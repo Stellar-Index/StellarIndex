@@ -1971,12 +1971,14 @@ export interface paths {
          *     pages — the `/v1/history` feed only samples recent trades, so
          *     an accurate 24h share needs this server-side aggregate.
          *
-         *     Volume derivation matches `/v1/sources?include=stats` (the
-         *     XLM/USD fallback for native / XLM-SAC legs); a source whose
-         *     trades carry no derivable USD volume still appears with its
-         *     trade count and a null `volume_24h_usd`. `share_pct` is the
-         *     source's share of the total derivable USD volume across all
-         *     sources (0 when the total is unknown).
+         *     Volume derivation matches `/v1/sources?include=stats`: the sum
+         *     of trade-time `usd_volume`. A trade with no `usd_volume` is
+         *     never valued at today's XLM price; it is excluded and the
+         *     source carries `volume_lower_bound: true`. A source with no
+         *     priced trade still appears with its trade count and a null
+         *     `volume_24h_usd`. `share_pct` is the source's share of the
+         *     total priced USD volume across all sources (0 when the total
+         *     is unknown).
          *
          *     Pass EITHER `base`+`quote` OR `asset` — combining them is a
          *     400.
@@ -17103,10 +17105,12 @@ export interface operations {
                             sources: {
                                 /** @description Source name (see /v1/sources). */
                                 source: string;
-                                /** @description SUM derivable USD volume over 24h. Decimal string per ADR-0003. */
+                                /** @description Sum of trade-time `usd_volume` over 24h. Decimal string per ADR-0003. */
                                 volume_24h_usd?: string | null;
+                                /** @description True when `volume_24h_usd` excludes this source's trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded. */
+                                volume_lower_bound?: boolean;
                                 trade_count_24h: number;
-                                /** @description Share of total derivable USD volume across sources (%). */
+                                /** @description Share of total priced USD volume across sources (%). */
                                 share_pct: number;
                             }[];
                         };

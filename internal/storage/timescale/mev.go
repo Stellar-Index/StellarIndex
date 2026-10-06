@@ -13,6 +13,47 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
+// tradesForArbScanQuery values each leg at its stored usd_volume, else
+// its XLM leg at the XLM/USD anchor of the trade's own minute
+// ([xlmUSDAnchorGridCTE]). SDEX arb legs quote XLM/token and often carry
+// NULL usd_volume, so without the fallback real cycles reported "$0"
+// notionals. With no anchor minute within xlmUSDAnchorMaxAge of the trade
+// the leg stays empty — never re-marked at a stale or later rate — as do
+// token/token legs with no XLM side. $3 is the network's native-XLM SAC.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
+var tradesForArbScanQuery = `
+        WITH ` + xlmUSDAnchorGridCTE("xlm_usd_grid", "$1::timestamptz", "$3::text") + `,
+        scan AS (
+          SELECT source, ledger, tx_hash, op_index, ts,
+                 base_asset, quote_asset, base_amount, quote_amount,
+                 maker, taker, usd_volume
+            FROM trades
+           WHERE ts > $1::timestamptz
+             AND ledger > 0
+             AND taker IS NOT NULL AND taker <> ''
+           ORDER BY ledger DESC, tx_hash DESC, op_index DESC
+           LIMIT $2
+        )
+        SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
+               t.base_asset, t.quote_asset,
+               t.base_amount, t.quote_amount,
+               COALESCE(t.maker, ''), COALESCE(t.taker, ''),
+               COALESCE((COALESCE(
+                 t.usd_volume,
+                 CASE
+                   WHEN t.base_asset IN ('native', $3::text)
+                     THEN (t.base_amount / 1e7::numeric) * xa.vwap
+                   WHEN t.quote_asset IN ('native', $3::text)
+                     THEN (t.quote_amount / 1e7::numeric) * xa.vwap
+                   ELSE NULL
+                 END
+               ))::text, '')
+          FROM scan t
+          ` + xlmUSDGridJoin("xa", "date_trunc('minute', t.ts)") + `
+         ORDER BY t.ledger DESC, t.tx_hash DESC, t.op_index DESC
+    `
+
 // TradesForArbScan returns the NEWEST `limit` ON-CHAIN trades (ledger >
 // 0, with a taker) that closed after `since`, returned ascending by
 // (ledger, tx_hash, op_index) — the order the MEV detector groups on —
@@ -27,39 +68,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	if limit <= 0 {
 		limit = 50_000
 	}
-	// Per-leg USD value: prefer the stored usd_volume, else estimate
-	// from the XLM leg × the current XLM/USD VWAP (same fallback the
-	// markets queries use). Without this, SDEX arb legs — which usually
-	// quote XLM/token and carry NULL usd_volume — summed to ~$0, so the
-	// MEV feed showed "$0" notionals on real multi-leg cycles (audit
-	// 2026-06-19). Token/token legs with no XLM side stay '' (no USD
-	// basis. $3 is the network's native-XLM SAC.
-	const q = `
-        WITH xlm_usd AS (
-          ` + xlmUSDVolumeSelect + `
-        )
-        SELECT source, ledger, tx_hash, op_index, ts,
-               base_asset, quote_asset,
-               base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, ''),
-               COALESCE((COALESCE(
-                 usd_volume,
-                 CASE
-                   WHEN base_asset IN ('native', $3::text)
-                     THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-                   WHEN quote_asset IN ('native', $3::text)
-                     THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-                   ELSE NULL
-                 END
-               ))::text, '')
-          FROM trades
-         WHERE ts > $1
-           AND ledger > 0
-           AND taker IS NOT NULL AND taker <> ''
-         ORDER BY ledger DESC, tx_hash DESC, op_index DESC
-         LIMIT $2
-    `
-	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit, canonical.NativeSACContractID())
+	rows, err := s.db.QueryContext(ctx, tradesForArbScanQuery, since.UTC(), limit, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, nil, fmt.Errorf("timescale: TradesForArbScan: %w", err)
 	}

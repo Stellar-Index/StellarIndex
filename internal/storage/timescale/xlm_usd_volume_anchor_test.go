@@ -20,7 +20,7 @@ func TestXLMUSDVolumeAnchorIsRobust(t *testing.T) {
 	if strings.Contains(xlmUSDVolumeSelect, "LIMIT 1") {
 		t.Error("xlmUSDVolumeSelect picks a single bucket")
 	}
-	for _, f := range []string{"markets.go", "soroban_volume.go", "sources_stats.go", "mev.go"} {
+	for _, f := range []string{"markets.go", "soroban_volume.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -31,6 +31,21 @@ func TestXLMUSDVolumeAnchorIsRobust(t *testing.T) {
 		}
 		if !strings.Contains(src, "xlmUSDVolumeSelect") {
 			t.Errorf("%s does not use xlmUSDVolumeSelect", f)
+		}
+	}
+}
+
+// TestTradeTimeReadersDoNotUseTheVolumeScalar: the per-source breakdowns sum
+// trade-time usd_volume and the MEV scan reads the anchor at each trade's
+// minute; neither may fall back to the current-window scalar.
+func TestTradeTimeReadersDoNotUseTheVolumeScalar(t *testing.T) {
+	for _, f := range []string{"sources_stats.go", "mev.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "xlmUSDVolumeSelect") {
+			t.Errorf("%s values XLM legs at the current XLM/USD scalar", f)
 		}
 	}
 }

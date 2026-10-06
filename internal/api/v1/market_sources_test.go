@@ -67,6 +67,33 @@ func TestMarketSources_PairBreakdownShares(t *testing.T) {
 	}
 }
 
+// A source whose unpriced trades were excluded from its volume is flagged
+// as a lower bound; a fully priced one is not.
+func TestMarketSources_UnpricedTradesMarkLowerBound(t *testing.T) {
+	reader := &stubMarketSourceReader{asset: []timescale.SourceStats{
+		{Source: "sdex", TradeCount24h: 10, VolumeUSD24h: sql.NullString{String: "300", Valid: true}, UnpricedTrades24h: 4},
+		{Source: "binance", TradeCount24h: 5, VolumeUSD24h: sql.NullString{String: "100", Valid: true}},
+	}}
+	srv := v1.New(v1.Options{MarketSources: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/markets/sources?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var body struct{ Data v1.MarketSourcesResp }
+	mustDecode(t, resp, &body)
+	if len(body.Data.Sources) != 2 {
+		t.Fatalf("got %d sources, want 2", len(body.Data.Sources))
+	}
+	if !body.Data.Sources[0].VolumeLowerBound {
+		t.Errorf("sdex excluded 4 unpriced trades; want volume_lower_bound, got %+v", body.Data.Sources[0])
+	}
+	if body.Data.Sources[1].VolumeLowerBound {
+		t.Errorf("binance excluded nothing; want no volume_lower_bound, got %+v", body.Data.Sources[1])
+	}
+}
+
 func TestMarketSources_AssetForm(t *testing.T) {
 	reader := &stubMarketSourceReader{asset: []timescale.SourceStats{
 		{Source: "binance", TradeCount24h: 42, VolumeUSD24h: sql.NullString{String: "1000", Valid: true}},

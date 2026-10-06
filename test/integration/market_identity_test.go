@@ -177,9 +177,11 @@ func TestSourceStats_OrderedByVolume(t *testing.T) {
 			t.Fatalf("InsertTrade %s: %v", tr.Source, err)
 		}
 	}
+	// The breakdowns sum the usd_volume stamped at trade time (0.5 USD/XLM
+	// here); aquarius's USDC/EURC legs stay unstamped, so unpriced.
 	if _, err := store.DB().ExecContext(ctx,
-		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
-		t.Fatalf("refresh prices_1m: %v", err)
+		`UPDATE trades SET usd_volume = quote_amount / 1e7 WHERE source IN ('soroswap', 'sdex')`); err != nil {
+		t.Fatalf("stamp usd_volume: %v", err)
 	}
 
 	pairRows, err := store.PairSourceStats(ctx, c.AssetAliasStrings(native), c.AssetAliasStrings(usdc))
@@ -193,6 +195,9 @@ func TestSourceStats_OrderedByVolume(t *testing.T) {
 		t.Fatalf("AssetSourceStats: %v", err)
 	}
 	assertSourceOrder(t, "AssetSourceStats(USDC)", assetRows, "soroswap", "sdex", "aquarius")
+	if last := assetRows[2]; last.VolumeUSD24h.Valid || last.UnpricedTrades24h != 5 {
+		t.Errorf("aquarius volume = %v, unpriced = %d; want NULL, 5", last.VolumeUSD24h, last.UnpricedTrades24h)
+	}
 }
 
 func assertSourceOrder(t *testing.T, name string, rows []timescale.SourceStats, want ...string) {

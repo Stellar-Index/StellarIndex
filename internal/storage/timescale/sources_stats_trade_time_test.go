@@ -37,3 +37,21 @@ func TestSourceVolumeHistoryQueryDoesNotValueAtSpot(t *testing.T) {
 		}
 	}
 }
+
+// The per-pair and per-asset breakdowns follow GetSourceStats: trade-time
+// usd_volume only, with the excluded unpriced trades counted.
+func TestPairAssetSourceStatsQueriesDoNotValueAtSpot(t *testing.T) {
+	for name, q := range map[string]string{
+		"pairSourceStatsQuery":  pairSourceStatsQuery,
+		"assetSourceStatsQuery": assetSourceStatsQuery,
+	} {
+		for _, bad := range []string{"xlm_usd", "vwap", "base_amount", "quote_amount"} {
+			if strings.Contains(q, bad) {
+				t.Errorf("%s must not value unpriced trades at spot; found %q:\n%s", name, bad, q)
+			}
+		}
+		if !strings.Contains(q, "COUNT(*) FILTER (WHERE usd_volume IS NULL)::bigint AS unpriced_trades_24h") {
+			t.Errorf("%s must report the excluded unpriced trade count:\n%s", name, q)
+		}
+	}
+}

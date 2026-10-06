@@ -2942,7 +2942,6 @@ internal/storage/timescale/markets.go	F028
 internal/storage/timescale/markets.go	F028
 internal/storage/timescale/markets.go	K031
 internal/storage/timescale/markets.go	K031
-internal/storage/timescale/mev.go	2026-06-19
 internal/storage/timescale/network_stats.go	2026-09-03
 internal/storage/timescale/network_stats.go	2026-09-03
 internal/storage/timescale/network_stats.go	2026-09-10
@@ -3082,7 +3081,6 @@ internal/storage/timescale/soroswap_skim_events.go	INV-3
 internal/storage/timescale/soroswap_skim_events.go	INV-3
 internal/storage/timescale/source_coverage.go	2026-08-28
 internal/storage/timescale/source_coverage.go	2026-08-28
-internal/storage/timescale/sources_stats.go	2026-07-23
 internal/storage/timescale/store.go	2026-05-12
 internal/storage/timescale/store.go	2026-07-16
 internal/storage/timescale/store.go	2026-07-24
