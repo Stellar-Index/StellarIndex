@@ -349,6 +349,9 @@ sysctl_tunings:
 
 # ───── Postgres ──────────────────────────────────────────────────────
 postgres_version:        "15"
+# Must match test/harness/timescale.go TimescaleImage (2.26.4-pg15): CI proves
+# migrations only against this version. Bump both together.
+timescaledb_version:     "2.26.4"
 postgres_listen_addresses: "127.0.0.1"          # stellar-core is local
 postgres_port:           5432
 postgres_shared_buffers: "{{ (ansible_facts.memtotal_mb * 0.25) | int }}MB"
