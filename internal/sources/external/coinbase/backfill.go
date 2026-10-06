@@ -1,6 +1,7 @@
 package coinbase
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -192,30 +193,24 @@ func (s *Streamer) restBase() string {
 	return s.Endpoint
 }
 
-// coinbaseCandle is the positional-array form Coinbase returns.
+// coinbaseCandle is the positional-array form Coinbase returns,
+// decoded with UseNumber so each slot keeps its exact wire digits.
 // Layout: [time_sec, low, high, open, close, volume]. NOT the
 // standard OHLC order — callers must address by index with care.
 type coinbaseCandle []any
 
 func (c coinbaseCandle) openTimeSec() (int64, bool) { return c.intAt(0) }
-func (c coinbaseCandle) closeFloat() (float64, bool) {
-	if len(c) < 5 {
-		return 0, false
-	}
-	if v, ok := c[4].(float64); ok {
-		return v, true
-	}
-	return 0, false
-}
+func (c coinbaseCandle) closeStr() (string, bool)   { return c.numberAt(4) }
+func (c coinbaseCandle) volumeStr() (string, bool)  { return c.numberAt(5) }
 
-func (c coinbaseCandle) volumeFloat() (float64, bool) {
-	if len(c) < 6 {
-		return 0, false
+// numberAt returns slot i's JSON number text. A float64 is refused: it
+// has already lost every digit beyond 2^53.
+func (c coinbaseCandle) numberAt(i int) (string, bool) {
+	if i >= len(c) {
+		return "", false
 	}
-	if v, ok := c[5].(float64); ok {
-		return v, true
-	}
-	return 0, false
+	n, ok := c[i].(json.Number)
+	return string(n), ok
 }
 
 func (c coinbaseCandle) intAt(i int) (int64, bool) {
@@ -223,6 +218,9 @@ func (c coinbaseCandle) intAt(i int) (int64, bool) {
 		return 0, false
 	}
 	switch v := c[i].(type) {
+	case json.Number:
+		n, err := v.Int64()
+		return n, err == nil
 	case float64:
 		return int64(v), true
 	case string:
@@ -295,15 +293,19 @@ func fetchCoinbaseCandles(ctx context.Context, endpoint string, q url.Values) ([
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
 	}
 	var out []coinbaseCandle
-	if err := json.Unmarshal(body, &out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return out, nil
 }
 
 // coinbaseCandleToTrade synthesises a canonical.Trade. Coinbase
-// doesn't publish quote volume — we compute it as close × volume,
-// same approach as Bitstamp.
+// publishes no VWAP or quote volume, so the trade is priced at the close
+// (the Backfiller "close when VWAP unavailable" contract): base volume
+// is exact, while quote = close × volume is an estimate whose true value
+// lies anywhere in [low × volume, high × volume].
 func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair, granSec int) (canonical.Trade, error) {
 	openSec, ok := c.openTimeSec()
 	if !ok {
@@ -311,33 +313,27 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 	}
 	closeSec := openSec + int64(granSec) - 1
 
-	vol, ok := c.volumeFloat()
-	if !ok || vol == 0 {
-		return canonical.Trade{}, fmt.Errorf("missing or zero volume")
+	volStr, ok := c.volumeStr()
+	if !ok {
+		return canonical.Trade{}, fmt.Errorf("missing volume")
 	}
-	closePrice, ok := c.closeFloat()
-	if !ok || closePrice == 0 {
-		return canonical.Trade{}, fmt.Errorf("missing or zero close")
-	}
-
-	// Coinbase returns amounts as JSON numbers (not strings),
-	// so we round-trip through the string form via FormatFloat
-	// to avoid float-state leakage into our integer math. At
-	// 8dp this is lossless for any realistic candle volume
-	// (<2^53).
-	base, err := scale.DecimalStringToScaledInt(
-		strconv.FormatFloat(vol, 'f', externalAmountDecimals, 64),
-		externalAmountDecimals,
-	)
+	base, err := scale.DecimalStringToScaledInt(volStr, externalAmountDecimals)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("volume: %w", err)
+		return canonical.Trade{}, fmt.Errorf("volume %q: %w", volStr, err)
 	}
-	price, err := scale.DecimalStringToScaledInt(
-		strconv.FormatFloat(closePrice, 'f', externalAmountDecimals, 64),
-		externalAmountDecimals,
-	)
+	if base.Sign() == 0 {
+		return canonical.Trade{}, fmt.Errorf("zero volume")
+	}
+	closeStr, ok := c.closeStr()
+	if !ok {
+		return canonical.Trade{}, fmt.Errorf("missing close")
+	}
+	price, err := scale.DecimalStringToScaledInt(closeStr, externalAmountDecimals)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("close: %w", err)
+		return canonical.Trade{}, fmt.Errorf("close %q: %w", closeStr, err)
+	}
+	if price.Sign() == 0 {
+		return canonical.Trade{}, fmt.Errorf("zero close")
 	}
 	quoteRaw := new(big.Int).Mul(base, price)
 	quote := new(big.Int).Quo(quoteRaw, scale.Pow10(externalAmountDecimals))
