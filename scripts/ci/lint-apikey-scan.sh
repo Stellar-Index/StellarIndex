@@ -37,7 +37,7 @@
 # Usage: lint-apikey-scan.sh [ROOT]   (ROOT defaults to the repo root;
 # the self-test points it at fixture trees).
 #
-# Run by verify.sh and CI's import-checks job; internal/auth/
+# Run by verify.sh and CI's repo-gates job; internal/auth/
 # apikey_scan_lint_test.go also runs it and its self-test under `go test`.
 #
 # Exit 0 clean, 1 on any violation or a vacuous run.

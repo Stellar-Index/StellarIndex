@@ -20,7 +20,7 @@ count of each key it matches. None of that is visible in a total, which is what
 makes the class expensive: an inflated board still sums to a plausible number.
 
 Guard: `scripts/ci/lint-lake-dedup.sh` (+ its self-test), in CI's
-`import-checks` job and in `scripts/dev/verify.sh`.
+`repo-gates` job and in `scripts/dev/verify.sh`.
 
 ## The rule
 

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# check-verify-parity.sh — verify.sh ↔ CI import-checks lint parity (W5-ci-6).
+# check-verify-parity.sh — verify.sh ↔ CI repo-gates lint parity (W5-ci-6).
 #
 # scripts/dev/verify.sh is the canonical pre-push gate ("run this before
-# every push"). But CI's `import-checks` job (.github/workflows/ci.yml) runs
+# every push"). But CI's `repo-gates` job (.github/workflows/ci.yml) runs
 # a BUNDLE of scripts/ci/*.sh gates, and nothing forced verify.sh to mirror
-# it. A gate added to import-checks but not to verify.sh is invisible drift:
+# it. A gate added to repo-gates but not to verify.sh is invisible drift:
 # `bash scripts/dev/verify.sh` goes green while the SAME commit reddens CI on
 # the new gate — the exact "verify.sh green ≠ CI green" class verify.sh's own
 # comments record biting twice (2026-07-06, 2026-07-25).
 #
 # This gate closes that hole DETERMINISTICALLY (no network, no gh): it
-# extracts every scripts/ci/*.sh invoked by the import-checks job and fails
+# extracts every scripts/ci/*.sh invoked by the repo-gates job and fails
 # if any is not also invoked by verify.sh. Adding a gate to CI now obligates
 # adding it to verify.sh in the same change — or the local gate stops being a
 # truthful pre-push signal.

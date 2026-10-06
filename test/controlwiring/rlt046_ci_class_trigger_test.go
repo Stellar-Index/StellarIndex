@@ -16,7 +16,7 @@ import (
 // The `go` class matched only *.go, go.mod/sum and openapi/**, so a diff
 // confined to a go:embed input set `go=false` and skipped the test job that
 // decodes it. The `ansible` class matched only configs/ansible/**, yet
-// clickhouse-exporter-test.sh (run only by the ansible-check job) also reads
+// clickhouse-exporter-test.sh (run only by the toolchain-gates job) also reads
 // configs/prometheus/** and deploy/monitoring/**.
 //
 // Both guards derive their inputs from the source of truth (every //go:embed

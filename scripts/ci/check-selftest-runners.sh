@@ -69,7 +69,7 @@ done <<<"$baseline"
 if [ "$bad" -gt 0 ]; then
   cat >&2 <<EOF
 check-selftest-runners: FAIL — $bad problem(s).
-Wire each new self-test into .github/workflows/ci.yml (import-checks) AND
+Wire each new self-test into .github/workflows/ci.yml (repo-gates) AND
 scripts/dev/verify.sh (check-verify-parity.sh requires both); never add a new
 entry to $BASELINE.
 EOF

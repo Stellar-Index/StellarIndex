@@ -137,7 +137,7 @@ also prints which checks **will** defer; under `VERIFY_FAIL_ON_SKIP=1`
 `VERIFY INCOMPLETE: 1 check(s) deferred` with exit 1 at the end of a macOS
 run is **by design**: the deploy migrations-sync self-test runs an ansible
 task file whose `unarchive --diff` needs GNU tar, and macOS ships bsdtar.
-Use `VERIFY_PROFILE=container` or let CI's ansible-check job run it.
+Use `VERIFY_PROFILE=container` or let CI's toolchain-gates job run it.
 `make prepush` issues push clearance.
 
 ## `cut-release.sh` preconditions

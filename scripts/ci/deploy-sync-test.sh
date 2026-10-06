@@ -35,7 +35,7 @@
 #   docker run -d --name si-sync-test --entrypoint sleep jrei/systemd-ubuntu:24.04 infinity
 #   DEPLOY_SYNC_CONNECTION=community.docker.docker DEPLOY_SYNC_HOST=si-sync-test \
 #     bash scripts/ci/deploy-sync-test.sh
-# CI (ubuntu, ansible-check job) runs it with the local default.
+# CI (ubuntu, toolchain-gates job) runs it with the local default.
 #
 # Overrides for the red-proof against a pre-fix copy: PLAYBOOK, TASKFILE.
 # Run: bash scripts/ci/deploy-sync-test.sh
