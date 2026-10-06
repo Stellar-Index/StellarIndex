@@ -2199,9 +2199,7 @@ func (s *Server) middlewareStack() []stackEntry {
 	// RequireEmailVerified runs after KeyPolicy (same "Subject
 	// already resolved" precondition) and BEFORE rate-limit (so
 	// an unverified-key 403 doesn't spend a per-minute token).
-	// F-1218 wave 45 (codex audit-2026-05-12); opt-in per
-	// deployment via the api binary's
-	// cfg.API.SignupRequireEmailVerification flag.
+	// Opt-in per deployment via cfg.API.SignupRequireEmailVerification.
 	if s.requireEmailVerified != nil {
 		stack = append(stack, stackEntry{"RequireEmailVerified", s.requireEmailVerified})
 	}
@@ -2250,6 +2248,8 @@ func (s *Server) middlewareStack() []stackEntry {
 	if s.sessionAuth != nil {
 		stack = append(stack, stackEntry{"SessionAuth", s.sessionAuth})
 	}
+	// Inside UsageTracker/TouchUsage: their AfterResponse flush would spill it untagged.
+	stack = append(stack, stackEntry{"ETag", middleware.ETag})
 	// CaptureRoute MUST be innermost — directly above the mux — so
 	// r.Pattern is populated before it reads. It writes the matched
 	// route into the *routeCapture HTTPMetrics planted in the

@@ -7,7 +7,7 @@
 //	CacheControl → Envelope404 → CORS → TrailingSlashRedirect →
 //	ResolveRoute → RequestTimeout → PublicRoutes → Auth → KeyPolicy →
 //	RequireEmailVerified → UsageTracker → MonthlyQuota → RateLimit →
-//	TouchUsage → SessionAuth → CaptureRoute
+//	TouchUsage → SessionAuth → ETag → CaptureRoute
 //
 // CORS, RequestTimeout, PublicRoutes + Auth, KeyPolicy,
 // RequireEmailVerified, UsageTracker, MonthlyQuota, RateLimit,
