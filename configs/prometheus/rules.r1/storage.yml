@@ -1516,6 +1516,8 @@ groups:
       #     verify-archive.yml, which carries the 8d threshold).
       #   - `heavy_job_*.prom`: run-heavy-job.sh writes it once at job start
       #     and removes it at exit; its age is the job's age, not a dead cron.
+      #   - `ch_lake_backup.prom`: written only when a run ends, and a full lake
+      #     backup runs for days; stellarindex_ch_lake_backup_stale (96h) owns it.
       #
       # Lock-gated producers (the `unless` clause, the ONE list of them) wait
       # behind the host-wide heavy lock, so a long heavy job (a long projector-replay
@@ -1529,7 +1531,7 @@ groups:
         expr: |
           (
             time() - node_textfile_mtime_seconds{
-              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$"
+              file!~".*/ops_job_.*\\.pid[0-9]+\\.prom$|.*/ops_job_(backfill|usd_volume_restamp|projected_rebuild_[a-z0-9_]+)\\.prom$|.*/restore_drill.*\\.prom$|.*/verify_archive_tier_d\\.prom$|.*/alertmanager_receivers\\.prom$|.*/heavy_job_.*\\.prom$|.*/ch_lake_backup\\.prom$"
             } > 86400
           )
           unless on (instance, file) (
