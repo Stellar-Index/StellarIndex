@@ -167,3 +167,60 @@ func TestReseedFrozenVWAP_RestoresHeldCoverage(t *testing.T) {
 		})
 	}
 }
+
+// TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite: a composite
+// serving on the key carries no coverage (unknown). A reseed whose value
+// write no-ops against it must not stamp the held direct window's coverage
+// beside it.
+func TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	const window = time.Hour
+	const composite = "0.123000000000"
+	end := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	rdb, mr := newTestRedis(t)
+	ctx := context.Background()
+	key := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
+	if err := rdb.Set(ctx, key, composite, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(ctx, cachekeys.VWAPProvenance(pair.Base, pair.Quote, window).String(),
+		cachekeys.VWAPProvenanceTriangulated, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	o := New(nil, rdb, Config{Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}})
+	stateKey := pair.String() + ":" + window.String()
+	o.setComparator(stateKey, big.NewRat(1, 10), end, end)
+	o.prevVWAPCoverage[stateKey] = cachekeys.WindowCoverage{Truncated: true, CoveredFrom: end.Add(-20 * time.Minute)}
+	o.reseedFrozenVWAP(ctx, pair, window, stateKey, 30*time.Minute)
+
+	if covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String(); mr.Exists(covKey) {
+		t.Error("held direct coverage stamped beside a serving composite")
+	}
+	if got, _ := mr.Get(key); got != composite {
+		t.Errorf("served value = %q, want the composite %q untouched", got, composite)
+	}
+}
+
+// TestPublishComposite_DropsHeldDirectCoverage: once a composite serves the
+// target, the direct comparator's coverage no longer describes the served
+// value and must not survive for a later reseed to restore.
+func TestPublishComposite_DropsHeldDirectCoverage(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
+	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := time.Minute
+	rdb, _ := newTestRedis(t)
+	o := New(&mockStore{}, rdb, Config{Windows: []time.Duration{window}})
+	stateKey := xlmEUR.String() + ":" + window.String()
+	o.prevVWAPCoverage[stateKey] = cachekeys.WindowCoverage{Truncated: true}
+
+	chain := TriangulationChain{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}}
+	if outcome := o.publishComposite(context.Background(), chain, window,
+		big.NewRat(72, 1000), 2, 2, 2, 0.9, false, false); outcome != "ok" {
+		t.Fatalf("publishComposite = %q, want ok", outcome)
+	}
+	if _, held := o.prevVWAPCoverage[stateKey]; held {
+		t.Error("direct coverage still held after a composite was published for the target")
+	}
+}

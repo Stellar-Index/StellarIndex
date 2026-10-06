@@ -540,14 +540,29 @@ func (o *Orchestrator) engageFreeze(
 	}
 }
 
+// reseedValueWithCoverageLua sets KEYS[1] to ARGV[1] only if absent and, only
+// then, sets KEYS[2] to ARGV[2] (or deletes it when ARGV[2] is empty); PX ARGV[3].
+const reseedValueWithCoverageLua = `
+if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[3]) then
+  if ARGV[2] == '' then
+    redis.call('DEL', KEYS[2])
+  else
+    redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+  end
+  return 1
+end
+return 0
+`
+
 // reseedFrozenVWAP writes the held comparator back as the window's VWAP, with
 // the observed-at stamp the API requires, when the keys are absent (cache
 // flushed mid-hold). Without it the API reads frozen=true with no servable
 // value and answers 503 for the rest of the hold. SetNX: a surviving value or
 // stamp is never overwritten. The stamp is the held bucket's own end, never
 // the reseed time, so the served age stays honest; with no known end the
-// reseed is skipped. The held value's coverage is reseeded beside it when
-// known; otherwise it reads as unknown.
+// reseed is skipped. The coverage key is written only when the held value
+// itself lands (its coverage, or cleared to unknown): a surviving value — a
+// composite included — must never gain the held window's coverage.
 func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair, window time.Duration, stateKey string, ttl time.Duration) {
 	// Read the last PUBLISHED value, not the caller's comparator: mid-freeze
 	// that is the previous refused bucket and must never be served as held.
@@ -561,14 +576,15 @@ func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair
 	}
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
 	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window).String()
-	coverage, coverageKnown := o.prevVWAPCoverage[stateKey]
+	covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String()
+	var coverageArg string
+	if coverage, known := o.prevVWAPCoverage[stateKey]; known {
+		coverageArg = cachekeys.FormatVWAPCoverage(coverage)
+	}
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.SetNX(ctx, atKey, cachekeys.FormatVWAPObservedAt(heldEnd), ttl)
-		if coverageKnown {
-			p.SetNX(ctx, cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String(),
-				cachekeys.FormatVWAPCoverage(coverage), ttl)
-		}
-		p.SetNX(ctx, key, formatRatFixed(held, 12), ttl)
+		p.Eval(ctx, reseedValueWithCoverageLua, []string{key, covKey},
+			formatRatFixed(held, 12), coverageArg, ttl.Milliseconds())
 		return nil
 	}); err != nil {
 		o.logger.Debug("freeze: held VWAP reseed failed",

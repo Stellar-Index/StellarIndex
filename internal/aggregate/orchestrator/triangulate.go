@@ -468,6 +468,9 @@ func (o *Orchestrator) publishComposite(
 			"chain", chain.Target.String(), "err", err)
 		return "redis_error"
 	}
+	// The served value is now the composite: the direct comparator's coverage
+	// no longer describes it, so a later reseed or hold must not restore it.
+	delete(o.prevVWAPCoverage, chain.Target.String()+":"+window.String())
 
 	// The stream carries the value /v1/price serves at this window, on the
 	// same once-per-closed-bucket contract as the direct path.
