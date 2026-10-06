@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -198,57 +199,75 @@ func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 	return nil
 }
 
-// spectraEventArgs validates e against its kind and returns the first 22
-// insert arguments, with every field the kind does not carry as NULL.
-func spectraEventArgs(e SpectraEvent) ([]any, error) {
+// spectraEventSpec checks e's identity, role and scalar formats and
+// returns its kind's field set.
+func spectraEventSpec(e SpectraEvent) (spectraKindSpec, error) {
 	if e.ContractID == "" || e.TxHash == "" {
-		return nil, errors.New("ContractID and TxHash are required")
+		return spectraKindSpec{}, errors.New("ContractID and TxHash are required")
 	}
 	spec, ok := spectraKindSpecs[e.Kind]
 	if !ok {
-		return nil, fmt.Errorf("invalid Kind %q", e.Kind)
+		return spec, fmt.Errorf("invalid Kind %q", e.Kind)
 	}
-	roleOK := false
-	for _, r := range spec.roles {
-		roleOK = roleOK || r == e.Role
-	}
-	if !roleOK {
-		return nil, fmt.Errorf("%s cannot be emitted by role %q", e.Kind, e.Role)
+	if !slices.Contains(spec.roles, e.Role) {
+		return spec, fmt.Errorf("%s cannot be emitted by role %q", e.Kind, e.Role)
 	}
 	if e.Role == SpectraRolePT && e.MarketPT != e.ContractID {
-		return nil, fmt.Errorf("%s from PT %s names market %q", e.Kind, e.ContractID, e.MarketPT)
+		return spec, fmt.Errorf("%s from PT %s names market %q", e.Kind, e.ContractID, e.MarketPT)
 	}
 	if e.OrderID != "" && !spectraOrderIDPattern.MatchString(e.OrderID) {
-		return nil, fmt.Errorf("OrderID %q is not 64 lowercase hex characters", e.OrderID)
+		return spec, fmt.Errorf("OrderID %q is not 64 lowercase hex characters", e.OrderID)
 	}
 	if e.DurationSeconds > math.MaxInt64 {
-		return nil, fmt.Errorf("DurationSeconds %d overflows bigint", e.DurationSeconds)
+		return spec, fmt.Errorf("DurationSeconds %d overflows bigint", e.DurationSeconds)
 	}
+	return spec, nil
+}
 
-	var problem error
-	text := func(f spectraField, name, v string) sql.NullString {
-		switch {
-		case spec.fields&f == 0 && v != "":
-			problem = errors.Join(problem, fmt.Errorf("%s does not carry %s (got %q)", e.Kind, name, v))
-		case spec.fields&f != 0 && v == "":
-			problem = errors.Join(problem, fmt.Errorf("%s needs %s", e.Kind, name))
-		}
-		return sql.NullString{String: v, Valid: spec.fields&f != 0}
+// spectraColumns turns optional fields into NULL-or-value arguments for
+// one kind, collecting every field that contradicts the kind.
+type spectraColumns struct {
+	kind    SpectraEventKind
+	fields  spectraField
+	problem error
+}
+
+func (c *spectraColumns) text(f spectraField, name, v string) sql.NullString {
+	carried := c.fields&f != 0
+	switch {
+	case !carried && v != "":
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s does not carry %s (got %q)", c.kind, name, v))
+	case carried && v == "":
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s needs %s", c.kind, name))
 	}
-	// A zero amount and an absent one are indistinguishable in
-	// canonical.Amount, so presence is keyed off the kind, never IsZero.
-	amount := func(f spectraField, name string, v canonical.Amount, signed bool) sql.NullString {
-		switch {
-		case spec.fields&f == 0 && !v.IsZero():
-			problem = errors.Join(problem, fmt.Errorf("%s does not carry %s (got %s)", e.Kind, name, v))
-		case spec.fields&f != 0 && !signed && v.Sign() < 0:
-			problem = errors.Join(problem, fmt.Errorf("%s %s must be >= 0 (got %s)", e.Kind, name, v))
-		}
-		return sql.NullString{String: v.String(), Valid: spec.fields&f != 0}
+	return sql.NullString{String: v, Valid: carried}
+}
+
+// amount keys presence off the kind, never IsZero: a zero amount and an
+// absent one are indistinguishable in canonical.Amount.
+func (c *spectraColumns) amount(f spectraField, name string, v canonical.Amount, signed bool) sql.NullString {
+	carried := c.fields&f != 0
+	switch {
+	case !carried && !v.IsZero():
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s does not carry %s (got %s)", c.kind, name, v))
+	case carried && !signed && v.Sign() < 0:
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s %s must be >= 0 (got %s)", c.kind, name, v))
 	}
+	return sql.NullString{String: v.String(), Valid: carried}
+}
+
+// spectraEventArgs validates e against its kind and returns the first 22
+// insert arguments, with every field the kind does not carry as NULL.
+func spectraEventArgs(e SpectraEvent) ([]any, error) {
+	spec, err := spectraEventSpec(e)
+	if err != nil {
+		return nil, err
+	}
+	c := &spectraColumns{kind: e.Kind, fields: spec.fields}
+	text, amount := c.text, c.amount
 	duration := sql.NullInt64{Int64: int64(e.DurationSeconds), Valid: spec.fields&sfDuration != 0}
 	if !duration.Valid && e.DurationSeconds != 0 {
-		problem = errors.Join(problem, fmt.Errorf("%s does not carry DurationSeconds (got %d)", e.Kind, e.DurationSeconds))
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s does not carry DurationSeconds (got %d)", e.Kind, e.DurationSeconds))
 	}
 
 	args := []any{
@@ -268,8 +287,8 @@ func spectraEventArgs(e SpectraEvent) ([]any, error) {
 		amount(sfAmount, "Amount", e.Amount, false),
 		amount(sfYieldInIBT, "YieldInIBT", e.YieldInIBT, true),
 	}
-	if problem != nil {
-		return nil, problem
+	if c.problem != nil {
+		return nil, c.problem
 	}
 	return args, nil
 }
