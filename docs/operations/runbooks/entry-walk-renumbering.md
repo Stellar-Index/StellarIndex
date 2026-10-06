@@ -262,7 +262,7 @@ GROUP BY key_xdr;
 
 - [Migration 0120](../../../migrations/0120_intra_ledger_seq_walk_version.up.sql)
   — the amendment that states this invariant on the live schema.
-- [supply-divergence](supply-divergence.md) — where a missed repair surfaces:
+- [supply-divergence](supply.md#stellarindex_supply_divergence_high) — where a missed repair surfaces:
   the classic-vs-SAC cross-check widens when an observation component is
   stale.
 - [projector-lag](projector.md#stellarindex_projector_lag_high) — the re-derive itself runs through the

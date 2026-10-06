@@ -71,7 +71,7 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 
 | Underlying error | Likely cause | Mitigation |
 | ---------------- | ------------ | ---------- |
-| connection refused / timeout | Postgres down / failover | Wait for recovery; check `postgres-ping-failing` |
+| connection refused / timeout | Postgres down / failover | Wait for recovery; check [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) |
 | `permission denied for table accounts` | Migration applied as superuser | `ALTER TABLE accounts OWNER TO stellarindex` (migrations/README rule 7) |
 | statement timeout | DB under load | Check DB load; alert auto-resolves once queries complete |
 
@@ -113,7 +113,7 @@ hammered), separate from the reaper's own health.
 - `internal/signupreaper/` — the reaper package.
 - `internal/api/v1/dashboardauth/` — the `/v1/auth/callback`
   provisioning path that produces the signup-race orphans (F-1255).
-- Sibling alert: `postgres-ping-failing` (the broader "API can't reach
+- Sibling alert: [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) (the broader "API can't reach
   Postgres" signal).
 
 ## Changelog

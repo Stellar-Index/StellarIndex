@@ -1506,7 +1506,7 @@
   # because a full run can restart galexie and a galexie restart is a
   # ~9-minute mainnet cold catchup. Tier B was left untagged when that
   # tag was introduced, so `--tags ops-jobs` — the apply procedure
-  # docs/operations/runbooks/archive-divergence.md prescribes — rendered
+  # docs/operations/runbooks/archive.md#stellarindex_stellar_archive_divergence prescribes — rendered
   # tier-a's unit and silently skipped tier-b's, leaving the checkpoint
   # tier's `-textfile-output` export path (#282) permanently unwired
   # while the confirm step still read green. Untagged behaviour is

@@ -3,13 +3,13 @@ title: SEV-1 tabletop — Timescale primary disk-full failover
 last_verified: 2026-10-05
 status: ratified
 severity: P1
-exercises_runbook: ../../runbooks/timescale-primary-down.md
+exercises_runbook: ../../runbooks/postgres.md#stellarindex_timescale_primary_down
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
 # SEV-1 tabletop — Timescale primary disk-full
 
-~30 min, 3 people. Exercises [`timescale-primary-down.md`](../../runbooks/timescale-primary-down.md)
+~30 min, 3 people. Exercises [`postgres.md`](../../runbooks/postgres.md#stellarindex_timescale_primary_down)
 and [SEV playbook §4](../../sev-playbook.md). r1 has no automatic failover; recovery
 is operator-driven. Successor once a Patroni cluster exists:
 [sev1-patroni-failover](sev1-patroni-failover.md).
@@ -51,7 +51,7 @@ All services up, `/v1/readyz` ok, 14:30 UTC Tuesday, routine traffic. Oncall and
 ## Pass criteria (aim >= 80% pass)
 
 1. Acknowledged within 5 min and channel opened.
-2. Found `timescale-primary-down.md` first try (alert `runbook_url`).
+2. Found `postgres.md` first try (alert `runbook_url`).
 3. Confirmed against `/v1/readyz`, not only the metric.
 4. Identified disk-full as root cause within 15 min.
 5. Chose failover vs fix-in-place with explicit rationale.

@@ -17,7 +17,7 @@ func (f fakeDecimalsLookup) Lookup(assetID string) (int, bool) {
 
 // testContract is a real, valid on-chain C-strkey — the founding
 // CS-026/2026-07-08 decimals incident's contract id
-// (docs/operations/runbooks/dex-nonstandard-decimals.md), reused here
+// (docs/operations/runbooks/dex.md), reused here
 // purely as a memorable, checksum-valid fixture.
 const testContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 
@@ -108,7 +108,7 @@ func TestAdjustPrice_NilInputReturnsNil(t *testing.T) {
 // constraint #5 asks for: a real-shaped trade of an 18-decimal bridged
 // token (base leg) quoted against a 7-decimal SAC/classic asset (quote
 // leg), showing the OLD unadjusted ratio is off by exactly 10^11 — the
-// |18-7| skew docs/operations/runbooks/dex-nonstandard-decimals.md describes — and that AdjustPrice
+// |18-7| skew docs/operations/runbooks/dex.md describes — and that AdjustPrice
 // corrects it exactly.
 //
 // Trade shape: base_amount = 2_500_000_000_000_000_000 (2.5 whole tokens
@@ -130,7 +130,7 @@ func TestAdjustPrice_Golden18DecimalToken(t *testing.T) {
 
 	// Show exactly how wrong the OLD (unadjusted) served value was:
 	// rawRatio should equal truePrice / 10^11 — the "served skewed by
-	// 10^(7-decimals)" landmine docs/operations/runbooks/dex-nonstandard-decimals.md describes.
+	// 10^(7-decimals)" landmine docs/operations/runbooks/dex.md describes.
 	tenToThe11 := new(big.Int).Exp(big.NewInt(10), big.NewInt(11), nil)
 	expectedRaw := new(big.Rat).Quo(truePrice, new(big.Rat).SetInt(tenToThe11))
 	if rawRatio.Cmp(expectedRaw) != 0 {

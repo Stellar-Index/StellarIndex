@@ -74,7 +74,7 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
    - Signal: insert-rate drops but decode-rate stays normal;
      backend time in `pg_stat_activity` shows `IO:DataFileRead`
      or `Lock:tuple` waits.
-   - Mitigation: `pg-conns-saturated.md` / `replica-lag.md` /
+   - Mitigation: `postgres.md#stellarindex_timescale_connections_saturated` / `postgres.md#stellarindex_timescale_replica_lag` /
      `db-disk-full.md` depending on the underlying storage issue.
 
 4. **Upstream RPC is lagging.** We can process at any speed we
@@ -153,7 +153,7 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
   to "retired; no rule in either tree" — the cited
   `deploy/monitoring/rules/ingestion.yml` no longer defines this
   alert, nor does `rules.r1/`. Dead link `pg_conns-saturated.md` →
-  `pg-conns-saturated.md`. Mitigation step 4 gained the ADR-0032
+  `postgres.md#stellarindex_timescale_connections_saturated`. Mitigation step 4 gained the ADR-0032
   split (projected sources catch up via `projector-replay`;
   `backfill` refuses non-`BackfillSafe` Soroban sources; both run
   under `/usr/local/sbin/run-heavy-job.sh` on r1). Diagnosis block

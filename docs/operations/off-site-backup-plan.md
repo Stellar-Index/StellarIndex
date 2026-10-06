@@ -36,7 +36,7 @@ Back up by recovery time, not by re-derivability:
 
 ### 1. Galexie archive → S3 (critical) — continuous mirror
 
-**Retired.** The archive is re-pulled from SDF's public bucket instead. The mechanism remains, disabled by default: `scripts/ops/galexie-archive-mirror.sh` + `galexie-archive-mirror.timer`, installed by `18-pgbackrest-backup.yml` only when `galexie_archive_mirror_enabled: true`, mirroring the local `galexie-archive` bucket to an off-site `mc` alias (`mc mirror`, verified each run with `mc mirror --dry-run`). Enabled, it needs `galexie_archive_mirror_s3_endpoint` and the vault key pair, else `stellarindex_galexie_archive_mirror_stale` tickets the host. Restore: [`runbooks/galexie-archive-mirror.md`](runbooks/galexie-archive-mirror.md).
+**Retired.** The archive is re-pulled from SDF's public bucket instead. The mechanism remains, disabled by default: `scripts/ops/galexie-archive-mirror.sh` + `galexie-archive-mirror.timer`, installed by `18-pgbackrest-backup.yml` only when `galexie_archive_mirror_enabled: true`, mirroring the local `galexie-archive` bucket to an off-site `mc` alias (`mc mirror`, verified each run with `mc mirror --dry-run`). Enabled, it needs `galexie_archive_mirror_s3_endpoint` and the vault key pair, else `stellarindex_galexie_archive_mirror_stale` tickets the host. Restore: [`runbooks/archive.md#stellarindex_galexie_archive_mirror_stale`](runbooks/archive.md#stellarindex_galexie_archive_mirror_stale).
 
 Locally, `data/minio` is in the role's `zfs_snapshot_datasets` (7-day retention), which turns a mis-aimed `mc rm --recursive` into a `zfs clone`; it does nothing for a pool or box loss.
 

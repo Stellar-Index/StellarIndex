@@ -131,7 +131,7 @@ Identity record: [credential-rotation.md §MinIO identity inventory](credential-
   `sac_balance_seed_provenance` (`source='full_history'`); `min_ledger_seen` is not a
   success signal (archived balances are tombstoned, so it reports tip − 2,073,600).
   Record per-asset outcomes of
-  [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md) here.
+  [runbooks/supply.md#stellarindex_supply_cross_check_divergence](runbooks/supply.md#stellarindex_supply_cross_check_divergence) here.
 
 ## Multi-region / HA (gated on hosts existing — P3)
 - [ ] Provision R2 (AWS) + R3 (Vultr); then the `redis-sentinel`/patroni/bringup roles run.

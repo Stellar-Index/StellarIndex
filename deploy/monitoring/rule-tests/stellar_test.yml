@@ -92,7 +92,7 @@ tests:
               tier: chain
               reason: chain
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_stellar_archive_divergence
               summary: "Archive hash divergence detected (SEV-1)"
               description: |
                 Our published archive's bucket hash differs from at least one

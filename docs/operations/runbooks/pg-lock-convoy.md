@@ -202,7 +202,7 @@ restamp.
   consequence of this, not an independent fault.
 - [aggregator-silent](aggregator.md#stellarindex_aggregator_silent) — the aggregator stops
   writing VWAP when its own reads are queued.
-- [pg-conns-saturated](pg-conns-saturated.md) — a convoy pins connections
+- [pg-conns-saturated](postgres.md#stellarindex_timescale_connections_saturated) — a convoy pins connections
   as it grows, so the two can fire together.
 - [ops-job-stalled](ops-job-stalled.md) — the heavy-job side: a restamp
   that is queued rather than wedged looks identical from its heartbeat,

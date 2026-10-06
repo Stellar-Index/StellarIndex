@@ -253,7 +253,7 @@ RCA capture: unit journal for the 30 minutes before the alert (`journalctl -u <u
 
 False positives: brief restarts during planned exporter upgrades (silence via amtool); MinIO bearer-token rotation without a Prometheus reload (Prometheus must reload its token file).
 
-Redis specifics: Debian unit `prometheus-redis-exporter`, port 9121, bound to `127.0.0.1` via `WEB_LISTEN_ADDRESS` in `/etc/default/prometheus-redis-exporter` (group A). Blinds `cache.yml` (`configs/prometheus/rules.r1/cache.yml`), `stellarindex_redis_writes_blocked` and any cache-miss/latency rule on `redis_*`. Downstream runbook: `redis-write-blocked-disk-full.md`.
+Redis specifics: Debian unit `prometheus-redis-exporter`, port 9121, bound to `127.0.0.1` via `WEB_LISTEN_ADDRESS` in `/etc/default/prometheus-redis-exporter` (group A). Blinds `cache.yml` (`configs/prometheus/rules.r1/cache.yml`), `stellarindex_redis_writes_blocked` and any cache-miss/latency rule on `redis_*`. Downstream runbook: `cache.md#stellarindex_redis_writes_blocked`.
 
 ## stellarindex_postgres_exporter_down
 

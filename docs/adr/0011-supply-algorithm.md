@@ -65,4 +65,4 @@ Market-cap, FDV and supply-percentage fields depend on this table.
 
 ## Evidence
 
-`internal/supply/` (policy, overlay, crosscheck), `internal/storage/timescale/supply.go`, `docs/architecture/supply-pipeline.md`, and `docs/operations/runbooks/supply-cross-check-divergence.md`.
+`internal/supply/` (policy, overlay, crosscheck), `internal/storage/timescale/supply.go`, `docs/architecture/supply-pipeline.md`, and `docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence`.

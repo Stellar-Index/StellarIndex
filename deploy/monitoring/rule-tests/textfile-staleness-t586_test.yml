@@ -47,7 +47,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/patroni-textfile-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_patroni_textfile_stale
               summary: "patroni-textfile-scraper has not run for 10m on r1:9100"
               description: |
                 patroni.prom has not been rewritten in 10+ minutes despite

@@ -39,7 +39,7 @@ tests:
         source: sdex
         table: trades
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
         summary: Data-gap detector hasn't scanned sdex/trades successfully in >8h (above the 6h sdex/soroban scan cadence)
         description: 'The aggregator''s data-gap detector goroutine appears
 
@@ -93,7 +93,7 @@ tests:
           climbing?
 
 
-          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
           '
 - interval: 1m
@@ -120,7 +120,7 @@ tests:
         table: soroban_events
         outcome: error
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
         summary: Data-gap detector hasn't scanned soroban-events/soroban_events successfully in >8h (above the 6h sdex/soroban scan cadence)
         description: 'The aggregator''s data-gap detector goroutine appears
 
@@ -174,7 +174,7 @@ tests:
           climbing?
 
 
-          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
           '
 - interval: 1m
@@ -199,7 +199,7 @@ tests:
         table: soroban_events
         outcome: error
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
         summary: Data-gap detector hasn't scanned soroban-events/soroban_events successfully in >8h (above the 6h sdex/soroban scan cadence)
         description: 'The aggregator''s data-gap detector goroutine appears
 
@@ -253,7 +253,7 @@ tests:
           climbing?
 
 
-          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
           '
 - interval: 1m
@@ -270,7 +270,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
         summary: Data-gap detector hasn't scanned / successfully in >8h (above the 6h sdex/soroban scan cadence)
         description: 'The aggregator''s data-gap detector goroutine appears
 
@@ -324,7 +324,7 @@ tests:
           climbing?
 
 
-          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
           '
 # Guard for the #323 restart shape: RunGapDetector pre-registers
@@ -373,7 +373,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols
         summary: Oracle reflector is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="reflector"}
 
@@ -418,7 +418,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols
         summary: Oracle band is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="band"}
 
@@ -454,7 +454,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols
         summary: Oracle band is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="band"}
 
@@ -505,7 +505,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols
         summary: Oracle redstone published a feed_id the record layer cannot store
         description: |
           stellarindex_source_unrepresentable_symbols_total{source="redstone"}
@@ -548,7 +548,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols
         summary: Oracle redstone published a feed_id the record layer cannot store
         description: |
           stellarindex_source_unrepresentable_symbols_total{source="redstone"}

@@ -3,7 +3,7 @@ title: SEV-1 tabletop — Patroni-driven Timescale failover
 last_verified: 2026-10-05
 status: draft
 severity: P1
-exercises_runbook: ../../runbooks/timescale-primary-down.md
+exercises_runbook: ../../runbooks/postgres.md#stellarindex_timescale_primary_down
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
@@ -14,8 +14,8 @@ playbook_section: ../../sev-playbook.md#4-response-flow
 > [ha-plan §3.3](../../../architecture/ha-plan.md), not from a run. Before the first live drill: check each
 > `patronictl` flag against the installed version, time one real switchover, set `status: ratified`.
 
-~30 min, 3 people. Exercises [`timescale-primary-down.md`](../../runbooks/timescale-primary-down.md) (its
-undeployed-HA appendix), [`replica-lag.md`](../../runbooks/replica-lag.md) and [SEV playbook §4](../../sev-playbook.md).
+~30 min, 3 people. Exercises [`postgres.md`](../../runbooks/postgres.md#stellarindex_timescale_primary_down) (its
+undeployed-HA appendix), [`postgres.md`](../../runbooks/postgres.md#stellarindex_timescale_replica_lag) and [SEV playbook §4](../../sev-playbook.md).
 Point: Patroni promotes automatically but does not recover the *service*; the team must tell "cluster has a
 leader" from "API and indexer are writing to it".
 
@@ -49,7 +49,7 @@ fronts the API only); API and indexer dial the leader address directly. 10:15 UT
   that it was the sync standby (no loss under `synchronous_commit=remote_apply`). Read `postgres_exporter_down` for `db-01` as host loss.
   The ongoing outage is client routing, not Patroni.
 - **30 min, mitigate:** point API and indexer Postgres DSN at the new leader and restart them (indexer too, its pool can hold dead
-  connections: [postgres-ping-failing.md](../../runbooks/postgres-ping-failing.md)). Do **not** run `patronictl failover`/`switchover`;
+  connections: [postgres.md](../../runbooks/postgres.md#stellarindex_postgres_ping_failing)). Do **not** run `patronictl failover`/`switchover`;
   promotion already happened. Verify: `/v1/readyz` 200 with `postgres` ok; `postgres_ping_failing` clears; ingest cursor advances
   (`stellarindex_ingestion_cursor_stuck` needs ~10 min); `prices_1m` gains a bucket (Timescale jobs on new leader);
   `sudo -u postgres pgbackrest --stanza=stellarindex check` on `db-02` (WAL archiving resumed).
@@ -74,7 +74,7 @@ fronts the API only); API and indexer dial the leader address directly. 10:15 UT
 No Postgres front (every failover is a manual repoint); `primary_down` is blind to host loss (add `absent(pg_up)` per member or page on
 `up{job="postgres_exporter"} == 0` for a db host); no cluster-level no-leader alert from `stellarindex_patroni_role{role="leader"}`;
 `stellarindex_patroni_role` is a textfile metric and serves frozen values if the scraper dies
-(`stellarindex_patroni_textfile_stale`, [patroni-textfile-stale.md](../../runbooks/patroni-textfile-stale.md)).
+(`stellarindex_patroni_textfile_stale`, [textfile-stale.md](../../runbooks/textfile-stale.md#stellarindex_patroni_textfile_stale)).
 
 ## Variants
 

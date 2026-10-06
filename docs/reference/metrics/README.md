@@ -672,7 +672,7 @@ F-1234 (codex audit-2026-05-12).
 Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
 increase over a trailing 25 h, sustained 30 min — the window exceeds
 Band's daily cadence so it cannot flap) → runbook
-[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+[oracle-unknown-symbols](../../operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols).
 `informational` since 2026-09-08, delivered to the low-traffic
 `chat-informational` channel: a source listing a new token is routine
 and the observation is captured under `raw:`, so it earns a mapping
@@ -723,7 +723,7 @@ window as its unknown-symbols sibling so a daily-cadence oracle cannot
 flap). It stays `ticket` where the sibling dropped to
 `informational`, for the reason the two counters are separate: no row
 was written, so there is nothing to promote later. → runbook
-[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
+[oracle-unknown-symbols](../../operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols).
 
 ### `stellarindex_source_orphan_events_total`
 
@@ -748,7 +748,7 @@ legitimate calls — either warrants review. `statsflush` adds each
 flush window's per-source delta alongside a WARN log, same treatment
 as the dispatcher-level counters above. → alert
 `stellarindex_ingestion_uncorroborated_calls`, runbook
-[uncorroborated-calls](../../operations/runbooks/uncorroborated-calls.md).
+[uncorroborated-calls](../../operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls).
 
 ### `stellarindex_external_poller_polls_total`
 
@@ -1433,7 +1433,7 @@ of bug needed. A handful of hits is normal (genuine equal-value
 cross-asset fills exist); a sustained stream from one source
 (`increase(...[30m]) > 25`, see `dex_trade_unit_ratio_detected`) is the
 signature of a broken decoder. Runbook:
-`docs/operations/runbooks/dex-trade-unit-ratio.md`.
+`docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected`.
 
 ### `stellarindex_trade_insert_retries_total`
 
@@ -3212,14 +3212,14 @@ not indexer corruption).
   it. See
   [ADR-0011's 2026-08-05 amendment](../../adr/0011-supply-algorithm.md)
   and the
-  [runbook](../../operations/runbooks/supply-cross-check-divergence.md).
+  [runbook](../../operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence).
 - `wrap_class="full_wrap"` (operator-attested via
   `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
   value = `|classic_total − sac_total|` — the ORIGINAL ADR-0011
   equality compare, for a pair confirmed 100% SAC-represented.
 
 Drives the
-[`stellarindex_supply_cross_check_divergence`](../../operations/runbooks/supply-cross-check-divergence.md)
+[`stellarindex_supply_cross_check_divergence`](../../operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence)
 alert when > 1. The alert expression is unchanged (`> 1`, no
 `wrap_class` filter needed) — the false positives are fixed in what
 the value MEANS, not in the alert condition.
@@ -3247,7 +3247,7 @@ and `misaligned` evaluated nothing: the refresher deletes the pair's
 `stellarindex_supply_cross_check_divergence_stroops` series on them
 rather than leaving the last value re-exported. A sustained rate of
 any of the three drives
-[`stellarindex_supply_cross_check_unevaluable`](../../operations/runbooks/supply-cross-check-unevaluable.md).
+[`stellarindex_supply_cross_check_unevaluable`](../../operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable).
 A flat gauge with zero counter increments means the orchestrator
 stopped invoking the cross-check, not that everything's healthy.
 
@@ -3268,7 +3268,7 @@ Dashboard. Steady state for XLM is ~0.0003 (the ~0.03% Fee-Pool noise
 floor documented in
 [`docs/methodology/xlm-circulating-supply.md`](../../methodology/xlm-circulating-supply.md)).
 Drives the
-[`stellarindex_supply_divergence_high`](../../operations/runbooks/supply-divergence.md)
+[`stellarindex_supply_divergence_high`](../../operations/runbooks/supply.md#stellarindex_supply_divergence_high)
 alert when > 0.01 (1%) — a threshold two-plus orders of magnitude above
 that noise floor, so it fires only on a real drift (usually a stale
 SDF-reserve exclusion account list). NOT updated on the `no_reference`
@@ -4323,7 +4323,7 @@ pre-seeded — a series exists only once a real offender is detected, and the
 alert is a bare `> 0`. The exact decimals + skew magnitude are in the guard's
 ERROR log line, not a label. Any non-zero value is a real, silent mispricing
 on a live pair — page-adjacent (P2). Runbook:
-`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+`docs/operations/runbooks/dex.md#dex-nonstandard-decimals`.
 
 ### `stellarindex_decimals_guard_sweep_last_success_unix`
 
@@ -4369,7 +4369,7 @@ and the last two declining paths (`/v1/price` closed-1m bucket,
 path no longer exists and nothing increments this counter. Retained
 (registered, always zero) one release so dashboards/queries referencing
 it don't break; remove alongside the next metrics cleanup. Runbook:
-`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+`docs/operations/runbooks/dex.md#dex-nonstandard-decimals`.
 
 ### `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
 
@@ -4441,7 +4441,7 @@ Expected value is 0. Measured on r1 2026-09-18 before the counter shipped:
 9 projection rows, the 6 resolvable through the API all equal to the lake,
 so the steady state is genuinely zero. Third arm of
 `stellarindex_nonstandard_decimals_correction_failing`; runbook
-`docs/operations/runbooks/dex-nonstandard-decimals.md` ("Decimals lockstep").
+`docs/operations/runbooks/dex.md#dex-nonstandard-decimals` ("Decimals lockstep").
 
 ## Background cache workers (API binary, v0.21.4)
 
@@ -4847,7 +4847,7 @@ by the weekly `galexie-mirror-verify.timer` (archival-node role, tag
 `ops-jobs`). The file is rewritten only when a comparison completes, so a
 failing run leaves the previous verdict and its stamp in place. Alerted
 on by `deploy/monitoring/rules/galexie-archive.yml`; runbook
-`docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_archive_upstream_divergence`.
+`docs/operations/runbooks/archive.md#stellarindex_galexie_archive_upstream_divergence`.
 
 ### `galexie_archive_upstream_objects`
 

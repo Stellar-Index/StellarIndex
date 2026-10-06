@@ -28,7 +28,7 @@ type decimalsAssetReader interface {
 // refreshed snapshot of `nonstandard_decimals_assets` (migration 0093),
 // wired into orchestrator.Config.DecimalsLookup so the orchestrator's
 // published VWAP is decimals-normalized for any confirmed non-7-decimals
-// leg (docs/operations/runbooks/dex-nonstandard-decimals.md).
+// leg (docs/operations/runbooks/dex.md).
 //
 // Kept as a small standalone type here (not a shared package with
 // internal/api/v1's cache) deliberately: internal/aggregate/orchestrator's

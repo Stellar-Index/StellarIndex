@@ -14,7 +14,7 @@
 # Alg-3 ≈ 0) it produced 8 standing false positives — a monitoring
 # category error, not indexer corruption. The gauge is now
 # wrap_class-aware (internal/supply.WrapClass); see the alert's
-# comment below and docs/operations/runbooks/supply-cross-check-divergence.md.
+# comment below and docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence.
 
 groups:
   - name: stellarindex.supply
@@ -61,7 +61,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence
           summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} ({{ $labels.wrap_class }}, P3)"
           description: |
             The cross-check between Algorithm 2 (classic ledger-entry
@@ -78,7 +78,7 @@ groups:
             patterns" section before assuming corruption. The asset's
             circulating/total/max_supply on the API will be
             correspondingly wrong until reconciled.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence
 
       # The cross-check ran but evaluated NOTHING for a sustained
       # window: a side has no snapshot, a storage read keeps failing,
@@ -104,7 +104,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
           summary: "Supply cross-check not evaluated ({{ $labels.outcome }}, {{ $labels.wrap_class }}) for > 1h (P3)"
           description: |
             At least one configured classic ↔ SAC cross-check pair has
@@ -115,7 +115,7 @@ groups:
             asset_supply_history row; read_error: storage reads keep
             failing; misaligned: the two latest snapshots are more
             than 1000 ledgers apart (one side's refresher has stalled).
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
 
       # Served circulating supply drifted > 1% from an EXTERNAL
       # authoritative reference (Stellar Network Dashboard for XLM;
@@ -139,7 +139,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_divergence_high
           summary: "Served circulating supply {{ $value | humanizePercentage }} off {{ $labels.reference }} for {{ $labels.asset }} (P3)"
           description: |
             Our served circulating_supply for {{ $labels.asset }} differs
@@ -151,4 +151,4 @@ groups:
             no longer tracks accurately. Do NOT blindly change our number
             to match the reference; the methodology doc
             (docs/methodology/xlm-circulating-supply.md) is authoritative.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_divergence_high

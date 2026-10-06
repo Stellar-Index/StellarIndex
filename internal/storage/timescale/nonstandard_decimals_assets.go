@@ -16,7 +16,7 @@ import (
 // non-7 leg needs an exact 10^(baseDecimals-quoteDecimals) correction
 // (aggregate.AdjustPrice). Earlier revisions declined to serve instead;
 // that was the placeholder, normalization is the shipped behaviour.
-// See docs/operations/runbooks/dex-nonstandard-decimals.md.
+// See docs/operations/runbooks/dex.md.
 //
 // NOTE this table is about per-unit PRICE, which does need real decimals.
 // It is deliberately NOT consulted for usd_volume, where the token's

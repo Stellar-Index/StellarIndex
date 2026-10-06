@@ -889,7 +889,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_galexie_archive_mirror_stale
               summary: "Galexie archive has no verified off-site mirror younger than 48 h on r1:9100"
               description: |
                 No galexie-archive-mirror run has completed and verified clean
@@ -921,7 +921,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-mirror.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_galexie_archive_mirror_stale
               summary: "Galexie archive has no verified off-site mirror younger than 48 h on r1:9100"
               description: |
                 No galexie-archive-mirror run has completed and verified clean

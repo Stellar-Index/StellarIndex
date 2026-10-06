@@ -25,7 +25,7 @@ func (f fakeDecimalsLookup) Lookup(assetID string) (int, bool) {
 // by 10^(18-7), not served at the raw stroop-scale ratio.
 func TestTick_DecimalsLookup_NormalizesNonstandardLeg(t *testing.T) {
 	// Real on-chain contract id (the founding CS-026/2026-07-08 decimals
-	// incident, per docs/operations/runbooks/dex-nonstandard-decimals.md)
+	// incident, per docs/operations/runbooks/dex.md)
 	// — reused here purely as a valid, memorable C-strkey fixture.
 	token, err := canonical.NewSorobanAsset("CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO")
 	if err != nil {

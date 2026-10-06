@@ -477,8 +477,8 @@ func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source strin
 
 // supplyAudit prints the latest supply snapshot for an asset, plus
 // optional history trail and SAC-wrapped cross-check. Used during
-// supply-divergence triage per docs/operations/runbooks/
-// supply-cross-check-divergence.md.
+// supply-divergence triage per docs/operations/runbooks/supply.md
+// (section supply_cross_check_divergence).
 //
 // Asset is the one positional arg in canonical wire form
 // (native | CODE-ISSUER | <C-strkey>), accepted before, between or after
@@ -767,7 +767,7 @@ func reportCrossCheck(w io.Writer, result supply.CrossCheckResult, primaryKey st
 	unchecked := result.WrapClass == supply.WrapClassPartial && !result.SubsetBoundChecked
 	switch {
 	case !result.WithinTolerance:
-		_, _ = fmt.Fprintf(w, "  status:               OVER TOLERANCE ✗ — investigate per supply-cross-check-divergence runbook\n")
+		_, _ = fmt.Fprintf(w, "  status:               OVER TOLERANCE ✗ — investigate per the supply runbook (supply.md)\n")
 		_, _ = fmt.Fprintf(w, "  alert label:          classic_key=\"%s\"\n", primaryKey)
 		_, _ = fmt.Fprintln(w, "  next action:          stellarindex-ops supply audit <asset> -config /etc/stellarindex.toml -history-hours 24 to identify when divergence appeared")
 	case unchecked:

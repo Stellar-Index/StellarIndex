@@ -41,7 +41,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_unit_failed_alert
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_unit_failed_alert
           summary: "supply snapshot writer for {{ $labels.asset_key }} most recent run failed"
           description: |
             The supply-snapshot writer's most recent run for
@@ -63,7 +63,7 @@ groups:
           component: supply
           alert_family: supply_snapshot_stale
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_stale
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_stale
           summary: "supply snapshot for {{ $labels.asset_key }} has been stale {{ $value | humanizeDuration }} (cadence 24h, threshold 36h)"
           description: |
             Either the daily systemd timer isn't running, or every
@@ -83,7 +83,7 @@ groups:
           component: supply
           alert_family: supply_snapshot_stale
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_critical_stale
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_critical_stale
           summary: "supply snapshot for {{ $labels.asset_key }} stale > 72h — escalate"
           description: |
             Three days without a successful supply snapshot is enough
@@ -110,7 +110,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_never_initialized
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_never_initialized
           summary: "supply snapshot has never published — pipeline uninitialized"
           description: |
             stellarindex_supply_snapshot_last_success_timestamp has been
@@ -139,7 +139,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_circulating_zero
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_snapshot_circulating_zero
           summary: "XLM circulating supply gauge is {{ $value }} — operator config or computer bug"
           description: |
             Per ADR-0011 native XLM circulating = total - Σ(SDF reserves).

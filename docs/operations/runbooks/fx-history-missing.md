@@ -17,7 +17,7 @@ status: living procedure
 | Impact | FX history endpoints serve `history_1y: 0` and `history_all: 0` for every ticker. `history_7d` populates normally because it reads from a different surface. The aggregator's stablecoin-fiat proxy is unaffected (uses `[trades].usd_pegged_classic_assets`, not `fx_quotes`). |
 
 Companion to [`db-disk-full.md`](db-disk-full.md) and
-[`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md).
+[`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked).
 Different shape: a database migration that ships in the repo
 (0028) but hasn't been applied to the deployment, so a feature
 that depends on the new table fails silently at runtime.
@@ -209,7 +209,7 @@ post-F-1220, or close it as superseded.
 
 - [`db-disk-full.md`](db-disk-full.md) — different shape; the
   postgres-side disk-pressure surface.
-- [`redis-write-blocked-disk-full.md`](redis-write-blocked-disk-full.md) —
+- [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked) —
   another silent-runtime-failure shape (Redis writes blocked).
 
 ## Changelog

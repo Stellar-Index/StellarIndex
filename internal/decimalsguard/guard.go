@@ -26,7 +26,7 @@
 // looking NORMALIZATION (internal/aggregate.AdjustPrice, a read-time
 // 10^(dec_base−dec_quote) scalar) shipped 2026-07-10 for every query-time
 // serving path — see the runbook
-// docs/operations/runbooks/dex-nonstandard-decimals.md for exactly what's
+// docs/operations/runbooks/dex.md for exactly what's
 // covered and what remains a documented follow-up (the two CAGG-backed
 // paths, /v1/price and /v1/ohlc's series mode). This package's own
 // detection logic is unchanged by that work — it remains the sole writer
@@ -127,7 +127,7 @@ type DecimalsResolver interface {
 // /v1/vwap, /v1/history, /v1/ohlc, /v1/price/at and the chart surfaces for
 // any pair touching the asset — turning this package's detection-only
 // signal into a served-value correction
-// (docs/operations/runbooks/dex-nonstandard-decimals.md). Satisfied by
+// (docs/operations/runbooks/dex.md). Satisfied by
 // *timescale.Store via UpsertNonstandardDecimalsAsset.
 //
 // This started life as a stop-serving lever and the docstrings said so
@@ -495,7 +495,7 @@ func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, de
 		g.logger.Error(
 			"DEX trade for a non-7-decimal Soroban token — served price for pairs involving "+
 				"this asset is silently skewed by 10^(7-decimals); apply decimals normalization "+
-				"(runbook: dex-nonstandard-decimals.md)",
+				"(runbook: dex.md)",
 			"source", ref.Source,
 			"asset", ref.Asset,
 			"decimals", decimals,

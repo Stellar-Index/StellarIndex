@@ -50,14 +50,14 @@ journalctl -u stellarindex-indexer --since -2h | grep -E "insert (trade|oracle u
 
 If the log line says:
 
-- `connection refused`: Timescale is down or network partitioned. Jump to `timescale-primary-down.md`. For `kind=trade` an infrastructure fault like this now lands in `stellarindex_ingestion_trade_insert_backpressure` (the ADR-0041 retry path), not here; if you ARE seeing it here, the retry buffer overflowed (`kind=dropped`).
+- `connection refused`: Timescale is down or network partitioned. Jump to `postgres.md#stellarindex_timescale_primary_down`. For `kind=trade` an infrastructure fault like this now lands in `stellarindex_ingestion_trade_insert_backpressure` (the ADR-0041 retry path), not here; if you ARE seeing it here, the retry buffer overflowed (`kind=dropped`).
 - `disk full` / `no space`: Timescale volume out of space. Free space on the ZFS pool or evict old chunks (see db-disk-full.md).
 - `duplicate key value`: should be impossible; the idempotent ON CONFLICT swallows these. If you see this, the primary-key invariant is broken and this is a data-integrity incident, not a capacity one. Escalate.
 - `violates check constraint`: a source sent malformed data (negative amounts, bad tx_hash). Decode bug, not a storage bug; check `stellarindex_source_decode_errors_total` on the same source.
 
 Mitigation (<= 15 min). Events counted HERE are genuinely lost (permanent data fault `kind=trade`, or retry-buffer overflow `kind=dropped`). Prioritise:
 
-- [ ] Step 1: stop the bleeding. If Timescale is the root cause, follow `timescale-primary-down.md` first; insert errors are a symptom.
+- [ ] Step 1: stop the bleeding. If Timescale is the root cause, follow `postgres.md#stellarindex_timescale_primary_down` first; insert errors are a symptom.
 - [ ] Step 2: if disk-full: extend the underlying volume (the production deployment uses bare-metal NVMe + ZFS per [ADR-0008](../../adr/0008-ha-topology.md), not Kubernetes; grow via `zpool` / Hetzner volume-resize console). Let the indexer auto-retry once `df` reports headroom; then backfill the gap:
 
   ```sh
@@ -315,13 +315,13 @@ Soroban DEX trades (soroswap / aquarius / phoenix / comet) land through the same
 stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <ledger_from>
 ```
 
-[sdex-gap-detected](sdex-gap-detected.md) has the longer form if the range is wide or the writer is still unhealthy.
+[sdex-gap-detected](ingest-gap.md#sdex-gap-detected) has the longer form if the range is wide or the writer is still unhealthy.
 
 Resolution B, non-trade events: re-derive the source's tail. `consumer.Event` carries no ledger, so the window comes from the restart: take `ledger_from`/`ledger_to` from the `drain deadline exceeded` line in the same journal burst, or the `ingestion_cursors` value at the restart minus a generous margin. Then re-derive by source:
 
-- **Oracle / ContractCall sources (band, soroswap-router):** `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source>` (dry-run, then `-write`), as in [oracle-unknown-symbols](oracle-unknown-symbols.md).
+- **Oracle / ContractCall sources (band, soroswap-router):** `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source>` (dry-run, then `-write`), as in [oracle-unknown-symbols](ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols).
 - **Event-based sources:** the same `ch-rebuild` without `-contract-calls`, scoped with `-sources <source>`.
-- **Anything else the line names:** follow that source's own recovery in the insert_errors section above; the per-source gap detector ([ingest-gap-detected](ingest-gap-detected.md)) and the completeness verdict are how you confirm the tail is whole afterwards.
+- **Anything else the line names:** follow that source's own recovery in the insert_errors section above; the per-source gap detector ([ingest-gap-detected](ingest-gap.md#stellarindex_ingest_gap_detected)) and the completeness verdict are how you confirm the tail is whole afterwards.
 
 Resolution C, external CEX/FX trades: record the loss. External trades have no ledger and no lake copy; the source poller does not replay history. Note the venue (`venues=` on the retry-buffer line, or the batch's sources) and window in the incident record. Served prices are unaffected beyond that window (the next poll refills the feed), so no further action.
 
@@ -333,7 +333,7 @@ False positives: none. The counter increments only where a row has nowhere left 
 
 - [ch-live-sink](ch-live-sink.md): the ClickHouse half of the same class. Different remedy: those drops are healed by the `ch-live-catchup` timer; undrained-rows loss is healed by nothing but the re-derive above.
 - `ledger-ingest.md#stellarindex_ingestion_cursor_stuck`: the cursor-not-advancing symptom backpressure produces on purpose. `all-ingestion-down.md`: if the outage is total and prolonged, the SEV-1 page.
-- `timescale-primary-down.md` (root cause when shared storage is the issue); `decode-errors.md` (decode failures look similar but are source-side).
+- `postgres.md#stellarindex_timescale_primary_down` (root cause when shared storage is the issue); `decode-errors.md` (decode failures look similar but are source-side).
 - ADR-0003 (i128 precision): check-constraint violations in insert_errors indicate a decoder sending values that violate NUMERIC bounds.
 - [ADR-0041](../../adr/0041-ingest-durability-semantics.md) (durability semantics; why the drain is bounded rather than blocking); `docs/adr/0034-tiered-clickhouse-architecture.md` (why the range is recoverable).
 - `internal/pipeline/trade_sink.go` (`reportAbandonedTrades`, `externalRetryBuffer.finalDrain`) and `internal/pipeline/sink.go` (`reportAbandonedEvent`): the only three undrained-counter increment sites; `pipeline.ShutdownDeadline` is where the budget comes from.

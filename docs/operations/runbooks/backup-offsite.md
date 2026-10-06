@@ -62,4 +62,4 @@ Related: [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale
 
 ## Related
 
-- [archive-completeness](archive-completeness.md): archive completeness alerts.
+- [archive-completeness](archive.md): archive completeness alerts.

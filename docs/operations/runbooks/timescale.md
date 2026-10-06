@@ -358,5 +358,5 @@ Diagnose with step 0 and the `policy_refresh_continuous_aggregate` job listing i
 
 - [config-assertion-failed](config-assertion-failed.md): the same monitoring-of-monitoring shape one layer out, and the alert that catches codified-but-not-applied config.
 - `db-disk-full.md`: where uncompressed chunks end up if unchecked, and a different cause of job failure worth ruling out.
-- `api.md#stellarindex_api_latency_p95_high`: downstream effect when VWAP queries fall back to raw aggregation. `api.md#stellarindex_api_price_stale`: aggregator staleness visible through the API. `pg-conns-saturated.md`: can cascade if a refresh is holding connections.
+- `api.md#stellarindex_api_latency_p95_high`: downstream effect when VWAP queries fall back to raw aggregation. `api.md#stellarindex_api_price_stale`: aggregator staleness visible through the API. `postgres.md#stellarindex_timescale_connections_saturated`: can cascade if a refresh is holding connections.
 - Fixtures: `scripts/ci/timescale-jobs-probe-test.sh`; alert cases in `deploy/monitoring/rule-tests/storage_test.yml`.

@@ -593,7 +593,7 @@ type Config struct {
 	// DecimalsLookup, when non-nil, is consulted immediately after each
 	// window's raw VWAP computes to correct for a non-7-decimal leg —
 	// see aggregate.AdjustPrice / docs/operations/runbooks/
-	// dex-nonstandard-decimals.md. This is the ORCHESTRATOR's own
+	// dex.md. This is the ORCHESTRATOR's own
 	// published VWAP (Redis-cached, feeds /v1/price's Redis fallback,
 	// the confidence/anomaly/freeze chain, the contribution sink, AND
 	// the `/v1/price/stream` SSE fan-out) — none of those downstream
@@ -1848,7 +1848,7 @@ func (o *Orchestrator) replayDecidedBucket(
 // o.cfg.DecimalsLookup (or a pair with no confirmed non-7-decimals leg)
 // resolves both sides to aggregate.StandardDecimals, making the
 // normalization an exact no-op — see aggregate.AdjustPrice /
-// docs/operations/runbooks/dex-nonstandard-decimals.md. Doing both here
+// docs/operations/runbooks/dex.md. Doing both here
 // (rather than a separate call site in refreshPairWindow) means every
 // downstream consumer of the returned value sees the SAME corrected
 // number, and keeps refreshPairWindow under the funlen ceiling.

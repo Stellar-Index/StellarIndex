@@ -154,7 +154,7 @@ func readRepoFile(t *testing.T, rel string) string {
 // the verify-archive units.
 const opsJobsTaskFile = "configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml"
 
-// opsJobsTag is the tag docs/operations/runbooks/archive-divergence.md
+// opsJobsTag is the tag docs/operations/runbooks/archive.md
 // tells the operator to apply with.
 const opsJobsTag = "ops-jobs"
 

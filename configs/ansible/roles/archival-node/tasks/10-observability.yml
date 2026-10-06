@@ -315,7 +315,7 @@
   # from a quiet one. stellarindex_galexie_catchup_probe_degraded reads
   # those three.
   #
-  # Runbook: docs/operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_probe_degraded
+  # Runbook: docs/operations/runbooks/archive.md#stellarindex_galexie_catchup_probe_degraded
   # Fixtures: scripts/ci/galexie-catchup-probe-test.sh
   ansible.builtin.copy:
     dest: /usr/local/sbin/galexie-catchup-probe.sh

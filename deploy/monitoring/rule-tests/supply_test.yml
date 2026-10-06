@@ -35,7 +35,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
               summary: "Supply cross-check not evaluated (read_error, partial_wrap) for > 1h (P3)"
               description: |
                 At least one configured classic ↔ SAC cross-check pair has
@@ -46,7 +46,7 @@ tests:
                 asset_supply_history row; read_error: storage reads keep
                 failing; misaligned: the two latest snapshots are more
                 than 1000 ledgers apart (one side's refresher has stalled).
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
 
   - interval: 1m
     name: a stalled refresher (misaligned) is ticketed
@@ -64,7 +64,7 @@ tests:
               team: stellarindex
               component: supply
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
               summary: "Supply cross-check not evaluated (misaligned, full_wrap) for > 1h (P3)"
               description: |
                 At least one configured classic ↔ SAC cross-check pair has
@@ -75,7 +75,7 @@ tests:
                 asset_supply_history row; read_error: storage reads keep
                 failing; misaligned: the two latest snapshots are more
                 than 1000 ledgers apart (one side's refresher has stalled).
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable
 
   - interval: 1m
     name: a single bootstrap missing_snapshot does not ticket

@@ -17,7 +17,7 @@ Four alerts cover the archive verification tiers. Rules: `configs/prometheus/rul
 
 Ticket alerts: no immediate impact, the API serves correct data from existing bytes (the P2 `_run_stale` page has its own impact note below). R1 is the integrity leader (ADR-0016); the cross-region trust property degrades with each missed cycle. Staleness alerts read `stellarindex_verify_archive_last_success_unix{tier=...}`, a node_exporter textfile gauge the binary advances ONLY on a clean exit (`internal/ops/archive/verify_archive_textfile.go`); a failed run carries the prior value forward. Each has an `absent_over_time` branch so a never-written textfile also fires; the `> 0` guard means a fresh host that never completed a run does not fire.
 
-A missing-file gap in the archive is the most common cause of a verify-archive failure; `stellarindex_archive_files_missing` (see [archive-completeness](archive-completeness.md#stellarindex_archive_files_missing)) often co-fires.
+A missing-file gap in the archive is the most common cause of a verify-archive failure; `stellarindex_archive_files_missing` (see [archive-completeness](archive.md#stellarindex_archive_files_missing)) often co-fires.
 
 Shared lock: Tier A, Tier B and manual runs share the `verify-archive` heavy-job lock, keyed on the first argument to `run-heavy-job.sh`. A manual run is refused (exit 75) while a timer run holds it; a timer fire queues behind a manual run (or the other tier) for up to 20h (`HEAVY_JOB_LOCK_WAIT`, the unit shows `activating`) and fails only if the wait runs out ("still held after waiting" in the journal). Find the holder:
 
@@ -237,4 +237,4 @@ The log then lands under `/var/log/stellarindex/` (picked up by logrotate, F-000
 
 - ADR-0016 (per-region trust model), ADR-0017 (archive-completeness invariants, checkpoint tiers, DAT-09).
 - `docs/operations/archival-node-bringup.md` section "Per-region trust + verification model".
-- [archive-completeness](archive-completeness.md#stellarindex_archive_files_missing), the adjacent failure mode that often co-fires.
+- [archive-completeness](archive.md#stellarindex_archive_files_missing), the adjacent failure mode that often co-fires.

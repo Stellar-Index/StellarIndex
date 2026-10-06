@@ -290,7 +290,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/orphan-events.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_orphan_events
           summary: "Source {{ $labels.source }} orphan events {{ $value | humanize }}/sec"
           description: |
             Source {{ $labels.source }} has events arriving without their
@@ -382,7 +382,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols
           summary: "Oracle {{ $labels.source }} is publishing a ticker we do not map yet — captured, not lost"
           description: |
             stellarindex_source_unknown_symbols_total{source="{{ $labels.source }}"}
@@ -432,7 +432,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols
           summary: "Oracle {{ $labels.source }} published a feed_id the record layer cannot store"
           description: |
             stellarindex_source_unrepresentable_symbols_total{source="{{ $labels.source }}"}
@@ -927,7 +927,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
           summary: "Source {{ $labels.source }} producing a sustained stream of unit-ratio (1:1) trades"
           description: |
             Source {{ $labels.source }} has landed > 25 on-chain DEX
@@ -941,7 +941,7 @@ groups:
             the decoder's amount field mapping against the contract's
             event definition.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
 
       # Mirror of source_insert_stale in deploy/monitoring/rules/
       # ingestion.yml — timestamp-shape sibling to duplicate_flood
@@ -1004,7 +1004,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detected
           summary: "Data-coverage gap of {{ $value }} ledgers in source={{ $labels.source }}"
           description: |
             max by (source) (stellarindex_ingest_gap_max_size_ledgers{source="{{ $labels.source }}"})
@@ -1020,7 +1020,7 @@ groups:
             For non-projected sources (sdex / soroban-events):
               stellarindex-ops backfill -write --source <name> --from F --to T
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detected
 
       # 2026-08-28 (found verifying PR #258): the absent_over_time clause
       # is satisfied by the ERROR outcome of runs_total just as well as
@@ -1056,7 +1056,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
           summary: "Data-gap detector hasn't scanned {{ $labels.source }}/{{ $labels.table }} successfully in >8h"
           description: |
             The aggregator's data-gap detector goroutine appears
@@ -1083,7 +1083,7 @@ groups:
             outcome=error (grep `gap-detector: scan failed`); deploy
             regression removed the worker wiring.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
       # ── C6-020 (audit-2026-07-23): long-running ops jobs ──────────
       # There was NO backfill-progress alert in either rule tree — every
@@ -1351,7 +1351,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
           summary: "Source {{ $labels.source }} rejected an uncorroborated oracle call"
           description: |
             stellarindex_source_uncorroborated_calls_total rose for source
@@ -1361,4 +1361,4 @@ groups:
             attempt was rejected, or the legitimate routing shape changed
             and started refusing calls that should decode — both need
             review.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls

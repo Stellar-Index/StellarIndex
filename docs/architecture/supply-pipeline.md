@@ -202,7 +202,7 @@ sides' `Store.LatestSupply`, runs `supply.CrossCheckForClass` (→
 - `stellarindex_supply_cross_check_total{outcome,wrap_class}`.
 
 Alert `stellarindex_supply_cross_check_divergence` (`deploy/monitoring/rules/supply.yml`) fires when the gauge stays
-> 1 for ≥ 5 min ([runbook](../operations/runbooks/supply-cross-check-divergence.md)).
+> 1 for ≥ 5 min ([runbook](../operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence)).
 An empty pair set is a no-op.
 
 ### Dormant contract-held SAC balances (the current-state coverage floor)
@@ -255,7 +255,7 @@ table is audit-only — never read by `ClassicSupplyAt` /
 `SumSACBalancesAtOrBefore` / `Supply` — and separates "never full-history
 seeded" from "seeded and still diverging".
 
-Post-seed verification (provenance and observation queries, `supply audit -cross-check`) is in the [runbook](../operations/runbooks/supply-cross-check-divergence.md).
+Post-seed verification (provenance and observation queries, `supply audit -cross-check`) is in the [runbook](../operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence).
 
 ### LP reserve history cutoff
 
@@ -381,7 +381,7 @@ Aggregator-refresh outcomes:
 | `no_observation` | live reader has no row and static fallback is empty | bootstrap — wait for backfill or populate static config |
 | `missing_baseline` | SEP-41 total negative and the pre-Soroban genesis baseline is not seeded | `stellarindex-ops supply seed-sep41-genesis -write`; benign, excluded from `error_dominant` |
 | `compute_error` | genuine non-OK (e.g. negative SEP-41 total **after** the baseline is seeded) | code bug or upstream inconsistency; check logs, roll back a recent deploy |
-| `write_error` | `InsertSupply` failed | storage down; `pg-conns-saturated` runbook |
+| `write_error` | `InsertSupply` failed | storage down; `postgres.md` runbook |
 | `stale_component` | a component observation lags the snapshot ledger past the threshold and moved since last tick, or stayed frozen past `DefaultMaxDormantComponentLedgers` | rejected; check the lagging observer |
 | `missing_freshness` | strict mode and `MinComponentLedger == 0` (no freshness anchor) | rejected rather than published unanchored; check the observer |
 | `dormant` | component lags but is unchanged tick-over-tick; the last observation is re-stamped (snapshot inserted) | benign per asset; many assets dormant together means a producer stalled (`stellarindex_aggregator_supply_refresh_dormant_fleet`) |
@@ -396,15 +396,15 @@ Cross-check outcomes (`wrap_class` = `partial_wrap` | `full_wrap`):
 | Outcome | Means | Action |
 |---|---|---|
 | `within` | divergence ≤ 1 stroop (`partial_wrap`: `SACWrapped ≤ sac_total + 1`; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none |
-| `over` | divergence > 1 stroop | `supply-cross-check-divergence` runbook |
+| `over` | divergence > 1 stroop | `supply.md` runbook |
 | `missing_snapshot` | a side has no `asset_supply_history` row yet | normal on first tick |
-| `read_error` | transient storage read failure | `pg-conns-saturated` / `timescale-primary-down` runbooks |
+| `read_error` | transient storage read failure | `postgres.md` runbook |
 | `misaligned` | snapshots > 1000 ledgers apart (one refresher stalled) | `supply-refresh-stalled` for the stale side |
 | `unchecked` | `partial_wrap` pair whose classic snapshot has no `sac_wrapped_stroops`; leg 2 skipped, gauge cleared (`supply audit -cross-check` prints `UNCHECKED`) | no alert; to check it, `supply seed-sac-balances` (`-full-history` for dormant holders) then `supply audit -cross-check` |
 
 `missing_snapshot`, `read_error` or `misaligned` sustained over an hour fires
 `stellarindex_supply_cross_check_unevaluable`
-([runbook](../operations/runbooks/supply-cross-check-unevaluable.md)), because
+([runbook](../operations/runbooks/supply.md#stellarindex_supply_cross_check_unevaluable)), because
 the divergence alert cannot fire for a pair it is not evaluating.
 
 ## Asset identity

@@ -52,7 +52,7 @@
 # and stellar archive_publish_fail share the `for: W` / `[W]` shape but
 # describe themselves as SUSTAINED signals ("and continued doing so for 10
 # minutes"; ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops: "drops are normal in rare bursts … this
-# alert fires when dropping is continuous"; archive-publish.md: "the alert's
+# alert fires when dropping is continuous"; archive.md: "the alert's
 # `for: 1h` threshold filters" a retried transient). Staying silent on an
 # isolated event is their design, so the
 # last block below pins exactly that, to keep the distinction a decision
@@ -484,7 +484,7 @@ tests:
         values: '0x3 1x120'
       - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
         values: '0x3 5x120'
-      # archive-publish.md: "S3 returns a 503, core retries, successfully
+      # archive.md: "S3 returns a 503, core retries, successfully
       # publishes on retry. Counter still went up. The alert's `for: 1h`
       # threshold filters these."
       - series: 'stellarindex_stellar_archive_publish_errors_total{job="stellar_core",instance="r1:11626"}'
@@ -533,7 +533,7 @@ tests:
               team: stellarindex
               component: stellar
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_stellar_archive_publish_fail"
               summary: "Archive-publish errors in the last hour"
               description: |
                 stellar-core failed to publish a checkpoint to our history archive.
@@ -699,7 +699,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
               summary: "Source band rejected an uncorroborated oracle call"
               description: |
                 stellarindex_source_uncorroborated_calls_total rose for source
@@ -709,7 +709,7 @@ tests:
                 attempt was rejected, or the legitimate routing shape changed
                 and started refusing calls that should decode — both need
                 review.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
       - eval_time: 15m
         alertname: stellarindex_ingestion_uncorroborated_calls
         exp_alerts:
@@ -719,7 +719,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
               summary: "Source band rejected an uncorroborated oracle call"
               description: |
                 stellarindex_source_uncorroborated_calls_total rose for source
@@ -729,7 +729,7 @@ tests:
                 attempt was rejected, or the legitimate routing shape changed
                 and started refusing calls that should decode — both need
                 review.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
       # The increment has left the 15m window: a tripwire reports an
       # event, it does not latch.
       - eval_time: 25m
@@ -761,7 +761,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
               summary: "Source band rejected an uncorroborated oracle call"
               description: |
                 stellarindex_source_uncorroborated_calls_total rose for source
@@ -771,7 +771,7 @@ tests:
                 attempt was rejected, or the legitimate routing shape changed
                 and started refusing calls that should decode — both need
                 review.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
       - eval_time: 15m
         alertname: stellarindex_ingestion_uncorroborated_calls
         exp_alerts:
@@ -781,7 +781,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
               summary: "Source band rejected an uncorroborated oracle call"
               description: |
                 stellarindex_source_uncorroborated_calls_total rose for source
@@ -791,7 +791,7 @@ tests:
                 attempt was rejected, or the legitimate routing shape changed
                 and started refusing calls that should decode — both need
                 review.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/uncorroborated-calls.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_uncorroborated_calls
       - eval_time: 25m
         alertname: stellarindex_ingestion_uncorroborated_calls
         exp_alerts: []

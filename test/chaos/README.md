@@ -126,4 +126,4 @@ go install github.com/alexei-led/pumba@latest
 
 - [`docs/architecture/chaos-suite-design-note.md`](../../docs/architecture/chaos-suite-design-note.md) — Wave 1 / Wave 2 scoping + scenario matrix rationale.
 - [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md) §"Quarterly live chaos" — production drill cadence.
-- [`docs/operations/runbooks/cache.md#stellarindex_redis_master_down`](../../docs/operations/runbooks/cache.md#stellarindex_redis_master_down), [`timescale-primary-down.md`](../../docs/operations/runbooks/timescale-primary-down.md) — runbooks Wave 2 will exercise.
+- [`docs/operations/runbooks/cache.md#stellarindex_redis_master_down`](../../docs/operations/runbooks/cache.md#stellarindex_redis_master_down), [`postgres.md`](../../docs/operations/runbooks/postgres.md) — runbooks Wave 2 will exercise.
