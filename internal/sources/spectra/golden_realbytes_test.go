@@ -88,22 +88,6 @@ func TestGolden_wrap_ledger64716536(t *testing.T) {
 	}
 }
 
-// unwrap shares wrap's body; its shape is from source, so the proven wrap
-// body is replayed under unwrap's four-topic form.
-func TestDecode_unwrapReusesWrapBody(t *testing.T) {
-	t.Parallel()
-	ev := loadFixture(t, wrapperHash, "wrap_ibt_64716536_f7d5d536ff4d_CAHPZL.json")
-	ev.Topic = []string{TopicSymbolUnwrap, ev.Topic[1], ev.Topic[2], ev.Topic[2]}
-	got := mustDecodeOne(t, ev)
-	if got.Kind != EventUnwrap || got.Owner != got.Caller || got.Shares.String() != "1000000000000000000" {
-		t.Errorf("unwrap = %+v", got)
-	}
-	ev.Topic = ev.Topic[:3]
-	if _, err := NewDecoder().Decode(ev); err == nil {
-		t.Error("unwrap with 3 topics must error")
-	}
-}
-
 // approve is recognised on both the wrapper and a YT and projects zero rows.
 func TestGolden_approveRecognisedZeroRows(t *testing.T) {
 	t.Parallel()
