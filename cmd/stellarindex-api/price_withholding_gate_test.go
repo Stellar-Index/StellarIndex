@@ -127,20 +127,13 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 // governs. Matching on the STORE CALL rather than a hand-listed set of
 // method names is what makes this guard cover a seam that does not exist
 // yet: a new reader has to call one of these to serve a price at all.
+// Any reference counts, not only a call: a method value
+// (f := r.S.LatestClosedVWAP1mForPair; f(...)) reads the same bucket.
 func readsClosedVWAP(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		// r.s.ClosedVWAPAtOrBefore(...) in main.go, r.S.LatestClosedVWAP1mForPair(...)
-		// in the wiring package, where the store field is exported.
-		if inner, ok := sel.X.(*ast.SelectorExpr); !ok || (inner.Sel.Name != "s" && inner.Sel.Name != "S") {
 			return true
 		}
 		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
@@ -284,17 +277,68 @@ func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
 		{"main.go outside PriceWithheld", ".", `func (r storePriceAtReader) f() bool { return r.substance.Allowed(ctx, a, b, "x") }`},
 		{"wiring outside PriceWithheld", wiringDir, `func (r StorePriceReader) f() bool { return r.Substance.Allowed(ctx, a, b, "x") }`},
 		{"chokepoint name in main.go", ".", `func PriceWithheld() bool { return sub.Allowed(ctx, a, b, "x") }`},
+		{"method value of a gate half", v1ChokepointDir, `func (s *Server) h() bool { f := s.substance.Allowed; return f(ctx, a, b, "x") }`},
+		{"gate half passed as a value", wiringDir, `func (r StorePriceReader) f() bool { return apply(r.Scam.WithheldPair) }`},
+		{"method value through a renamed local", v1ChokepointDir, `func (s *Server) h() bool { g := s.scam; f := g.Withheld; return f(ctx, a, "x") }`},
+	}
+	violations := func(dir, src string) int {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "planted.go", "package p\n"+src, 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", src, err)
+		}
+		v, _ := gateSpellingViolations(fset, dir, f)
+		return len(v)
 	}
 	for _, sh := range shapes {
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, "planted.go", "package p\n"+sh.src, 0)
-		if err != nil {
-			t.Fatalf("%s: %v", sh.name, err)
-		}
-		if v, _ := gateSpellingViolations(fset, sh.dir, f); len(v) != 1 {
-			t.Errorf("%s: got %d violations, want 1", sh.name, len(v))
+		if n := violations(sh.dir, sh.src); n != 1 {
+			t.Errorf("%s: got %d violations, want 1", sh.name, n)
 		}
 	}
+	// A rate-limit result's Allowed field shares the half's name but is no gate.
+	if n := violations(v1ChokepointDir, `func f() bool { res := take(); return res.Allowed }`); n != 0 {
+		t.Errorf("field read on a non-gate value: got %d violations, want 0", n)
+	}
+}
+
+// TestStoreReadScansCatchMethodValues pins that both store-read scans see a
+// method value, not only a call: f := r.S.LatestClosedVWAP1mForPair; f(...)
+// serves the same bucket, and a call-only match let it through ungated.
+func TestStoreReadScansCatchMethodValues(t *testing.T) {
+	cases := []struct {
+		name, src string
+		want      bool
+	}{
+		{"direct call", `func (r R) f() { r.S.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"method value", `func (r R) f() { g := r.S.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
+		{"method passed as an argument", `func (r R) f() { apply(r.s.ClosedVWAPAtOrBefore) }`, true},
+		{"store alias", `func (r R) f() { st := r.S; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"unrelated store read", `func (r R) f() { r.S.LatestTrade(ctx, a, b) }`, false},
+	}
+	for _, c := range cases {
+		if got := readsClosedVWAP(plantedFunc(t, c.src)); got != c.want {
+			t.Errorf("readsClosedVWAP %s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	sc := &v1Scan{reads: map[string]bool{"Lookup": true}}
+	for _, src := range []string{
+		`func (s *Server) h() { s.triangulated.Lookup(a, b) }`,
+		`func (s *Server) h() { f := s.triangulated.Lookup; f(a, b) }`,
+	} {
+		if sc.earliestRead(&v1Func{decl: plantedFunc(t, src)}) == token.NoPos {
+			t.Errorf("earliestRead missed the cache read in %q", src)
+		}
+	}
+}
+
+func plantedFunc(t *testing.T, src string) *ast.FuncDecl {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+src, 0)
+	if err != nil {
+		t.Fatalf("parse %q: %v", src, err)
+	}
+	return f.Decls[0].(*ast.FuncDecl)
 }
 
 // apiTreeDir is every handler package the API binary serves from.
@@ -339,8 +383,15 @@ func apiSourceFiles(t *testing.T, root string) []gateSpellingFile {
 	return out
 }
 
+// gateHolderNames are the field names a SubstanceGate or ScamGate is held
+// under in the scanned packages.
+var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
+
 // gateSpellingViolations reports every gate-half call in f outside a
-// chokepoint, and counts the ones inside.
+// chokepoint, and counts the ones inside. A method value taken from a gate
+// (f := s.substance.Allowed; f(...)) is a call deferred, so it counts too.
+// Non-call references are matched only on a gate holder because the half
+// names are generic: rate-limit results carry a plain Allowed field.
 func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (violations []string, permitted int) {
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -348,13 +399,14 @@ func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (viola
 			continue
 		}
 		exempt := gateChokepoints[dir+":"+fn.Name.Name]
+		calls := selectorCallees(fn.Body)
+		aliases := gateAliases(fn.Body)
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || !gateHalfMethods[sel.Sel.Name] {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !gateHalfMethods[sel.Sel.Name] {
+			if !calls[sel] && !isGateHolder(sel.X, aliases) {
 				return true
 			}
 			if exempt {
@@ -365,11 +417,68 @@ func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (viola
 				"wiring.PriceWithheld() (cmd/stellarindex-api/internal/wiring) or withheldBy() (internal/api/v1). A hand-written call site "+
 				"can consult one gate and forget the other, which is exactly how the last-trade arm came to honour "+
 				"the thin-market floor but not the scam decision.",
-				enclosingName(fn), exprString(sel), fset.Position(call.Pos())))
+				enclosingName(fn), exprString(sel), fset.Position(sel.Pos())))
 			return true
 		})
 	}
 	return violations, permitted
+}
+
+// selectorCallees returns every selector body calls directly (x.M(...)).
+func selectorCallees(body *ast.BlockStmt) map[*ast.SelectorExpr]bool {
+	calls := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				calls[sel] = true
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// gateAliases returns the locals body binds to a gate holder (g := s.substance).
+func gateAliases(body *ast.BlockStmt) map[string]bool {
+	aliases := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		var lhs []*ast.Ident
+		var rhs []ast.Expr
+		switch st := n.(type) {
+		case *ast.AssignStmt:
+			for _, e := range st.Lhs {
+				id, _ := e.(*ast.Ident)
+				lhs = append(lhs, id)
+			}
+			rhs = st.Rhs
+		case *ast.ValueSpec:
+			lhs, rhs = st.Names, st.Values
+		}
+		if len(lhs) != len(rhs) {
+			return true
+		}
+		for i, id := range lhs {
+			if id != nil && isGateHolder(rhs[i], nil) {
+				aliases[id.Name] = true
+			}
+		}
+		return true
+	})
+	return aliases
+}
+
+// isGateHolder reports whether expr names a gate: a holder field
+// (s.substance, r.Scam), a bare holder parameter, or a local alias of one.
+func isGateHolder(expr ast.Expr, aliases map[string]bool) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return gateHolderNames[x.Sel.Name]
+	case *ast.Ident:
+		return gateHolderNames[x.Name] || aliases[x.Name]
+	case *ast.ParenExpr:
+		return isGateHolder(x.X, aliases)
+	}
+	return false
 }
 
 func enclosingName(fn *ast.FuncDecl) string {
@@ -686,15 +795,12 @@ func (sc *v1Scan) recordCalls(fn *v1Func) {
 }
 
 // earliestRead returns the position of fn's first cache read, or
-// token.NoPos when fn never reads the cache.
+// token.NoPos when fn never reads the cache. A method value taken from the
+// cache is a read: it is the price-serving call, just deferred.
 func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
 	first := token.NoPos
 	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || !sc.reads[sel.Sel.Name] {
 			return true
 		}
@@ -703,8 +809,8 @@ func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
 		if _, ok := sel.X.(*ast.SelectorExpr); !ok {
 			return true
 		}
-		if first == token.NoPos || call.Pos() < first {
-			first = call.Pos()
+		if first == token.NoPos || sel.Pos() < first {
+			first = sel.Pos()
 		}
 		return true
 	})
