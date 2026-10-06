@@ -5,6 +5,8 @@ package v1
 
 import (
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"slices"
 	"testing"
 )
@@ -124,26 +126,21 @@ func TestMergeTwinStats_AnUnflaggedIssuerKeepsItsFigures(t *testing.T) {
 // stats merge would republish the exact figure the tag just withheld,
 // and nothing behavioural would see it.
 func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
-	const (
-		prices = "fillCataloguePricesForPage"
-		stats  = "fillCatalogueStatsForPage"
-	)
 	checked := 0
 	for _, file := range packageGoFiles(t) {
 		parsed := parseGoFile(t, file)
 		for _, fn := range funcNamesIn(parsed) {
-			calls := serverCallsInFile(parsed, fn)
-			priceAt := slices.Index(calls, prices)
-			statsAt := slices.Index(calls, stats)
-			if priceAt < 0 || statsAt < 0 {
+			steps := serverStepsInFile(parsed, fn)
+			priceAt, statsAt, ok := cataloguePriceFillOrder(steps)
+			if !ok {
 				continue
 			}
 			checked++
-			if priceAt > statsAt {
+			if priceAt < 0 || priceAt > statsAt {
 				t.Errorf("%s:%s calls %s at step %d but %s only at step %d — the catalogue row's "+
 					"own price would be filled after the twin's scam suppression carried across, "+
-					"republishing the figure the tag withheld.\ncalls: %v",
-					file, fn, prices, priceAt, stats, statsAt, calls)
+					"republishing the figure the tag withheld.\nsteps: %v",
+					file, fn, cataloguePriceFill, priceAt, catalogueStatsFill, statsAt, steps)
 			}
 		}
 	}
@@ -156,6 +153,49 @@ func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 		t.Fatalf("the guard examined %d function(s) that make both calls; "+
 			"fillAndRankCatalogueRows is known to. Either it lost its price fill or this "+
 			"guard stopped reading the package", checked)
+	}
+}
+
+const (
+	cataloguePriceFill = "fillCataloguePricesForPage"
+	catalogueStatsFill = "fillCatalogueStatsForPage"
+)
+
+// cataloguePriceFillOrder returns the step of the first price-fill CALL and
+// of the first stats-merge reference; ok is false unless steps reach both.
+// The price fill counts only as a call: a method value taken early and
+// called after the merge (p := s.fill…; s.stats(); p()) still republishes.
+func cataloguePriceFillOrder(steps []serverStep) (priceAt, statsAt int, ok bool) {
+	names := stepNames(steps, false)
+	if !slices.Contains(names, cataloguePriceFill) || !slices.Contains(names, catalogueStatsFill) {
+		return -1, -1, false
+	}
+	return slices.Index(steps, serverStep{name: cataloguePriceFill, call: true}), slices.Index(names, catalogueStatsFill), true
+}
+
+// TestCataloguePriceFillOrderCountsCallsOnly: an early method value of the
+// price fill must not stand in for the call that runs after the merge.
+func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
+	cases := []struct {
+		name, src string
+		wantOK    bool
+	}{
+		{"fill before merge", `func (s *Server) f() { s.fillCataloguePricesForPage(ctx); s.fillCatalogueStatsForPage(ctx) }`, true},
+		{"early method value, call after merge", `func (s *Server) f() { p := s.fillCataloguePricesForPage; s.fillCatalogueStatsForPage(ctx); s.fillCataloguePricesForPage(ctx) }`, false},
+		{"method value only, called after merge", `func (s *Server) f() { p := s.fillCataloguePricesForPage; s.fillCatalogueStatsForPage(ctx); p(ctx) }`, false},
+	}
+	for _, c := range cases {
+		parsed, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package v1\n"+c.src, 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.src, err)
+		}
+		priceAt, statsAt, ok := cataloguePriceFillOrder(serverStepsInFile(parsed, "f"))
+		if !ok {
+			t.Fatalf("%s: the scan did not see both steps", c.name)
+		}
+		if got := priceAt >= 0 && priceAt < statsAt; got != c.wantOK {
+			t.Errorf("%s: priceAt=%d statsAt=%d ordered=%v, want %v", c.name, priceAt, statsAt, got, c.wantOK)
+		}
 	}
 }
 
