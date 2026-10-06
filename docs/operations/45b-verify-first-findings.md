@@ -60,9 +60,11 @@ when next touched.
 - **rozo v2 token field**: `Payment` omits a token field (v1 hardcodes USDC;
   `internal/sources/rozo/events.go`), `Flush` carries `Token`. Gated on Rozo v2
   Forwarder/IntentBridge reaching mainnet (INV-1164).
-- **Comet reserve tracker**: absent; `comet_liquidity` stores add/remove deltas
-  only. Needs reserves AND per-token weights. Gated on the requirement emerging
-  (`comet/README.md`).
+- **Comet reserves**: done. `comet_liquidity` stores add/remove deltas only, but
+  current per-token balances come from the lake (`CometPoolReserves`,
+  `internal/storage/clickhouse/comet_pool_state_reader.go`) and feed DEX TVL.
+  Spot price is the only gap: it needs `weight`, which the same record carries
+  but the reader does not yet decode. Gated on a consumer (`comet/README.md` Q3).
 - **CMC divergence reference**: absent from `internal/divergence/` by decision
   (`doc.go`); CMC exists as a disabled-by-default aggregator source
   (`internal/sources/external/coinmarketcap/`). Gated on operator demand + a
