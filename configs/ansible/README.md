@@ -182,7 +182,7 @@ overrides.
 ## Where decisions live
 
 - Hardware spec: [`docs/architecture/infrastructure/archival-node-spec.md`](../../docs/architecture/infrastructure/archival-node-spec.md)
-- Multi-region topology: [`docs/architecture/infrastructure/multi-region-topology.md`](../../docs/architecture/infrastructure/multi-region-topology.md)
+- Multi-region plan: [`docs/architecture/ha-plan.md`](../../docs/architecture/ha-plan.md)
 - Validator promotion plan: [`docs/architecture/infrastructure/validator-rollout.md`](../../docs/architecture/infrastructure/validator-rollout.md)
 - Bootstrap runbook (how to use this Ansible from scratch):
   [`docs/operations/runbooks/bootstrap-archival-node.md`](../../docs/operations/runbooks/bootstrap-archival-node.md)

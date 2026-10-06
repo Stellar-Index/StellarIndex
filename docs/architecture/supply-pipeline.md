@@ -215,9 +215,7 @@ stroop-exact against the lake and stellar.expert. The gap: Phoenix / Blend
 before the `sac_balances` observer's window opened and before
 `ledger_entries_current` existed, and those `Vec(Symbol("Balance"),
 Address(pool))` entries on the **SAC's own** storage have been dormant since.
-A hypothesis that the balances lived in pool-internal accounting (needing a
-protocol-specific, upgrade-brittle reader) was refuted by rollup-vs-lake
-reconciliation; no pool-internal reader is needed.
+Rollup-vs-lake reconciliation refuted a pool-internal-accounting hypothesis; no pool-specific reader is needed.
 
 The default seed (`supply seed-sac-balances` →
 `clickhouse.StreamSACBalanceSeeds`) scans `stellar.ledger_entries_current`, a
@@ -257,27 +255,7 @@ table is audit-only — never read by `ClassicSupplyAt` /
 `SumSACBalancesAtOrBefore` / `Supply` — and separates "never full-history
 seeded" from "seeded and still diverging".
 
-Post-seed verification:
-
-```sql
-SELECT contract_id, asset_key, source, holders_seeded, min_ledger_seen, max_ledger_seen, seeded_at
-  FROM sac_balance_seed_provenance
- WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%' OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
- ORDER BY asset_key;
-
-SELECT asset_key, count(DISTINCT holder) AS holders, sum(balance_stroops) AS sac_wrapped_stroops
-  FROM sac_balance_observations
- WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%' OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
- GROUP BY asset_key;
-```
-
-```sh
-# after the next refresher tick; repeat per pair. Expect "status: WITHIN TOLERANCE".
-# The CLI dispatches on wrap class like the refresher and prints the wrap_class it applied.
-stellarindex-ops supply audit BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY \
-  -config PATH -cross-check CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
-# then: stellarindex_supply_cross_check_divergence_stroops{classic_key=~"BLND.*|EURC.*|KALE.*|PHO.*"}
-```
+Post-seed verification (provenance and observation queries, `supply audit -cross-check`) is in the [runbook](../operations/runbooks/supply-cross-check-divergence.md).
 
 ### LP reserve history cutoff
 

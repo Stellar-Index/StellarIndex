@@ -10,24 +10,19 @@ related:
 
 # Chaos suite — design note
 
-Forced-failure smoke for the Stellar Index stack, run as a deliberate
-"break one component, assert sane behaviour" exercise. Companion to
-the [k6 load suite](ha-plan.md#73-load-testing-k6) — load proves
-"healthy stack stays within SLA," chaos proves "broken stack fails
-in documented ways."
+Forced-failure smoke: break one component, assert sane behaviour.
+Companion to the [k6 load suite](ha-plan.md#73-load-testing-k6): load
+proves a healthy stack stays within SLA, chaos proves a broken stack
+fails in documented ways.
 
 ## Goal
 
-One of the strongest guarantees the API makes is this: **when a
-backing service fails, the API never silently serves bad data** — the
-response either degrades-with-flag (documented) or 5xxs loud
-(unmistakable). A 200-with-empty-`data` or 200-with-stale-stamps is
-the nightmare. This suite is the behavioural fence for that specific
-guarantee — backing-service-failure degradation — not a proof that no
-other silent-failure path exists anywhere in the system; see
-`docs/operations/production-confidence-campaign-2026-07-23.md` for the
-tracked ledger of currently-open silent-failure-shaped findings from
-the cold audit.
+**When a backing service fails, the API never silently serves bad
+data**: the response either degrades with a documented flag or 5xxs loud.
+A 200 with empty `data` or stale stamps is the failure to catch. This suite
+fences backing-service-failure degradation only, not every silent-failure
+path; open ones are tracked in
+`docs/operations/production-confidence-campaign-2026-07-23.md`.
 
 ## Scope (Wave 1 — this PR)
 
@@ -43,47 +38,13 @@ In:
   - `03-redis-network-partition.sh` — Redis container reachable but
     silent (network partition / pumba pause). Exercises go-redis's
     timeout path, distinct from connection-refused.
-- Bash-based runner (`run.sh`) with production-safety guard.
-- Shared `lib/common.sh` with logging, asserts, HTTP polling,
-  docker / pumba helpers.
-- Per-run markdown reports under `reports/` (gitignored).
+- Bash runner `run.sh` with a production-safety guard, shared `lib/common.sh`, gitignored reports under `reports/`.
 
-Out (deferred to Wave 2):
-
-- HA-shaped scenarios: Patroni replica promotion, Sentinel master
-  failover, HAProxy keepalived VRRP VIP flip. These need the
-  staging baremetal stack with `configs/ansible/`-deployed
-  topology — the dev compose can't simulate them.
-- Cross-region chaos (split-brain, cross-region clock skew).
-- API pod mid-stream kill / reconnect-with-cursor — needs the SSE
-  streaming surface (Task #74's load suite already touches the
-  happy path, but failure-mode coverage is its own scenario).
-- Aggregator tick stall + alert fire-time measurement. The
-  `aggregator-silent` alert exists; this scenario would prove its
-  fire-time is within SLA. Wave 2 because it requires Prometheus
-  + AlertManager wired into the dev stack, which they currently
-  aren't.
+Out (deferred to Wave 2): HA-shaped scenarios (Patroni promotion, Sentinel failover, VRRP VIP flip; they need the staging bare-metal stack), cross-region chaos, API mid-stream kill with cursor resume, and aggregator tick stall with alert fire-time measurement (needs Prometheus and AlertManager in the dev stack).
 
 ## Why bash, not Go
 
-Go was the obvious first choice (the rest of the test surface is
-Go). Three reasons it's not:
-
-1. **Docker / pumba operations are shell-shaped.** A Go test that
-   shells out to `docker stop` + `pumba pause` + `curl` is mostly
-   `exec.Command` boilerplate around the actual chaos action.
-   Direct bash is shorter and more honest.
-2. **Each scenario stands alone.** Independent bash scripts mean
-   each can be invoked directly during a SEV drill ("rerun the
-   Redis-down scenario standalone"). A Go test runner couples them.
-3. **Matches the load suite shape.** `test/load/scenarios/*.js`
-   uses k6 (also non-Go). Both suites are external-tool harnesses
-   driven by shell-friendly entry points; the symmetry is
-   deliberate.
-
-The `doc.go` placeholder makes the directory visible to `go doc`
-and ADR-aware tooling without pulling Go code into the chaos
-surface.
+Docker and pumba operations are shell-shaped (a Go test would be `exec.Command` boilerplate), each scenario must run standalone during a SEV drill, and the shape matches the k6 load suite.
 
 ## Scenario matrix (Wave 1 + 2)
 
@@ -114,33 +75,9 @@ runs out of the SEV playbook's quarterly drill, not this suite.
 
 ## Reporting
 
-Per-run markdown under `reports/chaos-run-<UTC-timestamp>.md`. One
-header block; one row per scenario. Format chosen so a human can
-read it directly and so CI can grep for `❌` to detect failures
-without parsing.
+Per-run markdown under `reports/chaos-run-<UTC-timestamp>.md` (gitignored; local artefacts, unlike the committed SLA-proof report), one row per scenario, greppable for `❌`.
 
-The reports directory is gitignored — runs are local artefacts,
-not committed evidence. (Compare to the SLA-proof report in
-[Task #77](../../test/load/README.md), which IS committed because
-it's the contractual artefact for a release.)
-
-## Effort breakdown
-
-| Step | Estimate |
-|---|---|
-| `lib/common.sh` (helpers + asserts + reporting) | 2 h |
-| `run.sh` (top-level runner + safety guard) | 1 h |
-| `01-redis-down.sh` | 1 h |
-| `02-timescale-down.sh` | 1 h |
-| `03-redis-network-partition.sh` | 1.5 h |
-| README + design note | 1.5 h |
-| CHANGELOG + coverage matrix | 0.5 h |
-| **Wave 1 total** | **~9 h, ~1 day** |
-
-Wave 2's HA-shaped scenarios are gated on staging baremetal being
-deployable from the ansible roles (Tasks #79 / #82 / #83 / #84
-shipped that ansible surface; staging deploys are queued
-post-launch).
+Wave 2's HA-shaped scenarios are gated on a staging bare-metal stack deployable from the ansible roles; staging deploys are queued post-launch.
 
 ## Open questions
 

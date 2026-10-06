@@ -298,7 +298,6 @@ ZFS destroy + re-apply takes ~10 min.
 - [archival-node-bringup.md](../archival-node-bringup.md) — the
   canonical end-to-end bring-up + disaster-recovery recipe.
 - [archival-node-spec.md](../../architecture/infrastructure/archival-node-spec.md)
-- [multi-region-topology.md](../../architecture/infrastructure/multi-region-topology.md)
 - [validator-rollout.md](../../architecture/infrastructure/validator-rollout.md)
 - [ADR-0008](../../adr/0008-ha-topology.md) and [ha-plan.md](../../architecture/ha-plan.md) — hosting and topology decisions
 - `configs/ansible/README.md`

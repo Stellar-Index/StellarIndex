@@ -293,17 +293,6 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | X3.7 | Bootstrap (warmup) policy for new assets | `baseline/refresh.go` MinSamples gate | 📦 |
 | X3.8 | Operator runbook for freeze events | `docs/operations/runbooks/anomaly.md` | 📦 |
 
-#### Claim verification
-
-1. Galexie + CDP ingestion: ✅ met; live on r1.
-2. Reflector primary oracle: ✅ with correction; v3 has no `twap`/`x_*`, so TWAP and cross-pair are computed locally.
-3. Redstone per-symbol contracts: ✅ met; adapter events subscribed.
-4. Band via BandChain REST: ✅ exceeded; native Soroban contract used.
-5. DEX, Soroswap, Aquarius, Blend: ✅ exceeded; Phoenix and Comet added, Blend WASM audit closed (`docs/operations/wasm-audits/blend.md`).
-6. p95/p99/uptime: plan-credible, not yet proven; the proposal's 99.99 % is not the published commitment (99.9 % is); evidence is `test/load/` k6 plus a PROVEN sla-proof report.
-7. Since-inception coverage: ✅ feasible; Galexie replays from ledger 2 via `stellarindex-ops backfill`; served surface starts 2021-02-01.
-8. Open source + deployment kits: on track; Apache-2.0 `LICENSE`, `deploy/docker-compose/` (dev), `deploy/systemd/` + `configs/ansible/` (production, ADR-0008).
-
 #### Gap triage
 
 Every outstanding item is launch-blocking except ⏳ ones. Tracking: `docs/operations/v1-launch-plan.md`. Closed items: git history of this file.
@@ -318,17 +307,13 @@ Every outstanding item is launch-blocking except ⏳ ones. Tracking: `docs/opera
 
 1. S2.5 DIA mainnet ship: testnet only today; integration conditional on DIA's mainnet launch.
 2. S9.1 99.9 % availability measurement: needs ≥ 30 days production; number reported 90 days post-launch.
-3. Residual DeFi with no decoder (INV-1130, lake census 2026-07-10): FxDAO Vaults (~0 events; would need a `ContractCallDecoder` like Band), Slender (dormant since ledger 60,749,975), EquitX (4 `CDP` events ever, on contracts other than its documented ones). FxDAO's FXG and stablecoins are supply-watched only. Re-audit if activity resumes.
-   - FxDAO Vaults: `CCUN4RXU5VNDHSF4S4RKV4ZJYMX2YWKOH6L4AKEKVNVDQ7HY5QIAO4UB` (0 events in the lake). Slender pool: `CCL2KTHYOVMNNOFDT7PEAHACUBYVFLRH2LYWVQB6IPMHHAVUBC7ZUUC2`; re-audit if `deposit`/`borrow` resume.
-   - EquitX address mismatch: the documented orchestrator `CCU3FICCTH56KER3YR75NSLXC2BM24RSKNCW6ZT4JGRYYLO5K4FUP24I` has 0 events; the real `CDP` events are on `CCAKOTMHZ63UZIFRCWWABLIX5VP4DST2JANHFJLUR7CK4SGIKUPUDBA6` (3) and `CA3BB35F2EK4ADN4SI3QJAKWG2OQ3S5NKLFRV4H24FEHZ3CA2GHNDGAK` (1), ledgers 59,107,932 to 59,480,808. Resolve with a live RPC check before hard-coding either set.
-   - Orbit CDP and Laina are not deployed to mainnet; re-audit on a mainnet-launch announcement, mainnet addresses in Orbit's `orbit-utils`, or Laina's CI/frontend pointing at mainnet.
+3. Residual DeFi with no decoder (INV-1130, lake census 2026-07-10). FxDAO's FXG and stablecoins are supply-watched only. Re-audit if activity resumes.
+   - FxDAO Vaults `CCUN4RXU5VNDHSF4S4RKV4ZJYMX2YWKOH6L4AKEKVNVDQ7HY5QIAO4UB` (0 events; would need a `ContractCallDecoder` like Band). Slender pool `CCL2KTHYOVMNNOFDT7PEAHACUBYVFLRH2LYWVQB6IPMHHAVUBC7ZUUC2`; dormant since ledger 60,749,975; re-audit if `deposit`/`borrow` resume.
+   - EquitX: the documented orchestrator `CCU3FICCTH56KER3YR75NSLXC2BM24RSKNCW6ZT4JGRYYLO5K4FUP24I` has 0 events; the real `CDP` events are on `CCAKOTMHZ63UZIFRCWWABLIX5VP4DST2JANHFJLUR7CK4SGIKUPUDBA6` (3) and `CA3BB35F2EK4ADN4SI3QJAKWG2OQ3S5NKLFRV4H24FEHZ3CA2GHNDGAK` (1), ledgers 59,107,932 to 59,480,808. Confirm with a live RPC check before hard-coding.
+   - Orbit CDP and Laina are not on mainnet; re-audit on a mainnet-launch announcement, mainnet addresses in Orbit's `orbit-utils`, or Laina CI/frontend pointing at mainnet.
+
+Availability claim: the proposal's 99.99 % is not the published commitment (99.9 % is); evidence is `test/load/` k6 plus a PROVEN sla-proof report.
 
 #### Verification protocol
 
-If a reviewer disputes a ✅ cell, re-run the method used:
-
-- Source read: clone into `.discovery-repos/`, verify the claim against the code.
-- Protocol spec read: SEP / CAP markdown in `stellar-protocol/`.
-- On-chain verification: query stellar.expert's public API or a direct RPC call against mainnet; record contract + WASM hash.
-- Test: Go test with a fixture (canonical: KALIEN i128 regression, `internal/canonical/amount_test.go`).
-- External doc (weaker): WebFetch of an SDF or project-maintained reference; only where the doc is primary (e.g. `stellar-docs/networks/software-versions.mdx`).
+If a reviewer disputes a ✅ cell, re-run its method: source read, SEP/CAP spec read, on-chain query (record contract + WASM hash), or a Go test with a fixture (canonical: KALIEN i128 regression, `internal/canonical/amount_test.go`). An external doc is weaker evidence; use it only where it is primary.

@@ -31,7 +31,7 @@ CalVer releases from the launch tag with no parallel releases on both repos.
 | ☑ | `README.md` public landing page; `CONTRIBUTING.md` welcomes externals (triage/review SLA, CoC link); `CODE_OF_CONDUCT.md` Contributor Covenant v2.1; `LICENSE` Apache-2.0 | files in root |
 | ☑ | `.github/dependabot.yml` public registries only; CI workflows need no internal secrets | `.github/workflows/{ci,api-docs}.yml` |
 | ☑ | `AGENTS.md` and `docs/operations/r1-deployment-state.md` free of private paths, credentials, IPs | reviewed |
-| ☑ | Every ADR "Status" current (0001-0024 `Accepted`; 0012 reserved-future per multi-region-topology.md) | `docs/adr/` |
+| ☑ | Every ADR "Status" current (0001-0024 `Accepted`; 0012 reserved-future) | `docs/adr/` |
 | ☑ | `gitleaks detect --source .` clean | gitleaks 8.30.1, 0 leaks / 553 commits |
 
 ## Final 24-hour pre-cutover dry-run

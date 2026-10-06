@@ -56,5 +56,4 @@ Parquet-in-MinIO tiering stays a possible future option.
 ## Evidence
 
 Migration 0031 (`migrations/0031_remove_trades_retention.up.sql`); HA design in
-[docs/architecture/ha-plan.md](../architecture/ha-plan.md) and
-[docs/architecture/infrastructure/multi-region-topology.md](../architecture/infrastructure/multi-region-topology.md).
+[docs/architecture/ha-plan.md](../architecture/ha-plan.md).
