@@ -748,7 +748,7 @@ func TestProjectionScope_NamesWaivers(t *testing.T) {
 	}
 	seen := map[string]string{}
 	for _, src := range cat {
-		sc := src.projectionScope()
+		sc := src.projectionScope(make([]projectionScope, len(src.targets))) // every {0,0} scope is counted
 		seen[src.name] = sc
 		if strings.Contains(sc, "; ") {
 			t.Errorf("%s scope contains the detail separator: %q", src.name, sc)
