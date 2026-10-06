@@ -136,11 +136,6 @@ func readsClosedVWAP(fn *ast.FuncDecl) bool {
 		if !ok {
 			return true
 		}
-		// r.s.ClosedVWAPAtOrBefore(...) in main.go, r.S.LatestClosedVWAP1mForPair(...)
-		// in the wiring package, where the store field is exported.
-		if inner, ok := sel.X.(*ast.SelectorExpr); !ok || (inner.Sel.Name != "s" && inner.Sel.Name != "S") {
-			return true
-		}
 		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
 			found = true
 			return false
@@ -317,6 +312,7 @@ func TestStoreReadScansCatchMethodValues(t *testing.T) {
 		{"direct call", `func (r R) f() { r.S.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
 		{"method value", `func (r R) f() { g := r.S.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
 		{"method passed as an argument", `func (r R) f() { apply(r.s.ClosedVWAPAtOrBefore) }`, true},
+		{"store alias", `func (r R) f() { st := r.S; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
 		{"unrelated store read", `func (r R) f() { r.S.LatestTrade(ctx, a, b) }`, false},
 	}
 	for _, c := range cases {
