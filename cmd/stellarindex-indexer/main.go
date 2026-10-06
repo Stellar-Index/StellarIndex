@@ -706,13 +706,9 @@ func run(cfgPath string, dryRun bool) error {
 		// Sink wraps the same pipeline.HandleEvent the events
 		// goroutine uses; decoded rows take the same per-source
 		// write path. See internal/pipeline/sink.go.
-		sinkFn := func(ctx context.Context, ev consumer.Event) error {
-			err := pipeline.HandleEvent(ctx, logger, store, ev)
-			if err == nil {
-				lateTrades.ObserveEvent(ev)
-			}
-			return err
-		}
+		sinkFn := lateTrades.ObservingSink(func(ctx context.Context, ev consumer.Event) error {
+			return pipeline.HandleEvent(ctx, logger, store, ev)
+		})
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// soroban_events mode only: the ledgerstream cursor advances when a
 		// ledger's rows are enqueued to rawEventSink, not when they commit.
@@ -1076,6 +1072,14 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
+	// Both trade writers have stopped, so late trades the sink's shutdown
+	// drain wrote are pending here and Run stopped on rootCtx. Fresh
+	// ctx for the same reason as the rewind above; ~70s of systemd's 120s
+	// TimeoutStopSec is the worst case to here.
+	lctx, lcancel := context.WithTimeout(context.Background(), pipeline.LateTradeShutdownFlushBudget)
+	lateTrades.FlushOnShutdown(lctx) //nolint:contextcheck // deliberate fresh ctx, see above
+	lcancel()
+
 	// Shut the metrics server down last, after the drain sequence above
 	// has run to completion (or timed out). Doing this earlier — right
 	// after cancel() — made /metrics unscrapable for the entire drain

@@ -35,34 +35,10 @@ func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	quote := c.NativeAsset()
-	mkPair := func(code string) c.Pair {
-		a, err := c.NewClassicAsset(code, priceableIssuer)
-		if err != nil {
-			t.Fatalf("NewClassicAsset: %v", err)
-		}
-		p, err := c.NewPair(a, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return p
-	}
-	latePair, onTimePair := mkPair("LATE2492"), mkPair("ONTIME2492")
+	latePair, onTimePair := lateRefreshPair(t, "LATE2492"), lateRefreshPair(t, "ONTIME2492")
 
 	lateTS := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	bucket := lateTS.Truncate(time.Minute)
-	mk := func(p c.Pair, ts time.Time, hash string) sdex.TradeEvent {
-		return sdex.TradeEvent{Trade: c.Trade{
-			Source:      "test-late-refresh",
-			Ledger:      71_000_000,
-			TxHash:      hash,
-			Timestamp:   ts,
-			Pair:        p,
-			BaseAmount:  c.NewAmount(big.NewInt(1_000_000_000)),
-			QuoteAmount: c.NewAmount(big.NewInt(12_000_000)),
-		}}
-	}
-
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	late := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger})
 	runCtx, stop := context.WithCancel(ctx)
@@ -70,8 +46,8 @@ func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T)
 	go func() { defer close(runDone); late.Run(runCtx) }()
 
 	in := make(chan consumer.Event, 2)
-	in <- mk(onTimePair, time.Now().UTC().Truncate(time.Second), "00000000000000000000000000000000000000000000000000000000000a0001")
-	in <- mk(latePair, lateTS, "00000000000000000000000000000000000000000000000000000000000a0002")
+	in <- lateRefreshTrade(onTimePair, time.Now().UTC().Truncate(time.Second), "00000000000000000000000000000000000000000000000000000000000a0001")
+	in <- lateRefreshTrade(latePair, lateTS, "00000000000000000000000000000000000000000000000000000000000a0002")
 	sinkDone := make(chan struct{})
 	go func() {
 		defer close(sinkDone)
@@ -123,4 +99,75 @@ func TestLateTradeRefresh_MaterialisesTradeOlderThanPolicyLookback(t *testing.T)
 	if onTimeRows != 0 {
 		t.Errorf("on-time trade has %d prices_1m rows; the refresher must not refresh it", onTimeRows)
 	}
+}
+
+// TestLateTradeRefresh_ShutdownFlushMaterialisesDrainWrites: a late trade
+// written after Run stopped (the sink's shutdown drain) reaches prices_1m
+// through FlushOnShutdown, as the indexer calls it once both writers stop.
+func TestLateTradeRefresh_ShutdownFlushMaterialisesDrainWrites(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	pair := lateRefreshPair(t, "DRAIN2492")
+	lateTS := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	late := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger})
+	runCtx, stop := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); late.Run(runCtx) }()
+	stop()
+	<-runDone
+
+	in := make(chan consumer.Event, 1)
+	in <- lateRefreshTrade(pair, lateTS, "00000000000000000000000000000000000000000000000000000000000a0003")
+	close(in)
+	pipeline.PersistEvents(ctx, logger, store, in, pipeline.SinkModeAll, late)
+
+	flushCtx, flushCancel := context.WithTimeout(ctx, pipeline.LateTradeShutdownFlushBudget)
+	late.FlushOnShutdown(flushCtx)
+	flushCancel()
+
+	var count int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT trade_count FROM prices_1m WHERE base_asset = $1 AND quote_asset = $2 AND bucket = $3`,
+		pair.Base.String(), pair.Quote.String(), lateTS.Truncate(time.Minute)).Scan(&count); err != nil {
+		t.Fatalf("no prices_1m row for the drained late trade after the shutdown flush: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("trade_count = %d, want 1", count)
+	}
+}
+
+func lateRefreshPair(t *testing.T, code string) c.Pair {
+	t.Helper()
+	a, err := c.NewClassicAsset(code, priceableIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	p, err := c.NewPair(a, c.NativeAsset())
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	return p
+}
+
+func lateRefreshTrade(p c.Pair, ts time.Time, hash string) sdex.TradeEvent {
+	return sdex.TradeEvent{Trade: c.Trade{
+		Source:      "test-late-refresh",
+		Ledger:      71_000_000,
+		TxHash:      hash,
+		Timestamp:   ts,
+		Pair:        p,
+		BaseAmount:  c.NewAmount(big.NewInt(1_000_000_000)),
+		QuoteAmount: c.NewAmount(big.NewInt(12_000_000)),
+	}}
 }

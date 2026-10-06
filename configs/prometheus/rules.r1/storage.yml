@@ -456,6 +456,44 @@ groups:
             If this is a deliberate decommission, silence the alert
             rather than changing the probe query.
 
+      # Producer: the indexer's LateTradeRefresher (internal/pipeline).
+      # Late live trades (written past a policy's start_offset) are
+      # materialised only by it. A single error is retried with backoff,
+      # so this tickets on a run of them, not on one.
+      - alert: stellarindex_late_trade_cagg_refresh_failing
+        expr: |
+          increase(stellarindex_late_trade_cagg_refresh_total{outcome="error"}[30m]) >= 3
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_late_trade_cagg_refresh_failing
+          summary: "Late-trade cagg refresh failing on {{ $labels.instance }}"
+          description: |
+            {{ $value | humanize }} refreshes of the trades continuous
+            aggregates over late-written trades failed in 30 minutes.
+            Those buckets under-report until a refresh succeeds; the
+            indexer log names the view and window of each failure.
+
+      # Abandoned happens only at shutdown, just before /metrics goes
+      # away, so a scrape may miss it: the indexer's ERROR log line
+      # "late-trade cagg refresh abandoned" is the record of truth.
+      - alert: stellarindex_late_trade_cagg_refresh_abandoned
+        expr: |
+          increase(stellarindex_late_trade_cagg_refresh_total{outcome="abandoned"}[1h]) > 0
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_late_trade_cagg_refresh_abandoned
+          summary: "Late-trade cagg refresh abandoned at shutdown on {{ $labels.instance }}"
+          description: |
+            The indexer stopped with late-written trades whose buckets no
+            refresh policy will reach. Refresh the windows its ERROR log
+            names by hand, or those views under-report for good.
+
       - alert: stellarindex_timescale_job_failures_climbing
         # Producer: timescale-jobs-probe.timer (every 60s), same probe as
         # the two alerts above.

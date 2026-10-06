@@ -11,14 +11,14 @@ import "github.com/prometheus/client_golang/prometheus"
 var LateTradeCAGGRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_late_trade_cagg_refresh_total",
-		Help: "Refreshes of the trades continuous aggregates over trades written past a view's refresh-policy lookback, by outcome (ok|error). error = those buckets are not yet materialised; the refresh is retried with backoff.",
+		Help: "Refreshes of the trades continuous aggregates over trades written past a view's refresh-policy lookback, by outcome (ok|error|abandoned). error = those buckets are not yet materialised; the refresh is retried with backoff. abandoned = the shutdown flush failed or timed out; the window is logged at ERROR and needs a manual refresh.",
 	},
 	[]string{"outcome"},
 )
 
 func init() {
 	Registry.MustRegister(LateTradeCAGGRefreshTotal)
-	for _, outcome := range []string{"ok", "error"} {
+	for _, outcome := range []string{"ok", "error", "abandoned"} {
 		LateTradeCAGGRefreshTotal.WithLabelValues(outcome)
 	}
 }
