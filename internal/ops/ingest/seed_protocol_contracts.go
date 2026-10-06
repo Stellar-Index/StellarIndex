@@ -9,19 +9,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // seedProtocolContracts is the genesis bootstrap for a factory-anchored
 // gated decoder's pool/vault registry (ADR-0035). It walks the source's
 // factory creation events (e.g. Blend pool-factory `deploy`) from the
-// factory genesis ledger forward in the Postgres soroban_events lake and
-// upserts every announced child contract into protocol_contracts.
+// factory genesis ledger forward in the ClickHouse lake's contract_events
+// and upserts every announced child contract into protocol_contracts.
 //
 // Run once per FACTORY-anchored source as a DEPLOY PRECONDITION before
 // relying on the gate — like the migration 0057-0060 re-derive. Until it
@@ -38,16 +40,17 @@ import (
 //
 // Idempotent: the factory creation events are immutable history and
 // UpsertProtocolContract is ON CONFLICT DO UPDATE, so re-running re-walks
-// the same set harmlessly. Cheap: creation events are rare and the
-// (contract_id, topic_0_sym) index on soroban_events serves the filter.
+// the same set harmlessly. Cheap: creation events are rare and the walk is
+// filtered on the factory ids and the creation topic.
 //
 // Flags:
 //
 //	-config PATH   TOML config (required) — postgres DSN.
 //	-source NAME   gated source to seed (required): blend, …
 //	               (`-source all` seeds every gated source).
-//	-to LEDGER     last ledger to walk (inclusive); 0 = the soroban_events
-//	               max ledger.
+//	-to LEDGER     last ledger to walk (inclusive); 0 = the lake's max
+//	               ledger.
+//	-ch-addr H:P   ClickHouse native address.
 //	-timeout DUR   wall-clock budget. Default 15m.
 //	-write         apply. WITHOUT it the run is a fail-closed DRY RUN
 //	               (opsutil.WriteGate) that walks the creation events and
@@ -56,7 +59,8 @@ func seedProtocolContracts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-protocol-contracts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	source := fs.String("source", "", "gated source to seed (blend, … or 'all') (required)")
-	to := fs.Uint("to", 0, "last ledger (inclusive); 0 = soroban_events max ledger")
+	to := fs.Uint("to", 0, "last ledger (inclusive); 0 = the ClickHouse lake's max ledger")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (the creation events come from the lake's contract_events)")
 	timeout := fs.Duration("timeout", 15*time.Minute, "wall-clock budget")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -85,15 +89,16 @@ func seedProtocolContracts(args []string) error {
 
 	hi := uint32(*to)
 	if hi == 0 {
-		maxL, ok, merr := store.MaxSorobanEventLedger(ctx)
+		maxL, merr := clickhouse.MaxLedger(ctx, *chAddr)
 		if merr != nil {
-			return fmt.Errorf("resolve soroban_events max ledger: %w", merr)
+			return fmt.Errorf("resolve lake max ledger: %w", merr)
 		}
-		if !ok {
-			return errors.New("soroban_events is empty — nothing to walk")
+		if maxL == 0 {
+			return errors.New("the ClickHouse lake holds no ledgers — nothing to walk")
 		}
 		hi = maxL
 	}
+	seedStore := lakeSeedStore{Store: store, ReconcileEventStreamer: clickhouse.ReconcileEventStreamer{Addr: *chAddr}}
 
 	var sources []string
 	if strings.EqualFold(*source, "all") {
@@ -105,7 +110,7 @@ func seedProtocolContracts(args []string) error {
 	verb := writeModeVerb(write, "upserted", "WOULD upsert")
 	var errs []error
 	for _, src := range sources {
-		n, serr := seedOneGatedSource(ctx, store, write, src, hi)
+		n, serr := seedOneGatedSource(ctx, seedStore, write, src, hi)
 		fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s — %s %d child contract(s) into protocol_contracts (%s)\n",
 			src, verb, n, seedScope(src, hi))
 		if serr != nil {
@@ -132,11 +137,16 @@ func seedScope(source string, hi uint32) string {
 	}
 }
 
-// gatedSeedStore is the slice of *timescale.Store the seed needs.
+// gatedSeedStore writes protocol_contracts and reads the creation events.
 type gatedSeedStore interface {
 	pipeline.ProtocolContractUpserter
-	StreamSorobanEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
-		fn func(sorobanevents.Row) error) error
+	completeness.EventStreamer
+}
+
+// lakeSeedStore upserts into Postgres and walks the ClickHouse lake.
+type lakeSeedStore struct {
+	*timescale.Store
+	clickhouse.ReconcileEventStreamer
 }
 
 // seedOneGatedSource upserts one source's protocol_contracts rows and
@@ -213,15 +223,17 @@ func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool,
 
 	// Walk every factory's creation events in one lake scan (filter on the
 	// factory SET — Blend has more than one factory).
-	err := store.StreamSorobanEvents(ctx, meta.Genesis, hi,
-		meta.Factories, []string{meta.CreationSym}, nil,
-		func(row sorobanevents.Row) error {
-			ev, rerr := sorobanevents.Reconstruct(row)
-			if rerr != nil {
-				fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s unreadable creation row at ledger %d: %v\n", source, row.Ledger, rerr)
-				failed++
+	var last events.Event
+	haveLast := false
+	err := store.StreamContractEvents(ctx, meta.Genesis, hi,
+		meta.Factories, []string{meta.CreationSym},
+		func(ev events.Event) error {
+			// The stream reads without FINAL, so an unmerged duplicate part
+			// arrives adjacent to its twin; count each creation once.
+			if haveLast && sameEventIdentity(ev, last) {
 				return nil
 			}
+			last, haveLast = ev, true
 			if dec.Matches(ev) {
 				if _, derr := dec.Decode(ev); derr != nil {
 					fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s decode at ledger %d: %v\n", source, ev.Ledger, derr)
@@ -238,6 +250,10 @@ func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool,
 			"their children are missing from protocol_contracts — re-run after fixing the cause", source, failed)
 	}
 	return seeded, nil
+}
+
+func sameEventIdentity(a, b events.Event) bool {
+	return a.Ledger == b.Ledger && a.TxHash == b.TxHash && a.OperationIndex == b.OperationIndex && a.EventIndex == b.EventIndex
 }
 
 func sortedGatedNames() []string {

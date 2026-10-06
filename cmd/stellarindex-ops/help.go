@@ -628,7 +628,8 @@ Subcommands:
                           stalled cursors. -dry-run prints the plan only.
                           Skips (with the reason) any cursor whose sources
                           backfill would refuse today: projector-owned, or
-                          no longer BackfillSafe.
+                          no longer BackfillSafe, and raw soroban-events
+                          cursors.
   find-data-gaps -config PATH [-from N] [-to N] [-min-gap-size N] [-source S] [-output text|json]
                           Data-derived gap detector: scan the soroban_events
                           hypertable directly and report contiguous
@@ -1125,17 +1126,17 @@ Subcommands:
                           which claims the decoder DROPS and why — the exact
                           diagnosis of SDEX trade-count gaps against Hubble
                           (which counts one trade per claim atom). Read-only.
-  verify-recognition -config PATH -from N -to N
+  verify-recognition -config PATH -from N -to N [-ch-addr ADDR]
                           ADR-0033 Claim 2a: pull every distinct
-                          (contract, topic[0]) shape from soroban_events
-                          in the range and run each through the
+                          (contract, topic[0]) shape from the ClickHouse
+                          lake in the range and run each through the
                           production decoder chain's Matches(). Lists any
                           shape no decoder handles (a topic a WASM upgrade
                           added that we'd silently drop) and exits non-zero
                           if any exist. Cron/CI-gateable.
   verify-reconciliation -config PATH -from N -to N [-source S] [-max-list N] [-ch-addr ADDR]
-                          ADR-0033 Claim 2b: re-derive how many trades
-                          each soroban_events range WOULD produce (running
+                          ADR-0033 Claim 2b: re-derive how many rows
+                          each lake range WOULD produce (running
                           the real decoder) and diff per ledger against the
                           trades table. Lists ledgers where projected rows
                           went missing (or phantom rows appeared) and exits
@@ -1374,7 +1375,7 @@ Subcommands:
                           run). Run once on first deployment;
                           live new_pair events keep the table fresh
                           afterwards (see migrations/0016_create_soroswap_pairs.up.sql).
-  seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-timeout DUR] [-write]
+  seed-protocol-contracts -config PATH -source NAME|all [-to LEDGER] [-ch-addr ADDR] [-timeout DUR] [-write]
                           Bootstrap the protocol_contracts registry for a
                           factory-anchored gated decoder (ADR-0035): walks
                           the source's factory creation events (e.g. Blend

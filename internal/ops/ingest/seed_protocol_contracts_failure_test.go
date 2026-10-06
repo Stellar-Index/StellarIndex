@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,17 +12,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
-	"github.com/Stellar-Index/StellarIndex/internal/scval"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 const seedTestFactory = "CFACTORYSEEDTEST"
 
-// flakyUpsertStore streams one creation row per ledger in ledgers and
+// flakyUpsertStore streams one creation event per ledger in ledgers and
 // fails the upsert of any child named in failOn.
 type flakyUpsertStore struct {
 	ledgers  []uint32
 	failOn   map[string]bool
+	dupParts bool // stream every event twice, as an unmerged duplicate part does
 	upserted []string
 }
 
@@ -35,20 +33,18 @@ func (f *flakyUpsertStore) UpsertProtocolContract(_ context.Context, _, contract
 	return nil
 }
 
-func (f *flakyUpsertStore) StreamSorobanEvents(_ context.Context, _, _ uint32, _, _, _ []string,
-	fn func(sorobanevents.Row) error,
+func (f *flakyUpsertStore) StreamContractEvents(_ context.Context, _, _ uint32, _, _ []string,
+	fn func(events.Event) error,
 ) error {
-	sym, err := base64.StdEncoding.DecodeString(scval.MustEncodeSymbol("deploy"))
-	if err != nil {
-		return err
-	}
 	for _, l := range f.ledgers {
-		row := sorobanevents.Row{
-			Ledger: l, TxHash: make([]byte, 32), ContractID: seedTestFactory,
-			TopicCount: 1, Topic0XDR: sym,
-		}
-		if err := fn(row); err != nil {
+		ev := events.Event{Ledger: l, TxHash: fmt.Sprintf("tx%d", l), ContractID: seedTestFactory}
+		if err := fn(ev); err != nil {
 			return err
+		}
+		if f.dupParts {
+			if err := fn(ev); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -101,6 +97,19 @@ func TestWalkFactoryCreations_AllUpsertsLandIsNil(t *testing.T) {
 	n, err := walkFactoryCreations(context.Background(), store, true, "seedtest", seedTestMeta(), 20)
 	if err != nil || n != 2 {
 		t.Fatalf("clean walk = (%d, %v), want (2, nil)", n, err)
+	}
+}
+
+// The lake stream reads without FINAL: a creation event in an unmerged
+// duplicate part must be counted and upserted once, not twice.
+func TestWalkFactoryCreations_DuplicatePartCountedOnce(t *testing.T) {
+	store := &flakyUpsertStore{ledgers: []uint32{11, 12}, dupParts: true}
+	n, err := walkFactoryCreations(context.Background(), store, true, "seedtest", seedTestMeta(), 20)
+	if err != nil || n != 2 {
+		t.Fatalf("walk over duplicated parts = (%d, %v), want (2, nil)", n, err)
+	}
+	if len(store.upserted) != 2 {
+		t.Errorf("upserted %v, want each child once", store.upserted)
 	}
 }
 

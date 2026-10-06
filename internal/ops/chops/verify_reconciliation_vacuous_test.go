@@ -3,7 +3,10 @@
 
 package chops
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestReconciliationIsVacuous pins #1093: verify-reconciliation printed
 // "OK — expected=0 actual=0" and exited 0 for a target with no data on
@@ -29,5 +32,24 @@ func TestReconciliationIsVacuous(t *testing.T) {
 				t.Errorf("reconciliationIsVacuous(%d, %d) = %v, want %v", tc.expTotal, tc.actTotal, got, tc.want)
 			}
 		})
+	}
+}
+
+// Both verify commands read the ClickHouse lake, never Postgres
+// soroban_events, so they keep working once that table is retired.
+func TestVerifyCommandsReadTheLake(t *testing.T) {
+	for file, banned := range map[string][]string{
+		"verify_reconciliation.go": {"ReDeriveOutputCountsByKind(", "StreamSorobanEvents("},
+		"verify_recognition.go":    {"DistinctSorobanTopicSamples(", "StreamSorobanEvents("},
+	} {
+		src := mustRead(t, file)
+		for _, b := range banned {
+			if strings.Contains(src, b) {
+				t.Errorf("%s calls %s — a Postgres soroban_events read", file, b)
+			}
+		}
+	}
+	if !strings.Contains(mustRead(t, "verify_recognition.go"), "computeRecognitionGapsCH(") {
+		t.Error("verify_recognition.go no longer runs the lake recognition census")
 	}
 }

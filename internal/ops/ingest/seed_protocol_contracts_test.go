@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 // fakeGatedSeedStore records upserts and serves no creation events: the
@@ -22,8 +22,8 @@ func (f *fakeGatedSeedStore) UpsertProtocolContract(_ context.Context, _, contra
 	return nil
 }
 
-func (f *fakeGatedSeedStore) StreamSorobanEvents(context.Context, uint32, uint32, []string, []string, []string,
-	func(sorobanevents.Row) error,
+func (f *fakeGatedSeedStore) StreamContractEvents(context.Context, uint32, uint32, []string, []string,
+	func(events.Event) error,
 ) error {
 	f.walks++
 	return nil
