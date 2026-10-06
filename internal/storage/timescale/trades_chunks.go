@@ -329,6 +329,7 @@ func (s *Store) longLockHolder(ctx context.Context, c TradeChunk) (string, error
 // lockTally is what one bounded call has spent, for the retry decision
 // and the operator's error.
 type lockTally struct {
+	clk          lockClock
 	start        time.Time
 	charged      time.Duration // waiting only: refused requests, drains, long holders
 	workLost     time.Duration // work thrown away by refusals inside the statement
@@ -341,7 +342,7 @@ type lockTally struct {
 func (t *lockTally) String() string {
 	s := fmt.Sprintf("after %s and %d attempt(s): %d refused before any work, %d refused inside the statement (%s of work lost); "+
 		"%s of waiting charged",
-		time.Since(t.start).Round(time.Millisecond), t.attemptsMade, t.cheap, t.late, t.workLost.Round(time.Millisecond),
+		t.clk.since(t.start).Round(time.Millisecond), t.attemptsMade, t.cheap, t.late, t.workLost.Round(time.Millisecond),
 		t.charged.Round(time.Millisecond))
 	if t.holderWaits > 0 {
 		s += fmt.Sprintf("; %d wait(s) on a long-running holder, last: %s", t.holderWaits, t.lastHolder)
@@ -357,7 +358,8 @@ func (t *lockTally) String() string {
 // than the one this fixes. `live` is the caller's own context: once it is
 // done, no retry that would repeat work starts.
 func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
-	r := &lockRetry{t: lockTally{start: time.Now()}, p: p, live: live}
+	clk := s.lockClock
+	r := &lockRetry{t: lockTally{clk: clk, start: clk.now()}, p: p, live: live}
 	for {
 		holder, err := s.longLockHolder(ctx, c)
 		if err != nil {
@@ -394,7 +396,7 @@ func (r *lockRetry) giveUp(why string, err error) error {
 // mayWait: another cheap wait fits the budget, and once the caller has
 // gone, the wall clock as well.
 func (r *lockRetry) mayWait() bool {
-	if r.live.Err() != nil && time.Since(r.t.start)+r.p.drain >= r.p.budget {
+	if r.live.Err() != nil && r.t.clk.since(r.t.start)+r.p.drain >= r.p.budget {
 		return false
 	}
 	return r.t.charged+r.p.drain < r.p.budget
@@ -426,8 +428,8 @@ func (r *lockRetry) waitOutHolder(ctx context.Context, holder string) error {
 // caller should drain and retry.
 func (s *Store) retryAttempt(ctx context.Context, r *lockRetry, query string, c TradeChunk) (done bool, err error) {
 	r.t.attemptsMade++
-	began := time.Now()
-	stmtElapsed, inStatement, err := s.chunkLockAttempt(ctx, r.p.wait, query, c)
+	began := r.t.clk.now()
+	stmtElapsed, inStatement, err := s.chunkLockAttempt(ctx, r.t.clk, r.p.wait, query, c)
 	if err == nil {
 		return true, nil
 	}
@@ -440,7 +442,7 @@ func (s *Store) retryAttempt(ctx context.Context, r *lockRetry, query string, c 
 	if inStatement {
 		work = stmtElapsed - min(stmtElapsed, r.p.wait)
 	}
-	r.t.charged += time.Since(began) - work
+	r.t.charged += r.t.clk.since(began) - work
 	r.t.workLost += work
 	if !inStatement {
 		r.t.cheap++
@@ -450,7 +452,7 @@ func (s *Store) retryAttempt(ctx context.Context, r *lockRetry, query string, c 
 		return false, nil
 	}
 	r.t.late++
-	switch remaining := r.p.budget - time.Since(r.t.start); {
+	switch remaining := r.p.budget - r.t.clk.since(r.t.start); {
 	case r.live.Err() != nil:
 		return true, r.giveUp("the caller has stopped, so the work is not repeated", err)
 	case stmtElapsed+r.p.drain > remaining:
@@ -460,11 +462,34 @@ func (s *Store) retryAttempt(ctx context.Context, r *lockRetry, query string, c 
 	return false, nil
 }
 
+// lockClock is the retry loop's time source; the zero value is the wall
+// clock. Tests inject one so a loaded runner cannot change what is charged.
+type lockClock struct {
+	nowFn   func() time.Time
+	sleepFn func(context.Context, time.Duration) error
+}
+
+func (c lockClock) now() time.Time {
+	if c.nowFn != nil {
+		return c.nowFn()
+	}
+	return time.Now()
+}
+
+func (c lockClock) since(t time.Time) time.Duration { return c.now().Sub(t) }
+
+func (c lockClock) sleep(ctx context.Context, d time.Duration) error {
+	if c.sleepFn != nil {
+		return c.sleepFn(ctx, d)
+	}
+	return sleepCtx(ctx, d)
+}
+
 // drain waits d with no request pending and charges what it took.
 func (t *lockTally) drain(ctx context.Context, d time.Duration) error {
-	began := time.Now()
-	err := sleepCtx(ctx, d)
-	t.charged += time.Since(began)
+	began := t.clk.now()
+	err := t.clk.sleep(ctx, d)
+	t.charged += t.clk.since(began)
 	return err
 }
 
@@ -479,7 +504,7 @@ func (t *lockTally) drain(ctx context.Context, d time.Duration) error {
 // `SET` on a pooled connection outlives the call (pgx v5's stdlib adapter
 // resets nothing on reuse); COMMIT/ROLLBACK unwinds LOCAL even on the
 // error path.
-func (s *Store) chunkLockAttempt(ctx context.Context, wait time.Duration, query string, c TradeChunk) (stmtElapsed time.Duration, inStatement bool, err error) {
+func (s *Store) chunkLockAttempt(ctx context.Context, clk lockClock, wait time.Duration, query string, c TradeChunk) (stmtElapsed time.Duration, inStatement bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, err
@@ -494,11 +519,11 @@ func (s *Store) chunkLockAttempt(ctx context.Context, wait time.Duration, query 
 			return 0, false, err
 		}
 	}
-	began := time.Now()
+	began := clk.now()
 	if _, err := tx.ExecContext(ctx, query, c.Schema, c.Name); err != nil {
-		return time.Since(began), true, err
+		return clk.since(began), true, err
 	}
-	return time.Since(began), false, tx.Commit()
+	return clk.since(began), false, tx.Commit()
 }
 
 // sleepCtx waits d, or returns early with the context's error. The
