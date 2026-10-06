@@ -36,7 +36,7 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
 4. **Name every breaking `pkg/*` change in it.** This is one Go module
    (ADR-0005): `pkg/client` ships inside the root `vX.Y.Z`, so never cut a
    `pkg/client/vX.Y.Z` tag. The CHANGELOG is the consumer's only notice
-   (semver-policy.md "Why there is only one clock").
+   (semver-policy.md, opening section: one root tag clock).
 5. **Build is clean**: `make build`. If the release deploys the showcase
    site (`web/explorer/`, the launch-week default), also
    `NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build`
@@ -46,8 +46,8 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
 
 ## Cut
 
-1. **Decide the tag** per [`semver-policy.md` §"What constitutes a breaking
-   change for binaries"](../architecture/semver-policy.md):
+1. **Decide the tag** per [`semver-policy.md` §"SemVer rules for binary
+   releases"](../architecture/semver-policy.md#semver-rules-for-binary-releases):
    - new SSE endpoint, no schema change → minor (`v0.2.0 → v0.3.0`)
    - bug fix only, no operator-visible change → patch (`v0.3.0 → v0.3.1`)
    - removes a `[external]` config key → minor pre-v1.0 (`v0.3.1 → v0.4.0`), major post-v1.0

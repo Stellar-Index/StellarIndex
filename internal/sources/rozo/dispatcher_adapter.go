@@ -12,8 +12,8 @@ import (
 // stateless topic Decoder — each payment / flush event decodes
 // independently into one rozo_events row, no correlation state.
 //
-// Matching is by topic[0] symbol AND contract id. AGENTS.md ("Comet
-// uses a shared topic") warns that `symbol_short!` gives no protocol
+// Matching is by topic[0] symbol AND contract id. docs/architecture/domain-traps.md (ADR-0035;
+// Comet's shared topic) warns that `symbol_short!` gives no protocol
 // namespace, so another contract could emit "payment" / "flush" —
 // Matches gates on the event coming from a known Rozo v1 contract.
 type Decoder struct{}

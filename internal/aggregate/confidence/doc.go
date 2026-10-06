@@ -40,7 +40,7 @@
 //
 // Normalisation is what makes the weights relative and the 0.7
 // cross-oracle value neutral. See
-// docs/architecture/anomaly-freeze-and-confidence.md for the formula,
+// docs/architecture/oracle-manipulation-defense.md for the formula,
 // the factor constants and what the 0.10 scale means.
 //
 // The shape is right because it gives DOMINATING-FACTOR behaviour:

@@ -1661,8 +1661,7 @@ stellarindex_archive_trimmer_secret_key: "{{ vault_stellarindex_archive_trimmer_
 # observers skipped, which is how r1 silently captured nothing
 # until 2026-07-05) and the ch-rebuild -sep41 re-derive.
 stellarindex_watched_sep41_contracts:
-  # FxDAO FXG governance token (2026-07-10 residual-DeFi census,
-  # docs/architecture/residual-defi-census-2026-07.md §2). The other
+  # FxDAO FXG governance token (2026-07-10 residual-DeFi census). The other
   # three FxDAO stablecoins (USDx/EURx/GBPx) were ALREADY watched —
   # the census's "entirely untracked" claim was wrong on those three;
   # FXG was the only genuinely missing member of the family.

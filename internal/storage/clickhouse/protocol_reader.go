@@ -417,8 +417,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 // The daily pre-aggregation (deploy/clickhouse/tier1_schema.sql,
 // contract_events_daily + its MV) collapses the ~15s raw scans behind
 // /v1/protocols/{name} into millisecond reads over per-day uniqCombined(17)
-// states (docs/architecture/contract-events-daily-redesign.md — replaced
-// uniqExact 2026-07-09 after its unbounded per-state hash set blew the
+// states (uniqExact's unbounded per-state hash set blew the
 // ClickHouse merge memory budget on r1). uniqCombined still dedups a
 // group's natural key (ledger_seq, tx_hash, op_index, event_index) — so a
 // Summing MV's live-sink-retry / ch-rebuild-re-derive overcount risk is

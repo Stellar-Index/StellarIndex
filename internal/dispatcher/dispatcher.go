@@ -287,7 +287,7 @@ type ContractCallContext struct {
 	// auth tree. Empty for the top-level call; non-empty for
 	// sub-invocations (per-step indices in pre-order traversal,
 	// e.g. [0,1] = second sub-call of the first sub-call of root).
-	// Per task #48 + docs/architecture/contract-call-coverage-audit.md.
+	// Per task #48 (docs/adr/0052-contract-call-tree-routing.md).
 	// Decoders that need to dedup overlapping calls in the same tx
 	// (rare) can build a stable identifier as (TxHash, OpIndex, CallPath).
 	CallPath []int
@@ -298,8 +298,7 @@ type ContractCallContext struct {
 	// call N levels deep). CallPathContracts[0] is the outermost
 	// invoked contract (e.g. an aggregator); CallPathContracts[len-1]
 	// always equals ContractID. Built by the same auth-tree walk as
-	// CallPath (walkAuthTree) — see ROADMAP #11 / the
-	// contract-call-coverage-audit.md "sequencing" note: the walk
+	// CallPath (walkAuthTree) — see ROADMAP #11: the walk
 	// itself shipped as task #48 Phase 1; this field is the ancestor-
 	// identity enrichment that lets a decoder record WHO wrapped the
 	// call, not just at what tree depth.
@@ -1019,8 +1018,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		// ContractCallDecoder routing because most Soroswap traffic
 		// reaches the router as a sub-invocation of an aggregator
 		// contract — the pre-1b1e46a09 top-level-only walk missed ~99.99%
-		// of router calls (see
-		// docs/architecture/contract-call-coverage-audit.md).
+		// of router calls (docs/adr/0052-contract-call-tree-routing.md).
 		//
 		// Each decoder's Matches() runs per call in the tree; on a
 		// match, Decode() emits an event whose CallPath identifies
@@ -1805,8 +1803,8 @@ func contractEventToEventsEvent(ce xdr.ContractEvent, ledgerSeq uint32, txHash s
 // parent's SubInvocations slice (e.g. [0] = first sub of root,
 // [0,1] = second sub of the first sub of root). Used by
 // ContractCallDecoder consumers to dedup or tag attribution
-// across overlapping calls in the same tx — see task #48 +
-// docs/architecture/contract-call-coverage-audit.md.
+// across overlapping calls in the same tx — see task #48 and
+// docs/adr/0052-contract-call-tree-routing.md.
 type invokeCall struct {
 	ContractID   string
 	FunctionName string

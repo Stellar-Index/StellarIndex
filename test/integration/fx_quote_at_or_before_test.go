@@ -44,8 +44,8 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	// Anchor in the past — deterministic windows regardless of clock.
 	t0 := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 
-	// FX sources publish at uniform 1e8 scale on each side per
-	// AGENTS.md — quote/base = price ratio with no scale adjustment.
+	// Both legs of an FX quote share one scale, so quote/base is the
+	// price ratio with no scale adjustment.
 	// 0.92 EUR per USD:    base=1e8,    quote=92_000_000
 	// 0.93 EUR per USD:    base=1e8,    quote=93_000_000
 	// 0.94 EUR per USD:    base=1e8,    quote=94_000_000

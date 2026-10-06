@@ -126,5 +126,4 @@ Purely internal work (e.g. runbooks referencing private IPs) is never mirrored.
 ## Cross-references
 
 - [`semver-policy.md`](../architecture/semver-policy.md), [`release-process.md`](release-process.md)
-- [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md) §Finalization — L6.3 (this doc) and L6.4 (production cutover)
 - [`SECURITY.md`](../../SECURITY.md), [`CONTRIBUTING.md`](../../CONTRIBUTING.md)

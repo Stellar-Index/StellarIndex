@@ -2927,8 +2927,7 @@ export interface paths {
          *
          *     A router call observed as a SUB-INVOCATION (some other
          *     contract called the router as part of its own authorized
-         *     call tree — the common real-world shape, per
-         *     `docs/architecture/contract-call-coverage-audit.md`) is
+         *     call tree — the common real-world shape) is
          *     attributed to the OUTERMOST wrapping contract when that
          *     contract is itself a registered `router`-kind entry, instead
          *     of being lumped into the plain router's count. See each
@@ -3618,7 +3617,7 @@ export interface paths {
         put?: never;
         /**
          * Staff — customer look-up by user email or account slug.
-         * @description Staff "Customer look-up" tool (platform-spec §6): resolve an
+         * @description Staff "Customer look-up" tool: resolve an
          *     account by one of its users' email address OR by account slug,
          *     and return the account's tier/status plus the users on it.
          *
@@ -3808,8 +3807,7 @@ export interface paths {
         /**
          * Operator — post a customer-facing status banner.
          * @description Creates a LIVE, human-authored status banner shown on the public
-         *     status surface via GET /v1/status/notices (platform-spec §7.1
-         *     "Trigger maintenance mode banner"). Distinct from the embedded
+         *     status surface via GET /v1/status/notices. Distinct from the embedded
          *     post-mortem corpus (GET /v1/incidents) and the Alertmanager-
          *     derived incidents block on GET /v1/status.
          *

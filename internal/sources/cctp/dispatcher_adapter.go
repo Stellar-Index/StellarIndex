@@ -17,8 +17,8 @@ import (
 // describes is a downstream concern, correlatable later by (ledger,
 // tx_hash); the decoder does not buffer.
 //
-// Matching is by topic[0] symbol AND contract id. AGENTS.md ("Comet
-// uses a shared topic") warns that another contract could emit the
+// Matching is by topic[0] symbol AND contract id. docs/architecture/domain-traps.md (ADR-0035;
+// Comet's shared topic) warns that another contract could emit the
 // same symbol bytes, so Matches also gates on the event coming from
 // one of the three known CCTP contracts.
 type Decoder struct{}

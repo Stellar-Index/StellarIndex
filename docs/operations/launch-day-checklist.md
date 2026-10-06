@@ -19,7 +19,7 @@ from private staging to production.
 
 - [ ] **Open PR pile drained.** `gh pr list --state open --limit 100` shows zero
       launch-blocking entries; leftovers become
-      [post-launch](../architecture/launch-readiness-backlog.md) explicitly.
+      post-launch explicitly.
 - [ ] **Last L6.5 docs sweep.** Every `last_verified` within 30 days, every runbook
       `status:` accurate. One PR, merged same day.
 - [ ] **External security review (L5.6) findings closed**: a tracked PR or a
@@ -154,7 +154,6 @@ Order matters.
 - `https://stellarindex.io/status` shows "all systems operational".
 - Customer comms delivered; at least one passing SLA probe run against the public
   URL post-cut.
-- L6.4 in `launch-readiness-backlog.md` flips 🔴 → ✅.
 
 ## If anything fails mid-cut
 
@@ -168,5 +167,5 @@ rollback also needs a "we're rolling back" message.
 [`cdn-setup.md`](cdn-setup.md), [`explorer-deployment.md`](explorer-deployment.md),
 [`status-page-setup.md`](status-page-setup.md),
 [`chaos-wave1-runbook.md`](chaos-wave1-runbook.md), [`rollback.md`](rollback.md),
-[`sev-playbook.md`](sev-playbook.md), [`sla-probe.md`](sla-probe.md); L6.4–L6.7 in
-[`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md).
+[`sev-playbook.md`](sev-playbook.md), [`sla-probe.md`](sla-probe.md);
+[`v1-launch-plan.md`](v1-launch-plan.md).

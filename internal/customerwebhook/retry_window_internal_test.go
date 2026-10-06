@@ -33,7 +33,6 @@ func TestRetryWindowMatchesOperatorDocs(t *testing.T) {
 	for _, rel := range []string{
 		"docs/operations/runbooks/aggregator.md",
 		"docs/operations/runbooks/api.md",
-		"docs/architecture/platform-spec.md",
 		"internal/retentionreaper/reaper.go",
 		"internal/customerwebhook/worker.go",
 	} {

@@ -19,8 +19,7 @@ func TestSaturatingSub(t *testing.T) {
 		{"equal", 5, 5, 0},
 		// b>a: a raw uint64 subtraction would wrap to ~1.8e19 instead of
 		// saturating to 0 — the exact regression class the
-		// verify-contiguity review caught (AGENTS.md ADR-0034 invariant:
-		// never truncate/wrap a displayed count silently).
+		// verify-contiguity review caught.
 		{"b-greater-than-a", 3, 10, 0},
 		{"both-zero", 0, 0, 0},
 	}

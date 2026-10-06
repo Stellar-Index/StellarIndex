@@ -33,7 +33,7 @@ type StatusNoticeStore interface {
 }
 
 // StatusNotice is the wire shape for status-notice responses — the
-// operator-posted customer-facing banner (platform-spec §7.1). Distinct
+// operator-posted customer-facing banner. Distinct
 // from the Alertmanager-derived StatusIncidents block on /v1/status and
 // from the embedded post-mortem incidents.Incident: this is a live,
 // human-authored maintenance / incident banner.
@@ -140,7 +140,7 @@ type adminCreateNoticeRequest struct {
 
 // handleAdminStatusNoticeCreate serves POST /v1/admin/status-notices —
 // post a new active customer-facing banner. Operator-tier only;
-// requires an `X-Reason` header (platform-spec §7.2). Audit-logged
+// requires an `X-Reason` header. Audit-logged
 // ("status_notice.create").
 func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/status-notices")

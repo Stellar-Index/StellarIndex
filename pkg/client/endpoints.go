@@ -796,7 +796,7 @@ func (req CreateKeyRequest) headers() map[string]string {
 //
 // Reason is sent as the `X-Reason` header, not in the JSON body —
 // the server captures it into the audit log for every admin write
-// (platform-spec §7.2) and 400s the request without it.
+// and 400s the request without it.
 type AdminCreateKeyRequest struct {
 	Identifier      string   `json:"identifier"`
 	Account         string   `json:"account,omitempty"`

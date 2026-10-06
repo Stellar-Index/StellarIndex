@@ -96,6 +96,5 @@ duration, any 5xx.
 
 ## Cross-references
 
-- [`launch-readiness-backlog.md`](../architecture/launch-readiness-backlog.md) — L4.14, L4.15, L4.16, L4.17, L5.8.
 - [`multi-region-topology.md`](../architecture/infrastructure/multi-region-topology.md) — Model A design intent (superseded).
 - [`rollback.md`](rollback.md) — failure-mode rollback procedures.

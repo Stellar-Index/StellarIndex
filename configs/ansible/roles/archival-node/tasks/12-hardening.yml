@@ -60,7 +60,7 @@
       Unattended-Upgrade::Automatic-Reboot "false";
 
 # ── CIS L2 minimum set: kernel info-leak sysctls + auditd ────────────
-# (docs/architecture/repo-hygiene-plan.md §16.) Scope is deliberately
+# Scope is deliberately
 # narrow: kernel hardening + an auth/sudo-exec audit trail ONLY — no
 # SSH changes (templated above) and no network changes (11-firewall.yml).
 # Gated on `hardening_cis_l2` (default ON, defaults/main.yml).
