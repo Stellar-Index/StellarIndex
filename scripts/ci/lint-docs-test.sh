@@ -28,7 +28,7 @@ SPEC="openapi/stellar-index.v1.yaml"
 EXPLORER_README="web/explorer/README.md"
 COMMS_README="deploy/comms/README.md"
 NODOC_PKG="internal/zzlintdocsfixture"
-EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md docs/remediation-2026-07-01/STATUS.md
+EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md
         docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" "$COMMS_README")
 BACKUP=$(mktemp -d); OUT=$(mktemp)
 PASS=0; FAIL=0
@@ -104,8 +104,7 @@ printf '| [0098](0098-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint
 # existed (RSWP-127 #1230). #1263 and #1270 are bare patterns so the
 # 2026-05-11 PR-list header alone, without its R-row, is caught. docs/design/ is scanned too.
 printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n(PR #1231)\nsupersedes dependabot #1371/#1372\n' >> CHANGELOG.md
-printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\n' >> docs/architecture/coverage-matrix.md
-printf 'Deferred #1347 — go-stellar-sdk v0.5->v0.6\n#1353\n#1369\n' >> docs/remediation-2026-07-01/STATUS.md
+printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\nDeferred #1347 — go-stellar-sdk v0.5->v0.6\n#1353\n#1369\n' >> docs/architecture/coverage-matrix.md
 printf '# fixture design doc\n\nCites the dangling reference (PR #1042).\n' > "$DESIGN"
 
 # §15 (K089/F168): an aged incident's action item gates CI only as a `- [ ]`
@@ -170,9 +169,9 @@ stale "'R-013 → #1265' in coverage-matrix.md is caught" 'R-013.*#1265' '^ +doc
 stale "a bare '#1263' header citation in coverage-matrix.md is caught" '#1263\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
 stale "a bare '#1270' header citation in coverage-matrix.md is caught" '#1270\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
 stale "a bare '#1268' header citation in coverage-matrix.md is caught" '#1268\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
-stale "'Deferred #1347' in remediation STATUS.md is caught" 'Deferred #1347\b' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:Deferred #1347 — go-stellar-sdk v0\.5->v0\.6$'
-stale "'#1353' in remediation STATUS.md is caught" '#1353' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1353$'
-stale "'#1369' in remediation STATUS.md is caught" '#1369' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1369$'
+stale "'Deferred #1347' in coverage-matrix.md is caught" 'Deferred #1347\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:Deferred #1347 — go-stellar-sdk v0\.5->v0\.6$'
+stale "'#1353' in coverage-matrix.md is caught" '#1353' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:#1353$'
+stale "'#1369' in coverage-matrix.md is caught" '#1369' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:#1369$'
 stale "a dangling 'PR #1042' in docs/design/ is caught" 'PR #1042' "^ +$DESIGN:[0-9]+:"
 absent  "an aged incident's prose action item escapes the forcing function" "$(basename "$INC_PROSE")"
 present "an aged incident's '- [ ]' action item is caught" "incident '$INC_BOX' is older than 30 days"
