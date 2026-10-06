@@ -226,4 +226,4 @@ curl -s https://stellarindex.io/robots.txt
 
 - API CDN: [cdn-setup.md](cdn-setup.md)
 - Status page: [`deploy/status-page/README.md`](../../deploy/status-page/README.md)
-- [public-flip.md](public-flip.md), [launch-day-checklist.md](launch-day-checklist.md)
+- [launch-day-checklist.md](launch-day-checklist.md)

@@ -94,7 +94,7 @@ func TestSorobanVolume24hUSD_XLMAnchored(t *testing.T) {
 	}
 
 	// XLM-anchored reader: USD-pegged leg (7) + XLM legs (10 + 5) = 22.
-	anchored, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
+	anchored, _, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestSorobanVolume24hUSD_EmptyReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
+	got, _, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
 	}
@@ -189,12 +189,17 @@ func TestSorobanVolume24hUSD_PartlyValuedBucket(t *testing.T) {
 	if n, _ := res.RowsAffected(); n != 1 {
 		t.Fatalf("valued %d rows, want 1", n)
 	}
+	// The anchor reads only minutes with USD volume behind them.
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 50 WHERE base_asset = 'native' AND quote_asset LIKE 'USDC-%'`); err != nil {
+		t.Fatalf("value the anchor trade: %v", err)
+	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
 
-	got, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
+	got, _, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
 	}

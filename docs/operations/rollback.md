@@ -237,5 +237,4 @@ If it cannot be corrected within the SEV-2 detection window:
 - [`release-process.md`](release-process.md): per-release procedure;
   §Post-flight has the rollback one-liner.
 - [`sev-playbook.md`](sev-playbook.md): SEV escalation.
-- [`public-flip.md`](public-flip.md): public-repo cut-over mechanics (shape D).
 - [`postmortems/`](postmortems/): where the postmortem lands.

@@ -132,7 +132,7 @@ func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 
 	// Anchored reader takes the stored usd_volume for the SAME row —
 	// no double count against its own base_asset='native' CASE.
-	anchored, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
+	anchored, _, err := store.SorobanVolume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
 	}

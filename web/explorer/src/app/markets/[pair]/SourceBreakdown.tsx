@@ -14,6 +14,7 @@ import {
 interface SourceVolume {
   source: string;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
   trade_count_24h: number;
   share_pct: number;
 }
@@ -74,6 +75,13 @@ export function SourceBreakdown({
         .map((s) => s.volume_24h_usd),
     ) ?? '0';
 
+  // A flagged source excluded trades with no trade-time USD value, so the
+  // total (and that slice) is a lower bound.
+  const excluded = (data?.sources ?? [])
+    .filter((s) => s.volume_lower_bound)
+    .map((s) => s.source);
+  const lowerBound = excluded.length > 0;
+
   // No priced volume → nothing meaningful to chart; stay quiet rather
   // than render an empty frame. A failed fetch also has no slices, so it
   // must fall through to the error message instead of reading as "no volume".
@@ -95,10 +103,16 @@ export function SourceBreakdown({
       {slices.length > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={`$${formatCompactUnits(total)}`}
+          centerLabel={`${lowerBound ? '≥ ' : ''}$${formatCompactUnits(total)}`}
           centerSub="24h vol"
           formatValue={(n) => `$${formatCompact(n)}`}
         />
+      )}
+      {slices.length > 0 && lowerBound && (
+        <p className="text-ink-muted text-xs">
+          <strong>At least</strong> this: excludes trades with no trade-time USD
+          value on {excluded.join(', ')}.
+        </p>
       )}
     </Panel>
   );

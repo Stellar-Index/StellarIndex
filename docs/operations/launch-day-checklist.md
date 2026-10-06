@@ -84,8 +84,7 @@ Order matters.
    git push origin YYYY.MM.DD.1
    ```
 
-2. **Public-flip (`public-flip.md` §Cut-over mechanics).** Follow the 6 steps; the
-   orphan-branch diff at step 4 MUST be zero, else stop and investigate.
+2. **Public-flip.** Done 2026-07-03 (the repo is already public); nothing to run.
 
 3. **DNS flip — `api.stellarindex.io`.** The proxied record is already in place
    from the CDN setup; the "flip" is **enabling the public rate-limit tier**: change
@@ -163,8 +162,7 @@ rollback also needs a "we're rolling back" message.
 
 ## Cross-references
 
-[`release-process.md`](release-process.md), [`public-flip.md`](public-flip.md),
-[`cdn-setup.md`](cdn-setup.md), [`explorer-deployment.md`](explorer-deployment.md),
+[`release-process.md`](release-process.md), [`cdn-setup.md`](cdn-setup.md), [`explorer-deployment.md`](explorer-deployment.md),
 [`status-page-setup.md`](status-page-setup.md),
 [`chaos-wave1-runbook.md`](chaos-wave1-runbook.md), [`rollback.md`](rollback.md),
 [`sev-playbook.md`](sev-playbook.md), [`sla-probe.md`](sla-probe.md);
