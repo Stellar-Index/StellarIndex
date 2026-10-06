@@ -58,7 +58,7 @@ curl -s localhost:9854/metrics | grep 'pgbackrest_backup_info' | grep 'repo_key=
 2. Confirm the exporter picked it up (re-reads `pgbackrest info` every 10 min): `curl -s localhost:9854/metrics | grep 'repo_key="2"'` shows a `backup_name` with today's date.
 3. The alert resolves on the next evaluation with a young repo2 series; the status page Off-site row turns green within 60 s (API snapshot cache).
 
-Related: [restore-drill-stale](restore-drill-stale.md) (monthly proof repo1 restores; stale repo2 makes it partial), [restore-drill-offsite-stale](restore-drill-offsite-stale.md) (monthly proof the repo2 copy restores, `restore-drill-offsite.timer`, the 15th), `docs/operations/off-site-backup-plan.md`, `docs/operations/pgbackrest-encryption.md` (repo2 is encrypted by us; a re-created repo needs its cipher pass).
+Related: [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale) (monthly proof repo1 restores; stale repo2 makes it partial), [restore-drill-offsite-stale](restore-drill.md#stellarindex_restore_drill_offsite_stale) (monthly proof the repo2 copy restores, `restore-drill-offsite.timer`, the 15th), `docs/operations/off-site-backup-plan.md`, `docs/operations/pgbackrest-encryption.md` (repo2 is encrypted by us; a re-created repo needs its cipher pass).
 
 ## Related
 

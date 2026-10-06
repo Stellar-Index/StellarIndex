@@ -350,7 +350,7 @@ below is the generic path.
         running indexer re-projects from there, and the same command
         resets the `sep41_supply_rollup` fold so the aggregator re-sums
         the corrected rows. Decompress the window first
-        ([projector-replay](projector-replay.md) pre-flight):
+        ([projector-replay](projector.md#stellarindex_projector_replay_stalled) pre-flight):
         ```sh
         stellarindex-ops projector-replay -config /etc/stellarindex.toml \
             -source sep41_supply -from <first-diverging-ledger> -write
@@ -443,10 +443,10 @@ Capture for the postmortem:
   series is deleted, so this alert is silent for them.
 - `aggregator.md#stellarindex_aggregator_silent` — if the aggregator is stalled, the
   cross-check gauge is also stale; investigate that first.
-- `supply-refresh-stalled.md` / `supply-refresh-error-dominant.md`
+- `supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled` / `supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant`
   — when the refresher itself isn't producing snapshots; both
   algorithm readings would be stale rather than divergent.
-- `supply-snapshot-stale.md` — sibling alert on the systemd-timer
+- `supply-snapshot.md#stellarindex_supply_snapshot_stale` — sibling alert on the systemd-timer
   path; if it's also firing, the alternative-path producer is
   down too.
 - `internal/supply/crosscheck.go` — the comparison code (`CrossCheck`,

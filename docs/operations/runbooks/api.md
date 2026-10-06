@@ -522,7 +522,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 - Aggregator restart: `lastWriteAt` resets so every pair reports about 0 then climbs; a newly configured pair is stamped "just observed" on first sighting. If no VWAP write lands within 2 min of restart, the alert is real.
 - Chain halt: if Stellar mainnet stops producing ledgers every asset goes stale at once; correlates with `core-lag.md` / `rpc-lag.md`, which are the real alerts.
 
-**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `cagg-stale.md`; `divergence.md#stellarindex_oracle_stale`; `sla-probe-freshness-breach.md` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
+**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `cagg-stale.md`; `divergence.md#stellarindex_oracle_stale`; `sla-probe.md#stellarindex_sla_probe_freshness_breach` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
 
 ## stellarindex_api_price_stream_not_delivering
 

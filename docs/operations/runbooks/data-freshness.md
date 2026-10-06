@@ -93,7 +93,7 @@ curl -s http://localhost:9465/metrics | grep supply_refresh_duration_seconds_cou
 (metric `stellarindex_aggregator_supply_refresh_duration_seconds`, aggregator metrics port 9465)
 
 - Dominated by `stale_component`: the freshness GATE is refusing, go to 3.
-- Dominated by `no_ledger` / `compute_error`: a reader or the lake; see [supply-refresh-error-dominant](supply-refresh-error-dominant.md).
+- Dominated by `no_ledger` / `compute_error`: a reader or the lake; see [supply-refresh-error-dominant](supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant).
 - `ok` / `dormant` advancing: refresher fine, rows ARE landing; re-check step 1.
 - `missing_baseline` on a classic asset's SAC wrapper: its pre-Soroban opening balance was never seeded, supply is withheld, no snapshot lands (newly watched wrappers start here). See Fix.
 

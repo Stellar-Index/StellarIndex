@@ -75,5 +75,5 @@ Each step is independently reversible (release retag, `migrate down`, `DROP v2` 
 - The reproject artefact: `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql` (C2-4c).
 - Migrations `migrations/0109`–`0114`; the deploy playbook `configs/ansible/playbooks/deploy-binary.yml`.
 - The go-live master plan: [go-live-master-plan.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-16/go-live-master-plan.md); the un-audited-surfaces ledger + [OP] list: [findings-ledger.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-18-unaudited-surfaces/findings-ledger.md).
-- Companion incident runbooks: `infra.md#stellarindex_zfs_pool_low_space`, `ch-supply-gapfill-failed.md`, `stellar-stack-version-lag.md`.
+- Companion incident runbooks: `infra.md#stellarindex_zfs_pool_low_space`, `supply-refresh.md#stellarindex_ch_supply_gapfill_failed`, `stellar-stack-version-lag.md`.
 

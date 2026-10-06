@@ -1546,7 +1546,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale
           summary: "restore-drill textfile {{ $labels.file }} has not been refreshed in 35d+ on {{ $labels.instance }}"
           description: |
             node_exporter has not seen a fresh mtime on {{ $labels.file }}

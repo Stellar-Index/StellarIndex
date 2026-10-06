@@ -36,7 +36,7 @@ tests:
               team: stellarindex
               component: meta
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_down
               summary: "AlertManager is down or unscraped"
               description: |
                 Alertmanager is not answering its scrape. Every alert in the
@@ -72,7 +72,7 @@ tests:
               team: stellarindex
               component: meta
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-not-notifying.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_not_notifying
               summary: "AlertManager has sent no notifications in 15m — the fan-out is dead"
               description: |
                 The deadman's switch alone should produce ~30 webhook
@@ -149,7 +149,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_redis_exporter_down
               summary: "redis_exporter scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The redis_exporter Prometheus scrape target has been down
@@ -183,7 +183,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_postgres_exporter_down
               summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The postgres_exporter Prometheus scrape target has been
@@ -216,7 +216,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_postgres_exporter_down
               summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The postgres_exporter Prometheus scrape target has been
@@ -250,7 +250,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_pgbackrest_exporter_down
               summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The pgbackrest_exporter Prometheus scrape target has been
@@ -284,7 +284,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_pgbackrest_exporter_down
               summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The pgbackrest_exporter Prometheus scrape target has been
@@ -330,7 +330,7 @@ tests:
               team: stellarindex
               component: monitoring
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_minio_exporter_down
               summary: "MinIO scrape target is down — cascade-blind for any alert that depends on it"
               description: |
                 The MinIO Prometheus scrape target has been down for 2+
@@ -368,7 +368,7 @@ tests:
               team: stellarindex
               component: meta
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scrape-failing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_scrape_failing
               summary: "Prometheus scrape of stellarindex_api@api1:8080 failing"
               description: |
                 A scrape target has been down for 2+ min. We lose visibility
@@ -393,7 +393,7 @@ tests:
               team: stellarindex
               component: meta
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_notifications_failing
               summary: "AlertManager notifications to discord are failing"
               description: |
                 Alertmanager is attempting delivery and being refused
@@ -435,7 +435,7 @@ tests:
               team: stellarindex
               component: meta
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_optional_receiver_dark
               summary: "Alertmanager optional receiver delivery-failure delivers to nobody"
               description: |
                 configs/alertmanager/apply.sh last installed receiver

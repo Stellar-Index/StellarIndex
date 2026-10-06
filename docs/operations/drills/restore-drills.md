@@ -36,8 +36,8 @@ ssh root@136.243.90.96 'grep -c "^## " /var/lib/stellarindex/restore-drills/rest
 
 Schedule: `restore-drill.timer` (repo1, first Saturday of the month, 04:00 UTC) and `restore-drill-offsite.timer`
 (`DRILL_REPO=2`, the 15th, 04:00 UTC). Freshness is alerted, not read from this file:
-[restore-drill-stale](../runbooks/restore-drill-stale.md), [restore-drill-offsite-stale](../runbooks/restore-drill-offsite-stale.md),
-[restore-drill-failed](../runbooks/restore-drill-failed.md).
+[restore-drill-stale](../runbooks/restore-drill.md#stellarindex_restore_drill_stale), [restore-drill-offsite-stale](../runbooks/restore-drill.md#stellarindex_restore_drill_offsite_stale),
+[restore-drill-failed](../runbooks/restore-drill.md#stellarindex_restore_drill_failed).
 
 ## Procedures this log is evidence for
 

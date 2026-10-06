@@ -123,7 +123,7 @@ alertmanager_discord_webhook_url_informational: ""
 # down) Healthchecks pages us via a separately-hosted channel.
 # Recommended provisioning: a 90-second-grace check on hc-ping.com,
 # accountable to a different runbook (see
-# docs/operations/runbooks/deadmansswitch.md).
+# docs/operations/runbooks/meta.md#stellarindex_deadmansswitch).
 alertmanager_healthchecks_deadmansswitch_url: ""
 
 # Healthchecks.io endpoint for delivery FAILURES — a SECOND check, not

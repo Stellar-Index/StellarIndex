@@ -108,7 +108,7 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # tier's high-water FREEZES at its last certified value and every later
 # run re-walks from there (widening, not skipping). node_exporter's
 # systemd collector raises stellarindex_verify_archive_tier_b_unit_failed
-# (severity: ticket) — runbook docs/operations/runbooks/verify-archive-tier-b.md.
+# (severity: ticket) — runbook docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed.
 Environment=HEAVY_JOB_LOCK_WAIT=72000
 # 75 only reaches this unit from a caller that unsets the wait; kept for
 # the wrapper-wide SuccessExitStatus=75 contract.

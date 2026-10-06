@@ -82,8 +82,8 @@ ssh root@r1 'sudo -u postgres pg_isready -t 5; sudo -u postgres psql -d stellari
 If all three confirm Postgres is down → real incident, proceed to mitigation.
 If only the Prometheus alert fires and `systemctl status` + `psql` say
 healthy → a monitoring-side issue: check `stellarindex_postgres_exporter_down`
-(`rules.r1/meta.yml`, [`exporter-down.md`](exporter-down.md)) and
-`stellarindex_prometheus_scrape_failing` ([`scrape-failing.md`](scrape-failing.md)).
+(`rules.r1/meta.yml`, [`meta.md#stellarindex_redis_exporter_down`](meta.md#stellarindex_redis_exporter_down)) and
+`stellarindex_prometheus_scrape_failing` ([`meta.md#stellarindex_prometheus_scrape_failing`](meta.md#stellarindex_prometheus_scrape_failing)).
 Treat as P3 scrape failure, not P1.
 
 ## Mitigation (≤ 15 min)
@@ -221,7 +221,7 @@ Common root causes observed in similar systems:
   Postgres replication; the older `multi-region-topology.md` §5 is superseded.
 - [`postgres-ping-failing.md`](postgres-ping-failing.md),
   [`db-disk-full.md`](db-disk-full.md), [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h),
-  [`exporter-down.md`](exporter-down.md).
+  [`meta.md#stellarindex_redis_exporter_down`](meta.md#stellarindex_redis_exporter_down).
 - Postmortems: `docs/operations/postmortems/` (none yet; first one goes here).
 
 ## Appendix — undeployed HA design (do not follow on r1)

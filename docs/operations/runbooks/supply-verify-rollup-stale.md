@@ -51,5 +51,5 @@ cat /var/lib/node_exporter/textfile_collector/supply_verify_rollup.prom
 ## Related
 
 - Companion: [supply-verify-rollup-unit-failed](supply-verify-rollup-unit-failed.md).
-- Sibling pattern: [supply-snapshot-stale](supply-snapshot-stale.md),
-  [supply-snapshot-never-initialized](supply-snapshot-never-initialized.md).
+- Sibling pattern: [supply-snapshot-stale](supply-snapshot.md#stellarindex_supply_snapshot_stale),
+  [supply-snapshot-never-initialized](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized).

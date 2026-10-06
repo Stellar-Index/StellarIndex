@@ -59,7 +59,7 @@ const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, whi
 // over the replayed range and fails loudly if it cannot — rather than
 // leaving that as a sentence in a runbook (K006). `-refresh-caggs=false`
 // opts out explicitly and says what it costs. See
-// docs/operations/runbooks/projector-replay.md.
+// docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

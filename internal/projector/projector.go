@@ -582,7 +582,7 @@ func (p *Projector) refreshReplayWindows(ctx context.Context) {
 //     replay recorded while a projected-rebuild window is still pending
 //     widens to the higher `to_ledger` and the flag expires there. That
 //     is a recorded, ratified decision, documented with its operator
-//     remedy in docs/operations/runbooks/projector-replay.md ("clear the
+//     remedy in docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled ("clear the
 //     pending window with a compute-completeness run first if you want
 //     the tighter bound"); this comment previously glossed the bound as
 //     the pre-rewind position unconditionally, which is only true of the

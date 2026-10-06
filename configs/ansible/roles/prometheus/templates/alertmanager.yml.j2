@@ -52,7 +52,7 @@ route:
     # heartbeat stops, Healthchecks pages us via a separately-
     # hosted channel, catching outages of Prometheus or
     # Alertmanager themselves.
-    # See docs/operations/runbooks/deadmansswitch.md.
+    # See docs/operations/runbooks/meta.md#stellarindex_deadmansswitch.
     - matchers: [alertname = "stellarindex_deadmansswitch"]
       receiver: deadmansswitch
       group_interval: 60s
@@ -194,7 +194,7 @@ receivers:
   # carry two meanings ("Prometheus or Alertmanager is dead" and "chat
   # delivery is being refused") and send the operator to the wrong
   # runbook. Provision a separate check — see
-  # docs/operations/runbooks/alertmanager-notifications-failing.md.
+  # docs/operations/runbooks/meta.md#stellarindex_alertmanager_notifications_failing.
   #
   # Dark until that check exists: with the variable unset this renders
   # as a stub. That is why the route above carries `continue: true` —

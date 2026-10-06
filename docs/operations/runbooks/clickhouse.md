@@ -72,7 +72,7 @@ If Prometheus has no `clickhouse` job (`curl -s http://127.0.0.1:9090/api/v1/tar
 **B. Server actually down**
 
 - [ ] `systemctl start clickhouse-server`; read the journal for the refusal (bad `config.d` drop-in, full pool, corrupt part).
-- [ ] Expect ingest gaps for the outage window. `ch-live-catchup.timer` is the only thing that heals a Tier-1 hole; confirm it runs and that `ContiguousWatermark` resumes climbing, or the projector stays clamped ([projector-lag](projector-lag.md)).
+- [ ] Expect ingest gaps for the outage window. `ch-live-catchup.timer` is the only thing that heals a Tier-1 hole; confirm it runs and that `ContiguousWatermark` resumes climbing, or the projector stays clamped ([projector-lag](projector.md#stellarindex_projector_lag_high)).
 
 False positive: a deliberate ClickHouse restart (version upgrade, an `si-*.xml` change that needs one). Silence for the window rather than removing the alert.
 
@@ -99,6 +99,6 @@ False positive: during a bulk `ch-backfill` (writes far faster than live ingest)
 ## Related
 
 - [ch-schema-restore](ch-schema-restore.md): the lake's schema+state backup, and the other ClickHouse alert family.
-- [exporter-down](exporter-down.md): the same blindness pattern for exporters that run as separate processes.
-- [projector-lag](projector-lag.md): what an unhealed lake gap does to the CH-fed projector.
+- [exporter-down](meta.md#stellarindex_redis_exporter_down): the same blindness pattern for exporters that run as separate processes.
+- [projector-lag](projector.md#stellarindex_projector_lag_high): what an unhealed lake gap does to the CH-fed projector.
 - ADR-0034 (raw lake / served tier), ADR-0048 D4 (serving-query settings profile).

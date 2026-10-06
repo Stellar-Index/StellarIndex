@@ -109,7 +109,7 @@ severity: P1
   `chunk_idx`; the textfile aggregates that away because a chunk
   index is a per-run worker slot with no cross-run meaning.
 - The same event ALSO trips
-  [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md)
+  [`verify-archive.md#stellarindex_verify_archive_unit_failed`](verify-archive.md#stellarindex_verify_archive_unit_failed)
   (severity ticket) — a mismatch aborts the run non-zero. Expect
   both; this page is the one to work.
 
@@ -293,9 +293,9 @@ always real. But:
 
 ## Related
 
-- `verify-archive-unit-failed.md` — the ticket-severity sibling a
+- `verify-archive.md#stellarindex_verify_archive_unit_failed` — the ticket-severity sibling a
   mismatch also trips (the run exits non-zero).
-- `verify-archive-run-stale.md` — the timer-staleness sibling.
+- `verify-archive.md#stellarindex_verify_archive_run_stale` — the timer-staleness sibling.
 - `archive-publish.md` — when we fail to publish at all
   (Phase-3; inert everywhere today).
 - ADR-0004 (three-validator aspiration + independent archives).

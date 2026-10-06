@@ -34,12 +34,12 @@ check "first Runbook link differing from runbook_url is rejected" red "$TMP" \
   "stellarindex_slo_latency_burn_fast: catalogue Runbook column links 'runbooks/slo-latency-burn-fast.md' first"
 
 # A per-alert supplement AFTER the primary link is allowed.
-sed -E '/^\| .stellarindex_projector_lag_high. /s#\[projector-lag\]\(runbooks/projector-lag\.md\) \|$#[projector-lag](runbooks/projector-lag.md) + see [projector-replay](runbooks/projector-replay.md) |#' \
+sed -E '/^\| .stellarindex_projector_lag_high. /s#\[projector-lag\]\(runbooks/projector\.md\#stellarindex_projector_lag_high\) \|$#[projector-lag](runbooks/projector.md\#stellarindex_projector_lag_high) + see [projector-replay](runbooks/projector.md\#stellarindex_projector_replay_stalled) |#' \
   "$CATALOG" >"$TMP"
 check "supplement link after the primary is accepted" ok "$TMP"
 
 # A Runbook cell with no link at all cannot be checked, so it fails.
-sed -E '/^\| .stellarindex_projector_lag_high. /s#\[projector-lag\]\(runbooks/projector-lag\.md\) \|$#projector-lag |#' \
+sed -E '/^\| .stellarindex_projector_lag_high. /s#\[projector-lag\]\(runbooks/projector\.md\#stellarindex_projector_lag_high\) \|$#projector-lag |#' \
   "$CATALOG" >"$TMP"
 check "Runbook cell with no link is rejected" red "$TMP" \
   "stellarindex_projector_lag_high: catalogue Runbook column links None first"
