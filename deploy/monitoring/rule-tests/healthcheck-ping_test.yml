@@ -48,7 +48,7 @@ tests:
               component: observability
               check: api
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/healthcheck-ping.md#stellarindex_healthcheck_ping_undelivered
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_healthcheck_ping_undelivered
               summary: "check api could not deliver its Healthchecks.io ping for ≥ 15m — a 'down' email for it would be about egress, not the service"
               description: |
                 `hc_ping` has failed to reach Healthchecks.io for the

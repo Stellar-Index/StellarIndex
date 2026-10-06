@@ -52,7 +52,7 @@ GROUP BY 1 ORDER BY 1;
 
 **Fix:**
 - Buckets missing, trades present: `CALL refresh_continuous_aggregate('prices_1m', '<from>', '<to>');`. The next baseline refresh restores density and the cap releases on the following confidence compute.
-- Trades missing: repair ingestion first (`all-ingestion-down.md` or `source-stopped.md`), then refresh as above.
+- Trades missing: repair ingestion first (`ingestion.md#stellarindex_ingestion_all_sources_stopped` or `ingestion.md#stellarindex_ingestion_source_stopped`), then refresh as above.
 - Gap unrepairable: the cap stays until the gap leaves the 30-day window; record the expected release date in the ticket.
 
 **False positive:** three thin pairs hovering at the gate flipping in the same hour; per-day bucket counts show no common short day.
@@ -67,7 +67,7 @@ GROUP BY 1 ORDER BY 1;
 
 **Impact:** VWAP cache writes fail, so `/v1/price` on rewritten/triangulated/stablecoin-proxy pairs 404s (`price-not-found`) because the cache key was never written. Pairs served from `prices_1m` directly still work. `flags.stale` does NOT fire (aggregator is running, it just cannot write).
 
-**Most common cause:** root FS full, so Redis cannot write RDB snapshots and, with the default `stop-writes-on-bgsave-error yes`, refuses all writes (MISCONF). Aggregator log shows WARN `refresh failed` every tick with `err: "redis set vwap:...: MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk..."`. Companion to [`db-disk-full.md`](db-disk-full.md).
+**Most common cause:** root FS full, so Redis cannot write RDB snapshots and, with the default `stop-writes-on-bgsave-error yes`, refuses all writes (MISCONF). Aggregator log shows WARN `refresh failed` every tick with `err: "redis set vwap:...: MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk..."`. Companion to [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full).
 
 **Diagnose (1 min):**
 
@@ -127,13 +127,13 @@ curl -sS "https://api.stellarindex.io/v1/price?asset=native&quote=<USDC-classic-
 # Expect: 200 with observed_at within the last few minutes
 ```
 
-Then address the underlying disk-full state per `db-disk-full.md`.
+Then address the underlying disk-full state per `postgres.md#stellarindex_timescale_disk_full`.
 
 **Design note:** Redis is a cache only (all values reproducible from `trades`), so `stop-writes-on-bgsave-error no` (`CONFIG SET`) is an available trade-off (loses durability across restarts, aggregator keeps serving). The default `yes` is kept so an incident surfaces loudly.
 
 **Prevention (in place):** root-FS alerts `stellarindex_node_root_disk_warning` (< 20% avail), `_full` (< 10%), `_filling_fast` (predict_linear) in `storage.yml`; logrotate/journald caps in `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml` (syslog `maxsize 100M`, 7 gzip rotations, journald `SystemMaxUse=500M`); wasm-audit walks write under `/var/log/wasm-audit/` ([`../wasm-audits/README.md`](../wasm-audits/README.md) §2).
 
-**See also:** [`db-disk-full.md`](db-disk-full.md); [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down) (process exited); [`cache.md#stellarindex_redis_memory_saturated`](cache.md#stellarindex_redis_memory_saturated) (`stellarindex_redis_write_rejected_oom`, a different mechanism); [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed); `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md` (customer-facing post-mortem).
+**See also:** [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full); [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down) (process exited); [`cache.md#stellarindex_redis_memory_saturated`](cache.md#stellarindex_redis_memory_saturated) (`stellarindex_redis_write_rejected_oom`, a different mechanism); [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed); `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md` (customer-facing post-mortem).
 
 ## stellarindex_aggregator_class_drop_spike
 

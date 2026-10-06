@@ -63,7 +63,7 @@ done
 - **Means:** the probe crashed before writing its textfile or `stellarindex-binary-version-probe.timer` stopped firing; node_exporter keeps serving the last values, so `_skew` and `_probe_degraded` cannot detect drift or their own absence.
 - **Diagnose/fix:** `systemctl status stellarindex-binary-version-probe.timer` on the host; `systemctl start stellarindex-binary-version-probe.service` and check the journal and that `/var/lib/node_exporter/textfile_collector/stellarindex_binary_version.prom` is rewritten and mode 0644 (node_exporter runs unprivileged and skips unreadable files). If the unit is missing, the `observability` tag of `configs/ansible/roles/archival-node/tasks/10-observability.yml` has not been applied.
 
-Related: [stellar-stack-version-lag](stellar-stack-version-lag.md) (third-party core/galexie/archivist probe).
+Related: [stellar-stack-version-lag](stellar-node.md#stellar-stack-version-lag) (third-party core/galexie/archivist probe).
 
 ## Related
 

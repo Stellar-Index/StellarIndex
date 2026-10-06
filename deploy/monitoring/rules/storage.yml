@@ -145,7 +145,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#lock-table-pressure-stellarindex_timescale_lock_table_pressure
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_lock_table_pressure
           summary: "Postgres lock-table > 70% saturated (P3)"
           description: |
             Lock-table utilisation is {{ $value | humanizePercentage }}.
@@ -166,7 +166,7 @@ groups:
           component: storage
           alert_family: timescale_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_disk_full
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
           description: |
             Postgres data volume on {{ $labels.instance }} has < 10 % free.
@@ -183,7 +183,7 @@ groups:
           component: storage
           alert_family: timescale_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_disk_full
           summary: "Postgres disk {{ $value | humanize }}% free"
           description: |
             Postgres data volume on {{ $labels.instance }} under 20 %. Plan
@@ -208,7 +208,7 @@ groups:
           component: storage
           alert_family: node_root_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_full
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_full
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
             Root FS (/) under 10 % free on {{ $labels.instance }}.
@@ -234,7 +234,7 @@ groups:
           component: storage
           alert_family: node_root_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_warning
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_warning
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
             Root FS (/) under 20 % on {{ $labels.instance }}.
@@ -262,7 +262,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_filling_fast
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_filling_fast
           summary: "Root filesystem on {{ $labels.instance }} trending to FULL within 30 min"
           description: |
             Root FS (/) on {{ $labels.instance }} is filling fast enough
@@ -798,7 +798,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-lock-convoy.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pg_lock_convoy
           summary: "Postgres lock convoy: a backend has waited {{ $value | humanizeDuration }} behind a blocker that is itself blocked"
           description: |
             {{ $value | humanizeDuration }} is the longest wait among the

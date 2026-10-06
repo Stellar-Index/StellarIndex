@@ -51,13 +51,13 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
               summary: "Source binance has stopped ingesting"
               description: |
                 No events from source binance in the last 30 minutes,
                 sustained for ≥ 15 min. The source is configured
                 as enabled in ingestion.enabled_sources.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
   # ── near-threshold: a still-flowing source stays silent ───────────
   - interval: 1m
@@ -121,13 +121,13 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
               summary: "Low-volume Soroban DEX phoenix silent 24+ hours"
               description: |
                 For low-volume Soroban DEXes this is unusual but not
                 necessarily an outage — check the contract on
                 stellar.expert before paging the indexer team.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
   # ── near-threshold: one event inside the 24h window silences it ───
   - interval: 1m
@@ -162,12 +162,12 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
               summary: "Daily publisher ecb silent 30+ hours"
               description: |
                 ECB publishes daily. 30h gives a one-day buffer plus
                 ample slack for upstream cadence variation.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
   # ── near-threshold: one relay push inside the window silences it ──
   - interval: 1m
@@ -203,12 +203,12 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
               summary: "Hourly publisher band silent 6+ hours"
               description: |
                 No events from band in 6+ hours. Band relays
                 hourly, so this is six missed relays, not a quiet day.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
       - eval_time: 420m
         alertname: stellarindex_ingestion_source_stopped_daily_publisher
         exp_alerts: []
@@ -260,13 +260,13 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
               summary: "Source binance has stopped ingesting"
               description: |
                 No events from source binance in the last 30 minutes,
                 sustained for ≥ 15 min. The source is configured
                 as enabled in ingestion.enabled_sources.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
       - eval_time: 45m
         alertname: stellarindex_ingestion_source_stopped_low_volume_dex
         exp_alerts: []
@@ -357,13 +357,13 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
               summary: "All ingestion sources have stopped (SEV-1)"
               description: |
                 No events from any source in the last 3 minutes. API data will go
                 stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
                 or shared storage (Timescale) before restarting the indexer.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
 
   # ── firing: the indexer PROCESS DIED, so the series VANISHES ──────
   # The case above uses a flat counter — a source that stalled while the
@@ -393,13 +393,13 @@ tests:
               component: ingestion
               alert_family: ingestion_source_stopped
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
               summary: "All ingestion sources have stopped (SEV-1)"
               description: |
                 No events from any source in the last 3 minutes. API data will go
                 stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
                 or shared storage (Timescale) before restarting the indexer.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
 
   # ── guard: ONE living source keeps the fleet-wide sum non-zero ────
   - interval: 1m
@@ -646,7 +646,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decode-errors.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_decode_error
               summary: "Decode errors on sdex at 2/sec"
               description: |
                 Source sdex failed to decode > 1 event/sec for 5+
@@ -681,7 +681,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_discovery_drops
               summary: "Discovery sink is dropping hits"
               description: |
                 The SEP-41 discovery sink dropped at least one hit in the last
@@ -804,7 +804,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_discovery_drops
               summary: "Discovery recorder writes are failing"
               description: |
                 The discovery async sink's Recorder.Record write failed at
@@ -815,7 +815,7 @@ tests:
                 later event), so this is a coverage-degradation signal, not
                 data loss.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_discovery_drops
 
   - interval: 1m
     name: a flat discovery-record-failure counter raises nothing
@@ -847,7 +847,7 @@ tests:
               component: ingestion
               alert_family: ingestion_ch_live_sink_drops
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_drops
               summary: "ClickHouse live-sink is dropping ledger extracts"
               description: |
                 The real-time CH dual-sink dropped at least one whole ledger
@@ -889,7 +889,7 @@ tests:
               component: ingestion
               alert_family: ingestion_ch_live_sink_drops
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_drops
               summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
               description: |
                 Ledger extracts have been dropping continuously for an hour.
@@ -1612,7 +1612,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_errors
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_errors
               summary: "ClickHouse live-sink is erroring on ledger extracts"
               description: |
                 stellarindex_ch_live_sink_ledgers_total{outcome="errored"}
@@ -1695,7 +1695,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_read_undercount
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_read_undercount
               summary: "Indexer read path could not fully decode ledgers (tx_event_read_errors)"
               description: |
                 stellarindex_ch_live_sink_read_undercount_total{kind="tx_event_read_errors"}

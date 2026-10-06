@@ -143,7 +143,7 @@ do
 done'
 ```
 
-Most of the chain `200` and few checkpoints missing: a per-checkpoint 404 the chain did not resolve last pass; do step 1. Whole chain unreachable: egress/DNS incident on the host, not an archive incident; triage [host-down](infra.md#stellarindex_host_down) / [all-ingestion-down](all-ingestion-down.md) first, the next daily run refills on its own.
+Most of the chain `200` and few checkpoints missing: a per-checkpoint 404 the chain did not resolve last pass; do step 1. Whole chain unreachable: egress/DNS incident on the host, not an archive incident; triage [host-down](infra.md#stellarindex_host_down) / [all-ingestion-down](ingestion.md#stellarindex_ingestion_all_sources_stopped) first, the next daily run refills on its own.
 
 **Fix** (15 min)
 
@@ -1018,7 +1018,7 @@ stdout are checked separately.
 - `archive.md#stellarindex_stellar_archive_divergence` — when what we publish differs from
   other validators (much worse than not publishing at all; also
   inert-in-practice today — see its banner).
-- `db-disk-full.md` — staging-dir disk-full variant.
+- `postgres.md#stellarindex_timescale_disk_full` — staging-dir disk-full variant.
 - ADR-0004 (three-validator + independent archives).
 
 **Galexie archive alerts**

@@ -26,7 +26,7 @@
 # the GitHub API call failed/rate-limited. See the probe script's own
 # comments and the runbook's "Known false-positive patterns".
 #
-# Runbook: docs/operations/runbooks/stellar-stack-version-lag.md
+# Runbook: docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
 
 groups:
   - name: stellarindex.stellar_stack_version
@@ -50,7 +50,7 @@ groups:
           component: stellar-stack
           alert_family: "stellar_stack_version_lag/{{ $labels.stack_component }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
           summary: "{{ $labels.stack_component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
           description: |
             The daily stellar-stack-version-probe has found the
@@ -62,7 +62,7 @@ groups:
             also be firing at the same time as that one.) Check
             stellarindex_stellar_stack_installed_info{component="{{ $labels.stack_component }}"}
             for the exact installed version string.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
 
       - alert: stellarindex_stellar_stack_protocol_lag
         # A protocol-major lag is a time bomb with a network-scheduled
@@ -87,7 +87,7 @@ groups:
           component: stellar-stack
           alert_family: "stellar_stack_version_lag/{{ $labels.stack_component }}"
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
           summary: "{{ $labels.stack_component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
           description: |
             The installed {{ $labels.stack_component }} is behind upstream
@@ -97,7 +97,7 @@ groups:
             maintenance window NOW, well before any network protocol-
             activation vote. See the "Remediation" section of the
             runbook for the exact upgrade recipe per component.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
 
       # ── The probe's own health (monitoring of monitoring) ─────────
       #
@@ -158,7 +158,7 @@ groups:
           team: stellarindex
           component: stellar-stack
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
           summary: "stellar-stack version probe is not classifying components"
           description: |
             The daily stellar-stack-version-probe either could not
@@ -195,7 +195,7 @@ groups:
           team: stellarindex
           component: stellar-stack
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
           summary: "stellar-core auto-upgrade to {{ $labels.candidate }} {{ $labels.result }} ({{ $labels.reason }})"
           description: |
             stellar-core-auto-upgrade could not move core from
@@ -219,7 +219,7 @@ groups:
           team: stellarindex
           component: stellar-stack
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
           summary: "stellar-core auto-upgrade has not completed a run in 18h"
           description: |
             stellar-core-auto-upgrade.timer has not completed a run in

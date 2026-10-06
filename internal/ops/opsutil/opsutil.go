@@ -362,7 +362,7 @@ func HistoricReadBucket(cfg config.Config, override string) (string, error) {
 // exactly the ranges these commands exist to serve. The live bucket holds
 // only what galexie has exported since this node started (on r1 it is also
 // the TRIMMED one — see
-// docs/operations/runbooks/consolidated-deploy-plan-2026-07-18.md §4), so a
+// docs/operations/r1-deployment-state.md), so a
 // historic range resolves to zero objects there. Because every ops walker
 // opts into TolerateTrailingMissing (NewBoundedLedgerStreamConfig), that
 // walk ends WITHOUT an error, and the caller records the window as DONE on

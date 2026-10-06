@@ -31,7 +31,7 @@
 #   - Group D: MinIO's native /minio/v2/metrics/cluster bearer token
 #     (INV-0981/INV-1144). No exporter binary — MinIO exposes its
 #     own metrics behind `admin:Prometheus`; provisioning was an
-#     operator hand-step (docs/operations/runbooks/minio-metrics-403.md)
+#     operator hand-step (docs/operations/runbooks/infra.md#minio-metrics-403)
 #     with no ansible task producing it, so a rebuilt or rotated host
 #     silently shipped a missing/empty `/etc/prometheus/minio.token`
 #     and every MinIO-dependent alert went blind.
@@ -330,7 +330,7 @@
 
 # ── Group D: MinIO Prometheus bearer token ─────────────────────
 #
-# Procedure per docs/operations/runbooks/minio-metrics-403.md: a
+# Procedure per docs/operations/runbooks/infra.md#minio-metrics-403: a
 # dedicated `prometheus-read` policy scoped to `admin:Prometheus`
 # only, then a service account under MinIO root carrying that
 # policy — `mc admin user svcacct add` prints the generated secret

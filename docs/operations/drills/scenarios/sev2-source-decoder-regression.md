@@ -3,13 +3,13 @@ title: SEV-2 tabletop — Source decoder regression after protocol upgrade
 last_verified: 2026-10-05
 status: ratified
 severity: P2
-exercises_runbook: ../../runbooks/decode-errors.md
+exercises_runbook: ../../runbooks/ingestion.md#stellarindex_ingestion_decode_error
 playbook_section: ../../sev-playbook.md#4-response-flow
 ---
 
 # SEV-2 tabletop — Source decoder regression
 
-~30 min, 3 people. Exercises [`decode-errors.md`](../../runbooks/decode-errors.md), [`source-stopped.md`](../../runbooks/source-stopped.md) and the SEV-2 path of
+~30 min, 3 people. Exercises [`decode-errors.md`](../../runbooks/ingestion.md#stellarindex_ingestion_decode_error), [`source-stopped.md`](../../runbooks/ingestion.md#stellarindex_ingestion_source_stopped) and the SEV-2 path of
 [SEV playbook §4](../../sev-playbook.md). Less catastrophic than the SEV-1 scripts: it tests detection latency and triage discipline.
 
 ## Setup and trigger
@@ -41,7 +41,7 @@ All sources healthy (`stellarindex_source_events_total` within ±20% of baseline
   ship via the normal release process. Tell customers affected pairs may show elevated `flags.divergence_warning` while soroswap is out; price still served from the other sources.
 - **After the fix, recover the gap:** soroswap is a projected source, so rewind the projector, never a bespoke backfill:
   `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source soroswap -from <protocol-25-activation-ledger> -write`
-  (see [decode-errors.md](../../runbooks/decode-errors.md)). Triangulated rates recompute on the next aggregator tick.
+  (see [decode-errors.md](../../runbooks/ingestion.md#stellarindex_ingestion_decode_error)). Triangulated rates recompute on the next aggregator tick.
 
 ## Pass criteria
 

@@ -198,7 +198,7 @@ func TestExecUnderBoundedLockWait_GivesUpNamingTheConvoy(t *testing.T) {
 	if !isLockNotAvailable(err) {
 		t.Errorf("err = %v, want it to still wrap the 55P03 so callers can classify it", err)
 	}
-	for _, want := range []string{"gave up on the chunk's locks", "refused before any work", "pg_blocking_pids()", "runbooks/pg-lock-convoy.md"} {
+	for _, want := range []string{"gave up on the chunk's locks", "refused before any work", "pg_blocking_pids()", "runbooks/postgres.md"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want containing %q", err, want)
 		}

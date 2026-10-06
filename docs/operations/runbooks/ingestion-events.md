@@ -13,7 +13,7 @@ Ingestion event-quality alerts: orphan events, oracle symbols, uncorroborated ca
 
 - [`stellarindex_ingestion_orphan_events`](#stellarindex_ingestion_orphan_events)
 - [`stellarindex_ingestion_oracle_unknown_symbols`](#stellarindex_ingestion_oracle_unknown_symbols)
-- [`stellarindex_ingestion_oracle_unrepresentable_symbols`](#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols)
+- [`stellarindex_ingestion_oracle_unrepresentable_symbols`](#stellarindex_ingestion_oracle_unrepresentable_symbols)
 - [`stellarindex_ingestion_uncorroborated_calls`](#stellarindex_ingestion_uncorroborated_calls)
 
 ## stellarindex_ingestion_orphan_events
@@ -143,7 +143,7 @@ Read the alertname before anything else.
 | Severity | `informational` (quiet channel) | `ticket` |
 | Emitters | `reflector`, `redstone`, `band` | `redstone` only, in practice |
 
-Everything down to "Sibling alert" below is about `unknown_symbols`.
+Everything down to the `stellarindex_ingestion_oracle_unrepresentable_symbols` heading below is about `unknown_symbols`.
 
 ### Why `unknown_symbols` is informational, not a ticket
 
@@ -205,7 +205,7 @@ severity.
   (`ErrEmptyPrices` / `ErrEmptyUpdates` / `ErrEmptyRates`). Since
   capture-totality an all-unknown batch no longer lands there, so a
   co-firing decode-error alert is now a *different* cause — see
-  [decode-errors](decode-errors.md).
+  [decode-errors](ingestion.md#stellarindex_ingestion_decode_error).
 
 **There is no log line to grep.** Verified at HEAD: none of the three
 oracle decoders logs on the unmapped-symbol branch — they increment
@@ -258,7 +258,7 @@ sibling section.)
    the raw code. Decide the variant: fiat (ADR-0010), crypto
    (ADR-0014), RWA (ADR-0028). Many *different* symbols appearing on
    one event is a different problem — the oracle changed its schema;
-   treat as a decoder regression ([decode-errors](decode-errors.md)).
+   treat as a decoder regression ([decode-errors](ingestion.md#stellarindex_ingestion_decode_error)).
 
 ### Mitigation
 
@@ -309,7 +309,7 @@ wait for a convenient moment.
 - [ ] Verification: `increase(stellarindex_source_unknown_symbols_total{source="<src>"}[1h]) == 0`,
       and the `asset LIKE 'raw:%'` count for that symbol is 0.
 
-### Sibling alert — `stellarindex_ingestion_oracle_unrepresentable_symbols`
+### stellarindex_ingestion_oracle_unrepresentable_symbols
 
 One rung worse, and still a `ticket`.
 `stellarindex_source_unknown_symbols_total` means the slot **was
@@ -485,8 +485,8 @@ For the postmortem, gather:
 
 **stellarindex_ingestion_orphan_events**
 
-- `source-stopped.md` — adjacent alert for the "no events at all" case.
-- `decode-errors.md` — different failure mode (events arrive but don't parse).
+- `ingestion.md#stellarindex_ingestion_source_stopped` — adjacent alert for the "no events at all" case.
+- `ingestion.md#stellarindex_ingestion_decode_error` — different failure mode (events arrive but don't parse).
 - `internal/sources/soroswap/consumer.go` — correlation buffer + age eviction.
 - `internal/sources/phoenix/consumer.go` — same, for the 8-field fan-in.
 
@@ -503,7 +503,7 @@ For the postmortem, gather:
 - Design: `docs/design/oracle-capture-totality-design.md`; the
   `canonical.AssetOracleRaw` variant in `internal/canonical/asset_raw.go`.
 - Companion runbook (whole-event decode failures, a *different* cause
-  since capture-totality): [decode-errors](decode-errors.md).
+  since capture-totality): [decode-errors](ingestion.md#stellarindex_ingestion_decode_error).
 - Companion runbook (a stored row whose asset text will not parse on
   read): [oracle-stream-rows-unparsed](divergence.md#stellarindex_oracle_stream_rows_unparsed).
 - Feed registries: ADR-0010 (fiat), ADR-0014 (crypto), ADR-0028 (RWA);
@@ -511,7 +511,7 @@ For the postmortem, gather:
 
 **stellarindex_ingestion_uncorroborated_calls**
 
-- `dispatcher-tx-skips.md` — the sibling dispatcher-level tripwire for
+- `ingestion.md#stellarindex_ingestion_dispatcher_tx_skips` — the sibling dispatcher-level tripwire for
   whole-transaction skips; this one is per-source and oracle-specific.
 - ADR-0035 (contract-identity gating) — why a shared topic across
   deployments can't be trusted alone, the same class of assumption

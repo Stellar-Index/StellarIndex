@@ -387,7 +387,7 @@ type lockRetry struct {
 
 func (r *lockRetry) giveUp(why string, err error) error {
 	return fmt.Errorf("gave up on the chunk's locks (%s) %s; %s per request, %s between attempts: something else holds a "+
-		"conflicting lock — identify it with pg_blocking_pids() and see docs/operations/runbooks/pg-lock-convoy.md: %w",
+		"conflicting lock — identify it with pg_blocking_pids() and see docs/operations/runbooks/postgres.md: %w",
 		why, &r.t, r.p.wait, r.p.drain, err)
 }
 

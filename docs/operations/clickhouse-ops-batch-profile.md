@@ -69,7 +69,7 @@ Three launch paths reach that file:
   the path that matters: the heavy-job runbooks
   ([sep41-mint-recovery](sep41-mint-recovery.md),
   [usd-volume-rederive](usd-volume-rederive-2026-08.md),
-  [fx-history-missing](runbooks/fx-history-missing.md),
+  [fx-history-missing](runbooks/data-freshness.md#fx-history-missing),
   [lcm-cache-tiering](lcm-cache-tiering.md)) source
   `/etc/default/stellarindex`, not `-ops`. Every launch prints one stderr
   line naming the identity, or `WARNING ... CH 'default' user at SERVING

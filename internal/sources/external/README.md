@@ -92,7 +92,7 @@ override, which keeps the config surface narrow.
 Every external connector contributes to the same
 `stellarindex_source_decode_errors_total{source="<venue>"}`
 counter family as the on-chain decoders. The
-[`decode-errors`](../../../docs/operations/runbooks/decode-errors.md)
+[`decode-errors`](../../../docs/operations/runbooks/ingestion.md)
 runbook covers the response. Sustained > 1/s sustained 5 min
 across any single source pages P3.
 
