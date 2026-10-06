@@ -51,3 +51,28 @@ func TestUsageBodyCoversEverySubcommand(t *testing.T) {
 			len(missing), strings.Join(missing, ", "))
 	}
 }
+
+// TestUsageBodyListsOnlyRealSubcommands is the other half of the parity
+// check: an entry-column line in usageBody naming a command that is neither
+// dispatchable nor a built-in is a stale help entry (a renamed or deleted
+// subcommand still advertised).
+func TestUsageBodyListsOnlyRealSubcommands(t *testing.T) {
+	builtin := map[string]bool{"version": true, "help": true}
+	var stale []string
+	for _, ln := range strings.Split(usageBody, "\n") {
+		if len(ln) < 3 || ln[0] != ' ' || ln[1] != ' ' || ln[2] == ' ' {
+			continue
+		}
+		name := strings.Fields(ln)[0]
+		if _, ok := subcommands[name]; ok || builtin[name] || name == "stellarindex-ops" || strings.HasSuffix(name, ":") {
+			continue
+		}
+		if !strings.HasPrefix(name, "-") && !strings.ContainsAny(name, "[](){}<>=") {
+			stale = append(stale, name)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Fatalf("usageBody advertises %d name(s) that are not dispatchable: %s", len(stale), strings.Join(stale, ", "))
+	}
+}

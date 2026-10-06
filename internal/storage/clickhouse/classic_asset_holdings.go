@@ -113,6 +113,27 @@ const trustlineAssetsPageQuery = `
 	 ORDER BY asset
 	 LIMIT ?`
 
+// trustlineAssetCountQuery counts the population the page walk enumerates;
+// its predicates MUST match [trustlineAssetsPageQuery].
+const trustlineAssetCountQuery = `
+	SELECT uniqExact(asset)
+	  FROM stellar.ledger_entries_current
+	 WHERE entry_type = 'trustline'
+	   AND asset != ''
+	   AND asset != 'native'
+	   AND asset NOT LIKE 'pool:%'
+	   AND asset != 'pool'`
+
+// CountTrustlineAssets returns how many distinct classic assets the walk
+// would enumerate end to end.
+func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, error) {
+	var n uint64
+	if err := h.conn.QueryRow(ctx, trustlineAssetCountQuery).Scan(&n); err != nil {
+		return 0, fmt.Errorf("clickhouse: count trustline assets: %w", err)
+	}
+	return int64(n), nil //nolint:gosec // a distinct-asset count cannot approach 2^63
+}
+
 // TrustlineAssetsAfter returns up to `limit` distinct classic assets whose
 // asset string sorts strictly after `after`, in ascending asset order.
 //

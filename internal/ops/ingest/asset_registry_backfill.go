@@ -62,6 +62,7 @@ const assetRegistryLogEvery = 25000
 // satisfies it.
 type assetRegistryScanner interface {
 	TrustlineAssetsAfter(ctx context.Context, after string, limit int) ([]clickhouse.TrustlineAssetSeed, error)
+	CountTrustlineAssets(ctx context.Context) (int64, error)
 }
 
 // assetRegistryStore is the served-tier seam — timescale.Store satisfies
@@ -231,7 +232,7 @@ func runAssetRegistryBackfill(
 	}
 	_, _ = fmt.Fprintf(o.out, "asset-registry-backfill: registry before — %s\n", describeRegistryStats(before))
 
-	if perr := assetRegistryPreflight(ctx, o, before); perr != nil {
+	if perr := assetRegistryPreflight(ctx, o, scanner, before); perr != nil {
 		return perr
 	}
 
@@ -455,16 +456,18 @@ func assetRegistryWritePage(
 // available is a WARNING here rather than a refusal — unlike the chunk
 // restamp, whose failure mode is a half-decompressed 160 GB chunk, the
 // worst this job can do to a full volume is fail an INSERT.
-func assetRegistryPreflight(ctx context.Context, o assetRegistryOpts, before timescale.ClassicAssetRegistryStats) error {
+func assetRegistryPreflight(ctx context.Context, o assetRegistryOpts, scanner assetRegistryScanner, before timescale.ClassicAssetRegistryStats) error {
 	if o.dryRun {
 		return nil
 	}
-	// The population the walk can add is bounded by the lake's asset count,
-	// which this job does not know before it starts. Size the guard on the
-	// measured gap instead — 512,496 in the lake against what is registered
-	// now — and let the generous per-asset figure absorb the error.
-	const lakeClassicAssets = 512496
-	pending := int64(lakeClassicAssets) - before.Total
+	// The population the walk can add is bounded by the lake's asset count;
+	// measure it now rather than trusting a constant that goes stale as the
+	// lake grows. Without it the guard has no denominator, so refuse.
+	lakeAssets, err := scanner.CountTrustlineAssets(ctx)
+	if err != nil {
+		return fmt.Errorf("asset-registry-backfill: pre-flight cannot size the run: %w", err)
+	}
+	pending := lakeAssets - before.Total
 	if pending < 0 {
 		pending = 0
 	}

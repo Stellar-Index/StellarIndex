@@ -30,6 +30,18 @@ type stubScanner struct {
 	askedAfter []string
 	askedLimit []int
 	err        error
+	count      int64 // CountTrustlineAssets result; 0 = len(assets)
+	countErr   error
+}
+
+func (s *stubScanner) CountTrustlineAssets(context.Context) (int64, error) {
+	if s.countErr != nil {
+		return 0, s.countErr
+	}
+	if s.count > 0 {
+		return s.count, nil
+	}
+	return int64(len(s.assets)), nil
 }
 
 func (s *stubScanner) TrustlineAssetsAfter(_ context.Context, after string, limit int) ([]clickhouse.TrustlineAssetSeed, error) {
@@ -321,7 +333,7 @@ func TestAssetRegistryPreflight_RefusesWhenTheVolumeCannotHoldTheWrite(t *testin
 	var out bytes.Buffer
 	o := testOpts(&out)
 	o.freeBytes = func(string) (uint64, error) { return 1 << 20, nil } // 1 MiB
-	err := assetRegistryPreflight(context.Background(), o, timescale.ClassicAssetRegistryStats{Total: 199793})
+	err := assetRegistryPreflight(context.Background(), o, &stubScanner{count: 512496}, timescale.ClassicAssetRegistryStats{Total: 199793})
 	if err == nil {
 		t.Fatal("pre-flight allowed a run onto a volume with 1 MiB free")
 	}
@@ -338,10 +350,36 @@ func TestAssetRegistryPreflight_TrustsTheOverrideLoudly(t *testing.T) {
 	o := testOpts(&out)
 	o.minFreeBytes = 1 << 40
 	o.freeBytes = func(string) (uint64, error) { t.Fatal("override must not measure"); return 0, nil }
-	if err := assetRegistryPreflight(context.Background(), o, timescale.ClassicAssetRegistryStats{Total: 199793}); err != nil {
+	if err := assetRegistryPreflight(context.Background(), o, &stubScanner{count: 512496}, timescale.ClassicAssetRegistryStats{Total: 199793}); err != nil {
 		t.Fatalf("pre-flight refused a 1 TiB assertion: %v", err)
 	}
 	if !strings.Contains(out.String(), "NOT measured") {
 		t.Errorf("override did not warn that nothing was measured:\n%s", out.String())
+	}
+}
+
+// TestAssetRegistryPreflight_SizesFromTheLakeCount — the denominator is the
+// measured lake population, so a grown lake raises the estimated need.
+func TestAssetRegistryPreflight_SizesFromTheLakeCount(t *testing.T) {
+	var out bytes.Buffer
+	o := testOpts(&out)
+	o.freeBytes = func(string) (uint64, error) { return 1 << 40, nil }
+	before := timescale.ClassicAssetRegistryStats{Total: 1000}
+	if err := assetRegistryPreflight(context.Background(), o, &stubScanner{count: 3000}, before); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "~2000 new rows") {
+		t.Errorf("pending rows not derived from lake count 3000 - 1000:\n%s", out.String())
+	}
+}
+
+// TestAssetRegistryPreflight_RefusesWhenTheLakeCannotBeCounted — no
+// denominator, no guess.
+func TestAssetRegistryPreflight_RefusesWhenTheLakeCannotBeCounted(t *testing.T) {
+	var out bytes.Buffer
+	o := testOpts(&out)
+	err := assetRegistryPreflight(context.Background(), o, &stubScanner{countErr: errors.New("ch down")}, timescale.ClassicAssetRegistryStats{})
+	if err == nil || !strings.Contains(err.Error(), "cannot size the run") {
+		t.Fatalf("want a sizing refusal, got %v", err)
 	}
 }
