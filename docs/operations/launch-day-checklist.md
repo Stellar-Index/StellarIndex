@@ -6,7 +6,7 @@ status: operator runbook
 
 # Launch-day operator checklist
 
-> **SUPERSEDED by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8** ([pre-cut lines 4610-4636](https://github.com/Stellar-Index/StellarIndex/blob/52aacb972a5be5fe65e9d608227e8fe06dfe7fe2/docs/operations/v1-launch-plan.md#L4610-L4636)). The public-flip
+> **SUPERSEDED by [`v1-launch-plan.md`](v1-launch-plan.md#1-launch-sequence-and-gate-rationale)** ([pre-cut §2.8, lines 4610-4636](https://github.com/Stellar-Index/StellarIndex/blob/52aacb972a5be5fe65e9d608227e8fe06dfe7fe2/docs/operations/v1-launch-plan.md#L4610-L4636)). The public-flip
 > steps here already happened (2026-07-03, differently) and the CalVer tag format
 > is wrong (we use SemVer). The still-live content (`apikey_optional` warning,
 > F-0100 counter-presence check, first-24h watch) is carried in the new plan.
@@ -40,7 +40,7 @@ from private staging to production.
 
 Struck so the T-1 "all boxes ticked" rule can be met: the public-flip dry-run (repo
 already public, no orphan-branch cut to rehearse) and the customer demo (L6.6 maps
-to W6.7 announcement copy in `v1-launch-plan.md`; no customers at the 1.0 cut).
+to W6.7 announcement copy (INV-0873, see `v1-launch-plan.md`); no customers at the 1.0 cut).
 
 ## T-1 day — go/no-go
 

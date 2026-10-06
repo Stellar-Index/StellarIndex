@@ -20,8 +20,8 @@ severity: launch-blocking
 **Today alerts route to nobody.** Alertmanager evaluates rules correctly
 and accumulates firing alerts in its UI, but every fanout receiver is a
 no-op stub because no webhook URLs are set. The first-24h launch watch
-would be blind. This is the v1 launch plan's §1 "Launch mechanics" gate
-and §3 register item 2b.
+would be blind. This is the v1 launch plan's paging gate (INV-0841, in its
+"Go-live gate" table).
 
 Everything below is operator-only: it needs accounts and secrets that
 are deliberately not in the repo. All of it is reversible.
@@ -136,6 +136,6 @@ the failure mode nothing else can see.
   `apply.sh` validation fails or Alertmanager refuses to reload.
 - [../sev-playbook.md](../sev-playbook.md) — what to do once a page
   actually reaches you.
-- [../v1-launch-plan.md](../v1-launch-plan.md) — §1 "Launch mechanics"
-  gate and §3 register item 2b, which this runbook closes.
+- [../v1-launch-plan.md](../v1-launch-plan.md) — the "Go-live gate" table
+  (paging and SEV drill row), which this runbook closes.
 - `configs/alertmanager/README.md` — receiver/severity routing design.

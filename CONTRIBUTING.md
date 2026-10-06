@@ -129,7 +129,7 @@ branch for a day (#255).
    finding.** Run all of:
    - `gh pr list --state all --search "<alert name or symptom keywords>"`
    - `git branch -r | grep -i <keyword>`
-   - grep the backlog (`docs/operations/v1-launch-plan.md`) and the
+   - search the inventory plus `git log -S` at `52aacb972` (the pre-cut launch plan) and the
      alert's runbook (`docs/operations/runbooks/`).
 
    Record the result in the PR body's **Prior art** field:
