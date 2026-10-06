@@ -1348,7 +1348,7 @@ The journal names every drifted `(contract, kind)` and every missing contract.
 
 ### Mitigation
 
-- **Drift:** rebuild the named contracts' fold. `stellarindex-ops supply
+- **Drift:** rebuild the fold for every watched contract (the command has no contract filter). `stellarindex-ops supply
   seed-sep41-genesis -config /etc/stellarindex.toml -write` rebuilds the fold
   under the genesis baseline in one transaction per contract. Then re-run
   `systemctl start supply-verify-rollup.service` and confirm

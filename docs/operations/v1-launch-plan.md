@@ -1523,7 +1523,6 @@ One line per item; the INV item is the authority.
 
 | INV | Item |
 |---|---|
-| INV-2689 | `GetAssetBySlug` and `ListAssetsExt` are alias-blind readers |
 | INV-2690 | W8-15 CI/test gaps residue: goleak, revocation drift, TWAP coverage, lint-metric-refs comments |
 | INV-2691 | W8-16 CS-068 live-ingest half: late trades never re-materialise in `prices_1m` |
 | INV-2692 | `sep41_supply_events` never vacuumed (42/130 chunks, 276M rows) |
@@ -1570,19 +1569,19 @@ Copied from the 2026-08-29 table (old lines 1545-1570); text is condensed, the f
 
 | # | Decision |
 |---|---|
-| D1 | RATIFIED. Anomaly-freeze is implemented by shipping composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29. Verify with `increase(stellarindex_anomaly_freeze_engaged_total[24h])` plus `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm). |
+| D1 | RATIFIED. Anomaly-freeze is implemented by shipping composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29. Measured 2026-09-30: 575 freeze ticks over 14 d were 10 freezes, median hold 31 min. Verify with `increase(stellarindex_anomaly_freeze_engaged_total[24h])` plus `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm). |
 | D2 | ACCEPTED-RISK plus a tested restore at v1. Single box per region; multi-region (ADR-0050) deferred post-v1. |
 | D3 | SIGNED OFF. ClickHouse posture is ADR-0043 §2.1 schema-and-state snapshot plus re-derive, plus rolling ZFS snapshots (live 2026-08-29). Do NOT resurrect full-lake copies. |
 | D4 | BUILD ALL THREE: order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. This overrides any "[DECIDE build-or-drop]" text. |
 | D5 | ACCEPTED. The retention contract is "we retain everything we index", not a set of windows. `trades` holds 2018-07-01 to now (738,248,187 rows on 2026-08-29). Migration 0031 removed retention from `trades`, `prices_1m`, `prices_15m`; 0040 from `oracle_updates`. Amended 2026-09-26 (#1168): the authoritative list of retention policies is `TestRetentionPolicies_AreExactlyTheDeclaredSet`; Go-side age deletes are in `TestGoAgePruners_AreExactlyTheDeclaredSet`; the MEV pruner was removed, so `mev_events` is retained. The limits worth telling customers are coverage: on-chain SDEX trades begin 2026-03-12 (#349); CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance, Coinbase, Bitstamp). |
 | D6 | ACCEPTED as documented-unfillable: genesis edge [2 to 287,404]; recover via op-replay if ever needed. |
 | D7 | Not a decision but owed work: the third-alias thin-pool VWAP review. DONE 2026-09-04, see row 1.9. |
-| D8 | OVERRIDDEN to FIX FOR v1: `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but were registered `quote=fiat:USD`. Contained (`IncludeInVWAP=false`). |
+| D8 | OVERRIDDEN to FIX FOR v1: `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but were registered `quote=fiat:USD`. Contained (`IncludeInVWAP=false`). Fix landed: 961cc8a97 (#348) quotes the SolvBTC NAV feeds in their reserve asset. |
 | D9 | DROPPED. Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049. |
-| D10 | Privacy review reduced to a sign-off; PR #237 was closed unmerged, terms and privacy are live (INV-0150). |
+| D10 | Privacy review reduced to a sign-off; PR #237 was closed unmerged, terms and privacy are live (INV-0150). Amended 2026-09-28 (#346): erasure and export were built in GH #809 (`internal/accounterasure`, migration 0188), superseding the PRV-1 drop; procedures in `runbooks/account-erasure.md`. |
 | DR | SIGNED OFF. Off-site posture: pgBackRest repo2 plus rolling ZFS snapshots; the nightly job writes every configured repo. Superseded by the B2-only off-site decision of 2026-10-02 (INV-1475, INV-1181 done). |
-| W6.1 | CLOSED. Paging wired and proven: Discord (pages and alerts) and a Healthchecks.io dead-man. |
-| W8-13 | Decided: `stellar.trades_by_account` in ClickHouse for per-account trade history (old line 4745; INV-0902 tracks the open storage-design question). |
+| W6.1 | CLOSED. Paging wired and proven: Discord (pages and alerts) and a Healthchecks.io dead-man. Caveat: whether an alertmanager receiver holds a real URL is NOT covered by the 0-failures `pre-launch-check.sh` measurement. |
+| W8-13 | Decided: `stellar.trades_by_account` in ClickHouse for per-account trade history (old line 4745; INV-0902 tracks the open storage-design question). NOT built. Rejected: taker/maker in `trades`' `compress_segmentby` (recompresses every chunk, splits the pair-read segments) and keeping the bounded horizon as the v1 contract. Interim: `/trades` floors at the uncompressed horizon and its `note` says so. The build is its own slice with a plan review (PRE-CUT 1752-1760). |
 | RWA basis | See INV-1036 and the RWA section in [rwa-coverage-reconciliation.md](../methodology/rwa-coverage-reconciliation.md). |
 
 ## Cut: cited rows
@@ -1601,7 +1600,7 @@ Code, workflows and docs cite these ids. Full text is at the pre-cut sha (old li
 | W1.1 [1107] | `/v1/status` incidents: a failed Prometheus query must not serialise as zero counts; `87e5b1aa` (#73) | internal/api/v1/status.go:63 |
 | W3.1, W3.2 [1191, 1200] | Contract pages cold: 23/25 breaching to 6/25. W3.2 page-type audit harness is `scripts/ops/contract-page-audit.py --type` | scripts/ops/contract-page-audit.py:19 |
 | W5.3 [1425] | Pre-07-23 usd-volume restamp verified a NO-OP 2026-08-30; tool `usd-volume-restamp` (#251). The #372 restamp ran 2026-09-06 (26,231,575 rows, $30,601,931.62) | usd_volume_restamp.go:24, usd_volume_restamp_test.go:16 |
-| W5.4 [1437] | Reset the 13 supply rollups (EURC done 2026-08-05); retry gated on `ops_batch` on r1 (INV-2695) | runbooks/supply-verify-rollup-unit-failed.md:54 |
+| W5.4 [1437] | Reset of the 13 supply rollups: `supply verify-rollup` on r1 verified clean 2026-09-17 (0 drift, tolerance 0); no reset needed (see the W5.4 line above, :228) | n/a |
 | W8-12 [1738] | LP reserves are live-only from ledger 63,300,828; ACCEPTED 2026-10-02, no backfill ([supply-pipeline.md](../architecture/supply-pipeline.md#lp-reserve-history-cutoff)) | open-fixes-inventory-2026-08-08.md:23 |
 | W8-17, W8-20 [1786, 358] | `/v1/ohlc` 500 at 2h/12h/3d/2w; one interval ladder (`AllHistoryGranularities`) now drives validation, routing and the fold allow-list. CLOSED | aggregates.go:2381, ohlc_routes.go:44, ohlc_routes_test.go:21, ohlc_intervals_test.go:20-21, test/integration/ohlc_fold_intervals_test.go:59 |
 | W8-19 [1807] | A single `refresh_continuous_aggregate` call needs a timeout bound: `CAGGRefreshTimeout` 5 min per hour of window, floor 10 min, ceiling 4 h | cagg_refresh_timeout.go:16 |
@@ -1627,3 +1626,4 @@ Code, workflows and docs cite these ids. Full text is at the pre-cut sha (old li
 | Soroban TTL join recipe: `SHA256(base64Decode(cd.key_xdr)) = substring(base64Decode(ttl.key_xdr),5,32)`, `live_until = reinterpretAsUInt32(reverse(substring(base64Decode(ttl.entry_xdr),41,4)))`; as of 2026-07-28 `ledger_entries_current` served archived contract_data to every current-state reader (AQUA SAC kept 1,663 of 2,420 entries under the TTL filter); readers now resolve liveness via `internal/storage/clickhouse/ttl_liveness.go` | Pre-cut sha only; no better home | 2914-2954, 3398-3439 |
 | Ordinal re-derive: `-parallel 4` with default `-flush-every 500` OOM-killed at the 20 G cap in 22 s; `-parallel 3 -flush-every 100` held 6.7 GB; `ch-backfill` has no resume so run ~110k-ledger chunks (`scripts/ops/ordinal-rederive-chunks.sh`); `d2-ordinal-reproject.sh` is retired and refuses to run (REPLACE PARTITION dropped rows ingested after the snapshot) | Measurements also in the `ordinal-rederive-chunks.sh` header | 3652-3669 |
 | As of 2026-07-28 the `run-heavy-job.sh` flock was per-job-name, so a scheduled timer (`archive-completeness`) ran beside a manual heavy job (two scopes reserved 40 G of 188 G); fixed by a68a34e52 (host-wide heavy-job lock, `run-heavy-job-test.sh` case 12) | Pre-cut sha only; no better home | 3750-3760 |
+| W5.8 (INV-1245): before any TRUNCATE or DROP of Postgres `soroban_events`, re-grep every live reader: `StreamSorobanEvents\|FirstSorobanEventLedger\|MaxSorobanEventLedger\|FindSorobanEventsLedgerGaps\|DistinctSorobanTopicSamples\|ReDeriveOutputCountsByKind\(`. A TRUNCATE leaves the table, so readers see empty as "nothing happened" instead of failing. `StreamSorobanEvents` is still referenced in `internal/projector/projector.go` (5 matches at HEAD, call at :1314) | Pre-cut sha only; no better home | 1446-1460 |
