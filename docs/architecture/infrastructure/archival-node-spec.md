@@ -23,8 +23,9 @@ keys; that sequence is [validator-rollout.md](validator-rollout.md).
 
 ### 3.1 CPU
 
-- x86-64 (AMD EPYC/Ryzen or Intel Xeon). stellar-core's upstream binaries
-  target it; the role's preflight refuses anything else.
+- x86-64 with an ECC-capable platform (r1: Intel Core Ultra 7 265, 192 GB
+  DDR5 ECC). stellar-core's upstream binaries target it; the role's
+  preflight refuses anything else.
 - ≥ 16 cores, ≥ 2.4 GHz base. Catchup is latency-bound per ledger, so
   clock beats core count up to ~16 cores.
 - AES-NI, AVX2 and SHA extensions (stellar-core uses all three).

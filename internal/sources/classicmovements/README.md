@@ -36,7 +36,20 @@ From P23 every classic movement emits a CAP-67 event that `sep41_transfers`
 decodes, so this package stops there. Per-op `ledger_entry_changes`
 fidelity natively starts at about ledger 61,996,000 (2026-04-06); below it
 the table held only a periodic `state` census until the ADR-0047 Phase 0
-backfill over `[38115806, 61999000]` filled it.
+backfill over `[38115806, 61999000]` filled it. Lake state (INV-1073,
+2026-10-02): `ledger_entry_changes` holds 163.86B rows over ledgers
+3..64,730,073 and verify-lake reports zero deficiency; the Phase C backfill
+has run (INV-1251, #2018).
+
+## Volume
+
+Pre-P23 (ledger < 58,762,517) is exactly 20,297,622,756 operations
+(`sum(op_count)` over `stellar.ledgers`). The per-type split is sampled from
+seven 20,000-ledger windows (ledgers 3M, 10M, 20M, 30M, 40M, 50M, 57M), so
+it is order-of-magnitude only. Top rows: `ManageSellOffer` ~5.4B,
+`Payment` ~4.0B, `ManageBuyOffer` ~3.8B, `PathPaymentStrictReceive` ~2.6B,
+`CreateClaimableBalance` ~1.5B, `ClaimClaimableBalance` ~1.3B. Offers are
+SDEX territory, so the new rows are about 7-8B (ADR-0047: archive 10-11B).
 
 ## Operation inventory
 
@@ -228,7 +241,7 @@ the whole range.
 **Memory-scaling caveat**: the in-run index is bounded at
 `maxCBIndexEntries` (8,000,000, ~3 GB; FIFO eviction — oldest create
 evicted first) rather than growing without limit; unbounded growth across the
-full `CreateClaimableBalance` row count (~1.5B, sampled) is what
+full `CreateClaimableBalance` row count (~1.5B, sampled; see Volume) is what
 drove an earlier OOM. Eviction is safe — a miss just falls through to
 the ClickHouse fallback (`FindClaimableBalanceCreates`), same as a
 create outside this run's range entirely — but operators should still
