@@ -1,0 +1,59 @@
+---
+# promtool unit tests for stellarindex_restore_drill_textfile_stale in ../rules/storage.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/storage-restore-drill-stale_test.yml
+#
+# Split out of storage_test.yml: this group evaluates every storage.yml rule
+# each minute out to 841h (~50k steps), so in one file it serialised most of
+# `make monitoring-check`, which runs one promtool process per file in parallel.
+
+rule_files:
+  - ../rules/storage.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── companion: stellarindex_restore_drill_textfile_stale carries the
+  # 35d threshold the catch-all now excludes restore_drill*.prom from.
+  - interval: 1m
+    name: restore_drill_textfile_stale fires past 35d, quiet before it
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0x50600'
+    alert_rule_test:
+      - eval_time: 839h
+        alertname: stellarindex_restore_drill_textfile_stale
+        exp_alerts: []
+      - eval_time: 841h
+        alertname: stellarindex_restore_drill_textfile_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/restore_drill.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale
+              summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill.prom has not been refreshed in 35d+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill.prom
+                for 35+ days despite the monthly restore-drill timer.
+                `systemctl status restore-drill.timer restore-drill-offsite.timer`.
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale
+              summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom has not been refreshed in 35d+ on r1:9100"
+              description: |
+                node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom
+                for 35+ days despite the monthly restore-drill timer.
+                `systemctl status restore-drill.timer restore-drill-offsite.timer`.

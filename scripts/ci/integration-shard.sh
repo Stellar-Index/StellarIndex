@@ -124,7 +124,9 @@ fi
 
 # Same invocation as the Makefile's test-integration target, narrowed to
 # this shard's tests; -timeout is the per-slice deadline (see header).
-go test -tags=integration -timeout "$TIMEOUT" -run "$regex" "$SHARDED_PKG"
+# -v prints each test's `--- PASS: TestX (Ns)`, the per-test timing a
+# duration-weighted split needs; without it the log has only the package total.
+go test -tags=integration -v -timeout "$TIMEOUT" -run "$regex" "$SHARDED_PKG"
 
 if [ "$idx" -eq 0 ] && [ "${#EXTRA_PKGS[@]}" -gt 0 ]; then
   echo "integration-shard: shard 0 also runs the non-sharded packages: ${EXTRA_PKGS[*]}" >&2

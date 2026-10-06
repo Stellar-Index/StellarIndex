@@ -599,7 +599,7 @@ jobs:
     # for a change confined to them. A docs/web-only PR still gets zero
     # additional signal from a 20-minute Docker round-trip.
     #
-    # Gated with a STEP-level `if:` on "integration shard N of 4" below,
+    # Gated with a STEP-level `if:` on "integration shard N of 6" below,
     # NOT a job-level one: this job's comment two lines down already
     # explains that `integration-test` treats a SKIPPED shard result as
     # a failure, on purpose, because a skipped required check does not
@@ -614,13 +614,16 @@ jobs:
     # serially while every other job finished in <= 6 min. Each shard
     # derives the same sorted `go test -list` and takes lines i mod 4
     # (scripts/ci/integration-shard.sh; the partition property is pinned
-    # by scripts/ci/integration-shard-test.sh in import-checks). The
+    # by scripts/ci/integration-shard-test.sh in import-checks). 6-way:
+    # 493 tests put each of 4 shards at a 15-17.5 min median,
+    # the PR critical path; the summed work (~62 runner-min) cannot fit
+    # under ~13 min in 4 slots however it is balanced. The
     # `integration tests (Docker)` aggregate job below is the branch-
     # protection required check; keep that name stable.
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5]
     # BLOCKING (CS-070). Wiring this job first surfaced accumulated rot (the
     # suite was only ever compiled, never run) — all fixed 2026-07-01: the
     # stale FXSources assertion (massive joined the registry), the markets
@@ -649,7 +652,7 @@ jobs:
             sleep $((i * 15))
           done
           echo "::error::go mod download failed after 3 attempts"; exit 1
-      - name: integration shard ${{ matrix.shard }} of 4
+      - name: integration shard ${{ matrix.shard }} of 6
         # testcontainers-go spins TimescaleDB/Redis/MinIO; ubuntu-latest ships
         # a Docker daemon. Same go test flags as `make test-integration`
         # (which stays the developer entry point), narrowed to this shard's
@@ -657,7 +660,7 @@ jobs:
         # and the job timeout above is its ceiling. Shard 0 also runs the
         # non-sharded INT_TEST_PKGS packages (seconds).
         if: needs.preflight.outputs.integration == 'true'
-        run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 4
+        run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 6
       - name: no in-scope change (path filter) — nothing to run
         if: needs.preflight.outputs.integration != 'true'
         run: |
