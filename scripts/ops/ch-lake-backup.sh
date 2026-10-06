@@ -263,7 +263,7 @@ main() {
   exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
   if ! flock -n 9; then
     note "another ch-lake-backup run holds $STATE_DIR/lock — not starting"
-    write_metrics
+    write_metrics keep_success
     return 1
   fi
   # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an

@@ -349,6 +349,12 @@ before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
 { cat "$PROM"; echo "$before"; } > "$PROM.dup" && mv "$PROM.dup" "$PROM"
 MOCK_HEAVY_HELD=1 run; rc=$?
 if [[ "$(grep -c '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" -eq 1 && "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before"  ]] && ! grep -qx '[0-9]*' "$PROM"; then ok "a duplicated success line is re-emitted as one value"; else bad "a duplicated success line is re-emitted as one value"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+sleep 1
+MOCK_LOCK_HELD=1 run; rc=$?
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a run-lock overlap keeps the previous last-success stamp"; else bad "a run-lock overlap keeps the previous last-success stamp"; fi
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"
