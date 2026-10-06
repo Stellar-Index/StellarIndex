@@ -22,8 +22,7 @@ var legacyIssueRefFamilies = []struct {
 	{
 		re: regexp.MustCompile(`BACKLOG #60\b`),
 		allow: map[string]bool{
-			"docs/adr/0045-sep40-oracle-read-adapter.md":     true,
-			"docs/architecture/sep40-oracle-read-adapter.md": true,
+			"docs/adr/0045-sep40-oracle-read-adapter.md": true,
 		},
 		why: "price alerts landed in commit 7145a7e51; the private backlog number reads as gh#60",
 	},

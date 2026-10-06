@@ -1,333 +1,355 @@
 ---
-title: Aggregation plan — the policy chain from raw trade to served price
-last_verified: 2026-07-06
-status: binding — outlier-filter description, orchestrator state, alert inventory and div: key shape corrected against code 2026-09-02 (#361); the rest not re-derived this pass
+title: Pricing and aggregation — from raw trade to served price
+last_verified: 2026-10-05
+status: binding — config keys, alert names and metric names checked against code 2026-10-05
 ---
 
-# Aggregation plan
+# Pricing and aggregation
 
-**There are TWO serving paths, not one.** The filtered orchestrator path
-below is the primary product; `/v1/price` has a second, direct read of the
-`prices_1m` continuous aggregate that must be understood alongside it (see
-[Two serving paths](#two-serving-paths--and-the-guard-that-keeps-the-direct-one-honest)).
+How a stored trade becomes a served price: the policy chain, how a
+market's spellings and aliases fold into one population, cross-rate
+routing, and thin markets. Oracle feeds and manipulation defenses are in
+[oracle-manipulation-defense.md](oracle-manipulation-defense.md); ingest is
+in [ingest-pipeline.md](ingest-pipeline.md); the system map is
+[overview.md](overview.md); the asset-identity and stablecoin traps are in
+[domain-traps.md](domain-traps.md). The public methodology is
+[docs/methodology/vwap-aggregation.md](../methodology/vwap-aggregation.md).
 
-The filtered orchestrator path:
+Money is invariant 1 (ADR-0003): `canonical.Amount` / `*big.Int` legs,
+exact `*big.Rat` for every price, mean and inverse, never `float64`;
+decimal strings on the wire; a partial total is served as a lower bound
+(`lower_bound`), never as a total.
 
-```text
-Timescale `trades` hypertable    ← decoders write here (per ingest-pipeline.md)
-    │   (TradesInRange per (pair, window))
-    ▼
-internal/aggregate/orchestrator/ ← tick loop, one (pair, window) per call
-    │   1. fetchForTarget(target, window)
-    │      ├─ direct TradesInRange(target, …)
-    │      └─ optional: stablecoin-backer expansion (XLM/fiat:USD →
-    │                  XLM/USDT, XLM/USDC, XLM/DAI, XLM/PYUSD,
-    │                  XLM/USDP — each rewritten via ProxyPair onto
-    │                  the target)
-    │   2. class filter (default: drop non-ClassExchange rows)
-    │   3. σ-threshold outlier filter (default 4σ)
-    │   4. min-USD-volume gate + freeze value-protection
-    │   5. VWAP via internal/aggregate/vwap.go
-    │
-    ▼
-Redis  ← key `vwap:<base>:<quote>:<window-seconds>`, TTL = window
-    │
-    ▼
-internal/api/v1/  ← /v1/price (after its prices_1m read misses, or as the held value of a frozen pair)
-    │
-    ▼
-HTTP consumer
-```
+## Ingest preserves truth; aggregation applies policy
 
-`/v1/sources` is the read-only sibling: it surfaces the same
-`external.Registry` the class filter consults so API consumers can
-see which venues contribute to VWAP and which are visible-only.
+Decoders never re-stamp a pair, never drop a trade by source class and
+never drop an outlier. All three are policy, applied here:
 
-## Two serving paths — and the guard that keeps the direct one honest
-
-The diagram above is the path for the aggregator's **configured** pair set
-(the headline fiat pairs, triangulated cross-pairs, and stablecoin-proxy
-rewrites). Those land in Redis already filtered, and `/v1/price` serves
-them from cache.
-
-But `/v1/price` also does a **direct** read: `LatestClosedVWAP1mForPair`
-returns the most-recent CLOSED `prices_1m` bucket for the requested pair.
-That CAGG is a bare `Σ(quote)/Σ(base)` per bucket
-(`migrations/0002…`) — it does **not** pass through the class / σ-outlier /
-min-USD-volume / freeze policy chain above. A pair with **no** `prices_1m`
-rows at all — a pure-synthetic fiat pair like `native/fiat:USD` (SDEX
-native trades are quoted in issuer-stablecoins, never `fiat:USD`) — misses
-this read and falls through to the filtered Redis value. But any pair with
-**real** `prices_1m` rows is served straight off that raw CAGG bucket, and
-that set is broader than "obscure DEX pairs": it includes directly-quoted
-DEX/CEX pairs (a Soroban token priced in `USDC-GA5Z…`,
-`crypto:BTC/crypto:USDT`) **and** headline pairs with a real fiat CEX
-market (`crypto:XLM/fiat:USD` via Kraken/Coinbase real XLM/USD books, which
-on r1 do populate `prices_1m`).
-
-Unfiltered, a single fat-finger / manipulation trade in the served minute
-would corrupt that price with `stale=false`, no outlier rejection, no
-volume floor. So the direct read is wrapped in a **serving-sanity guard**
-(`internal/aggregate.GuardServedVWAP`, wired in
-`cmd/stellarindex-api storePriceReader.guardServedVWAP1m`): it compares the
-candidate bucket's VWAP against a robust bound (the UNION of a wide ratio
-band and a MAD band) over the pair's recent trailing closed buckets, and
-when the candidate is grossly off it serves the newest clean trailing
-bucket (last-known-good) instead. The guard is tuned **conservatively** —
-it only ever catches gross, order-of-magnitude-ish deviation and never a
-legitimately volatile-but-real move (a stablecoin depeg is served, not
-hidden); all math is exact `*big.Rat` (ADR-0003). On a healthy bucket it is
-a pure **pass-through** — a liquid pair like `crypto:XLM/fiat:USD` sits
-tightly clustered and always passes, so its served value is byte-identical
-to pre-guard behaviour — and a pair with too little history to establish a
-robust baseline fails **open** (serves the candidate) rather than risk
-dropping a real price.
-
----
+- A USDT depeg is news, not a correction to hide, so ingest stores the
+  real pair (`XLM/USDT`) and the aggregator maps `USDT→USD` at compute
+  time. The map is `internal/aggregate/stablecoin.go`.
+- A CoinGecko poll is data to record and expose via `/v1/sources`; it just
+  does not weigh in VWAP.
+- σ-deviance is window-relative; a print that is 5σ for one pair can be
+  normal across pairs.
 
 ## The policy chain
 
-The orchestrator applies three filters between `TradesInRange`
-and `aggregate.VWAP`. Each step is independent and falls back to
-"input unchanged" when its config flag is off.
+`internal/aggregate/orchestrator` runs each configured `(pair, window)`
+every `interval_seconds` (default 30):
 
-| Step | Default | Config flag | Purpose |
-| --- | --- | --- | --- |
-| 1. Stablecoin expansion | OFF | `aggregate.enable_stablecoin_fiat_proxy` | Expand fiat-quote targets to direct + stablecoin backers; rewrite via `aggregate.ProxyPair` |
-| 2. Class filter | ON | `aggregate.disable_class_filter` (inverted — zero is filter ON) | Drop non-`ClassExchange` rows; aggregator / oracle / authority_sanity classes don't contribute to VWAP |
-| 3. Outlier filter | ON (`σ=4.0`) | `aggregate.outlier_sigma_threshold` | Drop a trade only when it sits > σ **robust scales (1.4826·MAD)** from **every** reference it is scored against — the window MEDIAN *and* its time-local neighbourhood (own/adjacent 1-minute buckets, or nearest prints for thin series). **Median+MAD, not mean+stdev** (`internal/aggregate/outliers_local.go`; `internal/config/config.go:1150` states this verbatim). The centre is per-print (one price per trade); a trim that would keep less base volume than it drops withholds the window instead. |
+1. **Stablecoin expansion** (`enable_stablecoin_fiat_proxy`, OFF by
+   default). Expands a fiat-quoted target to its direct market plus its
+   stablecoin backers (`XLM/USD` → `XLM/USDT`, `XLM/USDC`, `XLM/DAI`,
+   `XLM/PYUSD`, `XLM/USDP`); `ProxyPair` / `ExpandTargetPair` re-stamp each
+   rewritten trade onto the target. Runs first so the class filter judges
+   each row by venue.
+2. **Class filter** (ON; `disable_class_filter` turns it off). Drops every
+   trade whose source is not `ClassExchange` in
+   `internal/sources/external/registry.go`. Aggregator, oracle and
+   authority-sanity classes never contribute VWAP weight. A venue listed
+   on `/v1/sources` with `include_in_vwap=true` contributes; a mismatch is
+   a bug.
+3. **Outlier filter** (`outlier_sigma_threshold`, default 4.0;
+   `internal/aggregate/outliers_local.go`). Robust centre and scale:
+   median + 1.4826·MAD, not mean + stdev (masking-resistant). A trade is
+   dropped only when it is more than σ robust scales from **every**
+   reference: the window median **and** its time-local neighbourhood (its
+   own and adjacent 1-minute buckets, or the nearest prints for a thin
+   series). The neighbourhood test lets an agreed regime shift through
+   and rejects a lone print; it was added after a live false-fire on
+   `crypto:XLM/fiat:USD`. `keepIfVolumeMajority` (`outliers.go`) withholds
+   the window when dropped prints outweigh the survivors' base volume, so
+   dust cannot out-vote a large block.
+4. **VWAP** (`internal/aggregate/vwap.go`): Σquote / Σbase over
+   `[bucketEnd − W, bucketEnd)`, `bucketEnd` = last closed 1-minute
+   boundary. Eligibility needs `min_usd_volume` (default 10,000 USD);
+   `max_trades_per_window` (default 10,000) bounds the scan.
+5. **Freeze / confidence** (ADR-0019) — see
+   [anomaly-freeze-and-confidence.md](anomaly-freeze-and-confidence.md).
+6. Result to Redis at `vwap:<base>:<quote>:<window-seconds>`, TTL equal to
+   the window; triangulated cross-pairs carry a `:provenance` marker.
 
-Order matters: class filter runs before the outlier filter because
-the σ arithmetic should run over a pair-homogeneous, exchange-only
-sample. (**Corrected 2026-09-02:** this section previously described the
-outlier step as "> σ standard deviations from the window mean". It has
-never been a mean/stdev test in the shipped code, and since #244 it is
-additionally *time-local* so an agreed regime shift survives.) Stablecoin expansion runs before both — it re-stamps the
-rewritten trades onto the target pair, and the class filter then
-treats each row by its venue identity (binance, coinbase, …) not
-by the original on-chain pair.
+### Two serving paths
 
-### Why each filter is here, not at ingest
+The configured pair set is served from Redis, already filtered. `/v1/price`
+also reads `LatestClosedVWAP1mForPair`: the newest closed `prices_1m`
+bucket, a bare Σquote/Σbase CAGG (migration 0002) that skips the chain
+above. A pair with no `prices_1m` rows (a synthetic `native/fiat:USD`)
+falls through to Redis; any pair with real rows (`crypto:XLM/fiat:USD` via
+Kraken/Coinbase books, a Soroban token quoted in `USDC-GA5Z…`) is served
+from the CAGG. That read is wrapped in `aggregate.GuardServedVWAP`
+(`internal/aggregate/served_guard.go`, wired in `cmd/stellarindex-api`
+`storePriceReader.guardServedVWAP1m`): it compares the bucket against the
+UNION of a wide ratio band and a MAD band over the pair's recent closed
+buckets and, when grossly off, serves the newest clean trailing bucket.
+It is deliberately conservative: it catches order-of-magnitude errors,
+lets real volatility through (a depeg passes), fails **open** on too
+little history, and is pure pass-through for healthy pairs. All math is
+exact `*big.Rat`.
 
-- **Decoders never re-stamp pairs.** A USDT depeg event is news;
-  rewriting `XLM/USDT → XLM/USD` at decode time would hide it.
-- **Decoders never drop trades by class.** A CoinGecko poll is
-  data we want to record + serve via `/v1/sources`; we just don't
-  want to fold it into our own VWAP. Filtering at decode would
-  strip information we need.
-- **Decoders never drop outliers.** σ-deviance is a window-relative
-  signal. A row that's 5 robust scales from the per-pair window median
-  is noise on a single pair but might be perfectly normal across all
-  pairs combined.
+### Frozen pairs
 
-In short: ingest preserves truth; aggregation applies policy.
+A freeze fires only when all three hold (`phase2FreezeFires`,
+`internal/aggregate/orchestrator/phase2_freeze.go`): confidence < 0.45,
+z > 5 and source_count <= 1. Two of three does not freeze; it surfaces as
+`flags.divergence_warning`. A frozen pair serves the held value from Redis
+even when a `prices_1m` row exists, overriding the CAGG path above (pinned
+by `TestFrozenPairServesHeldValueThroughProductionAdapters`,
+`cmd/stellarindex-api/price_frozen_lkg_test.go`).
 
----
+### Closed-bucket-only serving
 
-## Configuration surface
+ADR-0015: queries filter `bucket <= now() - INTERVAL '<granularity>'`, so
+a closed bucket is deterministic and replicates byte-identical across
+regions; `/v1/price` freshness is ≤30 s. The orchestrator writes Redis
+only; CAGG refresh keeps the tables current. `/v1/price/tip` (ADR-0018)
+is the deliberate live exception. Routing every read through the
+closed-bucket guard is tracked as #689.
 
-`[aggregate]` in TOML drives the orchestrator. Operator overrides
-win; empty falls back to library defaults.
+## Asset identity and aliases
 
-| TOML key | Library default | Effect |
-| --- | --- | --- |
-| `pairs` | `[]` → built-in (XLM/BTC/ETH × USD/EUR/GBP) | Operator-supplied coverage set as canonical pair strings |
-| `windows` | `[]` → `[5m, 1h, 24h]` | Per-window cadences as Go `time.Duration` strings |
-| `interval_seconds` | 30 | Tick cadence — gap between successive (pair, window) refreshes |
-| `max_trades_per_window` | 10 000 | Per-(pair, window) row cap |
-| `disable_class_filter` | false | Off ⇒ ClassExchange-only VWAP (default) |
-| `enable_stablecoin_fiat_proxy` | false | On ⇒ fiat-target fan-out across stablecoin backers |
-| `outlier_sigma_threshold` | 4.0 | σ-threshold (0 disables) |
-| `vwap_window_seconds` | 300 | Legacy alias retained for backwards-compat |
-| `twap_window_seconds` | 300 | TWAP-specific cadence (used by api/v1/twap.go) |
-| `min_usd_volume` | 10 000 | Eligibility threshold |
-| `triangulation_enabled` | true | Master switch for the post-refresh triangulation pass; false skips the tick regardless of `aggregate.triangulations` rows. Triangulated rows now serve via `/v1/price` (PR for F-0014) — the switch is the operator-side kill-switch when the feature itself needs to be paused. |
+An asset is `(code, issuer)`, a SAC address, or `native` — never a code.
+XLM has three disjoint identities — `native`, `crypto:XLM` (off-chain
+venues) and its SAC — with different venue populations. Every asset-id
+read path loops `canonical.AssetAliases` (`internal/canonical/alias.go`);
+a path that reads one spelling silently under-reports.
 
-The full reference lives at
-[`docs/reference/config/README.md`](../reference/config/README.md);
-this table is the curated subset that drives aggregator
-behaviour day-to-day.
+## Folding a market's two spellings
 
----
+A market is stored in whichever direction the venue printed it. Two
+folds put it back together, and they are different decisions:
 
-## Observability
+> Folding a direction adds no market. Folding an alias adds one.
 
-`deploy/monitoring/rules/aggregator.yml` (and its R1 overlay
-`configs/prometheus/rules.r1/aggregator.yml`, kept in lockstep by
-`scripts/ci/lint-rule-equivalence`) carries **12** alerts as of
-2026-09-02, not three: `aggregator_silent`, `outlier_storm`,
-`outlier_trim_fraction`, `outlier_trim_rate_legacy` (overlap copy,
-retires 2026-09-04), `fx_snap_fallback_dominant`,
-`triangulation_chains_dry`, `class_drop_spike`, `cache_write_errors`,
-`protocol_events_rollup_failing`, `asset_volume_rollup_failing`,
-`nonstandard_decimals_correction_failing`,
-`customer_webhook_fanout_failing`. The counters below are the subset
-this doc's policy chain feeds:
+### The direction fold
 
-| Counter | Labels | Used by |
-| --- | --- | --- |
-| `stellarindex_aggregator_ticks_total` | `outcome` (ok/error) | `aggregator_silent` alert |
-| `stellarindex_aggregator_vwap_writes_total` | — | `aggregator_silent` alert |
-| `stellarindex_aggregator_empty_windows_total` | — | (Operator dashboards; see runbooks) |
-| `stellarindex_aggregator_dropped_trades_total` | `reason` (class/outlier) **and `pair`** (`orchestrator.go:1068,1086`) | `aggregator_outlier_trim_rate_legacy` + `aggregator_class_drop_spike` alerts |
+`(A,B)` and `(B,A)` are the same trades. `Store.TradesInRange` and
+`Store.FXQuoteAtOrBefore` (`internal/storage/timescale/trades.go`) read
+both directions and re-express each flipped row in the requested
+orientation by swapping its legs (`orientTradeTo`). Every aggregate —
+VWAP, TWAP, OHLC, volumes (`aggregate.VWAP`, `TWAP`, `ComputeOHLC`,
+`TotalBaseVolume`, `TotalQuoteVolume`) — is defined on the two integer
+legs of `canonical.Trade`, never a stored price, so the swap re-weights
+exactly with no extra step: a flipped row's weight in the requested base
+IS its stored quote leg, and the only division is the final
+`SetFrac(sumQuote, sumBase)`.
 
-Alert runbooks at:
+- **No separate re-weighting step.** Inverting each price but keeping the
+  stored base as weight gives Σ(b²/q)/Σb; on the fixture that served
+  1.0127659574 where the market VWAP is 0.1825.
+- **VWAP is exactly reciprocal**: VWAP(A/B) × VWAP(B/A) = 1 for any window.
+  TWAP is not (a time-mean of reciprocals is not the reciprocal of a
+  time-mean); that is correct, not a defect.
+- **Re-express before comparing.** Inversion swaps max and min, so rows
+  fold first and extremes are taken after. Row-level fold is safe because
+  a row has one price. The CAGG bar readers (`Store.OHLCSeries`,
+  `OHLCSeriesReBucketed`, `internal/storage/timescale/aggregates.go`) fold
+  per bucket with an explicit `CASE WHEN base_asset = $1 THEN high_price
+  ELSE 1.0 / NULLIF(low_price, 0)` (and the mirror for low). Merely
+  relabelling a bucket would serve a fully populated, wrong bar (a high of
+  10 where the true high is 0.25); an unfolded read is thin but right.
+- **Order-independent with scale normalisation**: multiplying both legs
+  commutes with swapping them, so `AdjustPrice` runs unchanged.
+- **Truncation.** Each direction is its own `LIMIT`ed arm; the union is
+  re-sorted and limited again, which is exactly the market's newest
+  `limit` rows (same plan as `Store.LatestTradesForPair`).
+- **Where it lives.** In the store, not in callers: `TradesInRange` has no
+  cursor and its five callers all want "expressed the way I asked";
+  folding in callers would duplicate code across `v1.HistoryReader` and
+  `orchestrator.Store`. `TradesInRangeAfter` is exempt: a cursor names a
+  position in one ordering, so the paged caller merges directions itself.
+- **Merge sets dedupe flips**: `distinctMarkets` drops a flip already seen,
+  keeps the first spelling and honours SAC-last order; applied in
+  `tipMergePairs` and `usdPeggedConstituents`.
 
-- [`aggregator.md#stellarindex_aggregator_silent`](../operations/runbooks/aggregator.md#stellarindex_aggregator_silent) — P1
-- [`aggregator.md#stellarindex_aggregator_outlier_storm`](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm) — P3
-- [`aggregator.md#stellarindex_aggregator_class_drop_spike`](../operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike) — P3
+Measured on r1 (1 h, `native/USDC-GA5Z…`): rows 2,957 → 5,751 (the unfolded
+read saw 51.4% of the market); VWAP moved −0.0016%; high 0.1806 → 0.1818
+(+0.65%). Plan cost: 1.72× on a populated 1 h window, 1.02× on 24 h, 1.26×
+on an empty pair since 2021, 1.13× for an FX snap; the 8 s handler
+ceilings are unchanged.
 
-Baseline-comparator alerts use `offset 1h` to auto-tune to operator
-traffic. Suppress for the first hour after deploy — the comparator
-returns zero before there's an hour of history.
+Pinned by `TestTradesInRange_AggregateOverBothStoredDirections`
+(`trades_in_range_direction_test.go`), `TestRawTradeReadsSpanBothStoredDirections`
+(`trades_direction_test.go`, query shape) and
+`TestCAGGPairReadsFoldBothDirections` (`pair_direction_guard_test.go`,
+parses every SQL literal so a new one-direction CAGG read fails CI).
 
----
+### The alias fold
 
-## API surface
+A classic market and its SAC-wrapped twin (`native/USDC-GA5Z…` vs
+`<XLM SAC>/<USDC SAC>`) are different venues. Merging them is a liquidity
+decision, not completeness: a thin pool beside a deep book sets the bar's
+extremes. Live example (2026-06-02, `GQX-GD7TC72O…`): 660 book prints,
+$140; 1 pool print, $0.60, at 13.10 vs the book's 9.54 — a +37.32% high.
+Migration 0115's `usd_volume >= 0.01` floor does not stop it ($0.60 is
+60× the floor).
 
-| Endpoint | Backed by | Purpose |
-| --- | --- | --- |
-| `GET /v1/vwap?pair=…` | Trades hypertable (on-query) | Volume-weighted average over the request's `from`/`to`, `to` clamped to the last closed minute. Does not read the aggregator's Redis VWAP. |
-| `GET /v1/twap?pair=…` | Trades hypertable (on-query) | Time-weighted average — `internal/aggregate.TWAP` runs against raw trades for the request's window. The orchestrator does not pre-compute TWAP today (TWAP-via-orchestrator path stays out of scope; see Deferred). |
-| `GET /v1/price?pair=…` | `prices_1m` closed bucket → aggregator Redis VWAP → last-trade fallback | The aggregator's Redis VWAP is served here for pairs with no `prices_1m` row, and as the held value when the pair is frozen (ADR-0019) even if a row exists (see [Two serving paths](#two-serving-paths--and-the-guard-that-keeps-the-direct-one-honest)) |
-| `GET /v1/sources` | `external.Registry` (static) | Class + IncludeInVWAP metadata for every known venue |
-| `GET /v1/markets` | Timescale `DistinctPairs` | Trade-table coverage; orthogonal to the registry |
+### The fiat quote leg, per bucket
 
-`/v1/sources` and the orchestrator's class filter agree by
-construction — they consume the same `external.Registry`, so a
-venue listed with `include_in_vwap=true` *will* contribute to
-the cached VWAP, and one with `false` *will not*. Discrepancies
-between the two surfaces are a bug to surface in PR review, not a
-runtime concern.
+How `native/fiat:USD`-style series and points combine USD-pegged
+constituents (`internal/api/v1/ohlc_fiat_combine.go`,
+`usdPeggedConstituentSets`, `usdPegProxyQuotes`; `chart.go` already read
+both). Shipped 2026-09-05 for both the series (launch-plan row 1.15) and
+the point path (row 1.14), keeping point/series parity (C1-024).
 
-### Closed-bucket-only serving (cross-region consistency)
+- **Reach.** Over the year to 2026-09-05: 132 markets with a SAC-quoted
+  leg, 1,916,996 prints. 24 assets were reachable already; 43 had
+  SAC-only USD depth ($14,630,761.46; the largest $6,375,518.23 over
+  129,925 prints) and were served nothing.
+- **Established vs held-back.** Classic spellings are established; SAC
+  spellings are held back. A held-back spelling is suppressed for a
+  bucket an established spelling answered, and for **no other bucket** —
+  absent, not down-weighted. It can never set a bar's max, min, count or
+  volume beside book data. All established spellings are read before any
+  held-back one (`assertSACQuotedSeriesReadLast`).
+- **Per bucket, never per response.** A per-response first-hit rule makes
+  the constituent set depend on the window, and would have served the
+  3,356 pool-only days (671,712 prints, $175,962,608.19) as quiet. Per
+  bucket, a bar renders identically in every window that contains it.
+- **Point path at a stated grain.** "The point window is its own bucket"
+  holds only when the window is one bucket, so the point gate runs per
+  bucket at `fiatPointGateInterval` = 1m, the finest series interval.
+  Point equals series exactly at 1m; at coarser intervals they are
+  different questions and may differ.
+- **Scale lift per bucket.** Constituents arrive at different scales
+  (SDEX 7 dp, CEX 8 dp). Each bucket lifts to its own maximum scale by
+  multiplying both legs by 10^(max−scale) — exact, no division; prices,
+  extremes and counts are untouched, only absolute volumes move. A
+  response-wide maximum made a bucket's volume depend on other days
+  (10× on the book's own day). The `sources` column every `prices_*` CAGG
+  has carried since migration 0002 (recreated in 0147) was simply not
+  SELECTed; the same defect already understated `v_base` by 3.41% on a
+  three-constituent `native/fiat:USD` bar.
+- **Rejected shapes**, with plan costs: a CTE joined back on bucket
+  (1.34×), a union at row grain (2.08×), `WITH ORDINALITY` + `FILTER`
+  (1.09×) — refused because its failure mode is silently wrong sums on a
+  money path, unprovable without a database. Shipped cost: `OHLCSeries` 1.005×, `OHLCSeriesReBucketed` 1.25×
+  (1h→4h, 30 days), constituent reads 21 → 24 (`native/fiat:USD`).
+- **Not done**: fiat bars still do not attribute `sources` on the wire —
+  the combine always merged SDEX, four CEX and the FX pollers
+  unattributed; changing that is a spec change.
 
-Per [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md), the
-API endpoints above (`/v1/price`, `/v1/vwap`, `/v1/twap`,
-`/v1/ohlc`) NEVER expose the in-progress (currently-filling)
-window — only the most recent **closed** bucket. The CAGG rows
-(`prices_1m` and its rollups) are materialised by TimescaleDB's
-continuous-aggregate refresh policies, which keep the in-progress
-bucket current too; the orchestrator writes no CAGG row. Its VWAP is
-Redis-only, over `[bucketEnd − W, bucketEnd)` with `bucketEnd` the last
-closed 1-minute boundary — a rolling window that still never includes
-the filling minute. `/v1/vwap` and `/v1/twap` clamp `to` the same way.
-`/v1/price/tip` is the deliberate exception (ADR-0018's tip surface).
-Query handlers MUST filter `bucket <= now() - INTERVAL '<granularity>'`
-(a row carries only its start, `bucket`) so clients only ever see
-closed buckets; #689 tracks routing every read through one guard.
+Pinned by `TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer`,
+`TestFiatSeries_ABucketRendersTheSameInEveryWindow`,
+`TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData`,
+`TestFiatPointEqualsTheFinestSeriesExactly`,
+`TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed`,
+`TestFiatPointMatchesSeries_AcrossVenueScales`,
+`TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant` and
+`TestOHLCSeries_FiatProbeSpansWhatTheCombineReads` (the
+`ohlcCoverageSet` floor spans exactly what the combine reads). Two earlier
+parity pins were vacuous (one scale only; empty CAGG `sources`) and were
+rebuilt with real venue names and scales.
 
-This is what makes "all 3 regions serve exactly the same rate" a
-real property rather than a hopeful one: closed-bucket rows are
-deterministic given the same trade inputs, and (sub-second to
-seconds-of-replication-lag aside) replicate to all regions
-byte-identical. See ADR-0015 for the trade-off analysis and the
-≤30 s freshness contract this places on the default `/v1/price`
-window.
+## Cross-rates: triangulation and the router
 
----
+When no direct market exists, `internal/aggregate/router.go` chains fresh
+per-pair rates through hub assets (XLM, USD, BTC, …) and corroborates
+across every independent path of the shortest length. Rates and inverses
+are exact `*big.Rat` (`new(big.Rat).Inv(p)`, never `1.0/p`). Routes combine
+by the **member median** of the highest-confidence tier, not a weighted
+mean, so one divergent survivor cannot drag the result. A route's
+confidence is its weakest edge (USD volume, trade count, source count,
+dispersion, recency), so a dust print cannot launder itself into a
+confident valuation through a hub. `min_route_confidence` ships at 0 so
+serving stays permissive; `RouteTrustFloor` gates leg-substitution
+reroutes and corroboration counts. Triangulated pairs
+(`internal/aggregate/orchestrator/triangulate.go`) set `flags.triangulated`;
+reroutes set `rerouted`, and `pivot_unverified` marks a composite leg
+that was all stablecoin prints at par (a depeg there went unchecked).
 
-## Boundaries — what this layer does NOT do
+## Thin markets
 
-- **No persistent VWAP state — but NOT stateless.** No VWAP state is
-  persisted; the freeze ladder is (`freeze_events`, ADR-0019, read back
-  on a Redis-marker miss). The orchestrator also carries
-  **load-bearing cross-tick in-memory state**: `prevVWAPs` (the anomaly comparator), `frozenPrevVWAPs` (the
-  freeze-ladder shadow comparator), `freezeStates`, `lastComposites` and
-  `tickEdgeQuotes` — all documented at
-  `internal/aggregate/orchestrator/orchestrator.go:642-679`, together with
-  the incidents that made them necessary. **A restart loses them** — all
-  but `freezeStates`, which is read back from `freeze_events` — and a
-  frozen pair with no `prev` is UNSCORED, which can neither fire nor
-  release (observed live as reason `phase2:unscored`). Treat "restart-
-  friendly" as "restarts safely", not "restarts free". *(Corrected
-  2026-09-02: this bullet previously read "the orchestrator is stateless
-  across ticks".)*
-- **No cross-binary state coupling.** Aggregator → API
-  communication is via Redis keys + the static registry. The API
-  has no read path into the orchestrator's in-memory `Stats()`.
-- **Redis-only for VWAP.** The VWAP results live in Redis with a TTL;
-  the orchestrator's Timescale writes are the per-source
-  `price_source_contributions` audit mirror (`ContributionSink`), the
-  ADR-0019 freeze ladder (`freeze_events`, via `FreezeWriter`) and the
-  `divergence_observations` mirror (`DivergenceSink`, read by the
-  divergence listings); no served price value is read from any of them.
-  If Redis loses the world, the next tick
-  rebuilds it from raw trades. Continuous-aggregate materialised views (when
-  they ship under [migrations/](../../migrations/)) provide the
-  long-tail historical answer; the orchestrator focuses on the
-  hot, freshness-sensitive cache.
-- **No per-pair Prometheus labels.** Cardinality stays bounded —
-  pair-level lenses live in the Redis key namespace and on the API
-  contract, not on `/metrics`.
+A market below the substance floor is withheld from `price_usd` unless the
+caller asks with `include_thin=true`; the price then carries
+`thin_market: true` (`internal/api/v1/envelope.go`, `assets.go`).
+`/v1/price`, `/v1/price/batch` and `/v1/price/at` withhold it the same way;
+`/v1/vwap` and `/v1/twap` serve such a market by default and flag it the
+same way. A thin price is display-only: no valuation, total or series
+derives from it.
 
----
+## Configuration, observability, API
 
-## Shipped since the original draft (2026-04-25)
+Config (`[aggregate]`, full reference in
+[docs/reference/config/README.md](../reference/config/README.md)): `pairs`,
+`windows` (5m, 1h, 24h), `interval_seconds`, `max_trades_per_window`,
+`disable_class_filter`, `enable_stablecoin_fiat_proxy`,
+`outlier_sigma_threshold`, `vwap_window_seconds` / `twap_window_seconds`
+(unread, retired by GH-1129; windows come from `windows`), `min_usd_volume`, `triangulation_enabled`,
+`divergence_min_interval_seconds` (300), `min_route_confidence`.
 
-These were deferred when this doc was first written; they
-landed during the launch-readiness sweep:
+Metrics ([docs/reference/metrics/README.md](../reference/metrics/README.md)):
+`stellarindex_aggregator_ticks_total{outcome}`,
+`stellarindex_aggregator_vwap_writes_total`,
+`stellarindex_aggregator_empty_windows_total`,
+`stellarindex_aggregator_dropped_trades_total{reason,pair}`,
+`stellarindex_aggregator_window_base_volume`,
+`stellarindex_divergence_refresh_total{outcome}`. No other per-pair
+labels: pair lenses live in Redis keys and the API, not `/metrics`.
+Baseline-comparator alerts use `offset 1h`: expect noise, and suppress
+them, for the first hour after a deploy.
 
-- **Triangulation.** Shipped — `internal/aggregate/orchestrator/triangulate.go`
-  runs after the per-pair refresh, computes implied legs (e.g.
-  XLM/USD × USD/EUR = XLM/EUR), writes to the same VWAP key
-  namespace with a `:provenance` marker, and the `flags.triangulated`
-  envelope field is populated by the API. X2.5 forex-snap rule
-  closes the across-region consistency gap (closes F-0014).
-- **Divergence detection.** Shipped — `divergence.Service` queries
-  CoinGecko + Chainlink HTTP per-pair on every aggregator Tick
-  (per `internal/aggregate/orchestrator/divergence_refresh.go`,
-  PR #429), writes **`div:<pair>`** to Redis with a 5-min TTL
-  (`internal/cachekeys/keys.go:409` — keyed by pair; the older
-  `div:<base>` shape let the last pair win), and
-  the API's `flags.divergence_warning` reads the cache. Per-Tick
-  outcomes labelled by `ok / no_vwap / parse_error / refresh_error`
-  via `stellarindex_divergence_refresh_total`; sustained
-  refresh_error → `stellarindex_divergence_refresh_error_dominant`
-  alert (P3).
+Alerts: `deploy/monitoring/rules/aggregator.yml`, kept in lockstep with
+`configs/prometheus/rules.r1/aggregator.yml` by
+`scripts/ci/lint-rule-equivalence`; runbooks in
+[aggregator.md](../operations/runbooks/aggregator.md). The `stellarindex_aggregator_*`
+set: `silent`, `outlier_storm`, `outlier_trim_fraction`,
+`outlier_volume_trim_fraction`, `fx_snap_fallback_dominant`,
+`triangulation_chains_dry`, `bootstrap_cap_reengaged`, `class_drop_spike`,
+`cache_write_errors`. The same file holds the rollup and sweep alerts
+(`stellarindex_protocol_events_rollup_failing`,
+`stellarindex_asset_volume_rollup_failing`,
+`stellarindex_asset_character_rollup_failing`,
+`stellarindex_nonstandard_decimals_correction_failing`,
+`stellarindex_decimals_guard_sweep_stale`,
+`stellarindex_customer_webhook_fanout_failing`,
+`stellarindex_change_summary_stale`).
 
-## Deferred — natural follow-ups
+Divergence (`internal/aggregate/orchestrator/divergence_refresh.go`): per
+tick, `divergence.Service` checks every enabled reference (CoinGecko, Chainlink-HTTP,
+Reflector, RedStone, Band, synthetic USD-cross; see
+[oracle-manipulation-defense.md](oracle-manipulation-defense.md)), writes
+`div:<pair>` (`internal/cachekeys/keys.go`) with a TTL of
+max(5m, refresh interval + worst pass + 1m) (`internal/divergence/worker.go`), and
+`/v1/price` reads it into `flags.divergence_warning`. Outcomes `ok`,
+`no_vwap`, `parse_error`, `refresh_error`; a sustained `refresh_error`
+fires `stellarindex_divergence_refresh_error_dominant`.
 
-Listed here so a future contributor can pick one up without
-re-deriving the design space:
+API: `/v1/price` (Redis or guarded `prices_1m`, then a last-trade
+fallback), `/v1/price/tip`, `/v1/vwap` and `/v1/twap` (on-query over
+`TradesInRange`, `to` clamped to the last closed minute), `/v1/ohlc`,
+`/v1/sources` (the registry), `/v1/markets` (`DistinctPairs`).
 
-- **TWAP-via-orchestrator pre-compute.** `/v1/twap` reads
-  the trades hypertable on every request today; the orchestrator
-  could pre-compute time-weighted averages alongside VWAP and
-  serve them from Redis. Deferred behind real production traffic
-  data — VWAP is the dominant query shape; pre-computing TWAP
-  too costs Redis without an established demand-side signal.
-- ~~**MAD-based outlier filter.**~~ **SHIPPED — moved out of Deferred
-  2026-09-02.** The filter is median + 1.4826·MAD behind the same
-  `outlier_sigma_threshold` flag, and #244 (2026-08-28) added the
-  time-local neighbourhood test after a live false-fire on
-  `crypto:XLM/fiat:USD` where an *agreed* 2% step was trimmed wholesale.
-  Code: `internal/aggregate/outliers_local.go` (its header carries the
-  incident narrative) and `internal/aggregate/global.go`.
-- **Continuous-aggregate refresh driver.** Timescale's background
-  job handles materialised-view refresh today. A custom driver
-  with tighter freshness guarantees lands when API consumers
-  start hitting historical CAGGs at fresh-data SLAs.
-- **Per-source weighted VWAP.** Currently every contributing
-  source weights at 100. The `Metadata.DefaultWeight` field is
-  shaped to support per-source overrides via config; the math
-  change to `aggregate.VWAP` lands when an operator actually
-  needs it.
+## Boundaries
 
-Each is a drop-in extension — no shape change to the existing
-orchestrator's `Config` or to the surrounding contracts.
+- **No persisted VWAP, but not stateless.** VWAP lives in Redis with a
+  TTL; if Redis is lost the next tick rebuilds it from trades. Timescale
+  holds only audit mirrors — `price_source_contributions`
+  (`ContributionSink`), `freeze_events` (`FreezeWriter`),
+  `divergence_observations` (`DivergenceSink`) — and no served price is
+  read from them. The orchestrator carries load-bearing cross-tick memory
+  (`prevVWAPs`, `frozenPrevVWAPs`, `freezeStates`, `lastComposites`,
+  `tickEdgeQuotes`; documented in `orchestrator.go`). A restart loses all
+  but `freezeStates` (read back from `freeze_events`), and a frozen pair
+  with no `prev` is unscored (`phase2:unscored`): it can neither fire nor
+  release. Restarts are safe, not free.
+- **No cross-binary coupling.** Aggregator → API is Redis keys plus the
+  static registry; the API cannot read the orchestrator's `Stats()`.
 
----
+## Open and deferred
+
+| Item | Why deferred | Ref |
+|---|---|---|
+| Pre-compute TWAP in the orchestrator | `/v1/twap` reads trades on each request; VWAP dominates traffic and pre-computing costs Redis without a demand signal | INV-1067 (discarded) |
+| Explicit CAGG refresh driver | Timescale's background job suffices until consumers need historical CAGGs at fresh-data SLAs | — |
+| Per-source weighted VWAP | every contributing source weighs 100; `Metadata.DefaultWeight` is shaped for config overrides, and the `aggregate.VWAP` math change lands when an operator needs it | — |
+| Every read through the closed-bucket guard | — | #689 |
+| `sources` on the wire for fiat bars | spec change | — |
 
 ## References
 
-- [`internal/aggregate/orchestrator/orchestrator.go`](../../internal/aggregate/orchestrator/orchestrator.go) — Tick loop + filter chain
-- [`internal/aggregate/stablecoin.go`](../../internal/aggregate/stablecoin.go) — `FiatProxy` / `ProxyPair` / `ExpandTargetPair`
-- [`internal/aggregate/outliers.go`](../../internal/aggregate/outliers.go) — σ-threshold filter
-- [`internal/aggregate/served_guard.go`](../../internal/aggregate/served_guard.go) — `/v1/price` direct-read serving-sanity guard (robust ratio + MAD band)
-- [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go) — Source-class registry (single source of truth)
-- [`internal/obs/metrics.go`](../../internal/obs/metrics.go) — Aggregator counters
-- [`deploy/monitoring/rules/aggregator.yml`](../../deploy/monitoring/rules/aggregator.yml) — Prometheus rules
-- [`docs/reference/config/README.md`](../reference/config/README.md) — Full config reference
-- [`docs/reference/metrics/README.md`](../reference/metrics/README.md) — Full metrics reference
-- [`CHANGELOG.md`](../../CHANGELOG.md) — Per-PR narrative for the build-out
+ADR-0003 (money), ADR-0015 (closed-bucket serving), ADR-0018 (tip),
+ADR-0019 (freeze/confidence); [docs/methodology/twap-ohlc.md](../methodology/twap-ohlc.md);
+[docs/operations/v1-launch-plan.md](../operations/v1-launch-plan.md) rows
+1.14–1.16; `internal/aggregate/doc.go`.

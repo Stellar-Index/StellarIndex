@@ -1130,7 +1130,7 @@ Discovery hits dropped because the async discovery sink buffer was
 full. Covers all three sniffers sharing the one sink — SEP-41 token
 sightings ([internal/canonical/discovery.Sniff]) plus the broader
 oracle-suggestive event and event-less-call sightings added per
-docs/architecture/generic-oracle-sep-onboarding.md §3(b)
+docs/architecture/oracle-manipulation-defense.md §"Discovery pipeline"
 (`SniffOracleEvent` / `SniffOracleCall`) — the counter is not
 labeled per-sniffer, so a spike doesn't distinguish which lane
 dropped; check `stellarindex-ops discovery list`'s `KIND` column

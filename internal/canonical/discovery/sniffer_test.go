@@ -214,7 +214,7 @@ func TestInMemoryRecorder_RejectsEmptyContractID(t *testing.T) {
 // ─── SniffOracleEvent ──────────────────────────────────────────────
 //
 // Exercises the broader oracle-suggestive topic[0] sniffer added per
-// docs/architecture/generic-oracle-sep-onboarding.md §3(b)(1).
+// docs/architecture/oracle-manipulation-defense.md §"Event-shaped discovery".
 
 // TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol — the
 // exact symbol set from the investigation's 2026-07-10 ClickHouse
@@ -303,8 +303,8 @@ func TestSniffOracleEvent_RejectsEmptyContractIDOrTopic(t *testing.T) {
 // ─── SniffOracleCall ───────────────────────────────────────────────
 //
 // Exercises the event-less-oracle ContractCallContext-path sniffer
-// added per docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)(2) — the Band pattern generalized.
+// added per docs/architecture/oracle-manipulation-defense.md
+// §"Event-less discovery" — the Band pattern generalized.
 
 // TestSniffOracleCall_RecognisesEveryCallCandidate — the exact
 // function-name allow-list the investigation named for the call

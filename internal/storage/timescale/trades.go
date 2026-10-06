@@ -1798,7 +1798,7 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 // [Store.TradesInRange] and [Store.FXQuoteAtOrBefore] fold on the same
 // rule, for the same reason. The aggregate case was held back once as
 // "a mean is not a relabelling"; it is settled in
-// docs/architecture/aggregate-alias-folding.md and the answer is that
+// docs/architecture/aggregation-plan.md §"The direction fold" and the answer is that
 // every aggregate this store feeds is defined on the two integer LEG
 // AMOUNTS — Σquote/Σbase for a mean, quote/base per row for an extreme
 // — so the leg swap re-weights them exactly and no aggregate needs a
@@ -2174,7 +2174,7 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // not touch. The swap therefore re-weights the mean at the same time
 // as it inverts the price, exactly and without dividing — a flipped
 // row's weight in the requested base IS its stored quote leg. See
-// docs/architecture/aggregate-alias-folding.md.
+// docs/architecture/aggregation-plan.md §"The direction fold".
 //
 // TWO LIMITED ARMS, as in [Store.LatestTradesForPair]. The union of
 // each direction's newest `limit`, re-sorted and cut to `limit`, is

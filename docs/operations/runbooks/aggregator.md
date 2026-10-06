@@ -293,7 +293,7 @@ psql -d stellarindex -c \
 
 **False positives:** a venue that stopped trading has its `venue_vwap` series DELETED on the next refresh, so a persisting series is a bug in `recordVenueVWAPs`. Stablecoin-leg skew: a USDT-quoted vs USD-quoted venue diverge by the USDT/USD basis; > 1% sustained is a real depeg, escalate to the pricing owner. A new pair's first tick (< 3 valid prices): `aggregate.FilterOutliersLocal` is a no-op and `trim_fraction` needs >= 20 trades; both stay silent.
 
-**See also:** [stellarindex_aggregator_silent](#stellarindex_aggregator_silent) (often co-fires when the filter removes every row); [`aggregation-plan.md`](../../architecture/aggregation-plan.md) "Deferred". Any filter algorithm change must update this runbook, the `outliers_spam_test.go` fixture numbers and the promtool `trim_fraction` case together.
+**See also:** [stellarindex_aggregator_silent](#stellarindex_aggregator_silent) (often co-fires when the filter removes every row); [`aggregation-plan.md`](../../architecture/aggregation-plan.md#open-and-deferred) "Open and deferred". Any filter algorithm change must update this runbook, the `outliers_spam_test.go` fixture numbers and the promtool `trim_fraction` case together.
 
 ## stellarindex_aggregator_outlier_trim_fraction
 

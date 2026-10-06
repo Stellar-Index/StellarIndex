@@ -1200,7 +1200,6 @@ internal/canonical/asset_raw.go	2026-08-28
 internal/canonical/asset_rwa.go	2026-07-24
 internal/canonical/asset_rwa.go	2026-08-29
 internal/canonical/asset_xdr.go	2026-07-23
-internal/canonical/discovery/doc.go	2026-07-10
 internal/canonical/discovery/sink.go	2026-07-16
 internal/canonical/discovery/sniffer.go	2026-07-10
 internal/canonical/safetime.go	2001-09-09

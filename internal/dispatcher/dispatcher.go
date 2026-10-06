@@ -37,7 +37,7 @@
 //
 // Two of the three seams also carry a discovery hook (sighting-only,
 // never attribution — internal/canonical/discovery,
-// docs/architecture/generic-oracle-sep-onboarding.md): the event
+// docs/architecture/oracle-manipulation-defense.md): the event
 // seam sniffs topic[0] against both the SEP-41 and a broader
 // oracle-suggestive symbol set; the ContractCallDecoder seam sniffs
 // (contract_id, function_name) against an oracle-suggestive call
@@ -1453,8 +1453,8 @@ func (d *Dispatcher) bumpUncorroborated(name string) {
 // contractCallPathActive reports whether ProcessLedger needs to walk
 // each op's full InvokeContract auth tree at all. True when at least
 // one ContractCallDecoder is registered (the pre-existing condition)
-// OR a discovery sink is installed (docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)(2)) — the oracle-call discovery hook lives in
+// OR a discovery sink is installed (docs/architecture/oracle-manipulation-defense.md
+// §"Event-less discovery") — the oracle-call discovery hook lives in
 // dispatchContractCall, which is only ever invoked from inside that
 // walk, so without this widened condition an event-less-oracle
 // sighting would silently depend on Band (or some other
@@ -1469,8 +1469,8 @@ func (d *Dispatcher) contractCallPathActive() bool {
 // dispatchContractCall runs one InvokeContract op through the
 // contract-call decoder chain. First matching decoder owns it.
 //
-// Discovery hook (docs/architecture/generic-oracle-sep-onboarding.md
-// §3(b)(2)): BEFORE the decoder pass, every call is run through
+// Discovery hook (docs/architecture/oracle-manipulation-defense.md
+// §"Event-less discovery"): BEFORE the decoder pass, every call is run through
 // [discovery.SniffOracleCall] — a cheap map lookup on FunctionName,
 // no arg decoding. This is the event-less-oracle symmetric hook to
 // dispatchOne's event-path discovery: Band's relay()/force_relay()
@@ -1656,7 +1656,7 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 // Discovery hooks: BEFORE the decoder pass, every event is run
 // through [discovery.Sniff] (SEP-41-shaped) AND
 // [discovery.SniffOracleEvent] (broader oracle-suggestive topic
-// set — docs/architecture/generic-oracle-sep-onboarding.md §3(b)(1)).
+// set — docs/architecture/oracle-manipulation-defense.md §"Event-shaped discovery").
 // Either hit is forwarded to the configured [DiscoverySink] (when
 // set); an event can trip at most one of the two (the symbol sets
 // are disjoint). Discovery runs first so even events a decoder later
