@@ -46,11 +46,12 @@ type OrderedLeg struct {
 // sandwichDetail is the mev_events.detail payload for a sandwich
 // candidate.
 type sandwichDetail struct {
-	Pair        string       `json:"pair"`
-	Attacker    string       `json:"attacker"`
-	Legs        []OrderedLeg `json:"legs"`
-	NotionalUSD string       `json:"notional_usd,omitempty"`
-	Note        string       `json:"note"`
+	Pair               string       `json:"pair"`
+	Attacker           string       `json:"attacker"`
+	Legs               []OrderedLeg `json:"legs"`
+	NotionalUSD        string       `json:"notional_usd,omitempty"`
+	NotionalLowerBound bool         `json:"notional_usd_lower_bound,omitempty"`
+	Note               string       `json:"note"`
 }
 
 // DetectSandwiches scans a batch of trades for the cross-transaction
@@ -165,28 +166,30 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 	t0 := trades[front]
 	pair := unorderedPairKey(t0)
 	assetID, quoteID := pairIDs(t0)
-	notional := sumUSD(usdVolume, involved)
+	notional, lowerBound := sumUSD(usdVolume, involved)
 	c := Candidate{
-		AssetID:          assetID,
-		QuoteID:          quoteID,
-		Kind:             KindSandwich,
-		Ledger:           t0.Ledger,
-		DetectedAtLedger: t0.Ledger,
-		Timestamp:        t0.Timestamp.UTC(),
-		TxHash:           t0.TxHash,
-		Taker:            attacker,
-		TxHashes:         distinctTxHashes(trades, involved),
-		Accounts:         distinctAccounts(trades, involved, attacker),
-		Assets:           pairAssets(t0),
-		Sources:          distinctSources(trades, involved),
-		NotionalUSD:      notional,
-		Dedup:            KindSandwich + ":" + t0.TxHash + ":" + attacker + ":" + pair,
+		AssetID:            assetID,
+		QuoteID:            quoteID,
+		Kind:               KindSandwich,
+		Ledger:             t0.Ledger,
+		DetectedAtLedger:   t0.Ledger,
+		Timestamp:          t0.Timestamp.UTC(),
+		TxHash:             t0.TxHash,
+		Taker:              attacker,
+		TxHashes:           distinctTxHashes(trades, involved),
+		Accounts:           distinctAccounts(trades, involved, attacker),
+		Assets:             pairAssets(t0),
+		Sources:            distinctSources(trades, involved),
+		NotionalUSD:        notional,
+		NotionalLowerBound: lowerBound,
+		Dedup:              KindSandwich + ":" + t0.TxHash + ":" + attacker + ":" + pair,
 		Detail: sandwichDetail{
-			Pair:        pair,
-			Attacker:    attacker,
-			Legs:        legs,
-			NotionalUSD: notional,
-			Note:        sandwichNote,
+			Pair:               pair,
+			Attacker:           attacker,
+			Legs:               legs,
+			NotionalUSD:        notional,
+			NotionalLowerBound: lowerBound,
+			Note:               sandwichNote,
 		},
 	}
 	return c, true

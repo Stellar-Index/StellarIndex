@@ -2,6 +2,7 @@ package mev
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,6 +194,29 @@ func TestDetectArbitrage_NotionalSum(t *testing.T) {
 	got := DetectArbitrage(trades, []string{"10.50", "9.25"})
 	if len(got) != 1 || got[0].NotionalUSD != "19.75" {
 		t.Fatalf("notional = %q (want 19.75): %+v", got[0].NotionalUSD, got)
+	}
+	if got[0].NotionalLowerBound {
+		t.Errorf("every leg priced; want no lower-bound flag")
+	}
+}
+
+// A partly priced cycle's notional is a lower bound, and the stored
+// evidence says so.
+func TestDetectArbitrage_PartialNotionalIsLowerBound(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GARB", "native", usdc),
+		trade(t, "phoenix", 2, "GARB", usdc, "native"),
+	}
+	got := DetectArbitrage(trades, []string{"10.50", ""})
+	if len(got) != 1 || got[0].NotionalUSD != "10.50" || !got[0].NotionalLowerBound {
+		t.Fatalf("got %+v, want notional 10.50 flagged as a lower bound", got)
+	}
+	ev, err := storedFrom(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ev.DetailJSON), `"notional_usd_lower_bound":true`) {
+		t.Errorf("detail = %s, want notional_usd_lower_bound:true", ev.DetailJSON)
 	}
 }
 

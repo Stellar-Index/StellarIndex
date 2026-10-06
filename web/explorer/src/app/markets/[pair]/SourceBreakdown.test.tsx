@@ -55,4 +55,28 @@ describe('SourceBreakdown', () => {
     await waitFor(() => expect(container).toBeEmptyDOMElement());
     expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument();
   });
+
+  it('marks the total a lower bound and names the sources that excluded trades', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        window_secs: 86400,
+        sources: [
+          {
+            source: 'sdex',
+            volume_24h_usd: '11',
+            volume_lower_bound: true,
+            trade_count_24h: 4,
+            share_pct: 100,
+          },
+        ],
+      },
+    });
+    renderPanel();
+    expect(
+      await screen.findByText(
+        /excludes trades with no trade-time USD value on sdex/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^≥ \$/)).toBeInTheDocument();
+  });
 });

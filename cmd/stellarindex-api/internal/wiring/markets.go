@@ -55,6 +55,8 @@ func (r StoreMarketsReader) SourceMarkets(ctx context.Context, source, cursor st
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 			LastPrice:     m.LastPrice,
+
+			VolumeLowerBound: m.VolumeLowerBound,
 		}
 	}
 	return out, next, nil
@@ -95,6 +97,8 @@ func (r StoreMarketsReader) AllPools(ctx context.Context, filter timescale.Pools
 			TradeCount24h: p.TradeCount24h,
 			Volume24hUSD:  p.Volume24hUSD,
 			LastPrice:     p.LastPrice,
+
+			VolumeLowerBound: p.VolumeLowerBound,
 		}
 	}
 	return out, next, nil

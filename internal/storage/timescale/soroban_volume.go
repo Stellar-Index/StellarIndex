@@ -8,78 +8,60 @@ import (
 )
 
 // sorobanVolume24hUSDQuery derives the trailing-24h USD trade volume for
-// an asset, anchoring XLM-legged trades to the on-chain XLM/USD VWAP — the
-// L2.2 "phase 2" derivation, applied per-asset. It exists for
-// pure-Soroban SEP-41 tokens: [Store.Volume24hUSDForAsset] only sees the
-// insert-time `usd_volume` column, so a Soroban token whose XLM-legged
-// trades were stored unvalued shows a bogus "0" USD volume on its asset
-// detail.
+// an asset, for pure-Soroban SEP-41 tokens: [Store.Volume24hUSDForAsset]
+// only sees the insert-time `usd_volume` column, so a Soroban token whose
+// XLM-legged trades were stored unvalued would show a bogus "0".
 //
 // Valuation is per TRADE, never per prices_1m row: each trade contributes
-// its insert-time `usd_volume` when present, else its XLM leg valued at
-// query time. A prices_1m row sums every source's trades for one
-// (bucket, base, quote), so a bucket can be partly valued (one insert's FX
-// lookup failed, a neighbour's succeeded); an either/or choice on the
-// row's `volume_usd` would drop the unvalued trades, and prices_1m keeps
-// no residual volume to value them from. COALESCE per trade takes exactly
-// one valuation each, so nothing is dropped or double-counted.
+// its insert-time `usd_volume` when present, else its XLM leg (base_amount
+// or quote_amount, in stroops) at the XLM/USD anchor of the trade's own
+// minute ([xlmUSDAnchorGridCTE]) — never today's rate. A trade with
+// neither (no XLM leg, or no anchor within xlmUSDAnchorMaxAge of it) is
+// excluded and counted, so the caller can flag the sum a lower bound.
 //
-// The XLM leg is `base_amount` for an XLM-base trade and `quote_amount`
-// for an XLM-quote one — the same stroop sums prices_1m exposes as
-// `volume` and `volume_quote` — and `/1e7 * xlm_usd` converts it to USD.
-// Trades with no valuation and no XLM leg (pure SEP-41/SEP-41) still
-// contribute nothing — valuing those needs a per-token oracle. This query
-// values unpriced XLM legs at the current XLM/USD (unlike /v1/sources,
-// which reports trade-time usd_volume only).
+// The window is the closed 1-minute buckets of the last 24h (ADR-0015).
+// $1 binds the asset's canonical key (trades.base_asset / quote_asset
+// form, e.g. a `C…` id); $2 the network's native-XLM SAC.
 //
-// The window is the closed 1-minute buckets of the last 24h, the same
-// buckets prices_1m serves (ADR-0015); `ts >= now() - 24h` is the
-// index-usable superset of the bucket lower bound. The `xlm_usd` CTE is
-// the same bounded most-recent XLM→USD anchor GetSourceStats uses; a NULL
-// anchor degrades the XLM-leg fallback to NULL, which SUM skips, and the
-// outer COALESCE floors the all-NULL case to "0". $1 binds the asset's
-// canonical key (trades.base_asset / quote_asset form, e.g. a `C…` id); $2 the
-// network's native-XLM SAC.
-const sorobanVolume24hUSDQuery = `
-        WITH xlm_usd AS (
-          ` + xlmUSDVolumeSelect + `
-        ),
+//nolint:gosec // G202: fragments are constant SQL built from literals and $N placeholders
+var sorobanVolume24hUSDQuery = `
+        WITH ` + xlmUSDAnchorGridCTE("xlm_usd_grid", "now() - INTERVAL '24 hours'", "$2::text") + `,
         asset_trades AS (
           SELECT time_bucket('1 minute', ts) AS bucket,
                  base_asset, quote_asset, base_amount, quote_amount, usd_volume
             FROM trades
            WHERE (base_asset = $1 OR quote_asset = $1)
              AND ts >= now() - INTERVAL '24 hours'
+        ),
+        valued AS (
+          SELECT COALESCE(t.usd_volume, CASE
+                   WHEN t.base_asset IN ('native', $2::text)
+                     THEN (t.base_amount / 1e7::numeric) * xa.vwap
+                   WHEN t.quote_asset IN ('native', $2::text)
+                     THEN (t.quote_amount / 1e7::numeric) * xa.vwap
+                 END) AS usd
+            FROM asset_trades t
+            ` + xlmUSDGridJoin("xa", "t.bucket") + `
+           WHERE t.bucket >= now() - INTERVAL '24 hours'
+             AND t.bucket <= now() - INTERVAL '1 minute'
         )
-        SELECT COALESCE(sum(
-          COALESCE(usd_volume, CASE
-            WHEN base_asset IN ('native', $2::text)
-              THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-            WHEN quote_asset IN ('native', $2::text)
-              THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-            ELSE NULL
-          END)
-        ), 0)::text
-          FROM asset_trades
-         WHERE bucket >= now() - INTERVAL '24 hours'
-           AND bucket <= now() - INTERVAL '1 minute'
+        SELECT COALESCE(sum(usd), 0)::text, count(*) FILTER (WHERE usd IS NULL)
+          FROM valued
     `
 
 // SorobanVolume24hUSDForAsset is the XLM-anchored trailing-24h USD-volume
 // variant of [Store.Volume24hUSDForAsset], for pure-Soroban SEP-41 assets
-// whose liquidity is quoted in XLM (or another SEP-41 token) rather than a
-// USD-pegged classic. Each trade contributes its insert-time `usd_volume`,
-// or failing that its XLM leg valued through the on-chain XLM/USD VWAP —
-// see [sorobanVolume24hUSDQuery] for the NUMERIC derivation and its scope
-// boundary (pure SEP-41/SEP-41 legs still contribute 0).
+// whose liquidity is quoted in XLM rather than a USD-pegged classic. See
+// [sorobanVolume24hUSDQuery] for the trade-time valuation.
 //
-// Returns "0" (not an error) when the asset had no valuable trades in the
-// window — same convention as Volume24hUSDForAsset. `assetKey` is the
-// canonical asset string trades.base_asset / quote_asset stores.
-func (s *Store) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
-	var out string
-	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey, canonical.NativeSACContractID()).Scan(&out); err != nil {
-		return "", fmt.Errorf("timescale: SorobanVolume24hUSDForAsset(%s): %w", assetKey, err)
+// Returns "0" (not an error) when the asset had no valued trades in the
+// window. lowerBound is true when some trade in the window could not be
+// valued and was excluded. `assetKey` is the canonical asset string
+// trades.base_asset / quote_asset stores.
+func (s *Store) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error) {
+	var unpriced int64
+	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey, canonical.NativeSACContractID()).Scan(&usd, &unpriced); err != nil {
+		return "", false, fmt.Errorf("timescale: SorobanVolume24hUSDForAsset(%s): %w", assetKey, err)
 	}
-	return out, nil
+	return usd, unpriced > 0, nil
 }

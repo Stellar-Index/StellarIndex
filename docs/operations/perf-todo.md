@@ -28,7 +28,7 @@ Open API performance items, and the operator notes for the shipped
 1. **CDN in front of R1 — OPEN (operator action).** Responses already emit
    `s-maxage=N`. `api.stellarindex.io` is DNS-live but **grey-cloud** (direct
    to the R1 origin); the orange-cloud proxy is in
-   [`cdn-setup.md`](cdn-setup.md), tracked as launch-todo P2-1 ④.
+   [`cdn-setup.md`](cdn-setup.md), a pre-launch hardening step ([`pre-launch-hardening.md`](pre-launch-hardening.md)).
 2. **Stale-while-revalidate — SHIPPED** (above).
 3. **Materialised catalogue tables — NOT BUILT; deferred.** Revisit only if
    SWR + prewarm prove insufficient at sustained consumer volume. Design:

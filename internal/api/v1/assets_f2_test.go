@@ -106,16 +106,76 @@ type stubDualVolumeReader struct {
 	sorobanKey string
 	plain      string
 	soroban    string
+
+	sorobanLowerBound bool
+	sorobanErr        error
+	plainErr          error
 }
 
 func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
 	s.plainKey = assetKey
+	if s.plainErr != nil {
+		return "", s.plainErr
+	}
 	return s.plain, nil
 }
 
-func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {
 	s.sorobanKey = assetKey
-	return s.soroban, nil
+	if s.sorobanErr != nil {
+		return "", false, s.sorobanErr
+	}
+	return s.soroban, s.sorobanLowerBound, nil
+}
+
+// TestF2_SorobanVolumeFallbackIsLowerBound — when the trade-time Soroban
+// read fails, the plain reader's figure omits every XLM-quoted trade, so it
+// must be served flagged volume_lower_bound, never as an exact total.
+func TestF2_SorobanVolumeFallbackIsLowerBound(t *testing.T) {
+	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	vol := &stubDualVolumeReader{plain: "12.5", sorobanErr: errors.New("anchor read failed")}
+	ts := startHTTPTest(t, v1.New(v1.Options{Volume: vol}).Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+contractID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	if vol.plainKey != contractID {
+		t.Fatalf("plain reader not used as fallback; key = %q", vol.plainKey)
+	}
+	if !strings.Contains(body, `"volume_24h_usd":"12.5"`) {
+		t.Errorf("fallback volume missing; body: %s", body)
+	}
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("fallback figure must flag volume_lower_bound; body: %s", body)
+	}
+}
+
+// TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail — GetAsset pre-fills
+// the insert-time prices_1m figure; if both trade-time reads then fail it is
+// served as-is, so it must carry volume_lower_bound.
+func TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail(t *testing.T) {
+	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	prefilled := "7.5"
+	asset := canonical.Asset{Type: canonical.AssetSoroban, ContractID: contractID}
+	assets := &stubAssetReader{byID: map[string]v1.AssetDetail{
+		asset.String(): {AssetID: asset.String(), VolumeUSD24h: &prefilled},
+	}}
+	vol := &stubDualVolumeReader{sorobanErr: errors.New("anchor read failed"), plainErr: errors.New("plain read failed")}
+	ts := startHTTPTest(t, v1.New(v1.Options{Assets: assets, Volume: vol}).Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+contractID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"volume_24h_usd":"7.5"`) {
+		t.Fatalf("pre-filled volume missing; body: %s", body)
+	}
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("pre-filled partial figure must flag volume_lower_bound; body: %s", body)
+	}
 }
 
 // TestF2_SorobanAssetUsesAnchoredVolume — a pure-Soroban SEP-41 asset's
@@ -139,6 +199,15 @@ func TestF2_SorobanAssetUsesAnchoredVolume(t *testing.T) {
 	}
 	if vol.sorobanKey != contractID {
 		t.Errorf("SorobanVolume24hUSDForAsset key = %q, want %q", vol.sorobanKey, contractID)
+	}
+	if strings.Contains(body, `"volume_lower_bound"`) {
+		t.Errorf("nothing excluded; volume_lower_bound must be absent; body: %s", body)
+	}
+	partial := &stubDualVolumeReader{plain: "0", soroban: "98765.43", sorobanLowerBound: true}
+	resp = mustGet(t, startHTTPTest(t, v1.New(v1.Options{Volume: partial}).Handler()).URL+"/v1/assets/"+contractID)
+	body, _ = readAll(resp)
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("excluded trades must flag volume_lower_bound; body: %s", body)
 	}
 	if vol.plainKey != "" {
 		t.Errorf("plain Volume24hUSDForAsset should NOT be called for a Soroban asset; got key %q", vol.plainKey)

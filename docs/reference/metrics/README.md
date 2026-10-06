@@ -593,6 +593,17 @@ so reconciliation cannot see this; non-zero means served volume for
 that source is silently under-reported. Emitted by sorocredit's
 settlement decoder (`field="settled_amount"`).
 
+### `stellarindex_spectra_unlisted_infrastructure_total`
+
+Counter, label `kind`.
+
+Spectra registry `*_change` events naming a factory, router, order engine
+or token WASM outside the hand-kept audited set. `kind` is the change class
+(`factory_change`, `router_change`, `limit_order_engine_change`,
+`pt_wasm_hash_change`, `yt_wasm_hash_change`), pre-seeded at 0. Each
+increment leaves the Spectra gate incomplete until the infrastructure is
+audited and listed; alerts on `increase(...[1h]) > 0`.
+
 ### `stellarindex_decoder_panics_total`
 
 Counter, label `source`.
