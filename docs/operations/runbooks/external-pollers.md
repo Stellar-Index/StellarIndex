@@ -2,7 +2,7 @@
 title: Runbook — external pollers, CEX streams, FX feed
 last_verified: 2026-10-06
 status: draft
-severity: P2 for `stellarindex_external_poller_stale`; P3 for the rest
+severity: P2 for `stellarindex_external_poller_stale`, `stellarindex_external_fx_feed_stale`, `stellarindex_cex_stream_subscription_rejected` and `stellarindex_cex_stream_entry_skips`; P3 for the rest
 ---
 
 # Runbook — external pollers, CEX streams, FX feed
@@ -31,7 +31,7 @@ Rules: `configs/prometheus/rules.r1/external-pollers.yml` (loaded on r1) and `de
 
 - `external.Connector` pollers (CoinGecko, CoinMarketCap, CryptoCompare, ECB, ExchangeRatesAPI, Tiingo, Chainlink) and the CEX WebSocket streamers (Binance, Coinbase, Kraken, Bitstamp) run in `stellarindex-indexer`. Metrics: indexer `:9464` (loopback; `:9100` is node_exporter; the aggregator shifts to `:9465`). Query from the host.
 - `massive` (fiat FX, `internal/sources/external/forex` worker) runs in `stellarindex-api`, not the poller framework: no `stellarindex_external_poller_*` series, so poller alerts cannot see it. Its alerts are the `fx_*` ones below.
-- Impact of a lost poller: the venue drops out of its pairs' consensus; `/v1/price` keeps serving from the remaining sources (a thinner consensus can surface as `flags.single_source` and elevated `flags.divergence_warning`). Whether VWAP moves depends on the source's `Class` / `IncludeInVWAP` row in `internal/sources/external/registry.go` (see [aggregation-plan](../../architecture/aggregation-plan.md); ADR-0008). CoinGecko has two independent paths (the ingest poller and `divergence.CoinGeckoReference`), so a stale poller does not blind the cross-reference layer.
+- Impact of a lost poller: the venue drops out of its pairs' consensus; `/v1/price` keeps serving from the remaining sources (a thinner consensus can surface as `flags.single_source` and elevated `flags.divergence_warning`). Whether VWAP moves depends on the source's `Class` / `IncludeInVWAP` row in `internal/sources/external/registry.go` (see [aggregation-plan](../../architecture/aggregation-plan.md)); oracle- and lending-class sources never contribute to VWAP (`internal/sources/external/registry.go`). CoinGecko has two independent paths (the ingest poller and `divergence.CoinGeckoReference`), so a stale poller does not blind the cross-reference layer.
 - Logs: `ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "1 hour ago" --no-pager | grep -E "poller error|poller stopping|produced no rows|no applicable pairs" | grep <source>'`
 - Startup line showing the auth tier: `journalctl -u stellarindex-indexer --no-pager | grep -F 'external poller enabled' | grep -F 'source=coingecko' | tail -1` gives `… poll_interval=5m0s auth_mode=anonymous|demo|pro`.
 - Verify a fix: `ssh root@136.243.90.96 "curl -s http://localhost:9464/metrics | grep -E 'stellarindex_external_poller_(polls|last_success).*<source>'"` shows `stellarindex_external_poller_polls_total{source="<source>",outcome="success"}` incrementing and `stellarindex_external_poller_last_success_unix{source="<source>"}` recent.
@@ -102,7 +102,7 @@ Trips, `for: 15m`, `severity: informational` (no ticket; escalation is `stellari
 - `sum without (outcome)` + `ignoring(outcome)` is required: a bare `success + error` sum matches nothing under one-to-one matching (`outcome` differs) and could never fire. Reproduce by hand with the expression above, not the unaggregated form.
 - A genuine trip needs ~30 min of degradation (15 m windows + `for: 15m`).
 
-Impact depends on source class (`registry.go`): exchange-class venues (`binance`, `kraken`, `bitstamp`, `coinbase`, `exchangeratesapi`) are `IncludeInVWAP: true` (loss degrades the aggregate for their pairs; ADR-0008 class-aware fallback keeps `/v1/price` serving); aggregator-class (`coingecko`, `coinmarketcap`, `cryptocompare`) and `ecb` are `IncludeInVWAP: false` (degrades cross-checks / FX sanity only).
+Impact depends on source class (`registry.go`): exchange-class venues (`binance`, `kraken`, `bitstamp`, `coinbase`, `exchangeratesapi`) are `IncludeInVWAP: true` (loss degrades the aggregate for their pairs; `/v1/price` keeps serving from the remaining sources); aggregator-class (`coingecko`, `coinmarketcap`, `cryptocompare`) and `ecb` are `IncludeInVWAP: false` (degrades cross-checks / FX sanity only).
 
 Diagnose:
 
@@ -149,7 +149,7 @@ journalctl -u stellarindex-indexer -n 500 --no-pager | \
 Mitigation:
 - [ ] 429: raise `[external.<vendor>] poll_interval` in `/etc/stellarindex.toml`, `systemctl restart stellarindex-indexer`.
 - [ ] 401/403: rotate/provision the key in `/etc/default/stellarindex` and restart the owning binary; confirm the tier on the `external poller enabled … auth_mode=` line.
-- [ ] Vendor outage: nothing to do (ADR-0008 fallback serves from remaining sources).
+- [ ] Vendor outage: nothing to do (`/v1/price` serves from the remaining sources).
 - [ ] Schema drift: code update (release per [release-process](../release-process.md)). Parse path: streaming CEX venues in `internal/sources/external/<vendor>/parse.go` (binance, bitstamp, coinbase, kraken); poller-only vendors (coingecko, ecb, cryptocompare, coinmarketcap, exchangeratesapi) decode inline in `poller.go`. External venues have no `dispatcher_adapter.go`.
 - [ ] Verify: ratio < 0.5; allow the 15 min window plus `for: 15m`.
 
@@ -243,7 +243,7 @@ Trips: `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total{r
 - `non_finite`: NaN or ±Inf.
 - `history_deviation`: a trailing-7d HISTORY bar moved > 50% from the ticker's current accepted rate (past bars are banded read-only, never move the baseline).
 - `history_deviation_stuck`: same (within 1%) history bar refused >= 12 consecutive times; excluded from the alert, still WARN-logged. >= 4 mutually-agreeing rejected bars against a still-unconfirmed bootstrap baseline instead HEAL the baseline (`stellarindex_external_fx_baseline_healed_total`; history-majority heal in `forex/worker.go`).
-- `deviation_history_conflict`: a two-fetch confirmation was VETOED because the ticker's trailing-7d history majority (>= 4 bars agreeing within 10%) refutes the candidate (two repeats of one broken current bar are not corroboration). History never SETS the baseline, it only refuses the confirm; a genuine devaluation confirms once the trailing majority stops refuting. Log: `forex: pending confirmation refuted by agreeing history majority`.
+- `deviation_history_conflict`: a two-fetch confirmation was VETOED because the ticker's trailing-7d history majority (>= 4 bars agreeing within 10%) refutes the candidate (two repeats of one broken current bar are not corroboration). History never SETS the baseline, it only refuses the confirm; a genuine devaluation confirms once the trailing majority stops refuting: the history follows a real devaluation within days, or the split-level window fails mutual agreement and yields no veto. Log: `forex: pending confirmation refuted by agreeing history majority`.
 - `deviation_history_conflict_stuck`: same (within 1%) vetoed candidate refused >= 12 consecutive times; excluded from the alert, WARN-logged, graphable.
 
 Diagnose:
@@ -254,7 +254,7 @@ Diagnose:
 Fix:
 - Real move the upstream keeps reporting: nothing in code; the two-strike arm accepts after two agreeing fetches. If it still fires, the upstream oscillates between scales (feed bug): report it and consider pinning the currency out of the fiat-quote surface.
 - Decimal shift / unit-scale change upstream: guard did its job, no `fx_quotes` row corrupted, nothing to backfill; open an upstream ticket.
-- A bad bar reached `fx_quotes` before the band: rows are per `(ticker, bucket)`; correct with an `InsertFXQuoteBatch`-equivalent upsert for the day, then re-derive fiat-quoted aggregates over the window.
+- A bad bar reached `fx_quotes` before the band shipped (historical rows): rows are per `(ticker, bucket)`; correct with an `InsertFXQuoteBatch`-equivalent upsert for the day, then re-derive fiat-quoted aggregates over the window.
 - Band too tight: `maxRateDeviation` is a documented constant; changing it is a code change with a test, not a toggle.
 - Do NOT widen the band to silence the alert, do NOT disable the guard (confirmation already lets a real rate through on the next refresh), and do not read a firing alert as wrong data: data was withheld.
 

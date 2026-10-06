@@ -104,6 +104,8 @@ absent_over_time(stellarindex_hashdb_verify_runs_total[6h])
 ```
 `for: 30m`. Append has been recording for 6h (hashdb enabled, ingest live) but `stellarindex_hashdb_verify_runs_total` has had zero samples: the verifier completed no pass at all (not clean, drifted or errored). `verify_failing` cannot catch it: both sides of its ratio are zero and its `> 0` guard reads that as no signal. Cause: every tick took `hashDBVerifySweep`'s early return, or the ticker goroutine died. Check the indexer process is alive and its logs for hashdb verifier startup/panic (`journalctl -u stellarindex-indexer | grep hashdb`).
 
+Known gap: the rule's `absent_over_time` cannot fire while `stellarindex_hashdb_verify_runs_total` is seeded at 0 (a seeded series is never absent); a fix is in flight in a separate PR.
+
 ## stellarindex_hashdb_append_failing
 
 Trips:

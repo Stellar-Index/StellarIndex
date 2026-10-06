@@ -169,7 +169,7 @@ tests:
                 `curated.published` with `stale: true`, and drops the block
                 once the execution is 7 days old. Nothing on this side
                 refreshes it: confirm on dune.com that the curator's query
-                schedule is paused or broken (runbook triage step 5).
+                schedule is paused or broken (see the runbook section).
 
   # ── healthy: the curator re-executes daily, never fires ──
   - interval: 1m

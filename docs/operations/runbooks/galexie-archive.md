@@ -25,13 +25,13 @@ Alerts for the R1 durable ledger mirror (`galexie-archive` bucket on MinIO, ADR-
 
 ## Shared context
 
-- Archive alerts: no customer impact (serving unaffected; `aws-public-blockchain` backstops); the mirror and the off-site DR copy (`docs/architecture/multi-region-ha.md` §5) degrade.
+- Archive alerts: no customer impact (serving unaffected; `aws-public-blockchain` backstops); the R1 mirror degrades; the archive is re-pulled from `aws-public-blockchain`, not backed up off-site.
 - Scope: r1 / pubnet. `galexie-archive-fill` is installed only when `stellar_network == pubnet` (aws-public has no testnet/futurenet dataset) and removed elsewhere; the tip-lag updater is on every network, so fill remediation does not apply off pubnet.
 - Partition model: galexie writes 64,000 ledgers per partition (`files_per_partition=64000`, `ledgers_per_file=1`); the fill mirrors only COMPLETE partitions. Archive tip lag is a sawtooth 0 → 64,000 (~4 days per partition, back to ~0 on the first hourly fill after a partition completes).
 - Declared archive shape: genesis partition `[0, 63999]` plus `[ARCHIVE_FROM = 49,984,000 → tip]`; the middle is a deliberate capacity trim (recoverable only from `aws-public-blockchain`).
 - Every mc-based guard reads through root's `local` mc alias; a rotated MinIO credential breaks all of them at once. The `aws-public` alias lives only in root's `~/.mc/config.json` and is not ansible-managed.
 - Probe-blindness alerts (`_metric_stale`, `_contiguity_silent`, `_scan_degraded`, `_upstream_check_stale`, `_catchup_probe_degraded`) are `ticket`: node_exporter serves the LAST textfile forever, so a dead producer freezes the guarded alert. Fix the producer first.
-- Timers and units: `galexie-archive-fill.timer` (hourly, :17 + jitter), `galexie-archive-tip-lag.timer` (5 min), `galexie-archive-contiguity.timer` (hourly), `galexie-mirror-verify.timer` (weekly), `galexie-archive-trim.timer`, `galexie-catchup-probe.timer`. Sources: `configs/ansible/roles/archival-node/templates/systemd/*.j2`, installed by `tasks/07-galexie.yml` (the `deploy/systemd/` copies have drifted and are not what runs on r1).
+- Timers and units: `galexie-archive-fill.timer` (hourly, :17 + jitter), `galexie-archive-tip-lag.timer` (5 min), `galexie-archive-contiguity.timer` (hourly), `galexie-mirror-verify.timer` (weekly), `galexie-archive-trim.timer`, `galexie-catchup-probe.timer`. Sources: `configs/ansible/roles/archival-node/templates/systemd/*.j2`. `tasks/07-galexie.yml` installs only the fill, tip-lag and contiguity timers; trim and mirror-verify come from `tasks/14-stellarindex-services.yml` (trim is left for a hand `systemctl enable --now`); the catchup-probe unit is inline in `tasks/10-observability.yml`. The `deploy/systemd/` copies have drifted and are not what runs on r1.
 - Read a oneshot's `Result` WITH its timestamp (`Type=oneshot RemainAfterExit=no` units keep `Result` from the last run; empty `InactiveEnterTimestamp` = never ran):
 
   ```sh
@@ -57,8 +57,8 @@ Remediation (both lag alerts):
 # Manual catch-up (idempotent; same unit the timer runs, via run-heavy-job.sh:
 # singleton flock, MemoryMax=20G, disk watchdog, 6h TimeoutStartSec):
 ssh r1 'sudo systemctl start galexie-archive-fill.service'
-# Foreground run with the same guards (never invoke the script bare: it races
-# the :17 timer on the shared /tmp/galexie-fill.*.txt scratch files, uncapped):
+# Foreground run with the same guards (never run the script bare: it runs without
+# the MemoryMax and watchdog caps, and exits 75 if the timer's run holds the lock):
 ssh r1 'sudo /usr/local/sbin/run-heavy-job.sh galexie-archive-fill /usr/local/bin/galexie-archive-fill'
 # Force the tip-lag updater to re-read:
 ssh r1 'sudo systemctl start galexie-archive-tip-lag.service'
@@ -100,7 +100,7 @@ If the fill itself fails, follow `/var/log/galexie-mirror.log`. Common causes: b
      ```
 
   3. Overlap: compare both dirs' object counts/sizes; the newer partial one is usually a botched re-fill. Remove the incomplete one only after confirming the other is whole.
-  4. Hole inside declared coverage: recover from `aws-public-blockchain` (same pull path as the off-site DR middle-range copy) with `galexie-archive-fill` (it copies absent partitions; incomplete ones go in via the `PARTIALS` env), then re-run the scan service and confirm the gauge returns to 0. A hole below the hot floor is skipped by the fill (see above).
+  4. Hole inside declared coverage: recover from `aws-public-blockchain` (the archive is re-pulled from there, not backed up off-site) with `galexie-archive-fill` (it copies absent partitions; incomplete ones go in via the `PARTIALS` env), then re-run the scan service and confirm the gauge returns to 0. A hole below the hot floor is skipped by the fill (see above).
   5. If the declared shape legitimately changed (e.g. the middle was backfilled), update `EXPECTED_TRIM` in the service env via ansible (empty = strict full-history contiguity) and the HA plan doc in the same change.
 
 ## stellarindex_galexie_archive_contiguity_silent
@@ -259,4 +259,4 @@ A galexie restart is never casual on r1: the captive core cold-catches-up ~9 min
 
 ## Related
 
-- ADR-0016 (R1 = full mirror), ADR-0027 (hot floor + trim, `docs/operations/lcm-cache-tiering.md`), [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-mirror](galexie-archive-mirror.md) (the off-site copy).
+- ADR-0016 (R1 = full mirror), ADR-0027 (hot floor + trim, `docs/operations/lcm-cache-tiering.md`), [archive-files-missing](archive-completeness.md#stellarindex_archive_files_missing), [bootstrap-archival-node](bootstrap-archival-node.md), [galexie-archive-mirror](galexie-archive-mirror.md).

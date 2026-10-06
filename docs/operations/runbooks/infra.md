@@ -7,7 +7,7 @@ severity: P1
 
 # Runbook — host, disk, backup and worker alerts (infra family)
 
-Alerts live in `configs/prometheus/rules.r1/infra.yml` and `storage.yml` (the files r1 loads from `/etc/prometheus/rules.r1/*.yml`; group `stellarindex.infra`, trend alerts in `stellarindex.infra_pool_trend`). `deploy/monitoring/rules/{infra,storage}.yml` are the multi-host twins; exprs, `for:` and severities are identical (comments differ only). Section headings are the alert names.
+Alerts live in `configs/prometheus/rules.r1/infra.yml` and `storage.yml` (the files r1 loads from `/etc/prometheus/rules.r1/*.yml`; group `stellarindex.infra`, trend alerts in `stellarindex.infra_pool_trend`; the nvme wear/spare/media alerts and the four backup alerts are in group `stellarindex.storage`, `storage.yml`). `deploy/monitoring/rules/{infra,storage}.yml` are the multi-host twins; exprs, `for:` and severities are identical (comments differ only). Section headings are the alert names.
 
 ## At a glance
 
@@ -40,11 +40,11 @@ Alerts live in `configs/prometheus/rules.r1/infra.yml` and `storage.yml` (the fi
 ## Shared context
 
 - r1 is a single host: Hetzner EX63 (FSN1), root `ssh root@136.243.90.96`. No replica, no HAProxy/Patroni/Sentinel/PgBouncer, no stellar-core validator (galexie's captive core is the only one). Hetzner Robot (https://robot.hetzner.com, r1 = EX63 #2982698; testnet/futurenet host = Server Auction #3057275) gives KVM console / Rescue / Reset; no customer IPMI. Robot login is held by the maintainer (`docs/operations/maintainer-workflow.md`). Hardware swaps go through a Hetzner support ticket.
-- Storage: OS/boot disks are mdadm RAID1 (`md0` swap, `md1` `/`; installimage `SWRAID 1`, `configs/libvirt/installimage-host.conf`). Data is the ZFS pool `data` on 4 NVMe, **raidz1 (single parity)**: one drive failure is the whole tolerance, so DEGRADED means zero redundancy. Never promise two-failure tolerance (the role default is raidz2 but r1's inventory pins `zfs_data_pool_type: "raidz1"`; `scripts/ci/lint-docs.sh` §18 lints this).
+- Storage: OS/boot disks are mdadm RAID1 (`md0` swap, `md1` `/`; layout in `docs/operations/r1-deployment-state.md` §Disk layout). On r1, `nvme0n1`/`nvme1n1` carry `md0`, `md1` and a ZFS member (`p4`), so one failed OS drive also degrades the `data` pool. Data is the ZFS pool `data` on 4 NVMe, **raidz1 (single parity)**: one drive failure is the whole tolerance, so DEGRADED means zero redundancy. Never promise two-failure tolerance (the role default is raidz2 but r1's inventory pins `zfs_data_pool_type: "raidz1"`; `scripts/ci/lint-docs.sh` §18 lints this).
 - node_exporter is the Debian unit `prometheus-node-exporter` (job label `node_exporter`, `localhost:9100`). The old `node_exporter.service` is deliberately stopped+disabled and shows `inactive (dead)` on a healthy host; never `systemctl start node_exporter` except as rollback after `systemctl stop prometheus-node-exporter` (`configs/ansible/roles/archival-node/tasks/10-observability.yml`).
 - Heavy ops one-shots must run under `/usr/local/sbin/run-heavy-job.sh` (transient scope: batch CPUWeight=25 / IOWeight=25, `MemoryMax=20G`, `MemorySwapMax=0`); galexie carries elevated weight and `MemoryLow=16G`. A `heavy-*.scope` dominating `systemd-cgtop` is expected. A heavy binary run raw (outside a scope) is the real fault: stop it and re-run under the wrapper (an unwrapped re-derive once wedged galexie's captive core for 11 h).
 - Memory policy: strict overcommit (`vm.overcommit_memory=2`, `vm.overcommit_ratio=80`), 16 G swap at `vm.swappiness=1`. Failure mode is ENOMEM ("Cannot allocate memory") in the next allocator, before the OOM-killer.
-- Textfile-collector metrics (`nvme_*`, `keepalived.prom`, `pgbackrest_backup.prom`, ...) are produced by timers/scripts listed in `configs/ansible/roles/archival-node/tasks/10-observability.yml`; the textfile dir is `/var/lib/node_exporter/textfile_collector/`.
+- Textfile-collector metrics (`nvme_*`, `keepalived.prom`, `pgbackrest_backup.prom`, ...) are produced by timers/scripts; `scripts/ci/textfile-producers.manifest` lists each file's producer; the textfile dir is `/var/lib/node_exporter/textfile_collector/`.
 - `systemctl --failed` empty and `zpool status -x` clean are the generic all-clear after any of these.
 
 ## stellarindex_host_down
@@ -85,7 +85,7 @@ False positives: node_exporter OOM-killed on a starved box (real problem is memo
 
 ```sh
 ssh root@136.243.90.96 'top -b -n1 -o %CPU | head -20'
-ssh root@136.243.90.96 'systemd-cgtop --order=cpu --iterations=2 -n 20'
+ssh root@136.243.90.96 'systemd-cgtop --order=cpu --iterations=2'
 ssh root@136.243.90.96 'mpstat 1 5'     # user vs system vs iowait vs softirq; %steal is structurally 0 on this dedicated box
 ```
 
@@ -100,7 +100,7 @@ Fix: identify consumer; legitimate load → scale up, bug → incident; catchup 
 
 ```sh
 ssh root@136.243.90.96 'ps auxww --sort=-%mem | head -10'
-ssh root@136.243.90.96 'systemd-cgtop --order=memory --iterations=2 -n 20'
+ssh root@136.243.90.96 'systemd-cgtop --order=memory --iterations=2'
 ssh root@136.243.90.96 'free -h; cat /proc/meminfo | head -30'
 ssh root@136.243.90.96 'journalctl --since -2h | grep -i "cannot allocate memory" | tail'
 ssh root@136.243.90.96 'dmesg -T | grep -i "out of memory\|killed process" | tail'
@@ -222,7 +222,7 @@ ssh <host> 'zpool status -v'             # checksum errors on this drive's pool?
 
 Causes: end-of-life wear (Percentage Used > 80 %, replace on schedule); one drive flaking while siblings are fine (drive, occasionally backplane/cable/slot); firmware bug (check vendor advisory); spurious kernel event (SMART clean and ZFS checksum errors zero: upgrade kernel when feasible, low priority).
 
-Fix: read SMART + ZFS status; if ZFS already shows checksum errors/scrub/resilver it is escalating, follow `## stellarindex_zfs_pool_degraded`; schedule replacement (`zpool offline`, swap, `zpool replace`, wait for resilver); if traffic can be drained, stop the relevant `stellarindex-*` units and reboot after the swap (stressed drives sometimes fail harder during resilver). Verify: new drive resilvered, `zpool status` ONLINE, no new IO errors for 24 h. False positives: a single transient IO error at boot (no recurrence within 1 h: close, keep on a watch list); scrub-detected-and-repaired sectors (informational unless growing).
+Fix: read SMART + ZFS status; if ZFS already shows checksum errors/scrub/resilver it is escalating, follow `## stellarindex_zfs_pool_degraded`; schedule replacement (`zpool offline`, swap, `zpool replace`, wait for resilver); a clean reboot BEFORE the swap is preferable when traffic can be drained (stop the relevant `stellarindex-*` units first); resilver is online-safe, but stressed drives sometimes fail harder during it. Verify: new drive resilvered, `zpool status` ONLINE, no new IO errors for 24 h. False positives: a single transient IO error at boot (no recurrence within 1 h: close, keep on a watch list); scrub-detected-and-repaired sectors (informational unless growing).
 
 ## stellarindex_nvme_critical_warning
 
@@ -248,7 +248,6 @@ Fix: read SMART + ZFS status; if ZFS already shows checksum errors/scrub/resilve
 ```sh
 ssh root@136.243.90.96 'for d in /dev/nvme?n1; do echo -n "$d: "; smartctl -A "$d" | grep -i temperature; done'
 ssh root@136.243.90.96 'sensors | grep -E "Composite|fan"'         # all drives (chassis) or one (drive)?
-ssh root@136.243.90.96 'ipmitool sdr list | grep -iE "fan|temp"'   # only if the BMC is reachable
 ```
 
 Causes: chassis airflow (clogged filter, failed fan; several drives at once); ambient DC temperature (all drives climb together); single drive (loose heatsink, poor slot); heavy work (scrub, resilver, backup, compaction; expected, throttle does its job).
@@ -266,7 +265,7 @@ ssh <host> 'mdadm --detail /dev/md0 /dev/md1'
 ssh <host> 'dmesg -T | grep -iE "md/raid1|ata.*error|nvme.*error" | tail -30'
 ```
 
-Fix: identify the failed member from `mdadm --detail`; if the drive is failing outright, schedule replacement (a failing NVMe often also trips `## stellarindex_nvme_smart_warn`); after replacement `mdadm --manage /dev/mdX --add /dev/<new-partition>` and confirm `cat /proc/mdstat` shows a `resync` percentage. Verify `mdadm --detail /dev/mdX` reports `State : clean` with both members `active sync`. A transient hot-plug drop can re-add itself: confirm with `mdadm --detail` but do not wait out the page on that alone. Layout: `configs/libvirt/installimage-host.conf`, `docs/operations/r1-deployment-state.md`. Same redundancy-loss class as `## stellarindex_zfs_pool_degraded` on the data pool.
+Fix: identify the failed member from `mdadm --detail`; if the drive is failing outright, schedule replacement (a failing NVMe often also trips `## stellarindex_nvme_smart_warn`); after replacement (GPT layout): copy the partition table from the surviving partner (`sgdisk -R=/dev/<new> /dev/<surviving>`, then `sgdisk -G /dev/<new>`), `mdadm --manage /dev/md0 --add /dev/<new>p2` and `/dev/md1 --add /dev/<new>p3`, and `zpool replace data <old-p4> /dev/<new>p4` for the ZFS member; confirm `cat /proc/mdstat` shows a `resync` percentage. Verify `mdadm --detail /dev/mdX` reports `State : clean` with both members `active sync`. A transient hot-plug drop can re-add itself: confirm with `mdadm --detail` but do not wait out the page on that alone. Layout: `docs/operations/r1-deployment-state.md` §Disk layout. Same redundancy-loss class as `## stellarindex_zfs_pool_degraded` on the data pool.
 
 ## stellarindex_filesystem_readonly
 
@@ -317,7 +316,7 @@ curl -s http://<instance>:9100/metrics | grep node_textfile_scrape_error
 ls -la /var/lib/node_exporter/textfile_collector/                         # 0-byte / half-written file is the usual culprit
 ```
 
-Fix: identify the file from the log; stale partial write (writer unit died mid-run): remove it, the next run regenerates it; writer emitting bad syntax (regression): fix the writer and check its output with `scripts/ci/lint_textfile_exposition.py` (CI-time static lint; does not catch runtime disk-full/permissions/mid-write). Owning unit per file: `10-observability.yml`. Verify gauge back to 0 next scrape and the file's metrics reappear. RCA: crashed mid-write vs bad output every run; how long it was broken (first parse-error line) = how long dependent alerts were blind. No known false positives: a hit within a 15-minute `for:` means a writer racing its own rename. Related: `metrics-registry-absent.md` (same idea one level up, in-process Registry).
+Fix: identify the file from the log; stale partial write (writer unit died mid-run): remove it, the next run regenerates it; writer emitting bad syntax (regression): fix the writer and check its output with `scripts/ci/lint_textfile_exposition.py` (CI-time static lint; does not catch runtime disk-full/permissions/mid-write). Owning unit per file: `scripts/ci/textfile-producers.manifest`. Verify gauge back to 0 next scrape and the file's metrics reappear. RCA: crashed mid-write vs bad output every run; how long it was broken (first parse-error line) = how long dependent alerts were blind. No known false positives: a transient mid-write read should not survive a 15-minute `for:`; one that does means a writer racing its own rename. Related: `metrics-registry-absent.md` (same idea one level up, in-process Registry).
 
 ## stellarindex_keepalived_textfile_stale
 
@@ -371,7 +370,7 @@ cat /var/lib/node_exporter/textfile_collector/pgbackrest_backup.prom   # which r
 ```
 
 Root causes:
-1. repo1 pool full or bad permissions on `/var/lib/pgbackrest`: root-owned strays from a manual root run break the timer run. `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`; free space (zfs-pool-full sections / `db-disk-full.md`) and `chown -R postgres:postgres` the strays. S3 credential / bucket-policy / endpoint failures hit only `repo2`: `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero while `{repo="1"}` is 0, so the 24 h alerts stay green; the signal for a repo2 that keeps failing is `stellarindex_backup_offsite_stale` (`backup-offsite.md#stellarindex_backup_offsite_stale`).
+1. repo1 pool full (repo1 shares the DB's pool, so a full pool stops WAL archiving first and backups fail after; that is why `stellarindex_wal_archive_stale` is the leading signal) or bad permissions on `/var/lib/pgbackrest`: root-owned strays from a manual root run break the timer run. `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`; free space (zfs-pool-full sections / `db-disk-full.md`) and `chown -R postgres:postgres` the strays. S3 credential / bucket-policy / endpoint failures hit only `repo2`: `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero while `{repo="1"}` is 0, so the 24 h alerts stay green; the signal for a repo2 that keeps failing is `stellarindex_backup_offsite_stale` (`backup-offsite.md#stellarindex_backup_offsite_stale`).
 2. Primary resource pressure (no backup slot/buffer; rare, seen in heavy write bursts).
 3. WAL archive behind and the `archive-async` spool (`/var/spool/pgbackrest`) full: `pg_stat_archiver` `failed_count` rising; usually the same repo1 space/permission issue.
 4. pgBackRest binary vs repo format mismatch after a major upgrade; a repo cipher mismatch after a repo re-create (`docs/operations/pgbackrest-encryption.md`) looks identical.
@@ -436,7 +435,7 @@ Verify: the `curl` shows `pgbackrest_backup_since_last_completion_seconds{stanza
 
 - Trips: `pg_stat_archiver_last_archive_age > 600`, `for: 10m`, `severity: ticket` (`infra.yml`; reads postgres_exporter's built-in `pg_stat_archiver` collector, not pgbackrest's). Same signal as `postgres.wal_archive_max_age_seconds` on `/diagnostics/backups` (`internal/api/v1/diagnostics_backups.go`). Steady-state max observed over 14 d was 82 s.
 - Meaning: continuous WAL archiving holds the 5-min RPO between full backups. A stalled archiver with backups otherwise green is a leading indicator: RPO is already wider than believed though `_none_24h` won't fire until a full backup is also overdue.
-- Fix: check `pg_stat_archiver.failed_count` and repo1 free space first (zfs-pool-full sections); same causes as backup root causes #1 and #3 usually explain both.
+- Fix: repo1 shares the DB's pool, so a full pool stops WAL archiving first and backups fail after; check `pg_stat_archiver.failed_count` and repo1 free space first (zfs-pool-full sections); same causes as backup root causes #1 and #3 usually explain both.
 
 ## Related
 
