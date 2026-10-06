@@ -115,7 +115,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			continue
 		}
 
-		out = append(out, coinbaseCandlesToTrades(candles, product, pair, granSec, to, now)...)
+		trades, err := coinbaseCandlesToTrades(candles, product, pair, granSec, to, now)
+		if err != nil {
+			return out, fmt.Errorf("coinbase.Backfill: %w", err)
+		}
+		out = append(out, trades...)
 
 		next, done := advanceCoinbaseCursor(candles, startSec, granSec)
 		if done {
@@ -149,23 +153,30 @@ func (s *Streamer) resolveBackfillProduct(pair canonical.Pair, granSec int) (str
 // coinbaseCandlesToTrades converts one page of candles into trades.
 // Coinbase returns candles in REVERSE chronological order (newest
 // first); walk the slice backwards so trades emit chronologically.
-// A candle coinbaseCandleToTrade can't represent is skipped, not
-// failed — the surrounding range still produces useful output. A candle
-// not closed by min(to, now) is dropped; see scale.CandleClosed.
-func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int, to, now time.Time) []canonical.Trade {
+// A zero-volume or dust candle is skipped; any other candle that can't
+// be converted fails the page, so a malformed row can never shrink the
+// range silently. A candle not closed by min(to, now) is dropped; see
+// scale.CandleClosed.
+func coinbaseCandlesToTrades(candles []coinbaseCandle, product string, pair canonical.Pair, granSec int, to, now time.Time) ([]canonical.Trade, error) {
 	out := make([]canonical.Trade, 0, len(candles))
 	for i := len(candles) - 1; i >= 0; i-- {
 		openSec, ok := candles[i].openTimeSec()
-		if !ok || !scale.CandleClosed(time.Unix(openSec+int64(granSec), 0), to, now) {
+		if !ok {
+			return nil, fmt.Errorf("candle %v: missing time", candles[i])
+		}
+		if !scale.CandleClosed(time.Unix(openSec+int64(granSec), 0), to, now) {
 			continue
 		}
 		trade, err := coinbaseCandleToTrade(candles[i], product, pair, granSec)
-		if err != nil {
+		if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("candle %v: %w", candles[i], err)
 		}
 		out = append(out, trade)
 	}
-	return out
+	return out, nil
 }
 
 // advanceCoinbaseCursor computes the next window's startSec: one
@@ -228,6 +239,31 @@ func (c coinbaseCandle) intAt(i int) (int64, bool) {
 		return n, err == nil
 	}
 	return 0, false
+}
+
+// maxCandleExponent bounds a JSON number's exponent before big.Rat
+// expands it; a hostile "1e999999999" would otherwise allocate gigabytes.
+const maxCandleExponent = 40
+
+// errZeroVolume marks an empty candle, the one expected skip.
+var errZeroVolume = errors.New("zero volume")
+
+// candleNumberToScaled parses a JSON number, exponent form included,
+// exactly and truncates it to externalAmountDecimals, as
+// scale.DecimalStringToScaledInt does for plain decimals.
+func candleNumberToScaled(s string) (*big.Int, error) {
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		exp, err := strconv.Atoi(s[i+1:])
+		if err != nil || exp > maxCandleExponent || exp < -maxCandleExponent {
+			return nil, fmt.Errorf("exponent out of range: %q", s)
+		}
+	}
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		return nil, fmt.Errorf("not a decimal: %q", s)
+	}
+	r.Mul(r, new(big.Rat).SetInt(scale.Pow10(externalAmountDecimals)))
+	return new(big.Int).Quo(r.Num(), r.Denom()), nil
 }
 
 // fetchCandlesWithRetry retries a rate-limited window, honouring
@@ -317,18 +353,18 @@ func coinbaseCandleToTrade(c coinbaseCandle, product string, pair canonical.Pair
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("missing volume")
 	}
-	base, err := scale.DecimalStringToScaledInt(volStr, externalAmountDecimals)
+	base, err := candleNumberToScaled(volStr)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", volStr, err)
 	}
 	if base.Sign() == 0 {
-		return canonical.Trade{}, fmt.Errorf("zero volume")
+		return canonical.Trade{}, errZeroVolume
 	}
 	closeStr, ok := c.closeStr()
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("missing close")
 	}
-	price, err := scale.DecimalStringToScaledInt(closeStr, externalAmountDecimals)
+	price, err := candleNumberToScaled(closeStr)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("close %q: %w", closeStr, err)
 	}
