@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -76,6 +78,49 @@ func TestQueryLedgerRangeCoverage_SeesUnmergedDuplicates(t *testing.T) {
 	}
 	if got.Rows != 4 || got.DuplicateRows() != 1 {
 		t.Errorf("rows=%d duplicate_rows=%d, want 4/1 — the un-merged re-ingest of %d is invisible to Check 1", got.Rows, got.DuplicateRows(), base+1)
+	}
+}
+
+// TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap pins that a tx-bearing
+// ledger whose only entry-change row is a state-snapshot seed counts as
+// uncovered: the seed proves the entry's state, not that the ledger's tx meta
+// was captured.
+func TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const base = uint32(7_320_000)
+	seedOnly := base + 2
+	insertContiguityLedgers(ctx, t, addr, base, base+1, base+2, base+3)
+	seed, ok := chstore.SnapshotEntryRow(&xdr.LedgerEntry{
+		LastModifiedLedgerSeq: xdr.Uint32(seedOnly),
+		Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
+			AccountId: xdr.MustAddress("GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"), Balance: 1, Thresholds: xdr.Thresholds{1, 0, 0, 0},
+		}},
+	}, time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC))
+	if !ok || seed.LedgerSeq != seedOnly || seed.TxHash != "" {
+		t.Fatalf("SnapshotEntryRow = (%+v, %v), want an empty-tx_hash seed at %d", seed, ok, seedOnly)
+	}
+	ec := []chstore.LedgerEntryChangeRow{
+		contiguityECRow(base, fmt.Sprintf("tx%d", base)),
+		contiguityECRow(base+1, fmt.Sprintf("tx%d", base+1)),
+		seed,
+		contiguityECRow(base+3, fmt.Sprintf("tx%d", base+3)),
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, ec, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	got, err := chstore.QueryECWindowCoverage(ctx, addr, base, base+3, 100)
+	if err != nil {
+		t.Fatalf("QueryECWindowCoverage: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("QueryECWindowCoverage returned %d windows, want 1: %+v", len(got), got)
+	}
+	if w := got[0]; w.TxLedgers != 4 || w.ECCoveredTxLedgers != 3 || w.Missing() != 1 {
+		t.Errorf("window = tx %d covered %d missing %d, want 4/3/1 — the seed-only ledger %d was counted as covered", w.TxLedgers, w.ECCoveredTxLedgers, w.Missing(), seedOnly)
 	}
 }
 

@@ -191,6 +191,11 @@ func (w ECWindowCoverage) Missing() uint64 {
 	return w.TxLedgers - w.ECCoveredTxLedgers
 }
 
+// ecTxScopedRow selects transaction-scoped ledger_entry_changes rows. Snapshot
+// seeds (SnapshotEntryRow) and eviction rows carry an empty tx_hash; tx_hash is
+// the second sort-key column, so the ledger_seq range still prunes granules.
+const ecTxScopedRow = "tx_hash != ''"
+
 // ecWindowCoverageQuery is the Check-2 per-window scan: one query returning
 // (tx-bearing ledgers, tx-bearing ledgers WITH entry-change coverage).
 //
@@ -204,15 +209,21 @@ func (w ECWindowCoverage) Missing() uint64 {
 //     double-counts a tx-bearing ledger and manufactures a false coverage
 //     surplus (audit C2-12). uniqExact counts distinct ledgers — matching
 //     the two uniqExact reads above.
+//
 //   - uniqExactIf(..., ledger_seq IN (SELECT … FROM ledger_entry_changes …))
 //     is the anti-join's complement, evaluated over the SAME tx-bearing row
 //     set as the total. Restricting coverage to that set is the whole fix
 //     for C4-085; a standalone uniqExact over ledger_entry_changes counts
 //     tx_count == 0 ledgers as coverage of ledgers that are not in the
 //     expected set at all.
+//
 //   - Both sides are primary-key range scans bounded by the caller's stride
 //     window, so the IN-set is one window wide — the cost class is unchanged
 //     from the two-query form it replaces (in fact one fewer round trip).
+//
+//   - The membership subquery admits only ecTxScopedRow rows: a snapshot seed
+//     or eviction row left behind on a ledger whose tx meta was lost is not
+//     coverage of that ledger.
 //
 // The four `?` placeholders bind positionally in text order:
 // (subquery lo, subquery hi, outer lo, outer hi) — the same pair twice.
@@ -223,7 +234,7 @@ func ecWindowCoverageQuery() string {
 		    uniqExactIf(ledger_seq, ledger_seq IN (
 		        SELECT ledger_seq
 		        FROM stellar.ledger_entry_changes
-		        WHERE ledger_seq BETWEEN ? AND ?
+		        WHERE ledger_seq BETWEEN ? AND ? AND ` + ecTxScopedRow + `
 		    ))
 		FROM stellar.ledgers
 		WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
@@ -282,7 +293,7 @@ func QueryECLowerEdge(ctx context.Context, addr string, from, to uint32) (edge u
 	const q = `
 		SELECT ledger_seq
 		FROM stellar.ledger_entry_changes
-		WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != ''
+		WHERE ledger_seq BETWEEN ? AND ? AND ` + ecTxScopedRow + `
 		ORDER BY ledger_seq
 		LIMIT 1`
 	rows, err := conn.Query(ctx, q, from, to)
