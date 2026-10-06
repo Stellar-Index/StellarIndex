@@ -42,8 +42,8 @@ func (l *opsBySourceLake) respond(q string) (driver.Rows, error) {
 // accountHistoryErrs runs the three ops_by_source-gated readers once each.
 func accountHistoryErrs(ctx context.Context, r *ExplorerReader) map[string]error {
 	const account = "GTESTOPSBYSOURCE"
-	_, txErr := r.AccountTransactions(ctx, account, 10, ExplorerCursor{})
-	_, opErr := r.AccountOperations(ctx, account, 10, ExplorerCursor{})
+	_, _, txErr := r.AccountTransactions(ctx, account, 10, ExplorerCursor{})
+	_, _, opErr := r.AccountOperations(ctx, account, 10, ExplorerCursor{})
 	_, cntErr := r.AccountOperationTypeCounts(ctx, account)
 	return map[string]error{
 		"AccountTransactions":        txErr,

@@ -96,7 +96,7 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	asOf, stale, asOfOK := h.LakeWatermark(ctx)
-	rows, err := h.Reader.AccountTransactions(ctx, g, limit, cur)
+	rows, resume, err := h.Reader.AccountTransactions(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -116,7 +116,9 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	for i, t := range rows {
 		out.Transactions[i] = txSummaryView(t)
 	}
-	if n := len(rows); n == limit {
+	if n := len(rows); resume.IsSet() {
+		out.NextCursor = encodeCursor(resume.Ledger, resume.A)
+	} else if n == limit {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex)
 	}
@@ -151,7 +153,7 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	asOf, stale, asOfOK := h.LakeWatermark(ctx)
-	rows, err := h.Reader.AccountOperations(ctx, g, limit, cur)
+	rows, resume, err := h.Reader.AccountOperations(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -175,7 +177,9 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	// operations are clearly marked in this public account history rather than
 	// masquerading as applied (D-PART-FAILEDTX).
 	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
-	if n := len(rows); n == limit {
+	if n := len(rows); resume.IsSet() {
+		out.NextCursor = encodeCursor(resume.Ledger, resume.A, resume.B)
+	} else if n == limit {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.TxIndex, last.OpIndex)
 	}

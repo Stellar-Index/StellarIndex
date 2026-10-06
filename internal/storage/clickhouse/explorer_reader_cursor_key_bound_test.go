@@ -17,10 +17,10 @@ func TestKeysetCursors_CarryLeadingKeyBound(t *testing.T) {
 		q, clause string
 		perQuery  int
 	}{
-		"account transactions": {accountTransactionsQuery(true), "ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)", 2},
-		"account operations":   {accountOperationsQuery(true, false), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 2},
+		"account transactions": {sourcedTxKeysExactQuery(true), "ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)", 1},
+		"account operations":   {sourcedOpKeysExactQuery(true, false), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 1},
 		"account operations (watermark)": {
-			accountOperationsQuery(true, true), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 2,
+			sourcedOpKeysExactQuery(true, true), "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)", 1,
 		},
 		"contract events":       {contractEventsRecentQuery(true, false), "ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)", 1},
 		"contract events dedup": {contractEventsRecentDedupQuery(true, true), "ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)", 1},
@@ -45,12 +45,12 @@ func TestKeysetCursors_LeadingKeyBoundBindsCursorLedger(t *testing.T) {
 	t.Run("account transactions", func(t *testing.T) {
 		conn := &stubConn{respond: withOpsBySourceRows(empty)}
 		cur := ExplorerCursor{Ledger: 63_000_000, A: 4}
-		if _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
+		if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(ctx, "GTEST", limit, cur); err != nil {
 			t.Fatalf("AccountTransactions: %v", err)
 		}
 		// An empty window proves an exhausted arm, so the last query is the
-		// windowed participant arm.
-		assertBinds(t, conn, []any{"GTEST", cur.Ledger, cur.Ledger, cur.A, windowRows(limit, windowFactorTxArm)})
+		// participant arm's first window.
+		assertBinds(t, conn, []any{"GTEST", cur.Ledger, cur.Ledger, cur.A, windowRows(limit, windowFactorKeys)})
 	})
 	t.Run("contract events", func(t *testing.T) {
 		conn := &stubConn{respond: empty}

@@ -194,19 +194,19 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"AccountTransactions(first page)": func() error {
-			_, err := r.AccountTransactions(ctx, account, 5, chstore.ExplorerCursor{})
+			_, _, err := r.AccountTransactions(ctx, account, 5, chstore.ExplorerCursor{})
 			return err
 		},
 		"AccountTransactions(cursor)": func() error {
-			_, err := r.AccountTransactions(ctx, account, 5, cursor)
+			_, _, err := r.AccountTransactions(ctx, account, 5, cursor)
 			return err
 		},
 		"AccountOperations(first page)": func() error {
-			_, err := r.AccountOperations(ctx, account, 5, chstore.ExplorerCursor{})
+			_, _, err := r.AccountOperations(ctx, account, 5, chstore.ExplorerCursor{})
 			return err
 		},
 		"AccountOperations(cursor)": func() error {
-			_, err := r.AccountOperations(ctx, account, 5, cursor)
+			_, _, err := r.AccountOperations(ctx, account, 5, cursor)
 			return err
 		},
 		"ContractEventsRecent(first page)": func() error {

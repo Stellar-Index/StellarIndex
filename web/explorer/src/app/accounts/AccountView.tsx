@@ -745,13 +745,18 @@ function TransactionsPanel({
   }
   const transactions = data.transactions ?? [];
   if (transactions.length === 0) {
+    // A page can be empty while next_cursor is set (rows filtered out of the
+    // window); only an empty page with no cursor means there is no history.
     return (
       <Panel
         title="Transactions"
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No transactions observed for this account yet.
+        {data.next_cursor
+          ? 'No visible items on this page — older history continues.'
+          : 'No transactions observed for this account yet.'}
+        <ActivityPager onOlder={onOlder} onNewest={onNewest} />
       </Panel>
     );
   }
@@ -889,13 +894,18 @@ function OperationsPanel({
   }
   const operations = data.operations ?? [];
   if (operations.length === 0) {
+    // A page can be empty while next_cursor is set (rows filtered out of the
+    // window); only an empty page with no cursor means there is no history.
     return (
       <Panel
         title="Operations"
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No operations observed for this account yet.
+        {data.next_cursor
+          ? 'No visible items on this page — older history continues.'
+          : 'No operations observed for this account yet.'}
+        <ActivityPager onOlder={onOlder} onNewest={onNewest} />
       </Panel>
     );
   }

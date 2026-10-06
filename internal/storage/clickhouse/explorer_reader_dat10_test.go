@@ -69,34 +69,49 @@ func TestRecentOperations_DedupsPerPrimaryKey(t *testing.T) {
 	}
 }
 
-func TestAccountOperations_DedupsPerPrimaryKeyInBothArms(t *testing.T) {
-	conn := &stubConn{}
-	conn.respond = func(q string) (driver.Rows, error) {
-		return &stubRows{data: [][]any{opRowFor(100, 0, 0)}}, nil
+// audit DAT-10: stellar.operations is ReplacingMergeTree, so an account
+// listing collapses un-merged duplicate parts on the narrow primary key —
+// never with a DISTINCT over opCols, which carries the KB-scale body_xdr. The
+// exact sourced arm uses LIMIT 1 BY; the windowed reads collapse adjacent keys
+// in Go; body_xdr is read exactly once, by the FINAL hydration (opColsLight's
+// doc measures that column at ~600ms over a 24B-row table).
+func TestAccountOperations_DedupsOnThePrimaryKey(t *testing.T) {
+	const limit = 3
+	filled := make([][]any, windowRows(limit, windowFactorKeys))
+	for i := range filled {
+		filled[i] = keyRow(100, 0, 0) // forces the exact sourced arm
 	}
-	r := &ExplorerReader{conn: conn}
-
-	rows, err := r.accountOperationsExact(context.Background(), "GTEST", 50, ExplorerCursor{}, 0, false)
+	router := &opsArmRouter{sourced: filled, hydrated: [][]any{opRowFor(100, 0, 0)}}
+	conn := &stubConn{respond: withOpsBySourceRows(func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "LIMIT 1 BY") {
+			return &stubRows{data: [][]any{keyRow(100, 0, 0)}}, nil
+		}
+		return router.respond(q)
+	})}
+	rows, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{})
 	if err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	q := conn.queries[len(conn.queries)-1]
-	// audit DAT-10: opCols carries body_xdr (KB-scale) so an outer DISTINCT
-	// is the wrong tool here — dedup happens on the narrow primary key.
-	// THREE clauses since the two-phase rewrite (2026-08-13): one per
-	// UNION arm (both now narrow, key-only) plus the hydration pass,
-	// which is the only place the wide columns are read.
-	if n := strings.Count(q, "LIMIT 1 BY ledger_seq, tx_index, op_index"); n != 3 {
-		t.Fatalf("query has %d `LIMIT 1 BY ledger_seq, tx_index, op_index` clauses, want 3 (two arms + hydration): %s", n, q)
+	var exact, wide int
+	for _, q := range conn.queries {
+		if strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?") {
+			exact++
+		}
+		if strings.Contains(q, "body_xdr") {
+			wide++
+			if !strings.Contains(q, "FROM stellar.operations FINAL") {
+				t.Errorf("body_xdr read outside the FINAL hydration: %s", q)
+			}
+		}
+		if strings.Contains(q, "DISTINCT") {
+			t.Errorf("an account-operations read dedups with DISTINCT: %s", q)
+		}
 	}
-	// body_xdr must be read EXACTLY once — carrying it inside both arms
-	// is the regression this shape exists to prevent (opColsLight's doc
-	// measures that column at ~600ms over a 24B-row table).
-	if n := strings.Count(q, "body_xdr"); n != 1 {
-		t.Fatalf("body_xdr appears %d times, want 1 (hydrate once, never per arm): %s", n, q)
+	if exact != 1 || wide != 1 {
+		t.Fatalf("exact LIMIT 1 BY reads = %d, body_xdr reads = %d; want 1 and 1: %v", exact, wide, conn.queries)
 	}
 }
 

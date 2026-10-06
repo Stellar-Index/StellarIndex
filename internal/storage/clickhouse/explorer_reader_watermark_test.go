@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,9 +10,8 @@ import (
 )
 
 // Tests for the per-account activity watermark bound (#31): AccountOperations'
-// keyset arms resolve with `ORDER BY pk DESC LIMIT n` over stellar.operations,
-// which streams granules backwards from the TIP until the account's rows turn
-// up — measured ~4s live for a 46d-idle account (2026-08-24). With a watermark
+// key arms read `ORDER BY pk DESC LIMIT n`, which streams granules backwards
+// from the TIP until the account's rows turn up (~4 s for a 46d-idle account). With a watermark
 // row in stellar.account_activity the reader bounds EACH arm's resolve with
 // `ledger_seq <= watermark`, so the reverse read starts at the account's real
 // last activity. These pin the emitted SQL and the bind order (stubConn from
@@ -51,49 +51,42 @@ func watermarkStubConn(watermark uint32, rows *stubRows) *stubConn {
 	return conn
 }
 
+// keyReads returns the emitted key reads (ops_by_source / participants) and
+// their args.
+func keyReads(conn *stubConn) (qs []string, args [][]any) {
+	for i, q := range conn.queries {
+		if isOpsBySourceProbe(q) || isVisibilityLookup(q) {
+			continue
+		}
+		if strings.Contains(q, "FROM stellar.ops_by_source") || strings.Contains(q, "FROM stellar.operation_participants") {
+			qs, args = append(qs, q), append(args, conn.args[i])
+		}
+	}
+	return qs, args
+}
+
 func TestAccountOperations_WatermarkBoundsEachArmResolve(t *testing.T) {
 	const (
 		limit     = 37
 		watermark = uint32(63_411_270)
-		account   = "GTEST_WATERMARK"
 	)
 	conn := watermarkStubConn(watermark, &stubRows{})
-	r := &ExplorerReader{conn: conn}
-
-	if _, err := r.accountOperationsExact(context.Background(), account, limit, ExplorerCursor{}, watermark, true); err != nil {
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	q := conn.queries[len(conn.queries)-1]
-	arm1, arm2 := armBodies(t, q)
-
-	// BOTH arms must carry the bound — a sourced-only bound would still walk
-	// the tip for the participant arm, and (worse) a bound on the OUTER
-	// hydration only would not stop either arm's reverse read.
-	for i, arm := range []string{arm1, arm2} {
-		if !strings.Contains(arm, "AND ledger_seq <= ?") {
-			t.Errorf("arm %d resolve is unbounded — the reverse primary-key read walks granules "+
-				"from the tip instead of starting at the account's last activity (#31):\n%s", i+1, arm)
+	// BOTH arms must carry the bound — a bound on one arm, or on the
+	// hydration only, leaves the other arm's reverse read walking the tip.
+	qs, args := keyReads(conn)
+	if len(qs) != 2 {
+		t.Fatalf("key reads = %d, want 2 (sourced + participant windows): %v", len(qs), conn.queries)
+	}
+	for i, q := range qs {
+		if !strings.Contains(q, "AND ledger_seq <= ?") || args[i][1] != watermark {
+			t.Errorf("key read %d is unbounded or binds %v as the bound (#31):\n%s", i, args[i], q)
 		}
 	}
-
-	// Bind order must mirror the SQL text: account, bound, page size per arm,
-	// then the keyset + hydration LIMITs. A transposed slice would bind a
-	// ledger number as a page size.
-	want := []any{
-		account, watermark, limit, // arm 1: account, watermark bound, page size
-		account, watermark, limit, // arm 2: same
-		limit, // keyset merge
-		limit, // hydration pass
-	}
-	got := conn.args[len(conn.args)-1]
-	if len(got) != len(want) {
-		t.Fatalf("bound %d args, want %d: %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("arg %d = %v, want %v (full: %v)", i, got[i], want[i], got)
-		}
-	}
+	q, got := exactOpsArm(t, watermarkStubConn(watermark, &stubRows{}).respond, limit, ExplorerCursor{})
+	assertArgs(t, q, got, []any{"GTEST", watermark, limit})
 }
 
 func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
@@ -101,62 +94,41 @@ func TestAccountOperations_WatermarkPreservesCursorArgOrder(t *testing.T) {
 		limit     = 9
 		watermark = uint32(63_411_270)
 	)
-	conn := watermarkStubConn(watermark, &stubRows{})
-	r := &ExplorerReader{conn: conn}
-
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, cur, watermark, true); err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	q := conn.queries[len(conn.queries)-1]
-	// The bound precedes the cursor tuple in each arm's text, so it must
-	// precede it in the args too.
+	q, got := exactOpsArm(t, watermarkStubConn(watermark, &stubRows{}).respond, limit, cur)
+	// The bound precedes the cursor tuple in the text, so it must in the args.
 	if i, j := strings.Index(q, "ledger_seq <= ?"), strings.Index(q, "< (?, ?, ?)"); !(i >= 0 && j > i) {
 		t.Fatalf("bound clause must precede the cursor clause in the emitted SQL:\n%s", q)
 	}
-	want := []any{
-		"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 1
-		"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit, // arm 2
-		limit, // keyset merge
-		limit, // hydration pass
-	}
-	got := conn.args[len(conn.args)-1]
-	if len(got) != len(want) {
-		t.Fatalf("bound %d args, want %d: %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("arg %d = %v, want %v (full: %v)", i, got[i], want[i], got)
-		}
-	}
+	assertArgs(t, q, got, []any{"GTEST", watermark, cur.Ledger, cur.Ledger, cur.A, cur.B, limit})
 }
 
 // TestAccountOperations_NoWatermarkFallsBackUnbounded pins the degrade
-// direction: no watermark row for the account (max() over zero rows scans as
-// 0) → the emitted SQL and args are EXACTLY the pre-watermark shape. A
-// missing watermark may only cost performance — it must never bound (a
-// fabricated bound of 0 would hide the account's whole history).
+// direction: no watermark row (max() over zero rows scans as 0) → no bound on
+// any key read. A missing watermark may only cost performance; a fabricated
+// bound of 0 would hide the account's whole history.
 func TestAccountOperations_NoWatermarkFallsBackUnbounded(t *testing.T) {
 	const limit = 37
 	conn := watermarkStubConn(0, &stubRows{})
-	r := &ExplorerReader{conn: conn}
-
-	if _, err := r.accountOperationsExact(context.Background(), "GTEST", limit, ExplorerCursor{}, 0, false); err != nil {
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
-	q := conn.queries[len(conn.queries)-1]
-	if strings.Contains(q, "ledger_seq <= ?") {
-		t.Fatalf("no watermark, yet the query carries a bound — a zero/absent watermark must fall "+
-			"back to the unbounded resolve, never bound at 0 (hides all history):\n%s", q)
-	}
-	want := []any{"GTEST", limit, "GTEST", limit, limit, limit}
-	got := conn.args[len(conn.args)-1]
-	if len(got) != len(want) {
-		t.Fatalf("bound %d args, want %d: %v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("arg %d = %v, want %v (full: %v)", i, got[i], want[i], got)
+	qs, _ := keyReads(conn)
+	for _, q := range qs {
+		if strings.Contains(q, "ledger_seq <= ?") {
+			t.Fatalf("no watermark, yet a key read carries a bound:\n%s", q)
 		}
+	}
+	q, got := exactOpsArm(t, watermarkStubConn(0, &stubRows{}).respond, limit, ExplorerCursor{})
+	assertArgs(t, q, got, []any{"GTEST", limit})
+}
+
+func assertArgs(t *testing.T, q string, got, want []any) {
+	t.Helper()
+	if n := strings.Count(q, "?"); n != len(got) {
+		t.Fatalf("query has %d placeholders, reader bound %d args: %v\n%s", n, len(got), got, q)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("args = %v, want %v", got, want)
 	}
 }

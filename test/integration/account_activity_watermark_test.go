@@ -140,7 +140,7 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = er.Close() })
 
-	rows, err := er.AccountOperations(ctx, idle, 50, chstore.ExplorerCursor{})
+	rows, _, err := er.AccountOperations(ctx, idle, 50, chstore.ExplorerCursor{})
 	if err != nil {
 		t.Fatalf("AccountOperations: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 
 	// Pagination across the bound: cursor below the participant row must
 	// serve the sourced rows, nothing lost at the seam.
-	page2, err := er.AccountOperations(ctx, idle, 50, chstore.ExplorerCursor{Ledger: participant, A: 0, B: 0})
+	page2, _, err := er.AccountOperations(ctx, idle, 50, chstore.ExplorerCursor{Ledger: participant, A: 0, B: 0})
 	if err != nil {
 		t.Fatalf("AccountOperations page 2: %v", err)
 	}

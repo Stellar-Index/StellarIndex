@@ -44156,7 +44156,7 @@
                   "request": {
                     "name": "Transactions involving an account (sourced + incoming), newest first.",
                     "description": {
-                      "content": "The transactions INVOLVING this account, newest first, keyset-paged\nwith `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the\ncomposite `(ledger, tx_index)`.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — both transactions the\naccount SOURCED (source/fee-payer) AND those where it's a non-source\nPARTICIPANT in any operation (payment destination, trustor, merge\ntarget, clawback victim, …), via the operation-participant index.\nIncoming coverage tracks the participant-index capture + historical\nbackfill — a transaction whose only link to the account predates\nparticipant capture surfaces once the re-derive lands.\n",
+                      "content": "The transactions INVOLVING this account, newest first, keyset-paged\nwith `?cursor=<opaque>` (echo back `next_cursor`). The cursor is the\ncomposite `(ledger, tx_index)`.\n\nA page can hold fewer than `limit` items (even zero) while\n`next_cursor` is present; clients must keep paging until\n`next_cursor` is absent.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — both transactions the\naccount SOURCED (source/fee-payer) AND those where it's a non-source\nPARTICIPANT in any operation (payment destination, trustor, merge\ntarget, clawback victim, …), via the operation-participant index.\nIncoming coverage tracks the participant-index capture + historical\nbackfill — a transaction whose only link to the account predates\nparticipant capture surfaces once the re-derive lands.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -44427,7 +44427,7 @@
                   "request": {
                     "name": "Operations involving an account (sourced + incoming), newest first.",
                     "description": {
-                      "content": "The operations INVOLVING this account, decoded (human-readable\nfields), newest first, keyset-paged with `?cursor=<opaque>` (echo back\n`next_cursor`). The cursor is the composite `(ledger, tx_index,\nop_index)`.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — operations the account\nSOURCED plus those where it's a non-source PARTICIPANT — see the\ntransactions endpoint above for the coverage/backfill note.\n",
+                      "content": "The operations INVOLVING this account, decoded (human-readable\nfields), newest first, keyset-paged with `?cursor=<opaque>` (echo back\n`next_cursor`). The cursor is the composite `(ledger, tx_index,\nop_index)`.\n\nA page can hold fewer than `limit` items (even zero) while\n`next_cursor` is present; clients must keep paging until\n`next_cursor` is absent.\n\nSCOPE: `scope: \"all\"` (ADR-0038 Phase B) — operations the account\nSOURCED plus those where it's a non-source PARTICIPANT — see the\ntransactions endpoint above for the coverage/backfill note.\n",
                       "type": "text/plain"
                     },
                     "url": {
