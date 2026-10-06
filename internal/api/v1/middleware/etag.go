@@ -101,7 +101,7 @@ func (e *etagWriter) spill() error {
 	if e.buf.Len() == 0 {
 		return nil
 	}
-	_, err := e.ResponseWriter.Write(e.buf.Bytes())
+	_, err := e.ResponseWriter.Write(e.buf.Bytes()) //nolint:gosec // G705: replays the wrapped handler's own response bytes unchanged; no request data is introduced here
 	e.buf.Reset()
 	return err
 }
