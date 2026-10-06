@@ -8,29 +8,31 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	sep41_supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41_transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// sep41Events is the set of consumer.Event types the two sep41 sources
-// emit — the domain the projector has earned sole-writer status for
-// (TASK #16b). Kept in one place so the invariant tests below all
-// exercise the same set.
-func sep41Events() []consumer.Event {
+// soleWriterEvents is the set of consumer.Event types the projector has
+// earned sole-writer status for: the sep41 pair and rozo. Kept in one
+// place so the invariant tests below all exercise the same set.
+func soleWriterEvents() []consumer.Event {
 	return []consumer.Event{
 		sep41_supply.Event{},
 		sep41_transfers.Event{},
+		rozo.Event{},
 	}
 }
 
-// TestIsSoleWriterProjected_OnlySep41 pins the sole-writer membership:
-// exactly the two sep41 event types, and nothing else. A projected but
-// NOT-yet-promoted source (soroswap, comet) must be false — it still
-// double-writes in Phase-3 parallel; a non-projected source (sdex) must
-// be false too.
-func TestIsSoleWriterProjected_OnlySep41(t *testing.T) {
+// TestIsSoleWriterProjected_Membership pins the sole-writer membership:
+// exactly the sep41 pair and rozo, and nothing else. A projected but
+// NOT-yet-promoted source (soroswap, comet, cctp) must be false — it still
+// double-writes in Phase-3 parallel; a non-projected source must be false
+// too.
+func TestIsSoleWriterProjected_Membership(t *testing.T) {
 	cases := []struct {
 		name       string
 		event      consumer.Event
@@ -38,10 +40,12 @@ func TestIsSoleWriterProjected_OnlySep41(t *testing.T) {
 	}{
 		{"sep41_supply.Event", sep41_supply.Event{}, true},
 		{"sep41_transfers.Event", sep41_transfers.Event{}, true},
+		{"rozo.Event", rozo.Event{}, true},
 
 		// Projected but un-promoted → still Phase-3 parallel.
 		{"soroswap.TradeEvent", soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap"}}, false},
 		{"comet.TradeEvent", comet.TradeEvent{Trade: canonical.Trade{Source: "comet"}}, false},
+		{"cctp.Event", cctp.Event{}, false},
 
 		// Not projected at all.
 		{"fakeEvent", fakeEvent{}, false},
@@ -60,7 +64,7 @@ func TestIsSoleWriterProjected_OnlySep41(t *testing.T) {
 // would skip it (per skipInSink) while no projector source wrote it:
 // total silent loss.
 func TestSpec_SoleWriterSubsetOfProjected(t *testing.T) {
-	for _, ev := range sep41Events() {
+	for _, ev := range soleWriterEvents() {
 		if !IsSoleWriterProjected(ev) {
 			t.Fatalf("%T is expected to be a sole-writer event but IsSoleWriterProjected=false", ev)
 		}
@@ -84,7 +88,7 @@ func TestSinkModeForProjector_TruthTable(t *testing.T) {
 	}{
 		{false, false, SinkModeAll},          // projector off → events-goroutine writes all
 		{false, true, SinkModeAll},           // projector off → flag irrelevant
-		{true, true, SinkModeSkipSoleWriter}, // Phase-3 parallel (sep41 sole-writer)
+		{true, true, SinkModeSkipSoleWriter}, // Phase-3 parallel (SoleWriter specs projector-only)
 		{true, false, SinkModeSkipProjected}, // Phase-4 (projector sole writer for all)
 	}
 	for _, tc := range cases {
@@ -96,27 +100,27 @@ func TestSinkModeForProjector_TruthTable(t *testing.T) {
 	}
 }
 
-// TestSinkModeForProjector_Sep41SoleWriterInvariant is the foot-gun
-// closure (F-1316): for EVERY combination of the two projector config
-// booleans, a sep41 event is written EXACTLY ONCE — never zero (silent
-// loss) and never twice (double-write).
+// TestSinkModeForProjector_SoleWriterInvariant is the foot-gun closure:
+// for EVERY combination of the two projector config booleans,
+// a sole-writer event is written EXACTLY ONCE — never zero (silent loss)
+// and never twice (double-write).
 //
 //   - the dispatcher's events-goroutine writes it iff skipInSink is false;
-//   - the projector writes it iff the projector is enabled (its registry
-//     always includes sep41 when the watched set is non-empty; when the
-//     watched set is empty BOTH paths emit nothing, so the invariant is
-//     vacuously satisfied and not exercised here).
+//   - the projector writes it iff the projector is enabled: both writers
+//     build from the same enabled_sources (rozo) or watched set (sep41),
+//     and an empty set makes BOTH paths emit nothing, so the invariant is
+//     vacuously satisfied there and not exercised here.
 //
 // Before this change, `persist_per_source` left at its zero-value
 // (false) while the projector was enabled selected sole-writer mode for
 // a projector that could not serve sep41 → zero writers → total loss.
-func TestSinkModeForProjector_Sep41SoleWriterInvariant(t *testing.T) {
+func TestSinkModeForProjector_SoleWriterInvariant(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, pps := range []bool{false, true} {
 			mode := SinkModeForProjector(enabled, pps)
-			for _, ev := range sep41Events() {
+			for _, ev := range soleWriterEvents() {
 				writtenBySink := !skipInSink(ev, mode)
-				writtenByProjector := enabled // projector owns sep41 whenever running
+				writtenByProjector := enabled // projector owns it whenever running
 
 				writers := 0
 				if writtenBySink {
@@ -126,7 +130,7 @@ func TestSinkModeForProjector_Sep41SoleWriterInvariant(t *testing.T) {
 					writers++
 				}
 				if writers != 1 {
-					t.Errorf("sep41 %T with enabled=%v persist_per_source=%v: %d writers (sink=%v, projector=%v); want exactly 1",
+					t.Errorf("%T with enabled=%v persist_per_source=%v: %d writers (sink=%v, projector=%v); want exactly 1",
 						ev, enabled, pps, writers, writtenBySink, writtenByProjector)
 				}
 			}
@@ -134,13 +138,13 @@ func TestSinkModeForProjector_Sep41SoleWriterInvariant(t *testing.T) {
 	}
 }
 
-// TestSkipInSink_Sep41AlwaysProjectorOwnedWhenEnabled — the direct
+// TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled — the direct
 // statement of the fix: whenever the projector is enabled, the
-// dispatcher's events-goroutine SKIPS sep41 (projector is sole writer),
+// dispatcher's events-goroutine SKIPS a sole-writer event,
 // regardless of persist_per_source. When the projector is disabled it
 // does NOT skip them (it is the only writer, so a skip would lose them).
-func TestSkipInSink_Sep41AlwaysProjectorOwnedWhenEnabled(t *testing.T) {
-	for _, ev := range sep41Events() {
+func TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled(t *testing.T) {
+	for _, ev := range soleWriterEvents() {
 		// Projector disabled → must NOT skip (only writer).
 		if skipInSink(ev, SinkModeForProjector(false, false)) {
 			t.Errorf("%T skipped by sink with projector DISABLED — would be lost", ev)
@@ -178,5 +182,27 @@ func TestSkipInSink_UnpromotedProjectedStillDoubleWritesInPhase3(t *testing.T) {
 	// Projector off: dispatcher writes it (only writer).
 	if skipInSink(ev, SinkModeForProjector(false, true)) {
 		t.Errorf("soroswap.TradeEvent skipped with projector disabled — would be lost")
+	}
+}
+
+// TestRozo_ProjectorSoleWriterInPhase3 pins rozo's promotion: in the
+// Phase-3 mode r1 runs, the dispatcher skips rozo.Event and the projector
+// still builds and owns a rozo source, so the event has exactly one writer.
+func TestRozo_ProjectorSoleWriterInPhase3(t *testing.T) {
+	ev := rozo.Event{}
+	phase3 := SinkModeForProjector(true, true)
+	if !skipInSink(ev, phase3) {
+		t.Error("dispatcher still writes rozo.Event in Phase 3: two writers for rozo_events")
+	}
+	spec, ok := SpecByName(rozo.SourceName)
+	if !ok || spec.Projector == nil || !spec.Projector.SoleWriter {
+		t.Fatalf("rozo spec = %+v, want a SoleWriter projector", spec)
+	}
+	dec, err := spec.NewDecoder(BuildArgs{})
+	if err != nil || dec == nil {
+		t.Fatalf("rozo projector decoder = %v, %v; want one built from no config", dec, err)
+	}
+	if skipInSink(ev, SinkModeForProjector(false, true)) {
+		t.Error("rozo.Event skipped with the projector disabled: no writer")
 	}
 }

@@ -68,7 +68,7 @@ func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 	if !errors.Is(err, pipeline.ErrSoleWriterCAGGWindow) || !strings.Contains(err.Error(), "oracle_prices_1m (start_offset 5m0s)") {
 		t.Fatalf("gate err = %v, want ErrSoleWriterCAGGWindow naming oracle_prices_1m", err)
 	}
-	// No aggregate reads a sep41 table, and the dispatcher still feeds
+	// No aggregate reads a sep41 or rozo table, and the dispatcher still feeds
 	// oracle_updates live in Phase 3, so that mode starts.
 	if err := pipeline.VerifySoleWriterCAGGCoverage(ctx, store, pipeline.SinkModeSkipSoleWriter); err != nil {
 		t.Fatalf("Phase-3 gate err = %v, want nil", err)
