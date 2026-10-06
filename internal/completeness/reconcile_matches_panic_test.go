@@ -9,7 +9,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 // matchPanicDecoder panics in MATCHES on rows in one specific ledger and
@@ -37,77 +36,10 @@ func (matchPanicDecoder) Decode(events.Event) ([]consumer.Event, error) {
 	return []consumer.Event{fakeOutput{}}, nil
 }
 
-// TestReDeriveOutputCounts_RecoversMatchesPanic drives a panicking Matches
-// through the Postgres soroban_events re-derive CALL SITE.
-//
-// TestSafeMatches_PanicBecomesAnError (reconcile_test.go) calls the helper
-// directly, so it stays green when a refactor inlines `dec.Matches(ev)`
-// back into any of the three loops — the state reverting 14626cd7's three
-// call sites leaves the package in, which nothing detected (RV2 C3). These
-// three tests fail in that state: without the guard at the call site the
-// panic escapes the re-derive and takes the test binary with it.
-func TestReDeriveOutputCounts_RecoversMatchesPanic(t *testing.T) {
-	const panicLedger uint32 = 401
-	s := fakeStreamer{rows: []sorobanevents.Row{
-		rowAt(400, "MATCH"),         // decodes normally → 1 output
-		rowAt(panicLedger, "MATCH"), // Matches PANICS → blind spot
-		rowAt(402, "MATCH"),         // decodes normally → 1 output
-	}}
-
-	counts, blind, err := ReDeriveOutputCounts(
-		context.Background(), s, matchPanicDecoder{panicLedger: panicLedger}, nil, nil, 400, 402)
-	if err != nil {
-		t.Fatalf("ReDeriveOutputCounts returned error: %v", err)
-	}
-	if counts[400] != 1 || counts[402] != 1 {
-		t.Errorf("non-panicking ledgers = {400:%d,402:%d}, want {400:1,402:1}", counts[400], counts[402])
-	}
-	if counts[panicLedger] != 0 {
-		t.Errorf("ledger whose Matches panicked contributed %d outputs, want 0", counts[panicLedger])
-	}
-	if !blind.Any() {
-		t.Fatal("a panicking Matches reported no blind spot: the row nets to zero and the ledger certifies CLEAN")
-	}
-	if got, want := blind.UndecodableMatched, 1; got != want {
-		t.Errorf("UndecodableMatched = %d, want %d", got, want)
-	}
-	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != panicLedger {
-		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, panicLedger)
-	}
-}
-
-// TestReDeriveOutputCountsByKind_RecoversMatchesPanic covers the
-// multi-table Postgres call site (compute-completeness's Postgres branch +
-// verify-reconciliation).
-func TestReDeriveOutputCountsByKind_RecoversMatchesPanic(t *testing.T) {
-	const panicLedger uint32 = 501
-	s := fakeStreamer{rows: []sorobanevents.Row{
-		rowAt(500, "MATCH"),
-		rowAt(panicLedger, "MATCH"),
-	}}
-
-	byKind, blind, err := ReDeriveOutputCountsByKind(
-		context.Background(), s, matchPanicDecoder{panicLedger: panicLedger}, nil, nil, 500, 501)
-	if err != nil {
-		t.Fatalf("ReDeriveOutputCountsByKind returned error: %v", err)
-	}
-	if byKind["trade"][500] != 1 {
-		t.Errorf("ledger 500 = %d trade outputs, want 1", byKind["trade"][500])
-	}
-	if byKind["trade"][panicLedger] != 0 {
-		t.Errorf("ledger whose Matches panicked contributed %d outputs, want 0", byKind["trade"][panicLedger])
-	}
-	if got, want := blind.UndecodableMatched, 1; got != want {
-		t.Errorf("UndecodableMatched = %d, want %d", got, want)
-	}
-	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != panicLedger {
-		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, panicLedger)
-	}
-}
-
-// TestReDeriveOutputCountsByKindFromEvents_RecoversMatchesPanic covers the
-// ClickHouse-lake call site — the one compute-completeness takes by default
-// (storage.clickhouse_projector_source).
+// TestReDeriveOutputCountsByKindFromEvents_RecoversMatchesPanic drives a
+// panicking Matches through the re-derive CALL SITE. TestSafeMatches_PanicBecomesAnError
+// calls the helper directly, so it stays green if a refactor inlines
+// `dec.Matches(ev)` back into the loop; this test then fails with the panic.
 func TestReDeriveOutputCountsByKindFromEvents_RecoversMatchesPanic(t *testing.T) {
 	const panicLedger uint32 = 601
 	es := fakeEventStreamer{evs: []events.Event{

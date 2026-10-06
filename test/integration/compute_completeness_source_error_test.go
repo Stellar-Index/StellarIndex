@@ -30,6 +30,7 @@ func TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	chAddr := clickhouseAddr(t)
 	dsn := startTimescale(t, ctx)
 	applyMigrations(t, dsn)
 	store, err := timescale.Open(ctx, dsn)
@@ -57,7 +58,7 @@ CREATE TRIGGER fail_soroswap_verdict BEFORE INSERT OR UPDATE ON completeness_sna
 		t.Fatalf("install fault trigger: %v", err)
 	}
 
-	runErr := chops.Run([]string{"compute-completeness", "-config", cfgPath, "-to", "70000000", "-skip-recognition"})
+	runErr := chops.Run([]string{"compute-completeness", "-config", cfgPath, "-ch", "-ch-addr", chAddr, "-to", "70000000", "-skip-recognition"})
 	if runErr == nil || !strings.Contains(runErr.Error(), "soroswap") {
 		t.Fatalf("run err = %v, want a non-nil error naming soroswap (a failed source must fail the run)", runErr)
 	}

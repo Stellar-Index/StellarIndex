@@ -1696,33 +1696,31 @@ func TestProjectionFloor_NonPassIsTheUnchangedIncrementalFloor(t *testing.T) {
 // would carry a stale recognition verdict.
 func TestValidatePassFlags_RejectsTheKnobsItReplaces(t *testing.T) {
 	// A clean pass validates.
-	if err := validatePassFlags(true, true, "", 0, false, false); err != nil {
-		t.Fatalf("a clean -ch -pass must validate, got: %v", err)
+	if err := validatePassFlags(true, "", 0, false, false); err != nil {
+		t.Fatalf("a clean -pass must validate, got: %v", err)
 	}
 	// Non-pass is never constrained — the per-source/per-chunk knobs stay legal
 	// off -pass.
-	if err := validatePassFlags(false, false, "aquarius", 55_000_000, true, true); err != nil {
+	if err := validatePassFlags(false, "aquarius", 55_000_000, true, true); err != nil {
 		t.Fatalf("validatePassFlags must not constrain non-pass runs, got: %v", err)
 	}
 
 	cases := []struct {
 		name    string
-		useCH   bool
 		source  string
 		from    uint
 		skipSub bool
 		skipRec bool
 		wantIn  string
 	}{
-		{"pass requires -ch", false, "", 0, false, false, "requires -ch"},
-		{"pass rejects -source", true, "aquarius", 0, false, false, "-source"},
-		{"pass rejects -from", true, "", 55_000_000, false, false, "-from"},
-		{"pass rejects -skip-substrate", true, "", 0, true, false, "-skip-substrate"},
-		{"pass rejects -skip-recognition", true, "", 0, false, true, "-skip-recognition"},
+		{"pass rejects -source", "aquarius", 0, false, false, "-source"},
+		{"pass rejects -from", "", 55_000_000, false, false, "-from"},
+		{"pass rejects -skip-substrate", "", 0, true, false, "-skip-substrate"},
+		{"pass rejects -skip-recognition", "", 0, false, true, "-skip-recognition"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validatePassFlags(true, tc.useCH, tc.source, tc.from, tc.skipSub, tc.skipRec)
+			err := validatePassFlags(true, tc.source, tc.from, tc.skipSub, tc.skipRec)
 			if err == nil {
 				t.Fatalf("-pass with %s must fail closed, got nil", tc.name)
 			}
@@ -1730,6 +1728,22 @@ func TestValidatePassFlags_RejectsTheKnobsItReplaces(t *testing.T) {
 				t.Errorf("error %q must name the offending flag %q", err.Error(), tc.wantIn)
 			}
 		})
+	}
+}
+
+// TestComputeCompleteness_RequiresCH pins that a caller still written for the
+// removed Postgres soroban_events path fails before reading anything, rather
+// than publishing verdicts that verified less than they claim.
+func TestComputeCompleteness_RequiresCH(t *testing.T) {
+	for _, args := range [][]string{
+		{"-config", "/nonexistent/stellarindex.toml"},
+		{"-config", "/nonexistent/stellarindex.toml", "-source", "sdex", "-from", "60000000"},
+		{"-config", "/nonexistent/stellarindex.toml", "-pass"},
+	} {
+		err := computeCompleteness(args)
+		if err == nil || !strings.Contains(err.Error(), "-ch is required") {
+			t.Errorf("computeCompleteness(%v) = %v, want the -ch is required error", args, err)
+		}
 	}
 }
 
