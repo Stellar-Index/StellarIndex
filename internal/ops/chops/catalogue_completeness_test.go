@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
@@ -180,9 +181,7 @@ var projRoutes = []projRoute{
 	{typeName: "upshift.Event", table: "upshift_vault_events", kind: "upshift.vault_event", disp: reconciledByKind},
 
 	// ── spectra ──
-	// Not yet enabled: lint-source-enablement.sh refuses a catalogue entry
-	// for a deferred source, so the claim is deferred with it.
-	{typeName: "spectra.Event", table: "spectra_events", disp: noReconcile, reason: "not yet enabled; the reconSource entry lands with the enable (INV-2044)"},
+	{typeName: "spectra.Event", table: "spectra_events", kind: "spectra.event", disp: reconciledByKind},
 
 	// ── blend (five kinds across four tables) ──
 	{typeName: "blend.NewAuctionEvent", table: "blend_auctions", disp: reconciledByKind},
@@ -556,6 +555,7 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// deployed-assets change — the row's event_kind column
 		// discriminates them, the wire EventKind does not.
 		{upshift.Event{}, "upshift.vault_event", "upshift_vault_events"},
+		{spectra.Event{}, spectra.EventKind, "spectra_events"},
 	}
 
 	for _, e := range emitters {

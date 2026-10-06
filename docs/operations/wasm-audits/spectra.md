@@ -3,7 +3,7 @@ title: Spectra WASM audit
 last_verified: 2026-10-06
 status: string-checked — 8 hashes, one per contract role, no upgrade seen; lake lineage to ledger 64,716,536
 source: spectra
-backfill_safe: false
+backfill_safe: true
 ---
 
 # Spectra WASM audit
@@ -19,9 +19,9 @@ checks every gated contract against ([runbook](../runbooks/wasm-drift.md)).
 whole observed life (nothing was upgraded in place). Each hash carries the
 event-kind literals its role is expected to emit, and every
 `(contract, topic[0])` pair observed on chain matches the lake's own
-`topics_xdr` byte for byte. `BackfillSafe` is **not** changed by this log; the
-source is not wired yet (INV-2044) and the flag stays `false` until a
-separate change decides.
+`topics_xdr` byte for byte. On that basis the source is
+`Backfill: BackfillPerWASM`: a replay passes the gate only while every
+active hash is one of the eight below.
 
 No `stellarindex-ops wasm-history` walk was run; lineage comes from the
 lake's `stellar.contract_instance_changes`.
@@ -29,7 +29,8 @@ lake's `stellar.contract_instance_changes`.
 ## Contracts under audit
 
 Roster and discovery chain: [`../../protocols/spectra.md`](../../protocols/spectra.md).
-27 contracts: registry, factory, router, 2 order engines, 7 PTs, 7 YTs, 3
+22 contracts, the set the code gates (`MainnetContracts` plus
+`MainnetInfrastructure`): registry, factory, router, 2 order engines, 7 PTs, 7 YTs, 3
 wrapper IBTs. The earnXLM and earnUSDC IBTs are Upshift vaults, audited in
 [`upshift.md`](upshift.md), and are not part of this set.
 
@@ -39,10 +40,10 @@ Read-only on r1's ClickHouse lake, 2026-10-06, ledgers 63,700,000 to
 64,900,000; strkeys converted to the lower-hex 32-byte contract id locally.
 
 ```sql
--- 1. lineage (all 27 contract ids)
+-- 1. lineage (all 22 contract ids)
 SELECT contract_hash, wasm_hash, min(ledger_seq), max(ledger_seq), count()
 FROM stellar.contract_instance_changes
-WHERE contract_hash IN (<27 hex>) AND ledger_seq BETWEEN 63700000 AND 64900000
+WHERE contract_hash IN (<22 hex>) AND ledger_seq BETWEEN 63700000 AND 64900000
 GROUP BY contract_hash, wasm_hash ORDER BY wasm_hash, 3;
 
 -- 2. string check, one query per hash
@@ -58,7 +59,7 @@ FROM (SELECT ledger_seq, base64Decode(entry_xdr) c
 -- 3. topic byte check
 SELECT contract_id, topic_0_sym, topics_xdr[1], topic_count, count(), min(ledger_seq), max(ledger_seq)
 FROM stellar.contract_events
-WHERE contract_id IN (<27 ids>) AND ledger_seq BETWEEN 63778000 AND 64800000
+WHERE contract_id IN (<22 ids>) AND ledger_seq BETWEEN 63778000 AND 64800000
   AND in_successful_call = 1
 GROUP BY contract_id, topic_0_sym, topics_xdr[1], topic_count;
 ```
@@ -97,7 +98,7 @@ Query 3 was compared locally with the expected `ScVal` symbol encoding of
 
 Each contract's first instance change is the ledger of its first event
 (`role_granted`, `factory_initialized` or `pt_deployed`); no second hash appears
-on any of the 27 contracts. The order engine's v0 instance (`CC2CEV23…`) was
+on any of the 22 contracts. The order engine's v0 instance (`CC2CEV23…`) was
 replaced at ledger 63,780,164 by `CCKNOCLH…`, which carries the same hash.
 
 ### Observed on chain, ledgers 63,778,000 to 64,800,000
@@ -127,7 +128,9 @@ claim kinds): `unwrap`, `yield_claimed`, `fee_claimed`,
 ## Decision
 
 The eight hashes above are the audited set for `spectra` in
-`audited_wasm.json`. `BackfillSafe` is unchanged (`false`).
+`audited_wasm.json`. Backfill is now per-WASM gated
+(`BackfillPerWASM`): only the hashes above pass. The audited lineage is bounded
+at ledger 64,900,000; no second hash was found up to there.
 
 Re-audit trigger: `wasm-drift` reports a `spectra` contract on a hash not
 listed here; the registry emits a `pt_wasm_hash_change`, `yt_wasm_hash_change`
