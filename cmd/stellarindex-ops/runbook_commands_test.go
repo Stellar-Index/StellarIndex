@@ -115,8 +115,9 @@ func TestRunbookOpsInvocationsNameRegisteredSubcommands(t *testing.T) {
 
 var (
 	createdRelationRE = regexp.MustCompile(`(?i)(?:CREATE\s+(?:UNLOGGED\s+)?(?:TABLE|(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?|RENAME\s+TO\s+)"?([a-z_0-9]+)`)
-	fromRelationRE    = regexp.MustCompile(`\bFROM\s+([a-z_][a-z_0-9.]*)`)
-	cteNameRE         = regexp.MustCompile(`(?i)\b([a-z_0-9]+)\s+AS\s*\(`)
+	// Group 2 catches a function call (`FROM intDiv(lo, 2000)` in WITH FILL), which is not a relation.
+	fromRelationRE = regexp.MustCompile(`\bFROM\s+([a-z_][a-z_0-9.]*)([A-Z(]?)`)
+	cteNameRE      = regexp.MustCompile(`(?i)\b([a-z_0-9]+)\s+AS\s*\(`)
 )
 
 // TestRunbookSQLNamesMigratedRelations: the first diagnostic query of a
@@ -153,7 +154,7 @@ func TestRunbookSQLNamesMigratedRelations(t *testing.T) {
 			}
 			for _, m := range fromRelationRE.FindAllStringSubmatch(line, -1) {
 				rel := m[1]
-				if strings.Contains(rel, ".") || strings.HasPrefix(rel, "pg_") || ctes[rel] {
+				if m[2] != "" || strings.Contains(rel, ".") || strings.HasPrefix(rel, "pg_") || ctes[rel] {
 					continue
 				}
 				checked++

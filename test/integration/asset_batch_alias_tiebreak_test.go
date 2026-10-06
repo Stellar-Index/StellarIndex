@@ -14,7 +14,9 @@ import (
 
 // TestAssetBatchReads_AliasCompleteAndTieBroken proves the listing's batch
 // readers answer exactly what the single-asset detail readers do, and that
-// a same-minute USDC and fiat:USD print resolves to fiat:USD every time.
+// a same-minute USDC and fiat:USD print resolves to fiat:USD every time on a
+// direct arm. XLM's own price is the anchor, which instead weights that
+// minute by volume_usd: $50 at 0.5 and $4 at 0.4 -> 26.6/54 = 0.49259.
 //
 // Fixture:
 //   - t1 (~2h ago): native/USDC at 0.5 AND native/fiat:USD at 0.4, same minute
@@ -130,7 +132,7 @@ func TestAssetBatchReads_AliasCompleteAndTieBroken(t *testing.T) {
 		t.Fatalf("GetAssetsPriceHistory24hBatch: %v", err)
 	}
 	assertSameSeries(t, "24h", single24, batch24[key])
-	assertPointAt(t, "24h", batch24[key], t1.Truncate(time.Hour), 0.4)
+	assertPointAt(t, "24h", batch24[key], t1.Truncate(time.Hour), 0.4926)
 	assertPointAt(t, "24h", batch24[key], t2.Truncate(time.Hour), 3.0)
 
 	single7, err := store.GetAssetPriceHistory7d(ctx, key)
@@ -142,7 +144,7 @@ func TestAssetBatchReads_AliasCompleteAndTieBroken(t *testing.T) {
 		t.Fatalf("GetAssetsPriceHistory7dBatch: %v", err)
 	}
 	assertSameSeries(t, "7d", single7, batch7[key])
-	assertPointAt(t, "7d", batch7[key], t1.Truncate(24*time.Hour), 0.4)
+	assertPointAt(t, "7d", batch7[key], t1.Truncate(24*time.Hour), 0.4926)
 
 	ath, err := store.GetAssetATH(ctx, key)
 	if err != nil || ath == nil {
@@ -163,17 +165,16 @@ func TestAssetBatchReads_AliasCompleteAndTieBroken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNativeAssetRow: %v", err)
 	}
-	if row.PriceUSD == nil {
-		t.Fatal("GetNativeAssetRow.PriceUSD = nil, want t1's fiat:USD print")
-	}
-	if v := mustFloat(t, *row.PriceUSD); v < 0.399 || v > 0.401 {
-		t.Errorf("GetNativeAssetRow.PriceUSD = %s, want 0.4 (fiat:USD wins a same-minute tie)", *row.PriceUSD)
+	// t1 is 2 h old, past the anchor's freshness bound.
+	if row.PriceUSD != nil {
+		t.Errorf("GetNativeAssetRow.PriceUSD = %s, want unpriced (newest XLM/USD is 2 h old)", *row.PriceUSD)
 	}
 
-	// The transitive resolver's XLM/USD and hop/USD picks break the same tie
-	// the same way, so a hop route agrees with the native row exactly.
-	xlmUSD := mustRat(t, *row.PriceUSD)
-	assertOneRoute(t, ctx, store, tkn.String(), native.String(), new(big.Rat).Mul(big.NewRat(2, 1), xlmUSD))
+	// An XLM hop is priced by the anchor alone, so it agrees with the native
+	// row: no route, never t1's raw 0.4 fiat:USD row.
+	if tps, err := store.TransitiveUSDPriceCandidates(ctx, tkn.String()); err != nil || len(tps) != 0 {
+		t.Errorf("TransitiveUSDPriceCandidates(TKN) = %+v, %v; want no route while XLM/USD is stale", tps, err)
+	}
 	assertOneRoute(t, ctx, store, leg.String(), hop.String(), big.NewRat(2, 1))
 }
 

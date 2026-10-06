@@ -31,7 +31,7 @@ func TestChangeWindowsMatchDocumentedTolerance(t *testing.T) {
 	}
 	// The XLM/USD lookbacks (rollup, detail and native row) carry their
 	// own copies of the same windows.
-	for name, q := range map[string]string{"xlmUSDCTEs": xlmUSDCTEs, "getNativeAssetSQL": getNativeAssetSQL} {
+	for name, q := range map[string]string{"xlmUSDNativeCTEs": xlmUSDNativeCTEs("$1::text"), "getNativeAssetSQL": getNativeAssetSQL} {
 		for _, stale := range []string{"'90 minutes'", "'26 hours'", "'7 days 12 hours'"} {
 			if strings.Contains(q, stale) {
 				t.Errorf("%s still reads a change lookback outside the documented tolerance (%s)", name, stale)
@@ -82,14 +82,14 @@ var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQu
 // minute, so every newest-bucket pick across forms needs a stable
 // second key. last(vwap, bucket) has none.
 func TestUSDQuotePicksAreTieBroken(t *testing.T) {
-	if !strings.Contains(getNativeAssetSQL, xlmUSDCTEs) {
-		t.Error("getNativeAssetSQL must reuse xlmUSDCTEs rather than carry its own XLM/USD picks")
+	if !strings.Contains(getNativeAssetSQL, xlmUSDNativeCTEs("$1::text")) {
+		t.Error("getNativeAssetSQL must reuse xlmUSDNativeCTEs rather than carry its own XLM/USD picks")
 	}
-	if n := strings.Count(xlmUSDCTEs, xlmUSDNewest); n != 4 {
-		t.Errorf("xlmUSDCTEs orders %d XLM/USD picks by xlmUSDNewest, want 4", n)
+	if n := strings.Count(xlmUSDNativeCTEs("$1::text"), "ORDER BY xm.form_rank, xm.bucket DESC"); n != 4 {
+		t.Errorf("xlmUSDNativeCTEs orders %d XLM/USD picks by form then minute, want 4", n)
 	}
 	for name, q := range map[string]string{
-		"xlmUSDCTEs":              xlmUSDCTEs,
+		"xlmUSDNativeCTEs":        xlmUSDNativeCTEs("$1::text"),
 		"getNativeAssetSQL":       getNativeAssetSQL,
 		"xlmLegQuery":             xlmLegQuery("AND bucket >= $5"),
 		"directLegQuery":          directLegQuery(false),
@@ -137,9 +137,13 @@ func TestUSDQuotePicksAreTieBroken(t *testing.T) {
 		if strings.Contains(q, "last(vwap, bucket)") {
 			t.Errorf("%s still picks with last(vwap, bucket), which has no tie-break", name)
 		}
-		// The direct arm and the XLM/USD arm each rank the USD quote forms.
-		if n := strings.Count(q, usdQuotePref); n != 2 {
-			t.Errorf("%s ranks USD quote forms %d times, want 2 (direct + xlm_usd)", name, n)
+		// The direct arm ranks the USD quote forms; the XLM/USD leg is the
+		// anchor, which weights a minute's quote forms instead of ranking them.
+		if n := strings.Count(q, usdQuotePref); n != 1 {
+			t.Errorf("%s ranks USD quote forms %d times, want 1 (direct)", name, n)
+		}
+		if !strings.Contains(q, "ORDER BY 1, xm.form_rank, xm.bucket DESC") {
+			t.Errorf("%s does not take its XLM/USD leg from the anchor", name)
 		}
 		if !strings.Contains(q, "bucket DESC, xlm_prio") {
 			t.Errorf("%s does not break an XLM-form tie in its XLM leg", name)

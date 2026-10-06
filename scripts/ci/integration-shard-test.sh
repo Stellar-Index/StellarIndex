@@ -85,6 +85,20 @@ if [[ "$(wc -l <"$union" | tr -d ' ')" == "11" ]]; then ok "shard sizes sum to 1
 # Named explicitly so the failure reads as what it is, not as an off-by-one.
 if grep -qx 'TestÜber' "$union"; then ok "a Unicode-named test lands in a shard"; else bad "TestÜber is in NO shard — the listing filter dropped it"; fi
 
+# ─── 1b. the same partition at ci.yml's matrix width ──────────────────
+CI_N="$(sed -nE 's/^ *run: \.\/scripts\/ci\/integration-shard\.sh "\$\{\{ matrix\.shard \}\}" ([0-9]+)$/\1/p' .github/workflows/ci.yml)"
+if [[ "$CI_N" =~ ^[0-9]+$ ]]; then
+  : >"$TMP/union_ci.txt"
+  for i in $(seq 0 $((CI_N - 1))); do INTEGRATION_SHARD_LIST_FILE="$STUB" INTEGRATION_SHARD_DRY_RUN=1 "$SUT" "$i" "$CI_N" 2>/dev/null >>"$TMP/union_ci.txt" || bad "shard $i/$CI_N exited non-zero"; done
+  if [[ "$(LC_ALL=C sort "$TMP/union_ci.txt")" == "$expected_sorted" ]]; then
+    ok "union of ci.yml's $CI_N shards == sorted listing, no duplicates"
+  else
+    bad "union of ci.yml's $CI_N shards != listing"
+  fi
+else
+  bad "could not read the shard count from ci.yml's integration-shard.sh call (got '$CI_N')"
+fi
+
 # ─── 2. deterministic: same inputs, same slice ──────────────────────────
 a="$(shard 1 "$N")"; b="$(shard 1 "$N")"
 if [[ "$a" == "$b" ]]; then ok "shard 1 is byte-identical across two runs"; else bad "shard 1 differs between runs"; fi
@@ -139,6 +153,7 @@ if [[ "$one" == "$expected_sorted" ]]; then ok "1 shard == the full sorted listi
 mkmakefile() { # mkmakefile FILE PKGS...
   local f="$1"; shift
   { printf 'INT_TEST_PKGS := %s\n' "$*"
+    # shellcheck disable=SC2016 # $(INT_TEST_PKGS) is make syntax, written literally
     printf 'print-int-test-pkgs:\n\t@echo $(INT_TEST_PKGS)\n'; } >"$f"
 }
 # extras_of FILE -> the shard-0-only list the script reports for that makefile

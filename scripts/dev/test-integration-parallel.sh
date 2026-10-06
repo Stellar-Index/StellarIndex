@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 shards="${1:-2}"
 [[ "$shards" =~ ^[1-9][0-9]*$ ]] || { echo "usage: $0 [positive-shard-count]" >&2; exit 2; }
 docker info >/dev/null
-# integration-shard.sh's 15m default is sized for CI's 4-way split; fewer local
+# integration-shard.sh's 15m default is sized for CI's 6-way split; fewer local
 # shards each carry a larger slice, so scale the per-slice budget to match.
 budget=$(( (60 + shards - 1) / shards ))
 (( budget < 15 )) && budget=15
