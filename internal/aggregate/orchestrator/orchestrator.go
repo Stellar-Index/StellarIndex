@@ -1428,6 +1428,14 @@ func (o *Orchestrator) refreshPairWindow(
 	return nil
 }
 
+// noteEmptyWindow counts one window that produced no price.
+func (o *Orchestrator) noteEmptyWindow() {
+	o.mu.Lock()
+	o.emptyWindows++
+	o.mu.Unlock()
+	obs.AggregatorEmptyWindowsTotal.Inc()
+}
+
 // decideBucket is the first evaluation of one closed bucket: fetch
 // [bucketEnd-window, bucketEnd), filter, VWAP, the Phase 1 and Phase 2
 // freeze steps, and — when the bucket clears them — the publish. Returns
@@ -1485,10 +1493,7 @@ func (o *Orchestrator) decideBucket(
 	}
 	recordWindowStageVolume(pair, window, "outlier", trades)
 	if len(trades) == 0 {
-		o.mu.Lock()
-		o.emptyWindows++
-		o.mu.Unlock()
-		obs.AggregatorEmptyWindowsTotal.Inc()
+		o.noteEmptyWindow()
 		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
@@ -1506,10 +1511,7 @@ func (o *Orchestrator) decideBucket(
 	vwap, err := o.computeNormalizedVWAP(trades, pair)
 	if err != nil {
 		if errors.Is(err, aggregate.ErrNoTrades) {
-			o.mu.Lock()
-			o.emptyWindows++
-			o.mu.Unlock()
-			obs.AggregatorEmptyWindowsTotal.Inc()
+			o.noteEmptyWindow()
 			return o.unpricedBucket(ctx, pair, window, now)
 		}
 		return nil, fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
