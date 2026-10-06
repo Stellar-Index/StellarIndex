@@ -123,15 +123,21 @@ passes `-write`).
 **Which partitions.** Every P23+ partition written before `f4bebbfda` must be
 re-extracted, not just those a symptom points at: positions drifted in the
 restored-change era (`c4ab63e45..f4bebbfda`) and the drift is real in those
-partitions. Record the per-slice table below before and after the
-re-extract; after must be >= before on every slice.
+partitions. Record the per-slice table below before the re-extract (step 2a)
+and after the delete and OPTIMIZE (step 6a); after must be >= before on every
+slice.
+
+Every read of `ledger_entry_changes` in the gate uses `FINAL`. Before the
+delete, old rows with old sort keys are still present, so a gate run on
+non-FINAL reads, or before the delete, proves nothing: "after >= before" and
+"restored > 0" pass even if the re-extract wrote nothing.
 
 Restored gate, over `[lo, hi]` inside one partition. Table (a), restored rows
 per 2k slice, empty slices shown as 0:
 
 ```sql
 SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
-FROM stellar.ledger_entry_changes
+FROM stellar.ledger_entry_changes FINAL
 WHERE ledger_seq BETWEEN lo AND hi
 GROUP BY slice
 ORDER BY slice WITH FILL FROM intDiv(lo, 2000) TO intDiv(hi, 2000) + 1
@@ -139,16 +145,19 @@ ORDER BY slice WITH FILL FROM intDiv(lo, 2000) TO intDiv(hi, 2000) + 1
 
 Pass condition, one query returning the failing slices (zero rows = PASS). The
 baseline `b` is independent of the table under test: slices of the raw lake's
-`stellar.operations` with at least one `RestoreFootprint` operation.
+`stellar.operations` with at least one `RestoreFootprint` operation from P23.
+`restored` changes exist only from P23 (LedgerEntryRestored), so earlier
+`RestoreFootprint` ops produce no `restored` rows and would fail partition 58
+forever.
 
 ```sql
 SELECT b.slice, b.restore_ops, ifNull(r.restored, 0) AS restored
 FROM (SELECT intDiv(ledger_seq, 2000) AS slice, count() AS restore_ops
       FROM stellar.operations
-      WHERE ledger_seq BETWEEN lo AND hi AND op_type = 'OperationTypeRestoreFootprint'
+      WHERE ledger_seq BETWEEN lo AND hi AND ledger_seq >= 58762517 AND op_type = 'OperationTypeRestoreFootprint'
       GROUP BY slice) AS b
 LEFT JOIN (SELECT intDiv(ledger_seq, 2000) AS slice, countIf(change_type = 'restored') AS restored
-           FROM stellar.ledger_entry_changes
+           FROM stellar.ledger_entry_changes FINAL
            WHERE ledger_seq BETWEEN lo AND hi
            GROUP BY slice) AS r USING (slice)
 WHERE ifNull(r.restored, 0) = 0
@@ -161,7 +170,7 @@ necessary, not sufficient. Add the ledger floor, which must return a value
 `>= 58,762,517`:
 
 ```sql
-SELECT minIf(ledger_seq, change_type = 'restored') FROM stellar.ledger_entry_changes
+SELECT minIf(ledger_seq, change_type = 'restored') FROM stellar.ledger_entry_changes FINAL
 WHERE ledger_seq BETWEEN lo AND hi
 ```
 
@@ -185,8 +194,11 @@ exclude by `ingested_at` date alone.
 1. Precheck: `zfs list -Hp -o avail data` at least 2.0 TiB; otherwise wait for
    the 01:45 UTC snapshot rotation. Start after the snapshot run.
 2. Re-extract with the wrapper above.
+   2a. Before it starts, run table (a) on `FINAL` and save it as the "before"
+   snapshot.
 3. Completeness gates, all before any delete, with `T` the re-extract start:
    - the log shows `ALL CHUNKS DONE`, every chunk exited 0, no `extract ledger` errors;
+   - re-extract sanity: `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN lo AND hi AND ingested_at >= toDateTime(T)` is > 0, which proves the re-extract wrote;
    - `uniqExact(ledger_seq)` in `stellar.ledgers` with `ingested_at >= T` equals `hi-lo+1`;
    - per 100k window, no ledger with rows but none newer than `T`;
    - orphan census per 100k window on `ledger_entry_changes FINAL` for rows
@@ -208,6 +220,9 @@ exclude by `ingested_at` date alone.
    Then run the two view deletes and reclaim with
    `OPTIMIZE TABLE stellar.ledger_entry_changes PARTITION <N> FINAL`.
 6. Re-run the orphan census from step 3; it must now be 0.
+   6a. Run the restored gate (table (a), the pass query and the ledger floor,
+   all on `FINAL`) now, after the delete and OPTIMIZE, and compare table (a)
+   to the 2a snapshot. Any failing slice or a floor below 58,762,517 is a STOP.
 7. Wait again for no other heavy job, then repair the projection (below) and
    verify.
 
