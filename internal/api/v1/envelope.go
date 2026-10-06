@@ -243,6 +243,32 @@ func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) 
 	})
 }
 
+// dataVintage folds the fill times of the cached reads a response is built
+// from into its as_of: the oldest fill when every read was cached, so an
+// unchanged payload replays byte-identical (and its ETag 304s), else now.
+type dataVintage struct {
+	oldest time.Time
+	live   bool
+}
+
+// note records one read's fill time; zero means an uncached, live read.
+func (v *dataVintage) note(at time.Time) {
+	if at.IsZero() {
+		v.live = true
+		return
+	}
+	if v.oldest.IsZero() || at.Before(v.oldest) {
+		v.oldest = at
+	}
+}
+
+func (v dataVintage) asOf() WireTime {
+	if v.live || v.oldest.IsZero() {
+		return WireTime(time.Now().UTC())
+	}
+	return WireTime(v.oldest.UTC())
+}
+
 // writeJSONCoverage is [writeJSON] plus the coverage-floor annotation
 // the empty-window surfaces attach. coverageFrom nil (the probe reached
 // no answer) leaves the field off the wire entirely.

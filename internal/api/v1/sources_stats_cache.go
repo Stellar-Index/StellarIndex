@@ -50,26 +50,36 @@ func NewCachedSourcesStatsReader(upstream SourcesStatsReader, ttl time.Duration)
 // triggers exactly one upstream refetch (sharing it across all
 // concurrent callers).
 func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timescale.SourceStats, error) {
-	if c.ttl <= 0 {
-		return c.upstream.GetSourceStats(ctx)
-	}
+	rows, _, err := c.GetSourceStatsAt(ctx)
+	return rows, err
+}
+
+// GetSourceStatsAt is GetSourceStats plus the served slot's fill time;
+// zero on an uncached (ttl<=0) read.
+func (c *CachedSourcesStatsReader) GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error) {
 	return fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats)
 }
 
 // GetSourceVolumeHistory24h: same shape as GetSourceStats.
 func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24h(ctx context.Context) ([]timescale.SourceVolumeBucket, error) {
-	if c.ttl <= 0 {
-		return c.upstream.GetSourceVolumeHistory24h(ctx)
-	}
+	rows, _, err := c.GetSourceVolumeHistory24hAt(ctx)
+	return rows, err
+}
+
+// GetSourceVolumeHistory24hAt: same shape as GetSourceStatsAt.
+func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24hAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
 	return fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h)
 }
 
 // GetSourceVolumeHistory7d: same single-flight TTL pattern as the 24h
 // variant, on its own cache slot.
 func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context) ([]timescale.SourceVolumeBucket, error) {
-	if c.ttl <= 0 {
-		return c.upstream.GetSourceVolumeHistory7d(ctx)
-	}
+	rows, _, err := c.GetSourceVolumeHistory7dAt(ctx)
+	return rows, err
+}
+
+// GetSourceVolumeHistory7dAt: same shape as GetSourceStatsAt.
+func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7dAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
 	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d)
 }
 
@@ -85,13 +95,17 @@ func fetchSourcesSlot[T any](
 	slot *sourcesStatsSlot[T],
 	op string,
 	upstream func(context.Context) ([]T, error),
-) ([]T, error) {
+) ([]T, time.Time, error) {
+	if c.ttl <= 0 {
+		rows, err := upstream(ctx)
+		return rows, time.Time{}, err
+	}
 	c.mu.Lock()
 	if time.Since(slot.at) < c.ttl && slot.rows != nil {
-		out := slot.rows
+		out, at := slot.rows, slot.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "hit").Inc()
-		return out, nil
+		return out, at, nil
 	}
 
 	ch, leader := slot.flight, slot.flight == nil
@@ -110,20 +124,20 @@ func fetchSourcesSlot[T any](
 	select {
 	case <-ch:
 		c.mu.Lock()
-		out, refetchErr := slot.rows, slot.err
+		out, at, refetchErr := slot.rows, slot.at, slot.err
 		c.mu.Unlock()
 		if refetchErr != nil {
 			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "error").Inc()
 			}
-			return nil, refetchErr
+			return nil, time.Time{}, refetchErr
 		}
 		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "hit").Inc()
 		}
-		return out, nil
+		return out, at, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, time.Time{}, ctx.Err()
 	}
 }
 

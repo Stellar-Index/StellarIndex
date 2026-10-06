@@ -777,6 +777,8 @@ const HealthTTL = 60 * time.Second
 // ─── Oracle latest readings — read-through cache ─────────────────
 //
 // Wire shape: `oracle:latest:<asset-keys-joined>:<source-filter>`
+// Value: JSON `{"computed_at": RFC 3339, "updates": [...]}`; a bare array
+// (pre-computed_at) is read as a miss.
 // Writer: api (read-through; populated on cache miss)
 // Reader: api
 // TTL: 30 s — Reflector / Band / RedStone push every 1–5 minutes;
