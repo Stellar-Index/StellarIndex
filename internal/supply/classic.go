@@ -21,9 +21,9 @@ import (
 // subtract it as the default locked-set member without re-querying.
 type ClassicSupplyComponents struct {
 	// Trustline is Σ trustline_balance for the asset across every
-	// classic account that holds it (excluding the issuer's own
-	// trustline — issuers don't hold their own asset via trustline,
-	// they emit it).
+	// classic account that holds it. There is no issuer filter: the
+	// protocol refuses a trustline to one's own asset
+	// (CHANGE_TRUST_SELF_NOT_ALLOWED / MALFORMED), so no issuer row exists.
 	Trustline *big.Int
 
 	// Claimable is Σ claimable_balance amount for the asset across

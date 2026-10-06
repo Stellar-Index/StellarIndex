@@ -185,8 +185,8 @@ func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request,
 // trade was therefore excluded from the population but would have been
 // valued as XLM had it matched — so /v1/markets/sources?asset=native
 // undercounted Soroban volume by construction. Both sides now agree
-// because both derive from [canonical.AssetAliases]; the SQL literal is
-// [canonical.XLMSacContractID], the same constant this expansion emits.
+// because both derive from [canonical.AssetAliases]; the SQL binds
+// [canonical.NativeSACContractID], the same SAC this expansion emits.
 //
 // Falls back to the literal id when it doesn't parse as a canonical
 // asset, so a malformed param still produces a (single-form) query

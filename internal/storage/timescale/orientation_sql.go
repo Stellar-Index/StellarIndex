@@ -8,17 +8,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// nativeXLMSAC is the PUBNET native-XLM SAC. Read paths bind
-// canonical.NativeSACContractID() instead (see [nativeSACParam]); this
-// literal survives only in the asset_price_snapshot writer and tests that
-// pin pubnet.
-const nativeXLMSAC = canonical.XLMSacContractID
-
 // nativeSACParam is the placeholder for the installed network's native
 // XLM SAC, bound at $n from canonical.NativeSACContractID().
 func nativeSACParam(n int) string { return fmt.Sprintf("$%d::text", n) }
 
-// xlmQuotesBound is [xlmQuotes] with the SAC bound at $n.
+// xlmQuotesBound is XLM in both on-chain identity forms, 'native' and its
+// SAC bound at $n. A VWAP against these is a price in XLM.
 func xlmQuotesBound(n int) string { return "'native', " + nativeSACParam(n) }
 
 // Constant forms of [xlmQuotesBound] for the SQL that must stay compile-time
