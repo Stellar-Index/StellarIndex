@@ -283,3 +283,7 @@ Script: `configs/ansible/roles/archival-node/files/run-ch-supply.sh`; unit: `tem
 - [`supply-snapshot.md#stellarindex_supply_snapshot_never_initialized`](supply-snapshot.md#stellarindex_supply_snapshot_never_initialized): the timer-path never-initialized alert (the sibling of `_never_initialized` here).
 - `supply-snapshot.md#stellarindex_supply_snapshot_stale`: systemd-timer-path equivalent (different metric, different expectation).
 - ADR-0011 (three-domain supply algorithm), ADR-0021, ADR-0022, ADR-0023: algorithms and observer designs the refresher consumes.
+
+## CS-102: quiet is not stale
+
+The stale-supply anchor for a quiet asset must be the observer watermark, not the asset's own last activity. A quiet asset has an old last-activity ledger and is still fresh. Regression tests for both storage paths were run with a full red/green proof on 2026-07-29: with the defect re-introduced they fail with `quiet asset anchor = 1000, want 5000 (the observer watermark)`, and they pass with the fix. PHO's +157% divergence is a separate cause (archived SAC entries seeded as live; see `docs/architecture/domain-traps.md`). Source: `git show 52aacb972:docs/operations/v1-launch-plan.md`, lines 2636-2700 and 2823-2830.
