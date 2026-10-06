@@ -137,3 +137,46 @@ func TestAccountOperations_SkipsFailedParticipantTxs(t *testing.T) {
 		t.Fatalf("hydration must skip both ops of the failed participant tx and still fill the page: %s", last)
 	}
 }
+
+// A page one slot short of full, followed by a long failed run, must not be
+// probed key by key: lookups are chunked at a fixed size, independent of the
+// limit and the free slots.
+func TestParticipantKeys_FailedRunLookupsAreChunked(t *testing.T) {
+	const (
+		limit  = 50
+		failed = 10000
+	)
+	lake := &participantLake{failed: map[accountTxKey]bool{}}
+	var want []accountOpKey
+	ledger := uint32(failed + limit + 10)
+	for i := 0; i < limit-1; i++ {
+		k := accountOpKey{ledger, 1, 0}
+		lake.rows = append(lake.rows, k)
+		want = append(want, k)
+		ledger--
+	}
+	for i := 0; i < failed; i++ {
+		lake.rows = append(lake.rows, accountOpKey{ledger, 1, 0})
+		lake.failed[accountTxKey{ledger, 1}] = true
+		ledger--
+	}
+	last := accountOpKey{ledger, 1, 0}
+	lake.rows = append(lake.rows, last)
+	want = append(want, last)
+
+	got, err := participantKeys(context.Background(), lake, "GTEST", limit, opParticipantArm, "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("want the %d visible keys in order, got %d: %v", len(want), len(got), got)
+	}
+	total := failed + limit
+	// Window doubling re-reads nothing; every key is looked up once, plus one
+	// partial chunk per window (13 windows from 4*limit up to the cap).
+	bound := (total+visibilityChunk-1)/visibilityChunk + 16
+	t.Logf("%d visibility lookups for %d keys (bound %d)", len(lake.lookups), total, bound)
+	if len(lake.lookups) > bound {
+		t.Fatalf("%d visibility lookups for %d keys, want <= %d", len(lake.lookups), total, bound)
+	}
+}

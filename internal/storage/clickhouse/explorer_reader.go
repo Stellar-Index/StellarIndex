@@ -1585,7 +1585,7 @@ const maxParticipantWindow = 1 << 14
 // exhausted, so a failed tx can neither reach the page nor shorten it — the
 // filter runs here, inside the arm, because filtering at hydration would
 // serve short pages (#290). Each step is bounded (one window read plus point
-// lookups over ≤limit keys); the cost grows only with the failed
+// lookups, chunked by visibilityChunk); the cost grows only with the failed
 // participant rows skipped. `fixed` carries predicates every read must
 // keep (the activity-watermark bound).
 func participantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
@@ -1613,15 +1613,11 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 				keys = append(keys, k)
 			}
 		}
-		for len(keys) > 0 && len(out) < limit {
-			n := min(len(keys), limit-len(out))
-			kept, err := visibleParticipantKeys(ctx, conn, account, keys[:n], arm.tx)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, kept...)
-			keys = keys[n:]
+		kept, err := visibleParticipantKeys(ctx, conn, account, keys, arm.tx)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, kept[:min(len(kept), limit-len(out))]...)
 		if len(out) >= limit || len(raw) < window {
 			return out, nil
 		}
@@ -1634,22 +1630,41 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 // tx must pass to be listed; its one placeholder binds the listed account.
 const visibleTxPredicate = `(successful = 1 OR source_account = ?)`
 
+// visibilityChunk is the tx keys per visibility lookup. Fixed, never derived
+// from the page limit or the free slots: a nearly full page must not turn a
+// run of failed txs into one query per key.
+const visibilityChunk = 500
+
 // visibleParticipantKeys keeps, in order, the keys whose transaction
 // succeeded or was sourced by the account itself (its own failed txs stay in
-// its history). A point lookup on the stellar.transactions primary key over
-// ≤limit keys. No FINAL: successful and source_account are ledger facts, so
-// every un-merged version of a key carries the same values.
+// its history). Resolves every distinct tx of keys in ceil(txs/visibilityChunk)
+// point lookups on the stellar.transactions primary key. No FINAL: successful
+// and source_account are ledger facts, so every un-merged version of a key
+// carries the same values.
 func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey) ([]K, error) {
-	q := `SELECT ledger_seq, tx_index FROM stellar.transactions
-		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k K) []uint32 { t := tx(k); return []uint32{t.ledger, t.txIndex} }) + `)
-		  AND ` + visibleTxPredicate + explorerScanSettings
-	ok, err := queryKeys(ctx, conn, q, []any{account}, scanTxKey)
-	if err != nil {
-		return nil, err
+	seen := make(map[accountTxKey]struct{}, len(keys))
+	var txs []accountTxKey
+	for _, k := range keys {
+		t := tx(k)
+		if _, dup := seen[t]; !dup {
+			seen[t] = struct{}{}
+			txs = append(txs, t)
+		}
 	}
-	visible := make(map[accountTxKey]struct{}, len(ok))
-	for _, k := range ok {
-		visible[k] = struct{}{}
+	visible := make(map[accountTxKey]struct{}, len(txs))
+	for len(txs) > 0 {
+		n := min(len(txs), visibilityChunk)
+		q := `SELECT ledger_seq, tx_index FROM stellar.transactions
+		WHERE (ledger_seq, tx_index) IN (` + tupleList(txs[:n], func(t accountTxKey) []uint32 { return []uint32{t.ledger, t.txIndex} }) + `)
+		  AND ` + visibleTxPredicate + explorerScanSettings
+		ok, err := queryKeys(ctx, conn, q, []any{account}, scanTxKey)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range ok {
+			visible[k] = struct{}{}
+		}
+		txs = txs[n:]
 	}
 	out := keys[:0:0]
 	for _, k := range keys {
