@@ -98,7 +98,7 @@ ANSIBLE_DEFAULTS=configs/ansible/roles/archival-node/defaults/main.yml
 INVENTORY_DIR=configs/ansible/inventory
 KNOWN_GO=internal/config/validate.go
 CATALOGUE_GO=internal/ops/chops/reconciliation_catalogue.go
-PROJECTOR_GO=internal/projector/registry.go
+PROJECTOR_GO=internal/pipeline/source_spec.go
 SOURCES_DIR=internal/sources
 
 ENABLED_KEY=stellarindex_enabled_sources
@@ -337,16 +337,16 @@ n_catalogue=$(count "$CATALOGUE")
 
 # ─── 6. ALWAYS_ON — projector sources with no enabled_sources entry ──
 #
-# BuildRegistry registers the sep41 domain unconditionally (F-1316
-# SKIP-SOLE-WRITER: the dispatcher cedes it to the projector, and the sep41
-# names are not in KnownSources so they can never legally appear in
+# BuildRegistry registers every Watched spec unconditionally (F-1316
+# SKIP-SOLE-WRITER: the dispatcher cedes the sep41 domain to the projector, and
+# the sep41 names are not in KnownSources so they can never legally appear in
 # enabled_sources). Those are the only catalogue entries §5 may excuse, and the
 # excuse is read from the code that grants it rather than hardcoded here.
 ALWAYS_ON=""
-always_tokens=$(grep -oE 'range \[\]string\{[a-z0-9_]+\.SourceName(,[[:space:]]*[a-z0-9_]+\.SourceName)*\}' "$PROJECTOR_GO" |
-	grep -oE '[a-z0-9_]+\.SourceName' | sort -u || true)
+always_tokens=$(awk '/^[[:space:]]*Name:[[:space:]]*[a-z0-9_]+\.SourceName/ { n = $2; sub(/,$/, "", n) }
+	/^[[:space:]]*Watched:[[:space:]]*true/ { print n }' "$PROJECTOR_GO" | sort -u || true)
 [ -n "$always_tokens" ] ||
-	die "no unconditional projector source list found in $PROJECTOR_GO.
+	die "no Watched (unconditional) projector spec found in $PROJECTOR_GO.
       §5 would then demand every catalogue entry be in KnownSources, which is the right
       direction for the wrong reason — re-aim the extraction first."
 while IFS= read -r tok; do

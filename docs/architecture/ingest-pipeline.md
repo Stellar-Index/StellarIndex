@@ -109,7 +109,7 @@ tables: trades for soroswap/aquarius/phoenix/comet/sushiswap_v3,
 `aquarius_*`, `upshift_vault_events`, `defindex_*`, `sorocredit_*`,
 `soroswap_skim`, `cctp_events`, `rozo_events`, `sep41_*`, and
 reflector/redstone `oracle_updates`. The authoritative list is
-the specs with `Projector` set in `internal/pipeline/source_spec.go`; its default branch is the non-projected list: `sdex`,
+the specs with `Projector` set in `internal/pipeline/source_spec.go`. Everything else is non-projected: `sdex`,
 `band`, `soroswap_router`, external CEX/FX, supply observers.
 
 - It reads ClickHouse `contract_events` by default
