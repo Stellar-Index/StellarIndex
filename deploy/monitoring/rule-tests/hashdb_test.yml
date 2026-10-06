@@ -203,7 +203,7 @@ tests:
               team: stellarindex
               component: hashdb
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb.md#stellarindex_hashdb_verify_stale
               summary: "hashdb periodic verify sweep has recorded no outcome in 6h+ (T132)"
               description: |
                 hashdb.Append has been recording ledgers on this region for
