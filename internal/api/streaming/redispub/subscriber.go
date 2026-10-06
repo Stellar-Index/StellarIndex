@@ -315,6 +315,8 @@ func (s *Subscriber) handleMessage(payload []byte) {
 			PriceType:     "vwap",
 			ObservedAt:    wiretime.Time(ev.ObservedAt),
 			WindowSeconds: ev.WindowSeconds,
+			Truncated:     ev.Truncated,
+			CoveredFrom:   (*wiretime.Time)(ev.CoveredFrom),
 		},
 		AsOf: wiretime.Time(ev.ObservedAt),
 	})
@@ -342,12 +344,14 @@ type closedBucketEnvelope struct {
 }
 
 type closedBucketWireData struct {
-	AssetID       string        `json:"asset_id"`
-	Quote         string        `json:"quote"`
-	Price         string        `json:"price"`
-	PriceType     string        `json:"price_type"`
-	ObservedAt    wiretime.Time `json:"observed_at"`
-	WindowSeconds int64         `json:"window_seconds"`
+	AssetID       string         `json:"asset_id"`
+	Quote         string         `json:"quote"`
+	Price         string         `json:"price"`
+	PriceType     string         `json:"price_type"`
+	ObservedAt    wiretime.Time  `json:"observed_at"`
+	WindowSeconds int64          `json:"window_seconds"`
+	Truncated     *bool          `json:"truncated,omitempty"`
+	CoveredFrom   *wiretime.Time `json:"covered_from,omitempty"`
 }
 
 const (
@@ -412,6 +416,23 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	}
 	if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
 		return err
+	}
+	return validateCoverage(ev)
+}
+
+// validateCoverage rejects a covered_from that is not the truncation
+// point of a truncated window inside [observed_at-window, observed_at).
+func validateCoverage(ev *ClosedBucketEvent) error {
+	truncated := ev.Truncated != nil && *ev.Truncated
+	if truncated != (ev.CoveredFrom != nil) {
+		return errors.New("truncated and covered_from must be set together")
+	}
+	if !truncated {
+		return nil
+	}
+	windowStart := ev.ObservedAt.Add(-time.Duration(ev.WindowSeconds) * time.Second)
+	if ev.CoveredFrom.Before(windowStart) || !ev.CoveredFrom.Before(ev.ObservedAt) {
+		return fmt.Errorf("covered_from %s outside the window", ev.CoveredFrom.Format(time.RFC3339))
 	}
 	return nil
 }

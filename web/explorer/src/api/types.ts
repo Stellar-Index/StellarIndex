@@ -11481,6 +11481,13 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number;
+            /** @description Present only when the value was served from the aggregator's rolling-window VWAP (a frozen pair's held value, the cache fallback, and `price_update` events on `/v1/price/stream`) and its coverage is known. Same meaning as `/v1/vwap`'s `truncated`: true when the window's trade read hit the server's row cap, so the oldest trades are missing and the value is NOT the full-window VWAP; see `covered_from`. False means the whole window was read. Absent means unknown (a triangulated composite does not track its legs' coverage) or not a rolling-window value. */
+            truncated?: boolean;
+            /**
+             * Format: date-time
+             * @description Present only with `truncated: true`. Every trade after this instant is in the value; trades at or before it may be missing. With stablecoin-proxy legs it is the newest of the capped legs' cut-off points.
+             */
+            covered_from?: string;
             /** @description Decimal string, quote units per 1 USD. Present only on a closed-surface USD-anchored fiat cross (`/v1/price`, `/v1/price/batch`, SEP-40): the vendor FX fixing the USD leg was converted at, verbatim. The fixing is the bar with the greatest close at or before the USD bucket's end minus 3 h, within the 76 h lookback, so the answer is the same whenever and wherever it is read. `/v1/price/tip` converts at the live rate and omits it. */
             fx_rate?: string;
             /**
@@ -15121,7 +15128,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. */
+            /** @description SSE stream of price_update (and price_frozen / price_withheld) events. A `price_update` carries `truncated` (and `covered_from` when true) under the same contract as the Price schema; both are absent when coverage is unknown. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -144,6 +144,9 @@ type PriceSnapshot struct {
 	PriceType     string    `json:"price_type"`
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
+	// Truncated (nil = unknown): the window read hit the row cap; see CoveredFrom.
+	Truncated   *bool      `json:"truncated,omitempty"`
+	CoveredFrom *time.Time `json:"covered_from,omitempty"`
 
 	// FXRate, FXAsOf, FXSource and FXResolution describe the vendor FX
 	// fixing a closed-surface fiat cross converted at; FXRate is quote
@@ -171,23 +174,6 @@ type PriceSnapshot struct {
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
 	// Substance is the measurement behind a Flags.ThinMarket price.
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
-}
-
-// SubstanceEvidence is the trailing substance measurement behind a
-// thin-market verdict. Volumes are decimal strings.
-type SubstanceEvidence struct {
-	Base          string         `json:"base"`
-	Quote         string         `json:"quote"`
-	WindowSeconds int64          `json:"window_seconds"`
-	MeasuredAt    time.Time      `json:"measured_at"`
-	WindowEnd     *time.Time     `json:"window_end,omitempty"`
-	VolumeUSD     string         `json:"volume_usd"`
-	Buckets       int64          `json:"buckets"`
-	ValuedBuckets int64          `json:"valued_buckets"`
-	SpanSeconds   int64          `json:"span_seconds"`
-	Floor         SubstanceFloor `json:"floor"`
-	// Failed is the first floor failed: "buckets", "span", "volume" or "volume_unvalued".
-	Failed string `json:"failed"`
 }
 
 // SubstanceFloor is the substance policy a measurement was held to.

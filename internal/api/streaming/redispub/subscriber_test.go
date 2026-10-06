@@ -107,7 +107,7 @@ func TestSubscriber_RoundTrip(t *testing.T) {
 	// fixture uses a recent timestamp rather than a fixed historical one.
 	observedAt := time.Now().UTC().Add(-time.Minute)
 
-	if err := pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.123456789012", observedAt); err != nil {
+	if err := pub.PublishClosedBucket(ctx, pair, 5*time.Minute, "0.123456789012", observedAt, nil); err != nil {
 		t.Fatalf("PublishClosedBucket: %v", err)
 	}
 

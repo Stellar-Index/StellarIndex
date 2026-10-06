@@ -483,6 +483,13 @@ type PriceSnapshot struct {
 	// Zero for last_trade.
 	WindowSeconds int `json:"window_seconds,omitempty"`
 
+	// Truncated is set only on a value served from the aggregator's
+	// rolling-window cache whose coverage is known: true when the
+	// window's trade read hit the row cap, so only trades after
+	// CoveredFrom are all in the value. Same meaning as /v1/vwap's.
+	Truncated   *bool     `json:"truncated,omitempty"`
+	CoveredFrom *WireTime `json:"covered_from,omitempty"`
+
 	// ProxyDeviation carries the proxy_deviation envelope flag from a
 	// reader that does not return Flags (the tip fallbacks); never on the wire.
 	ProxyDeviation bool `json:"-"`
@@ -673,20 +680,6 @@ type TriangulatedPriceLooker interface {
 	// errors (found=false, err=nil); err propagates Redis errors so
 	// the handler can log them.
 	LookupTriangulatedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (vwap CachedVWAP, found bool, err error)
-}
-
-// CachedVWAP is one aggregator-published VWAP read from the Redis
-// cache.
-type CachedVWAP struct {
-	// Value is the decimal-string VWAP.
-	Value string
-	// Triangulated is true when the provenance marker says the
-	// triangulation worker wrote the value; false is a direct VWAP.
-	Triangulated bool
-	// ObservedAt is when the aggregator observed the value — the end of
-	// the closed bucket its window ends at. A freeze keeps a value
-	// served long after this, so it is the only honest observed_at.
-	ObservedAt time.Time
 }
 
 // lookupCachedVWAP is the one read of the aggregator's VWAP cache every
@@ -1200,14 +1193,14 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	if !found {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
-	snap = PriceSnapshot{
+	snap = withCoverage(PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
 		Price:         v.Value,
 		PriceType:     "vwap",
 		ObservedAt:    WireTime(v.ObservedAt),
 		WindowSeconds: int(triangulationLookupWindow.Seconds()),
-	}
+	}, v.Coverage)
 	return snap, []string{}, served, v.Triangulated, true
 }
 
@@ -3147,7 +3140,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 			sources:      []string{},
 			triangulated: v.Triangulated,
 			pairBase:     pairBase,
-			snapshot: PriceSnapshot{
+			snapshot: withCoverage(PriceSnapshot{
 				AssetID:   requested.String(),
 				Quote:     quote.String(),
 				Price:     v.Value,
@@ -3156,7 +3149,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 				// the hold is what makes those differ by tens of minutes.
 				ObservedAt:    WireTime(v.ObservedAt),
 				WindowSeconds: int(window / time.Second),
-			},
+			}, v.Coverage),
 		}
 	}
 	return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
