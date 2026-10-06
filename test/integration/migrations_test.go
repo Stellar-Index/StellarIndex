@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1020,4 +1021,216 @@ func configAssertionSQL(t *testing.T, name, marker string) string {
 		t.Fatalf("%s in %s is unterminated or lacks %q: %q", name, path, marker, query)
 	}
 	return query
+}
+
+// compressedDownCase describes one down migration over a hypertable that
+// holds compressed chunks. Rows are inserted and compressed right after the
+// table's creating migration (stageA) and again just before the migration
+// under test (stageB); `reject` must be refused by the restored schema.
+type compressedDownCase struct {
+	version uint
+	table   string
+	stageA  uint
+	rowA    map[string]string
+	rowB    map[string]string
+	reject  map[string]string // row the post-down schema must refuse
+	verify  func(t *testing.T, ctx context.Context, db *sql.DB)
+}
+
+// insertGenericRow inserts one row into table, filling every NOT NULL
+// column that has no default from its type; over wins. seq keeps rows
+// distinct on ledger / tx_hash / numeric key columns.
+func insertGenericRow(t *testing.T, ctx context.Context, db *sql.DB, table string, seq int, ts string, over map[string]string) {
+	t.Helper()
+	if err := tryInsertGenericRow(ctx, db, table, seq, ts, over); err != nil {
+		t.Fatalf("insert into %s: %v", table, err)
+	}
+}
+
+func tryInsertGenericRow(ctx context.Context, db *sql.DB, table string, seq int, ts string, over map[string]string) error {
+	rows, err := db.QueryContext(ctx, `SELECT column_name, data_type, is_nullable, column_default IS NOT NULL
+		FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1
+		  AND is_generated = 'NEVER' ORDER BY ordinal_position`, table)
+	if err != nil {
+		return fmt.Errorf("columns of %s: %w", table, err)
+	}
+	var cols, vals []string
+	for rows.Next() {
+		var name, typ, nullable string
+		var hasDefault bool
+		if err := rows.Scan(&name, &typ, &nullable, &hasDefault); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan: %w", err)
+		}
+		v, ok := over[name]
+		if !ok {
+			if nullable == "YES" || hasDefault {
+				continue
+			}
+			switch {
+			case strings.Contains(typ, "timestamp"):
+				v = "'" + ts + "'"
+			case name == "tx_hash":
+				v = fmt.Sprintf("repeat('%d', 64)", seq%10)
+			case typ == "text" || strings.HasPrefix(typ, "character"):
+				v = "'x'"
+			case typ == "boolean":
+				v = "false"
+			case typ == "jsonb" || typ == "json":
+				v = "'{}'"
+			default: // integer family and numeric
+				v = fmt.Sprint(seq)
+			}
+		}
+		cols = append(cols, name)
+		vals = append(vals, v)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("columns of %s: %w", table, err)
+	}
+	rows.Close()
+	_, err = db.ExecContext(ctx, `INSERT INTO `+table+` (`+strings.Join(cols, ",")+`) VALUES (`+strings.Join(vals, ",")+`)`)
+	return err
+}
+
+func compressAllChunks(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `SELECT compress_chunk(c, true) FROM show_chunks('`+table+`') c`); err != nil {
+		t.Fatalf("compress %s: %v", table, err)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM timescaledb_information.chunks
+		WHERE hypertable_name = $1 AND is_compressed`, table).Scan(&n); err != nil {
+		t.Fatalf("count compressed %s chunks: %v", table, err)
+	}
+	if n < 1 {
+		t.Fatalf("%s has no compressed chunk; the test would not exercise compressed chunks", table)
+	}
+}
+
+func assertColumnNullable(t *testing.T, ctx context.Context, db *sql.DB, table, col, want string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRowContext(ctx, `SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, table, col).Scan(&got); err != nil {
+		t.Fatalf("nullable %s.%s: %v", table, col, err)
+	}
+	if got != want {
+		t.Fatalf("%s.%s is_nullable = %s, want %s", table, col, got, want)
+	}
+}
+
+// TestDownsOnCompressedChunks pins INV-2684: a down on a hypertable with
+// compressed chunks either restores the schema without losing rows or
+// refuses loudly; it never fails with a Timescale internal error.
+func TestDownsOnCompressedChunks(t *testing.T) {
+	const tsA, tsB = "2020-01-01T00:00:00Z", "2026-01-01T00:00:00Z"
+	enum := func(col, v string) map[string]string { return map[string]string{col: "'" + v + "'"} }
+	with := func(m map[string]string, kv ...string) map[string]string {
+		out := map[string]string{}
+		for k, v := range m {
+			out[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			out[kv[i]] = kv[i+1]
+		}
+		return out
+	}
+	phoenixBond := map[string]string{"action": "'bond'", "user_addr": "'U'", "amount": "1", "lp_token": "'L'"}
+	cases := []compressedDownCase{
+		{version: 70, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "mint_and_forward")},
+		{version: 92, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "token_pair_linked")},
+		{version: 94, table: "cctp_events", stageA: 38, rowA: enum("event_type", "deposit_for_burn"), rowB: enum("event_type", "deposit_for_burn"), reject: enum("event_type", "pauser_changed")},
+		{version: 95, table: "blend_backstop_events", stageA: 63, rowA: enum("event_kind", "deposit"), rowB: enum("event_kind", "deposit"), reject: enum("event_kind", "rw_zone")},
+		{version: 97, table: "blend_emissions", stageA: 45, rowA: enum("event_kind", "gulp"), rowB: enum("event_kind", "gulp"), reject: enum("event_kind", "update_emissions")},
+		{version: 97, table: "blend_admin", stageA: 45, rowA: enum("event_kind", "set_admin"), rowB: enum("event_kind", "set_admin"), reject: enum("event_kind", "new_liquidation_auction")},
+		{
+			version: 98, table: "phoenix_stake_events", stageA: 44, rowA: phoenixBond, rowB: phoenixBond, reject: with(phoenixBond, "action", "'withdraw_rewards'"),
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "user_addr", "NO")
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "amount", "NO")
+			},
+		},
+		{version: 124, table: "freeze_events", stageA: 18, rowA: enum("reason", "single_source"), rowB: enum("reason", "single_source"), reject: enum("reason", "other")},
+		{version: 138, table: "defindex_flows", stageA: 50, rowA: map[string]string{"direction": "'deposit'", "layer": "'vault'"}, rowB: map[string]string{"direction": "'deposit'", "layer": "'vault'"}, reject: map[string]string{"direction": "'harvest'", "layer": "'vault'"}},
+		{version: 145, table: "credit_events", stageA: 90, rowA: enum("event_type", "withdrawal"), rowB: enum("event_type", "withdrawal"), reject: enum("event_type", "treasury_updated")},
+		{
+			version: 195, table: "phoenix_stake_events", stageA: 44, rowA: phoenixBond, rowB: phoenixBond, reject: with(phoenixBond, "action", "'migration_started'"),
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "phoenix_stake_events", "lp_token", "NO")
+			},
+		},
+		{
+			version: 195, table: "phoenix_admin_events", stageA: 132, rowA: enum("admin_action", "undo"), rowB: enum("admin_action", "undo"), reject: enum("admin_action", "blend_set_delegate"),
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				var n int
+				if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns
+					WHERE table_name = 'phoenix_admin_events' AND column_name = 'value'`).Scan(&n); err != nil || n != 0 {
+					t.Fatalf("phoenix_admin_events.value after down: n=%d err=%v, want column dropped", n, err)
+				}
+			},
+		},
+		{
+			version: 207, table: "price_source_contributions", stageA: 169, rowA: map[string]string{"window_seconds": "300", "weight": "0.5"}, rowB: map[string]string{"window_seconds": "300", "weight": "0.5"},
+			verify: func(t *testing.T, ctx context.Context, db *sql.DB) {
+				assertColumnNullable(t, ctx, db, "price_source_contributions", "window_seconds", "YES")
+				var n int
+				if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_constraint
+					WHERE conrelid = 'price_source_contributions'::regclass AND contype = 'p'`).Scan(&n); err != nil || n != 1 {
+					t.Fatalf("primary key after down: n=%d err=%v, want 1", n, err)
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%04d/%s", c.version, c.table), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			dsn := startTimescale(t, ctx)
+			db, err := sql.Open("pgx", dsn)
+			if err != nil {
+				t.Fatalf("sql.Open: %v", err)
+			}
+			defer db.Close()
+
+			applyMigrationsUpTo(t, dsn, c.stageA)
+			insertGenericRow(t, ctx, db, c.table, 1, tsA, c.rowA)
+			compressAllChunks(t, ctx, db, c.table)
+			applyMigrationsUpTo(t, dsn, c.version)
+			insertGenericRow(t, ctx, db, c.table, 2, tsB, c.rowB)
+			compressAllChunks(t, ctx, db, c.table)
+			var compressed int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM timescaledb_information.chunks
+				WHERE hypertable_name = $1 AND is_compressed`, c.table).Scan(&compressed); err != nil || compressed < 1 {
+				t.Fatalf("compressed chunks of %s just before down = %d (err %v), want >= 1", c.table, compressed, err)
+			}
+			var before int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+c.table).Scan(&before); err != nil {
+				t.Fatalf("count: %v", err)
+			}
+
+			if err := applyMigrationsUpToErr(dsn, c.version-1); err != nil {
+				if strings.Contains(err.Error(), "LOUD") {
+					t.Logf("down %d refused: %v", c.version, err)
+					return // a clear refusal is an accepted outcome
+				}
+				t.Fatalf("down %d on compressed %s: %v", c.version, c.table, err)
+			}
+			var after int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM `+c.table).Scan(&after); err != nil {
+				t.Fatalf("count after: %v", err)
+			}
+			if after != before {
+				t.Fatalf("%s rows after down = %d, want %d", c.table, after, before)
+			}
+			if c.reject != nil {
+				if err := tryInsertGenericRow(ctx, db, c.table, 3, tsB, c.reject); err == nil {
+					t.Fatalf("%s accepted %v after down; the restored CHECK is missing", c.table, c.reject)
+				}
+			}
+			if c.verify != nil {
+				c.verify(t, ctx, db)
+			}
+		})
+	}
 }
