@@ -28,7 +28,7 @@ INV_PUBNET="$ROOT/configs/ansible/inventory/r9.example.yml"
 INV_TESTNET="$ROOT/configs/ansible/inventory/testnet.yml"
 KNOWN_GO="$ROOT/internal/config/validate.go"
 CATALOGUE_GO="$ROOT/internal/ops/chops/reconciliation_catalogue.go"
-PROJECTOR_GO="$ROOT/internal/projector/registry.go"
+PROJECTOR_GO="$ROOT/internal/pipeline/source_spec.go"
 
 pass=0
 fail=0
@@ -47,7 +47,7 @@ mkfixture() {
 		"$ROOT/configs/ansible/inventory" \
 		"$ROOT/internal/config" \
 		"$ROOT/internal/ops/chops" \
-		"$ROOT/internal/projector" \
+		"$ROOT/internal/pipeline" \
 		"$ROOT/internal/sources/kilo" \
 		"$ROOT/internal/sources/sep41_x"
 	cp "$SRC" "$ROOT/scripts/ci/lint-source-enablement.sh"
@@ -125,16 +125,17 @@ func buildReconciliationCatalogue() []reconSource {
 GO
 
 	cat >"$PROJECTOR_GO" <<'GO'
-package projector
+package pipeline
 
 import (
 	sepx "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_x"
 )
 
-func BuildRegistry() {
-	for _, name := range []string{sepx.SourceName} {
-		_ = name
-	}
+var specs = []SourceSpec{
+	{
+		Name:    sepx.SourceName,
+		Watched: true,
+	},
 }
 GO
 
@@ -291,9 +292,9 @@ run
 expect_red 'a catalogue whose entry shape moved reds' 'no reconSource entries found'
 
 mkfixture
-perl -0pi -e 's/for _, name := range \[\]string\{sepx\.SourceName\}/for _, name := range []string{"sep41_x"}/m' "$PROJECTOR_GO"
+perl -0pi -e 's/Watched:/Observed:/' "$PROJECTOR_GO"
 run
-expect_red 'a projector always-on list the gate can no longer read reds' 'no unconditional projector source list'
+expect_red 'a spec list whose Watched marker the gate can no longer read reds' 'no Watched (unconditional) projector spec'
 
 # ─── the pubnet premise is asserted, not assumed ────────────────────
 mkfixture

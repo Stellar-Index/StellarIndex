@@ -55,18 +55,21 @@ func TestIsSoleWriterProjected_OnlySep41(t *testing.T) {
 	}
 }
 
-// TestSoleWriter_SubsetOfProjected — invariant: every sole-writer event
-// MUST also be a projected event. If it weren't, the dispatcher's
-// events-goroutine would skip it (per skipInSink) while NO projector
-// arm handled it → total silent loss. This is the structural guard the
-// F-1316 class demands.
-func TestSoleWriter_SubsetOfProjected(t *testing.T) {
+// TestSpec_SoleWriterSubsetOfProjected — every sole-writer event MUST
+// also be projected. If it weren't, the dispatcher's events goroutine
+// would skip it (per skipInSink) while no projector source wrote it:
+// total silent loss.
+func TestSpec_SoleWriterSubsetOfProjected(t *testing.T) {
 	for _, ev := range sep41Events() {
 		if !IsSoleWriterProjected(ev) {
 			t.Fatalf("%T is expected to be a sole-writer event but IsSoleWriterProjected=false", ev)
 		}
-		if !IsProjectedEvent(ev) {
-			t.Errorf("%T is sole-writer but NOT projected — skipInSink would drop it with no projector writer", ev)
+	}
+	for _, spec := range specs {
+		for _, ev := range spec.Events {
+			if IsSoleWriterProjected(ev) && !IsProjectedEvent(ev) {
+				t.Errorf("%T (spec %s) is sole-writer but NOT projected — skipInSink would drop it with no projector writer", ev, spec.Name)
+			}
 		}
 	}
 }

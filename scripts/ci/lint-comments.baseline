@@ -1865,10 +1865,6 @@ internal/pipeline/datastore.go	#371
 internal/pipeline/datastore.go	2026-05-26
 internal/pipeline/datastore.go	2026-07-25
 internal/pipeline/dispatcher.go	#478
-internal/pipeline/dispatcher.go	2026-06-15
-internal/pipeline/dispatcher.go	2026-08-03
-internal/pipeline/dispatcher.go	2026-08-03
-internal/pipeline/dispatcher.go	F-0021
 internal/pipeline/gated_registry.go	2026-07-05
 internal/pipeline/gated_registry.go	2026-07-08
 internal/pipeline/gated_registry.go	2026-08-25
@@ -1885,7 +1881,6 @@ internal/pipeline/sink.go	#368
 internal/pipeline/sink.go	2026-06-01
 internal/pipeline/sink.go	2026-06-01
 internal/pipeline/sink.go	2026-06-01
-internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
@@ -1908,8 +1903,6 @@ internal/pipeline/sink.go	2026-07-24
 internal/pipeline/sink.go	2026-08-03
 internal/pipeline/sink.go	2026-08-03
 internal/pipeline/sink.go	F-0021
-internal/pipeline/sink.go	F-1316
-internal/pipeline/sink.go	F-1316
 internal/pipeline/sink.go	F-1316
 internal/pipeline/sink.go	F-1318
 internal/pipeline/sink.go	F-1318
@@ -2014,10 +2007,6 @@ internal/projector/projector.go	RLT-131
 internal/projector/projector.go	RLT-132
 internal/projector/projector.go	RLT-132
 internal/projector/projector.go	RLT-132
-internal/projector/registry.go	2026-07-27
-internal/projector/registry.go	F-1316
-internal/projector/registry.go	F-1316
-internal/projector/registry.go	Q018
 internal/projector/sinkfault.go	2026-07-23
 internal/projector/sinkfault.go	2026-07-23
 internal/projector/sinkfault.go	INV-4
