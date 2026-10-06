@@ -19,10 +19,10 @@ type SourceStats struct {
 	// "" when no trades had populated usd_volume in the window
 	// (e.g. an oracle source whose decoder doesn't set usd_volume).
 	VolumeUSD24h sql.NullString
-	// UnpricedXLMTrades24h counts trades with an XLM leg and no
+	// UnpricedTrades24h counts trades with no
 	// usd_volume. They are excluded from VolumeUSD24h, which is then a
 	// lower bound. Populated by GetSourceStats only.
-	UnpricedXLMTrades24h int64
+	UnpricedTrades24h int64
 	// MarketsCount24h is the number of distinct markets the source
 	// observed in the trailing 24h, a market being its unordered
 	// {base, quote} pair (see marketKeySQL). A useful "pools per DEX"
@@ -40,8 +40,8 @@ type SourceStats struct {
 //
 // Volume is SUM(usd_volume), the value stamped at trade time. Trades
 // with no usd_volume are never valued at today's XLM price (that would
-// make a historical figure move with spot); those with an XLM leg are
-// counted in UnpricedXLMTrades24h so the caller can mark a lower bound.
+// make a historical figure move with spot); they are counted in
+// UnpricedTrades24h so the caller can mark a lower bound.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	q := sourceStatsQuery()
 	rows, err := s.db.QueryContext(ctx, q, canonical.NativeSACContractID())
@@ -57,7 +57,7 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 			&ss.TradeCount24h,
 			&ss.VolumeUSD24h,
 			&ss.MarketsCount24h,
-			&ss.UnpricedXLMTrades24h,
+			&ss.UnpricedTrades24h,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: GetSourceStats scan: %w", err)
 		}
@@ -98,17 +98,14 @@ func sourceStatsQuery() string {
 		       SUM(pair_trades)::bigint AS trades_24h,
 		       SUM(pair_volume)::text   AS volume_usd_24h,
 		       COUNT(*)::bigint         AS markets_24h,
-		       SUM(pair_unpriced_xlm)::bigint AS unpriced_xlm_trades_24h
+		       SUM(pair_unpriced)::bigint AS unpriced_trades_24h
 		  FROM (
 		    SELECT source,
 		           ` + canonBase + ` AS base_asset,
 		           ` + canonQuote + ` AS quote_asset,
 		           COUNT(*) AS pair_trades,
 		           SUM(usd_volume::numeric) AS pair_volume,
-		           COUNT(*) FILTER (
-		             WHERE usd_volume IS NULL
-		               AND (` + xlmNativeAssetIn("base_asset", 1) + ` OR ` + xlmNativeAssetIn("quote_asset", 1) + `)
-		           ) AS pair_unpriced_xlm
+		           COUNT(*) FILTER (WHERE usd_volume IS NULL) AS pair_unpriced
 		      FROM trades
 		     WHERE ts >= now() - INTERVAL '24 hours'
 		     GROUP BY source, ` + canonBase + `, ` + canonQuote + `
@@ -195,8 +192,8 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 
 // The shared CTE + SELECT for the per-source breakdowns. Two fully
 // static query strings (NOT string-concatenated — gosec G202) that
-// differ only in the WHERE predicate; the volume derivation matches
-// GetSourceStats (XLM/USD fallback for native / XLM-SAC legs).
+// differ only in the WHERE predicate; unlike GetSourceStats (trade-time
+// usd_volume only), they still value unpriced XLM legs at the current XLM/USD.
 //
 // The asset filters use `= ANY($n)` against a bound string[] so the
 // handler can pass every canonical FORM of an asset (XLM's three:

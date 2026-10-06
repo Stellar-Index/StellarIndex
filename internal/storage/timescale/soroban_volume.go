@@ -28,8 +28,9 @@ import (
 // for an XLM-quote one — the same stroop sums prices_1m exposes as
 // `volume` and `volume_quote` — and `/1e7 * xlm_usd` converts it to USD.
 // Trades with no valuation and no XLM leg (pure SEP-41/SEP-41) still
-// contribute nothing — valuing those needs a per-token oracle, matching
-// the GetSourceStats boundary.
+// contribute nothing — valuing those needs a per-token oracle. This query
+// values unpriced XLM legs at the current XLM/USD (unlike /v1/sources,
+// which reports trade-time usd_volume only).
 //
 // The window is the closed 1-minute buckets of the last 24h, the same
 // buckets prices_1m serves (ADR-0015); `ts >= now() - 24h` is the

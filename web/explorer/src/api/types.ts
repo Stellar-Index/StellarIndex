@@ -12399,7 +12399,7 @@ export interface components {
             trade_count_24h?: number;
             /** @description Trailing-24h USD volume for this source: the sum of trade-time `usd_volume`. Decimal string. Populated only with `?include=stats`; absent otherwise (empty when the source had no priced trades). */
             volume_24h_usd?: string;
-            /** @description True when the USD volume figures (`volume_24h_usd`, `volume_history_24h`, `volume_history_7d`) exclude XLM-leg trades that carry no trade-time `usd_volume`. Those trades are never valued at today's XLM price, so the figures are lower bounds. Absent when nothing was excluded. */
+            /** @description True when the USD volume figures (`volume_24h_usd`, `volume_history_24h`, `volume_history_7d`) exclude trades that carry no trade-time `usd_volume` (the 24h figure counts any unpriced trade; the hourly histories only unpriced XLM legs). Those trades are never valued at today's price, so the figures are lower bounds. Absent when nothing was excluded. */
             volume_lower_bound?: boolean;
             /** @description Distinct (base, quote) pairs this source traded in the trailing 24h. Populated only with `?include=stats`; absent otherwise. */
             markets_count_24h?: number;

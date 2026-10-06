@@ -10,7 +10,7 @@ import (
 
 // A trade with NULL usd_volume must never be valued at today's XLM price:
 // a historical per-source figure would then move with XLM spot. Unpriced
-// XLM legs are excluded and reported so the API can mark a lower bound.
+// trades are excluded and reported so the API can mark a lower bound.
 func TestSourceStatsQueryDoesNotValueAtSpot(t *testing.T) {
 	q := sourceStatsQuery()
 	for _, bad := range []string{"xlm_usd", "vwap", "base_amount /", "quote_amount /"} {
@@ -18,8 +18,8 @@ func TestSourceStatsQueryDoesNotValueAtSpot(t *testing.T) {
 			t.Errorf("sourceStatsQuery must not value unpriced trades at spot; found %q:\n%s", bad, q)
 		}
 	}
-	if !strings.Contains(q, "unpriced_xlm_trades") {
-		t.Errorf("sourceStatsQuery must report the excluded XLM-leg trade count:\n%s", q)
+	if !strings.Contains(q, "unpriced_trades") {
+		t.Errorf("sourceStatsQuery must report the excluded unpriced trade count:\n%s", q)
 	}
 	assertDEXNumericSafe(t, "source stats", q)
 }

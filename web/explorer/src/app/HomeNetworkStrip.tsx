@@ -60,6 +60,10 @@ export function HomeNetworkStrip() {
       .filter((s) => s.subclass === 'dex')
       .map((s) => s.volume_24h_usd),
   );
+  // Any flagged source makes the sum a lower bound (excluded unpriced trades).
+  const volumeLowerBound = (sources.data ?? []).some(
+    (s) => s.subclass === 'dex' && s.volume_lower_bound,
+  );
   const volume =
     stellarVolume != null && Number(stellarVolume) > 0 ? stellarVolume : null;
   const activeMarkets = stats.data?.markets_count_24h ?? null;
@@ -108,8 +112,16 @@ export function HomeNetworkStrip() {
       {pricing && (
         <Cell
           label="24h volume"
-          value={volume != null ? `$${formatCompactUnits(volume)}` : '—'}
-          sub="Stellar on-chain (SDEX + DEXes)"
+          value={
+            volume != null
+              ? `${volumeLowerBound ? '≥ ' : ''}$${formatCompactUnits(volume)}`
+              : '—'
+          }
+          sub={
+            volumeLowerBound
+              ? 'Stellar on-chain (SDEX + DEXes), lower bound'
+              : 'Stellar on-chain (SDEX + DEXes)'
+          }
           href="/markets"
         />
       )}

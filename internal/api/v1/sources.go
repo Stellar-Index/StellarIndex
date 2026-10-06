@@ -253,7 +253,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 				if ss.VolumeUSD24h.Valid {
 					vol = ss.VolumeUSD24h.String
 				}
-				if ss.UnpricedXLMTrades24h > 0 {
+				if ss.UnpricedTrades24h > 0 {
 					lowerBound[ss.Source] = true
 				}
 				statsBySource[ss.Source] = stats{

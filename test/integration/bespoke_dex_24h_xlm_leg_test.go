@@ -13,19 +13,13 @@ import (
 )
 
 // TestBespokeDEX24hVolumeCarriesXLMLeg proves the DEX block's 24h USD
-// figures apply migration 0068's WHOLE read contract against a real
-// TimescaleDB.
+// figures are trade-time only against a real TimescaleDB.
 //
-// source_volume_1h cannot materialize a finished USD figure (the XLM/USD
-// multiply cross-references prices_1m), so it materializes the inputs and
-// the reader must apply
-//
-//	sum_usd_priced + (sum_xlm_base + sum_xlm_quote)/10^7 * <XLM/USD vwap>
-//
-// Reading only sum_usd_priced serves every XLM-denominated leg the
-// ingest-time valuation left unpriced as $0 — and disagrees with the
-// other reader of the same CAGG (GetSourceVolumeHistory24h), which the
-// SAME source page renders beside this block.
+// source_volume_1h stores sum_usd_priced plus the XLM legs of trades left
+// unpriced. Valuing those legs at today's XLM/USD would make a historical
+// window move with spot, so the reader sums sum_usd_priced and names the
+// excluded XLM as a lower bound. It must agree with the other reader of
+// the CAGG (GetSourceVolumeHistory24h), rendered on the same source page.
 //
 // Fixture (one closed minute ~2h back, all on soroswap):
 //
@@ -34,11 +28,8 @@ import (
 //	token/XLM  20 XLM on the QUOTE side        usd_volume NULL → sum_xlm_quote
 //	XLM/token  10 XLM on the BASE side         usd_volume NULL → sum_xlm_base
 //
-// priced             = 50 + 7                       = 57
-// XLM legs           = (20 + 10) XLM * 0.5 USD/XLM  = 15
-// 24h USD volume     =                               72
-//
-// The pre-fix reader returns 57.00 here; the contract's value is 72.00.
+// priced             = 50 + 7  = 57  (the 24h USD volume)
+// unpriced XLM       = 20 + 10 = 30 XLM, excluded and named in the hint
 func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -138,13 +129,11 @@ func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 	if volKPI == nil {
 		t.Fatal(`no "USD volume (1d)" KPI on the 24h DEX block`)
 	}
-	// The corrected VALUE: 57 priced + 15 XLM-anchored. The unfixed
-	// reader returns "57.00" here.
-	if volKPI.Value != "72.00" {
-		t.Errorf("24h USD volume KPI = %s, want 72.00 (57 priced + 30 XLM at 0.5)", volKPI.Value)
+	if volKPI.Value != "57.00" {
+		t.Errorf("24h USD volume KPI = %s, want 57.00 (trade-time priced only)", volKPI.Value)
 	}
-	if !strings.Contains(volKPI.Hint, "XLM") {
-		t.Errorf("24h USD volume KPI hint must disclose the XLM-anchored leg, got %q", volKPI.Hint)
+	if !strings.Contains(volKPI.Hint, "LOWER BOUND") || !strings.Contains(volKPI.Hint, "excludes 30.0000000 XLM") {
+		t.Errorf("24h USD volume KPI hint must be a lower bound naming the 30 XLM excluded, got %q", volKPI.Hint)
 	}
 
 	// The hourly series carries the same derivation (all four trades sit
@@ -162,19 +151,13 @@ func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 	for _, p := range series.Points {
 		total += mustFloat(t, p.Value)
 	}
-	if total < 71.99 || total > 72.01 {
-		t.Errorf("hourly USD volume series totals %.4f, want ~72 (57 priced + 15 XLM-anchored)", total)
+	if total < 56.99 || total > 57.01 {
+		t.Errorf("hourly USD volume series totals %.4f, want ~57 (priced only)", total)
 	}
 
-	// The block's served note must describe what it actually serves: the
-	// old note promised "never ad-hoc pricing", which the read-time XLM
-	// multiply is.
 	joined := strings.Join(blk.Notes, "\n")
-	if !strings.Contains(joined, "XLM-denominated legs") {
-		t.Errorf("24h block note must disclose the XLM-anchored leg, got %q", joined)
-	}
-	if strings.Contains(joined, "never ad-hoc pricing") {
-		t.Errorf("24h block note must not claim there is no ad-hoc pricing, got %q", joined)
+	if !strings.Contains(joined, "30.0000000 XLM of XLM-denominated legs") || !strings.Contains(joined, "lower bounds") {
+		t.Errorf("24h block note must name the excluded XLM as a lower bound, got %q", joined)
 	}
 
 	// Cross-surface parity — the whole point of the finding: the other
@@ -190,29 +173,23 @@ func TestBespokeDEX24hVolumeCarriesXLMLeg(t *testing.T) {
 			histTotal += mustFloat(t, b.VolumeUSD)
 		}
 	}
-	if histTotal < 71.99 || histTotal > 72.01 {
-		t.Fatalf("fixture check: GetSourceVolumeHistory24h totals %.4f, want ~72", histTotal)
+	if histTotal < 56.99 || histTotal > 57.01 {
+		t.Fatalf("fixture check: GetSourceVolumeHistory24h totals %.4f, want ~57", histTotal)
 	}
 	if diff := histTotal - total; diff > 0.01 || diff < -0.01 {
 		t.Errorf("the two readers of source_volume_1h disagree on soroswap's 24h volume: bespoke block %.4f vs source chart %.4f", total, histTotal)
 	}
 }
 
-// TestBespokeDEX24hXLMAnchorOutageIsLowerBound — the read expression
-// COALESCEs a missing XLM/USD vwap to 0, so with no native/USD row in
-// prices_1m the XLM legs contribute $0 and the KPI is the priced leg only.
-// That outage is the one that parks volume in the XLM legs, so the block
-// must serve the figure as a named lower bound, not under a hint and note
-// claiming the XLM legs are valued.
+// TestBespokeDEX24hXLMAnchorOutageIsLowerBound — with no native/USD row in
+// prices_1m the unpriced XLM legs are still excluded; the block serves the
+// priced leg as a named lower bound.
 //
 // Fixture: the sibling test's minus its XLM/USDC trade (the only anchor):
 //
 //	token/USDC 7 USDC quote       usd_volume =  7  (priced)
 //	token/XLM  20 XLM quote side  usd_volume NULL → sum_xlm_quote
 //	XLM/token  10 XLM base side   usd_volume NULL → sum_xlm_base
-//
-// The pre-fix block serves 7.00 with "plus unpriced XLM-denominated legs
-// at the current XLM/USD vwap"; the 30 XLM it dropped are never named.
 func TestBespokeDEX24hXLMAnchorOutageIsLowerBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

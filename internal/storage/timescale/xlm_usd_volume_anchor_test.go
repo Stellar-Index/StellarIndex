@@ -20,7 +20,7 @@ func TestXLMUSDVolumeAnchorIsRobust(t *testing.T) {
 	if strings.Contains(xlmUSDVolumeSelect, "LIMIT 1") {
 		t.Error("xlmUSDVolumeSelect picks a single bucket")
 	}
-	for _, f := range []string{"markets.go", "bespoke_dex.go", "soroban_volume.go", "sources_stats.go", "mev.go"} {
+	for _, f := range []string{"markets.go", "soroban_volume.go", "sources_stats.go", "mev.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

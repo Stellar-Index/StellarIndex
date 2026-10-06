@@ -34,7 +34,7 @@ func (lowerBoundSourcesStats) GetSourceVolumeHistory7d(context.Context) ([]times
 func TestSources_VolumeLowerBound(t *testing.T) {
 	srv := v1.New(v1.Options{SourcesStats: lowerBoundSourcesStats{
 		stats: []timescale.SourceStats{
-			{Source: "soroswap", TradeCount24h: 10, UnpricedXLMTrades24h: 3},
+			{Source: "soroswap", TradeCount24h: 10, UnpricedTrades24h: 3},
 			{Source: "aquarius", TradeCount24h: 5},
 		},
 		h24: []timescale.SourceVolumeBucket{{Source: "phoenix", VolumeUSD: "1", XLMUnpriced: true}},
