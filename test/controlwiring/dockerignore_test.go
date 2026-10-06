@@ -164,9 +164,14 @@ func goBuildInputs(t *testing.T, root string, targets []string) []string {
 	if err != nil {
 		t.Fatalf("go list %v: %v", targets, err)
 	}
+	// go list reports symlink-resolved dirs (macOS $TMPDIR is /var -> /private/var).
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", root, err)
+	}
 	var files []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		rel, err := filepath.Rel(root, line)
+		rel, err := filepath.Rel(realRoot, line)
 		if err != nil {
 			t.Fatalf("rel %s: %v", line, err)
 		}
