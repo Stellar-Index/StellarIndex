@@ -296,6 +296,8 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
 		}
+		// A pre-filled figure (insert-time prices_1m) is as partial as the plain read.
+		detail.VolumeLowerBound = asset.Type == canonical.AssetSoroban && detail.VolumeUSD24h != nil
 		return true
 	}
 	detail.VolumeUSD24h = &v

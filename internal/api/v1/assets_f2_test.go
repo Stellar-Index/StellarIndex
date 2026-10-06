@@ -109,10 +109,14 @@ type stubDualVolumeReader struct {
 
 	sorobanLowerBound bool
 	sorobanErr        error
+	plainErr          error
 }
 
 func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
 	s.plainKey = assetKey
+	if s.plainErr != nil {
+		return "", s.plainErr
+	}
 	return s.plain, nil
 }
 
@@ -145,6 +149,32 @@ func TestF2_SorobanVolumeFallbackIsLowerBound(t *testing.T) {
 	}
 	if !strings.Contains(body, `"volume_lower_bound":true`) {
 		t.Errorf("fallback figure must flag volume_lower_bound; body: %s", body)
+	}
+}
+
+// TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail — GetAsset pre-fills
+// the insert-time prices_1m figure; if both trade-time reads then fail it is
+// served as-is, so it must carry volume_lower_bound.
+func TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail(t *testing.T) {
+	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	prefilled := "7.5"
+	asset := canonical.Asset{Type: canonical.AssetSoroban, ContractID: contractID}
+	assets := &stubAssetReader{byID: map[string]v1.AssetDetail{
+		asset.String(): {AssetID: asset.String(), VolumeUSD24h: &prefilled},
+	}}
+	vol := &stubDualVolumeReader{sorobanErr: errors.New("anchor read failed"), plainErr: errors.New("plain read failed")}
+	ts := startHTTPTest(t, v1.New(v1.Options{Assets: assets, Volume: vol}).Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+contractID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"volume_24h_usd":"7.5"`) {
+		t.Fatalf("pre-filled volume missing; body: %s", body)
+	}
+	if !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("pre-filled partial figure must flag volume_lower_bound; body: %s", body)
 	}
 }
 
