@@ -31,7 +31,7 @@ func TestTradeUSDVolumeChecked_ResolverErrorIsReturned(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	// The anchor resolves XLM through its `native` form whichever wire form
 	// the pool used, so failing `native` alone breaks only the anchor read.
-	xlmSAC, _ := canonical.NewSorobanAsset(nativeXLMSAC)
+	xlmSAC, _ := canonical.NewSorobanAsset(canonical.XLMSacContractID)
 	aqua, _ := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 	tokn, _ := canonical.NewClassicAsset("TOKN", "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2")
 

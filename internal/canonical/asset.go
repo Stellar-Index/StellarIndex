@@ -274,24 +274,25 @@ func ParseAsset(s string) (Asset, error) {
 		return NativeAsset(), nil
 	}
 
-	// Fiat — unambiguous prefix dispatch (ADR-0010).
-	if rest, ok := strings.CutPrefix(s, "fiat:"); ok {
-		return NewFiatAsset(rest)
+	// Fiat (ADR-0010), crypto (ADR-0014) and RWA (ADR-0028) prefix
+	// dispatch. A G-strkey rest is never on those allow-lists, so it is the
+	// classic `<code>:<issuer>` alias of a token whose code is the prefix
+	// word, and falls through to the classic split below.
+	for _, p := range []struct {
+		prefix string
+		ctor   func(string) (Asset, error)
+	}{{"fiat:", NewFiatAsset}, {"crypto:", NewCryptoAsset}, {"rwa:", NewRWAAsset}} {
+		if rest, ok := strings.CutPrefix(s, p.prefix); ok && !IsAccountID(rest) {
+			return p.ctor(rest)
+		}
 	}
 
-	// Crypto — unambiguous prefix dispatch (ADR-0014).
-	if rest, ok := strings.CutPrefix(s, "crypto:"); ok {
-		return NewCryptoAsset(rest)
-	}
-
-	// RWA — unambiguous prefix dispatch (ADR-0028).
-	if rest, ok := strings.CutPrefix(s, "rwa:"); ok {
-		return NewRWAAsset(rest)
-	}
-
-	// Raw oracle symbol — unambiguous prefix dispatch. MUST sit before
-	// the classic `<code>:<issuer>` split below, which would otherwise
-	// read `raw:BTC` as classic code "raw" + issuer "BTC" and fail.
+	// Raw oracle symbol — prefix dispatch. MUST sit before the classic
+	// `<code>:<issuer>` split below, which would otherwise read `raw:BTC`
+	// as classic code "raw" + issuer "BTC" and fail. Unlike the prefixes
+	// above, any G-strkey is also a valid raw symbol and `raw:<symbol>` is
+	// the raw asset's String form, so `raw:G…` stays raw; a classic "raw"
+	// token round-trips through its `raw-G…` form.
 	if rest, ok := strings.CutPrefix(s, "raw:"); ok {
 		return NewOracleRawAsset(rest)
 	}

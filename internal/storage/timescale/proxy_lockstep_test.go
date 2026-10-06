@@ -3,8 +3,6 @@ package timescale
 import (
 	"strings"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestProxyQuoteLists_Lockstep pins the four places that decide "what is
@@ -30,14 +28,6 @@ import (
 func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	t.Parallel()
 
-	if nativeXLMSAC != canonical.XLMSacContractID {
-		t.Fatalf("nativeXLMSAC = %s, want canonical.XLMSacContractID %s", nativeXLMSAC, canonical.XLMSacContractID)
-	}
-
-	xlmList := "'native', '" + canonical.XLMSacContractID + "'"
-	if xlmQuotes != xlmList {
-		t.Errorf("xlmQuotes = %q, want %q", xlmQuotes, xlmList)
-	}
 	for _, member := range []string{
 		"'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'",
 		"'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'",
@@ -66,7 +56,7 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	// test red against the pre-fix catalogue: it had 4 base-side arms
 	// per query and zero inverted ones.
 	for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
-		xlmList := xlmList // the writer keeps the pubnet literal; reads bind the SAC
+		xlmList := xlmQuotesBound(1)
 		if name == "detail" {
 			xlmList = xlmQuotesBound(2)
 		}

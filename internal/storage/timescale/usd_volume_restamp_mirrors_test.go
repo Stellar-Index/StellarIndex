@@ -317,7 +317,7 @@ func TestRestampTierGates_KeepTheTiersDisjoint(t *testing.T) {
 		},
 		{
 			name:    "XLM on BOTH legs — the base tier alone, never both",
-			row:     mirrorScan("sdex", "native", nativeXLMSAC, "49999996", "49999996", nil),
+			row:     mirrorScan("sdex", "native", canonical.XLMSacContractID, "49999996", "49999996", nil),
 			xlmBase: restampTierOwns, xlmQuote: restampTierOutOfScope, cexFiat: restampTierOutOfScope,
 		},
 		{
