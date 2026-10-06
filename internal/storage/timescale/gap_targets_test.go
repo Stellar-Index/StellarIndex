@@ -83,6 +83,7 @@ var excludedFromGapDetector = map[string]string{
 	"freeze_events":     "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
 	"mev_events":        "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
 	"api_usage_events":  "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
+	"spectra_events":    "migration 0210 and its store land before the spectra sink and projector wiring, so nothing writes the table yet and a target would report a permanent genesis→tip gap. Register the target (genesis 63_778_088) in the wiring PR and delete this entry.",
 	// classic_movements (migration 0105, ADR-0047) doesn't match
 	// perSourcePattern's suffix list (it ends in "_movements", not
 	// "_events"/etc.), so this entry isn't mechanically required by
