@@ -152,6 +152,8 @@ type Pool struct {
 	LastTradeAt   WireTime `json:"last_trade_at"`
 	TradeCount24h int64    `json:"trade_count_24h"`
 	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
+	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
 	// for THIS pool — same wire shape as Market.LastPrice but
 	// per-source, so two venues trading the same pair surface
@@ -411,6 +413,9 @@ type Market struct {
 	BucketCloseAt WireTime `json:"bucket_close_at"`
 	TradeCount24h int64    `json:"trade_count_24h"`
 	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
+	// usd_volume. Set only under `?source=`.
+	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
 	// for this pair within the trailing 24h: across every source, or
 	// that source's own with `?source=`. Null when none was observed.

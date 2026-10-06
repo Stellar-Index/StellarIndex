@@ -388,29 +388,6 @@ const (
 	xlmFormPrefOpenBound4 = `array_position(ARRAY['native', $4::text], `
 )
 
-// xlmUSDVolumeSelect is the XLM/USD scalar that converts XLM-legged volume to
-// USD: the median vwap of the minutes within 15 min of the newest print, so a
-// single thin or off-market minute cannot rescale every venue's figure. It
-// is volume-display only; price paths use [xlmUSDAnchorAt].
-const xlmUSDVolumeSelect = `SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY vwap) AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= now() - INTERVAL '24 hours'
-		     AND bucket > (SELECT max(bucket)
-		                     FROM prices_1m
-		                    WHERE base_asset = 'native'
-		                      AND quote_asset IN (
-		                        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		                        'fiat:USD'
-		                      )
-		                      AND vwap IS NOT NULL
-		                      AND bucket >= now() - INTERVAL '24 hours') - INTERVAL '15 minutes'`
-
 // refreshAssetPriceSnapshotUpsert recomputes every priced asset's
 // headline price + 1h/24h/7d change + backing source count from
 // [assetPriceCTEs] and upserts one row per asset into

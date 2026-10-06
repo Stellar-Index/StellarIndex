@@ -505,6 +505,8 @@ type AssetDetail struct {
 	//     the trade's timestamp. Wired when `[trades].usd_pegged_classic_assets`
 	//     is non-empty.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound is true when VolumeUSD24h excludes unpriced trades.
+	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 
 	// Change24hPct is the trailing-24h price change as a signed
 	// percentage with two fractional digits (e.g. "+1.27", "-0.05",
@@ -985,6 +987,8 @@ type Market struct {
 	// prices_1m's per-bucket volume_usd. Decimal string per
 	// ADR-0003. Nil when the pair has no USD-equivalent trades.
 	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound is true when Volume24hUSD excludes unpriced trades.
+	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
 	// for this pair (cross-source) within the trailing 24h. Nil
 	// when no recent bucket carries one.
@@ -1573,7 +1577,9 @@ type Pool struct {
 	LastTradeAt   time.Time `json:"last_trade_at"`
 	TradeCount24h int64     `json:"trade_count_24h"`
 	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
-	LastPrice     *string   `json:"last_price,omitempty"`
+	// VolumeLowerBound is true when Volume24hUSD excludes unpriced trades.
+	VolumeLowerBound bool    `json:"volume_lower_bound,omitempty"`
+	LastPrice        *string `json:"last_price,omitempty"`
 }
 
 // GlobalAssetView is one branch of [AssetLookup], the wire shape
