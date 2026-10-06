@@ -60,6 +60,6 @@ curl -s http://indexer:9464/metrics | grep stellarindex_source_insert_errors_tot
 
 ## Related
 
-- `insert-errors.md` — storage write failures on the main ingest sink.
+- `ingestion-sink.md#stellarindex_ingestion_insert_errors` — storage write failures on the main ingest sink.
 - `all-ingestion-down.md` — the severe case where ingestion itself stops.
 - `internal/canonical/discovery/sink.go` — best-effort buffer/drop contract.

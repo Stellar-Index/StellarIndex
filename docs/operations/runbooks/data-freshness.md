@@ -290,7 +290,7 @@ Fix:
    Repeat for `twap_1d` (or the named `prices_*` view). `force => true` is required: over a range retention dropped, a plain refresh reports `already up-to-date` and writes nothing. Minutes for TWAP views; a `prices_*` view over years of `trades` takes hours, run in slices of a few months.
 3. The gauge clears on the next `data-freshness.sh` tick (<= 15 min) once the oldest bar reaches its floor. With `prices_1m` retention armed a TWAP view's floor is still the oldest trade, so the TWAP gauge keeps firing until step 1's rebuild has run.
 
-During a legitimate recreate deploy, `for: 2h` leaves time to run the refresh; after it, wait one tick and confirm it clears rather than silencing. Related: `stellarindex_cagg_last_refresh_unix` / [cagg-stale](cagg-stale.md) is the refresh-POLICY health probe (policy not running, a different failure).
+During a legitimate recreate deploy, `for: 2h` leaves time to run the refresh; after it, wait one tick and confirm it clears rather than silencing. Related: `stellarindex_cagg_last_refresh_unix` / [cagg-stale](timescale.md#stellarindex_timescale_cagg_stale) is the refresh-POLICY health probe (policy not running, a different failure).
 
 ## stellarindex_data_freshness_watchdog_silent
 

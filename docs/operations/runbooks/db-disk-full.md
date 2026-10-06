@@ -28,7 +28,7 @@ severity: P1
   (near-)identical across the postgres, clickhouse, minio, and
   pgbackrest mountpoints. This alert and the pool alert are two
   views of one condition.
-- Cascading: `insert-errors.md`, `trade-insert-backpressure.md`.
+- Cascading: `ingestion-sink.md#stellarindex_ingestion_insert_errors`, `ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure`.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -61,8 +61,8 @@ du -sh /var/lib/pgbackrest
 1. **Compression policy isn't running.** Chunks older than their
    `compress_after` should be compressed; if the job fails silently,
    raw chunks accumulate.
-   - Signal: `compression-lag.md` is also firing.
-   - Mitigation: `cagg-stale.md` and `compression-lag.md` explain
+   - Signal: `timescale.md#stellarindex_timescale_compression_lag` is also firing.
+   - Mitigation: `timescale.md#stellarindex_timescale_cagg_stale` and `timescale.md#stellarindex_timescale_compression_lag` explain
      the fix paths.
 
 2. **The shared `data` pool is full** — ClickHouse lake growth, the
@@ -82,8 +82,8 @@ du -sh /var/lib/pgbackrest
    (misconfig writing debug everywhere). Note the log is NOT on this
    filesystem: `/var/log/postgresql/postgresql-15-main.log` lives on
    the **root fs**, which has its own alerts — if logs are the
-   problem you'll see `node-root-disk-full.md` /
-   `node-root-disk-warning.md`, not this alert.
+   problem you'll see `node-root-disk.md#stellarindex_node_root_disk_full` /
+   `node-root-disk.md#stellarindex_node_root_disk_warning`, not this alert.
    - Mitigation: truncate the log + fix the verbosity.
 
 5. **Someone loaded a large dataset** (backfill, import) beyond the
@@ -148,11 +148,11 @@ du -sh /var/lib/pgbackrest
 
 - `infra.md#stellarindex_zfs_pool_low_space` — the pool-level view of the same space; on r1
   the two alerts fire together and that runbook owns the relief levers.
-- `node-root-disk-full.md` — the ROOT fs (where the Postgres log
+- `node-root-disk.md#stellarindex_node_root_disk_full` — the ROOT fs (where the Postgres log
   lives) has separate alerts; a log flood shows up there, not here.
-- `insert-errors.md` — downstream when writes start failing.
-- `compression-lag.md` — the policy that should be shrinking cold data.
-- `cagg-stale.md` — separate issue that often correlates.
+- `ingestion-sink.md#stellarindex_ingestion_insert_errors` — downstream when writes start failing.
+- `timescale.md#stellarindex_timescale_compression_lag` — the policy that should be shrinking cold data.
+- `timescale.md#stellarindex_timescale_cagg_stale` — separate issue that often correlates.
 
 ## Changelog
 
@@ -171,7 +171,7 @@ du -sh /var/lib/pgbackrest
   upload). Commands use r1 shapes (`ssh root@136.243.90.96`,
   `runuser -u postgres -- psql -d stellarindex`); log path corrected
   to `/var/log/postgresql/postgresql-15-main.log` (root fs →
-  `node-root-disk-full.md`); replica framing dropped (no replica);
+  `node-root-disk.md#stellarindex_node_root_disk_full`); replica framing dropped (no replica);
   rule citation → `rules.r1/storage.yml`.
 - 2026-04-23 — initial draft. Emphasises "create headroom first,
   investigate second" — at the edge you can't afford to root-cause

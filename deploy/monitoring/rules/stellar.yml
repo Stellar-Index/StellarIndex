@@ -60,7 +60,7 @@ groups:
           team: stellarindex
           component: stellar
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellarindex_stellar_core_ledger_age
           summary: "stellar-core ledger age {{ $value | humanizeDuration }} (SEV-1)"
           description: |
             stellar-core hasn't applied a ledger in > 60 s. Either the node
@@ -75,7 +75,7 @@ groups:
           team: stellarindex
           component: stellar
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-peers.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellarindex_stellar_core_peers_low
           summary: "stellar-core has only {{ $value }} peers"
           description: |
             stellar-core connected to < 5 peers. Quorum resilience degraded.
@@ -89,7 +89,7 @@ groups:
           team: stellarindex
           component: stellar
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/rpc-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellarindex_stellar_rpc_lag
           summary: "stellar-rpc lagging by {{ $value | humanizeDuration }}"
           description: |
             stellar-rpc's latestLedger is > 5 min behind wall-clock. Its

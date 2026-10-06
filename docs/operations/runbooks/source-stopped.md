@@ -128,9 +128,9 @@ fourth window.
 ## Related
 
 - `all-ingestion-down.md` — P1 escalation when multiple sources stop.
-- `rpc-lag.md` — upstream root cause.
+- `stellar-node.md#stellarindex_stellar_rpc_lag` — upstream root cause.
 - `decode-errors.md` — adjacent failure mode that can masquerade as source-stopped if every event is being rejected.
-- `cursor-stuck.md` — persistence-layer sibling (events flowing but cursor not advancing).
+- `ledger-ingest.md#stellarindex_ingestion_cursor_stuck` — persistence-layer sibling (events flowing but cursor not advancing).
 
 ## Changelog
 

@@ -41,7 +41,7 @@ maintenance windows where the live cursor may lag.
 Severities are the rules' `labels.severity` (`page` → Discord
 #stellarindex-pages, `ticket` → #stellarindex-alerts). Rules live in
 `configs/prometheus/rules.r1/`. Duplicate-flood runbook:
-[ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md).
+[ingestion-duplicate-flood](runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood).
 
 If any fires while a fill walk or verify-archive runs, assume back-pressure
 and stop the heavy walker first.

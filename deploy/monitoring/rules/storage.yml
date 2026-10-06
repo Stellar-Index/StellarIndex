@@ -208,7 +208,7 @@ groups:
           component: storage
           alert_family: node_root_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_full
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
             Root FS (/) under 10 % free on {{ $labels.instance }}.
@@ -234,7 +234,7 @@ groups:
           component: storage
           alert_family: node_root_disk
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_warning
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
             Root FS (/) under 20 % on {{ $labels.instance }}.
@@ -262,7 +262,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_filling_fast
           summary: "Root filesystem on {{ $labels.instance }} trending to FULL within 30 min"
           description: |
             Root FS (/) on {{ $labels.instance }} is filling fast enough
@@ -394,7 +394,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
           summary: "Continuous aggregate {{ $labels.cagg }} hasn't refreshed"
           description: |
             Refresh for {{ $labels.cagg }} is 5× its configured interval
@@ -441,7 +441,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
           summary: "Continuous aggregate {{ $labels.cagg }} has stopped reporting refresh status"
           description: |
             {{ $labels.cagg }} was reporting
@@ -561,7 +561,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_job_failures_climbing
           summary: "TimescaleDB job {{ $labels.proc }} failing repeatedly ({{ $labels.hypertable }})"
           description: |
             Job {{ $labels.job_id }} ({{ $labels.proc }} on
@@ -632,7 +632,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_compression_lag
           summary: "{{ $labels.hypertable }}: {{ $value }} chunks past their compression policy's own window"
           description: |
             Chunks on {{ $labels.hypertable }} are still uncompressed more than
@@ -706,7 +706,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded
           summary: "TimescaleDB job/CAGG probe is not producing usable metrics{{ if $labels.query }} ({{ $labels.query }}){{ end }}"
           description: |
             timescale-jobs-probe.timer is not producing a usable
