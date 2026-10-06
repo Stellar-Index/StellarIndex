@@ -479,7 +479,7 @@ region that hasn't opted in.
 | `stellarindex_hashdb_drift_detected` | `stellarindex_hashdb_drift_total` | > 0 | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_drift_detected) |
 | `stellarindex_hashdb_verify_failing` | `rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome="error"}[6h]) > rate(...{window="recent",outcome=~"ok\|drift"}[6h])` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_verify_failing) |
 | `stellarindex_hashdb_history_verify_failing` | `increase(...{window="history",outcome="error"}[6h]) > 0 unless increase(...{window="history",outcome=~"ok\|drift"}[6h]) > 0` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_history_verify_failing) |
-| `stellarindex_hashdb_verify_stale` | `increase(stellarindex_hashdb_append_total[6h]) > 0 and absent_over_time(stellarindex_hashdb_verify_runs_total[6h])` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_verify_stale) |
+| `stellarindex_hashdb_verify_stale` | `sum(increase(stellarindex_hashdb_append_total[6h])) > 0 and sum(stellarindex_hashdb_append_total offset 6h) > 0 and sum(increase(stellarindex_hashdb_verify_runs_total[6h])) == 0` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_verify_stale) |
 | `stellarindex_hashdb_append_failing` | `rate(stellarindex_hashdb_append_total{outcome="error"}[15m]) > rate(...{outcome="ok"}[15m])` | sustained 10 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_append_failing) |
 
 ## Data-freshness / completeness alerts
