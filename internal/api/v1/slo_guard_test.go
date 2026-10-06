@@ -25,7 +25,7 @@ import (
 // Mechanism: a direct-body AST tripwire — every SLO'd handler's body is
 // walked for selector reads of the Server's ClickHouse-backed fields. This
 // intentionally checks the handler bodies, not the transitive call graph
-// (the realistic regression is wiring `s.explorer`/`s.tokenSupply` straight
+// (the realistic regression is wiring `s.Explorer`/`s.TokenSupply` straight
 // into a handler); if a lake dependency is ever threaded through a helper,
 // add the helper here. The forbidden fields are [sloLakeBackedFields];
 // TestSLOLakeFieldsCoverLakeWiring fails when main.go wires a lake reader

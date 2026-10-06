@@ -19,7 +19,7 @@ func closedFlight() chan struct{} {
 }
 
 func TestRWAHistory_CarriedForwardAssemblyIsNoStore(t *testing.T) {
-	s := &Server{assetsReader: nilAssets{}, oracleHistory: nilOracleHistory{}}
+	s := &Server{Options: Options{AssetsReader: nilAssets{}, OracleHistory: nilOracleHistory{}}}
 	s.rwaHistCache = &rwaValueHistory{available: true, builtAt: time.Now().Add(-48 * time.Hour)}
 	s.rwaHistAt = time.Now().Add(-48 * time.Hour)
 	s.rwaHistFlight = closedFlight()
@@ -45,7 +45,7 @@ func TestIngestionFlags_PartialSnapshotIsDegraded(t *testing.T) {
 type nilMarketHistory struct{ RWAMarketHistoryReader }
 
 func TestRWAPremiumHistory_CarriedForwardAssemblyIsNoStore(t *testing.T) {
-	s := &Server{assetsReader: nilAssets{}, oracleHistory: nilOracleHistory{}, marketHistory: nilMarketHistory{}}
+	s := &Server{Options: Options{AssetsReader: nilAssets{}, OracleHistory: nilOracleHistory{}, MarketHistory: nilMarketHistory{}}}
 	s.rwaPremCache = &rwaPremiumHistory{available: true, builtAt: time.Now().Add(-48 * time.Hour)}
 	s.rwaPremAt = time.Now().Add(-48 * time.Hour)
 	s.rwaPremFlight = closedFlight()

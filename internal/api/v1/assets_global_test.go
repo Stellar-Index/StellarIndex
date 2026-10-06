@@ -279,7 +279,7 @@ func TestAssetGet_Fiat_USDIdentity(t *testing.T) {
 }
 
 // TestAssetGet_Fiat_CNY_MarketCap — non-USD fiat: handler reads
-// the FX rate from PriceReader (s.prices) for the fiat:CNY/fiat:USD
+// the FX rate from PriceReader (s.Prices) for the fiat:CNY/fiat:USD
 // pair, then multiplies M2 by the result. PriceReader is used
 // rather than ComputeGlobalPrice because the FX-rate Redis
 // triangulated fallback (which prices_1m doesn't carry for

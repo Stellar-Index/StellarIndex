@@ -107,7 +107,7 @@ func decodeAssetRows(t *testing.T, rec *httptest.ResponseRecorder) []AssetDetail
 // listing accepted `q` and searched nothing.
 func TestAssetsQReachesTheStoreOnDefaultPath(t *testing.T) {
 	stub := &filterCapturingAssets{}
-	s := &Server{assetsReader: stub}
+	s := &Server{Options: Options{AssetsReader: stub}}
 	serveAssets(t, s, "/v1/assets?q=ZZZZNOSUCH&limit=3")
 	if got := listingCall(t, stub, 3).Q; got != "ZZZZNOSUCH" {
 		t.Errorf("store saw Q = %q, want %q — `q` is parsed and dropped, so "+
@@ -122,7 +122,7 @@ func TestAssetsUnifiedClassicPhaseHonoursFilters(t *testing.T) {
 	stub := &filterCapturingAssets{}
 	// No catalogue wired → the catalogue phase hands straight over to
 	// the classic phase, so the listing call under test is that phase's.
-	s := &Server{assetsReader: stub}
+	s := &Server{Options: Options{AssetsReader: stub}}
 	serveAssets(t, s, "/v1/assets?asset_class=all&code="+aquaCode+
 		"&issuer="+aquaIssuer+"&q=aqu&limit=3")
 	got := listingCall(t, stub, 3)
@@ -160,7 +160,7 @@ func TestAssetsUnifiedTypeReachesTheSpine(t *testing.T) {
 	} {
 		t.Run(tc.typ, func(t *testing.T) {
 			stub := &filterCapturingAssets{}
-			s := &Server{assetsReader: stub}
+			s := &Server{Options: Options{AssetsReader: stub}}
 			serveAssets(t, s, "/v1/assets?asset_class=all&type="+tc.typ+"&limit=3")
 			var listing *timescale.ListAssetsOptions
 			for i, c := range stub.calls {
@@ -191,7 +191,7 @@ func TestAssetsUnifiedCataloguePhaseHonoursFilters(t *testing.T) {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
 	stub := &filterCapturingAssets{}
-	s := &Server{assetsReader: stub, verifiedCurrencies: cat}
+	s := &Server{Options: Options{AssetsReader: stub, VerifiedCurrencies: cat}}
 
 	t.Run("code", func(t *testing.T) {
 		rows := decodeAssetRows(t, serveAssets(t, s, "/v1/assets?asset_class=all&code="+aquaCode+"&limit=25"))

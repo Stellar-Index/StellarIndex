@@ -293,10 +293,10 @@ func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
 // permanent failure by dying on a caller's context before it can record the
 // attempt.
 func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[string]string {
-	if s.tokenSupply == nil {
+	if s.TokenSupply == nil {
 		return nil
 	}
-	rd, ok := s.tokenSupply.(classicLakeSupplyReader)
+	rd, ok := s.TokenSupply.(classicLakeSupplyReader)
 	if !ok {
 		return nil
 	}
@@ -565,10 +565,10 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // token-supply reader, no bulk capability, no assets reader, a listing error
 // or a lake error each leave the cache exactly as it was.
 func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.ListAssetsOptions) {
-	if s.tokenSupply == nil || s.assetsReader == nil {
+	if s.TokenSupply == nil || s.AssetsReader == nil {
 		return
 	}
-	rd, ok := s.tokenSupply.(classicLakeSupplyReader)
+	rd, ok := s.TokenSupply.(classicLakeSupplyReader)
 	if !ok {
 		return
 	}

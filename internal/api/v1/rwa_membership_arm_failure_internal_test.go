@@ -94,7 +94,7 @@ func TestRefreshRWAMembership_FailedClassicArmDoesNotOverwrite(t *testing.T) {
 	reader.err = context.DeadlineExceeded
 	reader.mu.Unlock()
 	s := rwaCacheTestServer(reader)
-	s.rwaContracts = &stubRWAContractArm{}
+	s.RWAContracts = &stubRWAContractArm{}
 	builtAt := seedDatedRWACache(s, rwaMembershipTTL+time.Minute)
 
 	s.cachedRWAMembership(context.Background())
@@ -136,7 +136,7 @@ func TestRefreshRWAMembership_FailedClassicArmDoesNotOverwrite(t *testing.T) {
 func TestRefreshRWAMembership_FailedContractArmDoesNotOverwrite(t *testing.T) {
 	reader := newBlockingRWASep1Reader()
 	s := rwaCacheTestServer(reader)
-	s.rwaContracts = &stubRWAContractArm{err: context.DeadlineExceeded}
+	s.RWAContracts = &stubRWAContractArm{err: context.DeadlineExceeded}
 	seedDatedRWACache(s, rwaMembershipTTL+time.Minute)
 
 	s.cachedRWAMembership(context.Background())
@@ -164,7 +164,7 @@ func TestRefreshRWAMembership_FailedContractArmDoesNotOverwrite(t *testing.T) {
 // rule was written for, and which the fix above must not take away.
 func TestRefreshRWAMembership_UnwiredArmStillCaches(t *testing.T) {
 	s := rwaCacheTestServer(unwiredSep1Reader{})
-	s.rwaContracts = &stubRWAContractArm{}
+	s.RWAContracts = &stubRWAContractArm{}
 
 	s.PrewarmRWA(context.Background())
 

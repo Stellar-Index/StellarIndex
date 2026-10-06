@@ -284,7 +284,7 @@ func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 
 // TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader is the
 // COR-14 regression: attachFiatMarketCaps used to skip its ENTIRE
-// fan-out whenever PriceReader (s.prices) was nil, even though
+// fan-out whenever PriceReader (s.Prices) was nil, even though
 // fiatMarketCapUSD tries fxHistory FIRST and only falls back to
 // PriceReader. A deployment that wires FXHistory but not PriceReader —
 // or even the USD row itself, which needs NEITHER reader (identity

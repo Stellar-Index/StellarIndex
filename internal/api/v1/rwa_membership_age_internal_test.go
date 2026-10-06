@@ -128,7 +128,7 @@ func TestRWAMembershipSet_SeparatesARebuildComingFromNothingComing(t *testing.T)
 // happened" — an alarm that never clears is one nobody reads twice.
 func TestRWAMembershipSet_ASuccessfulRebuildClearsTheFailure(t *testing.T) {
 	s := rwaAgeTestServer()
-	s.sep1Cache = &stubAgeSep1Reader{}
+	s.Sep1Cache = &stubAgeSep1Reader{}
 	s.rwaFailedAt = time.Now().UTC().Add(-time.Minute)
 
 	s.refreshRWAMembership(make(chan struct{}))
@@ -155,7 +155,7 @@ func TestRWAMembershipSet_ASuccessfulRebuildClearsTheFailure(t *testing.T) {
 // hand-set field.
 func TestRWAMembershipSet_AFailedRebuildRecordsIt(t *testing.T) {
 	s := rwaAgeTestServer()
-	s.sep1Cache = &stubAgeSep1Reader{err: context.DeadlineExceeded}
+	s.Sep1Cache = &stubAgeSep1Reader{err: context.DeadlineExceeded}
 	built := time.Now().UTC().Add(-rwaMembershipTTL - time.Minute)
 	s.rwaCache = &rwaMembership{available: true, refusals: map[string]int{}, builtAt: built}
 	s.rwaAt = built

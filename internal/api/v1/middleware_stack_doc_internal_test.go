@@ -43,18 +43,10 @@ func TestMiddlewareStackMatchesPackageDoc(t *testing.T) {
 	pass := func(next http.Handler) http.Handler { return next }
 	var optional middleware.Middleware = pass
 	s := &Server{
-		mux:                  http.NewServeMux(),
-		publicRoutes:         middleware.NewPublicRoutes(),
-		requestTimeout:       time.Second,
-		cors:                 optional,
-		auth:                 optional,
-		keyPolicy:            optional,
-		requireEmailVerified: optional,
-		usageTracker:         optional,
-		monthlyQuota:         optional,
-		rateLimit:            optional,
-		touchUsage:           optional,
-		sessionAuth:          optional,
+		Options:        Options{CORS: optional, Auth: optional, KeyPolicy: optional, RequireEmailVerified: optional, UsageTracker: optional, MonthlyQuota: optional, RateLimit: optional, TouchUsage: optional, SessionAuth: optional},
+		mux:            http.NewServeMux(),
+		publicRoutes:   middleware.NewPublicRoutes(),
+		requestTimeout: time.Second,
 	}
 	var built []string
 	for _, e := range s.middlewareStack() {

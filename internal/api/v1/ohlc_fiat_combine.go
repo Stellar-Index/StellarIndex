@@ -245,7 +245,7 @@ func (s *Server) usdPeggedConstituentSets(pair canonical.Pair) (established, hel
 		if err != nil {
 			continue
 		}
-		expanded, err := aggregate.ExpandTargetPairWithClassicPegs(tgt, s.usdPeggedClassics)
+		expanded, err := aggregate.ExpandTargetPairWithClassicPegs(tgt, s.USDPeggedClassics)
 		if err != nil {
 			// Malformed target — fall back to the direct pair only.
 			expanded = []canonical.Pair{tgt}
@@ -368,7 +368,7 @@ func (s *Server) fiatCombinedTrades(
 	if len(heldBack) > 0 {
 		answered := tradeGateBuckets(merged)
 		for _, sp := range heldBack {
-			batch, berr := s.history.TradesInRange(ctx, sp, from, to, maxTrades)
+			batch, berr := s.History.TradesInRange(ctx, sp, from, to, maxTrades)
 			if berr != nil {
 				return aggregate.ScaledWindow{}, false, berr
 			}
@@ -419,7 +419,7 @@ func (s *Server) mergeConstituentTrades(
 	var merged []canonical.Trade
 	proxied := false
 	for _, sp := range pairs {
-		batch, err := s.history.TradesInRange(ctx, sp, from, to, maxTrades)
+		batch, err := s.History.TradesInRange(ctx, sp, from, to, maxTrades)
 		if err != nil {
 			return nil, false, err
 		}
@@ -633,7 +633,7 @@ func (s *Server) combineConstituentBars(
 ) (bool, error) {
 	proxied := false
 	for _, sp := range pairs {
-		bars, err := s.history.OHLCSeries(ctx, sp, string(interval), from, to, limit)
+		bars, err := s.History.OHLCSeries(ctx, sp, string(interval), from, to, limit)
 		if err != nil {
 			// A constituent that simply has no rows returns an empty
 			// slice + nil, not an error.

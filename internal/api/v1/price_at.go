@@ -71,7 +71,7 @@ const priceAtMaxLookback = 24 * time.Hour
 // used — so callers see exactly how far the nearest observation was
 // and at what granularity.
 func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
-	if s.priceAt == nil {
+	if s.PriceAt == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
 			"Point-in-time price serving not configured", http.StatusServiceUnavailable,
@@ -214,7 +214,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			if pairErr != nil {
 				continue
 			}
-			value, bucketAt, resSec, lookErr := s.priceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
+			value, bucketAt, resSec, lookErr := s.PriceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
 				if failErr := notePriceAtMiss(&withheld, lookErr); failErr != nil {
 					return PriceSnapshot{}, false, nil, failErr
@@ -335,8 +335,8 @@ func (s *Server) priceAtUSDPegPairs(asset, quote canonical.Asset) []canonical.Pa
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return nil
 	}
-	out := make([]canonical.Pair, 0, len(s.usdPeggedClassics))
-	for _, peg := range s.usdPeggedClassics {
+	out := make([]canonical.Pair, 0, len(s.USDPeggedClassics))
+	for _, peg := range s.USDPeggedClassics {
 		// A peg asked for under any of its spellings — the classic id or
 		// its SAC wrapper — is not a market against itself.
 		if sameAsset(peg, asset) {

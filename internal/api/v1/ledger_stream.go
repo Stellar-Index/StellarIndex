@@ -143,7 +143,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
-	if s.cursors == nil {
+	if s.Cursors == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,

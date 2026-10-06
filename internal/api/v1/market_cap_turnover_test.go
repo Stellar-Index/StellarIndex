@@ -152,7 +152,7 @@ func TestCapExceedsObservedTurnoverIsExactAtTheBoundary(t *testing.T) {
 // wiring test — the pure-function cases above would all still pass against a
 // build that computed the verdict and threw it away.
 func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
-	s := &Server{minMarketCapVolumeUSD: 1000, maxMarketCapVolumeRatio: 50_000}
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "1.5666161388"
 	vol := slvrVolumeUSD
 	row := AssetDetail{
@@ -188,7 +188,7 @@ func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
 // guard took it, the line would be drawn through the served set rather than
 // around an outlier.
 func TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset(t *testing.T) {
-	s := &Server{minMarketCapVolumeUSD: 1000, maxMarketCapVolumeRatio: 50_000}
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "0.0062624500"
 	vol := tftVolumeUSD
 	row := AssetDetail{
@@ -218,7 +218,7 @@ func TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset(t *testing.T) {
 // same reason, and it is reachable: a low-volume day against the whole XLM
 // float is exactly the shape the ratio is looking for.
 func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
-	s := &Server{minMarketCapVolumeUSD: 1000, maxMarketCapVolumeRatio: 50_000}
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "0.16"
 	vol := "10"
 	row := AssetDetail{
@@ -250,9 +250,8 @@ func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 // the row it just fired on.
 func TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset(t *testing.T) {
 	s := &Server{
-		logger:                  slogDiscard(),
-		minMarketCapVolumeUSD:   1000,
-		maxMarketCapVolumeRatio: 50_000,
+		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
+		logger:  slogDiscard(),
 	}
 	price := "1.5666161388"
 	vol := slvrVolumeUSD
@@ -285,9 +284,8 @@ func TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset(t *testing.T) {
 // is not a guard, it is an outage.
 func TestPopulateMarketCapStillPublishesALiquidCap(t *testing.T) {
 	s := &Server{
-		logger:                  slogDiscard(),
-		minMarketCapVolumeUSD:   1000,
-		maxMarketCapVolumeRatio: 50_000,
+		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
+		logger:  slogDiscard(),
 	}
 	price := "1.0006355636"
 	vol := usdcVolumeUSD
@@ -322,9 +320,8 @@ func slogDiscard() *slog.Logger {
 // declared cap sits above what has vested — not an edge case.
 func TestPopulateMarketCapFlagsFDVOnlyCeilingBreach(t *testing.T) {
 	s := &Server{
-		logger:                  slogDiscard(),
-		minMarketCapVolumeUSD:   1000,
-		maxMarketCapVolumeRatio: 50_000,
+		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
+		logger:  slogDiscard(),
 	}
 	price := "1.5666161388"
 	vol := slvrVolumeUSD // $3,791.13915551 — ceiling at 50,000x is ~$189.56M
@@ -366,12 +363,10 @@ func TestFillContractMarketCapsAppliesTheSameCeiling(t *testing.T) {
 	price := "1.5666161388"
 	vol := slvrVolumeUSD
 	s := &Server{
-		logger:                  slogDiscard(),
-		minMarketCapVolumeUSD:   1000,
-		maxMarketCapVolumeRatio: 50_000,
-		tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000, TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: total, Mint: total, Burn: big.NewInt(0), Clawback: big.NewInt(0), FlowCount: 7},
-		}},
+		}}},
+		logger: slogDiscard(),
 	}
 	rows := []AssetDetail{{
 		AssetID: contractID, Kind: "soroban_token", Decimals: 7,

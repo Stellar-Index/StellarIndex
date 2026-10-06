@@ -268,8 +268,8 @@ func (s *Server) handleOHLCSeries(
 	// the non-combined path here, [ohlcBucketAcc.finalize]'s own
 	// commonScale for [Server.ohlcSeriesFiatCombined] — so a consumer
 	// must not divide v_quote by a fixed 1e7 either way.
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote)
 	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
 
 	// Series mode returns 200 + empty `intervals: []` when there are
@@ -455,7 +455,7 @@ func (s *Server) ohlcSeriesWithAliases(
 			if perr != nil {
 				continue // degenerate alias combination (identity pair)
 			}
-			bars, err := s.history.OHLCSeries(ctx, ap, string(interval), from, to, limit)
+			bars, err := s.History.OHLCSeries(ctx, ap, string(interval), from, to, limit)
 			if err != nil || len(bars) > 0 {
 				annotateOHLCSeriesBarScale(bars)
 				normalizeOHLCSeriesVolumes(bars)

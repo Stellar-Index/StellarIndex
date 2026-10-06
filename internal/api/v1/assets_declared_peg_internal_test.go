@@ -35,11 +35,10 @@ func pegTestServer(t *testing.T, fx FXHistoryReader) *Server {
 		t.Fatal(err)
 	}
 	return &Server{
-		fxHistory: fx,
-		fiatPeggedClassics: map[string]canonical.Asset{
+		Options: Options{FXHistory: fx, FiatPeggedClassics: map[string]canonical.Asset{
 			pegTestAUDD: aud,
 			pegTestAUDR: aud,
-		},
+		}},
 	}
 }
 
@@ -58,7 +57,7 @@ func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 	s := pegTestServer(t, fx)
 	// Gate denies everything (no allow entries) — AUDD's USD books are
 	// the inconsistent bot dust the 2026-08-24 census found.
-	s.substance = &stubListingGate{allow: map[string]bool{}}
+	s.Substance = &stubListingGate{allow: map[string]bool{}}
 
 	dust, ch := "0.80", "+1.00"
 	other := "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
@@ -102,7 +101,7 @@ func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
-	s.substance = &stubListingGate{allow: map[string]bool{
+	s.Substance = &stubListingGate{allow: map[string]bool{
 		pegTestAUDD + "|native": true, // a real market cleared the floor
 	}}
 
@@ -169,7 +168,7 @@ func TestFillDeclaredPegPrice_DetailPathSingleRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.fiatPeggedClassics["USDX-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"] = usd
+	s.FiatPeggedClassics["USDX-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"] = usd
 	d2 := AssetDetail{AssetID: "USDX-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"}
 	s.fillDeclaredPegPrice(context.Background(), &d2, nil)
 	if d2.PriceUSD == nil || *d2.PriceUSD != "1.00000000000000" {

@@ -155,7 +155,7 @@ func priceRenderScale(r *big.Rat, digits int) int {
 //   - to:   now snapped DOWN to interval boundary
 //   - from: to - limit*interval
 func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
-	reader := s.history
+	reader := s.History
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/ohlc-unavailable",
@@ -334,8 +334,8 @@ func (s *Server) computeOHLCSingleBar(
 		return nil, false
 	}
 
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote)
 	bar.Open = aggregate.AdjustPrice(bar.Open, baseDec, quoteDec)
 	bar.High = aggregate.AdjustPrice(bar.High, baseDec, quoteDec)
 	bar.Low = aggregate.AdjustPrice(bar.Low, baseDec, quoteDec)

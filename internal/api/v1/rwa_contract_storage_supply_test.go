@@ -40,15 +40,14 @@ func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {
 	// The six non-zero Balance entries measured for this exact contract.
 	held, _ := new(big.Int).SetString("344995973100000", 10)
 	s := &Server{
-		logger: discardLogger(),
-		tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			// What the event reader returns for a contract with no events:
 			// a zero total over zero flows. Not an error, not incomplete.
 			contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
-		}},
-		storageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
+		}}, ContractStorageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
 			contractID: {ContractID: contractID, Total: held, BalanceEntries: 6},
-		}},
+		}}},
+		logger: discardLogger(),
 	}
 	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
 
@@ -79,11 +78,10 @@ func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 		contractID: {ContractID: contractID, Total: big.NewInt(999), BalanceEntries: 1},
 	}}
 	s := &Server{
-		logger: discardLogger(),
-		tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: total, Mint: total, Burn: big.NewInt(0), FlowCount: 1828},
-		}},
-		storageSupply: storage,
+		}}, ContractStorageSupply: storage},
+		logger: discardLogger(),
 	}
 	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 5}}
 
@@ -119,14 +117,13 @@ func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Server{
-				logger: discardLogger(),
-				tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+				Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 					contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
-				}},
-				storageSupply: &storageSupplyStub{
+				}}, ContractStorageSupply: &storageSupplyStub{
 					byContract: map[string]clickhouse.ContractStorageSupply{contractID: tt.st},
 					err:        tt.err,
-				},
+				}},
+				logger: discardLogger(),
 			}
 			rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
 
@@ -145,10 +142,10 @@ func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 func TestContractArmWithNoStorageReaderWiredIsUnchanged(t *testing.T) {
 	const contractID = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
 	s := &Server{
-		logger: discardLogger(),
-		tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
-		}},
+		}}},
+		logger: discardLogger(),
 	}
 	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
 

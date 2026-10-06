@@ -96,8 +96,8 @@ func (s *Server) vwapBreakdown(
 	}
 	adjust := func(p *big.Rat) *big.Rat {
 		return aggregate.AdjustPrice(p,
-			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base),
-			aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote))
+			aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base),
+			aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote))
 	}
 	return buildVWAPBreakdown(pre, post, *interval, from, to, adjust, truncated)
 }

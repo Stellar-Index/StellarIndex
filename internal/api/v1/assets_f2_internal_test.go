@@ -183,7 +183,7 @@ func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
 		FlowCount:  3,
 		Incomplete: true,
 	}}
-	sNeg := &Server{logger: slog.Default(), tokenSupply: neg}
+	sNeg := &Server{Options: Options{TokenSupply: neg}, logger: slog.Default()}
 	detailNeg := &AssetDetail{Decimals: 7}
 	sNeg.applyF2Fields(context.Background(), detailNeg, asset)
 	if detailNeg.TotalSupply != nil {
@@ -200,7 +200,7 @@ func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
 		Total:      big.NewInt(900), Mint: big.NewInt(1000), Burn: big.NewInt(80), Clawback: big.NewInt(20),
 		FlowCount: 7,
 	}}
-	sPos := &Server{logger: slog.Default(), tokenSupply: pos}
+	sPos := &Server{Options: Options{TokenSupply: pos}, logger: slog.Default()}
 	detailPos := &AssetDetail{Decimals: 7}
 	sPos.applyF2Fields(context.Background(), detailPos, asset)
 	if detailPos.TotalSupply == nil || *detailPos.TotalSupply != "900" {

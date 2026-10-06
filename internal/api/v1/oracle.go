@@ -148,7 +148,7 @@ func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	if a.Type != canonical.AssetClassic || a.Code == "" || a.Issuer == "" {
 		return "", false
 	}
-	vc, ok := s.verifiedCurrencies.LookupByStellarAssetID(a.String())
+	vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(a.String())
 	if !ok || vc.Ticker == "" {
 		return "", false
 	}
@@ -173,7 +173,7 @@ func (s *Server) verifiedSACAsset(contractID string) (canonical.Asset, bool) {
 
 func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
 	set := make(map[string]canonical.Asset)
-	if s.networkPassphrase == "" {
+	if s.NetworkPassphrase == "" {
 		return set
 	}
 	add := func(assetID string) {
@@ -181,13 +181,13 @@ func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
 		if err != nil {
 			return
 		}
-		if cid, ok := xdrjson.SACContractID(assetID, s.networkPassphrase); ok {
+		if cid, ok := xdrjson.SACContractID(assetID, s.NetworkPassphrase); ok {
 			set[cid] = a
 		}
 	}
 	add("native")
-	if s.verifiedCurrencies != nil {
-		for _, vc := range s.verifiedCurrencies.Browseable() {
+	if s.VerifiedCurrencies != nil {
+		for _, vc := range s.VerifiedCurrencies.Browseable() {
 			if se := vc.StellarEntry(); se != nil && se.AssetID != "" {
 				add(se.AssetID)
 			}
@@ -258,7 +258,7 @@ type OracleReading struct {
 // this as "nothing to report," not an error. That matches the
 // behaviour of /v1/history.
 func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
-	reader := s.oracle
+	reader := s.Oracle
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/oracle-unavailable",
@@ -375,7 +375,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 // OracleReader is wired — consistent with /v1/oracle/latest's
 // "nothing to report" handling.
 func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
-	reader := s.oracle
+	reader := s.Oracle
 	if reader == nil {
 		writeJSON(w, []OracleReading{}, Flags{})
 		return

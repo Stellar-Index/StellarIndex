@@ -235,7 +235,7 @@ func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, p
 // price_type=market_cap routes to handleChartMarketCap. Both are
 // dispatched in dispatchSpecialisedChart before the default vwap path.
 func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
-	if s.history == nil {
+	if s.History == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/history-unavailable",
 			"History serving not configured", http.StatusServiceUnavailable,
@@ -566,7 +566,7 @@ func (s *Server) handleChartTWAP(
 	defer cancel()
 
 	read := func(rc context.Context, p canonical.Pair, lo, hi time.Time, limit int) ([]HistoryPoint, error) {
-		return s.history.TWAPPointsInRange(rc, p, twapGran, lo, hi, limit)
+		return s.History.TWAPPointsInRange(rc, p, twapGran, lo, hi, limit)
 	}
 
 	points, walk, err := s.chartSeriesPoints(ctx, pair,
@@ -662,7 +662,7 @@ func (s *Server) handleChartFiat(
 		Points:      []HistoryPointWire{},
 	}
 
-	if s.fxHistory == nil {
+	if s.FXHistory == nil {
 		writeChartJSON(w, series, Flags{})
 		return
 	}
@@ -692,7 +692,7 @@ func (s *Server) handleChartFiat(
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	points, err := s.fxHistory.ListFXHistory(fxCtx, ticker, queryFrom, to)
+	points, err := s.FXHistory.ListFXHistory(fxCtx, ticker, queryFrom, to)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -766,7 +766,7 @@ func (s *Server) handleChartFiatCross(
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	basePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
+	basePts, err := s.FXHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -780,7 +780,7 @@ func (s *Server) handleChartFiatCross(
 		writeChartJSON(w, series, Flags{Stale: true, Degraded: true})
 		return
 	}
-	quotePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
+	quotePts, err := s.FXHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -1404,8 +1404,8 @@ func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 // instead of the peg's.
 func (s *Server) adjustSourcePoints(sp canonical.Pair, points []HistoryPoint) []HistoryPoint {
 	return adjustHistoryPointPrices(points,
-		aggregate.ResolveDecimals(s.nonstandardDecimals, sp.Base),
-		aggregate.ResolveDecimals(s.nonstandardDecimals, sp.Quote))
+		aggregate.ResolveDecimals(s.NonstandardDecimals, sp.Base),
+		aggregate.ResolveDecimals(s.NonstandardDecimals, sp.Quote))
 }
 
 // chartSeriesPoints is the whole read chain behind a CAGG-served chart
@@ -1586,7 +1586,7 @@ func (s *Server) chartFiatProxyQuotes(quote canonical.Asset) (established, heldB
 	// (they carry issuer identity and are mapped to fiat only for USD by
 	// the operator's allow-list).
 	if quote.Code == "USD" {
-		for _, peg := range s.usdPeggedClassics {
+		for _, peg := range s.USDPeggedClassics {
 			add(&established, canonical.CanonicalAsset(peg))
 		}
 	}
@@ -1600,7 +1600,7 @@ func (s *Server) chartFiatProxyQuotes(quote canonical.Asset) (established, heldB
 	// (2) the remaining canonical forms of each declared peg — the SAC
 	// wrappers — after every established spelling of every family.
 	if quote.Code == "USD" {
-		for _, peg := range s.usdPeggedClassics {
+		for _, peg := range s.USDPeggedClassics {
 			for _, form := range assetAliases(peg) {
 				add(&heldBack, form)
 			}
@@ -1710,7 +1710,7 @@ func (s *Server) chartMergeAliasPairs(ctx context.Context, w *chartWalk) error {
 // fetches a pair's closed prices_<gran> series over [from, to).
 func (s *Server) chartVWAPReader(gran string) chartRead {
 	return func(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]HistoryPoint, error) {
-		return s.history.HistoryPointsInRange(ctx, p, gran, from, to, limit)
+		return s.History.HistoryPointsInRange(ctx, p, gran, from, to, limit)
 	}
 }
 
@@ -2044,7 +2044,7 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
-	if s.verifiedCurrencies == nil || s.fxHistory == nil {
+	if s.VerifiedCurrencies == nil || s.FXHistory == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/market-cap-unavailable",
 			"market_cap not configured", http.StatusServiceUnavailable,
@@ -2052,7 +2052,7 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
-	vc, ok := s.verifiedCurrencies.LookupByTicker(pair.Base.Code)
+	vc, ok := s.VerifiedCurrencies.LookupByTicker(pair.Base.Code)
 	if !ok || vc.CirculatingSupply == "" {
 		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
 		return
@@ -2080,7 +2080,7 @@ func (s *Server) handleChartMarketCap(
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	points, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
+	points, err := s.FXHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
 		s.marketCapReadFailed(w, r, fxCtx, err, "ListFXHistory", pair, tfRaw, gran, from, "market_cap: fx_quotes fetch failed", "ticker", pair.Base.Code, "err", err)
 		return
@@ -2216,7 +2216,7 @@ func (s *Server) handleChartMarketCapCrypto(
 ) {
 	const gran = "1d" // market cap is always a daily series
 
-	if s.history == nil || s.supply == nil {
+	if s.History == nil || s.Supply == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/market-cap-unavailable",
 			"market_cap not configured", http.StatusServiceUnavailable,
@@ -2273,11 +2273,11 @@ func (s *Server) handleChartMarketCapCrypto(
 	// families are singletons. The durable fix is alias-folding the
 	// lookup, which is a change to the cache's own contract and belongs
 	// with its other callers, not here.
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := time.Now().UTC().Truncate(24 * time.Hour)
-	supPts, err := s.supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
+	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -2333,17 +2333,17 @@ func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asse
 		return false, false
 	}
 	var probe AssetDetail
-	if s.minMarketCapVolumeUSD > 0 || s.maxMarketCapVolumeRatio > 0 {
+	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
 		s.populateVolume24h(ctx, &probe, base)
 	}
 	sources := 0
-	if probe.VolumeUSD24h != nil && s.minMarketCapVolumeUSD > 0 {
+	if probe.VolumeUSD24h != nil && s.MinMarketCapVolumeUSD > 0 {
 		sources = s.lookupUSDPriceWithSources(ctx, base).sources
 	}
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
 		return refused, lowLiquidity
 	}
-	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		return true, true
 	}
 	return false, false

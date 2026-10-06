@@ -181,7 +181,7 @@ func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.platformAccounts == nil {
+	if s.PlatformAccounts == nil {
 		writeAccountStoreUnavailable(w, r)
 		return
 	}
@@ -189,7 +189,7 @@ func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, err := s.platformAccounts.Get(r.Context(), id)
+	acct, err := s.PlatformAccounts.Get(r.Context(), id)
 	if errors.Is(err, platform.ErrNotFound) {
 		writeAccountNotFound(w, r)
 		return
@@ -216,7 +216,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if s.platformAccounts == nil {
+	if s.PlatformAccounts == nil {
 		writeAccountStoreUnavailable(w, r)
 		return
 	}
@@ -236,7 +236,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	// UpdateAtomic loads the row under a row lock and writes the mutated
 	// result back inside the same transaction, so a concurrent PATCH on
 	// this account can't read the same stale snapshot we did (Q148).
-	beforeAcct, acct, err := s.platformAccounts.UpdateAtomic(r.Context(), id, func(a *platform.Account) error {
+	beforeAcct, acct, err := s.PlatformAccounts.UpdateAtomic(r.Context(), id, func(a *platform.Account) error {
 		if a.Status == platform.AccountClosed && req.Status != nil &&
 			platform.AccountStatus(*req.Status) != platform.AccountClosed {
 			return errAccountClosed
@@ -326,7 +326,7 @@ func (s *Server) writeAccountUpdateError(w http.ResponseWriter, r *http.Request,
 func (s *Server) revokeKeysOnClosure(
 	ctx context.Context, subject auth.Subject, acct platform.Account,
 ) (revoked, failed int) {
-	st := s.apiKeyBudgets
+	st := s.APIKeyBudgets
 	if acct.Status != platform.AccountClosed || st.Platform == nil {
 		return 0, 0
 	}
@@ -360,10 +360,10 @@ func (s *Server) revokeKeysOnClosure(
 // revokeKeysOnClosure it runs on every PATCH that leaves the account closed,
 // so a re-PATCH retries a member a previous sweep failed on.
 func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Account) (users, failed int) {
-	if acct.Status != platform.AccountClosed || s.platformUsers == nil {
+	if acct.Status != platform.AccountClosed || s.PlatformUsers == nil {
 		return 0, 0
 	}
-	members, err := s.platformUsers.ListUsersForAccount(ctx, acct.ID)
+	members, err := s.PlatformUsers.ListUsersForAccount(ctx, acct.ID)
 	if err != nil {
 		s.logger.Error("account closure: ListUsersForAccount failed; sessions stay unrevoked "+
 			"(the account-status gate still denies them); re-PATCH status=closed to retry",
@@ -371,7 +371,7 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 		return 0, 1
 	}
 	for i := range members {
-		if err := s.platformUsers.RevokeAllUserSessions(ctx, members[i].ID); err != nil {
+		if err := s.PlatformUsers.RevokeAllUserSessions(ctx, members[i].ID); err != nil {
 			s.logger.Error("account closure: session revoke failed; re-PATCH status=closed to retry",
 				"account_id", acct.ID, "user_id", members[i].ID, "err", err)
 			failed++
@@ -416,7 +416,7 @@ func (s *Server) clampKeysAfterTierChange(
 	}
 	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
 		" by " + subject.KeyID + " (" + string(priorTier) + "→" + string(acct.Tier) + ")"
-	return s.clampKeyBudgetsToTier(ctx, cause, s.apiKeyBudgets, acct, ceiling)
+	return s.clampKeyBudgetsToTier(ctx, cause, s.APIKeyBudgets, acct, ceiling)
 }
 
 // evictKeyCacheOnEnforcementChange evicts every cached API-key record for the
@@ -472,7 +472,7 @@ func (s *Server) evictKeyCacheOnEnforcementChange(
 	if !statusLeftActive && !overrideChanged {
 		return 0, 0
 	}
-	st := s.apiKeyBudgets
+	st := s.APIKeyBudgets
 	if st.Platform == nil || st.CacheInvalidator == nil {
 		return 0, 0
 	}
@@ -708,7 +708,7 @@ const auditSurfaceAdminAccountRead = "admin_account_read"
 // like every sibling: the read has already happened, so a sink failure is
 // counted and logged rather than failing the request.
 func (s *Server) recordAdminAccountReadAudit(r *http.Request, actor auth.Subject, acct platform.Account) {
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	meta, err := json.Marshal(map[string]any{
@@ -734,7 +734,7 @@ func (s *Server) recordAdminAccountReadAudit(r *http.Request, actor auth.Subject
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceAdminAccountRead).Inc()
 		s.logger.Warn("admin account read: audit append failed (best-effort)",
 			"err", err, "account_id", acct.ID, "actor_key_id", actor.KeyID)
@@ -749,7 +749,7 @@ func (s *Server) recordAdminAccountAudit(
 	r *http.Request, actor auth.Subject, accountID, reason string, before, after AdminAccountView,
 	keys adminAccountKeyOutcome,
 ) {
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	meta, err := json.Marshal(map[string]any{
@@ -805,7 +805,7 @@ func (s *Server) recordAdminAccountAudit(
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		// C3-067: a tier/quota override landed with no durable record of the
 		// operator, the reason, or the previous values.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("account_override").Inc()

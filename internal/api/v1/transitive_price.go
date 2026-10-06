@@ -42,10 +42,10 @@ type TransitivePricer interface {
 // The near leg is gated as (asset, hop) rather than against a proxy,
 // because that IS the market being trusted to convert one into the other.
 func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (string, bool) {
-	if s.transitive == nil {
+	if s.TransitivePricer == nil {
 		return "", false
 	}
-	candidates, err := s.transitive.TransitiveUSDPriceCandidates(ctx, assetID)
+	candidates, err := s.TransitivePricer.TransitiveUSDPriceCandidates(ctx, assetID)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Debug("transitive price lookup failed",
@@ -79,13 +79,13 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 	// hop: a price derived through a flagged issuer's market is that
 	// market's price; /v1/price refuses it for the hop itself, so it must
 	// not reappear here one conversion removed.
-	if withheldBy(ctx, s.substance, s.scam, asset, hop, "transitive") != pricingguard.NotWithheld {
+	if withheldBy(ctx, s.Substance, s.Scam, asset, hop, "transitive") != pricingguard.NotWithheld {
 		return false
 	}
 
 	// With the substance gate not wired the fold above allowed the leg by
 	// default, and we must NOT invent a price the gate never saw.
-	if s.substance == nil {
+	if s.Substance == nil {
 		return false
 	}
 	// Far leg: the hop must stand on its own against the SAME quote set

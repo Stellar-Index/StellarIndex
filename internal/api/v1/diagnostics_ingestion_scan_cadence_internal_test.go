@@ -22,7 +22,7 @@ func (f fixedCoverageReader) ListSourceCoverage(context.Context) ([]timescale.So
 func TestOverlaySourceCoverageV2_ServesPerRowScanCadence(t *testing.T) {
 	now := time.Now()
 	srv := New(Options{})
-	srv.coverageReader = fixedCoverageReader{
+	srv.CoverageReader = fixedCoverageReader{
 		{Source: "sdex", GapFreePct: 1, LastUpdated: now},
 		{Source: "blend-positions", GapFreePct: 1, LastUpdated: now},
 		{Source: "blend-emissions", GapFreePct: 1, LastUpdated: now},

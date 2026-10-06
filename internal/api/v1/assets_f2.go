@@ -176,7 +176,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// Supply snapshot only when a supply reader is wired and the
 	// asset has a supply key — off-chain assets (fiat / crypto-pure)
 	// have no snapshot, matching the pre-parallelisation early-return.
-	if s.supply != nil && keyErr == nil {
+	if s.Supply != nil && keyErr == nil {
 		run(func() { snap, haveSnap, supplyFailed = s.fetchSupplySnapshot(ctx, key) })
 	}
 	wg.Wait()
@@ -194,7 +194,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// A stale observer snapshot yields to the live lake reading too, as the
 	// listing's precise arm yields to its lake arms past the same bound.
 	now := time.Now()
-	if (!haveSnap || supplyObservationStale(snap, now)) && s.tokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
+	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
 		// ts.Incomplete means the lake-flows net total is negative
 		// (Σ(burn+clawback) > Σmint) — the token's supply_flows are
 		// incompletely seeded (e.g. pre-Soroban SAC-wrapper mints not yet
@@ -214,7 +214,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		// total_supply.
 		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 		defer scancel()
-		if ts, terr := s.tokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
+		if ts, terr := s.TokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
 			snap = supply.Supply{
 				AssetKey:          asset.ContractID,
 				TotalSupply:       ts.Total,
@@ -272,12 +272,12 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // path could still supply; that figure omits the XLM-legged trades, so it is
 // served flagged as a lower bound. Reports whether the plain read failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
-	if s.volume == nil {
+	if s.Volume == nil {
 		return false
 	}
 	assetKey := asset.String()
 	if asset.Type == canonical.AssetSoroban {
-		if sv, ok := s.volume.(SorobanVolumeReader); ok {
+		if sv, ok := s.Volume.(SorobanVolumeReader); ok {
 			v, lowerBound, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
 			if err == nil {
 				detail.VolumeUSD24h = &v
@@ -291,7 +291,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 			// Fall through to the plain reader below.
 		}
 	}
-	v, err := s.volume.Volume24hUSDForAsset(ctx, assetKey)
+	v, err := s.Volume.Volume24hUSDForAsset(ctx, assetKey)
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
@@ -311,7 +311,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 // errors are logged at WARN and reported as failed, client-cancel
 // doesn't log.
 func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (snap supply.Supply, ok, failed bool) {
-	snap, err := s.supply.LatestSupply(ctx, key)
+	snap, err := s.Supply.LatestSupply(ctx, key)
 	if errors.Is(err, ErrSupplyNotFound) {
 		return supply.Supply{}, false, false
 	}
@@ -377,7 +377,7 @@ func supplyObservationStale(snap supply.Supply, now time.Time) bool {
 // /v1/assets/{id} detail path this runs before any overlay, so a found price
 // always yields the real count).
 func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) int {
-	if s.prices == nil || detail.PriceUSD != nil {
+	if s.Prices == nil || detail.PriceUSD != nil {
 		return 0
 	}
 	if asset.Equal(defaultPriceQuote) {
@@ -462,13 +462,13 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 // ceiling tests the computed figure, so each caller applies
 // [capExceedsObservedTurnover] to its own.
 func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, volume24hUSD *string) (refused, lowLiquidity bool) {
-	if s.verifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
-		if _, collision := s.verifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
+	if s.VerifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
+		if _, collision := s.VerifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
 			return true, false
 		}
 	}
 	if !asset.Equal(canonical.NativeAsset()) &&
-		dustLiquiditySuppressed(priceSourceCount, volume24hUSD, s.minMarketCapVolumeUSD) {
+		dustLiquiditySuppressed(priceSourceCount, volume24hUSD, s.MinMarketCapVolumeUSD) {
 		return true, true
 	}
 	return false, false
@@ -545,7 +545,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// The ceiling is a test of the computed FIGURE, so unlike the
 			// floor above it can only run here. The detail page and the
 			// listing must agree on the verdict or the same asset reads as
@@ -559,7 +559,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// FDV is the cap computed over MAX supply, so it is >= market_cap_usd
 			// and can breach the ceiling on its own even when circulating supply
 			// did not — maxSupply > circulatingSupply is the common case for an
@@ -617,7 +617,7 @@ type usdPriceLookup struct {
 // thin (price, ok) wrapper for callers (lending, change-24h) that may only
 // use a served price and have no field to report a withholding on.
 func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) usdPriceLookup {
-	if s.prices == nil {
+	if s.Prices == nil {
 		// Options documents Prices as independently optional ("nil →
 		// 503"); populatePriceUSD guards this, but populateChange24h
 		// reaches us via a different path. Guard here so a
@@ -639,7 +639,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	// different pairs). readPriceWithAliases makes both dual-forms
 	// resolve to the same canonical USD price. Non-aliased assets are
 	// unaffected (assetAliases returns [asset] for everything else).
-	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
+	snap, sources, _, err := s.readPriceWithAliases(ctx, s.Prices, asset, defaultPriceQuote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Withheld beats every fallback, as on /v1/price: the proxy below
 		// would re-serve the refused market through a side door.
@@ -682,14 +682,14 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 // that case, and the early-return below kicks in without logging.
 // Reports whether the 24h-ago read failed.
 func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
-	if s.change24h == nil {
+	if s.Change24h == nil {
 		return false
 	}
 	currStr, ok := s.lookupUSDPrice(ctx, asset)
 	if !ok {
 		return false
 	}
-	thenStr, err := s.change24h.USDPrice24hAgo(ctx, asset)
+	thenStr, err := s.Change24h.USDPrice24hAgo(ctx, asset)
 	if errors.Is(err, ErrChange24hUnavailable) {
 		// Asset first traded < 24h ago, or retention pruned the row.
 		// Silent — feature unavailable for this asset.

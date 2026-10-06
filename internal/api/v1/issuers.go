@@ -120,7 +120,7 @@ const IssuersListMaxLimit = 500
 // ranking the explorer /issuers page exposes. Returns 503 when
 // no IssuersReader is wired and 400 on out-of-range limit.
 func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
-	if s.issuers == nil {
+	if s.Issuers == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/issuers-unavailable",
 			"Issuers unavailable", http.StatusServiceUnavailable,
@@ -142,7 +142,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	// 8s ceiling — same pattern as the cold-path series.
 	listCtx, listCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer listCancel()
-	rows, err := s.issuers.ListIssuers(listCtx, limit)
+	rows, err := s.Issuers.ListIssuers(listCtx, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			// Client went away mid-query — e.g. concurrent callers
@@ -220,7 +220,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 // Always includes the assets array so the explorer issuer card has
 // the per-issuer drill-down data without a second request.
 func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
-	if s.issuers == nil {
+	if s.Issuers == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/issuers-unavailable",
 			"Issuers unavailable", http.StatusServiceUnavailable,
@@ -250,13 +250,13 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	// for the per-asset observation count.
 	iCtx, iCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer iCancel()
-	row, err := s.issuers.GetIssuer(iCtx, gStrkey)
+	row, err := s.Issuers.GetIssuer(iCtx, gStrkey)
 	if err != nil {
 		s.writeIssuerReadProblem(w, r, iCtx, gStrkey, err)
 		return
 	}
 
-	assets, err := s.issuers.ListIssuerAssets(iCtx, gStrkey)
+	assets, err := s.Issuers.ListIssuerAssets(iCtx, gStrkey)
 	var assetsCoverageNote string
 	var assetsReadFailed bool
 	if err != nil {
@@ -419,18 +419,18 @@ func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey strin
 // narrow key_xdr point lookup when wired, else through the explorer's full
 // account-state read.
 func (s *Server) liveIssuerAccount(ctx context.Context, gStrkey string) (clickhouse.AccountAuthFlags, bool) {
-	if s.issuerAuthFlags != nil {
-		m, err := s.issuerAuthFlags.BulkAccountAuthFlags(ctx, []string{gStrkey})
+	if s.IssuerAuthFlags != nil {
+		m, err := s.IssuerAuthFlags.BulkAccountAuthFlags(ctx, []string{gStrkey})
 		if err != nil {
 			return clickhouse.AccountAuthFlags{}, false
 		}
 		f, ok := m[gStrkey]
 		return f, ok && f.Source == clickhouse.AuthFlagsSourceLive
 	}
-	if s.explorer == nil {
+	if s.Explorer == nil {
 		return clickhouse.AccountAuthFlags{}, false
 	}
-	st, _, err := s.explorer.AccountStateCached(ctx, gStrkey)
+	st, _, err := s.Explorer.AccountStateCached(ctx, gStrkey)
 	if err != nil || !st.Exists {
 		return clickhouse.AccountAuthFlags{}, false
 	}

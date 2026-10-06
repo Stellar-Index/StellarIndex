@@ -397,10 +397,10 @@ func (s *Server) assetListingSnapshotWithin(ctx context.Context, budget time.Dur
 
 // readAssetListing performs the one directory read behind the cache.
 func (s *Server) readAssetListing(ctx context.Context) assetListing {
-	if s.listings == nil {
+	if s.Listings == nil {
 		return assetListing{}
 	}
-	rows, census, err := s.listings.ListingDirectoryByAddress(ctx)
+	rows, census, err := s.Listings.ListingDirectoryByAddress(ctx)
 	if err != nil {
 		s.logger.Warn("asset listing directory read failed", "err", err)
 		return assetListing{}
@@ -511,7 +511,7 @@ func listingEntryIn(byAddress map[string]timescale.ListingEntry, assetID string)
 // catalogue, no reader, a failed read or a cold supply cache all yield
 // fewer published figures, never an error and never a failed response.
 func (s *Server) applyListingValuations(ctx context.Context, rows []AssetDetail) {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return
 	}
 	// Narrow to the rows this arm may speak about BEFORE paying for
@@ -576,7 +576,7 @@ func (s *Server) listingValuationCandidate(row *AssetDetail) bool {
 	// Not a catalogued identity. No status: the listing has no standing
 	// to price an asset this repository has not attested, and saying so
 	// on every row of the long tail would drown the rows that matter.
-	if _, ok := s.verifiedCurrencies.LookupByStellarAssetID(row.AssetID); !ok {
+	if _, ok := s.VerifiedCurrencies.LookupByStellarAssetID(row.AssetID); !ok {
 		return false
 	}
 	// A scam-flagged issuer, or a row impersonating a verified ticker,

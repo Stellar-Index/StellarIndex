@@ -81,7 +81,7 @@ func newCountingListingServer(t *testing.T, dir *countingDirectory) (*Server, *c
 	t.Helper()
 	reader := &countingListingReader{}
 	srv := New(Options{Directory: dir})
-	srv.assetsReader = reader
+	srv.AssetsReader = reader
 	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
 	srv.assetListCache.now = clock.now
 	return srv, reader, clock

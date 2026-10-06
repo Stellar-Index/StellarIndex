@@ -133,7 +133,7 @@ func TestPrice_NonstandardDecimals_UnflaggedPairServesNormally(t *testing.T) {
 // TestPrice_NonstandardDecimals_NoCacheWired_ServesNormally proves a
 // deployment that never wires NonstandardDecimals (the pre-guard shape,
 // and every deployment until the cache is configured) is unaffected —
-// declineIfNonstandardDecimals must be a pure no-op when s.nonstandardDecimals
+// declineIfNonstandardDecimals must be a pure no-op when s.NonstandardDecimals
 // is nil.
 func TestPrice_NonstandardDecimals_NoCacheWired_ServesNormally(t *testing.T) {
 	snap := v1.PriceSnapshot{AssetID: "native", Quote: "fiat:USD", Price: "0.5", PriceType: "last_trade"}

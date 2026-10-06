@@ -34,7 +34,7 @@ type AssetSupplyFlowDay struct {
 // handleAssetSupplyFlows serves GET /v1/assets/{asset_id}/supply/flows from
 // the same supply_flows lake as /supply, through the daily-flows seam.
 func (s *Server) handleAssetSupplyFlows(w http.ResponseWriter, r *http.Request) {
-	reader, ok := s.tokenSupply.(rwaSupplyFlowHistoryReader)
+	reader, ok := s.TokenSupply.(rwaSupplyFlowHistoryReader)
 	if !ok {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/supply-unavailable",

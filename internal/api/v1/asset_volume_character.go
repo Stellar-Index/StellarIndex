@@ -43,7 +43,7 @@ type AssetVolumeCharacterSignals struct {
 // the asset response. ANALYTICS-only — it reads nothing from and writes
 // nothing to the price/verification/gate surfaces.
 func (s *Server) applyVolumeCharacter(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
-	if s.volumeCharacter == nil {
+	if s.VolumeCharacter == nil {
 		return
 	}
 	// fiat:* assets are off-chain reference rows with no trades-table
@@ -53,7 +53,7 @@ func (s *Server) applyVolumeCharacter(ctx context.Context, detail *AssetDetail, 
 	}
 	// Keyed-on-PK rollup lookup (~instant) — the pre-rollup 4s per-request
 	// trades roll (and its timeout) is gone.
-	vc, found, err := s.volumeCharacter.AssetVolumeCharacterRollup(ctx, asset.String())
+	vc, found, err := s.VolumeCharacter.AssetVolumeCharacterRollup(ctx, asset.String())
 	if err != nil {
 		s.logger.Debug("volume character rollup lookup failed", "asset_id", asset.String(), "err", err)
 		return

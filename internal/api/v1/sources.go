@@ -219,7 +219,7 @@ func sourceClassList() string {
 // network. They name pubnet identities only; an unknown network reads as
 // pubnet, as in sourcenet.Applicable.
 func (s *Server) servesPubnetReference() bool {
-	return s.network != sourcenet.Testnet && s.network != sourcenet.Futurenet
+	return s.Network != sourcenet.Testnet && s.Network != sourcenet.Futurenet
 }
 
 // handleSources serves GET /v1/sources.
@@ -271,8 +271,8 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	history7dBySource := map[string][]VolumeBucket{}
 	var vintage dataVintage
 	var reads sourcesStatsAtReader
-	if s.sourcesStats != nil {
-		reads = sourcesStatsAt(s.sourcesStats)
+	if s.SourcesStats != nil {
+		reads = sourcesStatsAt(s.SourcesStats)
 	}
 	if includeStats && reads != nil {
 		// 8s ceiling on the stats fan-out — same pattern as
@@ -325,7 +325,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 		// The registry is compiled in for every network; a test net must
 		// not list pubnet-only venues it never ingests.
-		if ok, _ := sourcenet.Applicable(name, s.network); !ok {
+		if ok, _ := sourcenet.Applicable(name, s.Network); !ok {
 			continue
 		}
 		st := statsBySource[name]

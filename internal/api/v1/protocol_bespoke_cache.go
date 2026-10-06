@@ -201,7 +201,7 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 		s.protocolBespokeCache.end(key, fl, errBespokeSaturated)
 		return fl
 	}
-	reader := s.protocolBespoke
+	reader := s.ProtocolBespoke
 	go func() {
 		defer gate.ReleaseClass(bespokeGateClass)
 		// End the flight from a defer so a panic cannot wedge this key:
@@ -244,7 +244,7 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 //     or the first-ever build failed / was starved / outran ctx) — the
 //     caller degrades exactly as it did before this cache existed.
 func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
-	if s.protocolBespoke == nil {
+	if s.ProtocolBespoke == nil {
 		return nil, false, false
 	}
 	key := protocolBespokeCacheKey(source, category, windowDays)

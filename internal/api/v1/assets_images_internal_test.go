@@ -42,8 +42,8 @@ func (s *stubSep1ImagesReader) AllSep1Images(context.Context) ([]timescale.Sep1I
 
 func discardServer(sep1 Sep1CachedReader) *Server {
 	return &Server{
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sep1Cache: sep1,
+		Options: Options{Sep1Cache: sep1},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -219,7 +219,7 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
 	}}
 	s := discardServer(stub)
-	s.verifiedCurrencies = cat
+	s.VerifiedCurrencies = cat
 	s.PrewarmSep1Images(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=stablecoin", nil)

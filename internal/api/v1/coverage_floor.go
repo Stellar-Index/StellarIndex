@@ -429,12 +429,12 @@ func (s *Server) coverageFloor(ctx context.Context, pair canonical.Pair, span co
 		return e.floor, e.outcome
 	}
 
-	read := s.coverageFloorReader.EarliestBucket
+	read := s.CoverageFloor.EarliestBucket
 	switch span {
 	case spanAliasedAsStored:
-		read = s.coverageFloorReader.EarliestBucketAsStored
+		read = s.CoverageFloor.EarliestBucketAsStored
 	case spanLiteralQuote:
-		read = s.coverageFloorReader.EarliestBucketLiteralQuote
+		read = s.CoverageFloor.EarliestBucketLiteralQuote
 	case spanAliasedBothDirections:
 	}
 	floor, found, err := read(ctx, pair, coverageFloorGranularity, coverageFloorEpoch, now)
@@ -495,7 +495,7 @@ func (s *Server) coverageFloorOf(ctx context.Context, set coverageSet) (time.Tim
 	// reads per request on a path an anonymous caller controls. A
 	// Server assembled field-by-field rather than through [New] has no
 	// cache, and the honest answer there is no signal.
-	if s.coverageFloorReader == nil || s.coverageFloorCache == nil {
+	if s.CoverageFloor == nil || s.coverageFloorCache == nil {
 		return time.Time{}, false
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, coverageFloorProbeTimeout)

@@ -79,7 +79,7 @@ func TestHandlePriceAt_ReaderFailureIsNotNotFound(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{priceAt: tc.stub, logger: discardLogger()}
+			s := &Server{Options: Options{PriceAt: tc.stub}, logger: discardLogger()}
 			rec := httptest.NewRecorder()
 			s.handlePriceAt(rec, httptest.NewRequest(http.MethodGet,
 				"/v1/price/at?asset=native&quote=fiat:USD&ts="+ts.Format(time.RFC3339), nil))
@@ -110,7 +110,7 @@ func TestHandlePriceChanges_ReaderFailureIsNotAbsence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{priceAt: tc.stub, logger: discardLogger()}
+			s := &Server{Options: Options{PriceAt: tc.stub}, logger: discardLogger()}
 			rec := httptest.NewRecorder()
 			s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet,
 				"/v1/price/changes?asset=native&quote=fiat:USD", nil))

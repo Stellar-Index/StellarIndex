@@ -149,10 +149,10 @@ func (l rwaListing) names(contractID string) bool {
 // The staleness bound itself is enforced in SQL by the reader, so a
 // snapshot that arrives here is already inside it.
 func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
-	if s.rwaListings == nil {
+	if s.RWAListings == nil {
 		return rwaListing{}
 	}
-	rows, census, err := s.rwaListings.ListingDirectoryContracts(ctx)
+	rows, census, err := s.RWAListings.ListingDirectoryContracts(ctx)
 	if err != nil {
 		s.logger.Warn("rwa listing directory read failed", "err", err)
 		return rwaListing{wired: true}
@@ -386,10 +386,10 @@ func (s *Server) rwaDirectoryTagsFor(ctx context.Context, addrs []string) (map[s
 	if len(addrs) == 0 {
 		return map[string][]string{}, true
 	}
-	if s.directory == nil {
+	if s.Directory == nil {
 		return nil, false
 	}
-	found, err := s.directory.DirectoryEntriesByAddresses(ctx, addrs)
+	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, addrs)
 	if err != nil {
 		s.logger.Warn("rwa listing arm: curated tag lookup failed", "n", len(addrs), "err", err)
 		return nil, false

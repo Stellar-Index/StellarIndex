@@ -53,7 +53,7 @@ type assetExtensionResults struct {
 }
 
 func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
-	if s.assetsReader == nil || asset.Type == canonical.AssetFiat {
+	if s.AssetsReader == nil || asset.Type == canonical.AssetFiat {
 		return
 	}
 	assetID := asset.String()
@@ -89,32 +89,32 @@ func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string)
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-top-markets")
-		r.topMarkets, r.topMarketsErr = s.assetsReader.GetAssetTopMarkets(ctx, assetID, 5)
+		r.topMarkets, r.topMarketsErr = s.AssetsReader.GetAssetTopMarkets(ctx, assetID, 5)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-history-24h")
-		r.hist24, r.hist24Err = s.assetsReader.GetAssetPriceHistory24h(ctx, assetID)
+		r.hist24, r.hist24Err = s.AssetsReader.GetAssetPriceHistory24h(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-history-7d")
-		r.hist7d, r.hist7dErr = s.assetsReader.GetAssetPriceHistory7d(ctx, assetID)
+		r.hist7d, r.hist7dErr = s.AssetsReader.GetAssetPriceHistory7d(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-markets-count")
-		r.marketsCount, r.marketsErr = s.assetsReader.GetAssetMarketsCount(ctx, assetID)
+		r.marketsCount, r.marketsErr = s.AssetsReader.GetAssetMarketsCount(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-trade-count")
-		r.tradeCount, r.tradeCountErr = s.assetsReader.GetAssetTradeCount24h(ctx, assetID)
+		r.tradeCount, r.tradeCountErr = s.AssetsReader.GetAssetTradeCount24h(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-asset-extension-ath")
-		r.ath, r.athErr = s.assetsReader.GetAssetATH(ctx, assetID)
+		r.ath, r.athErr = s.AssetsReader.GetAssetATH(ctx, assetID)
 	}()
 	wg.Wait()
 	return r
@@ -156,7 +156,7 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// Withholding here also lets the declared-peg fill downstream
 	// (fillDeclaredPegPrice, which fills nil PriceUSD only) supply the
 	// operator-declared basis for peg-configured assets.
-	priceAllowed := s.substance == nil || s.listingPriceAllowed(ctx, asset)
+	priceAllowed := s.Substance == nil || s.listingPriceAllowed(ctx, asset)
 	// Fill PriceUSD from the asset-catalogue row ONLY when the canonical
 	// price path (F2 populatePriceUSD → lookupUSDPrice, run earlier)
 	// left it nil. The asset-catalogue row's USD price is the listing-query
@@ -319,8 +319,8 @@ const catalogueUSDMinQuanta = 1000
 // fiction, so the point is a gap instead. Scaling DOWN only shrinks the
 // error and needs no floor.
 func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, rounded bool) (string, bool) {
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, asset)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, defaultPriceQuote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, asset)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, defaultPriceQuote)
 	if baseDec == quoteDec {
 		return value, true
 	}
@@ -398,9 +398,9 @@ func topMarketsToWire(in []timescale.AssetTopMarket) []AssetTopMarket {
 // else uses GetAssetByAssetID.
 func (s *Server) lookupAssetRow(ctx context.Context, asset canonical.Asset, assetID string) (timescale.AssetRow, error) {
 	if asset.Type == canonical.AssetNative {
-		return s.assetsReader.GetNativeAssetRow(ctx)
+		return s.AssetsReader.GetNativeAssetRow(ctx)
 	}
-	return s.assetsReader.GetAssetByAssetID(ctx, assetID)
+	return s.AssetsReader.GetAssetByAssetID(ctx, assetID)
 }
 
 // assetPointsToWire projects the storage-layer price points onto the

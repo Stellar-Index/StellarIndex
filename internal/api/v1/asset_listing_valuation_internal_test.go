@@ -489,7 +489,7 @@ func TestListingValuation_FailsClosed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := tlvServer(t, listings, map[string]string{tlvUSDT0SAC: tlvUSDT0LakeSupply})
 			if listings == nil {
-				s.listings = nil
+				s.Listings = nil
 			}
 			row := tlvApply(t, s, []AssetDetail{
 				tlvDustSuppressedRow(tlvUSDT0Asset, "0.99", tlvUSDT0TrustlineSupply),

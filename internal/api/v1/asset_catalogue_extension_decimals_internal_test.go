@@ -43,7 +43,7 @@ func TestNormalizeCatalogueUSD_PrecisionFloor(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: tc.decimals})}
+			s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: tc.decimals})}}
 			got, ok := s.normalizeCatalogueUSD(tc.value, token, tc.rounded)
 			if ok != tc.wantOK || got != tc.want {
 				t.Errorf("normalizeCatalogueUSD(%q) = (%q, %v), want (%q, %v)", tc.value, got, ok, tc.want, tc.wantOK)
@@ -53,7 +53,7 @@ func TestNormalizeCatalogueUSD_PrecisionFloor(t *testing.T) {
 
 	// No confirmed row: whatever the reader produced passes through
 	// untouched — including text this function could not have parsed.
-	s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}
+	s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}}
 	for _, v := range []string{"0.0000000000", "0.0000000001", "41.32", "not-a-number"} {
 		if got, ok := s.normalizeCatalogueUSD(v, token, true); !ok || got != v {
 			t.Errorf("unflagged %q = (%q, %v), want it byte-identical", v, got, ok)
@@ -70,7 +70,7 @@ func TestNormalizedAssetPointsToWire_WithheldPointBecomesGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	crushed, fine := "0.0000000001", "0.0000001000"
-	s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})}
+	s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})}}
 	in := []timescale.AssetPricePoint{
 		{T: "2026-09-17T00:00:00Z", P: &crushed},
 		{T: "2026-09-17T01:00:00Z", P: &fine},

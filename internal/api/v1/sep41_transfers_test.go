@@ -27,7 +27,7 @@ func (r *stubSEP41TransfersReader) ListSEP41Transfers(
 
 func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
 	s := &Server{}
-	s.sep41Transfers = reader
+	s.SEP41Transfers = reader
 	return s
 }
 

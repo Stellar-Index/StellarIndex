@@ -125,7 +125,7 @@ type AssetSupply struct {
 // supply from the decode-at-ingest supply_flows lake. The literal "supply"
 // segment takes precedence over the {asset_id}/{network} wildcard route.
 func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
-	if s.tokenSupply == nil {
+	if s.TokenSupply == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/supply-unavailable",
 			"Supply unavailable", http.StatusServiceUnavailable,
@@ -150,7 +150,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	// XLM: supply is the ledger header's total_coins (XLM is not minted/burned
 	// via SAC mint/burn events, so it has no supply_flows). Handle every alias.
 	if isNativeSupplyAlias(assetID) {
-		coins, ledger, err := s.tokenSupply.NativeTotalCoins(ctx)
+		coins, ledger, err := s.TokenSupply.NativeTotalCoins(ctx)
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
 			writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
@@ -177,7 +177,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sup, err := s.tokenSupply.TokenSupply(ctx, contractID)
+	sup, err := s.TokenSupply.TokenSupply(ctx, contractID)
 	if err != nil {
 		s.logger.Warn("supply: token supply", "contract_id", contractID, "err", err)
 		writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
@@ -257,10 +257,10 @@ type ContractStorageSupplyReader interface {
 // fallback, and a fallback that turns a 200 into a 502 because its own optional
 // source declined would be worse than the gap it closes.
 func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID string) (AssetSupply, bool, bool) {
-	if s.storageSupply == nil {
+	if s.ContractStorageSupply == nil {
 		return AssetSupply{}, false, false
 	}
-	st, err := s.storageSupply.ContractStorageSupply(ctx, contractID)
+	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
 	if err != nil {
 		// Both refusals (a SAC, an oversized holder set) and genuine read
 		// errors land here. A SAC is the expected case — every classic asset

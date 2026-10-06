@@ -98,7 +98,7 @@ func assertRequestTimeout(t *testing.T, rec *httptest.ResponseRecorder, endpoint
 
 func TestHandlerOwnBudget_TWAPDeadlineOnLiveRequestIs503(t *testing.T) {
 	s := quietServer()
-	s.history = deadlineHistoryReader{}
+	s.History = deadlineHistoryReader{}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/twap?base=native&quote=fiat:USD", nil)
 	if err := req.Context().Err(); err != nil {
@@ -112,7 +112,7 @@ func TestHandlerOwnBudget_TWAPDeadlineOnLiveRequestIs503(t *testing.T) {
 
 func TestHandlerOwnBudget_LiquidityPoolDeadlineOnLiveRequestIs503(t *testing.T) {
 	s := quietServer()
-	s.explorer = deadlineLPReader{}
+	s.Explorer = deadlineLPReader{}
 
 	const poolHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	req := httptest.NewRequest(http.MethodGet, "/v1/liquidity-pools?pool="+poolHex, nil)
@@ -144,7 +144,7 @@ func (deadlineTokenSupplyReader) TokenSupply(
 // upstream's, and it clears on retry.
 func TestHandlerOwnBudget_AssetSupplyDeadlineOnLiveRequestIs503(t *testing.T) {
 	s := quietServer()
-	s.tokenSupply = deadlineTokenSupplyReader{}
+	s.TokenSupply = deadlineTokenSupplyReader{}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets/"+supplyContractID+"/supply", nil)
 	req.SetPathValue("asset_id", supplyContractID)
@@ -172,7 +172,7 @@ func (brokenHistoryReader) TradesInRange(
 
 func TestHandlerOwnBudget_NonDeadlineFaultStays500(t *testing.T) {
 	s := quietServer()
-	s.history = brokenHistoryReader{}
+	s.History = brokenHistoryReader{}
 
 	rec := httptest.NewRecorder()
 	s.handleTWAP(rec, httptest.NewRequest(http.MethodGet, "/v1/twap?base=native&quote=fiat:USD", nil))
@@ -197,7 +197,7 @@ func (brokenTokenSupplyReader) TokenSupply(
 
 func TestHandlerOwnBudget_AssetSupplyNonDeadlineFaultStays502(t *testing.T) {
 	s := quietServer()
-	s.tokenSupply = brokenTokenSupplyReader{}
+	s.TokenSupply = brokenTokenSupplyReader{}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets/"+supplyContractID+"/supply", nil)
 	req.SetPathValue("asset_id", supplyContractID)

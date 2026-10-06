@@ -63,7 +63,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reader := s.markets
+	reader := s.Markets
 	if reader == nil {
 		// Mirror /v1/markets's degradation: empty list instead of 503
 		// so clients can integrate against the wire contract before a

@@ -112,7 +112,7 @@ func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []AggregatorRow{}, Flags{})
 		return
 	}
-	if s.aggregators == nil {
+	if s.Aggregators == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/aggregators-unavailable",
 			"Aggregators listing unavailable", http.StatusServiceUnavailable,
@@ -120,7 +120,7 @@ func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.aggregators.AggregatorRollup(r.Context(), time.Now().UTC().Add(-24*time.Hour))
+	rows, err := s.Aggregators.AggregatorRollup(r.Context(), time.Now().UTC().Add(-24*time.Hour))
 	if err != nil {
 		if clientAborted(r, err) {
 			return

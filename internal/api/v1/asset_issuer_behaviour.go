@@ -82,7 +82,7 @@ func (s *Server) applyIssuerBehaviour(ctx context.Context, row *AssetDetail) {
 // SAC. An incompletely seeded log (burns exceed mints) is omitted, as
 // /v1/assets/{id}/supply refuses it.
 func (s *Server) fillIssuerFlowTotals(ctx context.Context, assetID string, b *AssetIssuerBehaviour) {
-	if s.tokenSupply == nil {
+	if s.TokenSupply == nil {
 		return
 	}
 	contractID, ok := classicSACContractID(assetID)
@@ -91,7 +91,7 @@ func (s *Server) fillIssuerFlowTotals(ctx context.Context, assetID string, b *As
 	}
 	fctx, cancel := context.WithTimeout(ctx, issuerFlowReadTimeout)
 	defer cancel()
-	sup, err := s.tokenSupply.TokenSupply(fctx, contractID)
+	sup, err := s.TokenSupply.TokenSupply(fctx, contractID)
 	if err != nil || sup.Incomplete || sup.FlowCount == 0 || sup.Mint == nil || sup.Burn == nil || sup.Clawback == nil {
 		return
 	}

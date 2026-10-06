@@ -35,7 +35,7 @@ func TestStablecoinPrewarmSet_KeysMembersToTheirSAC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := (&Server{verifiedCurrencies: cat}).stablecoinPrewarmSet()
+	got := (&Server{Options: Options{VerifiedCurrencies: cat}}).stablecoinPrewarmSet()
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	sac, ok := classicSACContractID(usdc)
 	if !ok || got[usdc] != sac {

@@ -15,20 +15,20 @@ import (
 // derived. Add any future cross-region-proxy or S3-fallback client field by
 // hand; lake-wired fields are enforced by TestSLOLakeFieldsCoverLakeWiring.
 var sloLakeBackedFields = map[string]bool{
-	"explorer":        true,
-	"explorerHandler": true,
-	"supply":          true,
-	"tokenSupply":     true,
-	"storageSupply":   true,
-	"tokenDecimals":   true,
-	"tokenSymbol":     true,
-	"issuerAuthFlags": true,
+	"Explorer":              true,
+	"explorerHandler":       true,
+	"Supply":                true,
+	"TokenSupply":           true,
+	"ContractStorageSupply": true,
+	"TokenDecimals":         true,
+	"TokenSymbol":           true,
+	"IssuerAuthFlags":       true,
 	// The readiness checks include the ClickHouse ping (clickhouseReadyChecks).
-	"checks":              true,
-	"lakeWatermarkReader": true,
-	"protocolActivity":    true,
-	"dexTVL":              true,
-	"sdexOrderBook":       true,
+	"ReadyChecks":      true,
+	"LakeWatermark":    true,
+	"ProtocolActivity": true,
+	"DEXTVL":           true,
+	"SDEXOrderBook":    true,
 }
 
 // TestSLOLakeFieldsCoverLakeWiring derives, from the production wiring, every
@@ -43,10 +43,11 @@ func TestSLOLakeFieldsCoverLakeWiring(t *testing.T) {
 
 	derived := map[string]bool{}
 	for opt := range lakeOptions {
+		// Options is embedded in Server, so a field with no derived copy in
+		// server.go lands under its own name.
 		fields := optToField[opt]
 		if len(fields) == 0 {
-			t.Errorf("Options.%s carries a lake reader but no Server field is assigned from opts.%s "+
-				"in server.go — find where it lands and name that field in sloLakeBackedFields", opt, opt)
+			fields = []string{opt}
 		}
 		for _, f := range fields {
 			derived[f] = true
@@ -54,7 +55,7 @@ func TestSLOLakeFieldsCoverLakeWiring(t *testing.T) {
 	}
 	// Non-vacuity: these come from the two lake dials (explorer and supply
 	// readers); a derivation that misses them is not reading the wiring.
-	for _, known := range []string{"explorer", "tokenSupply", "dexTVL"} {
+	for _, known := range []string{"Explorer", "TokenSupply", "DEXTVL"} {
 		if !derived[known] {
 			t.Fatalf("derivation missed lake-wired field %q (derived %v) — the scan no longer follows main.go's wiring",
 				known, derived)

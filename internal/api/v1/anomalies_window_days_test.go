@@ -16,8 +16,8 @@ import (
 // signal it was ignored.
 func TestAnomalies_WindowDaysOutOfRangeRejects(t *testing.T) {
 	s := &Server{
-		anomalies: &fakeAnomalyReader{firing: 1},
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Anomalies: &fakeAnomalyReader{firing: 1}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	for _, raw := range []string{"400", "0", "abc"} {

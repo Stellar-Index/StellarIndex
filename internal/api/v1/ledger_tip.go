@@ -41,7 +41,7 @@ type LedgerTipView struct {
 // hiding a stall. Clients that want push semantics use
 // /v1/ledger/stream instead.
 func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
-	if s.cursors == nil {
+	if s.Cursors == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
 			"Ledger tip not available", http.StatusServiceUnavailable,
@@ -81,7 +81,7 @@ func (s *Server) handleLedgerTip(w http.ResponseWriter, r *http.Request) {
 // not exist yet — that is a legitimate cold-start state, not a
 // failure. A non-nil error means the cursors read itself failed.
 func (s *Server) ledgerTip(ctx context.Context) (LedgerTipView, bool, error) {
-	rows, err := s.cursors.ListCursors(ctx)
+	rows, err := s.Cursors.ListCursors(ctx)
 	if err != nil {
 		return LedgerTipView{}, false, err
 	}

@@ -53,10 +53,9 @@ func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing
 			price := tc.price
 			rows := []AssetDetail{assetDetailFromAssetRow(timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price})}
 			s := &Server{
-				assetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
+				Options: Options{AssetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
 					sorobanContract: {CirculatingSupply: tc.supply, Basis: "sep41_lake_flows"},
-				}},
-				nonstandardDecimals: decimalsCacheFlagging(t, tc.flagged),
+				}}, NonstandardDecimals: decimalsCacheFlagging(t, tc.flagged)},
 			}
 			s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
 
@@ -85,9 +84,11 @@ func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing
 	// on record, so nothing changes.
 	price := "2.5000000000"
 	rows := []AssetDetail{assetDetailFromAssetRow(timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price})}
-	s := &Server{assetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
-		sorobanContract: {CirculatingSupply: "10000000000", Basis: "sep41_lake_flows"},
-	}}}
+	s := &Server{
+		Options: Options{AssetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
+			sorobanContract: {CirculatingSupply: "10000000000", Basis: "sep41_lake_flows"},
+		}}},
+	}
 	s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
 	if rows[0].MarketCapUSD == nil || *rows[0].MarketCapUSD != "2500.00" || rows[0].Decimals != 7 {
 		t.Errorf("nil cache: cap = %v decimals = %d, want 2500.00 at 7", rows[0].MarketCapUSD, rows[0].Decimals)
@@ -130,13 +131,10 @@ func TestRWAContractListingRows_EarlyCapIsNotOnTheHardcodedSevenScale(t *testing
 	row := timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price, Volume24hUSD: &volume, SourceCount: &sources}
 
 	s := &Server{
-		assetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
+		Options: Options{AssetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
 			sorobanContract: {CirculatingSupply: "1000000000000", Basis: "sep41_lake_flows"},
-		}},
-		contractCatalogue:   capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}},
-		tokenSupply:         capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "1000000000000"}},
-		nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9}),
-		// tokenDecimals deliberately unwired: the scale is never READ.
+		}}, ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}, TokenSupply: capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "1000000000000"}}, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9})},
+		// tokenDecimals deliberately unwired: the scale is never READ.,
 	}
 	out, _, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
 	if err != nil {
@@ -171,10 +169,8 @@ func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
 	members := []rwaContractMember{{contractID: sorobanContract}}
 	newServer := func(decimals TokenDecimalsReader) *Server {
 		return &Server{
-			logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
-			contractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}},
-			tokenSupply:       capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}},
-			tokenDecimals:     decimals,
+			Options: Options{ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}, TokenSupply: capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}, TokenDecimals: decimals},
+			logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		}
 	}
 

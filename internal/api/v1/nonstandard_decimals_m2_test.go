@@ -141,7 +141,7 @@ func TestPriceTip_NonstandardDecimals_FallbackNormalizes(t *testing.T) {
 	key := flaggedAsset + "/fiat:USD"
 	srv := v1.New(v1.Options{
 		// Empty history → tipWindowVWAP finds no trades → falls through to the
-		// readPriceWithAliases(s.prices) branch (price_tip.go:168), the M2 gap.
+		// readPriceWithAliases(s.Prices) branch (price_tip.go:168), the M2 gap.
 		History: &stubHistoryReader{},
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{key: {

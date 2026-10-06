@@ -17,7 +17,7 @@ func TestDivergence_ServesReferenceObservationTime(t *testing.T) {
 	comparedAt := time.Date(2026, 7, 3, 22, 37, 8, 0, time.UTC)
 	refAt := time.Date(2026, 7, 3, 21, 47, 8, 500_000_000, time.FixedZone("UTC+2", 2*3600))
 	s := withholdingServer()
-	s.divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
+	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
 		{
 			AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "redstone", ObservedAt: comparedAt,
 			OurPrice: "100", RefPrice: "99", DeltaPct: "1", Status: "clear", RefObservedAt: &refAt,
@@ -71,7 +71,7 @@ func TestDivergence_GroupsReferencesPerPair(t *testing.T) {
 	newer := time.Date(2026, 7, 3, 22, 0, 0, 0, time.UTC)
 	older := newer.Add(-10 * time.Minute)
 	s := withholdingServer()
-	s.divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
+	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
 		{
 			AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "coingecko", ObservedAt: older, ObservedAtLedger: 10,
 			OurPrice: "99", RefPrice: "92", DeltaPct: "7.6", Status: "firing",

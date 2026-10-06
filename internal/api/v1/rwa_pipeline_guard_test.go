@@ -240,7 +240,7 @@ func serverCallsInFile(parsed *ast.File, fn string) []string {
 			if !ok || ident.Name != "s" {
 				return true
 			}
-			// Field reads through s (s.logger.Warn, s.assetsReader.X)
+			// Field reads through s (s.logger.Warn, s.AssetsReader.X)
 			// are not pipeline steps; only direct s.method(…) calls are.
 			if strings.Contains(sel.Sel.Name, ".") {
 				return true

@@ -252,8 +252,8 @@ func validateScopes(raw []string) ([]string, string) {
 // any credential.
 func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 	// Magic-link session takes precedence when both are present.
-	if s.sessionPeeker != nil {
-		if sess, ok := s.sessionPeeker.SessionFromContext(r.Context()); ok {
+	if s.SessionPeeker != nil {
+		if sess, ok := s.SessionPeeker.SessionFromContext(r.Context()); ok {
 			out := Account{
 				User: &AccountUser{
 					ID:              sess.UserID,
@@ -341,8 +341,8 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // per-dependency `checks` field is `/readyz`-only).
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	key := ""
-	if s.sessionPeeker != nil {
-		if sess, ok := s.sessionPeeker.SessionFromContext(r.Context()); ok {
+	if s.SessionPeeker != nil {
+		if sess, ok := s.SessionPeeker.SessionFromContext(r.Context()); ok {
 			key = usageKeyForSession(sess.AccountSlug)
 		}
 	}
@@ -398,10 +398,10 @@ func usageKeyForSession(accountSlug string) string {
 // (unwired, read error, or zero rows) falls back to the legacy shape
 // entirely; ok=false means that.
 func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool) {
-	if s.usageRollupReader == nil {
+	if s.UsageRollupReader == nil {
 		return nil, false
 	}
-	days, err := s.usageRollupReader.ReadRollup(r.Context(), key, 30)
+	days, err := s.UsageRollupReader.ReadRollup(r.Context(), key, 30)
 	if err != nil {
 		s.logger.Warn("usage rollup read", "err", err, "subject", key)
 		return nil, false
@@ -434,10 +434,10 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 // read failure just means no backfill, same posture as
 // [Server.readUsageLegacy].
 func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present map[string]struct{}) []UsageRow {
-	if s.usageReader == nil {
+	if s.UsageReader == nil {
 		return nil
 	}
-	legacyDays, err := s.usageReader.Read(r.Context(), key, 30)
+	legacyDays, err := s.UsageReader.Read(r.Context(), key, 30)
 	if err != nil {
 		s.logger.Warn("usage rollup backfill read", "err", err, "subject", key)
 		return nil
@@ -457,10 +457,10 @@ func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present m
 // shape rather than a 5xx — usage is a dashboard nicety, never
 // worth failing a customer integration over.
 func (s *Server) readUsageLegacy(r *http.Request, key string) []UsageRow {
-	if s.usageReader == nil {
+	if s.UsageReader == nil {
 		return []UsageRow{}
 	}
-	days, err := s.usageReader.Read(r.Context(), key, 30)
+	days, err := s.UsageReader.Read(r.Context(), key, 30)
 	if err != nil {
 		s.logger.Warn("usage read", "err", err, "subject", key)
 		return []UsageRow{}
@@ -527,7 +527,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			"POST /v1/account/keys mints keys for API-key accounts only")
 		return
 	}
-	if s.accounts == nil {
+	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
@@ -682,7 +682,7 @@ func (s *Server) recordAccountKeyMintAudit(
 		"tier", actor.Tier,
 		"scopes", scopes,
 		"reason", reason)
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	meta, err := json.Marshal(map[string]any{
@@ -722,7 +722,7 @@ func (s *Server) recordAccountKeyRevokeAudit(
 		"actor_identifier", actor.Identifier,
 		"key_id", keyID,
 		"reason", reason)
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	meta, err := json.Marshal(map[string]any{
@@ -755,7 +755,7 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(surface).Inc()
 		s.logger.Warn(what+": audit append failed (best-effort)",
 			"err", err, "key_id", entry.TargetID)
@@ -791,7 +791,7 @@ const defaultAccountKeyQuota = 25
 // An unverifiable count fails CLOSED (503, no mint): the cap exists
 // precisely because an unbounded mint is the abuse.
 func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, bool) {
-	quota := s.accountKeyQuota
+	quota := s.AccountKeyQuota
 	if quota == 0 {
 		quota = defaultAccountKeyQuota
 	}
@@ -801,9 +801,9 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 		err       error
 	)
 	if quota < 0 { // explicitly disabled by the operator
-		rec, plaintext, err = s.accounts.Create(r.Context(), req)
+		rec, plaintext, err = s.Accounts.Create(r.Context(), req)
 	} else {
-		rec, plaintext, err = s.accounts.CreateCapped(r.Context(), req, quota)
+		rec, plaintext, err = s.Accounts.CreateCapped(r.Context(), req, quota)
 	}
 	if err == nil {
 		return rec, plaintext, true
@@ -857,7 +857,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 			"/v1/account/keys requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
-	if s.accounts == nil {
+	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
@@ -865,7 +865,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keys, err := s.accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
+	keys, err := s.Accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
 	if err != nil {
 		s.logger.Error("account keys list failed", "err", err,
 			"identifier", subject.Identifier)
@@ -932,7 +932,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"authenticate with a different key (or SEP-10 token) and retry")
 		return
 	}
-	if s.accounts == nil {
+	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,

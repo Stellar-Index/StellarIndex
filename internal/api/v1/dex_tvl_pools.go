@@ -293,23 +293,23 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 			"unknown protocol name; GET /v1/protocols lists every known protocol")
 		return
 	}
-	if s.dexTVL == nil {
+	if s.DEXTVL == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/dex-tvl-unavailable",
 			"DEX TVL unavailable", http.StatusServiceUnavailable,
 			"This deployment hasn't wired the DEX TVL snapshot cache.")
 		return
 	}
-	if _, at := s.dexTVL.Snapshot(); at.IsZero() {
+	if _, at := s.DEXTVL.Snapshot(); at.IsZero() {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/dex-tvl-unavailable",
 			"DEX TVL unavailable", http.StatusServiceUnavailable,
 			"the first DEX TVL snapshot refresh has not completed; retry in a few seconds")
 		return
 	}
-	snap, ok := s.dexTVL.Protocol(meta.Name)
+	snap, ok := s.DEXTVL.Protocol(meta.Name)
 	if !ok {
-		if reason, down := s.dexTVL.Unavailable(meta.Name); down {
+		if reason, down := s.DEXTVL.Unavailable(meta.Name); down {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/protocol-tvl-not-derived",
 				"No TVL figure for this protocol this cycle", http.StatusNotFound,

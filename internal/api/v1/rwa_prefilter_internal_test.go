@@ -78,17 +78,16 @@ func TestBuildRWAClassicMembership_FranklinShapedCandidatePassesThePreFilter(t *
 		domain   = "www.franklintempleton.com"
 	)
 	s := &Server{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sep1Cache: &filteringSep1Reader{bound: []timescale.Sep1BoundCurrency{
+		Options: Options{Sep1Cache: &filteringSep1Reader{bound: []timescale.Sep1BoundCurrency{
 			{Code: "BENJI", Issuer: listed, HomeDomain: domain, AnchorAssetType: "other", AnchorAsset: "FOBXX"},
 			{Code: "gBENJI", Issuer: unlisted, HomeDomain: domain, AnchorAssetType: "other", AnchorAsset: "LU2900381208"},
 			// The population the filter exists to drop, still dropped.
 			{Code: "MEME", Issuer: unlisted, HomeDomain: domain, AnchorAssetType: "nft", AnchorAsset: ""},
 			{Code: "NOPE", Issuer: unlisted, HomeDomain: domain, AnchorAssetType: "other", AnchorAsset: "LU2900381209"},
-		}},
-		directory: fixedDirectory{
+		}}, Directory: fixedDirectory{
 			listed: {Name: "Franklin Templeton", Tags: []string{"issuer"}},
-		},
+		}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	out := s.buildRWAClassicMembership(context.Background())
 	if !out.available {

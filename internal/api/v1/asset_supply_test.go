@@ -45,7 +45,7 @@ func serveSupply(t *testing.T, reader TokenSupplyReader, sac map[string]string, 
 
 func serveSupplyWM(t *testing.T, reader TokenSupplyReader, sac map[string]string, wm LakeWatermarkReader, assetID string) *httptest.ResponseRecorder {
 	t.Helper()
-	srv := &Server{tokenSupply: reader, sacWrappers: sac, lakeWatermarkReader: wm}
+	srv := &Server{Options: Options{TokenSupply: reader, SACWrappers: sac, LakeWatermark: wm}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/assets/{asset_id}/supply", srv.handleAssetSupply)
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets/"+assetID+"/supply", nil)

@@ -34,9 +34,8 @@ func (f *fakeDivergenceReader) ListDivergenceSeries(_ context.Context, assetID, 
 
 func newSeriesServer(reader DivergenceReader, threshold float64) *Server {
 	return &Server{
-		divergences:            reader,
-		divergenceThresholdPct: threshold,
-		logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Divergences: reader, DivergenceThresholdPct: threshold},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -168,9 +167,9 @@ func TestDivergenceSeries_NilReaderAndZeroThreshold(t *testing.T) {
 // a client must be able to tell "not served" from "zero freezes".
 func TestAnomalies_IncludeDaily(t *testing.T) {
 	s := &Server{
-		anomalies: &fakeAnomalyReader{daily: []timescale.FreezeDailyReasonCount{
+		Options: Options{Anomalies: &fakeAnomalyReader{daily: []timescale.FreezeDailyReasonCount{
 			{Day: time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC), Reason: "divergence", Count: 3},
-		}},
+		}}},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 

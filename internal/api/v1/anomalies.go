@@ -103,7 +103,7 @@ type FreezeEventView struct {
 // 200 + empty payload when no reader is wired — feature-gated like
 // /v1/lending/pools.
 func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
-	if s.anomalies == nil {
+	if s.Anomalies == nil {
 		writeJSON(w, AnomaliesView{ReasonTally: []ReasonCountV{}, Events: []FreezeEventView{}}, Flags{})
 		return
 	}
@@ -117,7 +117,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := s.anomalies.ListFreezeEvents(r.Context(), firingOnly, limit)
+	events, err := s.Anomalies.ListFreezeEvents(r.Context(), firingOnly, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -129,7 +129,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	// Always compute the live firing count (independent of the firing
 	// filter) so the UI can show "N firing now" on the full timeline.
 	// An exact count, not a page length — see AnomaliesView.
-	firingCount, err := s.anomalies.CountFiringFreezes(r.Context())
+	firingCount, err := s.Anomalies.CountFiringFreezes(r.Context())
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -138,7 +138,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	tally, err := s.anomalies.FreezeReasonCounts(r.Context(), windowDays)
+	tally, err := s.Anomalies.FreezeReasonCounts(r.Context(), windowDays)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -182,7 +182,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 // block. ok=false means the response has already been written (error
 // or aborted client) and the caller must return.
 func (s *Server) anomaliesDaily(w http.ResponseWriter, r *http.Request, windowDays int) ([]DailyReasonCountV, bool) {
-	daily, err := s.anomalies.FreezeDailyReasonCounts(r.Context(), windowDays)
+	daily, err := s.Anomalies.FreezeDailyReasonCounts(r.Context(), windowDays)
 	if err != nil {
 		if clientAborted(r, err) {
 			return nil, false
@@ -275,7 +275,7 @@ type DivergenceRefV struct {
 //
 // 200 + empty payload when no reader is wired.
 func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
-	if s.divergences == nil {
+	if s.Divergences == nil {
 		writeJSON(w, DivergenceView{Pairs: []DivergencePairV{}}, Flags{})
 		return
 	}
@@ -289,7 +289,7 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.divergences.ListDivergenceLatest(r.Context(), windowDays, firingOnly, limit)
+	rows, err := s.Divergences.ListDivergenceLatest(r.Context(), windowDays, firingOnly, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -373,7 +373,7 @@ func (s *Server) storedMarketGate(surface string) func(ctx context.Context, asse
 	}
 	seen := make(map[[2]string]verdict)
 	return func(ctx context.Context, assetID, quoteID string) (bool, PriceWithheldReason) {
-		if s.substance == nil && s.scam == nil {
+		if s.Substance == nil && s.Scam == nil {
 			return false, ""
 		}
 		key := [2]string{assetID, quoteID}
@@ -384,7 +384,7 @@ func (s *Server) storedMarketGate(surface string) func(ctx context.Context, asse
 		base, berr := canonical.ParseAsset(assetID)
 		quote, qerr := canonical.ParseAsset(quoteID)
 		if berr == nil && qerr == nil {
-			w := withheldBy(ctx, s.substance, s.scam, base, quote, surface)
+			w := withheldBy(ctx, s.Substance, s.Scam, base, quote, surface)
 			v = verdict{withheld: w != pricingguard.NotWithheld, reason: withheldReasonFor(w)}
 		}
 		seen[key] = v
@@ -479,17 +479,17 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 	out := DivergenceSeriesView{
 		AssetID: base, QuoteID: quote, Days: days,
 		BucketSeconds: int(timescale.DivergenceSeriesBucket(days).Seconds()),
-		ThresholdPct:  s.divergenceThresholdPct,
+		ThresholdPct:  s.DivergenceThresholdPct,
 		Points:        []DivergenceSeriesPointV{},
 	}
 	if s.divergenceSeriesWithheld(w, r, base, quote) {
 		return
 	}
-	if s.divergences == nil {
+	if s.Divergences == nil {
 		writeJSON(w, out, Flags{})
 		return
 	}
-	points, err := s.divergences.ListDivergenceSeries(r.Context(), base, quote, days)
+	points, err := s.Divergences.ListDivergenceSeries(r.Context(), base, quote, days)
 	if err != nil {
 		if clientAborted(r, err) {
 			return

@@ -103,18 +103,18 @@ func (s *Server) rwaCuratedSnapshotWithin(ctx context.Context, budget time.Durat
 }
 
 func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
-	if s.rwaCurated == nil {
+	if s.RWACurated == nil {
 		return rwaCurated{}
 	}
 	// The two reads fail independently: a curator whose published totals
 	// answer while its per-asset list is (as today) unreadable is the
 	// normal state, not a failure of either.
-	published, err := s.rwaCurated.LatestCuratedPublished(ctx, rwaCuratorDune)
+	published, err := s.RWACurated.LatestCuratedPublished(ctx, rwaCuratorDune)
 	if err != nil {
 		s.logger.Warn("rwa curated published read failed", "err", err)
 		published = nil
 	}
-	rows, census, err := s.rwaCurated.CuratedRWADirectoryByAddress(ctx, rwaCuratorDune)
+	rows, census, err := s.RWACurated.CuratedRWADirectoryByAddress(ctx, rwaCuratorDune)
 	if err != nil {
 		s.logger.Warn("rwa curated directory read failed", "err", err)
 		return rwaCurated{published: published, wired: true, observedAt: time.Now()}

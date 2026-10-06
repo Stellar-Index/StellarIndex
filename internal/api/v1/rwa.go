@@ -1176,7 +1176,7 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	// CLOSED inside the measured branch, dropping every binding under
 	// `independent_listing_unavailable`, so its outage is already a
 	// stated refusal on the wire rather than a silent absence.
-	if s.rwaContracts != nil && !c.census.available {
+	if s.RWAContracts != nil && !c.census.available {
 		out.readFailed = true
 	}
 	// One `refused[]` for the whole surface. The per-arm tallies stay
@@ -1199,7 +1199,7 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 // per-candidate verdict. Nothing here reads a price.
 func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	out := rwaMembership{refusals: map[string]int{}}
-	reader, ok := s.sep1Cache.(Sep1BoundCurrencyReader)
+	reader, ok := s.Sep1Cache.(Sep1BoundCurrencyReader)
 	if !ok {
 		return out
 	}
@@ -1244,8 +1244,8 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	}
 
 	var entries map[string]timescale.DirectoryEntry
-	if s.directory != nil && len(addrs) > 0 {
-		entries, err = s.directory.DirectoryEntriesByAddresses(ctx, addrs)
+	if s.Directory != nil && len(addrs) > 0 {
+		entries, err = s.Directory.DirectoryEntriesByAddresses(ctx, addrs)
 		if err != nil {
 			// Requirement 3 cannot be evaluated without the directory,
 			// and it is the requirement that keeps impersonators out.
@@ -1665,11 +1665,11 @@ func (s *Server) PrewarmRWA(ctx context.Context) {
 	// above. That is what makes warming them worth the goroutine's
 	// time: whoever pays the build should be this goroutine, not a
 	// reader of the page.
-	if s.assetsReader == nil || s.oracleHistory == nil {
+	if s.AssetsReader == nil || s.OracleHistory == nil {
 		return
 	}
 	s.cachedRWAValueHistory(ctx)
-	if ctx.Err() != nil || s.marketHistory == nil {
+	if ctx.Err() != nil || s.MarketHistory == nil {
 		return
 	}
 	s.cachedRWAPremiumHistory(ctx)
@@ -1691,7 +1691,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		Refused:           []RWARefusal{},
 		UnreachedEntities: []RWAUnreachedEntity{},
 	}
-	if s.assetsReader == nil {
+	if s.AssetsReader == nil {
 		view.Summary.Basis = rwaBasisUnavailable
 		view.Funnel = rwaFunnelUnavailable()
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
@@ -1923,7 +1923,7 @@ func (s *Server) rwaListingRows(
 
 	out := make(map[string]AssetDetail, len(m.members))
 	for _, issuer := range issuers {
-		rows, err := s.assetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
+		rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
 			Limit:  rwaAssetsPerIssuer,
 			Issuer: issuer,
 			Type:   "classic",

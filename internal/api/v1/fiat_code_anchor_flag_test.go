@@ -52,7 +52,7 @@ func TestVerifiedCurrencyFlagsFiatCodeAnchor(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseAsset: %v", err)
 			}
-			s := &Server{verifiedCurrencies: cat}
+			s := &Server{Options: Options{VerifiedCurrencies: cat}}
 			var detail AssetDetail
 			flags := s.verifiedCurrencyFlags(&detail, asset)
 

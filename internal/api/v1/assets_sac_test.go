@@ -26,7 +26,7 @@ func (s *sacStubReader) SACClassicAssetName(context.Context, string) (string, bo
 // resolves to the classic USDC identity because the metadata name
 // re-derives to the queried address.
 func TestResolveSACToClassic_Genuine(t *testing.T) {
-	s := &Server{explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}}
 	got, ok := s.resolveSACToClassic(context.Background(), "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
 	if !ok || got.Code != "USDC" {
 		t.Fatalf("resolve = %+v ok=%v, want classic USDC", got, ok)
@@ -37,14 +37,14 @@ func TestResolveSACToClassic_Genuine(t *testing.T) {
 // whose metadata CLAIMS to be USDC but whose address does not
 // re-derive from that asset must NOT redirect pricing.
 func TestResolveSACToClassic_SpoofedName(t *testing.T) {
-	s := &Server{explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}}
 	if _, ok := s.resolveSACToClassic(context.Background(), "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"); ok {
 		t.Fatal("spoofed metadata name redirected pricing — derivation cross-check failed")
 	}
 }
 
 func TestResolveSACToClassic_Native(t *testing.T) {
-	s := &Server{explorer: &sacStubReader{name: "native", found: true}}
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "native", found: true}}}
 	got, ok := s.resolveSACToClassic(context.Background(), "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
 	if !ok || got.Type != canonical.AssetNative {
 		t.Fatalf("native SAC resolve = %+v ok=%v", got, ok)

@@ -57,7 +57,7 @@ type MEVEventView struct {
 // detected — the same feature-gated-reader degradation as /v1/markets
 // and /v1/lending/pools.
 func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
-	if s.mev == nil {
+	if s.MEV == nil {
 		writeJSON(w, []MEVEventView{}, Flags{})
 		return
 	}
@@ -79,7 +79,7 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 	// the ingress times out instead of returning a fast, retryable 503.
 	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer mCancel()
-	rows, err := s.mev.ListMEVEvents(mCtx, kind, limit)
+	rows, err := s.MEV.ListMEVEvents(mCtx, kind, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
