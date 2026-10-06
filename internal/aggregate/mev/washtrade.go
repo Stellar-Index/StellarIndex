@@ -51,12 +51,13 @@ type washLeg struct {
 // washDetail is the mev_events.detail payload for a wash_trade
 // candidate.
 type washDetail struct {
-	Variant     string    `json:"variant"` // "self_trade" | "round_trip"
-	Pair        string    `json:"pair"`
-	Accounts    []string  `json:"accounts"`
-	Legs        []washLeg `json:"legs"`
-	NotionalUSD string    `json:"notional_usd,omitempty"`
-	Note        string    `json:"note"`
+	Variant            string    `json:"variant"` // "self_trade" | "round_trip"
+	Pair               string    `json:"pair"`
+	Accounts           []string  `json:"accounts"`
+	Legs               []washLeg `json:"legs"`
+	NotionalUSD        string    `json:"notional_usd,omitempty"`
+	NotionalLowerBound bool      `json:"notional_usd_lower_bound,omitempty"`
+	Note               string    `json:"note"`
 }
 
 // DetectWashTrades scans a batch of trades for two wash signatures,
@@ -106,29 +107,31 @@ func detectSelfTrades(trades []canonical.Trade, usdVolume []string) []Candidate 
 	for _, key := range order {
 		idxs := groups[key]
 		t0 := trades[idxs[0]]
-		notional := sumUSD(usdVolume, idxs)
+		notional, lowerBound := sumUSD(usdVolume, idxs)
 		assetID, quoteID := pairIDs(t0)
 		out = append(out, Candidate{
-			Kind:             KindWashTrade,
-			Ledger:           t0.Ledger,
-			DetectedAtLedger: t0.Ledger,
-			Timestamp:        t0.Timestamp.UTC(),
-			TxHash:           t0.TxHash,
-			Taker:            t0.Taker,
-			Assets:           pairAssets(t0),
-			AssetID:          assetID,
-			QuoteID:          quoteID,
-			Sources:          distinctSources(trades, idxs),
-			NotionalUSD:      notional,
+			Kind:               KindWashTrade,
+			Ledger:             t0.Ledger,
+			DetectedAtLedger:   t0.Ledger,
+			Timestamp:          t0.Timestamp.UTC(),
+			TxHash:             t0.TxHash,
+			Taker:              t0.Taker,
+			Assets:             pairAssets(t0),
+			AssetID:            assetID,
+			QuoteID:            quoteID,
+			Sources:            distinctSources(trades, idxs),
+			NotionalUSD:        notional,
+			NotionalLowerBound: lowerBound,
 			// Default dedup (kind:tx:actor) is exactly the self-trade
 			// identity — no explicit Dedup needed.
 			Detail: washDetail{
-				Variant:     "self_trade",
-				Pair:        unorderedPairKey(t0),
-				Accounts:    []string{t0.Taker},
-				Legs:        washLegs(trades, idxs),
-				NotionalUSD: notional,
-				Note:        washSelfNote,
+				Variant:            "self_trade",
+				Pair:               unorderedPairKey(t0),
+				Accounts:           []string{t0.Taker},
+				Legs:               washLegs(trades, idxs),
+				NotionalUSD:        notional,
+				NotionalLowerBound: lowerBound,
+				Note:               washSelfNote,
 			},
 		})
 	}
@@ -194,7 +197,7 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 
 	t0 := trades[idxs[0]]
 	accounts := sortedKeys(map[string]struct{}{t0.Maker: {}, t0.Taker: {}})
-	notional := sumUSD(usdVolume, idxs)
+	notional, lowerBound := sumUSD(usdVolume, idxs)
 	assetID, quoteID := pairIDs(t0)
 	c := Candidate{
 		AssetID:          assetID,
@@ -207,22 +210,24 @@ func buildRoundTripCandidate(trades []canonical.Trade, usdVolume []string, key s
 		// No Taker: a round trip has two symmetric parties and no
 		// principal. Accounts carries both; Dedup replaces the kind:tx:taker
 		// default that would otherwise read it.
-		TxHashes:    distinctTxHashes(trades, idxs),
-		Accounts:    accounts,
-		Assets:      pairAssets(t0),
-		Sources:     distinctSources(trades, idxs),
-		NotionalUSD: notional,
+		TxHashes:           distinctTxHashes(trades, idxs),
+		Accounts:           accounts,
+		Assets:             pairAssets(t0),
+		Sources:            distinctSources(trades, idxs),
+		NotionalUSD:        notional,
+		NotionalLowerBound: lowerBound,
 		// The bucket key (bucket + pair + account pair) IS the identity:
 		// a sliding scan window re-detects the same bucket without
 		// duplicating it.
 		Dedup: KindWashTrade + ":rt:" + key,
 		Detail: washDetail{
-			Variant:     "round_trip",
-			Pair:        unorderedPairKey(t0),
-			Accounts:    accounts,
-			Legs:        washLegs(trades, idxs),
-			NotionalUSD: notional,
-			Note:        washRoundTripNote,
+			Variant:            "round_trip",
+			Pair:               unorderedPairKey(t0),
+			Accounts:           accounts,
+			Legs:               washLegs(trades, idxs),
+			NotionalUSD:        notional,
+			NotionalLowerBound: lowerBound,
+			Note:               washRoundTripNote,
 		},
 	}
 	return c, true

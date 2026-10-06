@@ -13,6 +13,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
@@ -103,6 +104,7 @@ var crawlsFromLakeFloor = map[string]string{
 func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 	wantGenesis := map[string]uint32{
 		upshift.SourceName:        upshift.GenesisLedger,
+		spectra.SourceName:        spectra.GenesisLedger,
 		sushiswap_v3.SourceName:   sushiswap_v3.FactoryGenesisLedger,
 		sorocredit.SourceName:     sorocredit.GenesisLedger,
 		blend.SourceName:          blend.FactoryGenesisLedger,

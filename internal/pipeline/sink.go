@@ -35,6 +35,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -629,7 +630,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
 		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent, defindex.AdminEvent,
-		upshift.Event,
+		upshift.Event, spectra.Event,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
 	default:
@@ -1028,6 +1029,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistCometLiquidity(ctx, logger, store, e)
 	case upshift.Event:
 		return persistUpshiftVaultEvent(ctx, logger, store, e)
+	case spectra.Event:
+		return persistSpectraEvent(ctx, logger, store, e)
 	case sdex.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
 	case reflector.UpdateEvent:

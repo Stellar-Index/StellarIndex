@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
@@ -46,6 +47,7 @@ var protocolContractsGatedSources = []string{
 	comet.SourceName,
 	sushiswap_v3.SourceName,
 	upshift.SourceName,
+	spectra.SourceName,
 }
 
 // loadProtocolContractSeeds unions protocol_contracts into the
@@ -103,7 +105,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		"exit non-zero when any registered decoder emitted zero outputs over the range — the finding this command exists to produce. Pass -fail-on-silent=false for a range not chosen to contain every source's events")
 	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
 	seedProtocolContracts := fs.Bool("seed-protocol-contracts", false,
-		"union protocol_contracts into the curated-set decoders' gate (aquarius/phoenix/comet/sushiswap_v3/upshift), mirroring production's GatedRegistryOptions warm. Off by default: verify-decoders is a dry harness with no Timescale dependency; a pool admitted only via protocol_contracts looks falsely silent without this, and a genuinely silent decoder looks the same as one whose pool simply isn't in the curated seed")
+		"union protocol_contracts into the curated-set decoders' gate (aquarius/phoenix/comet/sushiswap_v3/upshift/spectra), mirroring production's GatedRegistryOptions warm. Off by default: verify-decoders is a dry harness with no Timescale dependency; a pool admitted only via protocol_contracts looks falsely silent without this, and a genuinely silent decoder looks the same as one whose pool simply isn't in the curated seed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -353,6 +355,7 @@ func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map
 		comet.NewDecoder(seedOpt(comet.SourceName)),
 		sushiswap_v3.NewDecoder(seedOpt(sushiswap_v3.SourceName)),
 		upshift.NewDecoder(seedOpt(upshift.SourceName)),
+		spectra.NewDecoder(seedOpt(spectra.SourceName)),
 	}
 	registered := []string{
 		soroswap.SourceName,
@@ -361,6 +364,7 @@ func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map
 		comet.SourceName,
 		sushiswap_v3.SourceName,
 		upshift.SourceName,
+		spectra.SourceName,
 	}
 
 	// Oracle variants: only register if their contract address is set.

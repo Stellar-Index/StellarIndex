@@ -497,6 +497,9 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// no row); the first ROW lands 15,341 ledgers later, far inside the
 	// threshold, so the two never disagree in practice.
 	{Source: "upshift", Table: "upshift_vault_events", LedgerColumn: "ledger", Genesis: 62_623_313, MinGapSizeOverride: 600000},
+	// spectra: own hypertable, no price. Markets are few and weeks apart;
+	// 600k (~40 days) is a starting bound to revisit after the backfill.
+	{Source: "spectra", Table: "spectra_events", LedgerColumn: "ledger", Genesis: 63_778_088, MinGapSizeOverride: 600000},
 	// Oracle sources (reflector, band, redstone) write into the
 	// unified `oracle_updates` hypertable, sliced by `source`.
 	// Same pattern as the Soroban-DEX trades targets — per-source

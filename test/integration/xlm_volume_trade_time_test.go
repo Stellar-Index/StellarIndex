@@ -7,6 +7,7 @@ import (
 	"time"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestXLMLegVolume_TradeTimeNeverSpot pins the volume readers that used to
@@ -41,6 +42,7 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	for _, q := range []string{
 		`UPDATE trades SET taker = 'GTAKER'`,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
+		`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`,
 	} {
 		if _, err := db.ExecContext(f.ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -61,6 +63,40 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	}
 	if len(asset) != 1 || !ratEq(t, asset[0].VolumeUSD24h.String, "11") || asset[0].UnpricedTrades24h != 3 {
 		t.Errorf("AssetSourceStats = %+v, want sdex volume 11 (trade-time only) with 3 unpriced trades", asset)
+	}
+
+	// Spot would read 10 (20 XLM at 0.5); trade time is 10 XLM at 0.4, and the
+	// stale leg is excluded.
+	soroban, lowerBound, err := f.store.SorobanVolume24hUSDForAsset(f.ctx, X.String())
+	if err != nil {
+		t.Fatalf("SorobanVolume24hUSDForAsset: %v", err)
+	}
+	if !ratEq(t, soroban, "4") || !lowerBound {
+		t.Errorf("SorobanVolume24hUSDForAsset(X) = %s lowerBound=%v, want 4 at trade time, flagged a lower bound", soroban, lowerBound)
+	}
+
+	pools, _, err := f.store.AllPools(f.ctx, timescale.PoolsFilter{Sources: []string{"sdex"}}, "", 100, timescale.MarketsOrderVolume24hDesc)
+	if err != nil {
+		t.Fatalf("AllPools: %v", err)
+	}
+	markets, _, err := f.store.SourceMarkets(f.ctx, "sdex", "", 100, timescale.MarketsOrderVolume24hDesc)
+	if err != nil {
+		t.Fatalf("SourceMarkets: %v", err)
+	}
+	for _, p := range pools {
+		if p.Pair.Base.String() == "native" && p.Pair.Quote == usdc &&
+			(p.Volume24hUSD == nil || !ratEq(t, *p.Volume24hUSD, "11") || !p.VolumeLowerBound) {
+			t.Errorf("AllPools sdex XLM/USDC = %+v, want 11 (trade-time only, spot would add 5) flagged a lower bound", p)
+		}
+	}
+	for _, m := range markets {
+		if m.Pair.Base.String() == "native" && m.Pair.Quote == usdc &&
+			(m.Volume24hUSD == nil || !ratEq(t, *m.Volume24hUSD, "11") || !m.VolumeLowerBound) {
+			t.Errorf("SourceMarkets sdex XLM/USDC = %+v, want 11 flagged a lower bound", m)
+		}
+	}
+	if len(pools) == 0 || len(markets) == 0 {
+		t.Errorf("AllPools/SourceMarkets(sdex) returned %d/%d rows, want both non-empty", len(pools), len(markets))
 	}
 
 	trades, usd, err := f.store.TradesForArbScan(f.ctx, f.now.Add(-4*time.Hour), 0)

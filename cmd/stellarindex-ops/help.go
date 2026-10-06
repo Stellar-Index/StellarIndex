@@ -747,7 +747,7 @@ Subcommands:
                           says so. Use it for a historical re-derive below
                           the source's floor — for a recovery INTO populated
                           ledgers it only adds a probe and then falls back.
-  trades-cagg-refresh -config PATH -from N -to N
+  trades-cagg-refresh -config PATH -from N -to N [-force=false] | -config PATH -size
                           Refresh every continuous aggregate over trades
                           (prices_1m first, twap_1h/twap_1d last) over the
                           time span of the trades now in ledgers
@@ -761,6 +761,18 @@ Subcommands:
                           that fails, and when prices_1m then disagrees
                           with trades in any of 8 sampled one-hour
                           windows of the span. Idempotent.
+                          -force=false re-materialises only the buckets
+                          Timescale's invalidation log names (late trades),
+                          one committed day-sized CALL at a time; -size is
+                          read-only and prints each view's pending ranges
+                          and the -from/-to ledgers that cover them.
+                          -force=false refuses a range whose twap windows
+                          reach below prices_1m's earliest bucket (a past
+                          retention drop); -size lists those as below-floor.
+                          It also refuses when prices_1m disagrees with
+                          trades in a minute a recomputed twap bucket reads
+                          (a dropped stretch above that bucket); -size names
+                          it as a gap and raises the floor past it.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback

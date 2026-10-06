@@ -132,6 +132,16 @@ One line per item; the INV item is the authority.
 
 - HA, R2/R3 and ClickHouse HA (INV-0890, INV-1048, INV-1070, INV-1101, INV-1389). D2 accepts a single box per region with a tested restore; multi-region (ADR-0050) is post-v1 with the reasoning in `docs/architecture/ha-plan.md` §10.
 - R1 is NOT hardware-upgradeable. Never propose drives.
+- INV-2851: oracle-reconcile window netting (F6 = C2-16).
+- INV-2852: oracle-reconcile fail-opens (F8-F10).
+- INV-2853: caller-side supply close-timestamp fix (M4).
+- INV-2854: `/assets/native` advertises 5,553 markets but lists 100.
+- INV-2855: API auth and rate-limit review.
+- INV-2856: dependency-advisory review cadence.
+- INV-2857, INV-2858: operator decisions on peg-set thresholds and served-tier retention (Ash).
+- INV-2859: instrument the Redis read-through caches (`cache_ops_total` covers only in-memory caches).
+- INV-2860: projector-replay to the served tier to close the sep41 gap (register D4).
+- INV-2861: HA blockers F-001..F-010 (HA itself stays post-v1, above).
 - W9: DeFindex vault registry and unproven emitters (INV-0923), residual DeFi decoders (INV-0894), L4.14-L4.17 and L5.8 (INV-2710).
 - CH Phase 8 `soroban_events` decommission (#803): destructive, last.
 - Credential rotation is one batch after inventory closure (Ash, 2026-09-30). The MinIO root exposure of 2026-07-25 is closed: root is `stellarindex-admin`, the old key is rejected, and moving services off root remains hygiene (verified 2026-09-28).

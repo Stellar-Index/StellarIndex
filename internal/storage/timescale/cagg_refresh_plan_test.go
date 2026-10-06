@@ -204,3 +204,18 @@ func TestRunCAGGRefreshStepRefusesArmedRetentionBeforeAnyCall(t *testing.T) {
 		t.Fatalf("err = %v after %d CALLs, want a refusal before any", err, len(f.calls))
 	}
 }
+
+// A non-forced twap refresh applies the invalidations each retention drop
+// logged against it, recomputing those buckets from emptied minute rows.
+func TestRunCAGGRefreshStepRefusesNonForcedTwapWhileRetentionArmed(t *testing.T) {
+	st := fiveDayPrices1mStep()
+	st.View, st.Force = "twap_1d", false
+	f := &fakePieceRefresher{}
+	if err := RunCAGGRefreshStep(context.Background(), f, st, true); err == nil || len(f.calls) != 0 {
+		t.Fatalf("err = %v after %d CALLs, want a refusal before any", err, len(f.calls))
+	}
+	st.View = "prices_1d"
+	if err := RunCAGGRefreshStep(context.Background(), f, st, true); err != nil || len(f.calls) == 0 {
+		t.Fatalf("prices_1d reads trades, not prices_1m: err = %v after %d CALLs, want it refreshed", err, len(f.calls))
+	}
+}

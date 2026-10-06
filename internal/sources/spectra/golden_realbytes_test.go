@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -114,13 +116,55 @@ type row struct {
 func rowOf(e Event) row {
 	return row{
 		e.Kind, e.Role, e.MarketPT, e.Caller, e.Receiver, e.Owner, e.Maker, e.OrderID, e.IBT, e.YT,
-		e.DurationSeconds, e.Shares.String(), e.VaultShares.String(), e.Assets.String(), e.Amount.String(),
-		e.YieldInIBT.String(),
+		e.DurationSeconds, amountString(e.Shares), amountString(e.VaultShares), amountString(e.Assets),
+		amountString(e.Amount), amountString(e.YieldInIBT),
+	}
+}
+
+func amountString(a *canonical.Amount) string {
+	if a == nil {
+		return "0"
+	}
+	return a.String()
+}
+
+// carriedAmounts is each row kind's amount columns (migration 0210). A kind
+// listed here must set every one; every other amount must stay nil.
+var carriedAmounts = map[string][]string{
+	EventPTMinted:        {"shares"},
+	EventRedeem:          {"shares"},
+	EventYieldUpdated:    {"yield_in_ibt"},
+	EventTransfer:        {"amount"},
+	EventWrap:            {"shares", "vault_shares"},
+	EventUnwrap:          {"shares", "vault_shares"},
+	EventDeposit:         {"assets", "shares"},
+	EventWithdraw:        {"assets", "shares"},
+	EventOrderRegistered: {"amount"},
+	EventOrderFilled:     {"amount"},
+}
+
+// assertAmountsSet fails when a carried amount is unset: the store refuses
+// the row rather than writing 0, so this catches it at decode time.
+func assertAmountsSet(t *testing.T, e Event) {
+	t.Helper()
+	got := map[string]*canonical.Amount{
+		"shares": e.Shares, "vault_shares": e.VaultShares, "assets": e.Assets,
+		"amount": e.Amount, "yield_in_ibt": e.YieldInIBT,
+	}
+	for name, a := range got {
+		carried := slices.Contains(carriedAmounts[e.Kind], name)
+		if carried && a == nil {
+			t.Errorf("%s: carried amount %s is unset", e.Kind, name)
+		}
+		if !carried && a != nil {
+			t.Errorf("%s: sets %s, which the kind does not carry", e.Kind, name)
+		}
 	}
 }
 
 // goldens pins every row-kind fixture's decoded values, at least one per
-// (WASM hash, kind). Unset amounts render "0".
+// (WASM hash, kind). Uncarried amounts render "0"; assertAmountsSet tells
+// them apart from a carried one left unset.
 var goldens = map[string]row{
 	// factory: market announcements, three durations
 	factoryHash + "/pt_deployed_factory_63782624_dc730b2a132e_6_CC4ZVR.json": {
@@ -279,6 +323,7 @@ func TestGolden_EveryFixture(t *testing.T) {
 				t.Fatalf("%d rows, want 1", len(out))
 			}
 			got := out[0].(Event)
+			assertAmountsSet(t, got)
 			if g := rowOf(got); g != want {
 				t.Errorf("decoded\n got %+v\nwant %+v", g, want)
 			}

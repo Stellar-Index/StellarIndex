@@ -104,8 +104,11 @@ The session-cookie customer-dashboard operations (magic-link and passkey sign-in
 Field semantics:
 
 - `data`: endpoint-specific payload. Always present.
-- `as_of`: when the server produced the payload. Millisecond
-  precision.
+- `as_of`: when the data was computed. A cached surface stamps the
+  time its cache entry was filled, so an unchanged payload replays a
+  byte-identical body and its `ETag` answers `If-None-Match` with 304;
+  an uncached surface stamps the time it built the response.
+  Millisecond precision.
 - `coverage_from`: the earliest instant this deployment holds
   served-tier price history at for what the surface serves the
   named pair from. Present only on an EMPTY answer from the

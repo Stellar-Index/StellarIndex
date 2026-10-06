@@ -45,6 +45,9 @@ type Market struct {
 	BucketCloseAt time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
+	// usd_volume. Computed only for the per-source listing.
+	VolumeLowerBound bool
 	// LastPrice is the last quote-per-base price observed for this
 	// pair: the newest prices_1m bucket close within the trailing 24h,
 	// or — for a pair that has been idle longer than that — the newest
@@ -66,6 +69,8 @@ type Pool struct {
 	LastTradeAt   time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
+	VolumeLowerBound bool
 	// LastPrice is the last quote-per-base price for this
 	// (source, base, quote) tuple — same wire shape as
 	// Market.LastPrice but per-pool.
@@ -240,8 +245,9 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 			count24h          int64
 			vol24hUSD         sql.NullString
 			lastPrice         sql.NullString
+			lowerBound        bool
 		)
-		if err := rows.Scan(&source, &baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
+		if err := rows.Scan(&source, &baseRaw, &quoteRaw, &lastAt, &count24h, &vol24hUSD, &lastPrice, &lowerBound); err != nil {
 			return nil, "", fmt.Errorf("timescale: AllPools scan: %w", err)
 		}
 		n++
@@ -262,10 +268,11 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 			return nil, "", fmt.Errorf("timescale: AllPools pair: %w", err)
 		}
 		p := Pool{
-			Source:        source,
-			Pair:          pair,
-			LastTradeAt:   lastAt.UTC(),
-			TradeCount24h: count24h,
+			Source:           source,
+			Pair:             pair,
+			LastTradeAt:      lastAt.UTC(),
+			TradeCount24h:    count24h,
+			VolumeLowerBound: lowerBound,
 		}
 		if vol24hUSD.Valid && vol24hUSD.String != "" && vol24hUSD.String != "0" {
 			v := vol24hUSD.String
@@ -315,40 +322,29 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // ordering tail. $1 is the recency-window lower bound; every caller
 // binds it first, and sacAliasFoldBind's arrays at $foldIdx, $foldIdx+1.
 //
-// Rows are alias-folded BEFORE grouping, so the filters, the XLM-fallback
-// CASE and every group key see one spelling per asset.
-func perSourcePoolsCTE(foldIdx, sacIdx int) string {
+// Rows are alias-folded BEFORE grouping, so the filters and every group
+// key see one spelling per asset.
+//
+// vol_24h_usd sums trade-time usd_volume only. A trade stamped without one
+// is excluded, never re-marked at today's XLM/USD; vol_lower_bound says so.
+func perSourcePoolsCTE(foldIdx int) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
-        xlm_usd AS (
-          ` + xlmUSDVolumeSelect + `
-        ),
         pools AS (
           SELECT
             p.source, p.base_asset, p.quote_asset,
             MAX(p.bucket_last_ts) AS last_trade_at,
             COALESCE(SUM(p.trade_count)
                      FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
-            (
-              COALESCE(SUM(p.sum_usd_priced)
-                       FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)
-              +
-              CASE
-                WHEN ` + xlmNativeAssetIn("p.base_asset", sacIdx) + `
-                  THEN COALESCE(SUM(p.sum_base_unpriced)
-                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
-                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
-                WHEN ` + xlmNativeAssetIn("p.quote_asset", sacIdx) + `
-                  THEN COALESCE(SUM(p.sum_quote_unpriced)
-                                FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) / 1e7::numeric
-                       * COALESCE((SELECT vwap FROM xlm_usd), 0)
-                ELSE 0
-              END
-            )::text AS vol_24h_usd,
+            COALESCE(SUM(p.sum_usd_priced)
+                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)::text AS vol_24h_usd,
+            -- sum_base_unpriced is NULL exactly when the bucket held no unpriced trade.
+            COALESCE(bool_or(p.sum_base_unpriced IS NOT NULL)
+                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), false) AS vol_lower_bound,
             last(p.bucket_last_price, p.bucket_last_ts)::text AS last_price
           FROM (
             SELECT r.source, r.bucket, r.bucket_last_ts, r.bucket_last_price,
-                   r.trade_count, r.sum_usd_priced, r.sum_base_unpriced, r.sum_quote_unpriced,
+                   r.trade_count, r.sum_usd_priced, r.sum_base_unpriced,
                    COALESCE(bf.canon, r.base_asset)  AS base_asset,
                    COALESCE(qf.canon, r.quote_asset) AS quote_asset
               FROM pools_per_source_1h r
@@ -425,7 +421,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// pre-#25 query returned NULL; the handler scan collapses
 	// NULL and "0" identically, so functionally equivalent).
 	// $8/$9 are the alias-fold arrays, after the $1..$7 layout below.
-	cte := perSourcePoolsCTE(8, 10)
+	cte := perSourcePoolsCTE(8)
 	canonBase, canonQuote, flipped := canonOrientSQL(10)
 	cte += poolsFilterSQL(canonBase, canonQuote) + `
          GROUP BY p.source, p.base_asset, p.quote_asset
@@ -434,9 +430,9 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// canon collapses flipped orientations of the same market within a
 	// source (XLM/USDC + USDC/XLM → one canonical row): vol + trade
 	// count sum across both directions; last_price is the latest trade's
-	// price re-expressed canonically (inverted for the flipped one). The
-	// XLM-fallback is already resolved into vol_24h_usd in `pools`, so
-	// summing it across directions is correct. See canonical.Orient.
+	// price re-expressed canonically (inverted for the flipped one); either
+	// direction's excluded trades make the folded volume a lower bound.
+	// See canonical.Orient.
 	cte += `,
         canon AS (
           SELECT source,
@@ -445,14 +441,15 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
                  MAX(last_trade_at)             AS last_trade_at,
                  SUM(count_24h)                 AS count_24h,
                  SUM(vol_24h_usd::numeric)::text AS vol_24h_usd,
-                 ` + canonLastPriceSQL(flipped) + ` AS last_price
+                 ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                 bool_or(vol_lower_bound)       AS vol_lower_bound
             FROM pools
            GROUP BY source, ` + canonBase + `, ` + canonQuote + `
         )
     `
 	if order == MarketsOrderVolume24hDesc {
 		const tail = `
-		 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price
+		 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price, vol_lower_bound
 		   FROM canon
 		  WHERE $2 = ''
 		     OR COALESCE(vol_24h_usd::numeric, 0)
@@ -483,7 +480,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// unreferenced on this branch — legal in Postgres, invisible at
 	// compile time.)
 	const tail = `
-	 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price
+	 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price, vol_lower_bound
 	   FROM canon
 	  WHERE ($2 = '' OR (source || '|' || base_asset || '|' || quote_asset) > $2)
 	  ORDER BY (source || '|' || base_asset || '|' || quote_asset) ASC
@@ -619,7 +616,7 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	out, hasMore, err := scanDistinctPairs(rows, limit)
+	out, hasMore, err := scanDistinctPairs(rows, limit, true)
 	if err != nil {
 		return nil, "", err
 	}
@@ -649,7 +646,7 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
 	canonBase, canonQuote, flipped := canonOrientSQL(7)
 	forms, canons := sacAliasFoldBind() // $5, $6
-	ctes := perSourcePoolsCTE(5, 7) + `
+	ctes := perSourcePoolsCTE(5) + `
            AND p.source = $4
          GROUP BY p.source, p.base_asset, p.quote_asset
         ),
@@ -659,13 +656,15 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                  MAX(last_trade_at)              AS last_trade_at,
                  SUM(count_24h)                  AS count_24h,
                  SUM(vol_24h_usd::numeric)       AS vol_24h_num,
-                 ` + canonLastPriceSQL(flipped) + ` AS last_price
+                 ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                 bool_or(vol_lower_bound)        AS vol_lower_bound
             FROM pools
            GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
         SELECT base_asset, quote_asset, last_trade_at,
                date_trunc('day', last_trade_at) AS bucket_close_at,
-               count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price
+               count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price,
+               vol_lower_bound
           FROM canon
     `
 	switch order {
@@ -729,7 +728,7 @@ func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor s
 	}
 	defer func() { _ = rows.Close() }()
 
-	out, hasMore, err := scanDistinctPairs(rows, limit)
+	out, hasMore, err := scanDistinctPairs(rows, limit, false)
 	if err != nil {
 		return nil, "", err
 	}
@@ -742,8 +741,9 @@ func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor s
 
 // scanDistinctPairs reads up to `limit+1` rows; the +1th row toggles
 // hasMore. Pulled out of DistinctPairsExt so the latter stays under
-// the gocognit threshold.
-func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
+// the gocognit threshold. withLowerBound reads the per-source query's
+// trailing vol_lower_bound column.
+func scanDistinctPairs(rows *sql.Rows, limit int, withLowerBound bool) ([]Market, bool, error) {
 	out := make([]Market, 0, limit)
 	n := 0
 	hasMore := false
@@ -755,8 +755,13 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 			count24h          int64
 			vol24hUSD         sql.NullString
 			lastPrice         sql.NullString
+			lowerBound        bool
 		)
-		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &bucketCloseAt, &count24h, &vol24hUSD, &lastPrice); err != nil {
+		dest := []any{&baseRaw, &quoteRaw, &lastAt, &bucketCloseAt, &count24h, &vol24hUSD, &lastPrice}
+		if withLowerBound {
+			dest = append(dest, &lowerBound)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, false, fmt.Errorf("timescale: DistinctPairs scan: %w", err)
 		}
 		n++
@@ -784,6 +789,7 @@ func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 			v := lastPrice.String
 			m.LastPrice = &v
 		}
+		m.VolumeLowerBound = lowerBound
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {

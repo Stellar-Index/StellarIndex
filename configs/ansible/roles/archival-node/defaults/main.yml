@@ -268,7 +268,7 @@ zfs_datasets:
   # codified (BACKLOG #50 — no un-codified ZFS dataset remains on r1):
   #   clickhouse  — ADR-0034 lake (2026-06-05 pivot)
   #   loki        — CH logs off the 49G root (2026-06-11, commit 5dd6fcda)
-  #   prometheus  — TSDB off the root (2026-06-30, launch-todo P0-5)
+  #   prometheus  — TSDB off the root (2026-06-30)
   #   pgbackrest  — pgBackRest repo1 backups (ADR-0043)
   #   restore-drill — DRILL_ROOT for scripts/ops/restore-drill.sh (CS-110)
   - name: "clickhouse"
@@ -283,7 +283,7 @@ zfs_datasets:
     mountpoint: "/var/lib/loki"
   - name: "prometheus"
     # The Prometheus TSDB (~12-13G) lived on the 49G OS root and kept it
-    # chronically >90% full; relocated to ZFS 2026-06-30 (launch-todo P0-5),
+    # chronically >90% full; relocated to ZFS 2026-06-30,
     # where zstd compresses it ~12x. recordsize 128K suits its chunk writes.
     recordsize: "131072"
     compression: "zstd"
@@ -788,7 +788,8 @@ stellarindex_enabled_sources:
 # coverage_pct=0, watermark_ledger=genesis-1 on /v1/coverage — the
 # permanently-red row that teaches everyone to ignore the board. Deferring
 # the source means deferring the claim about it too.
-stellarindex_sources_not_yet_enabled: {}
+stellarindex_sources_not_yet_enabled:
+  spectra: "wiring only; enable + seed + replay is a follow-up PR (WASM backfill audit gate)"
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must

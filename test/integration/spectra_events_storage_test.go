@@ -39,12 +39,12 @@ func TestSpectraEvents_Storage(t *testing.T) {
 		// 10^30: an 18-decimal market's amount well past 2^64 and 2^96.
 		e30 = "1000000000000000000000000000000"
 	)
-	amt := func(s string) canonical.Amount {
+	amt := func(s string) *canonical.Amount {
 		a, err := canonical.FromString(s)
 		if err != nil {
 			t.Fatalf("amount %q: %v", s, err)
 		}
-		return a
+		return &a
 	}
 	t0 := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	ev := func(tx string, idx uint32, kind timescale.SpectraEventKind, role timescale.SpectraRole, contract string) timescale.SpectraEvent {
@@ -179,6 +179,39 @@ func TestSpectraEvents_Storage(t *testing.T) {
 		}
 		if e, m, g := read(); e != 2_592_000 || m != 2_592_000 || g != 1 {
 			t.Errorf("after gen0 replay: event/market duration, gen = %d/%d, %d; want 2592000/2592000, 1 — a stale replay reverted the correction", e, m, g)
+		}
+	})
+
+	t.Run("a rebuild that re-keys pt_deployed drops the stale market", func(t *testing.T) {
+		t.Cleanup(func() { store.SetDeriveGeneration(0) })
+		const (
+			stale = "CBZ7M5B3Y4WWBZ5XK74ZKMGNC3NKUGBVLBWJ5CZJKEXAEDW3Q4HYXC2A"
+			fresh = "CDPGNJ6ZMPGIJOHJH2LTZWC2ZOSVVQJ6WN7HPTPDE5EPZT3BXCFRCYUK"
+		)
+		deployed := ev("e", 0, timescale.SpectraPTDeployed, timescale.SpectraRoleFactory, factory)
+		deployed.MarketPT, deployed.Caller, deployed.IBT, deployed.DurationSeconds = stale, holder, ibt, 100
+		if err := store.InsertSpectraEvent(ctx, deployed); err != nil {
+			t.Fatalf("gen0 insert: %v", err)
+		}
+		store.SetDeriveGeneration(1)
+		corrected := deployed
+		corrected.MarketPT = fresh
+		if err := store.InsertSpectraEvent(ctx, corrected); err != nil {
+			t.Fatalf("gen1 insert: %v", err)
+		}
+		markets, err := store.SpectraMarkets(ctx)
+		if err != nil {
+			t.Fatalf("SpectraMarkets: %v", err)
+		}
+		var sawFresh bool
+		for _, m := range markets {
+			if m.PT == stale {
+				t.Errorf("market %s survives the rebuild that re-keyed its only discovery row", stale)
+			}
+			sawFresh = sawFresh || m.PT == fresh
+		}
+		if !sawFresh {
+			t.Errorf("market %s missing after the rebuild", fresh)
 		}
 	})
 

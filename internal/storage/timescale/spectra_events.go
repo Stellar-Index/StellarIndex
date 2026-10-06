@@ -119,20 +119,23 @@ type SpectraEvent struct {
 	YT              string
 	DurationSeconds uint64
 
-	Shares      canonical.Amount
-	VaultShares canonical.Amount
-	Assets      canonical.Amount
-	Amount      canonical.Amount
-	YieldInIBT  canonical.Amount
+	// Amounts are pointers: nil is "not set", which the writer refuses
+	// for a column the kind carries instead of storing it as 0.
+	Shares      *canonical.Amount
+	VaultShares *canonical.Amount
+	Assets      *canonical.Amount
+	Amount      *canonical.Amount
+	YieldInIBT  *canonical.Amount
 }
 
 // InsertSpectraEvent writes one spectra_events row, idempotent on the
 // (ledger_close_time, contract_id, ledger, tx_hash, op_index,
 // event_index) key under the derive_generation guard: an equal-or-higher
-// generation overwrites the stored row, a lower one is refused. A
-// pt_deployed / yt_deployed / pt_added row also merges its columns into
-// spectra_markets in the same transaction, and only when the event row
-// was written, so a refused replay cannot touch the market either.
+// generation overwrites the stored row, a lower one is refused. When the
+// row written is, or replaces, a pt_deployed / yt_deployed / pt_added row,
+// the markets it names are re-derived from spectra_events in the same
+// transaction, so a rebuild that corrects a discovery row's PT leaves no
+// stale market behind, and a refused replay touches neither table.
 func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 	args, err := spectraEventArgs(e)
 	if err != nil {
@@ -180,6 +183,10 @@ func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	prior, err := priorSpectraMarket(ctx, tx, e)
+	if err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, q, append(args, s.deriveGeneration)...)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSpectraEvent %s %s@%d: %w", e.Kind, e.ContractID, e.Ledger, err)
@@ -189,8 +196,14 @@ func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 		return fmt.Errorf("timescale: InsertSpectraEvent rows affected: %w", err)
 	}
 	if written > 0 {
-		if err := upsertSpectraMarket(ctx, tx, e); err != nil {
-			return err
+		pts := []string{prior}
+		if isSpectraDiscovery(string(e.Kind)) {
+			pts = append(pts, e.MarketPT)
+		}
+		for _, pt := range pts {
+			if err := refreshSpectraMarket(ctx, tx, pt); err != nil {
+				return err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -243,15 +256,20 @@ func (c *spectraColumns) text(f spectraField, name, v string) sql.NullString {
 	return sql.NullString{String: v, Valid: carried}
 }
 
-// amount keys presence off the kind, never IsZero: a zero amount and an
-// absent one are indistinguishable in canonical.Amount.
-func (c *spectraColumns) amount(f spectraField, name string, v canonical.Amount, signed bool) sql.NullString {
+// amount keys presence off the pointer, never IsZero: a zero amount is a
+// value, an unset one is a decoder bug.
+func (c *spectraColumns) amount(f spectraField, name string, v *canonical.Amount, signed bool) sql.NullString {
 	carried := c.fields&f != 0
 	switch {
-	case !carried && !v.IsZero():
+	case !carried && v != nil:
 		c.problem = errors.Join(c.problem, fmt.Errorf("%s does not carry %s (got %s)", c.kind, name, v))
+	case carried && v == nil:
+		c.problem = errors.Join(c.problem, fmt.Errorf("%s needs %s", c.kind, name))
 	case carried && !signed && v.Sign() < 0:
 		c.problem = errors.Join(c.problem, fmt.Errorf("%s %s must be >= 0 (got %s)", c.kind, name, v))
+	}
+	if v == nil {
+		return sql.NullString{}
 	}
 	return sql.NullString{String: v.String(), Valid: carried}
 }
@@ -293,49 +311,99 @@ func spectraEventArgs(e SpectraEvent) ([]any, error) {
 	return args, nil
 }
 
-// upsertSpectraMarket merges a discovery row's columns into
-// spectra_markets. A NULL argument keeps the stored value, so the three
-// discovery kinds fill one market row in any order.
-func upsertSpectraMarket(ctx context.Context, tx *sql.Tx, e SpectraEvent) error {
-	var (
-		yt, ibt, factory, deployer sql.NullString
-		duration, created, listed  sql.NullInt64
-		deployedAt                 sql.NullTime
-	)
-	switch e.Kind {
-	case SpectraPTDeployed:
-		ibt = sql.NullString{String: e.IBT, Valid: true}
-		factory = sql.NullString{String: e.ContractID, Valid: true}
-		deployer = sql.NullString{String: e.Caller, Valid: true}
-		duration = sql.NullInt64{Int64: int64(e.DurationSeconds), Valid: true}
-		created = sql.NullInt64{Int64: int64(e.Ledger), Valid: true}
-		deployedAt = sql.NullTime{Time: e.LedgerCloseTime.UTC(), Valid: true}
-	case SpectraYTDeployed:
-		yt = sql.NullString{String: e.YT, Valid: true}
-	case SpectraPTAdded:
-		listed = sql.NullInt64{Int64: int64(e.Ledger), Valid: true}
-	default:
+func isSpectraDiscovery(kind string) bool {
+	switch SpectraEventKind(kind) {
+	case SpectraPTDeployed, SpectraYTDeployed, SpectraPTAdded:
+		return true
+	case SpectraPTMinted, SpectraRedeem, SpectraYieldUpdated, SpectraTransfer,
+		SpectraWrap, SpectraUnwrap, SpectraDeposit, SpectraWithdraw,
+		SpectraOrderRegistered, SpectraOrderFilled, SpectraOrderCancelled:
+		return false
+	}
+	return false
+}
+
+// priorSpectraMarket returns the market a stored discovery row at e's key
+// names, or "" when there is none, locking the row for the overwrite.
+func priorSpectraMarket(ctx context.Context, tx *sql.Tx, e SpectraEvent) (string, error) {
+	const q = `
+        SELECT event_kind, market_pt
+          FROM spectra_events
+         WHERE ledger_close_time = $1 AND contract_id = $2 AND ledger = $3
+           AND tx_hash = $4 AND op_index = $5 AND event_index = $6
+           FOR UPDATE`
+	var kind string
+	var pt sql.NullString
+	err := tx.QueryRowContext(ctx, q, e.LedgerCloseTime.UTC(), e.ContractID, int(e.Ledger),
+		e.TxHash, int(e.OpIndex), int(e.EventIndex)).Scan(&kind, &pt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("timescale: InsertSpectraEvent prior row: %w", err)
+	case isSpectraDiscovery(kind):
+		return pt.String, nil
+	}
+	return "", nil
+}
+
+// refreshSpectraMarket re-derives one spectra_markets row from the
+// earliest discovery row of each kind naming pt, and deletes it when none
+// is left. The six pt_deployed columns come from one row, so the
+// all-or-none CHECK holds.
+//
+// unbounded-latest-ok: a market's creation row is arbitrarily old, and the read is keyed to one market_pt.
+func refreshSpectraMarket(ctx context.Context, tx *sql.Tx, pt string) error {
+	if pt == "" {
 		return nil
 	}
-	const q = `
+	const upsert = `
+        WITH d AS (
+            SELECT DISTINCT ON (event_kind)
+                   event_kind, contract_id, ledger, ledger_close_time, caller, ibt, yt, duration_s
+              FROM spectra_events
+             WHERE market_pt = $1
+               AND event_kind IN ('pt_deployed', 'yt_deployed', 'pt_added')
+             ORDER BY event_kind, ledger, op_index, event_index
+        )
         INSERT INTO spectra_markets (
             pt, yt, ibt, factory_id, deployer, duration_s,
             creation_ledger, deployed_at, listed_ledger
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        )
+        SELECT $1,
+               max(yt)                FILTER (WHERE event_kind = 'yt_deployed'),
+               max(ibt)               FILTER (WHERE event_kind = 'pt_deployed'),
+               max(contract_id)       FILTER (WHERE event_kind = 'pt_deployed'),
+               max(caller)            FILTER (WHERE event_kind = 'pt_deployed'),
+               max(duration_s)        FILTER (WHERE event_kind = 'pt_deployed'),
+               max(ledger)            FILTER (WHERE event_kind = 'pt_deployed'),
+               max(ledger_close_time) FILTER (WHERE event_kind = 'pt_deployed'),
+               max(ledger)            FILTER (WHERE event_kind = 'pt_added')
+          FROM d
+        HAVING count(*) > 0
         ON CONFLICT (pt) DO UPDATE SET
-            yt              = COALESCE(EXCLUDED.yt, spectra_markets.yt),
-            ibt             = COALESCE(EXCLUDED.ibt, spectra_markets.ibt),
-            factory_id      = COALESCE(EXCLUDED.factory_id, spectra_markets.factory_id),
-            deployer        = COALESCE(EXCLUDED.deployer, spectra_markets.deployer),
-            duration_s      = COALESCE(EXCLUDED.duration_s, spectra_markets.duration_s),
-            creation_ledger = COALESCE(EXCLUDED.creation_ledger, spectra_markets.creation_ledger),
-            deployed_at     = COALESCE(EXCLUDED.deployed_at, spectra_markets.deployed_at),
-            listed_ledger   = COALESCE(EXCLUDED.listed_ledger, spectra_markets.listed_ledger),
+            yt              = EXCLUDED.yt,
+            ibt             = EXCLUDED.ibt,
+            factory_id      = EXCLUDED.factory_id,
+            deployer        = EXCLUDED.deployer,
+            duration_s      = EXCLUDED.duration_s,
+            creation_ledger = EXCLUDED.creation_ledger,
+            deployed_at     = EXCLUDED.deployed_at,
+            listed_ledger   = EXCLUDED.listed_ledger,
             updated_at      = now()
     `
-	if _, err := tx.ExecContext(ctx, q, e.MarketPT, yt, ibt, factory, deployer,
-		duration, created, deployedAt, listed); err != nil {
-		return fmt.Errorf("timescale: InsertSpectraEvent market %s: %w", e.MarketPT, err)
+	if _, err := tx.ExecContext(ctx, upsert, pt); err != nil {
+		return fmt.Errorf("timescale: InsertSpectraEvent market %s: %w", pt, err)
+	}
+	const prune = `
+        DELETE FROM spectra_markets m
+         WHERE m.pt = $1
+           AND NOT EXISTS (
+               SELECT 1 FROM spectra_events
+                WHERE market_pt = $1
+                  AND event_kind IN ('pt_deployed', 'yt_deployed', 'pt_added'))`
+	if _, err := tx.ExecContext(ctx, prune, pt); err != nil {
+		return fmt.Errorf("timescale: InsertSpectraEvent prune market %s: %w", pt, err)
 	}
 	return nil
 }

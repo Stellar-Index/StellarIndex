@@ -40,11 +40,16 @@ func TestSpectraKindSpecsMatchMigration(t *testing.T) {
 	}
 }
 
+func amountOf(n int64) *canonical.Amount {
+	a := canonical.NewAmount(big.NewInt(n))
+	return &a
+}
+
 func TestSpectraEventArgs_Validation(t *testing.T) {
 	const pt = "CDRK5SWZ7DQJ4BZUAZQABPSP7MZS4NO4PPW7LW6CVD5THZDVE63MVLJJ"
 	ok := SpectraEvent{
 		ContractID: pt, TxHash: strings.Repeat("a", 64), Kind: SpectraPTMinted, Role: SpectraRolePT,
-		MarketPT: pt, Caller: "G1", Receiver: "G2", Shares: canonical.NewAmount(big.NewInt(5)),
+		MarketPT: pt, Caller: "G1", Receiver: "G2", Shares: amountOf(5),
 	}
 	if _, err := spectraEventArgs(ok); err != nil {
 		t.Fatalf("valid pt_minted refused: %v", err)
@@ -55,9 +60,10 @@ func TestSpectraEventArgs_Validation(t *testing.T) {
 		"PT names other mkt": func(e *SpectraEvent) { e.MarketPT = "COTHER" },
 		"missing receiver":   func(e *SpectraEvent) { e.Receiver = "" },
 		"extra maker":        func(e *SpectraEvent) { e.Maker = "G3" },
-		"extra amount":       func(e *SpectraEvent) { e.Amount = canonical.NewAmount(big.NewInt(1)) },
+		"extra amount":       func(e *SpectraEvent) { e.Amount = amountOf(1) },
 		"extra duration":     func(e *SpectraEvent) { e.DurationSeconds = 1 },
-		"negative shares":    func(e *SpectraEvent) { e.Shares = canonical.NewAmount(big.NewInt(-1)) },
+		"negative shares":    func(e *SpectraEvent) { e.Shares = amountOf(-1) },
+		"unset shares":       func(e *SpectraEvent) { e.Shares = nil },
 		"uppercase order id": func(e *SpectraEvent) { e.OrderID = strings.Repeat("A", 64) },
 		"missing tx hash":    func(e *SpectraEvent) { e.TxHash = "" },
 		"duration overflows": func(e *SpectraEvent) {

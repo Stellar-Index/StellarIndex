@@ -44,7 +44,7 @@ func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 		run  func(s *Store)
 	}{
 		{"TradesForArbScan", 3, func(s *Store) { _, _, _ = s.TradesForArbScan(ctx, since, 10) }},
-		{"SorobanVolume24hUSDForAsset", 2, func(s *Store) { _, _ = s.SorobanVolume24hUSDForAsset(ctx, "C1") }},
+		{"SorobanVolume24hUSDForAsset", 2, func(s *Store) { _, _, _ = s.SorobanVolume24hUSDForAsset(ctx, "C1") }},
 		{"GetSourceStats", 1, func(s *Store) { _, _ = s.GetSourceStats(ctx) }},
 		{"GetNetworkStats", 2, func(s *Store) { _, _ = s.GetNetworkStats(ctx) }},
 		{"GetAssetMarketsCount", 2, func(s *Store) { _, _ = s.GetAssetMarketsCount(ctx, "native") }},

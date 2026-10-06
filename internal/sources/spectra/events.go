@@ -2,9 +2,6 @@
 // tokenisation protocol (PT/YT split of an interest-bearing token, IBT).
 // See docs/protocols/spectra.md.
 //
-// Decoder and goldens only; not yet wired into the dispatcher, projector
-// or sinks.
-//
 // Only (role, kind) pairs observed on mainnet are classified, each pinned
 // by a lake fixture under test/fixtures/spectra; `unwrap` is the one
 // exception, decoded from the published source because it shares wrap's
@@ -22,6 +19,11 @@ import (
 
 // SourceName is the dispatcher / projector source name.
 const SourceName = "spectra"
+
+// GenesisLedger is the registry's first event (`role_granted`), ahead of
+// the factory's first at 63,778,145. Projector, gap target, catalogue and
+// ingestion floor all start here.
+const GenesisLedger uint32 = 63_778_088
 
 // EventKind is the consumer.Event kind of [Event].
 const EventKind = "spectra.event"
