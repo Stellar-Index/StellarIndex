@@ -37,7 +37,7 @@ rows): accept + document, recover via op-census if ever needed.
 - ⬜ `/v1/accounts` honest degradation: the cause is a query timeout, not "projection still backfilling"; return 200 + `flags.degraded`.
 - ⬜ `Cache-Control` on `/v1/ledgers`, `/v1/operations`, `/v1/network/throughput` (fall through to `private, no-store`). `/v1/account/*` (singular) is the authed surface; `/v1/accounts` is public.
 - ⬜ `api.stellarindex.io` behind Cloudflare — without it every `s-maxage` is inert.
-- ⬜ ETag / `If-None-Match` — none in `internal/`; cheap 304s on polling endpoints.
+- 🏗️ ETag / `If-None-Match` — `middleware.ETag` tags every 200 GET/HEAD body that is not `no-store` or a stream (strong tag over the exact bytes) and answers a match with 304. Bodies written by `writeJSON` stamp `as_of` with the write time, so their tag changes on every request; those routes get 304s only once `as_of` carries the data's own time.
 - ⬜ Instrument the Redis (T2) cache layer: no `cache_ops_total`, so the miss-rate alert is blind to it.
 - 🏗️ Materialize `ledger_entries_current` aggregates (`classic_supply_current`, `account_wealth_snapshot`) via the aggregator's rollup sweep; partitioning it is low priority once they land.
 - ⬜ Prewarm warms `limit=199`; the explorer sends 25/100/500.
