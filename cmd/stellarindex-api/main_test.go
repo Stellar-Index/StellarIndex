@@ -16,6 +16,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 
 	"github.com/alicebob/miniredis/v2"
@@ -38,8 +39,8 @@ import (
 // to `[]`; the buggy pre-fix shape was a non-nil adapter that
 // nil-deref'd on `Read`. F-1258 (codex audit-2026-05-12).
 func TestUsageReaderOrNil_RedisAbsent(t *testing.T) {
-	if r := usageReaderOrNil(nil); r != nil {
-		t.Errorf("usageReaderOrNil(nil) = %v (non-nil), want nil — handler short-circuits on nil; non-nil wrapper would deref the inner nil counter on Read", r)
+	if r := wiring.UsageReaderOrNil(nil); r != nil {
+		t.Errorf("wiring.UsageReaderOrNil(nil) = %v (non-nil), want nil — handler short-circuits on nil; non-nil wrapper would deref the inner nil counter on Read", r)
 	}
 }
 
@@ -55,9 +56,9 @@ func TestUsageReaderOrNil_RedisPresent(t *testing.T) {
 	if c == nil {
 		t.Fatal("usage.New(real rdb) returned nil — test setup invariant broken")
 	}
-	r := usageReaderOrNil(c)
+	r := wiring.UsageReaderOrNil(c)
 	if r == nil {
-		t.Fatal("usageReaderOrNil(real-counter) = nil, want non-nil")
+		t.Fatal("wiring.UsageReaderOrNil(real-counter) = nil, want non-nil")
 	}
 }
 

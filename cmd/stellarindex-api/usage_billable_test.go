@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -66,7 +67,7 @@ func TestUsageEndpointDay_BillableEqualsQuotaCounter(t *testing.T) {
 	}
 	var billable, requests int64
 	for _, r := range sink.rows {
-		day := usageEndpointDay(timescale.UsageDailyRow{
+		day := wiring.UsageEndpointDay(timescale.UsageDailyRow{
 			Day: r.Day, Subject: r.Subject, Endpoint: r.Endpoint,
 			OK: r.OK, ClientErrors: r.ClientErrors, ServerErrors: r.ServerErrors, Throttled: r.Throttled,
 		})

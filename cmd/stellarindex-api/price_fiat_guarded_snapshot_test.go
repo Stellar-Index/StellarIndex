@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/forex"
@@ -156,7 +157,7 @@ func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 		<-done
 	})
 
-	srv := v1.New(v1.Options{Prices: xlmUSDOnlyReader{}, Currencies: newForexAdapter(cache)})
+	srv := v1.New(v1.Options{Prices: xlmUSDOnlyReader{}, Currencies: wiring.NewForexAdapter(cache)})
 	api := httptest.NewServer(srv.Handler())
 	t.Cleanup(api.Close)
 

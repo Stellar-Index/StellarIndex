@@ -55,7 +55,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -107,7 +106,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
-	"github.com/Stellar-Index/StellarIndex/internal/supply"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
@@ -589,7 +587,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
 		}
-		divergenceLooker = newDivergenceAdapter(divSvc)
+		divergenceLooker = wiring.NewDivergenceAdapter(divSvc)
 		logger.Info("divergence cache reader wired",
 			"threshold_pct", cfg.Divergence.Threshold,
 			"min_sources_for_warning", cfg.Divergence.MinSourcesForWarning)
@@ -789,9 +787,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Wire fx_quotes persistence — every refresh tick writes the
 	// latest rates + 7d history to the hypertable so /v1/currencies
 	// can serve historical charts beyond the in-memory window.
-	forexWorker = forexWorker.WithWriter(&forexQuoteWriter{store: store}).
-		WithReader(&forexQuoteWriter{store: store}).
-		WithFixingWriter(&forexQuoteWriter{store: store})
+	forexWorker = forexWorker.WithWriter(&wiring.ForexQuoteWriter{Store: store}).
+		WithReader(&wiring.ForexQuoteWriter{Store: store}).
+		WithFixingWriter(&wiring.ForexQuoteWriter{Store: store})
 	// Standby FX source. `massive` is a PAID feed and was the ONLY series
 	// in stellarindex_external_fx_last_quote_unix (measured 2026-08-27),
 	// so a 401/429/subscription lapse silently broke every fiat-quoted
@@ -1383,7 +1381,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Confidence:            redisConfidenceLooker{rdb: rdb},
 		Triangulated:          redisTriangulatedLooker{rdb: rdb},
 		Freeze:                freezeLooker,
-		Supply:                storeSupplyLooker{s: store},
+		Supply:                wiring.StoreSupplyLooker{S: store},
 		TokenSupply:           tokenSupplyReader,
 		ContractStorageSupply: storageSupplyReader,
 		TokenDecimals:         tokenDecimalsReader,
@@ -1408,7 +1406,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Explorer:           explorerReader,
 		IssuerAuthFlags:    issuerAuthFlagsReader,
 		StaticHomeDomain:   homeDomainLookup.static,
-		Volume:             storeVolumeReader{s: store},
+		Volume:             wiring.StoreVolumeReader{S: store},
 		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger},
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
@@ -1464,14 +1462,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// dust trade. See v1.dustLiquiditySuppressed.
 		MinMarketCapVolumeUSD:   cfg.Aggregate.MinMarketCapVolumeUSD,
 		MaxMarketCapVolumeRatio: cfg.Aggregate.MaxMarketCapVolumeRatio,
-		Currencies:              newForexAdapter(forexCache),
+		Currencies:              wiring.NewForexAdapter(forexCache),
 		// Staleness budget for the fiat-cross-rate / USD-anchored-fiat-cross
 		// fallbacks (T650) — the in-memory forex cache never expires on
 		// its own.
 		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
 		DisableFiatBasis:   cfg.PricingGuard.DisableFiatBasis,
 		FXFixings:          store,
-		FXHistory:          &fxHistoryReader{store: store},
+		FXHistory:          &wiring.FXHistoryReader{Store: store},
 		SEP10:              sep10Validator,
 		Hub:                hub,
 		CORS:               cors,
@@ -1504,13 +1502,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// `/v1/account/usage` call. The handler short-circuits on
 		// `usageReader == nil` with an empty list, which is the
 		// correct "Redis absent → no usage data" shape.
-		UsageReader: usageReaderOrNil(usageCounter),
+		UsageReader: wiring.UsageReaderOrNil(usageCounter),
 		// Per-endpoint usage rollups: reads the
 		// `usage_daily` hypertable the usage-rollup worker below
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
 		// has no rows for the subject yet.
-		UsageRollupReader: usageRollupReaderOrNil(store),
+		UsageRollupReader: wiring.UsageRollupReaderOrNil(store),
 		CDNEnabled:        cfg.API.CDNEnabled,
 		// Per-request deadline applied to every non-streaming request
 		// (C3-1/C3-2/P1, audit-2026-07-16). Backs the RequestTimeout
@@ -2770,37 +2768,6 @@ func (l *lakeAccountSigners) LoadAccountSigners(ctx context.Context, accountID s
 	return out, nil
 }
 
-// divergenceAdapter wraps *divergence.Service to satisfy the v1
-// DivergenceLooker interface. v1 deliberately doesn't import the
-// divergence package (kept storage-package-agnostic); this thin
-// shim is the wire between them.
-type divergenceAdapter struct {
-	svc *divergence.Service
-}
-
-func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
-	return divergenceAdapter{svc: svc}
-}
-
-// DivergenceFiringFor reads the cached verdict for the EXACT (asset,
-// quote) pair — never another quote of the same base. GH-1045: the
-// prior implementation called LookupCached(asset), which ORs every
-// quote's WarningFired together, so a diverging XLM/GBP flagged a
-// clean XLM/USD response. A pair that fails to construct (asset ==
-// quote — callers should never reach this, since parsing already
-// rejects an identity price) reports unchecked rather than panicking.
-// The quorum behind `checked` (LookupCachedPairVerdict) is the
-// service's own, so it cannot drift from the one WarningFired was
-// gated on, and (firing=true, checked=false) cannot occur: a firing
-// pair met the quorum. window is the verdict's recorded aggregation window.
-func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, window time.Duration, err error) {
-	pair, perr := canonical.NewPair(asset, quote)
-	if perr != nil {
-		return false, false, 0, nil //nolint:nilerr // intentional: an unconstructible pair reports unchecked
-	}
-	return a.svc.LookupCachedPairVerdict(ctx, pair)
-}
-
 // nonstandardDecimalsRefreshTimeout bounds each nonstandard-decimals cache
 // load, the blocking startup one included.
 const nonstandardDecimalsRefreshTimeout = 30 * time.Second
@@ -3624,25 +3591,6 @@ func observedHomeDomain(row timescale.AccountObservation) metadata.IssuerHomeDom
 	return hd
 }
 
-// storeVolumeReader adapts *timescale.Store to v1.VolumeReader.
-// Returns the trailing-24h USD volume across every pair the asset
-// participates in. No error translation needed — the timescale
-// helper returns "0" when the asset is tracked but had no trades,
-// and a real error for genuine SQL failures.
-type storeVolumeReader struct{ s *timescale.Store }
-
-func (r storeVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
-	return r.s.Volume24hUSDForAsset(ctx, assetKey)
-}
-
-// SorobanVolume24hUSDForAsset implements the optional
-// v1.SorobanVolumeReader — the XLM-anchored 24h USD-volume variant used
-// for pure-Soroban SEP-41 assets whose liquidity is quoted in XLM rather
-// than a USD-pegged classic (fce3e2eef).
-func (r storeVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, bool, error) {
-	return r.s.SorobanVolume24hUSDForAsset(ctx, assetKey)
-}
-
 // usdQuoteAsset is the implicit USD quote used to anchor 24h-ago
 // price lookups in [storeChange24hReader]. Same string value as
 // the v1 handler's defaultPriceQuote — keeping them constructed
@@ -3774,45 +3722,6 @@ func normalizeChange24hAnchor(lookup aggregate.DecimalsLookup, vwap string, base
 		return "", v1.ErrChange24hUnavailable
 	}
 	return aggregate.AdjustPrice(raw, baseDec, quoteDec).FloatString(change24hAnchorDigits), nil
-}
-
-// storeSupplyLooker adapts *timescale.Store to v1.SupplyLooker for
-// the F2-fields path on /v1/assets/{id}. Closes audit F-0020 +
-// Codex Freighter-V2 high-1: the API binary previously left
-// Options.Supply nil, dead-coding the F2 read path entirely.
-//
-// Error translation: timescale.ErrNotFound (no recorded snapshot)
-// becomes v1.ErrSupplyNotFound, which the handler treats as
-// "feature unavailable for this asset" and leaves the F2 fields
-// null on the response. Other errors propagate unchanged so the
-// handler can log them at WARN.
-type storeSupplyLooker struct{ s *timescale.Store }
-
-func (r storeSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
-	snap, err := r.s.LatestSupply(ctx, assetKey)
-	if err != nil {
-		if errors.Is(err, timescale.ErrNotFound) {
-			return supply.Supply{}, v1.ErrSupplyNotFound
-		}
-		return supply.Supply{}, err
-	}
-	return snap, nil
-}
-
-// SupplyCoverageStats delegates to the underlying Store so the
-// wrapper satisfies v1.SupplyCoverageReader as well as
-// v1.SupplyLooker. Same pattern as fxHistoryReader's coverage
-// delegate — without it, /v1/diagnostics/ingestion's supply
-// section renders as empty.
-func (r storeSupplyLooker) SupplyCoverageStats(ctx context.Context) (timescale.SupplyCoverage, error) {
-	return r.s.SupplyCoverageStats(ctx)
-}
-
-// DailyCirculatingSupply delegates to the Store's supply_1d CAGG
-// reader (migration 0066), the supply leg of crypto market-cap-over-
-// time on /v1/chart?price_type=market_cap.
-func (r storeSupplyLooker) DailyCirculatingSupply(ctx context.Context, assetKey string, from, to time.Time) ([]timescale.SupplyDayPoint, error) {
-	return r.s.DailyCirculatingSupply(ctx, assetKey, from, to)
 }
 
 // parseStreamingPairs converts the operator-declared
@@ -4171,77 +4080,6 @@ func statusIdentity(cfg config.Config) (region, deployment string, services []st
 	return cfg.Region.ID, cfg.Region.Deployment, cfg.API.StatusServices
 }
 
-// usageReaderOrNil returns a v1.UsageReader bound to `c` when
-// `c` is non-nil, and a typed-nil v1.UsageReader otherwise. The
-// `/v1/account/usage` handler treats `UsageReader == nil` as
-// "no usage backend wired" and returns an empty list — the
-// correct degradation when Redis is absent. F-1258 (codex
-// audit-2026-05-12).
-func usageReaderOrNil(c *usage.Counter) v1.UsageReader {
-	if c == nil {
-		return nil
-	}
-	return usageReaderAdapter{c: c}
-}
-
-// usageReaderAdapter bridges *usage.Counter to v1.UsageReader so
-// the v1 package stays free of the internal/usage import.
-type usageReaderAdapter struct{ c *usage.Counter }
-
-func (a usageReaderAdapter) Read(ctx context.Context, subject string, days int) ([]v1.UsageDay, error) {
-	rows, err := a.c.Read(ctx, subject, days)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]v1.UsageDay, len(rows))
-	for i, d := range rows {
-		out[i] = v1.UsageDay{Date: d.Date, Requests: d.Requests}
-	}
-	return out, nil
-}
-
-// usageRollupReaderOrNil returns a v1.UsageRollupReader over the
-// `usage_daily` hypertable when the Timescale store is wired; nil
-// otherwise so the handler stays on the legacy per-day Redis path.
-func usageRollupReaderOrNil(s *timescale.Store) v1.UsageRollupReader {
-	if s == nil {
-		return nil
-	}
-	return usageRollupReaderAdapter{s: s}
-}
-
-// usageRollupReaderAdapter bridges *timescale.Store.ReadUsageDaily
-// to v1.UsageRollupReader; see usageEndpointDay for the derivation.
-type usageRollupReaderAdapter struct{ s *timescale.Store }
-
-func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string, days int) ([]v1.UsageEndpointDay, error) {
-	rows, err := a.s.ReadUsageDaily(ctx, subject, days)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]v1.UsageEndpointDay, len(rows))
-	for i, r := range rows {
-		out[i] = usageEndpointDay(r)
-	}
-	return out, nil
-}
-
-// usageEndpointDay derives the wire semantics from the granular
-// columns: requests = every non-429 outcome (ok + 4xx + 5xx),
-// billable = ok + 4xx — the classes middleware.billableClass lets into
-// the MonthlyQuota counter, so it equals the legacy per-day total —
-// errors = 4xx (excl. 429) + 5xx, throttled = 429s.
-func usageEndpointDay(r timescale.UsageDailyRow) v1.UsageEndpointDay {
-	return v1.UsageEndpointDay{
-		Date:      r.Day,
-		Endpoint:  r.Endpoint,
-		Requests:  r.OK + r.ClientErrors + r.ServerErrors,
-		Billable:  r.OK + r.ClientErrors,
-		Errors:    r.ClientErrors + r.ServerErrors,
-		Throttled: r.Throttled,
-	}
-}
-
 // sessionPeekerAdapter bridges dashboardauth.SessionFromContext
 // to v1.SessionPeeker so v1's /v1/account/me handler can read
 // the magic-link session without importing dashboardauth.
@@ -4271,37 +4109,6 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 		AccountRateLimitPerMin:     sc.Account.EffectiveRateLimitPerMin(),
 		AccountMonthlyRequestQuota: sc.Account.EffectiveMonthlyQuota(),
 	}, true
-}
-
-// forexAdapter bridges the forex.Cache (raw snapshot type) to
-// v1.CurrenciesReader (wire-shape projection). The v1 package
-// can't import internal/sources/external/forex without inverting
-// the dependency direction; the adapter lives here so main.go owns
-// the conversion.
-type forexAdapter struct{ cache *forex.Cache }
-
-func newForexAdapter(c *forex.Cache) *forexAdapter { return &forexAdapter{cache: c} }
-
-func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
-	snap := a.cache.Latest()
-	if snap == nil {
-		return nil
-	}
-	rows := make([]v1.CurrencyEntry, len(snap.Currencies))
-	for i, c := range snap.Currencies {
-		rows[i] = v1.CurrencyEntry{
-			Ticker:    c.Ticker,
-			Name:      c.Name,
-			RateUSD:   c.RateUSD,
-			UpdatedAt: c.UpdateAt,
-			Source:    c.Source,
-		}
-	}
-	return &v1.CurrenciesSnapshot{
-		Currencies:  rows,
-		PublishedAt: snap.PublishedAt,
-		FetchedAt:   snap.FetchedAt,
-	}
 }
 
 // prewarmCaches keeps the heaviest read caches hot. The
@@ -5175,111 +4982,6 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 			runPass()
 		}
 	}
-}
-
-// forexQuoteWriter adapts (*timescale.Store) to forex.FXQuoteWriter and
-// forex.FXQuoteReader (the worker can't import timescale without inverting
-// the dependency direction). Translates the per-package FXQuote shape.
-type forexQuoteWriter struct{ store *timescale.Store }
-
-func (w *forexQuoteWriter) InsertFXQuoteBatch(ctx context.Context, quotes []forex.FXQuote) error {
-	if len(quotes) == 0 {
-		return nil
-	}
-	out := make([]timescale.FXQuote, len(quotes))
-	for i, q := range quotes {
-		out[i] = timescale.FXQuote{
-			Bucket:  q.Bucket,
-			Ticker:  q.Ticker,
-			RateUSD: q.RateUSD,
-			Source:  q.Source,
-		}
-	}
-	return w.store.InsertFXQuoteBatch(ctx, out)
-}
-
-// InsertFXFixingBatch adapts the store's fx_fixings append to
-// forex.FXFixingWriter; the close stays the vendor's decimal text.
-func (w *forexQuoteWriter) InsertFXFixingBatch(ctx context.Context, bars []forex.FXBar) error {
-	out := make([]timescale.FXFixing, len(bars))
-	for i, b := range bars {
-		out[i] = timescale.FXFixing{
-			Ticker: b.Ticker, Grain: b.Grain, BarStart: b.BarStart, BarEnd: b.BarEnd,
-			RateUSD: b.CloseText, Source: b.Source,
-		}
-	}
-	_, err := w.store.InsertFXFixingBatch(ctx, out)
-	return err
-}
-
-// LatestFXQuotes adapts the store's NUMERIC-text read to forex.FXQuoteReader;
-// the float parse is at the forex cache boundary, which is float end to end.
-func (w *forexQuoteWriter) LatestFXQuotes(ctx context.Context, since time.Time) ([]forex.FXQuote, error) {
-	rows, err := w.store.LatestFXQuotes(ctx, since)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]forex.FXQuote, 0, len(rows))
-	for _, q := range rows {
-		rate, err := strconv.ParseFloat(q.RateUSDText, 64)
-		if err != nil {
-			return nil, fmt.Errorf("fx_quotes %s rate_usd %q: %w", q.Ticker, q.RateUSDText, err)
-		}
-		out = append(out, forex.FXQuote{Bucket: q.Bucket, Ticker: q.Ticker, RateUSD: rate, Source: q.Source})
-	}
-	return out, nil
-}
-
-// fxHistoryReader adapts (*timescale.Store) to v1.FXHistoryReader.
-// Mirrors the writer adapter but on the read path; the v1 package's
-// FXQuotePoint deliberately omits Ticker + Source (the handler
-// already knows ticker, source is provenance not display data).
-type fxHistoryReader struct{ store *timescale.Store }
-
-func (r *fxHistoryReader) ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]v1.FXQuotePoint, error) {
-	rows, err := r.store.ListFXHistory(ctx, ticker, from, to)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]v1.FXQuotePoint, len(rows))
-	for i, q := range rows {
-		out[i] = v1.FXQuotePoint{
-			Bucket:         q.Bucket,
-			RateUSDText:    q.RateUSDText,
-			InverseUSDText: q.InverseUSDText,
-		}
-	}
-	return out, nil
-}
-
-// FXCoverageStats delegates to the underlying Store so the wrapper
-// satisfies v1.FXCoverageReader as well as v1.FXHistoryReader. The
-// /v1/diagnostics/ingestion endpoint type-asserts to FXCoverageReader
-// at request time; if this delegate is missing, the FX section of
-// the response renders as empty.
-func (r *fxHistoryReader) FXCoverageStats(ctx context.Context) (timescale.FXCoverage, error) {
-	return r.store.FXCoverageStats(ctx)
-}
-
-// CAGGCoverageStats delegates so the wrapper satisfies
-// v1.CAGGCoverageReader too. Same pattern — without the delegate,
-// the prices_1h coverage section on /v1/diagnostics/ingestion
-// renders empty.
-func (r *fxHistoryReader) CAGGCoverageStats(ctx context.Context) (timescale.CAGGCoverage, error) {
-	return r.store.CAGGCoverageStats(ctx)
-}
-
-// SourceEntryCounts delegates so the wrapper satisfies
-// v1.SourceEntryCountReader too. Same pattern as the two above —
-// and the one that bit us: without this delegate the type
-// assertion in fillIngestionEntryCounts fails closed and the
-// `entries` column on /v1/diagnostics/ingestion is silently 0 for
-// EVERY source, even though source_entry_counts (migration 0035,
-// maintained live by the indexer + seed-entry-counts) is fully
-// populated. Shipped missing in rc.55; entries read 0 on the
-// status page until this landed.
-func (r *fxHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int64, error) {
-	return r.store.SourceEntryCounts(ctx)
 }
 
 // storePriceAtReader adapts *timescale.Store to v1.PriceAtReader —
