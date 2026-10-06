@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -304,15 +305,28 @@ func TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp(t *testing.T) 
 // does to a 90-minute decompress.
 func TestExecUnderBoundedLockWait_ChargesWaitingNotWorking(t *testing.T) {
 	t.Parallel()
-	script := workThenRefused(180 * time.Millisecond)
+	// Virtual time: the work and the drains advance a fake clock instead of
+	// sleeping, so a loaded runner cannot change what is charged.
+	var elapsed atomic.Int64
+	advance := func(d time.Duration) { elapsed.Add(int64(d)) }
+	epoch := time.Unix(0, 0)
+
+	work := workThenRefused(0)
+	work[len(work)-1].advance = 180 * time.Millisecond
+	script := work
 	for range 12 {
 		script = append(script, lockRefused()...)
 	}
 	script = append(script, lockGranted()...)
-	store, _ := newScriptedStore(t, script...)
+	store, conn := newScriptedStore(t, script...)
+	conn.onAdvance = advance
+	store.lockClock = lockClock{
+		nowFn:   func() time.Time { return epoch.Add(time.Duration(elapsed.Load())) },
+		sleepFn: func(_ context.Context, d time.Duration) error { advance(d); return nil },
+	}
 
-	// 180 ms of work + 12 refusals x 20 ms of drain = 420 ms of wall time,
-	// past the 400 ms budget; the waiting alone is about 265 ms.
+	// 180 ms of work + 12 refusals x 20 ms of drain = 420 ms of virtual
+	// time, past the 400 ms budget; the waiting alone is 240 ms.
 	p := lockWaitPolicy{wait: 5 * time.Millisecond, drain: 20 * time.Millisecond, budget: 400 * time.Millisecond}
 	if err := store.execUnderBoundedLockWait(context.Background(), context.Background(), p, tradesChunkDecompress, testChunk); err != nil {
 		t.Fatalf("err = %v, want the granted attempt reached: the work time was charged to the wait budget", err)

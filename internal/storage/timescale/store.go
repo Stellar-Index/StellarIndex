@@ -22,6 +22,9 @@ import (
 type Store struct {
 	db *sql.DB
 
+	// lockClock times the bounded chunk-lock retry loop; zero is the wall clock.
+	lockClock lockClock
+
 	// usdVolumeQuoteSpec, when non-nil, lets [InsertTrade] populate
 	// `trades.usd_volume` for on-chain trades whose quote asset is
 	// on the operator's USD-pegged list. Set via

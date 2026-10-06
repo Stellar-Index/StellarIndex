@@ -52,6 +52,8 @@ type scriptedResult struct {
 	// delay holds the result back this long, as a statement that does
 	// real work before it answers.
 	delay time.Duration
+	// advance moves the conn's virtual clock instead of sleeping.
+	advance time.Duration
 }
 
 // recordedStmt is one statement the store actually issued.
@@ -77,7 +79,9 @@ func (s recordedStmt) arg(t *testing.T, n int) driver.Value {
 type scriptedConn struct {
 	script []scriptedResult
 	n      int
-	stmts  []recordedStmt
+	// onAdvance receives each result's `advance`.
+	onAdvance func(time.Duration)
+	stmts     []recordedStmt
 	// Transaction bookkeeping. Store methods that replace a rollup
 	// atomically (RefreshAssetListingRollups) have their contract IN the
 	// transaction boundary — "these four statements commit together or
@@ -126,6 +130,9 @@ func (c *scriptedConn) next(ctx context.Context, q string, args []driver.NamedVa
 	}
 	res := c.script[c.n]
 	c.n++
+	if res.advance > 0 {
+		c.onAdvance(res.advance)
+	}
 	if res.delay > 0 {
 		select {
 		case <-ctx.Done():
