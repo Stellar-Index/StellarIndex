@@ -537,7 +537,7 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 	)
 	failingPrior := priorProjection{known: true, ok: false, tip: 63_300_000}
 
-	ok, detail := projectionClaim(servedFrom, runFrom, hi, true /* this run's window is clean */, "", failingPrior)
+	ok, detail := projectionClaim(servedFrom, runFrom, hi, true /* this run's window is clean */, "", failingPrior, testScope)
 	if ok {
 		t.Fatalf("an incremental run that reconciled only [%d,%d] UPGRADED a failing verdict to complete=true without ever re-checking [%d,%d] (INV-5); detail=%q", runFrom, hi, servedFrom, runFrom-1, detail)
 	}
@@ -547,13 +547,13 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 
 	// A run that DID cover the whole served range is self-evidencing — this is
 	// the deliberate, full re-verify that clears a failing verdict.
-	if full, d := projectionClaim(servedFrom, servedFrom, hi, true, "", failingPrior); !full {
+	if full, d := projectionClaim(servedFrom, servedFrom, hi, true, "", failingPrior, testScope); !full {
 		t.Errorf("a full-scope clean run must be able to clear a failing prior verdict, got false: %s", d)
 	}
 
 	// A clean prior contiguous with this run's window may be carried forward.
 	cleanPrior := priorProjection{known: true, ok: true, tip: 63_300_000}
-	carry, carryDetail := projectionClaim(servedFrom, runFrom, hi, true, "", cleanPrior)
+	carry, carryDetail := projectionClaim(servedFrom, runFrom, hi, true, "", cleanPrior, testScope)
 	if !carry {
 		t.Errorf("a contiguous clean prior must carry the skipped prefix, got false: %s", carryDetail)
 	}
@@ -562,17 +562,17 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 	}
 
 	// No prior verdict at all → fail closed.
-	if noPrior, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{}); noPrior {
+	if noPrior, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{}, testScope); noPrior {
 		t.Errorf("a partial run with NO prior verdict must not claim the skipped prefix: %s", d)
 	}
 
 	// A stale prior leaves [prior.tip+1, runFrom-1] verified by nobody.
-	if stale, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{known: true, ok: true, tip: 62_000_000}); stale {
+	if stale, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{known: true, ok: true, tip: 62_000_000}, testScope); stale {
 		t.Errorf("a stale prior leaves an unverified band — must not claim it: %s", d)
 	}
 
 	// A mismatch found by THIS run always fails, whatever the prior said.
-	if found, d := projectionClaim(servedFrom, servedFrom, hi, false, "trades: 1 mismatched ledger(s)", priorProjection{known: true, ok: true, tip: hi}); found {
+	if found, d := projectionClaim(servedFrom, servedFrom, hi, false, "trades: 1 mismatched ledger(s)", priorProjection{known: true, ok: true, tip: hi}, testScope); found {
 		t.Errorf("a mismatch found by this run can never be laundered by a clean prior: %s", d)
 	}
 }
@@ -588,7 +588,7 @@ func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
 		servedFrom = uint32(61_500_000)
 		hi         = uint32(63_305_532)
 	)
-	ok, detail := projectionClaim(servedFrom, servedFrom, hi, true, "", priorProjection{known: true, ok: true, tip: hi})
+	ok, detail := projectionClaim(servedFrom, servedFrom, hi, true, "", priorProjection{known: true, ok: true, tip: hi}, testScope)
 	if !ok {
 		t.Fatalf("a clean full-scope run must publish true, got: %s", detail)
 	}
@@ -631,7 +631,7 @@ func TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip(t *testing.T)
 	// Exercise the actual gate a subsequent -from=tip run hits: the prior
 	// clean verdict must be rejected as stale, naming the unreconciled band.
 	runFrom := tip
-	ok, detail := projectionClaim(servedFrom, runFrom, tip, true, "", prior)
+	ok, detail := projectionClaim(servedFrom, runFrom, tip, true, "", prior, testScope)
 	if ok {
 		t.Fatalf("projectionClaim carried a prior verdict over [%d,%d], a band the prior run at watermark=%d never reconciled — false complete=true (RFC-4 class)", watermark+1, runFrom-1, watermark)
 	}
@@ -1791,7 +1791,7 @@ func passProjectionVerdict(genesis, hi uint32, expected, actual map[uint32]int, 
 	servedFrom := targetScope(servedMin, haveServedRows, genesis, 0, hi).From
 	sc := targetScope(servedMin, haveServedRows, genesis, projFrom, hi)
 	delta, detail := strictPerLedgerDelta("trades", clipCounts(expected, sc), clipCounts(actual, sc), sc.From, sc.To)
-	ok, claim := projectionClaim(servedFrom, sc.From, hi, delta == 0, detail, prior)
+	ok, claim := projectionClaim(servedFrom, sc.From, hi, delta == 0, detail, prior, testScope)
 	return ok, servedFrom, claim
 }
 
@@ -1844,7 +1844,7 @@ func TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed(t *testing.T) {
 	if verifiedFrom != sushiFirstTrade {
 		t.Errorf("projection_verified_from = %d, want %d (the served tier's own bottom edge)", verifiedFrom, sushiFirstTrade)
 	}
-	want := fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", sushiFirstTrade, sushiTip)
+	want := fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", sushiFirstTrade, sushiTip, testScope)
 	if detail != want {
 		t.Errorf("detail = %q, want %q", detail, want)
 	}
@@ -1942,7 +1942,7 @@ func TestProjectionWithoutEvidence(t *testing.T) {
 	empty := []servedFloor{{present: false}, {present: false}}
 	servedFrom := targetScope(hi, false, genesis, 0, hi).From
 	delta, runDetail := strictPerLedgerDelta("trades", map[uint32]int{}, map[uint32]int{}, servedFrom, hi)
-	projOK, _ := projectionClaim(servedFrom, servedFrom, hi, delta == 0, runDetail, priorProjection{})
+	projOK, _ := projectionClaim(servedFrom, servedFrom, hi, delta == 0, runDetail, priorProjection{}, testScope)
 	if !projOK {
 		t.Fatal("precondition: projectionClaim certifies ∅ == ∅ over the full range — the vacuous green this gate exists to refuse")
 	}
@@ -2160,5 +2160,18 @@ func TestServedAxisVerdict_DeferredNeverAboveWindow(t *testing.T) {
 	}
 	if got := servedAxisVerdict(srW, false, false, timescale.ProjectionDirtyWindow{}); got.Complete {
 		t.Errorf("a failing served claim published complete: %+v", got)
+	}
+}
+
+const testScope = "scope: reconciled 1 table(s) [t]"
+
+func TestProjectionClaim_Rule2NamesScopeNotOverclaim(t *testing.T) {
+	ok, d := projectionClaim(100, 100, 200, true, "", priorProjection{}, testScope)
+	if !ok || !strings.Contains(d, testScope) || strings.Contains(d, "the full range the served tier holds") {
+		t.Errorf("ok=%v detail=%q", ok, d)
+	}
+	_, c := projectionClaim(100, 150, 200, true, "", priorProjection{known: true, ok: true, tip: 199, verifiedFrom: 100}, testScope)
+	if !strings.HasSuffix(c, "— "+testScope) {
+		t.Errorf("carried detail lacks scope: %q", c)
 	}
 }

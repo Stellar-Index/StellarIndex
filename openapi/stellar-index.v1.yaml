@@ -5552,6 +5552,12 @@ paths:
         run's own reconcile began. `flags.stale` is raised when a clean
         claim's evidence is older than about ten days, or unknown.
 
+        **What a clean projection claim covers.** Only the tables a
+        verdict's `detail` lists after `scope: reconciled`. Tables listed
+        after `not reconciled` (for example Aquarius' fan-out tables) are
+        watched by the density gap-detector, not by the reconcile, so a
+        clean projection claim says nothing about them.
+
         **`sources` holds sources only.** The ADR-0033 recognition audit
         also produces a SYSTEM-wide census — event shapes in the lake on
         contracts no indexed source owns, i.e. Soroban protocols we have

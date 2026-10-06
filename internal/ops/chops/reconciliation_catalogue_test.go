@@ -740,3 +740,28 @@ func TestReconTargetCountFilter_PriceableOnlyForSDEX(t *testing.T) {
 		t.Fatal("catalogue has no sdex target")
 	}
 }
+
+func TestProjectionScope_NamesWaivers(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	seen := map[string]string{}
+	for _, src := range cat {
+		sc := src.projectionScope()
+		seen[src.name] = sc
+		if strings.Contains(sc, "; ") {
+			t.Errorf("%s scope contains the detail separator: %q", src.name, sc)
+		}
+	}
+	for _, w := range []string{"aquarius_liquidity", "aquarius_reserves", "aquarius_reserves_sync", "(fan-out)"} {
+		if sc, ok := seen["aquarius"]; !ok || !strings.Contains(sc, "not reconciled: ") || !strings.Contains(sc, w) {
+			t.Errorf("aquarius scope %q missing %q", sc, w)
+		}
+	}
+	b := seen["blend_emitter"]
+	if !strings.Contains(b, "reconciled 1 table(s) [blend_emitter_events[event_kind <> 'drop']]") ||
+		!strings.Contains(b, "not reconciled: blend_emitter_events[event_kind = 'drop'] (fan-out)") {
+		t.Errorf("blend_emitter scope = %q", b)
+	}
+}

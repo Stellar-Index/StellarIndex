@@ -37,7 +37,7 @@ func TestScopesFromServed_UnprojectedPrefixFailsProjection(t *testing.T) {
 	if delta != 2 {
 		t.Fatalf("Σ|Δ| = %d, want 2 (the prefix rows at ledger 51000000); detail=%q", delta, detail)
 	}
-	if ok, claim := projectionClaim(servedFrom, runFrom, bandTip, delta == 0, detail, priorProjection{}); ok {
+	if ok, claim := projectionClaim(servedFrom, runFrom, bandTip, delta == 0, detail, priorProjection{}, testScope); ok {
 		t.Fatalf("projection_ok=true over an unprojected prefix: %s", claim)
 	}
 }
@@ -84,7 +84,7 @@ func TestFloorsToRecord_GenesisScopeBanksServedMin(t *testing.T) {
 func TestProjectionClaim_RefusesCarryBelowPriorVerifiedFrom(t *testing.T) {
 	runFrom := bandTip - 1000
 	narrow := priorProjection{known: true, ok: true, tip: runFrom - 1, verifiedFrom: bandServedMin}
-	ok, detail := projectionClaim(bandGenesis, runFrom, bandTip, true, "", narrow)
+	ok, detail := projectionClaim(bandGenesis, runFrom, bandTip, true, "", narrow, testScope)
 	if ok {
 		t.Fatalf("carried a prior verified only from %d over [%d,%d]: %s", bandServedMin, bandGenesis, bandServedMin-1, detail)
 	}
@@ -94,7 +94,7 @@ func TestProjectionClaim_RefusesCarryBelowPriorVerifiedFrom(t *testing.T) {
 
 	wide := narrow
 	wide.verifiedFrom = bandGenesis
-	if ok, d := projectionClaim(bandGenesis, runFrom, bandTip, true, "", wide); !ok {
+	if ok, d := projectionClaim(bandGenesis, runFrom, bandTip, true, "", wide, testScope); !ok {
 		t.Errorf("a prior verified from genesis must still carry: %s", d)
 	}
 }
