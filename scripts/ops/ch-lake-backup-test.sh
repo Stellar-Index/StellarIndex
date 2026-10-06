@@ -336,6 +336,32 @@ MOCK_HEAVY_HELD=1 run; rc=$?
 expect_rc 75 "a second deferred run exits 75"
 if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a deferred run keeps the previous last-success stamp"; else bad "a deferred run keeps the previous last-success stamp"; fi
 if grep -q "deferring" "$TMP/stderr"; then ok "the deferral is logged"; else bad "the deferral is logged"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+sleep 1
+MOCK_RUNNING=op-9 run; rc=$?
+expect_rc 1 "a run refused because a backup is already running exits 1"
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "an already-running refusal keeps the previous last-success stamp"; else bad "an already-running refusal keeps the previous last-success stamp"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+{ cat "$PROM"; echo "$before"; } > "$PROM.dup" && mv "$PROM.dup" "$PROM"
+MOCK_HEAVY_HELD=1 run; rc=$?
+if [[ "$(grep -c '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" -eq 1 && "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before"  ]] && ! grep -qx '[0-9]*' "$PROM"; then ok "a duplicated success line is re-emitted as one value"; else bad "a duplicated success line is re-emitted as one value"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+holder=""
+if command -v flock >/dev/null 2>&1; then
+  ( exec 9>"$TMP/state/lock"; flock -n 9 || exit 1; sleep 30 ) &
+  holder=$!
+fi
+sleep 1
+MOCK_LOCK_HELD=1 run; rc=$?
+[[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
+if [[ "$rc" -eq 0 ]]; then bad "a run-lock overlap exits non-zero (the lock was not held)"; fi
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a run-lock overlap keeps the previous last-success stamp"; else bad "a run-lock overlap keeps the previous last-success stamp"; fi
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"

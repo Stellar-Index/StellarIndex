@@ -84,7 +84,7 @@ write_metrics() {
   # A deferred run did no backup, so it re-emits the last real success rather
   # than dropping it: the stale alert must age from that, not from the deferral.
   if [[ "${1:-}" == keep_success && -r "$out" ]]; then
-    prev_success="$(sed -n 's/^stellarindex_ch_lake_backup_last_success_unix \([0-9][0-9]*\)$/\1/p' "$out")"
+    prev_success="$(sed -n 's/^stellarindex_ch_lake_backup_last_success_unix \([0-9][0-9]*\)$/\1/p' "$out" | tail -n1)"
   fi
   # The chain file is written only after a confirmed full, so its first
   # line names the restorable full even on a run that failed.
@@ -263,7 +263,7 @@ main() {
   exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
   if ! flock -n 9; then
     note "another ch-lake-backup run holds $STATE_DIR/lock — not starting"
-    write_metrics
+    write_metrics keep_success
     return 1
   fi
   # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
@@ -291,7 +291,7 @@ main() {
   fi
   if [[ -n "$running" ]]; then
     note "a backup to $BACKUP_DISK is already running — not starting a second"
-    write_metrics
+    write_metrics keep_success
     return 1
   fi
   plan="$(plan_next)"

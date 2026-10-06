@@ -302,7 +302,7 @@ func TestCandleNumberToScaled(t *testing.T) {
 			t.Errorf("candleNumberToScaled(%q) = %s, want %s", tc.in, got, tc.want)
 		}
 	}
-	for _, bad := range []string{"1e999999999", "1e-999999999", "abc", ""} {
+	for _, bad := range []string{"1e999999999", "1e-999999999", "1e900000", "1e-900000", "1e41", "abc", ""} {
 		if _, err := candleNumberToScaled(bad); err == nil {
 			t.Errorf("candleNumberToScaled(%q) = nil error, want refusal", bad)
 		}
