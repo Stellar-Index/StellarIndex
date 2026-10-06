@@ -190,6 +190,22 @@ expect "configs/alertmanager (not ansible/prometheus) does NOT trigger the ansib
 run ansible "deploy/clickhouse/tier1_schema.sql"
 expect "deploy/ outside monitoring/ does NOT trigger the ansible class" 1
 
+# ── Class matrix: a docs-only, web-only, ansible-only and mixed diff
+# each trigger exactly the classes whose jobs can be affected ─────────
+
+matrix() { # <label> <expected go,integration,web,ansible as 0/1 exit codes> <files...>
+  local label="$1" eg="$2" ei="$3" ew="$4" ea="$5"; shift 5
+  run go "$@"; expect "$label: go" "$eg"
+  run integration "$@"; expect "$label: integration" "$ei"
+  run web "$@"; expect "$label: web" "$ew"
+  run ansible "$@"; expect "$label: ansible" "$ea"
+}
+matrix "docs-only" 1 1 1 1 docs/architecture/x.md README.md
+matrix "web-only" 1 1 0 1 web/explorer/src/app/page.tsx
+matrix "ansible-only" 1 1 1 0 configs/ansible/roles/a/tasks/main.yml
+matrix "docs + go (mixed) must run go and integration" 0 0 1 1 docs/x.md internal/api/v1/h.go
+matrix "openapi runs go and web, not integration" 0 1 0 1 openapi/stellar-index.v1.yaml
+
 # ── stdin path (the real `git diff --name-only | check-change-class.sh`
 # call shape used in ci.yml) ─────────────────────────────────────────
 
@@ -212,7 +228,7 @@ expect "empty diff (zero files) → usage error, never read as 'nothing changed,
 
 echo
 echo "check-change-class-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 38 ]; then
+if [ "$asserts" -lt 58 ]; then
   echo "check-change-class-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi

@@ -589,6 +589,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [preflight]
+    # Job-level skip (not step-level): the aggregate `integration-test` below is
+    # the required check and always runs, so skipping the six shard runners on a
+    # non-integration diff saves six runner slots without leaving a skipped
+    # required check.
+    if: needs.preflight.outputs.integration == 'true'
     # §B: only when the diff touches the preflight `integration` class —
     # internal/storage|pipeline|sources|api, internal/ops/archive,
     # cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/,
@@ -661,10 +666,6 @@ jobs:
         # non-sharded INT_TEST_PKGS packages (seconds).
         if: needs.preflight.outputs.integration == 'true'
         run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 6
-      - name: no in-scope change (path filter) — nothing to run
-        if: needs.preflight.outputs.integration != 'true'
-        run: |
-          echo "integration-test-shard: this diff touches none of the preflight integration class (internal/**, cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/, test/harness/, go.mod) -- shard skipped its Docker suite, reporting success."
 
   integration-test:
     # Aggregate of the shard matrix. This is the job whose NAME branch
@@ -677,14 +678,20 @@ jobs:
     name: integration tests (Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [integration-test-shard]
+    needs: [preflight, integration-test-shard]
     if: always()
     steps:
       - name: every shard succeeded
         env:
           SHARDS_RESULT: ${{ needs.integration-test-shard.result }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          INTEGRATION_CLASS: ${{ needs.preflight.outputs.integration }}
         run: |
-          echo "integration-test-shard matrix result: ${SHARDS_RESULT}"
+          echo "preflight=${PREFLIGHT_RESULT} integration-class=${INTEGRATION_CLASS} shards=${SHARDS_RESULT}"
+          if [ "${PREFLIGHT_RESULT}" = "success" ] && [ "${INTEGRATION_CLASS}" != "true" ] && [ "${SHARDS_RESULT}" = "skipped" ]; then
+            echo "no integration-class change: shards skipped by design"
+            exit 0
+          fi
           if [ "${SHARDS_RESULT}" != "success" ]; then
             echo "::error::integration shards did not all succeed (result=${SHARDS_RESULT})"
             exit 1
