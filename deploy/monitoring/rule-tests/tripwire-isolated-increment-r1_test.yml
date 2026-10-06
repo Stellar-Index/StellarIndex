@@ -41,7 +41,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors"
               summary: "Persist drops on defindex/defindex_flow_vault (any rate)"
               description: |
                 A trade, soroswap-router or defindex persist write failed for
@@ -55,7 +55,7 @@ tests:
                 one through the dispatcher drain was dropped. Check Timescale
                 health and the poison-row logs.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
       - eval_time: 15m
         alertname: stellarindex_ingestion_persist_drop
         exp_alerts: *persist_drop_alert
@@ -147,7 +147,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure"
               summary: "External trade(s) permanently dropped on binance — buffer overflow or data fault during backpressure"
               description: |
                 stellarindex_source_insert_errors_total{source="binance",kind="dropped"}
@@ -161,7 +161,7 @@ tests:
                 the coarse stellarindex_ingestion_insert_errors alert only
                 trips above 0.1/s fleet-wide and can miss a slow trickle.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
       - eval_time: 15m
         alertname: stellarindex_ingestion_trade_buffer_drop
         exp_alerts: *trade_buffer_drop_alert
@@ -213,7 +213,7 @@ tests:
               team: stellarindex
               component: ingestion
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors"
               summary: "trustline_observation persist errors on trustlines (any rate)"
               description: |
                 A trustline_observation insert failed for trustlines
@@ -225,7 +225,7 @@ tests:
                 0.1/s fleet-wide and misses this class's low, sustained rate
                 (INV-0786). Check Timescale health and the poison-row logs.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
       - eval_time: 15m
         alertname: stellarindex_ingestion_trustline_observation_drop
         exp_alerts: *trustline_observation_drop_alert

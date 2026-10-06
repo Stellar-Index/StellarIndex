@@ -70,13 +70,13 @@ Fix:
 1. Exporter only: `systemctl restart prometheus-node-exporter`, `curl -s localhost:9100/metrics | head -1`, wait one 15 s scrape for `up` = 1.
 2. Host down: r1 has no failover; API, indexer, aggregator, galexie, ClickHouse, Postgres, Redis, MinIO, Prometheus and Alertmanager are all down and alerting is dark. Treat as SEV-1 manually: post in Discord #stellarindex-pages, update the status page (`sev-status-page-update.md`), Robot Reset → KVM. If nftables locked you out: `bootstrap-archival-node.md` §"Firewall locked us out".
 3. After return: `zpool status -x` shows `data` ONLINE (else zfs-degraded section) and `zfs list -o name,mountpoint,mounted` shows every `data/*` mounted; `systemctl --failed` empty; `systemctl is-active clickhouse-server postgresql@15-main redis-server galexie minio caddy cap67-movements stellarindex-indexer stellarindex-aggregator stellarindex-api prometheus-node-exporter prometheus` and `ss -ltnp | grep :9093` (Alertmanager). Caddy (:80/:443 → loopback API :3000, `tasks/19-caddy.yml`) returns with the host.
-4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `galexie-archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink-drops.md`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
+4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `galexie-archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
 5. Textfile-driven alerts (`sla-probe-stale.md`, `supply-snapshot-stale.md`, `archive-completeness.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
 6. Verify: `up{job="node_exporter"}` = 1, scrape_failing clears, deadmansswitch resumed, Healthchecks.io green.
 
 RCA: Robot KVM / status page and Hetzner network status for FSN1; `journalctl -b -1`; `smartctl` / `nvme smart-log` on all four NVMes; `dmesg | grep -i oom`.
 
-False positives: node_exporter OOM-killed on a starved box (real problem is memory, see memory section); Prometheus itself sick: if `up == 0` for node_exporter AND the other localhost jobs (`stellarindex-api`/`-indexer`/`-aggregator`, `caddy`, `galexie`) simultaneously, suspect Prometheus (restart, `/` full `node-root-disk-full.md`, `prometheus-tsdb-corruption.md`); legacy unit looking dead is correct.
+False positives: node_exporter OOM-killed on a starved box (real problem is memory, see memory section); Prometheus itself sick: if `up == 0` for node_exporter AND the other localhost jobs (`stellarindex-api`/`-indexer`/`-aggregator`, `caddy`, `galexie`) simultaneously, suspect Prometheus (restart, `/` full `node-root-disk.md#stellarindex_node_root_disk_full`, `prometheus-tsdb-corruption.md`); legacy unit looking dead is correct.
 
 ## stellarindex_host_cpu_high
 
@@ -89,7 +89,7 @@ ssh root@136.243.90.96 'systemd-cgtop --order=cpu --iterations=2'
 ssh root@136.243.90.96 'mpstat 1 5'     # user vs system vs iowait vs softirq; %steal is structurally 0 on this dedicated box
 ```
 
-Causes: one pegged process (hot path, unbounded goroutines, bad SQL plan); galexie captive-core catchup (CPU-bound; resolves in 30–120 min; it has no `/info` endpoint, so end-state is fresh objects in `galexie-live`; `core-lag.md` / `rpc-lag.md` are inert on r1); Postgres plan regression (`pg_stat_statements` high `mean_exec_time`); pgBackRest `--process-max=4` or Timescale compression (CPU-heavy on purpose); an unwrapped heavy one-shot (shared context). `pg_repack` and `pg_hint_plan` are not installed.
+Causes: one pegged process (hot path, unbounded goroutines, bad SQL plan); galexie captive-core catchup (CPU-bound; resolves in 30–120 min; it has no `/info` endpoint, so end-state is fresh objects in `galexie-live`; `stellar-node.md#stellarindex_stellar_core_ledger_age` / `stellar-node.md#stellarindex_stellar_rpc_lag` are inert on r1); Postgres plan regression (`pg_stat_statements` high `mean_exec_time`); pgBackRest `--process-max=4` or Timescale compression (CPU-heavy on purpose); an unwrapped heavy one-shot (shared context). `pg_repack` and `pg_hint_plan` are not installed.
 
 Fix: identify consumer; legitimate load → scale up, bug → incident; catchup → wait; plan regression → `runuser -u postgres -- psql -d stellarindex -c 'ANALYZE <table>'`, then rewrite the query; backup/compression running for hours → lower `--process-max`. Verify CPU < 70 % sustained and alert clears. Related: `pg-conns-saturated.md`, `all-ingestion-down.md`.
 
@@ -252,7 +252,7 @@ ssh root@136.243.90.96 'sensors | grep -E "Composite|fan"'         # all drives 
 
 Causes: chassis airflow (clogged filter, failed fan; several drives at once); ambient DC temperature (all drives climb together); single drive (loose heatsink, poor slot); heavy work (scrub, resilver, backup, compaction; expected, throttle does its job).
 
-Fix: all vs one drive; reduce load (pause pgBackRest, cancel scrubs); Hetzner support ticket for remote hands (fans/filters); ambient cause: escalate to Hetzner, nothing to do at 3 AM. Verify < 65 °C sustained 15 min and write throughput at baseline. False positives: brief spikes in scrub/resilver; sensor glitch (one drive 85 °C beside 45 °C neighbours; cross-check `smartctl -x`). Related: `db-disk-full.md`, `compression-lag.md`.
+Fix: all vs one drive; reduce load (pause pgBackRest, cancel scrubs); Hetzner support ticket for remote hands (fans/filters); ambient cause: escalate to Hetzner, nothing to do at 3 AM. Verify < 65 °C sustained 15 min and write throughput at baseline. False positives: brief spikes in scrub/resilver; sensor glitch (one drive 85 °C beside 45 °C neighbours; cross-check `smartctl -x`). Related: `db-disk-full.md`, `timescale.md#stellarindex_timescale_compression_lag`.
 
 ## stellarindex_md_array_degraded
 
@@ -342,7 +342,7 @@ ssh root@136.243.90.96 'journalctl -u stellarindex-api -u stellarindex-indexer -
 ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=stellarindex_worker_panics_total" | python3 -m json.tool | grep -E "worker|value"'
 ```
 
-Fix: `Recover` does not restart the worker: `systemctl restart stellarindex-<binary>`. An indexer restart resets the ledgerstream cursor: confirm it advances (`cursor-stuck.md`). Same worker panics again on the same input = poison input: stop the unit rather than crash-loop it, and escalate. A panic is always a code defect (unvalidated index, nil deref, decoder fed attacker-shaped bytes): file it with the journal stack; a worker that "only panicked once" is off until the next deploy. No benign false positives. Related: `dependency-down.md`.
+Fix: `Recover` does not restart the worker: `systemctl restart stellarindex-<binary>`. An indexer restart resets the ledgerstream cursor: confirm it advances (`ledger-ingest.md#stellarindex_ingestion_cursor_stuck`). Same worker panics again on the same input = poison input: stop the unit rather than crash-loop it, and escalate. A panic is always a code defect (unvalidated index, nil deref, decoder fed attacker-shaped bytes): file it with the journal stack; a worker that "only panicked once" is off until the next deploy. No benign false positives. Related: `dependency-down.md`.
 
 ## Backup (pgBackRest) shared context
 

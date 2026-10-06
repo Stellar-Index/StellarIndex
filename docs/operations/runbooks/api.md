@@ -116,7 +116,7 @@ SLA: availability budget (99.9 % non-5xx over 30 d) is the published target. Fas
 
 **Trigger.** `sum(rate(http_requests_total{job="stellarindex-api",status=~"5.."}[5m])) / sum(rate(http_requests_total{job="stellarindex-api"}[5m])) > 0.05`, `for: 2m`, P1 (`severity: page`). Rules: `configs/prometheus/rules.r1/api.yml` + `configs/prometheus/rules.r1/slo.yml` (r1, `job="stellarindex-api"`, loaded from `/etc/prometheus/rules.r1/*.yml`); multi-host templates `deploy/monitoring/rules/{api,slo}.yml`. Sibling: [stellarindex_api_error_rate_high](#stellarindex_api_error_rate_high) (>1%, P3).
 
-This section also serves the SLO availability burn alerts `stellarindex_slo_availability_burn_{fast,medium,slow}` (P1 fast/medium, P3 slow); their `runbook_url` lands here. Per-tier detail: [slo-availability-burn-fast](slo-availability-burn-fast.md), [slo-availability-burn-medium](slo-availability-burn-medium.md), [slo-availability-burn-slow](slo-availability-burn-slow.md).
+This section also serves the SLO availability burn alerts `stellarindex_slo_availability_burn_{fast,medium,slow}` (P1 fast/medium, P3 slow); their `runbook_url` lands here. Per-tier detail: [slo-availability-burn-fast](slo.md#stellarindex_slo_availability_burn_fast), [slo-availability-burn-medium](slo.md#stellarindex_slo_availability_burn_medium), [slo-availability-burn-slow](slo.md#stellarindex_slo_availability_burn_slow).
 
 **Impact.** Clients see request failures. Affects the availability SLA (99.9% non-5xx over 30 d) and p95/p99 latency (5xx adds timeout retries). MTTR 5-15 min for a bad-deploy revert, 30-60 min for a latent-bug forward fix. Concurrent alerts likely: `stellarindex_api_latency_p95_high`, possibly `stellarindex_api_price_stale` if Timescale is the cause.
 
@@ -350,7 +350,7 @@ Caddy's active health check probes `/v1/healthz` only (`health_uri /v1/healthz`,
 
 **Trigger.** `histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m]))) > 0.5`, `for: 10m` (not 2m: the p95 is already 5m-windowed), `severity: ticket`. Rule: `configs/prometheus/rules.r1/api.yml` (group `stellarindex.api`, the file r1 loads); multi-host twin `deploy/monitoring/rules/api.yml`. Sibling: [stellarindex_api_latency_p99_high](#stellarindex_api_latency_p99_high) (p99 > 2 s).
 
-This section also serves `stellarindex_slo_latency_burn_{fast,medium,slow}` (`configs/prometheus/rules.r1/slo.yml`, group `stellarindex.slo.latency`; twin `deploy/monitoring/rules/slo.yml`). Per-tier detail: [slo-latency-burn-fast](slo-latency-burn-fast.md), [slo-latency-burn-medium](slo-latency-burn-medium.md), [slo-latency-burn-slow](slo-latency-burn-slow.md). Severity: fast = `page` (`for: 2m`), medium = `page` (`for: 5m`), slow = `ticket` (`for: 30m`). Every burn tier carries a min-signal guard `stellarindex:api_slow_request_count:1h > 5` (absolute count of bad, slow-or-error, requests over the trailing hour) so one cold-cache outlier in a near-empty window cannot trip the budget; it does not depend on total traffic volume.
+This section also serves `stellarindex_slo_latency_burn_{fast,medium,slow}` (`configs/prometheus/rules.r1/slo.yml`, group `stellarindex.slo.latency`; twin `deploy/monitoring/rules/slo.yml`). Per-tier detail: [slo-latency-burn-fast](slo.md#stellarindex_slo_latency_burn_fast), [slo-latency-burn-medium](slo.md#stellarindex_slo_latency_burn_medium), [slo-latency-burn-slow](slo.md#stellarindex_slo_latency_burn_slow). Severity: fast = `page` (`for: 2m`), medium = `page` (`for: 5m`), slow = `ticket` (`for: 30m`). Every burn tier carries a min-signal guard `stellarindex:api_slow_request_count:1h > 5` (absolute count of bad, slow-or-error, requests over the trailing hour) so one cold-cache outlier in a near-empty window cannot trip the budget; it does not depend on total traffic volume.
 
 **Burn vs direct.** Direct alerts are an immediate "something changed" but noisy (one bad bucket can trip them). Burn alerts need both a short and a long window to agree: fast (5m AND 1h, 14.4x) exhausts budget in hours, medium (30m AND 6h, 6x) in days, slow (6h AND 24h, 1x) in about weeks. A `_burn_fast` page uses the same diagnosis but is SEV-1-worthy burn: aim for a real fix, not tolerating the symptom until the alert clears.
 
@@ -385,7 +385,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 
 1. Redis cache-miss storm: a popular asset's price key is evicted/TTL'd, every `/v1/price?asset=X` becomes a Timescale query, Timescale saturates, pileup. Signal: `stellarindex_api_cache_ops_total{result="miss"}` rate jumps per `(cache, op)` (see [stellarindex_api_cache_miss_rate_high](#stellarindex_api_cache_miss_rate_high)); Redis `keyspace_misses` / `evicted_keys` climbing in `INFO stats`. Fix: warm the cache or scale Redis memory; `cache.md#stellarindex_redis_memory_saturated`.
 2. Timescale contention: a long-running query (manual backfill, an unbounded exploratory `SELECT`) holds locks or fills the pool. Signal: `pg_stat_activity` shows a query older than 30 s. Fix: `SELECT pg_cancel_backend(pid)` on the offender after confirming it is not production traffic.
-3. CAGG not refreshed: `/v1/vwap` / `/v1/twap` fall back to raw-trades aggregation (O(trades), seconds). Signal: `stellarindex_timescale_cagg_stale` usually fires too. Fix: refresh the CAGG manually; `cagg-stale.md`.
+3. CAGG not refreshed: `/v1/vwap` / `/v1/twap` fall back to raw-trades aggregation (O(trades), seconds). Signal: `stellarindex_timescale_cagg_stale` usually fires too. Fix: refresh the CAGG manually; `timescale.md#stellarindex_timescale_cagg_stale`.
 4. Noisy neighbor on the host pegging CPU or IO. Signal: `stellarindex_host_cpu_high` on the same instance. Fix: scale horizontally or move to a dedicated node.
 5. GC pressure from a runaway allocation pattern (code issue). Signal: `go_gc_duration_seconds` quantile rises, latency tracks GC pauses. Fix: profile + code PR.
 
@@ -404,7 +404,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 - Large `limit=500` `/v1/markets` scan after a fresh deploy with cold Timescale buffers; warms within a minute.
 - `/v1/markets` baseline above 200 ms: it does `GROUP BY base_asset, quote_asset` across the 14-day chunk window of the trades hypertable. Baseline about 540 ms cold / 50 ms warm; during a concurrent heavy backfill cold balloons to about 7 s and warm settles about 400 ms (backfill writes evict recent chunks from shared buffers; columnstore-compress policy lags). Per-route SLA carve-out p95 <= 300 ms / p99 <= 1 s; during backfill it is exceeded and the global p95 > 500 ms alert may fire on the first request after a deploy or buffer churn. Transient load artefact, not a route regression; warm returns to about 50 ms once the backfill completes.
 
-**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `cache.md#stellarindex_redis_memory_saturated`, `cagg-stale.md`, `pg-conns-saturated.md`.
+**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `cache.md#stellarindex_redis_memory_saturated`, `timescale.md#stellarindex_timescale_cagg_stale`, `pg-conns-saturated.md`.
 
 ## stellarindex_api_latency_p99_high
 
@@ -501,8 +501,8 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 **Typical causes.**
 
-1. Source quoting the asset is stopped: no new trade, aggregator has nothing fresh, API serves the last trade with aging `observed_at`. Signal: `stellarindex_source_last_event_unix{source=<X>}` frozen; `stellarindex_ingestion_source_stopped` may fire (it uses `for: 15m`, so it can lag this alert). Also compare `stellarindex_source_last_insert_unix` (both on the indexer at `127.0.0.1:9464`): events advancing while inserts are frozen is the stuck-cursor / duplicate-flood signature, see `cursor-stuck.md`, `ingestion-duplicate-flood.md` and the `stellarindex_serving_insert_frozen` alert. Fix: `source-stopped.md`.
-2. Aggregator running but not writing CAGGs / hot cache (CAGG refresh jobs failing: schedule misfire, SQL error in the window function). Signal: `stellarindex_timescale_cagg_stale`. Fix: `cagg-stale.md`.
+1. Source quoting the asset is stopped: no new trade, aggregator has nothing fresh, API serves the last trade with aging `observed_at`. Signal: `stellarindex_source_last_event_unix{source=<X>}` frozen; `stellarindex_ingestion_source_stopped` may fire (it uses `for: 15m`, so it can lag this alert). Also compare `stellarindex_source_last_insert_unix` (both on the indexer at `127.0.0.1:9464`): events advancing while inserts are frozen is the stuck-cursor / duplicate-flood signature, see `ledger-ingest.md#stellarindex_ingestion_cursor_stuck`, `ingestion-sink.md#stellarindex_ingestion_duplicate_flood` and the `stellarindex_serving_insert_frozen` alert. Fix: `source-stopped.md`.
+2. Aggregator running but not writing CAGGs / hot cache (CAGG refresh jobs failing: schedule misfire, SQL error in the window function). Signal: `stellarindex_timescale_cagg_stale`. Fix: `timescale.md#stellarindex_timescale_cagg_stale`.
 3. Aggregator running but the pair has had no VWAP write for over 120 s. The gauge is emitted at the end of every tick for every configured pair (`internal/aggregate/orchestrator/orchestrator.go` `emitStalenessGauges`, reset on each VWAP cache write); not request-driven, no `change()` in the rule, so a reading > 120 s means the pair genuinely was not published. Causes: pair not clearing the `min_usd_volume` publication gate (`$10k`/window in `/etc/stellarindex.toml`), empty windows, outlier filtering dropping everything, anomaly freeze engaged. Signal: `stellarindex_aggregator_empty_windows_total` climbing; freeze alerts (`anomaly.md#stellarindex_anomaly_freeze_engaged`); `external-pollers.md` for fiat legs.
 4. Pair that no longer trades on-chain (long-tail asset, last trade days ago): data reality, not a bug. Only configured pair bases carry this gauge, so long-tail classic assets can never fire this alert; their staleness shows via the API `stale` flag and the sla-probe / served-value-drift alerts. Consider de-listing or flagging `stale=true`.
 5. Binary version skew: aggregator and API/indexer on different builds after a partial deploy (`stellarindex_binary_version_skew`). Signal: `-version` of `/usr/local/bin/stellarindex-aggregator` differs from `/usr/local/bin/stellarindex-api`. Fix: `binary-version-skew.md`.
@@ -511,7 +511,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 
 1. No `asset` label (absent branch): `aggregator.md#stellarindex_aggregator_silent`.
 2. Confirm which sources quote the asset and which stopped (diagnosis above).
-3. One source dead: `source-stopped.md`. Aggregation pipeline problem: `cagg-stale.md`.
+3. One source dead: `source-stopped.md`. Aggregation pipeline problem: `timescale.md#stellarindex_timescale_cagg_stale`.
 4. Genuinely no on-chain activity: decide with product whether to de-list or keep the stale number with `stale=true`.
 5. Verify: `stellarindex_price_staleness_seconds{asset=<X>,quote=<Q>}` back under 120 s and the alert clears (`for: 5m` lets you confirm it is not a flap).
 
@@ -520,9 +520,9 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 **False positives.**
 
 - Aggregator restart: `lastWriteAt` resets so every pair reports about 0 then climbs; a newly configured pair is stamped "just observed" on first sighting. If no VWAP write lands within 2 min of restart, the alert is real.
-- Chain halt: if Stellar mainnet stops producing ledgers every asset goes stale at once; correlates with `core-lag.md` / `rpc-lag.md`, which are the real alerts.
+- Chain halt: if Stellar mainnet stops producing ledgers every asset goes stale at once; correlates with `stellar-node.md#stellarindex_stellar_core_ledger_age` / `stellar-node.md#stellarindex_stellar_rpc_lag`, which are the real alerts.
 
-**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `cagg-stale.md`; `divergence.md#stellarindex_oracle_stale`; `sla-probe-freshness-breach.md` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
+**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `timescale.md#stellarindex_timescale_cagg_stale`; `divergence.md#stellarindex_oracle_stale`; `sla-probe-freshness-breach.md` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
 
 ## stellarindex_api_price_stream_not_delivering
 

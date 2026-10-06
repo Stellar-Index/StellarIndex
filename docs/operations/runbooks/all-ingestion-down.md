@@ -102,7 +102,7 @@ Route by the result:
   network is fine but galexie has stalled, capture logs and
   restart galexie.
 - *Future-tense:* if a deployment routes through stellar-rpc
-  rather than direct-MinIO ingest, [rpc-lag](rpc-lag.md) covers
+  rather than direct-MinIO ingest, [rpc-lag](stellar-node.md#stellarindex_stellar_rpc_lag) covers
   that path. r1 does not run stellar-rpc as of 2026-04-23.
 
 ### B. Timescale is the problem
@@ -200,7 +200,7 @@ Gather:
 Patterns observed:
 
 1. **Shared upstream down** — Galexie/MinIO live export stalled (captive-core hang, MinIO down, or bucket credentials). Mitigation: restart galexie / minio per §A; `stellarindex-ops rpc-probe` against a public endpoint tells you whether the network itself is closing ledgers.
-2. **Shared storage backpressure** — Timescale insert latency spiked; the indexer's `events` channel filled and `ProcessLedger` blocked on the send. This backpressure is by design: the indexer's `ledgerstream` cursor advances once a ledger's events are enqueued (ADR-0041), so dropping queued on-chain events to keep moving would leave holes that the next restart resumes past (cursor+1) and that only the completeness verdict / gap detector would surface. Mitigation: fix the Postgres side (insert latency, lock waits in `pg_stat_activity`) per [trade-insert-backpressure](trade-insert-backpressure.md). Only external CEX/FX trades (no cursor, vendor-refillable) drop-oldest, from a bounded retry buffer: watch `stellarindex_trade_insert_buffer_depth` and `stellarindex_source_insert_errors_total{kind="dropped"}` — that counter also counts on-chain rows isolated as permanent data faults and events abandoned at shutdown, so split it by `source` before reading a non-zero value as CEX/FX loss.
+2. **Shared storage backpressure** — Timescale insert latency spiked; the indexer's `events` channel filled and `ProcessLedger` blocked on the send. This backpressure is by design: the indexer's `ledgerstream` cursor advances once a ledger's events are enqueued (ADR-0041), so dropping queued on-chain events to keep moving would leave holes that the next restart resumes past (cursor+1) and that only the completeness verdict / gap detector would surface. Mitigation: fix the Postgres side (insert latency, lock waits in `pg_stat_activity`) per [trade-insert-backpressure](ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure). Only external CEX/FX trades (no cursor, vendor-refillable) drop-oldest, from a bounded retry buffer: watch `stellarindex_trade_insert_buffer_depth` and `stellarindex_source_insert_errors_total{kind="dropped"}` — that counter also counts on-chain rows isolated as permanent data faults and events abandoned at shutdown, so split it by `source` before reading a non-zero value as CEX/FX loss.
 3. **Config-change caused source registry to be empty** — `ingestion.enabled_sources` accidentally set to `[]`. Note: `internal/config/validate.go` rejects empty *entries* in `enabled_sources` and unknown names, but an empty list `[]` is still accepted — check the effective config with `stellarindex-indexer -config /etc/stellarindex.toml` startup logs.
 4. **Panic in a source** — bad decoder blows up one goroutine + the watch goroutine waits forever. Mitigation: defer-recover in the dispatcher / pipeline stages; the unit's `Restart=on-failure` covers a crash (the per-source orchestrator was retired 2026-04-23).
 
@@ -211,13 +211,13 @@ Patterns observed:
 
 ## Related
 
-- [rpc-lag](rpc-lag.md) — only for deployments that still route through stellar-rpc (not r1).
+- [rpc-lag](stellar-node.md#stellarindex_stellar_rpc_lag) — only for deployments that still route through stellar-rpc (not r1).
 - [ledgerstream-tier-both-missing](ledgerstream-tier-both-missing.md) — reader can find the ledger in neither MinIO tier.
 - [exporter-down](exporter-down.md) / [minio-metrics-403](minio-metrics-403.md) — MinIO monitoring.
 - [binary-version-skew](binary-version-skew.md) — expected after a partial rollback.
 - [timescale-primary-down](timescale-primary-down.md) — next step when DB is the root cause.
 - [ingestion-lag](ingestion-lag.md) — single-source-lag runbook.
-- [cursor-stuck](cursor-stuck.md) — cursor-specific diagnosis.
+- [cursor-stuck](ledger-ingest.md#stellarindex_ingestion_cursor_stuck) — cursor-specific diagnosis.
 - Internal docs:
   - `internal/dispatcher/` + `internal/pipeline/` — dispatcher hot path and sinks (the orchestrator was retired 2026-04-23; see `internal/consumer/doc.go`).
   - `cmd/stellarindex-indexer/main.go` — wiring + shutdown.

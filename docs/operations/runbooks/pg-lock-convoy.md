@@ -195,7 +195,7 @@ restamp.
 
 ## Related
 
-- [timescale-probe-degraded](timescale-probe-degraded.md) — the same
+- [timescale-probe-degraded](timescale.md#stellarindex_timescale_probe_degraded) — the same
   producer's self-report. If the probe is degraded, this alert is blind
   too; that one is the meta-alert and takes precedence.
 - [exporter-down](exporter-down.md) — usually a

@@ -1148,8 +1148,8 @@
 # itself in the convoy they exist to report — see the block comment
 # on the query.
 #
-# Runbooks: docs/operations/runbooks/cagg-stale.md,
-# docs/operations/runbooks/timescale-probe-degraded.md,
+# Runbooks: docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale,
+# docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded,
 # docs/operations/runbooks/pg-lock-convoy.md
 # Fixtures: scripts/ci/timescale-jobs-probe-test.sh
 - name: TimescaleDB job/CAGG health probe (script)
@@ -1701,7 +1701,7 @@
     content: |
       [Unit]
       Description=Stellar Index — TimescaleDB job/CAGG health probe
-      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/timescale-jobs-probe.sh
@@ -1723,7 +1723,7 @@
     content: |
       [Unit]
       Description=Run the TimescaleDB job/CAGG health probe every minute
-      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale
       [Timer]
       OnBootSec=2min
       OnUnitActiveSec=1min

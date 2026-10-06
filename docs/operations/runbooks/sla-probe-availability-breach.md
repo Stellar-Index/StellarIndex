@@ -72,7 +72,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 - `sla-probe-p95-breach.md`, `sla-probe-p99-breach.md`,
   `sla-probe-freshness-breach.md` — the other per-target alerts.
 - `sla-probe-unit-failed.md` — the umbrella verdict alert.
-- `slo-availability-burn-fast.md` — real-traffic availability burn.
+- `slo.md#stellarindex_slo_availability_burn_fast` — real-traffic availability burn.
 - `api.md#stellarindex_api_error_rate_critical` — server-error triage.
 
 ## Changelog

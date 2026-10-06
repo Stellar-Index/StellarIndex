@@ -444,11 +444,11 @@ Beyond the per-component security in the HA plan §6:
 
 | Metric | Threshold | Severity | Runbook |
 | ------ | --------- | -------- | ------- |
-| `stellar_core_ledger_age_seconds` | > 30 s | P1 | [core-lag](../../operations/runbooks/core-lag.md) |
+| `stellar_core_ledger_age_seconds` | > 30 s | P1 | [core-lag](../../operations/runbooks/stellar-node.md#stellarindex_stellar_core_ledger_age) |
 | `zfs_pool_degraded` | any | P1 | [zfs-degraded](../../operations/runbooks/infra.md#stellarindex_zfs_pool_degraded) |
 | NVMe temp | > 70 °C | P2 | [nvme-thermal](../../operations/runbooks/infra.md#stellarindex_nvme_thermal_throttle) |
 | Archive publish failure | any | P2 | [archive-publish](../../operations/runbooks/archive-publish.md) |
-| `stellarindex_ingestion_ledger_stalled` (Galexie export stopped: the lake tip, and so the `ledgerstream` cursor, stops advancing) | flat for 5 m, held 5 m (~10 min) | P1 | [ledger-ingest-stalled](../../operations/runbooks/ledger-ingest-stalled.md) |
+| `stellarindex_ingestion_ledger_stalled` (Galexie export stopped: the lake tip, and so the `ledgerstream` cursor, stops advancing) | flat for 5 m, held 5 m (~10 min) | P1 | [ledger-ingest-stalled](../../operations/runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_stalled) |
 | `stellarindex_galexie_catchup_refused` (captive core inside Galexie refuses to catch up) | > 0 for 10 m | P1 | [galexie-catchup-refused](../../operations/runbooks/galexie-archive.md#stellarindex_galexie_catchup_refused) |
 | Host up | any missed scrape × 3 | P1 | [host-down](../../operations/runbooks/infra.md#stellarindex_host_down) |
 

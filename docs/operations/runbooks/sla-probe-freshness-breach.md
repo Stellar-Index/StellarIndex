@@ -109,13 +109,13 @@ reading the wrong key.
      bitstamp, coinbase, kraken, sdex, aquarius, reflector-dex/cex/fx,
      redstone, coingecko). Sporadic sources (band, blend, comet,
      ecb, phoenix, …) are deliberately excluded and won't page.
-   - Mitigation: see `core-lag.md`.
+   - Mitigation: see `stellar-node.md#stellarindex_stellar_core_ledger_age`.
 
 3. **CAGG refresh policy is paused or lagging.** The `prices_1m`
    CAGG isn't materializing recent buckets even though raw trades
    are present.
    - Signal: `stellarindex_timescale_cagg_stale` fires too.
-   - Mitigation: see `cagg-stale.md`.
+   - Mitigation: see `timescale.md#stellarindex_timescale_cagg_stale`.
 
 4. **No trades for the pair in the tip's escalation window — the
    most common cause on `price-tip`, and it is in-contract.**
@@ -190,8 +190,8 @@ reading the wrong key.
 
 ## Related
 
-- `cagg-stale.md` — Postgres-side staleness.
-- `core-lag.md` — indexer-side lag.
+- `timescale.md#stellarindex_timescale_cagg_stale` — Postgres-side staleness.
+- `stellar-node.md#stellarindex_stellar_core_ledger_age` — indexer-side lag.
 - `aggregator.md#stellarindex_aggregator_silent` — orchestrator not writing.
 - The service freshness SLA — the 30 s spec (tip-of-chain surface).
 - ADR-0015 — the closed-bucket-only serving contract that makes

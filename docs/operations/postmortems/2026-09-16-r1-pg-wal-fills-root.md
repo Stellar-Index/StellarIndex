@@ -57,7 +57,7 @@ Three root-fs alerts existed; the page-tier ones fired long before the crash:
 | `stellarindex_node_root_disk_warning` | < 20% free | ticket | earlier |
 
 The page fired 3h29m before Postgres died. `chat-page` in `/etc/prometheus/alertmanager.yml` carries only `discord_configs` (no PagerDuty, OpsGenie or Pushover), as
-the alerts catalog states ("nothing wakes anyone up"). All three alerts pointed at `redis-write-blocked-disk-full.md` (since 600cd6b0f they point at `node-root-disk-full.md` / `node-root-disk-warning.md`), which described the MISCONF mechanism that made the
+the alerts catalog states ("nothing wakes anyone up"). All three alerts pointed at `redis-write-blocked-disk-full.md` (since 600cd6b0f they point at `node-root-disk.md#stellarindex_node_root_disk_full` / `node-root-disk.md#stellarindex_node_root_disk_warning`), which described the MISCONF mechanism that made the
 outage total; the runbook was right for that mechanism and nobody was paged to read it. This also proved the negative for launch-plan row 1.4 (SEV drill). The v0.83.0 config-apply gate
 correctly refused to apply that tag's config, which still carried `16GB`.
 
@@ -73,7 +73,7 @@ correctly refused to apply that tag's config, which still carried `16GB`.
 
 - [ ] **`pg_wal` is on the wrong volume.** The checkpoint problem is real and unfixed; move `pg_wal` onto `data/postgres` (2.8 TB free), which fixes the class.
 - [ ] **Nothing wakes anyone.** `chat-page` is Discord-only; a phone-paging receiver is an open decision (owner: maintainer). Same gap as launch-plan row 1.4.
-- [x] **Root-disk alerts pointed at the wrong runbook (INV-0995).** They linked `redis-write-blocked-disk-full.md`; since 600cd6b0f they link `node-root-disk-full.md` / `node-root-disk-warning.md`.
+- [x] **Root-disk alerts pointed at the wrong runbook (INV-0995).** They linked `redis-write-blocked-disk-full.md`; since 600cd6b0f they link `node-root-disk.md#stellarindex_node_root_disk_full` / `node-root-disk.md#stellarindex_node_root_disk_warning`.
 - [x] **No signal on rate-limiter fail-closed / Redis refusing writes — shipped 2026-09-27.** `stellarindex_ratelimit_fail_closed_total` counts the transition and
   `stellarindex_ratelimit_fail_closed` (`api.yml`, page) fires on it; `stellarindex_redis_command_errors_total{class}` counts Redis failures by class.
   `stellarindex_redis_write_rejected_oom` (`cache.yml`) widened to `OOM|READONLY|NOREPLICAS`, deliberately **not** MISCONF (`stellarindex_redis_writes_blocked` already pages on
