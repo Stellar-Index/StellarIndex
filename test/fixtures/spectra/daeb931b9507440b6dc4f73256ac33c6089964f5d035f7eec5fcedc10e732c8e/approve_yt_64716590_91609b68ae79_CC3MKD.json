@@ -1,0 +1,16 @@
+{
+  "contract_id": "CC3MKDR62O4Q7EEBOXXCNFJH3Z6AZQLB3QUTUEKAMSIJIYAHLUPVQR5G",
+  "role": "yt",
+  "market_decimals": 18,
+  "wasm_hash": "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e",
+  "ledger": 64716590,
+  "tx_hash": "91609b68ae79907bd8247debef89c2010f93015e4a118560c378e453d4502517",
+  "ledger_closed_at": "2026-10-01T15:32:12Z",
+  "topics": [
+    "AAAADwAAAAdhcHByb3ZlAA==",
+    "AAAAEgAAAAAAAAAAD2KIWBDlImMxrXnOeUEb/X0mOp99M3HGA2WwS20SFuE=",
+    "AAAAEgAAAAGU1wln9BCzS8bGbMh5Ij2Fof+uEjsVheKhflTNzWyFnA=="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAhnfv3RrkU7AAAADwAAABFsaXZlX3VudGlsX2xlZGdlcgAAAAAAAAMECUXs",
+  "event_name": "approve"
+}
