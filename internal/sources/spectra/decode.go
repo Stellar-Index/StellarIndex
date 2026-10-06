@@ -244,6 +244,22 @@ func decodeRow(e *events.Event, out Event) (Event, error) {
 		out.Caller, out.Receiver = r.topicAddr(1, "caller"), r.topicAddr(2, "receiver")
 		out.Owner = r.topicAddr(3, "owner")
 		out.Assets, out.Shares = r.amount("assets"), r.amount("shares")
+	default:
+		if r = decodeOrderRow(e, &out); r == nil {
+			return Event{}, fmt.Errorf("%w: %s is not a row kind", ErrNotSpectraEvent, out.Kind)
+		}
+	}
+	if r.err != nil {
+		return Event{}, r.err
+	}
+	return out, nil
+}
+
+// decodeOrderRow decodes an order-engine row kind into out, or returns nil
+// when kind is not one.
+func decodeOrderRow(e *events.Event, out *Event) *reader {
+	var r *reader
+	switch out.Kind {
 	case EventOrderRegistered:
 		r = newReader(e, out.Kind, 3)
 		out.Maker, out.OrderID = r.topicAddr(1, "maker"), r.topicOrderID(2)
@@ -257,12 +273,9 @@ func decodeRow(e *events.Event, out Event) (Event, error) {
 		out.Maker, out.OrderID = r.topicAddr(1, "maker"), r.topicOrderID(2)
 		r.mapBody()
 	default:
-		return Event{}, fmt.Errorf("%w: %s is not a row kind", ErrNotSpectraEvent, out.Kind)
+		return nil
 	}
-	if r.err != nil {
-		return Event{}, r.err
-	}
-	return out, nil
+	return r
 }
 
 // checkRegistryChange refuses a registry `*_change` whose new value is

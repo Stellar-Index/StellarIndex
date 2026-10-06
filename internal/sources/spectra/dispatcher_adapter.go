@@ -63,6 +63,7 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 			if a[AttrMarketPT] != "" {
 				d.roles[id], d.ytMarket[id] = RoleYT, a[AttrMarketPT]
 			}
+		case RoleFactory, RoleRegistry, RoleRouter, RoleOrderEngine, RoleIBT:
 		}
 	}
 	return d
@@ -150,6 +151,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		if out.MarketPT = d.marketOf(ev.ContractID); out.MarketPT == "" {
 			return nil, fmt.Errorf("%w: YT %s has no known market", ErrNotGated, ev.ContractID)
 		}
+	case RoleFactory, RoleRegistry, RoleRouter, RoleOrderEngine, RoleIBT:
 	}
 	if out, err = decodeRow(&ev, out); err != nil {
 		return nil, err
