@@ -180,6 +180,34 @@ run
 expect_absent 'ansible inline content: block counts as an emitter' 'stellarindex_fixture_ansible_inline_total'
 expect_present 'a metric named only in an ansible COMMENT stays dead' 'stellarindex_fixture_ansible_comment_total'
 
+# 5b. A Go /* */ block comment is a comment too. The `/*` inside the Help
+#     string must not open one, or it would swallow the Name: literal up to
+#     the block's `*/`; the `//` inside the block must not hide that `*/`.
+cat > "$ROOT/deploy/monitoring/rules/block-fixture.yml" <<'YML'
+groups:
+  - name: blockfixture
+    rules:
+      - alert: GoBlockCommentOnly
+        expr: stellarindex_fixture_blockcomment_total > 0
+      - alert: GoAfterGlobString
+        expr: stellarindex_fixture_afterglob_total > 0
+YML
+cat > "$ROOT/internal/block.go" <<'GO'
+package internal
+
+var _ = struct{ Help, Name string }{
+	Help: "requests matching /v1/*",
+	Name: "stellarindex_fixture_afterglob_total",
+}
+
+/*
+stellarindex_fixture_blockcomment_total is planned, see http://example.invalid
+*/
+GO
+run
+expect_present 'a metric named only in a Go block comment stays dead' 'stellarindex_fixture_blockcomment_total'
+expect_absent 'a /* inside a Go string does not open a comment' 'stellarindex_fixture_afterglob_total'
+
 # 6. Producer -> alert direction (advisory, T456). A metric emitted with
 # a real Name: literal but referenced by NO rule expr must be reported
 # as UNALERTED, without affecting the pass/fail exit status. Uses its
