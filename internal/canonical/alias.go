@@ -20,7 +20,6 @@ import (
 // TestXLMSacContractID_MatchesDerivation here, so the literal can never
 // drift from the derivation. It is the pubnet default only; Go code that
 // must follow the configured network calls [NativeSACContractID], never this.
-// It remains for SQL text a later slice will move to bound parameters.
 const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
 // xlmAliasFamily is the XLM equivalence class in CANONICAL PRIORITY
@@ -80,9 +79,9 @@ func baseAliasFamiliesFor(xlmSAC string) map[string][]Asset {
 // It is the explicit value alias.go's history called for: the
 // compile-time baseline plus every classic↔SAC pair declared in the operator's
 // `[supply].sac_wrappers`, resolved ONCE at binary start-up and then
-// read-only. A nil *AliasRegistry is valid and behaves as the compile-time
-// baseline, so leaf-package callers with no config in scope still get
-// correct (if compile-time-limited) behaviour.
+// read-only. A nil *AliasRegistry is valid and behaves as the baseline
+// for the installed network (pubnet when none is), so leaf-package callers
+// with no config in scope still get correct (if compile-time-limited) behaviour.
 type AliasRegistry struct {
 	families map[string][]Asset
 }
@@ -111,13 +110,34 @@ func InstallAliasRegistry(r *AliasRegistry) {
 	activeRegistry.Store(r)
 }
 
-// activeAliasRegistry returns the installed registry, or the compile-time
-// default when none has been installed.
+// activeAliasRegistry returns the installed registry, or the baseline
+// when none has been installed.
 func activeAliasRegistry() *AliasRegistry {
 	if r := activeRegistry.Load(); r != nil {
 		return r
 	}
+	return baselineAliasRegistry()
+}
+
+// networkBaseRegistry is the compile-time baseline re-derived for the
+// passphrase [InstallNetworkPassphrase] published; nil until one is.
+var networkBaseRegistry atomic.Pointer[AliasRegistry]
+
+// baselineAliasRegistry is the installed network's baseline, else
+// pubnet's, so the XLM family never disagrees with [NativeSACContractID].
+func baselineAliasRegistry() *AliasRegistry {
+	if r := networkBaseRegistry.Load(); r != nil {
+		return r
+	}
 	return defaultAliasRegistry
+}
+
+// familyMap resolves a nil receiver to the baseline registry's table.
+func (r *AliasRegistry) familyMap() map[string][]Asset {
+	if r == nil {
+		return baselineAliasRegistry().families
+	}
+	return r.families
 }
 
 // NewAliasRegistry builds the process registry from the operator's SAC
@@ -220,10 +240,7 @@ func addSACWrapperFamily(families map[string][]Asset, passphrase, sacID, classic
 // class in canonical priority order (SAC last). A form with no family
 // returns just itself, so callers loop unconditionally.
 func (r *AliasRegistry) Aliases(asset Asset) []Asset {
-	fams := baseAliasFamilies
-	if r != nil {
-		fams = r.families
-	}
+	fams := r.familyMap()
 	family, ok := fams[asset.String()]
 	if !ok {
 		return []Asset{asset}
@@ -253,10 +270,7 @@ func (r *AliasRegistry) Aliases(asset Asset) []Asset {
 // defect). An asset in no family is its own canonical form, so callers fold
 // unconditionally.
 func (r *AliasRegistry) Canonical(asset Asset) Asset {
-	fams := baseAliasFamilies
-	if r != nil {
-		fams = r.families
-	}
+	fams := r.familyMap()
 	if family, ok := fams[asset.String()]; ok && len(family) > 0 {
 		return family[0]
 	}
@@ -273,10 +287,7 @@ func (r *AliasRegistry) Canonical(asset Asset) Asset {
 // classic↔SAC pair) is omitted: it maps to itself, which the COALESCE
 // fallback already covers. A nil registry projects the compile-time baseline.
 func (r *AliasRegistry) AliasForms() map[string]string {
-	fams := baseAliasFamilies
-	if r != nil {
-		fams = r.families
-	}
+	fams := r.familyMap()
 	out := make(map[string]string, len(fams))
 	for form, family := range fams {
 		if len(family) == 0 {
@@ -377,8 +388,9 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 //     unchanged, while becoming alias-complete for the configured pairs.
 //
 // Until a registry is installed (unit tests, or a binary that never
-// serves reads) the function resolves against the compile-time baseline, so
-// the XLM three-form behaviour is invariant either way.
+// serves reads) the function resolves against the baseline for the network
+// [InstallNetworkPassphrase] published (pubnet when none), so the XLM
+// three-form behaviour is invariant either way.
 func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }
