@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- them); snapshot/seed backfill rows stamp 4294967295 (math.MaxUint32 —
     -- authoritative final state for their ledger).
     --
-    -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 2).
+    -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3).
     -- The C2-032 fix RENUMBERED every ledger, so a legacy row can carry a
     -- HIGHER version than the corrected row for the same key — and a lower
     -- RMT version never displaces a higher one. Re-deriving a range therefore

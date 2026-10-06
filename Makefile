@@ -60,7 +60,7 @@ BINARIES := \
 # here and every CI path picks it up.
 INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/...
 SHARD ?= 0
-SHARDS ?= 4
+SHARDS ?= 6
 
 # Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
 COVER_THRESHOLD := 70
@@ -223,7 +223,7 @@ test-integration: ## Integration tests (requires Docker; spins its own container
 	$(GO) test -tags=integration -timeout 35m $(INT_TEST_PKGS)
 
 .PHONY: test-integration-shard
-test-integration-shard: ## One CI shard of the integration suite: make test-integration-shard SHARD=0 SHARDS=4 (same flags as test-integration; see scripts/ci/integration-shard.sh)
+test-integration-shard: ## One CI shard of the integration suite: make test-integration-shard SHARD=0 SHARDS=6 (same flags as test-integration; see scripts/ci/integration-shard.sh)
 	./scripts/ci/integration-shard.sh $(SHARD) $(SHARDS)
 
 .PHONY: test-integration-build
@@ -384,7 +384,9 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@# defect (C4-037/038, C6-118) where a rule is syntactically perfect and
 	@# structurally unfireable. They were written but never wired into any
 	@# gate, so a regression in the rules they cover shipped green.
-	@promtool test rules deploy/monitoring/rule-tests/*.yml
+	@# One promtool process per file across all cores: a file's groups run
+	@# serially, so the 841h-horizon groups sit in files of their own.
+	@printf '%s\n' deploy/monitoring/rule-tests/*.yml | xargs -n 1 -P "$$(getconf _NPROCESSORS_ONLN)" promtool test rules
 	@# F-1329: promtool only checks PromQL SYNTAX, not whether a metric
 	@# has a producer. This guard catches dead stellarindex_* references
 	@# (an alert that can never fire because nothing emits its metric).

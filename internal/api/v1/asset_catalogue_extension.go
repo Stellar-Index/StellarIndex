@@ -161,9 +161,9 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// price path (F2 populatePriceUSD → lookupUSDPrice, run earlier)
 	// left it nil. The asset-catalogue row's USD price is the listing-query
 	// COALESCE(direct_usd, asset_vs_xlm × xlm_usd) — for native XLM
-	// its xlm_usd CTE mixes the SDEX (native/USDC) and CEX
-	// (native/fiat:USD) pairs and picks the latest bucket, which
-	// diverged from the canonical /v1/price CEX VWAP by ~0.2%.
+	// its xlm_usd anchor prefers the native (SDEX) book over the CEX
+	// crypto:XLM one, so it can differ from the canonical /v1/price CEX
+	// VWAP (~0.2% measured).
 	// Yielding to the already-set canonical value keeps
 	// /v1/assets/native in agreement with /v1/price and
 	// /v1/assets/crypto:XLM, while still pricing the XLM-triangulated

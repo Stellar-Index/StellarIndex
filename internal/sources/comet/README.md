@@ -127,10 +127,14 @@ spot_price_out_per_in =
     (reserve_out / weight_out) * (1 + swap_fee)
 ```
 
-Spot-price tracking would require a pool-state tracker capturing
-weight alongside reserves — out of scope for the trade-event
-decoder. v1 reports executed swap prices only; spot inference is
-a follow-up if the requirement emerges.
+Current reserves do not come from events: `ExplorerReader.CometPoolReserves`
+(`internal/storage/clickhouse/comet_pool_state_reader.go`) reads each
+gated pool's `AllRecordData` persistent entry from the lake and feeds
+`/v1` DEX TVL (`refreshComet` in `internal/api/v1/dex_tvl_cache.go`).
+That reader decodes only `balance`; the same `Record` carries `weight`,
+so spot-price inference would extend it rather than add a tracker.
+v1 reports executed swap prices only; spot inference is a follow-up if
+a consumer needs it.
 
 ### Q4 — `i128` everywhere
 

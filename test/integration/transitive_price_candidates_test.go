@@ -20,7 +20,7 @@ import (
 //
 // Fixture (closed buckets inside the trailing 24h):
 //
-//	XLM/USDC   vwap 0.40              → xlm_usd = 0.40
+//	XLM/USDC   vwap 0.40, before every hop leg → xlm_usd = 0.40 at each leg's minute
 //	HOPA/XLM   vwap 2                 → HOPA = 0.80 USD
 //	HOPB/XLM   vwap 0.5               → HOPB = 0.20 USD
 //	TGT/HOPA   vwap 1,  $100 volume   → TGT  = 0.80 USD via HOPA
@@ -79,7 +79,7 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 			t.Fatalf("InsertTrade %s: %v", p, err)
 		}
 	}
-	insert(now.Add(-10*time.Minute), pair(xlm, usdc), 1_000_000_000, 400_000_000)
+	insert(now.Add(-30*time.Minute), pair(xlm, usdc), 1_000_000_000, 400_000_000)
 	insert(now.Add(-20*time.Minute), pair(hopA, xlm), 100_000_000, 200_000_000)
 	insert(now.Add(-20*time.Minute), pair(hopB, xlm), 100_000_000, 50_000_000)
 	insert(now.Add(-15*time.Minute), pair(tgt, hopA), 100_000_000, 100_000_000)
@@ -94,6 +94,7 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 			t.Fatalf("stamp usd_volume: %v", err)
 		}
 	}
+	stamp(xlm, usdc, 40)
 	stamp(tgt, hopA, 100)
 	stamp(hopB, tgt, 1000)
 	stamp(tgt, nopx, 5000)
@@ -131,7 +132,7 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 // preferred direction that went quiet 20h ago must not outrank the other
 // direction's fresh bucket.
 //
-// Fixture (xlm_usd = 0.40):
+// Fixture (xlm_usd = 0.40 from -30m, before every hop's XLM leg):
 //
 //	HOPA/XLM 2 (-20m)                       → HOPA = 0.80 USD
 //	T1/HOPA 1 (-20h), HOPA/T1 0.5 (-2m)     → T1 = 2 HOPA   = 1.60
@@ -191,7 +192,7 @@ func TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections(t *testing.T)
 			t.Fatalf("InsertTrade %s: %v", p, err)
 		}
 	}
-	insert(10*time.Minute, pair(xlm, usdc), 1_000_000_000, 400_000_000)
+	insert(30*time.Minute, pair(xlm, usdc), 1_000_000_000, 400_000_000)
 	insert(20*time.Minute, pair(hopA, xlm), 100_000_000, 200_000_000)
 	insert(20*time.Hour, pair(t1, hopA), 100_000_000, 100_000_000)
 	insert(2*time.Minute, pair(hopA, t1), 200_000_000, 100_000_000)
@@ -203,6 +204,10 @@ func TestTransitiveUSDPriceCandidates_LatestBucketAcrossDirections(t *testing.T)
 	insert(15*time.Minute, pair(hopD, xlm), 100_000_000, 200_000_000)
 	insert(15*time.Minute, pair(xlm, hopD), 400_000_000, 100_000_000)
 	insert(15*time.Minute, pair(t4, hopD), 100_000_000, 100_000_000)
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 40 WHERE base_asset = 'native' AND quote_asset = $1`, usdc.String()); err != nil {
+		t.Fatalf("stamp usd_volume: %v", err)
+	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
