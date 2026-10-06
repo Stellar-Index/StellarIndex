@@ -589,10 +589,10 @@ type Server struct {
 	// reserve's underlying is the asset's SAC, so we price via this).
 	sacReserveAssets map[string]string
 	sacReserveOnce   sync.Once
-	// backfillCoverage is the per-source min/max-ledger snapshot
-	// powering /v1/diagnostics/ingestion's coverage section. Nil
-	// leaves that section absent. See [CoverageCache].
+	// backfillCoverage backs /v1/diagnostics/ingestion's coverage section; nil omits it.
 	backfillCoverage *CoverageCache
+	// usdVolumePricing backs /v1/coverage's usd_volume_pricing; nil renders null.
+	usdVolumePricing *UsdVolumePricingCache
 	// coverageFloorReader + coverageFloorCache back the empty-window
 	// coverage signal on /v1/ohlc, /v1/history, /v1/chart and
 	// /v1/price/at. Nil reader = no signal at all: those surfaces keep
@@ -1640,13 +1640,12 @@ type Options struct {
 	// per-Stellar-asset surface.
 	VerifiedCurrencies *currency.Catalogue
 
-	// BackfillCoverage, when non-nil, is the process-local cache of
-	// per-source min/max ledger + trade count, refreshed on a 5-min
-	// background goroutine. Powers the per-source coverage section
-	// on `/v1/diagnostics/ingestion`. The underlying SQL is 2–3s on
-	// a populated trades hypertable so we never run it synchronously
-	// from a request. Nil leaves that section absent from the wire.
+	// BackfillCoverage, when non-nil, is the background-refreshed cache behind
+	// the coverage section of `/v1/diagnostics/ingestion`; nil omits it.
 	BackfillCoverage *CoverageCache
+
+	// UsdVolumePricing feeds /v1/coverage's usd_volume_pricing; nil renders null.
+	UsdVolumePricing *UsdVolumePricingCache
 
 	// SDEXOrderBook, when non-nil, is the in-process live classic
 	// offer book behind GET /v1/sdex/orderbook — loaded once from the
@@ -1815,6 +1814,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		sessionAuth:             opts.SessionAuth,
 		verifiedCurrencies:      opts.VerifiedCurrencies,
 		backfillCoverage:        opts.BackfillCoverage,
+		usdVolumePricing:        opts.UsdVolumePricing,
 		nonstandardDecimals:     opts.NonstandardDecimals,
 		globalPrice:             newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
 		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),

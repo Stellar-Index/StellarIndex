@@ -194,6 +194,10 @@ type CoverageVerdictsView struct {
 	// the audit has not produced one on this deployment. The key is
 	// always present so its ABSENCE is visible rather than silent.
 	Recognition *RecognitionAxisView `json:"recognition"`
+	// UsdVolumePricing is the USD volume pricing axis (valuation coverage over
+	// a fixed 24h window), or null until the first background refresh. Outside
+	// every source count: it can never change Complete or LakeComplete.
+	UsdVolumePricing *UsdVolumePricingAxisView `json:"usd_volume_pricing"`
 	// CompleteSources / TotalSources summarize the headline ("20/20") for
 	// the served/combined axis (Complete). SOURCES ONLY — a system audit
 	// axis is not a source and is neither numerator nor denominator.
@@ -360,6 +364,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		Network:              network,
 		NotApplicableSources: make([]NotApplicableSourceView, 0),
 	}
+	view.UsdVolumePricing = s.usdVolumePricing.view()
 	for _, na := range sourcenet.NotApplicableOn(network) {
 		view.NotApplicableSources = append(view.NotApplicableSources, NotApplicableSourceView{Source: na.Source, Reason: na.Reason})
 	}

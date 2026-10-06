@@ -5799,6 +5799,64 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description How many trades in a fixed 24h window (hour-aligned, refreshed in the
+         *     background every 15 minutes) carry a `usd_volume`. This is VALUATION
+         *     coverage, not capture: it is not a source, is outside `sources`,
+         *     `complete_sources`, `total_sources` and `lake_complete_sources`, and can
+         *     never change `complete` or `lake_complete`.
+         *
+         *     Counts are exact integers. `lower_bound` is true when any trade in the
+         *     window has no `usd_volume`: every USD volume summed from those trades is
+         *     then a lower bound, and `excluded` names what it leaves out. No USD
+         *     amount is published for unpriced trades (it cannot be known).
+         *
+         *     `null` until the first background refresh completes; the key is always
+         *     present.
+         */
+        UsdVolumePricingAxis: {
+            /** Format: date-time */
+            window_start: string;
+            /**
+             * Format: date-time
+             * @description Exclusive.
+             */
+            window_end: string;
+            /** Format: date-time */
+            as_of: string;
+            lower_bound: boolean;
+            /** @description Names what `lower_bound` leaves out. Absent when `lower_bound` is false. */
+            excluded?: string;
+            meaning: string;
+            sources: {
+                source: string;
+                /** @enum {string} */
+                class: "external" | "onchain";
+                /**
+                 * Format: int64
+                 * @description priced + unpriced + unroutable.
+                 */
+                trades: number;
+                /** Format: int64 */
+                priced: number;
+                /**
+                 * Format: int64
+                 * @description NULL `usd_volume` on a routable pair. For on-chain sources this still includes thin markets (the substance verdict is not stored per trade).
+                 */
+                unpriced: number;
+                /**
+                 * Format: int64
+                 * @description Unpriced, both classic legs from one issuer; excluded from the ratio.
+                 */
+                unroutable: number;
+                /** @description priced / (trades - unroutable), decimal string truncated (never rounded up) to 6 dp so it never exceeds the true ratio. Omitted when that denominator is zero. */
+                priced_ratio?: string;
+                /** @description Decimal string; matches the usd-volume-coverage alert rules. */
+                bar: string;
+                /** @description External venues only; omitted for on-chain until per-row thin status is stored. False for an external venue with nothing to price (no trades in the window), so a silent venue never passes. */
+                meets_bar?: boolean;
+            }[];
+        } | null;
         /** @description One registered passkey (WebAuthn credential) on the signed-in user's account. Display metadata only — the credential ID and public key never leave the server, and the private key never left the user's authenticator. */
         PasskeyCredential: {
             /**
@@ -18419,6 +18477,37 @@ export interface operations {
                      *           "detail": "23945 unrecognized shape(s) on 4172 unowned contract(s) (earliest ledger 50560486) — events on contracts no indexed source owns (foreign Soroban protocols); a discovery backlog, not missing data — run verify-recognition",
                      *           "computed_at": "2026-07-03T05:30:21.937134Z"
                      *         },
+                     *         "usd_volume_pricing": {
+                     *           "window_start": "2026-07-02T22:00:00Z",
+                     *           "window_end": "2026-07-03T22:00:00Z",
+                     *           "as_of": "2026-07-03T22:15:00Z",
+                     *           "lower_bound": true,
+                     *           "excluded": "trades with NULL usd_volume (unpriced, plus unroutable same-issuer classic pairs) are excluded from every USD volume total",
+                     *           "meaning": "How many trades in the window carry a usd_volume. Valuation coverage, not capture: it never changes complete_sources / total_sources / lake_complete_sources.",
+                     *           "sources": [
+                     *             {
+                     *               "source": "binance",
+                     *               "class": "external",
+                     *               "trades": 1000,
+                     *               "priced": 1000,
+                     *               "unpriced": 0,
+                     *               "unroutable": 0,
+                     *               "priced_ratio": "1.000000",
+                     *               "bar": "0.999",
+                     *               "meets_bar": true
+                     *             },
+                     *             {
+                     *               "source": "sdex",
+                     *               "class": "onchain",
+                     *               "trades": 100,
+                     *               "priced": 90,
+                     *               "unpriced": 8,
+                     *               "unroutable": 2,
+                     *               "priced_ratio": "0.918367",
+                     *               "bar": "0.995"
+                     *             }
+                     *           ]
+                     *         },
                      *         "complete_sources": 14,
                      *         "lake_complete_sources": 15,
                      *         "network": "pubnet",
@@ -18584,6 +18673,7 @@ export interface operations {
                                 /** Format: date-time */
                                 computed_at: string;
                             } | null;
+                            usd_volume_pricing?: components["schemas"]["UsdVolumePricingAxis"];
                             /** @description Count of SOURCES with complete=true (served/combined axis). System audit axes are not sources and are not counted — see `recognition`. */
                             complete_sources: number;
                             /** @description Count of SOURCES with lake_complete=true (lake/archive axis). Same exclusion as `complete_sources`. */

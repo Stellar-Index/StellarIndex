@@ -1024,6 +1024,20 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			"backfill coverage periodic refresh")
 	}()
 
+	// USD volume pricing axis on /v1/coverage: one ts-bounded 24h count per
+	// refresh, never per request.
+	usdVolumePricingCache := v1.NewUsdVolumePricingCache(store, logger.With("component", "usd-volume-pricing"))
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "usd-volume-pricing-cache")
+		const usdVolumePricingRefreshTimeout = 5 * time.Minute
+		refreshWithTimeout(rootCtx, usdVolumePricingCache.Refresh, usdVolumePricingRefreshTimeout, logger,
+			"usd volume pricing initial refresh")
+		runRefreshLoop(rootCtx, usdVolumePricingCache.Refresh, v1.UsdVolumePricingRefreshInterval,
+			usdVolumePricingRefreshTimeout, logger, "usd volume pricing periodic refresh")
+	}()
+
 	// Read-time dex-nonstandard-decimals serving guard (confirmed
 	// production bug 2026-07-08 — see docs/operations/runbooks/
 	// dex.md). Mirrors `nonstandard_decimals_assets`
@@ -1521,6 +1535,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		FiatPeggedClassics:    fiatPegs,
 		VerifiedCurrencies:    verifiedCurrencies,
 		BackfillCoverage:      backfillCoverageCache,
+		UsdVolumePricing:      usdVolumePricingCache,
 		NonstandardDecimals:   nonstandardDecimalsCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,
