@@ -93,7 +93,7 @@ updates:
   # Next.js apps. Without these, Dependabot doesn't surface
   # next.js / typescript / react security advisories — operators
   # have to run `pnpm audit` manually. The CI gate is the
-  # trivy pnpm-lock.yaml scan in ci.yml's `web-explorer` job
+  # trivy pnpm-lock.yaml scan in ci.yml's `toolchain-gates` job
   # (`pnpm audit --audit-level high` enforced nothing from
   # 2026-07-15 on and was replaced — see ci.yml's DEP-F1 comment);
   # Dependabot opens the bump PR proactively.

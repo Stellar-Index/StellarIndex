@@ -306,7 +306,7 @@ import it. `scripts/ci/lint-imports.sh` enforces the allowlist
 with the xdr-in-`internal/scval` rule (ADR-0013) and the no-Horizon rule
 (ADR-0001). Legacy violations sit in `scripts/ci/lint-imports.baseline`,
 which may only shrink. It runs as `make lint-imports` and in the
-`import-checks` CI job.
+`repo-gates` CI job.
 
 Fixtures are captured over RPC by `scripts/dev/capture-{aquarius,phoenix,reflector,soroswap}-fixtures.sh`
 against `mainnet.sorobanrpc.com`. That is fine because RPC and the LCM

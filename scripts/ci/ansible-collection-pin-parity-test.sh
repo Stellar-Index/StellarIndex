@@ -18,7 +18,7 @@
 # input can trigger directly against production.
 #
 # This asserts, against the WORKING TREE (not a fixture): the ansible
-# install step in each of ci.yml's `ansible-check` job and
+# install step in each of ci.yml's `toolchain-gates` job and
 # ansible-drift.yml's `drift-check` job runs
 #   ansible-galaxy collection install -r configs/ansible/requirements.yml
 # — i.e. that the two CI-side jobs consume the exact file deploy.yml
@@ -74,7 +74,7 @@ check_step_has_pin() { # check_step_has_pin <desc> <file> <step-name>
 echo "ansible-collection-pin-parity-test: CI-side jobs install the pinned collections"
 
 check_step_has_pin \
-  "ci.yml ansible-check job installs configs/ansible/requirements.yml before syntax/lint" \
+  "ci.yml toolchain-gates job installs configs/ansible/requirements.yml before syntax/lint" \
   "$CI_YML" "Install ansible + lint"
 
 check_step_has_pin \

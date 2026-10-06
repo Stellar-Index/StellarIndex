@@ -265,8 +265,7 @@ lints (`lint-shell-sigpipe`, `lint-lexicon`, `lint-actions-pinning`,
 `lint-baseline-growth`, `lint-migration-immutability`,
 `lint-go-toolchain-parity`, `gofumpt -l`, `goimports -l`, and `shellcheck` on
 the diff's changed `*.sh` files) run there, before `lint`, `test`, `build`,
-`integration-test-shard`, `vuln`, `web-explorer`, `web-status` and
-`ansible-check` — a lint slip costs the runner-seconds `preflight` needs, not
+`integration-test-shard`, `repo-gates` and `toolchain-gates` — a lint slip costs the runner-seconds `preflight` needs, not
 the full matrix already in flight.
 
 `preflight` also classifies the diff (via `dorny/paths-filter`, cross-checked
@@ -277,13 +276,13 @@ without ever reporting a `skipped` job conclusion itself:
 | diff touches | jobs that do real work |
 |---|---|
 | `internal/storage/**`, `internal/pipeline/**`, `internal/sources/**`, `internal/api/**`, `internal/ops/archive/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
-| any `*.go`, `go.mod`, `go.sum` | `lint`, `test`, `build`, `vuln`'s `govulncheck` step, `fuzz-smoke` |
-| `web/**`, `openapi/**` | `web-explorer`, `web-status` |
-| `configs/ansible/**` | `ansible-check` |
+| any `*.go`, `go.mod`, `go.sum` | `lint`, `test`, `build`, `toolchain-gates`' `govulncheck` and fuzz-smoke steps |
+| `web/**`, `openapi/**` | `toolchain-gates`' web/explorer and web/status steps |
+| `configs/ansible/**` | `toolchain-gates`' ansible steps |
 
 Each gated job still runs to completion — the filtering is a STEP-level
 `if:` on the work inside it, not a job-level skip — so its conclusion is
-always `success` or `failure`, never `skipped`. `vuln`'s `gitleaks` step is
+always `success` or `failure`, never `skipped`. `toolchain-gates`' `gitleaks` step is
 never filtered: a leaked credential is exactly as real in a YAML or shell
 diff as a Go one.
 

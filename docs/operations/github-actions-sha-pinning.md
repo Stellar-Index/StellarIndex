@@ -10,7 +10,7 @@ Tags on third-party actions can be rewritten; a commit SHA cannot.
 
 ## Enforced in the repo
 
-- `ci.yml` `actions-pinning` job: warns on existing tag-pinned third-party actions,
+- `ci.yml` `repo-gates` job (SHA-pinning steps): warns on existing tag-pinned third-party actions,
   hard-fails a PR that adds a new one. `actions/*` and `github/*` may stay tag-pinned.
 - Dependabot (`github-actions` ecosystem, `.github/dependabot.yml`) queues bumps.
 

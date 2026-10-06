@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
     # T471/RLT-376 (audit-2026-09-18): a top-level `paths-ignore` skips
-    # the ENTIRE workflow, including the `doc-checks` job defined in
+    # the ENTIRE workflow, including the `repo-gates` job (doc checks) defined in
     # this same file — so it previously skipped the one job whose whole
     # purpose is validating docs, and also skipped every trigger for an
     # internal/incidents/data/*.md-only change (that package's
@@ -145,7 +145,7 @@ jobs:
           persist-credentials: false
           # Path-class diffing and the Dependabot guard both need the
           # base commit present locally, same reasoning as import-checks
-          # / actions-pinning / vuln below.
+          # / actions-pinning / vuln (repo-gates, toolchain-gates) below.
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
@@ -240,7 +240,7 @@ jobs:
           git diff "$BASE_SHA" "$HEAD_SHA" -- go.mod '**/package.json' \
             | ./scripts/ci/check-dependabot-toolchain-bump.sh "$PR_AUTHOR"
       # §B: resolve the diff base once (same BASE_SHA pattern as
-      # import-checks/actions-pinning below) so path-class filtering and
+      # the repo-gates job below) so path-class filtering and
       # the changed-scripts shellcheck scope agree on the same range.
       # Fails OPEN (empty `resolved`) on first-push/shallow history — an
       # unknown diff must widen the gate, never narrow it.
@@ -360,7 +360,7 @@ jobs:
               - 'openapi/**'
             ansible:
               - 'configs/ansible/**'
-              # clickhouse-exporter-test.sh (ansible-check job) pins the
+              # clickhouse-exporter-test.sh (toolchain-gates job) pins the
               # Prometheus port + job name across the scrape config and
               # both rule trees below, but neither lives under
               # configs/ansible/**, so a diff confined to one of them set
@@ -686,74 +686,25 @@ jobs:
             echo "::error::integration shards did not all succeed (result=${SHARDS_RESULT})"
             exit 1
           fi
-
-  # ────────────────────────────────────────────────────────────────
-  # Policy checks — keep the repo enterprise-grade per
-  # docs/engineering-standards.md.
-  # ────────────────────────────────────────────────────────────────
-
-  fuzz-smoke:
-    name: fuzz smoke (30s per target)
+  repo-gates:
+    name: repo gates (docs, workflow lint, import-boundary, openapi)
     runs-on: ubuntu-latest
-    # 166 targets at the 8s floor plus ~3s of startup each is ~30 min when a
-    # PR touches every fuzzed package; a normal PR smokes a handful at 30s.
     timeout-minutes: 40
     needs: [preflight]
-    # §B: pure Go work, gated on the `go` class with STEP-level `if:`
-    # (see the REQUIRED-CHECK NOTE on `preflight`).
+    # Folded from five short jobs to stay under the free-plan concurrent-job cap.
+    # Each former job keeps its steps and its step-level path-class `if:` (see the
+    # REQUIRED-CHECK NOTE on `preflight`). A failing step fails this job, and so the
+    # run; later steps do not run once one fails. Order is cheap-and-likely-to-fail first,
+    # and the base-ref restores stay AFTER the self-tests that must see the PR-head scripts.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: go mod download (retry on GOPROXY flake)
-        if: needs.preflight.outputs.go == 'true'
-        run: |
-          for i in 1 2 3; do
-            go mod download && exit 0
-            echo "::warning::go mod download failed (attempt $i/3) — likely a transient GOPROXY/sumdb 5xx; retrying"
-            sleep $((i * 15))
-          done
-          echo "::error::go mod download failed after 3 attempts"; exit 1
-      - name: Fuzz smoke
-        # #340 item 5. The unit-test job already runs every fuzz target's
-        # SEED corpus (a Go fuzz target is an ordinary test without
-        # -fuzz); this job is the GENERATIVE pass, which is the half that
-        # finds inputs nobody thought to write down.
-        #
-        # 30s per target is a smoke, not a campaign: it catches shallow
-        # crashers on every PR at a few minutes of runner time. Deep runs
-        # are an operator activity (-fuzztime=1h against one target).
-        #
-        # The target list is discovered from the tree, not listed here,
-        # so a newly-added target is covered without a second edit — see
-        # the script's header for why, and for its fail-closed behaviour
-        # when discovery returns nothing. On a PR only the targets of the
-        # packages it changed run (FUZZ_BASE); the per-target time is
-        # derived from a fixed job budget, capped at 30s.
-        if: needs.preflight.outputs.go == 'true'
-        env:
-          FUZZ_BASE: ${{ github.event.pull_request.base.sha }}
-        run: bash scripts/ci/fuzz-smoke.sh
-
-  doc-checks:
-    name: doc-code consistency
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [preflight]
-    # §B: cheap — kept unconditional (runs regardless of path class),
-    # per the CI feedback-loop plan's path-filter list. `needs:` alone
-    # (no explicit `if:`) still cascades a `preflight` failure into a
-    # skip here, which is fine for §A's sequencing purpose.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-          # doc-pinned-tests diffs against the preflight base.
+          # lint-baseline-growth, doc-pinned-tests and gitleaks diff against a base ref / full history.
           fetch-depth: 0
+      # ── from the former `doc-checks` job (doc-code consistency) ──
       - name: lint-docs
         # Single script covers: doc freshness (90-day warn, 180-day
         # fail on frontmatter-dated docs), config/API/metrics
@@ -839,19 +790,7 @@ jobs:
         env:
           BASE: ${{ needs.preflight.outputs.base }}
         run: bash scripts/ci/doc-pinned-tests.sh "$BASE"
-
-  workflow-security:
-    name: workflow static analysis (zizmor)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [preflight]
-    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
+      # ── from the former `workflow-security` job (workflow static analysis (zizmor)) ──
       - name: zizmor
         # These workflows deploy to production and hold deploy keys, a vault
         # password and database credentials. zizmor audits them for template
@@ -864,20 +803,58 @@ jobs:
           # See .github/zizmor.yml for why the floor is medium.
           min-confidence: medium
           inputs: .github/workflows/
-
-  import-checks:
-    name: import-boundary lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [preflight]
-    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-          # lint-baseline-growth diffs against the PR base / push
-          # `before` sha, so it needs more than a depth-1 checkout.
-          fetch-depth: 0
+      # ── from the former `actions-pinning` job (github-actions SHA-pinning lint) ──
+      - name: lint-actions-pinning self-test
+        # Pins the gate non-vacuous: it must CATCH an unpinned and a
+        # tag-pinned third-party action and PASS a SHA-pinned one, keep
+        # actions/*+github/* exempt, read `.yaml` as well as `.yml`, not
+        # mistake prose ending in "causes:" for a `uses:` key, and FAIL
+        # rather than pass on a root with no workflows or no steps. Runs
+        # BEFORE the restore below — as import-checks orders its own
+        # self-tests — because the fixtures must exercise the PROPOSED
+        # gate; judging them by the base-ref copy would redden every
+        # commit that changes the gate and its fixtures together.
+        run: bash scripts/ci/lint-actions-pinning-test.sh
+      - name: Restore trusted lint-actions-pinning.sh from the base ref
+        # CID-03 (audit-2026-07-23): same class as import-checks'
+        # equivalent step — a change could weaken this script's
+        # hard-fail (e.g. widen SHA_RE, or exempt a namespace) and
+        # introduce an unpinned third-party action in the same diff,
+        # and be judged by its own weakened copy. Restore the base-ref
+        # (un-modified) script before it runs; it scans the workflow
+        # tree on disk, so it still judges the PR-head
+        # `.github/workflows/` content.
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          f=scripts/ci/lint-actions-pinning.sh
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "$ZERO_SHA" ]; then
+            echo "::notice::no BASE_SHA — running the PR-head $f (first push / no comparison base)."
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running the PR-head $f (fetch-depth too shallow?)."
+            exit 0
+          fi
+          if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
+            mv "${f}.trusted" "$f"
+            chmod +x "$f"
+            echo "Restored $f from base ${BASE_SHA} — judged by the un-modified guard."
+          else
+            rm -f "${f}.trusted"
+            echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
+          fi
+      - name: lint-actions-pinning
+        # F-1216 (codex audit-2026-05-12): HARD-FAILS on any third-party
+        # action in the workflow tree that is not pinned to a commit SHA.
+        # It used to hard-fail only on `git diff origin/main`, which is
+        # empty on a push-to-main checkout — inert for every commit that
+        # lands here under the direct-to-main cadence. The scan reads the
+        # tree, so there is no diff base left to be wrong about.
+        run: bash scripts/ci/lint-actions-pinning.sh
+      # ── from the former `import-checks` job (import-boundary lint) ──
       - name: lint-baseline-growth self-test
         # Runs BEFORE the restore below, deliberately: this validates the
         # gate script AS THIS PR SHIPS IT. After the restore the working
@@ -1764,75 +1741,68 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-replay-plan.sh
-
-  actions-pinning:
-    name: github-actions SHA-pinning lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [preflight]
-    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # ── from the former `openapi` job (openapi lint) ──
+      - name: Spectral lint
+        uses: stoplightio/spectral-action@6416fd018ae38e60136775066eb3e98172143141  # v0.8.13
         with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: lint-actions-pinning self-test
-        # Pins the gate non-vacuous: it must CATCH an unpinned and a
-        # tag-pinned third-party action and PASS a SHA-pinned one, keep
-        # actions/*+github/* exempt, read `.yaml` as well as `.yml`, not
-        # mistake prose ending in "causes:" for a `uses:` key, and FAIL
-        # rather than pass on a root with no workflows or no steps. Runs
-        # BEFORE the restore below — as import-checks orders its own
-        # self-tests — because the fixtures must exercise the PROPOSED
-        # gate; judging them by the base-ref copy would redden every
-        # commit that changes the gate and its fixtures together.
-        run: bash scripts/ci/lint-actions-pinning-test.sh
-      - name: Restore trusted lint-actions-pinning.sh from the base ref
-        # CID-03 (audit-2026-07-23): same class as import-checks'
-        # equivalent step — a change could weaken this script's
-        # hard-fail (e.g. widen SHA_RE, or exempt a namespace) and
-        # introduce an unpinned third-party action in the same diff,
-        # and be judged by its own weakened copy. Restore the base-ref
-        # (un-modified) script before it runs; it scans the workflow
-        # tree on disk, so it still judges the PR-head
-        # `.github/workflows/` content.
-        env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          file_glob: openapi/*.yaml
+      - name: ADR-0018 URL-discipline + served-host check
+        run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
+      - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
+        run: go run ./scripts/ci/lint-pk-discriminators
+      - name: INV-3 derive_generation guard check
+        run: go run ./scripts/ci/lint-derive-generation-guard
+      - name: lint-comments
+        # No new date, ticket id, #nnn or PR n in a product Go comment;
+        # scripts/ci/lint-comments.baseline only shrinks.
+        run: ./scripts/ci/lint-comments.sh
+      - name: lint-comments self-test
+        run: ./scripts/ci/lint-comments-test.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "24"
+      - name: Generated API reference is in sync
         run: |
-          set -euo pipefail
-          ZERO_SHA="0000000000000000000000000000000000000000"
-          f=scripts/ci/lint-actions-pinning.sh
-          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "$ZERO_SHA" ]; then
-            echo "::notice::no BASE_SHA — running the PR-head $f (first push / no comparison base)."
-            exit 0
+          ./scripts/dev/docs-api.sh
+          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md docs/reference/api/stellar-index.v1.yaml; then
+            echo "::error::Generated API reference is stale. Run 'make docs-api' locally and commit the result."
+            exit 1
           fi
-          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running the PR-head $f (fetch-depth too shallow?)."
-            exit 0
+      - name: Generated Postman collection is in sync
+        # Third leg of the generated-artifact drift guard: docs/reference/api
+        # is checked above, web/explorer/src/api/types.ts in the web-explorer
+        # job. The converter is deterministic (seeded json-schema-faker
+        # preload + jq ID-strip in docs-postman.sh, commit 8ea2b9ad), so an
+        # exact-diff gate is safe.
+        run: |
+          ./scripts/dev/docs-postman.sh
+          if ! git diff --exit-code -- examples/postman; then
+            echo "::error::Generated Postman collection is stale. Run 'make docs-postman' locally and commit the result."
+            exit 1
           fi
-          if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
-            mv "${f}.trusted" "$f"
-            chmod +x "$f"
-            echo "Restored $f from base ${BASE_SHA} — judged by the un-modified guard."
-          else
-            rm -f "${f}.trusted"
-            echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
+      - name: Generated config reference is in sync
+        # GH-1132: docs/reference/config/README.md is generated from
+        # internal/config/config.go struct tags but, unlike the API
+        # reference and Postman collection above, had no CI regen-diff —
+        # only lint-docs.sh's forward check (a tag missing from the doc
+        # entirely), never a type/default drift on an already-documented
+        # key. scripts/dev/verify.sh already regenerates it; this makes
+        # the same check unavoidable in CI for a contributor who never
+        # runs verify.sh.
+        run: |
+          go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
+          if ! git diff --exit-code -- docs/reference/config/README.md; then
+            echo "::error::Generated config reference is stale. Run 'make docs-config' locally and commit the result."
+            exit 1
           fi
-      - name: lint-actions-pinning
-        # F-1216 (codex audit-2026-05-12): HARD-FAILS on any third-party
-        # action in the workflow tree that is not pinned to a commit SHA.
-        # It used to hard-fail only on `git diff origin/main`, which is
-        # empty on a push-to-main checkout — inert for every commit that
-        # lands here under the direct-to-main cadence. The scan reads the
-        # tree, so there is no diff base left to be wrong about.
-        run: bash scripts/ci/lint-actions-pinning.sh
+
 
   monitoring-rules:
     name: prometheus rule validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [preflight]
-    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
+    # §B: cheap — kept unconditional, same reasoning as repo-gates above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
     # configs/prometheus/rules.r1/*.yml (R1 single-host overlay)
     # with promtool. Catches YAML syntax errors, broken PromQL, and
@@ -1951,72 +1921,6 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────────────
-  # Security — fast scans on every PR: govulncheck + gitleaks (below).
-  # Heavier scans (trivy fs vuln+secret, CycloneDX SBOM) run OFF the
-  # PR path in .github/workflows/security.yml (weekly schedule +
-  # workflow_dispatch) — that workflow closes the N2-02 pre-flip gap
-  # that used to be documented here. Don't duplicate scanners across
-  # the two: fast-and-blocking lives here, deep-and-scheduled there.
-  # ────────────────────────────────────────────────────────────────
-
-  vuln:
-    name: govulncheck + gitleaks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [preflight]
-    # §B: govulncheck is Go-only work, gated on the `go` class — but
-    # gitleaks is a full-repository SECRET scan with no relationship to
-    # file type, so it is NOT gated: a leaked credential is exactly as
-    # real in a YAML/shell/config-only diff as in a .go one, and gating
-    # the whole job on the `go` class would silently turn secret
-    # scanning off for the majority of the repo's files. Only the
-    # govulncheck STEP below carries the class condition; this job has
-    # no job-level `if:` at all (see the REQUIRED-CHECK NOTE on
-    # `preflight`).
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: govulncheck
-        if: needs.preflight.outputs.go == 'true'
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
-          # Gated by a documented accepted-risk allowlist
-          # (scripts/ci/govulncheck-allow.txt): the unmaintained lib/pq@v1.12.3
-          # Postgres driver (ADR-0006) carries a batch of unpatched, malicious-
-          # server/MITM-only vulns that are not exploitable in stellarindex's
-          # localhost-only deployment. The wrapper accepts exactly those reviewed
-          # ids and still fails on ANY other called vulnerability (new lib/pq CVE
-          # or a vuln in any other module). Durable fix: migrate to jackc/pgx.
-          ./scripts/ci/govulncheck-gated.sh ./...
-      - name: gitleaks
-        # gitleaks/gitleaks-action@v2 changed to a paid-license model
-        # in late 2022 — fails every run without a GITLEAKS_LICENSE
-        # secret. We invoke the OSS CLI directly instead (same scan,
-        # MIT licensed, no key).
-        run: |
-          # F-1294 (codex audit-2026-05-13): SHA-verified install.
-          # Pre-fix this was `curl | tar -xz` straight, no
-          # checksum. Now we download, verify, then unpack.
-          # Checksum source (audit-2026-07-16 C4-17b): the committed
-          # GITLEAKS_TARBALL_SHA256_DEFAULT (top-level env, versioned +
-          # reviewable).
-          SHA="$GITLEAKS_TARBALL_SHA256_DEFAULT"
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
-          echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
-          gitleaks detect --redact --verbose --no-banner
-          # Pins the allowlists' scope against this same binary: no source
-          # file exempted wholesale, and every .gitleaksignore fingerprint
-          # reachable from HEAD (needs the fetch-depth: 0 checkout above).
-          ./scripts/ci/gitleaks-allowlist-scope-test.sh
-
-  # ────────────────────────────────────────────────────────────────
   # Build — the binaries must compile on every PR.
   # ────────────────────────────────────────────────────────────────
 
@@ -2048,293 +1952,22 @@ jobs:
           name: binaries-${{ github.sha }}
           path: bin/
           retention-days: 7
-
-  # ────────────────────────────────────────────────────────────────
-  # API contract check — OpenAPI lint + docs-regen drift detection.
-  # ────────────────────────────────────────────────────────────────
-
-  openapi:
-    name: openapi lint
+  toolchain-gates:
+    name: toolchain gates (ansible, web, vuln, fuzz)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     needs: [preflight]
-    # N2-04: runs on push-to-main too — a direct push (the live-in-dev
-    # norm) that edits openapi/ or the handlers previously skipped Spectral
-    # + the generated-reference drift check, the exact bypass the push
-    # trigger above exists to close. The job is cheap.
-    #
-    # §B: kept unconditional (not gated on the `web` class, deliberately
-    # — it also validates the Go-side openapi/*.yaml consumers via
-    # lint-openapi-urls/lint-pk-discriminators, so a "web"-only filter
-    # would be wrong for it either way).
+    # Folded from five short jobs (ansible-check, web-explorer, web-status, vuln,
+    # fuzz-smoke). Step-level path-class `if:` is unchanged; web steps carry an
+    # explicit working-directory because a merged job cannot share `defaults.run`.
+    # Fuzz runs last: it is the only step that can run for tens of minutes.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Spectral lint
-        uses: stoplightio/spectral-action@6416fd018ae38e60136775066eb3e98172143141  # v0.8.13
-        with:
-          file_glob: openapi/*.yaml
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: ADR-0018 URL-discipline + served-host check
-        run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
-      - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
-        run: go run ./scripts/ci/lint-pk-discriminators
-      - name: INV-3 derive_generation guard check
-        run: go run ./scripts/ci/lint-derive-generation-guard
-      - name: lint-comments
-        # No new date, ticket id, #nnn or PR n in a product Go comment;
-        # scripts/ci/lint-comments.baseline only shrinks.
-        run: ./scripts/ci/lint-comments.sh
-      - name: lint-comments self-test
-        run: ./scripts/ci/lint-comments-test.sh
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with:
-          node-version: "24"
-      - name: Generated API reference is in sync
-        run: |
-          ./scripts/dev/docs-api.sh
-          if ! git diff --exit-code -- docs/reference/api/index.html docs/reference/api/README.md docs/reference/api/stellar-index.v1.yaml; then
-            echo "::error::Generated API reference is stale. Run 'make docs-api' locally and commit the result."
-            exit 1
-          fi
-      - name: Generated Postman collection is in sync
-        # Third leg of the generated-artifact drift guard: docs/reference/api
-        # is checked above, web/explorer/src/api/types.ts in the web-explorer
-        # job. The converter is deterministic (seeded json-schema-faker
-        # preload + jq ID-strip in docs-postman.sh, commit 8ea2b9ad), so an
-        # exact-diff gate is safe.
-        run: |
-          ./scripts/dev/docs-postman.sh
-          if ! git diff --exit-code -- examples/postman; then
-            echo "::error::Generated Postman collection is stale. Run 'make docs-postman' locally and commit the result."
-            exit 1
-          fi
-      - name: Generated config reference is in sync
-        # GH-1132: docs/reference/config/README.md is generated from
-        # internal/config/config.go struct tags but, unlike the API
-        # reference and Postman collection above, had no CI regen-diff —
-        # only lint-docs.sh's forward check (a tag missing from the doc
-        # entirely), never a type/default drift on an already-documented
-        # key. scripts/dev/verify.sh already regenerates it; this makes
-        # the same check unavoidable in CI for a contributor who never
-        # runs verify.sh.
-        run: |
-          go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
-          if ! git diff --exit-code -- docs/reference/config/README.md; then
-            echo "::error::Generated config reference is stale. Run 'make docs-config' locally and commit the result."
-            exit 1
-          fi
-
-  # ────────────────────────────────────────────────────────────────
-  # Showcase site — typecheck, lint, build the Next.js app at
-  # web/explorer/. Static-export build is fast (~30s).
-  # Also verifies the OpenAPI → TypeScript codegen is in sync; if
-  # the OpenAPI spec changed and someone forgot to regen the types,
-  # this fails with a clear error.
-  # ────────────────────────────────────────────────────────────────
-
-  web-explorer:
-    name: web/explorer
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [preflight]
-    # §B: gated on the `web` class with STEP-level `if:` on every
-    # substantive step below (see the REQUIRED-CHECK NOTE on
-    # `preflight`) — checkout stays unconditional since it's cheap and
-    # harmless as a no-op prefix. pnpm/action-setup and setup-node are
-    # gated too: setup-node's `cache: "pnpm"` Post step saves whatever
-    # path `pnpm store path` resolved to at Main time, and hard-fails
-    # ("Path Validation Error: Path(s) ... do(es) not exist") when that
-    # store was never populated because `pnpm install` below it was
-    # skipped — run 36427729006 (PR #1545) red on every non-web PR.
-    # Main only registers a Post hook when it runs, so gating these two
-    # steps the same way as the work below suppresses it cleanly.
-    defaults:
-      run:
-        working-directory: web/explorer
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      # T547: `version:` floated independently of web/explorer/package.json's
-      # `packageManager` pin — package_json_file lets action-setup read the
-      # pin itself instead of a second, driftable copy.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
-        if: needs.preflight.outputs.web == 'true'
-        with:
-          package_json_file: web/explorer/package.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        if: needs.preflight.outputs.web == 'true'
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: web/explorer/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        if: needs.preflight.outputs.web == 'true'
-      # T335: web/explorer/public/_redirects documents Cloudflare Pages'
-      # free-plan ~100-rule cap in its own comments but nothing enforced
-      # it — past the cap CF Pages silently drops the excess rules at
-      # deploy time with no build error. working-directory overrides the
-      # job default since the script lives at the repo root.
-      - name: _redirects within Cloudflare Pages free-plan rule cap
-        if: needs.preflight.outputs.web == 'true'
-        working-directory: ${{ github.workspace }}
-        run: bash scripts/ci/check-redirects-cap.sh
-      - name: Generated API types are in sync
-        if: needs.preflight.outputs.web == 'true'
-        run: |
-          pnpm generate:api
-          if ! git diff --exit-code -- src/api/types.ts; then
-            echo "::error::Generated TS API types are stale. Run 'make web-generate-api' locally and commit src/api/types.ts."
-            exit 1
-          fi
-      - run: pnpm typecheck
-        if: needs.preflight.outputs.web == 'true'
-      - run: pnpm lint
-        if: needs.preflight.outputs.web == 'true'
-      # The vitest suite ran in NEITHER this job nor scripts/dev/verify.sh
-      # (cold audit 2026-08-04) — 209 tests across 49 files, all green and
-      # all dead, including safe-domain.test.ts (the isSafeHomeDomain /
-      # isSafePublicImageUrl phishing + client-SSRF gate), the CS-009 og
-      # SSRF regression, and the AGT-06 stale-flag regression. A refactor
-      # loosening any of them would have landed green.
-      - run: pnpm test
-        if: needs.preflight.outputs.web == 'true'
-      # Build covers what typecheck/lint don't: Next.js static-export
-      # constraints (e.g. `dynamic = 'force-static'` requirement on
-      # sitemap/robots routes), generateStaticParams behaviour at
-      # build time, and any runtime-vs-build divergence in the
-      # output: 'export' pipeline. The build-time API fetch falls
-      # through to the seed-only path when CI can't reach the
-      # production API — that's expected and not a CI failure.
-      #
-      # We deliberately run the build ONLY against the CI stub URL.
-      # A second build against the real API used to live here, but
-      # Next.js's per-page-render 60s worker timeout is too tight
-      # for /assets/native — XLM has 5,553 markets and the build
-      # serialises the response into the static HTML, which trips
-      # the timeout on busy build hosts. CF Pages does the real-API
-      # build at deploy time with its own retry policy, so the CI
-      # second-pass was redundant. Keep the stub-URL build — it
-      # exercises every code path that doesn't depend on API shape.
-      - run: pnpm build
-        if: needs.preflight.outputs.web == 'true'
-        env:
-          # Force a deterministic api-base URL so the build doesn't
-          # try to contact production from CI. The fallback in
-          # generateStaticParams kicks in when the fetch fails, so
-          # the build still succeeds with seed-only slugs.
-          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
-      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
-      # DEP-F1 (audit-2026-08-14): the `pnpm audit --audit-level high` gate
-      # that lived here enforced NOTHING from 2026-07-15 on — the npm advisory
-      # endpoint it calls returned ERR_PNPM_AUDIT_BAD_RESPONSE continuously
-      # (registry-side), so the step loud-SKIPPED every run and the promised
-      # OSV/trivy backstop stayed unwired: a HIGH advisory could ship green.
-      # Replaced with an endpoint-INDEPENDENT scanner — trivy reads the
-      # committed pnpm-lock.yaml against its own vuln DB (no npm advisory
-      # endpoint in the path), so it keeps enforcing through the outage. Same
-      # SHA-pinned action and same posture as the scheduled scan in
-      # security.yml: ignore-unfixed (an unfixable upstream CVE must not red
-      # every PR — it re-enters the moment a fixed version exists) and
-      # HIGH,CRITICAL only. node_modules is skipped so the verdict is a pure
-      # function of the committed lockfile, not of what `pnpm install`
-      # happened to resolve. scan-ref is repo-root-relative: `uses:` steps
-      # ignore this job's defaults.run.working-directory.
-      - name: web-deps vuln scan (trivy, pnpm-lock)
-        if: needs.preflight.outputs.web == 'true'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: web/explorer
-          scanners: vuln
-          format: table
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          skip-dirs: web/explorer/node_modules
-
-  # ────────────────────────────────────────────────────────────────
-  # Status page — the status.stellarindex.io project is now redirect-only
-  # (the page lives at stellarindex.io/status). Replaces
-  # the cstate Hugo build with a custom Next.js static-export.
-  # ────────────────────────────────────────────────────────────────
-  web-status:
-    name: web/status
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [preflight]
-    # §B: gated on the `web` class, same STEP-level shape as web-explorer
-    # above (see the REQUIRED-CHECK NOTE on `preflight`, and that job's
-    # comment on why pnpm/action-setup and setup-node are gated too —
-    # setup-node's cache-save Post step fails hard when `pnpm install`
-    # never ran to populate the store it tries to save).
-    defaults:
-      run:
-        working-directory: web/status
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      # T547: package_json_file reads web/status/package.json's
-      # `packageManager` pin instead of a second, driftable copy.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
-        if: needs.preflight.outputs.web == 'true'
-        with:
-          package_json_file: web/status/package.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        if: needs.preflight.outputs.web == 'true'
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: web/status/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        if: needs.preflight.outputs.web == 'true'
-      - run: pnpm typecheck
-        if: needs.preflight.outputs.web == 'true'
-      - run: pnpm lint
-        if: needs.preflight.outputs.web == 'true'
-      - run: pnpm build
-        if: needs.preflight.outputs.web == 'true'
-        env:
-          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
-      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
-      # DEP-F1 (audit-2026-08-14): see the web/explorer job above — the
-      # `pnpm audit` gate that lived here enforced nothing since 2026-07-15
-      # (ERR_PNPM_AUDIT_BAD_RESPONSE loud-skip). Replaced with the same
-      # endpoint-independent trivy lockfile scan, identical posture to
-      # security.yml (ignore-unfixed, HIGH,CRITICAL). scan-ref is
-      # repo-root-relative; node_modules skipped so the verdict is a pure
-      # function of the committed web/status/pnpm-lock.yaml.
-      - name: web-deps vuln scan (trivy, pnpm-lock)
-        if: needs.preflight.outputs.web == 'true'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: web/status
-          scanners: vuln
-          format: table
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          skip-dirs: web/status/node_modules
-
-  ansible-check:
-    name: ansible syntax + lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [preflight]
-    # §B: gated on the `ansible` class with STEP-level `if:` on every
-    # substantive step below (see the REQUIRED-CHECK NOTE on
-    # `preflight`) — checkout stays unconditional.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
+          # lint-baseline-growth, doc-pinned-tests and gitleaks diff against a base ref / full history.
+          fetch-depth: 0
+      # ── from the former `ansible-check` job (ansible syntax + lint) ──
       - name: ansible-collection-pin-parity self-test
         # F146 (audit-2026-09-02): this job and ansible-drift.yml both used
         # to install only the `ansible` pipx bundle, never
@@ -2443,7 +2076,7 @@ jobs:
         # zfs-snapshot.env.j2 and cross-checks it against the script's
         # built-in default and the role's own zfs_datasets.
         #
-        # Here rather than in import-checks: it needs a python with
+        # Here rather than in repo-gates: it needs a python with
         # jinja2 + PyYAML, which only this job installs (via ansible).
         # That ties the CI trigger to the `ansible` change class; a change
         # to scripts/ops/zfs-snapshot.sh alone is caught by verify.sh,
@@ -2639,6 +2272,235 @@ jobs:
         run: |
           python3 ./scripts/ci/lint-ch-client-auth.py
           ./scripts/ci/lint-ch-client-auth-test.sh
+      # ── from the former `web-explorer` job (web/explorer) ──
+      # T547: `version:` floated independently of web/explorer/package.json's
+      # `packageManager` pin — package_json_file lets action-setup read the
+      # pin itself instead of a second, driftable copy.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        if: needs.preflight.outputs.web == 'true'
+        with:
+          package_json_file: web/explorer/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: needs.preflight.outputs.web == 'true'
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: web/explorer/pnpm-lock.yaml
+      - name: "web/explorer pnpm install --frozen-lockfile"
+        working-directory: web/explorer
+        run: pnpm install --frozen-lockfile
+        if: needs.preflight.outputs.web == 'true'
+      # T335: web/explorer/public/_redirects documents Cloudflare Pages'
+      # free-plan ~100-rule cap in its own comments but nothing enforced
+      # it — past the cap CF Pages silently drops the excess rules at
+      # deploy time with no build error. working-directory overrides the
+      # job default since the script lives at the repo root.
+      - name: _redirects within Cloudflare Pages free-plan rule cap
+        if: needs.preflight.outputs.web == 'true'
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/ci/check-redirects-cap.sh
+      - name: Generated API types are in sync
+        working-directory: web/explorer
+        if: needs.preflight.outputs.web == 'true'
+        run: |
+          pnpm generate:api
+          if ! git diff --exit-code -- src/api/types.ts; then
+            echo "::error::Generated TS API types are stale. Run 'make web-generate-api' locally and commit src/api/types.ts."
+            exit 1
+          fi
+      - name: "web/explorer pnpm typecheck"
+        working-directory: web/explorer
+        run: pnpm typecheck
+        if: needs.preflight.outputs.web == 'true'
+      - name: "web/explorer pnpm lint"
+        working-directory: web/explorer
+        run: pnpm lint
+        if: needs.preflight.outputs.web == 'true'
+      # The vitest suite ran in NEITHER this job nor scripts/dev/verify.sh
+      # (cold audit 2026-08-04) — 209 tests across 49 files, all green and
+      # all dead, including safe-domain.test.ts (the isSafeHomeDomain /
+      # isSafePublicImageUrl phishing + client-SSRF gate), the CS-009 og
+      # SSRF regression, and the AGT-06 stale-flag regression. A refactor
+      # loosening any of them would have landed green.
+      - name: "web/explorer pnpm test"
+        working-directory: web/explorer
+        run: pnpm test
+        if: needs.preflight.outputs.web == 'true'
+      # Build covers what typecheck/lint don't: Next.js static-export
+      # constraints (e.g. `dynamic = 'force-static'` requirement on
+      # sitemap/robots routes), generateStaticParams behaviour at
+      # build time, and any runtime-vs-build divergence in the
+      # output: 'export' pipeline. The build-time API fetch falls
+      # through to the seed-only path when CI can't reach the
+      # production API — that's expected and not a CI failure.
+      #
+      # We deliberately run the build ONLY against the CI stub URL.
+      # A second build against the real API used to live here, but
+      # Next.js's per-page-render 60s worker timeout is too tight
+      # for /assets/native — XLM has 5,553 markets and the build
+      # serialises the response into the static HTML, which trips
+      # the timeout on busy build hosts. CF Pages does the real-API
+      # build at deploy time with its own retry policy, so the CI
+      # second-pass was redundant. Keep the stub-URL build — it
+      # exercises every code path that doesn't depend on API shape.
+      - name: "web/explorer pnpm build"
+        working-directory: web/explorer
+        run: pnpm build
+        if: needs.preflight.outputs.web == 'true'
+        env:
+          # Force a deterministic api-base URL so the build doesn't
+          # try to contact production from CI. The fallback in
+          # generateStaticParams kicks in when the fetch fails, so
+          # the build still succeeds with seed-only slugs.
+          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
+      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
+      # DEP-F1 (audit-2026-08-14): the `pnpm audit --audit-level high` gate
+      # that lived here enforced NOTHING from 2026-07-15 on — the npm advisory
+      # endpoint it calls returned ERR_PNPM_AUDIT_BAD_RESPONSE continuously
+      # (registry-side), so the step loud-SKIPPED every run and the promised
+      # OSV/trivy backstop stayed unwired: a HIGH advisory could ship green.
+      # Replaced with an endpoint-INDEPENDENT scanner — trivy reads the
+      # committed pnpm-lock.yaml against its own vuln DB (no npm advisory
+      # endpoint in the path), so it keeps enforcing through the outage. Same
+      # SHA-pinned action and same posture as the scheduled scan in
+      # security.yml: ignore-unfixed (an unfixable upstream CVE must not red
+      # every PR — it re-enters the moment a fixed version exists) and
+      # HIGH,CRITICAL only. node_modules is skipped so the verdict is a pure
+      # function of the committed lockfile, not of what `pnpm install`
+      # happened to resolve. scan-ref is repo-root-relative: `uses:` steps
+      # ignore this job's defaults.run.working-directory.
+      - name: web-deps vuln scan (trivy, pnpm-lock)
+        if: needs.preflight.outputs.web == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: web/explorer
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          skip-dirs: web/explorer/node_modules
+      # ── from the former `web-status` job (web/status) ──
+      # T547: package_json_file reads web/status/package.json's
+      # `packageManager` pin instead of a second, driftable copy.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        if: needs.preflight.outputs.web == 'true'
+        with:
+          package_json_file: web/status/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: needs.preflight.outputs.web == 'true'
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: web/status/pnpm-lock.yaml
+      - name: "web/status pnpm install --frozen-lockfile"
+        working-directory: web/status
+        run: pnpm install --frozen-lockfile
+        if: needs.preflight.outputs.web == 'true'
+      - name: "web/status pnpm typecheck"
+        working-directory: web/status
+        run: pnpm typecheck
+        if: needs.preflight.outputs.web == 'true'
+      - name: "web/status pnpm lint"
+        working-directory: web/status
+        run: pnpm lint
+        if: needs.preflight.outputs.web == 'true'
+      - name: "web/status pnpm build"
+        working-directory: web/status
+        run: pnpm build
+        if: needs.preflight.outputs.web == 'true'
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
+      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
+      # DEP-F1 (audit-2026-08-14): see the web/explorer job above — the
+      # `pnpm audit` gate that lived here enforced nothing since 2026-07-15
+      # (ERR_PNPM_AUDIT_BAD_RESPONSE loud-skip). Replaced with the same
+      # endpoint-independent trivy lockfile scan, identical posture to
+      # security.yml (ignore-unfixed, HIGH,CRITICAL). scan-ref is
+      # repo-root-relative; node_modules skipped so the verdict is a pure
+      # function of the committed web/status/pnpm-lock.yaml.
+      - name: web-deps vuln scan (trivy, pnpm-lock)
+        if: needs.preflight.outputs.web == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: web/status
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          skip-dirs: web/status/node_modules
+      # ── from the former `vuln` job (govulncheck + gitleaks) ──
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck
+        if: needs.preflight.outputs.go == 'true'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          # Gated by a documented accepted-risk allowlist
+          # (scripts/ci/govulncheck-allow.txt): the unmaintained lib/pq@v1.12.3
+          # Postgres driver (ADR-0006) carries a batch of unpatched, malicious-
+          # server/MITM-only vulns that are not exploitable in stellarindex's
+          # localhost-only deployment. The wrapper accepts exactly those reviewed
+          # ids and still fails on ANY other called vulnerability (new lib/pq CVE
+          # or a vuln in any other module). Durable fix: migrate to jackc/pgx.
+          ./scripts/ci/govulncheck-gated.sh ./...
+      - name: gitleaks
+        # gitleaks/gitleaks-action@v2 changed to a paid-license model
+        # in late 2022 — fails every run without a GITLEAKS_LICENSE
+        # secret. We invoke the OSS CLI directly instead (same scan,
+        # MIT licensed, no key).
+        run: |
+          # F-1294 (codex audit-2026-05-13): SHA-verified install.
+          # Pre-fix this was `curl | tar -xz` straight, no
+          # checksum. Now we download, verify, then unpack.
+          # Checksum source (audit-2026-07-16 C4-17b): the committed
+          # GITLEAKS_TARBALL_SHA256_DEFAULT (top-level env, versioned +
+          # reviewable).
+          SHA="$GITLEAKS_TARBALL_SHA256_DEFAULT"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks detect --redact --verbose --no-banner
+          # Pins the allowlists' scope against this same binary: no source
+          # file exempted wholesale, and every .gitleaksignore fingerprint
+          # reachable from HEAD (needs the fetch-depth: 0 checkout above).
+          ./scripts/ci/gitleaks-allowlist-scope-test.sh
+      # ── from the former `fuzz-smoke` job (fuzz smoke (30s per target)) ──
+      - name: go mod download (retry on GOPROXY flake)
+        if: needs.preflight.outputs.go == 'true'
+        run: |
+          for i in 1 2 3; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $i/3) — likely a transient GOPROXY/sumdb 5xx; retrying"
+            sleep $((i * 15))
+          done
+          echo "::error::go mod download failed after 3 attempts"; exit 1
+      - name: Fuzz smoke
+        # #340 item 5. The unit-test job already runs every fuzz target's
+        # SEED corpus (a Go fuzz target is an ordinary test without
+        # -fuzz); this job is the GENERATIVE pass, which is the half that
+        # finds inputs nobody thought to write down.
+        #
+        # 30s per target is a smoke, not a campaign: it catches shallow
+        # crashers on every PR at a few minutes of runner time. Deep runs
+        # are an operator activity (-fuzztime=1h against one target).
+        #
+        # The target list is discovered from the tree, not listed here,
+        # so a newly-added target is covered without a second edit — see
+        # the script's header for why, and for its fail-closed behaviour
+        # when discovery returns nothing. On a PR only the targets of the
+        # packages it changed run (FUZZ_BASE); the per-target time is
+        # derived from a fixed job budget, capped at 30s.
+        if: needs.preflight.outputs.go == 'true'
+        env:
+          FUZZ_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/ci/fuzz-smoke.sh
+
 
   branch-protection-status:
     name: branch protection status
