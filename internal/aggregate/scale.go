@@ -6,7 +6,34 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// NormalizeAmountScale returns a copy of `trades` in which every trade's
+// ScaledWindow is a trade window whose amounts all sit at one
+// smallest-unit scale. [NormalizeAmountScale] is its only constructor and
+// [VWAP] accepts nothing else, so a mixed-scale slice cannot be priced.
+type ScaledWindow struct {
+	trades   []canonical.Trade
+	decimals int
+}
+
+// Trades returns the lifted trades. Never hand them back to
+// [NormalizeAmountScale]: it keys off Source, not the amounts, so a second
+// pass multiplies the lower-scale trades again.
+func (w ScaledWindow) Trades() []canonical.Trade { return w.trades }
+
+// Decimals is the common scale every trade was lifted to: the largest
+// per-source scale in the window as built, 0 for an empty window.
+func (w ScaledWindow) Decimals() int { return w.decimals }
+
+// Len is the number of trades in the window.
+func (w ScaledWindow) Len() int { return len(w.trades) }
+
+// FilterOutliers applies [FilterOutliers] and keeps the window's scale:
+// dropping the trades that set it does not un-lift the survivors.
+func (w ScaledWindow) FilterOutliers(sigma float64) ScaledWindow {
+	return ScaledWindow{trades: FilterOutliers(w.trades, sigma), decimals: w.decimals}
+}
+
+// NormalizeAmountScale returns a [ScaledWindow] over a copy of `trades` in
+// which every trade's
 // BaseAmount and QuoteAmount have been lifted to a single common
 // smallest-unit scale — the LARGEST per-source scale present in the slice
 // — so that a volume-weighted aggregation ([VWAP], [ComputeOHLC]'s volume
@@ -51,13 +78,13 @@ import (
 //     10^0 = 1 for every trade, so no amount is touched. Only genuinely
 //     mixed windows move, toward the true real-volume-weighted price.
 //
-// A nil or empty input is returned unchanged. Input trades (which may alias a
+// A nil or empty input is wrapped unchanged at scale 0. Input trades (which may alias a
 // shared read cache) are never mutated: amounts are only ever read via
 // Amount.BigInt (which copies) and written back via canonical.NewAmount
 // (which copies), so the returned slice shares no *big.Int with the input.
-func NormalizeAmountScale(trades []canonical.Trade, decimalsFor func(source string) int) []canonical.Trade {
+func NormalizeAmountScale(trades []canonical.Trade, decimalsFor func(source string) int) ScaledWindow {
 	if len(trades) == 0 {
-		return trades
+		return ScaledWindow{trades: trades}
 	}
 
 	// Memoize the per-source scale — a window carries hundreds of trades
@@ -104,5 +131,5 @@ func NormalizeAmountScale(trades []canonical.Trade, decimalsFor func(source stri
 		quote.Mul(quote, factor)
 		out[i].QuoteAmount = canonical.NewAmount(quote)
 	}
-	return out
+	return ScaledWindow{trades: out, decimals: maxDec}
 }

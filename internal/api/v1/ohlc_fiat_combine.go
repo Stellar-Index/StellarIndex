@@ -297,8 +297,8 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // [Server.ohlcSeriesFiatCombined]: it reads the raw trades of EVERY
 // constituent of a fiat-quoted target — the SAME set
 // [Server.usdPeggedConstituents] feeds the series combine — and merges them
-// into one chronologically-ordered population. Returns
-// (trades, proxied, err); `proxied` drives flags.triangulated.
+// into one chronologically-ordered population, lifted to one amount scale.
+// Returns (window, proxied, err); `proxied` drives flags.triangulated.
 //
 // C1-024 (audit-2026-07-23): the point path used to read the LITERAL pair
 // and, only when that came back empty, retry each operator-declared classic
@@ -337,11 +337,11 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // `len(trades) == maxTrades` truncation signal.
 func (s *Server) fiatCombinedTrades(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, error) {
+) (aggregate.ScaledWindow, bool, error) {
 	established, heldBack := s.usdPeggedConstituentSets(pair)
 	merged, proxied, err := s.mergeConstituentTrades(ctx, established, pair, from, to, maxTrades)
 	if err != nil {
-		return nil, false, err
+		return aggregate.ScaledWindow{}, false, err
 	}
 	// The held-back spellings answer the sub-windows the established
 	// ones left empty — the series' per-bucket rule
@@ -370,7 +370,7 @@ func (s *Server) fiatCombinedTrades(
 		for _, sp := range heldBack {
 			batch, berr := s.history.TradesInRange(ctx, sp, from, to, maxTrades)
 			if berr != nil {
-				return nil, false, berr
+				return aggregate.ScaledWindow{}, false, berr
 			}
 			// `answered` is snapshotted from the established rows
 			// BEFORE any held-back row joins them, so two held-back
@@ -392,7 +392,7 @@ func (s *Server) fiatCombinedTrades(
 		merged = merged[len(merged)-maxTrades:]
 	}
 	// Scale-normalize before the callers (handleVWAP / handleTWAP /
-	// single-bar handleOHLC) feed this cross-source slice to
+	// single-bar handleOHLC) feed this cross-source window to
 	// aggregate.VWAP / aggregate.ComputeOHLC. usdPeggedConstituents merges
 	// on-chain legs (native/USDC-classic, 7dp) with CEX legs
 	// (crypto:XLM/crypto:USDT, 8dp) into one population, so without lifting
@@ -404,8 +404,7 @@ func (s *Server) fiatCombinedTrades(
 	// price. TWAP is time-weighted and thus unaffected either way (the
 	// per-trade ratio it weights is scale-invariant); normalizing is a
 	// no-op there, applied uniformly to keep one merge path.
-	merged = aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor)
-	return merged, proxied, nil
+	return aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor), proxied, nil
 }
 
 // mergeConstituentTrades reads one constituent set into a single

@@ -124,7 +124,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	const maxTrades = 10000
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
+	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -137,11 +137,11 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, ok := s.computeTWAP(w, r, pair, from, to, trades, sigma)
+	res, ok := s.computeTWAP(w, r, pair, from, to, window, sigma)
 	if !ok {
 		return
 	}
-	res.Truncated = len(trades) == maxTrades
+	res.Truncated = window.Len() == maxTrades
 	res.Clamped = clamped
 	res.Substance = s.thinMarketEvidence(ctx, base, quote, "twap")
 	writeJSON(w, res, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
@@ -152,12 +152,13 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 // Truncated is left for the caller, which owns the trade cap.
 func (s *Server) computeTWAP(
 	w http.ResponseWriter, r *http.Request, pair canonical.Pair,
-	from, to time.Time, trades []canonical.Trade, sigma float64,
+	from, to time.Time, window aggregate.ScaledWindow, sigma float64,
 ) (TWAPResult, bool) {
-	pre := len(trades)
+	pre := window.Len()
 	if sigma > 0 {
-		trades = aggregate.FilterOutliers(trades, sigma)
+		window = window.FilterOutliers(sigma)
 	}
+	trades := window.Trades()
 	price, weighted, err := aggregate.TWAPWithCount(trades, to)
 	if errors.Is(err, aggregate.ErrNoTrades) {
 		if sigma > 0 && pre > 0 && len(trades) == 0 {

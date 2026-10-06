@@ -12,8 +12,10 @@ import (
 // unavailable for this window" — not a programming error.
 var ErrNoTrades = errors.New("aggregate: no trades in window")
 
-// VWAP returns the volume-weighted average price of a slice of
-// trades as an exact-precision big.Rat (quote-per-base).
+// VWAP returns the volume-weighted average price of a window of
+// trades as an exact-precision big.Rat (quote-per-base). It takes a
+// [ScaledWindow] because a raw sum over trades at different source scales
+// weights each by its smallest-unit magnitude, not its volume.
 //
 // Definition: VWAP = Σ(QuoteAmount_i) / Σ(BaseAmount_i). Trades
 // whose base OR quote is non-positive are skipped — they can't
@@ -25,7 +27,8 @@ var ErrNoTrades = errors.New("aggregate: no trades in window")
 // an empty input or every trade skipped). The returned *big.Rat is
 // always strictly positive: only priceable trades (base > 0 AND
 // quote > 0) contribute.
-func VWAP(trades []canonical.Trade) (*big.Rat, error) {
+func VWAP(w ScaledWindow) (*big.Rat, error) {
+	trades := w.trades
 	if len(trades) == 0 {
 		return nil, ErrNoTrades
 	}

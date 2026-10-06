@@ -68,7 +68,7 @@ func TestFilterOutliers_DownAndUpOutliersBothDropped(t *testing.T) {
 					t.Fatalf("outlier %d survived the filter", tc.outlier)
 				}
 			}
-			vwap, err := aggregate.VWAP(got)
+			vwap, err := aggregate.VWAPOf(got)
 			if err != nil {
 				t.Fatalf("VWAP: %v", err)
 			}
@@ -116,7 +116,7 @@ func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 		t.Fatalf("kept %d/%d prints, want %d — the crash print must not reach the published VWAP",
 			len(got), len(trades), len(base))
 	}
-	vwap, err := aggregate.VWAP(got)
+	vwap, err := aggregate.VWAPOf(got)
 	if err != nil {
 		t.Fatalf("VWAP: %v", err)
 	}

@@ -247,7 +247,7 @@ func (o *Orchestrator) quoteSurfaces(
 	if len(proxied) == 0 {
 		return 0, nil, false
 	}
-	scaled := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
+	scaled := aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor).Trades()
 	var proxy, own []canonical.Trade
 	proxyBase, totalBase := new(big.Int), new(big.Int)
 	for i := range trades {

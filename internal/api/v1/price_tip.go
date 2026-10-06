@@ -461,9 +461,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	// (real_volume × 10^scale) and over-weight the finer-scaled venue ~10×
 	// per decimal. Lift every trade to the common scale first. A single-venue
 	// window (the common case) is byte-identical (CS-040).
-	trades = aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
-
-	price, err := aggregate.VWAP(trades)
+	price, err := aggregate.VWAP(aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor))
 	if err != nil {
 		// All-zero-volume input. The fallback path will produce a
 		// usable response.

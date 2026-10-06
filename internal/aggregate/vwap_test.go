@@ -36,7 +36,7 @@ func mkTrade(base, quote int64) canonical.Trade {
 func TestVWAP_SingleTrade(t *testing.T) {
 	// One trade of 100 base for 200 quote → price = 2.0 exactly.
 	trades := []canonical.Trade{mkTrade(100, 200)}
-	got, err := aggregate.VWAP(trades)
+	got, err := aggregate.VWAPOf(trades)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestVWAP_WeightedAverage(t *testing.T) {
 		mkTrade(20, 40),
 		mkTrade(100, 300),
 	}
-	got, err := aggregate.VWAP(trades)
+	got, err := aggregate.VWAPOf(trades)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestVWAP_PrecisionExact(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(base),
 		QuoteAmount: canonical.NewAmount(quote),
 	}
-	got, err := aggregate.VWAP([]canonical.Trade{trade})
+	got, err := aggregate.VWAPOf([]canonical.Trade{trade})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestVWAP_PrecisionExact(t *testing.T) {
 }
 
 func TestVWAP_EmptyReturnsErr(t *testing.T) {
-	_, err := aggregate.VWAP(nil)
+	_, err := aggregate.VWAPOf(nil)
 	if !errors.Is(err, aggregate.ErrNoTrades) {
 		t.Fatalf("err = %v, want ErrNoTrades", err)
 	}
-	_, err = aggregate.VWAP([]canonical.Trade{})
+	_, err = aggregate.VWAPOf([]canonical.Trade{})
 	if !errors.Is(err, aggregate.ErrNoTrades) {
 		t.Fatalf("err (empty slice) = %v, want ErrNoTrades", err)
 	}
@@ -103,7 +103,7 @@ func TestVWAP_ZeroBaseTradesSkipped(t *testing.T) {
 		mkTrade(0, 999), // should be skipped
 		mkTrade(10, 50), // price 5.0
 	}
-	got, err := aggregate.VWAP(trades)
+	got, err := aggregate.VWAPOf(trades)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestVWAP_ZeroBaseTradesSkipped(t *testing.T) {
 }
 
 func TestVWAP_AllZeroBaseReturnsErr(t *testing.T) {
-	_, err := aggregate.VWAP([]canonical.Trade{mkTrade(0, 10), mkTrade(0, 20)})
+	_, err := aggregate.VWAPOf([]canonical.Trade{mkTrade(0, 10), mkTrade(0, 20)})
 	if !errors.Is(err, aggregate.ErrNoTrades) {
 		t.Fatalf("err = %v, want ErrNoTrades", err)
 	}
@@ -129,7 +129,7 @@ func TestVWAP_NegativeAmountsSkipped(t *testing.T) {
 		mkTrade(10, -50), // negative quote, skip
 		mkTrade(10, 50),  // legit: price 5.0
 	}
-	got, err := aggregate.VWAP(trades)
+	got, err := aggregate.VWAPOf(trades)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestVWAP_I128ScaleExactPrecision(t *testing.T) {
 		QuoteAmount: mustBigAmount("300000000000000000000000000000000000000"), // 3×10^38
 	}
 	// VWAP = (2e36 + 3e38) / (1e36 + 1e38) = 302e36 / 101e36 = 302/101.
-	got, err := aggregate.VWAP([]canonical.Trade{tradeA, tradeB})
+	got, err := aggregate.VWAPOf([]canonical.Trade{tradeA, tradeB})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestTotalVolumes_SkipTheTradesVWAPSkips(t *testing.T) {
 	if base.Cmp(big.NewInt(30)) != 0 || quote.Cmp(big.NewInt(200)) != 0 {
 		t.Fatalf("TotalBaseVolume = %v, TotalQuoteVolume = %v; want 30, 200", base, quote)
 	}
-	price, err := aggregate.VWAP(trades)
+	price, err := aggregate.VWAPOf(trades)
 	if err != nil {
 		t.Fatal(err)
 	}
