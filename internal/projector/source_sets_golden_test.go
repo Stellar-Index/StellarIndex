@@ -159,11 +159,14 @@ var (
 	knownProjectedNotInConfig = []string{"sep41_supply", "sep41_transfers"}
 	// config sources with no projector case (dispatcher-only writers).
 	knownConfigNotProjected = []string{"band", "sdex", "soroswap-router"}
-	// ch-rebuild-projected.sh KNOWN_SOURCES omits these projected sources.
+	// ch-rebuild-projected.sh KNOWN_SOURCES omits these projected sources:
+	// blend_emitter owns only its non-drop rows (a whole-window DELETE would
+	// lose drops the re-derive never writes), oracles are config-gated and
+	// share oracle_updates, sep41 owns a watched-set slice of its tables, and
+	// sushiswap_v3 shares trades and is deliberately refused as unaudited.
 	knownScriptOmitsProjected = []string{
-		"blend_backstop", "blend_emitter", "redstone", "reflector-cex", "reflector-dex",
-		"reflector-fx", "sep41_supply", "sep41_transfers", "sorocredit", "spectra",
-		"sushiswap_v3", "upshift",
+		"blend_emitter", "redstone", "reflector-cex", "reflector-dex",
+		"reflector-fx", "sep41_supply", "sep41_transfers", "sushiswap_v3",
 	}
 	// completeness' static audit list omits these (oracles are config-gated
 	// in AuditedSources; sep41 has no entry).

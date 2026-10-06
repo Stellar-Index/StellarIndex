@@ -29,8 +29,11 @@ Environment=BACKUP_DISK={{ ch_lake_backup_disk | default('si_lake_backup') }}
 # Deliberately NOT under run-heavy-job.sh: the server owns the BACKUP and
 # writes it off-host, so the pool watchdog's stop would kill only this
 # polling script and orphan the backup (never recorded in the chain files).
-# The script itself refuses a second concurrent backup.
+# The script itself refuses a second concurrent backup, and takes the
+# host-wide heavy-job lock (shared) itself, so it defers (exit 75) while an
+# operator heavy job runs and keeps one from starting mid-backup.
 ExecStart=/usr/local/bin/ch-lake-backup.sh
+SuccessExitStatus=75
 # Root: clickhouse-disks (the chain prune) reads the server config, which
 # holds the backup disk's credentials at mode 0640 root:clickhouse.
 User=root

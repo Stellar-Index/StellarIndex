@@ -30,6 +30,21 @@ import (
 // the script's own text below, so this copy cannot drift silently.
 const scriptDefaultSources = "aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"
 
+// scriptKnownSources parses the script's KNOWN_SOURCES so the ownership
+// tests cover every source it will delete for, not only the SRC default.
+func scriptKnownSources(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "ops", "ch-rebuild-projected.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^KNOWN_SOURCES="([^"]*)"`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("KNOWN_SOURCES not found in ch-rebuild-projected.sh")
+	}
+	return strings.Fields(string(m[1]))
+}
+
 var deleteTableRE = regexp.MustCompile(`DELETE FROM ([a-z0-9_]+)`)
 
 // tablesDeleted returns the distinct tables one DELETE batch names, except
@@ -101,7 +116,7 @@ func TestChRebuildProjectedScript_EachSourceDeletesOnlyTablesTheCatalogueSaysItO
 			owns[src.name][tg.table] = tg.whereFilter
 		}
 	}
-	for _, source := range strings.Split(scriptDefaultSources, ",") {
+	for _, source := range scriptKnownSources(t) {
 		t.Run(source, func(t *testing.T) {
 			t.Parallel()
 			run := runProjectedScript(t, "", map[string]string{"SRC": source})
@@ -156,7 +171,7 @@ func TestChRebuildProjectedScript_EachSourceDeletesEveryTableTheCatalogueSaysItO
 			wholesale[src.name] = append(wholesale[src.name], tg.table)
 		}
 	}
-	for _, source := range strings.Split(scriptDefaultSources, ",") {
+	for _, source := range scriptKnownSources(t) {
 		want := wholesale[source]
 		if len(want) == 0 {
 			continue
@@ -217,7 +232,7 @@ func TestChRebuildProjectedScript_RefusesWhatItCannotCleanSlate(t *testing.T) {
 		"non-numeric TO":                      {"TO": "tip"},
 		"WIN=0 (used to spin forever)":        {"WIN": "0"},
 		"verdict names an unrequested source": {"SRC": "soroswap", "STUB_REDERIVE": "soroswap,phoenix"},
-		"verdict names an unmapped source":    {"STUB_REDERIVE": "soroswap,upshift"},
+		"verdict names an unmapped source":    {"STUB_REDERIVE": "soroswap,redstone"},
 		"verdict list is not a list":          {"STUB_REDERIVE": "soroswap; DROP TABLE trades"},
 	} {
 		t.Run(name, func(t *testing.T) {

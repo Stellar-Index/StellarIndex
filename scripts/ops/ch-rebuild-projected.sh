@@ -138,8 +138,10 @@ exec >>"$LOG" 2>&1
 
 # The sources window_delete_sql has a DELETE map for. Pinned against the
 # reconciliation catalogue's table ownership by
-# internal/ops/chops/ch_rebuild_projected_script_scope_test.go.
-KNOWN_SOURCES="aquarius soroswap phoenix comet blend cctp rozo defindex"
+# internal/ops/chops/ch_rebuild_projected_script_scope_test.go, and against the
+# projector registry by TestScriptKnownSources_Golden: a projected source left
+# out must be named, with its reason, in that test's knownScriptOmitsProjected.
+KNOWN_SOURCES="aquarius soroswap phoenix comet blend cctp rozo defindex blend_backstop sorocredit spectra upshift"
 TRADE_SOURCES="aquarius soroswap phoenix comet"
 
 refuse() { echo "REFUSED: $* — nothing was touched"; exit 2; }
@@ -188,6 +190,14 @@ source_delete_sql() {
       echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM defindex_admin_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    blend_backstop) echo "DELETE FROM blend_backstop_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    spectra) echo "DELETE FROM spectra_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    upshift) echo "DELETE FROM upshift_vault_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+    sorocredit)
+      echo "DELETE FROM credit_positions WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM credit_statements WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM credit_settlements WHERE ledger BETWEEN $lo AND $hi;"
+      echo "DELETE FROM credit_events WHERE ledger BETWEEN $lo AND $hi;" ;;
     blend)
       echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"

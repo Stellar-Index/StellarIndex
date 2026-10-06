@@ -37,7 +37,8 @@
 # Restore: docs/operations/runbooks/ch-lake-backup.md.
 #
 # Exit code: 0 clean; 1 the backup failed or no BACKUP_DISK is configured;
-# 2 the backup succeeded but pruning an old chain or sweeping orphans failed.
+# 2 the backup succeeded but pruning an old chain or sweeping orphans failed;
+# 75 deferred because a heavy job holds the host-wide heavy-job lock.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -255,6 +256,22 @@ main() {
     note "another ch-lake-backup run holds $STATE_DIR/lock — not starting"
     write_metrics
     return 1
+  fi
+  # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
+  # operator heavy job that rewrites lake parts (recompress, ch-backfill
+  # -write, ch-rebuild) is refused while this holds it, and a backup is
+  # deferred (exit 75) while one holds it, instead of reading parts mid-rewrite.
+  # The unit is not under run-heavy-job.sh (see the unit), so it takes it here.
+  local heavy="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
+  [[ -e "$heavy" ]] || (umask 022; : >>"$heavy") 2>/dev/null || true
+  if exec 8<"$heavy"; then
+    if ! flock -s -n 8; then
+      note "a heavy job holds $heavy — deferring this run (exit 75)"
+      write_metrics
+      return 75
+    fi
+  else
+    note "WARNING cannot open $heavy — running WITHOUT cross-job exclusion (systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf)"
   fi
   # Fail closed: an unreadable system.backups must not read as "nothing running".
   local running
