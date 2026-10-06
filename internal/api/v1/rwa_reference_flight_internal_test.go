@@ -45,7 +45,7 @@ func TestCachedRWAReferences_PanicDoesNotWedgeTheFlight(t *testing.T) {
 			refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "104000000", 8, time.Now()),
 		},
 	}
-	s := &Server{oracle: oracle, logger: slog.Default()}
+	s := &Server{Options: Options{Oracle: oracle}, logger: slog.Default()}
 
 	func() {
 		defer func() { _ = recover() }()

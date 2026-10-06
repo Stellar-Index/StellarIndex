@@ -28,8 +28,8 @@ func (b *blockingAssetListingReader) ListingDirectoryByAddress(ctx context.Conte
 
 func assetListingCacheTestServer(reader AssetListingDirectoryReader) *Server {
 	return &Server{
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		listings: reader,
+		Options: Options{Listings: reader},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

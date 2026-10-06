@@ -43,7 +43,7 @@ func TestNormalizeCatalogueReadUSD_RoundingScaleDecidesTheFloor(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: tc.decimals})}
+			s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: tc.decimals})}}
 			got, ok := s.normalizeCatalogueReadUSD(tc.value, token)
 			if ok != tc.wantOK || got != tc.want {
 				t.Errorf("normalizeCatalogueReadUSD(%q) = (%q, %v), want (%q, %v)", tc.value, got, ok, tc.want, tc.wantOK)
@@ -58,7 +58,7 @@ func TestNormalizeCatalogueReadUSD_RoundingScaleDecidesTheFloor(t *testing.T) {
 
 	// No confirmed row, or no cache at all: byte-identical, unparsed.
 	for _, s := range []*Server{
-		{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})},
+		{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}},
 		{},
 	} {
 		for _, v := range []string{"0.0000000001", "41.32", "not-a-number"} {
@@ -73,11 +73,11 @@ func TestNormalizeCatalogueReadUSD_RoundingScaleDecidesTheFloor(t *testing.T) {
 // case — it passes through; on record, it is withheld rather than raw.
 func TestNormalizeCatalogueReadUSDByID_UnparseableID(t *testing.T) {
 	const bogus = "not-an-asset-id"
-	s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}
+	s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}}
 	if got, ok := s.normalizeCatalogueReadUSDByID("1.5", bogus); !ok || got != "1.5" {
 		t.Errorf("unflagged unparseable id = (%q, %v), want (\"1.5\", true)", got, ok)
 	}
-	s = &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{bogus: 9})}
+	s = &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{bogus: 9})}}
 	if got, ok := s.normalizeCatalogueReadUSDByID("1.5", bogus); ok {
 		t.Errorf("flagged unparseable id = (%q, true), want it withheld", got)
 	}
@@ -102,7 +102,7 @@ func TestOnChainListingPriceUSD_NormalisesNonstandardDecimals(t *testing.T) {
 	raw := "0.0250000000"
 	reader := onChainPriceReader{row: timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &raw}}
 
-	s := &Server{assetsReader: reader, nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9})}
+	s := &Server{Options: Options{AssetsReader: reader, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9})}}
 	got := s.onChainListingPriceUSD(context.Background(), sorobanContract)
 	if got == nil {
 		t.Fatal("flagged 9dp price = nil, want 2.5000000000")
@@ -114,15 +114,14 @@ func TestOnChainListingPriceUSD_NormalisesNonstandardDecimals(t *testing.T) {
 	// 18dp and rounded on the raw scale: unpriced, not 0.0000000001.
 	crushed := "0.0000000001"
 	s = &Server{
-		assetsReader:        onChainPriceReader{row: timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &crushed}},
-		nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18}),
+		Options: Options{AssetsReader: onChainPriceReader{row: timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &crushed}}, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})},
 	}
 	if got := s.onChainListingPriceUSD(context.Background(), sorobanContract); got != nil {
 		t.Errorf("crushed 18dp price = %s, want nil", *got)
 	}
 
 	// Unflagged: the reader's own pointer target, byte for byte.
-	s = &Server{assetsReader: reader, nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}
+	s = &Server{Options: Options{AssetsReader: reader, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}}
 	got = s.onChainListingPriceUSD(context.Background(), sorobanContract)
 	if got == nil {
 		t.Fatalf("unflagged price = nil, want %s", raw)

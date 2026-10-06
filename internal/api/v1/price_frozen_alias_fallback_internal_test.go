@@ -37,7 +37,7 @@ func (f aliasFreezeStub) FrozenForPair(_ context.Context, asset, quote canonical
 }
 
 func aliasFreezeServer(stub aliasFreezeStub) *Server {
-	return &Server{freeze: stub, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return &Server{Options: Options{Freeze: stub}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func xlmGBPFixture(t *testing.T) (native, xlm, gbp canonical.Asset, req *http.Request) {

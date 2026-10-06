@@ -71,8 +71,8 @@ func (r *rosterStub) ProtocolContractIndex(context.Context) (map[string]string, 
 
 func newContractIndexServer(stub *rosterStub) *Server {
 	return &Server{
-		logger:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		protocolContractsReader: stub,
+		Options: Options{ProtocolContracts: stub},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

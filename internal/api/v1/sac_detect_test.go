@@ -9,8 +9,7 @@ const nativeSACPubnet = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWM
 
 func TestIsKnownSAC_NativeDerivation(t *testing.T) {
 	s := &Server{
-		networkPassphrase: "Public Global Stellar Network ; September 2015",
-		sacWrappers:       map[string]string{"CWRAPPED": "FOO:GISSUER"},
+		Options: Options{NetworkPassphrase: "Public Global Stellar Network ; September 2015", SACWrappers: map[string]string{"CWRAPPED": "FOO:GISSUER"}},
 	}
 	if !s.isKnownSAC(nativeSACPubnet) {
 		t.Errorf("native SAC %s not detected; computed set = %v", nativeSACPubnet, s.knownSACs)
@@ -28,7 +27,7 @@ func TestIsKnownSAC_NativeDerivation(t *testing.T) {
 // Without a passphrase the computed half is skipped, but sac_wrappers still
 // apply — the check must never panic on the empty-passphrase path.
 func TestIsKnownSAC_NoPassphrase(t *testing.T) {
-	s := &Server{sacWrappers: map[string]string{"CWRAPPED": "FOO:GISSUER"}}
+	s := &Server{Options: Options{SACWrappers: map[string]string{"CWRAPPED": "FOO:GISSUER"}}}
 	if !s.isKnownSAC("CWRAPPED") {
 		t.Error("sac_wrappers entry not detected without passphrase")
 	}

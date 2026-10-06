@@ -50,7 +50,7 @@ func TestHandlePriceAt(t *testing.T) {
 	ts := time.Date(2019, 6, 1, 12, 0, 0, 0, time.UTC)
 	near := ts.Add(-45 * time.Minute)
 
-	s := &Server{priceAt: priceAtStub{value: "0.128", bucketAt: near}}
+	s := &Server{Options: Options{PriceAt: priceAtStub{value: "0.128", bucketAt: near}}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/price/at?asset=native&ts="+ts.Format(time.RFC3339), nil)
 	rec := httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
@@ -69,7 +69,7 @@ func TestHandlePriceAt(t *testing.T) {
 	// passes IS the honesty cap.
 	var gotStaleness time.Duration
 	stale := ts.Add(-30 * 24 * time.Hour)
-	s = &Server{priceAt: priceAtStub{value: "0.128", bucketAt: stale, gotStaleness: &gotStaleness}}
+	s = &Server{Options: Options{PriceAt: priceAtStub{value: "0.128", bucketAt: stale, gotStaleness: &gotStaleness}}}
 	rec = httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
 	if rec.Code != 404 {
@@ -81,7 +81,7 @@ func TestHandlePriceAt(t *testing.T) {
 
 	// Defence in depth: a reader that ignores the bound still cannot
 	// get a beyond-cap bucket served.
-	s = &Server{priceAt: priceAtStub{value: "0.128", bucketAt: stale, ignoreStaleness: true}}
+	s = &Server{Options: Options{PriceAt: priceAtStub{value: "0.128", bucketAt: stale, ignoreStaleness: true}}}
 	rec = httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
 	if rec.Code != 404 {
@@ -112,7 +112,7 @@ func TestHandlePriceAt(t *testing.T) {
 // — same contract handlePrice and handlePriceTip already carry.
 func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-	s := &Server{priceAt: priceAtStub{err: ErrPriceWithheld}}
+	s := &Server{Options: Options{PriceAt: priceAtStub{err: ErrPriceWithheld}}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/price/at?asset=native&ts="+ts.Format(time.RFC3339), nil)
 	rec := httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
@@ -134,7 +134,7 @@ func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
 // the thin-market sentence the bare withheld sentinel gets.
 func TestHandlePriceAt_GuardedIsWithheldNotNoData(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-	s := &Server{priceAt: priceAtStub{err: ErrPriceAtGuarded}}
+	s := &Server{Options: Options{PriceAt: priceAtStub{err: ErrPriceAtGuarded}}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/price/at?asset=native&ts="+ts.Format(time.RFC3339), nil)
 	rec := httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
@@ -183,11 +183,10 @@ func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
 	near := ts.Add(-3 * time.Minute)
 
 	s := &Server{
-		priceAt: priceAtPairStub{
+		Options: Options{PriceAt: priceAtPairStub{
 			byPair:   map[string]string{"native/" + usdc.String(): "0.1626"},
 			bucketAt: near,
-		},
-		usdPeggedClassics: []canonical.Asset{usdc},
+		}, USDPeggedClassics: []canonical.Asset{usdc}},
 	}
 	req := httptest.NewRequest(http.MethodGet,
 		"/v1/price/at?asset=native&quote=fiat:USD&ts="+ts.Format(time.RFC3339), nil)

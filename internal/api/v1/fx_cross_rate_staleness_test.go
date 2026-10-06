@@ -19,7 +19,7 @@ const staleFXAge = 10 * 24 * time.Hour
 // TestPriceUSDAnchoredFiatCrossRejectsStaleRate — a wallet must not be
 // shown a BRL balance derived from a forex rate the worker stopped
 // refreshing over a week ago. Before the fix, tryUSDAnchoredFiatCross
-// read s.currencies.Latest() and used c.RateUSD with no check at all
+// read s.Currencies.Latest() and used c.RateUSD with no check at all
 // against the entry's own age, so a wedged forex worker kept silently
 // serving derived local-currency prices off an arbitrarily old rate
 // forever.

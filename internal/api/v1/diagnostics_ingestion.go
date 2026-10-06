@@ -679,8 +679,8 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	// whole snapshot when the trades scan is too IO-contended to
 	// finish.
 	var cacheRows []timescale.BackfillCoverage
-	if s.backfillCoverage != nil {
-		cacheRows, _ = s.backfillCoverage.Snapshot()
+	if s.BackfillCoverage != nil {
+		cacheRows, _ = s.BackfillCoverage.Snapshot()
 	}
 
 	// Each filler is a closure over &out's per-field write target;
@@ -783,10 +783,10 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 //
 //nolint:gocognit // linear pipeline; multi-table aggregation reads better inline than as a separate helper.
 func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCoverageRow) {
-	if s.coverageReader == nil {
+	if s.CoverageReader == nil {
 		return
 	}
-	snaps, err := s.coverageReader.ListSourceCoverage(ctx)
+	snaps, err := s.CoverageReader.ListSourceCoverage(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: source_coverage_snapshots read failed (rows show Pending)", "err", err)
 		return
@@ -869,10 +869,10 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 // no matching per-source row, so it is simply not overlaid here
 // (operators read it from the table / a dedicated surface).
 func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCoverageRow) {
-	if s.completenessReader == nil {
+	if s.CompletenessReader == nil {
 		return
 	}
-	snaps, err := s.completenessReader.ListCompletenessSnapshots(ctx)
+	snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: completeness_snapshots read failed (completeness_* absent)", "err", err)
 		return
@@ -941,11 +941,11 @@ func sourceFromTargetSource(targetSource string) string {
 // fillers would otherwise race on the shared field; the parent
 // goroutine hoists the resolved value onto out after wg.Wait().
 func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
-	if s.networkStats == nil {
+	if s.NetworkStats == nil {
 		degraded.Store(true)
 		return
 	}
-	ns, err := s.networkStats.GetNetworkStats(ctx)
+	ns, err := s.NetworkStats.GetNetworkStats(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: network_stats", "err", err)
 		degraded.Store(true)
@@ -964,11 +964,11 @@ func (s *Server) fillIngestionLedger(ctx context.Context, out *IngestionDiagnost
 // live-stream cursor age on out.Ledger.LagSeconds. Done in one
 // helper because both derive from the same fetch.
 func (s *Server) fillIngestionBackfill(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
-	if s.cursors == nil {
+	if s.Cursors == nil {
 		degraded.Store(true)
 		return
 	}
-	rows, err := s.cursors.ListCursors(ctx)
+	rows, err := s.Cursors.ListCursors(ctx)
 	if err != nil {
 		s.logger.Warn("diagnostics/ingestion: cursors", "err", err)
 		degraded.Store(true)
@@ -982,7 +982,7 @@ func (s *Server) fillIngestionBackfill(ctx context.Context, out *IngestionDiagno
 // also implements FXCoverageReader. Production wiring (Store) does;
 // test fakes may not, in which case the section stays empty.
 func (s *Server) fillIngestionFXCoverage(ctx context.Context, out *IngestionDiagnostics) {
-	reader, ok := s.fxHistory.(FXCoverageReader)
+	reader, ok := s.FXHistory.(FXCoverageReader)
 	if !ok || reader == nil {
 		return
 	}
@@ -1012,7 +1012,7 @@ func (s *Server) fillIngestionFXCoverage(ctx context.Context, out *IngestionDiag
 // every reader interface; the assertion gracefully no-ops on test
 // fakes that don't implement CAGGCoverageReader.
 func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDiagnostics) {
-	reader, ok := s.fxHistory.(CAGGCoverageReader)
+	reader, ok := s.FXHistory.(CAGGCoverageReader)
 	if !ok || reader == nil {
 		return
 	}
@@ -1037,7 +1037,7 @@ func (s *Server) fillIngestionCAGGCoverage(ctx context.Context, out *IngestionDi
 // Soft-fail: a reader error leaves entryCounts nil → the `entries`
 // column reads 0 rather than erroring the whole response.
 func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDiagnostics, degraded *atomic.Bool) {
-	reader, ok := s.fxHistory.(SourceEntryCountReader)
+	reader, ok := s.FXHistory.(SourceEntryCountReader)
 	if !ok || reader == nil {
 		// Not a test fake (those inject a discard logger): in
 		// production this means the fxHistory adapter is missing its
@@ -1120,7 +1120,7 @@ func buildBackfillCoverage(cacheRows []timescale.BackfillCoverage, entryCounts m
 // fillIngestionSupplyCoverage type-asserts that the wired
 // supply reader also implements SupplyCoverageReader.
 func (s *Server) fillIngestionSupplyCoverage(ctx context.Context, out *IngestionDiagnostics) {
-	reader, ok := s.supply.(SupplyCoverageReader)
+	reader, ok := s.Supply.(SupplyCoverageReader)
 	if !ok || reader == nil {
 		return
 	}
@@ -1264,9 +1264,9 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// it first left this query no deadline so every source read 0
 	// (observed on r1 2026-06-04). Soft-fail to empty.
 	entries24h := map[string]int64{}
-	if s.statusBackend != nil {
+	if s.StatusBackend != nil {
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		m, err := s.statusBackend.SourceEntries24h(ectx)
+		m, err := s.StatusBackend.SourceEntries24h(ectx)
 		cancel()
 		if err == nil {
 			entries24h = m
@@ -1279,9 +1279,9 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// renders as "not enabled" — visibly wrong rather than quietly
 	// implying a dead connector, and self-corrects on the next request.
 	enabledSources := map[string]bool{}
-	if s.statusBackend != nil {
+	if s.StatusBackend != nil {
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		m, err := s.statusBackend.SourceEnabled(ectx)
+		m, err := s.StatusBackend.SourceEnabled(ectx)
 		cancel()
 		if err == nil {
 			enabledSources = m
@@ -1295,8 +1295,8 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// out, leaving trade_count/volume 0/empty while entries_24h above
 	// still reflects real per-source activity.
 	statsBySource := map[string]timescale.SourceStats{}
-	if s.sourcesStats != nil {
-		if rows, err := s.sourcesStats.GetSourceStats(ctx); err == nil {
+	if s.SourcesStats != nil {
+		if rows, err := s.SourcesStats.GetSourceStats(ctx); err == nil {
 			for _, r := range rows {
 				statsBySource[r.Source] = r
 			}

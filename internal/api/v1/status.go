@@ -592,7 +592,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if s.statusBackend == nil {
+	if s.StatusBackend == nil {
 		// No metrics backend wired — return the in-process surface.
 		// Every background heartbeat is unknown, and so is the
 		// incidents signal: with no Alertmanager query, zero counts
@@ -631,22 +631,22 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-heartbeats")
-		hb, hbErr = s.statusBackend.Heartbeats(ctx)
+		hb, hbErr = s.StatusBackend.Heartbeats(ctx)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-latency")
-		latency, latErr = s.statusBackend.Latency(ctx)
+		latency, latErr = s.StatusBackend.Latency(ctx)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-freshness")
-		freshness, freErr = s.statusBackend.Freshness(ctx)
+		freshness, freErr = s.StatusBackend.Freshness(ctx)
 	}()
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-incidents")
-		incidents, incErr = s.statusBackend.Incidents(ctx)
+		incidents, incErr = s.StatusBackend.Incidents(ctx)
 	}()
 	wg.Wait()
 

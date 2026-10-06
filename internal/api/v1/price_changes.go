@@ -113,7 +113,7 @@ var priceChangeHorizons = []struct {
 // point-in-time reader is wired; a 503/500 when any read fails, since a
 // failed read is not evidence that a bucket is missing.
 func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
-	if s.priceAt == nil {
+	if s.PriceAt == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price-change serving not configured", http.StatusServiceUnavailable,
@@ -307,7 +307,7 @@ func (s *Server) resolvePriceChangePair(
 	// wins; the response still echoes the requested quote (fiat:USD)
 	// and flags triangulated.
 	if quote.Type == canonical.AssetFiat && quote.Code == "USD" {
-		for _, peg := range s.usdPeggedClassics {
+		for _, peg := range s.USDPeggedClassics {
 			// A peg asked for under any of its spellings — the classic
 			// id or its SAC wrapper — is not a market against itself.
 			if sameAsset(peg, asset) {
@@ -347,7 +347,7 @@ func (s *Server) currentPriceForAliases(
 			if pairErr != nil {
 				continue
 			}
-			value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, now, priceChangesCurrentStaleness)
+			value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, pair, now, priceChangesCurrentStaleness)
 			if err != nil {
 				if failErr := notePriceAtMiss(&withheld, err); failErr != nil {
 					return canonical.Pair{}, priceAtResult{}, false, nil, failErr
@@ -379,7 +379,7 @@ func (s *Server) currentPriceForAliases(
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {
-	value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, target, tolerance)
+	value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, pair, target, tolerance)
 	if err != nil {
 		if !isPriceAtMiss(err) {
 			return PriceChangeHorizon{}, "", err

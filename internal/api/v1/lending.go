@@ -57,7 +57,7 @@ type LendingPool struct {
 // have been observed — consistent with the rest of the
 // "feature-gated reader" handlers.
 func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
-	reader := s.lending
+	reader := s.Lending
 	if reader == nil {
 		writeJSON(w, []LendingPool{}, Flags{})
 		return
@@ -156,11 +156,11 @@ type ReserveView struct {
 // else null (the token-unit amounts + util + APY are always exact).
 // Distinct from the /v1/lending/pools window net-flow proxy.
 func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Request) {
-	if s.explorer == nil {
+	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
 		return
 	}
-	if s.lending == nil {
+	if s.Lending == nil {
 		writeJSON(w, LendingPoolReservesView{Reserves: []ReserveView{}}, Flags{})
 		return
 	}
@@ -187,7 +187,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	// Rate-model configs (for APY) come from blend_admin events — the
 	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
 	// a failure here just means APY is omitted, not a failed response.
-	configs, err := s.lending.BlendReserveConfigs(ctx, pool)
+	configs, err := s.Lending.BlendReserveConfigs(ctx, pool)
 	var configsFailed bool
 	if err != nil {
 		if clientAborted(r, err) {
@@ -197,7 +197,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		configsFailed = true
 		configs = nil
 	}
-	states, err := s.explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
+	states, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -268,7 +268,7 @@ func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 // scale is unknowable, and a guess is off by 10^3. proceed=false means
 // a response has been written or the client has gone.
 func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (version blend.PoolVersion, assets []string, proceed bool) {
-	version, err := s.lending.BlendPoolVersion(ctx, pool)
+	version, err := s.Lending.BlendPoolVersion(ctx, pool)
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "BlendPoolVersion", pool, err)
 		return version, nil, false
@@ -278,7 +278,7 @@ func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, 
 		writeJSON(w, LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}, Flags{})
 		return version, nil, false
 	}
-	assets, err = s.lending.BlendPoolAssets(ctx, pool)
+	assets, err = s.Lending.BlendPoolAssets(ctx, pool)
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "BlendPoolAssets", pool, err)
 		return version, nil, false
@@ -398,7 +398,7 @@ func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price stri
 	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
 		if a, err := canonical.ParseAsset(canonicalID); err == nil {
 			if p, ok := s.lookupUSDPrice(ctx, a); ok {
-				return p, aggregate.ResolveDecimals(s.nonstandardDecimals, a), true
+				return p, aggregate.ResolveDecimals(s.NonstandardDecimals, a), true
 			}
 		}
 	}
@@ -407,7 +407,7 @@ func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price stri
 		return "", 0, false
 	}
 	price, ok = s.lookupUSDPrice(ctx, asset)
-	return price, aggregate.ResolveDecimals(s.nonstandardDecimals, asset), ok
+	return price, aggregate.ResolveDecimals(s.NonstandardDecimals, asset), ok
 }
 
 // pubnetPassphrase is the Stellar mainnet network passphrase — the
@@ -432,10 +432,10 @@ func (s *Server) buildSACReserveMap() map[string]string {
 	if sac, ok := xdrjson.SACContractID("native", pubnetPassphrase); ok {
 		m[sac] = "native"
 	}
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return m
 	}
-	for _, vc := range s.verifiedCurrencies.All() {
+	for _, vc := range s.VerifiedCurrencies.All() {
 		for _, n := range vc.Issuance {
 			if n.AssetID == "" {
 				continue

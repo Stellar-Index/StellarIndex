@@ -39,11 +39,8 @@ func TestRWAContractListingRows_CapDividesByThePriceScale(t *testing.T) {
 			sources := 3
 			row := timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price, Volume24hUSD: &volume, SourceCount: &sources}
 			s := &Server{
-				logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
-				contractCatalogue:   capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}},
-				tokenSupply:         capDecimalsTokenSupply{byID: map[string]string{sorobanContract: supplyUnits}},
-				tokenDecimals:       fixedTokenDecimals(tc.lake),
-				nonstandardDecimals: decimalsCacheFlagging(t, tc.projection),
+				Options: Options{ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}, TokenSupply: capDecimalsTokenSupply{byID: map[string]string{sorobanContract: supplyUnits}}, TokenDecimals: fixedTokenDecimals(tc.lake), NonstandardDecimals: decimalsCacheFlagging(t, tc.projection)},
+				logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 			out, _, cut, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
 			if err != nil || cut {

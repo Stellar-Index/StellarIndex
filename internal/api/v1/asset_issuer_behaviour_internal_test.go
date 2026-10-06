@@ -34,13 +34,12 @@ func TestIssuerBehaviour_FlagsAndFlowTotals(t *testing.T) {
 		t.Fatal("no SAC id for the test asset")
 	}
 	s := &Server{
-		issuerAuthFlags: stubIssuerFlags{issuerTestIssuer: {
+		Options: Options{IssuerAuthFlags: stubIssuerFlags{issuerTestIssuer: {
 			Revocable: true, Clawback: true, Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 61_000_000,
-		}},
-		tokenSupply: &stubTokenSupply{byContract: map[string]clickhouse.TokenSupply{contractID: {
+		}}, TokenSupply: &stubTokenSupply{byContract: map[string]clickhouse.TokenSupply{contractID: {
 			ContractID: contractID, Mint: new(big.Int).Lsh(big.NewInt(1), 100), Burn: big.NewInt(7),
 			Clawback: big.NewInt(3), Total: big.NewInt(0), FlowCount: 12,
-		}}},
+		}}}},
 	}
 	d := AssetDetail{AssetID: globalTestUSDC}
 	s.applyIssuerBehaviour(context.Background(), &d)
@@ -67,9 +66,9 @@ func TestIssuerBehaviour_OmitsWhatDoesNotResolve(t *testing.T) {
 	removed := stubIssuerFlags{issuerTestIssuer: {Clawback: true, Source: clickhouse.AuthFlagsSourceLastKnownBeforeRemoval}}
 	for name, s := range map[string]*Server{
 		"nothing wired":     {},
-		"read error":        {issuerAuthFlags: stubIssuerFlags{}, tokenSupply: &stubTokenSupply{err: errors.New("boom")}},
-		"incomplete flows":  {issuerAuthFlags: stubIssuerFlags{}, tokenSupply: incomplete},
-		"not a live record": {issuerAuthFlags: removed},
+		"read error":        {Options: Options{IssuerAuthFlags: stubIssuerFlags{}, TokenSupply: &stubTokenSupply{err: errors.New("boom")}}},
+		"incomplete flows":  {Options: Options{IssuerAuthFlags: stubIssuerFlags{}, TokenSupply: incomplete}},
+		"not a live record": {Options: Options{IssuerAuthFlags: removed}},
 	} {
 		d := AssetDetail{AssetID: globalTestUSDC}
 		s.applyIssuerBehaviour(context.Background(), &d)
@@ -78,7 +77,7 @@ func TestIssuerBehaviour_OmitsWhatDoesNotResolve(t *testing.T) {
 		}
 	}
 	d := AssetDetail{AssetID: "native"}
-	(&Server{issuerAuthFlags: removed}).applyIssuerBehaviour(context.Background(), &d)
+	(&Server{Options: Options{IssuerAuthFlags: removed}}).applyIssuerBehaviour(context.Background(), &d)
 	if d.IssuerBehaviour != nil {
 		t.Error("native asset got issuer_behaviour")
 	}

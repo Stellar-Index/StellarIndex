@@ -95,7 +95,7 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{prices: tc.reader, usdPeggedClassics: []canonical.Asset{peg}}
+			s := &Server{Options: Options{Prices: tc.reader, USDPeggedClassics: []canonical.Asset{peg}}}
 			var detail AssetDetail
 			sources := s.populatePriceUSD(context.Background(), &detail, asset)
 
@@ -130,7 +130,7 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 func TestDeclaredPegFillClearsWithheldReason(t *testing.T) {
 	row := AssetDetail{AssetID: withheldTestAsset, PriceWithheldReason: PriceWithheldSubstance}
 	price := "1.0"
-	s := &Server{fiatPeggedClassics: map[string]canonical.Asset{withheldTestAsset: mustAsset(t, "fiat:AUD")}}
+	s := &Server{Options: Options{FiatPeggedClassics: map[string]canonical.Asset{withheldTestAsset: mustAsset(t, "fiat:AUD")}}}
 	s.fillDeclaredPegPrice(context.Background(), &row, map[string]*string{"AUD": &price})
 	if row.PriceUSD == nil || row.PriceWithheldReason != "" {
 		t.Fatalf("after peg fill: price_usd=%v price_withheld_reason=%q, want price and no reason", row.PriceUSD, row.PriceWithheldReason)

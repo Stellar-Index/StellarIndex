@@ -72,7 +72,7 @@ func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 		slack     = 400 * time.Millisecond
 	)
 	wm := &slowWatermark{delay: lakeDelay, ledger: 100, closedAt: time.Now()}
-	s := &Server{lakeWatermarkReader: wm, logger: slog.Default()}
+	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
 
 	returned := make(chan time.Duration, callers)
 	start := time.Now()
@@ -108,7 +108,7 @@ func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 // 30s ReadTimeout) that is a back-to-back retry train, one per request.
 func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 	wm := &slowWatermark{err: errors.New("lake down")}
-	s := &Server{lakeWatermarkReader: wm, logger: slog.Default()}
+	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
 
 	for i := 0; i < 4; i++ {
 		if _, _, ok := s.lakeWatermark(context.Background()); ok {
@@ -128,7 +128,7 @@ func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 // neither drop the last-good value nor re-arm an immediate retry.
 func TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake(t *testing.T) {
 	wm := &slowWatermark{delay: 400 * time.Millisecond, err: errors.New("lake down")}
-	s := &Server{lakeWatermarkReader: wm, logger: slog.Default()}
+	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
 	// The state every request lands in once the TTL window lapses.
 	s.lakeWMLedger, s.lakeWMClosedAt = 100, time.Now()
 	s.lakeWMFetched = time.Now().Add(-2 * lakeWatermarkTTL)
@@ -175,7 +175,7 @@ func TestLakeWatermark_UnmeasuredFailsClosed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{lakeWatermarkReader: tc.wm, logger: slog.Default()}
+			s := &Server{Options: Options{LakeWatermark: tc.wm}, logger: slog.Default()}
 			ledger, stale, ok := s.lakeWatermark(context.Background())
 			if ok || ledger != 0 {
 				t.Fatalf("watermark = (%d, ok=%v), want (0, false) with no measurement", ledger, ok)

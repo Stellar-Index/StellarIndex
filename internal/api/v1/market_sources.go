@@ -92,7 +92,7 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.marketSources == nil {
+	if s.MarketSources == nil {
 		// Not wired — empty list is consistent with the contract.
 		writeJSON(w, MarketSourcesResp{Base: base, Quote: quote, Asset: asset, WindowSecs: 86_400, Sources: []SourceVolume{}}, Flags{})
 		return
@@ -113,9 +113,9 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if asset != "" {
-		rows, err = s.marketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
+		rows, err = s.MarketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
 	} else {
-		rows, err = s.marketSources.PairSourceStats(msCtx,
+		rows, err = s.MarketSources.PairSourceStats(msCtx,
 			sourceStatsAliases(base), sourceStatsAliases(quote))
 	}
 	if err != nil {

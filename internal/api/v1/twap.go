@@ -46,7 +46,7 @@ type TWAPResult struct {
 // unrelated to trade size, so on a thin pair one dust print alone in
 // its ledger carries the whole interval to the next ledger's trade.
 func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
-	if s.history == nil {
+	if s.History == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/twap-unavailable",
 			"TWAP serving not configured", http.StatusServiceUnavailable,
@@ -187,8 +187,8 @@ func (s *Server) computeTWAP(
 	// dex-nonstandard-decimals forward normalization — see handleVWAP's
 	// equivalent comment.
 	price = aggregate.AdjustPrice(price,
-		aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base),
-		aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote))
+		aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base),
+		aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote))
 
 	return TWAPResult{
 		From:             WireTime(from),

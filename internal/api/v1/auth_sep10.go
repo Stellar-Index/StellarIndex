@@ -69,7 +69,7 @@ func writeSEP10Unavailable(w http.ResponseWriter, r *http.Request) {
 // This endpoint is deliberately unauthenticated — the whole point of
 // SEP-10 is to bootstrap auth from a public Stellar G-strkey.
 func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
-	if s.sep10 == nil {
+	if s.SEP10 == nil {
 		writeSEP10Unavailable(w, r)
 		return
 	}
@@ -83,7 +83,7 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := s.sep10.Challenge(r.Context(), account)
+	ch, err := s.SEP10.Challenge(r.Context(), account)
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthorized) {
 			writeProblem(w, r,
@@ -165,7 +165,7 @@ type sep10TokenResponse struct {
 //   - 404 — validator not wired (sep10-unavailable)
 //   - 500 — anything else
 func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
-	if s.sep10 == nil {
+	if s.SEP10 == nil {
 		writeSEP10Unavailable(w, r)
 		return
 	}
@@ -202,7 +202,7 @@ func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tok, err := s.sep10.Verify(r.Context(), req.Transaction)
+	tok, err := s.SEP10.Verify(r.Context(), req.Transaction)
 	if err != nil {
 		s.writeSEP10VerifyError(w, r, err)
 		return

@@ -88,11 +88,11 @@ func statusNoticeViews(in []platform.StatusNotice) []StatusNotice {
 // returns `{"notices":[],"count":0}` rather than null so SDK/JS
 // consumers can .map() unconditionally.
 func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
-	if s.statusNotices == nil {
+	if s.StatusNotices == nil {
 		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{})
 		return
 	}
-	rows, err := s.statusNotices.ListActive(r.Context())
+	rows, err := s.StatusNotices.ListActive(r.Context())
 	if err != nil {
 		// A notice-store blip must never fail the status surface — the
 		// banner is a nicety layered over the SLA-truth /v1/status. But an
@@ -114,11 +114,11 @@ func (s *Server) handleAdminStatusNoticesList(w http.ResponseWriter, r *http.Req
 	if _, ok := s.requireOperator(w, r, "/v1/admin/status-notices"); !ok {
 		return
 	}
-	if s.statusNotices == nil {
+	if s.StatusNotices == nil {
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
-	rows, err := s.statusNotices.List(r.Context(), 0)
+	rows, err := s.StatusNotices.List(r.Context(), 0)
 	if err != nil {
 		s.logger.Error("admin status notices list failed", "err", err)
 		writeProblem(w, r,
@@ -147,7 +147,7 @@ func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	if s.statusNotices == nil {
+	if s.StatusNotices == nil {
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	created, err := s.statusNotices.Create(r.Context(), platform.StatusNotice{
+	created, err := s.StatusNotices.Create(r.Context(), platform.StatusNotice{
 		Title:     req.Title,
 		Body:      req.Body,
 		Severity:  platform.StatusNoticeSeverity(req.Severity),
@@ -205,7 +205,7 @@ func (s *Server) handleAdminStatusNoticeResolve(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if s.statusNotices == nil {
+	if s.StatusNotices == nil {
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
@@ -222,7 +222,7 @@ func (s *Server) handleAdminStatusNoticeResolve(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	resolved, err := s.statusNotices.Resolve(r.Context(), id)
+	resolved, err := s.StatusNotices.Resolve(r.Context(), id)
 	if errors.Is(err, platform.ErrNotFound) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/status-notice-not-found",
@@ -320,7 +320,7 @@ func writeStatusNoticeStoreUnavailable(w http.ResponseWriter, r *http.Request) {
 func (s *Server) recordStatusNoticeAudit(
 	r *http.Request, actor auth.Subject, action, noticeID, reason string, extra map[string]any,
 ) {
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	fields := map[string]any{
@@ -349,7 +349,7 @@ func (s *Server) recordStatusNoticeAudit(
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		// C3-067: a public status notice changed with no record of who did it.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("status_notice").Inc()
 		s.logger.Warn("admin status notice: audit append failed (best-effort)",

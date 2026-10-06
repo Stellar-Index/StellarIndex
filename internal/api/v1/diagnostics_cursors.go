@@ -279,7 +279,7 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 //     ListCursors' (source, sub_source) ordering, so paging over a
 //     table that is append-mostly, shrinking only under the explicit reap command is stable.
 func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
-	if s.cursors == nil {
+	if s.Cursors == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/cursors-unavailable",
 			"Cursors unavailable", http.StatusServiceUnavailable,
@@ -294,7 +294,7 @@ func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 
 	listCtx, listCancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer listCancel()
-	rows, err := s.cursors.ListCursors(listCtx)
+	rows, err := s.Cursors.ListCursors(listCtx)
 	if err != nil {
 		s.writeCursorsListError(w, r, listCtx, err)
 		return

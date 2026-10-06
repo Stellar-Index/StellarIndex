@@ -136,7 +136,7 @@ func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 		MinSpan:      pricingguard.DefaultSubstanceMinSpan * 2,
 		Window:       24 * time.Hour,
 	}
-	s := &Server{rwaPremiumSubstance: configured}
+	s := &Server{Options: Options{RWAPremiumSubstance: configured}}
 	got := s.rwaPremiumDayFloorFor()
 
 	if got.MinVolumeUSD.Cmp(configured.MinVolumeUSD) != 0 {
@@ -422,7 +422,7 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 
 // TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight.
 //
-// A bound candidate with s.oracleHistory left nil drives buildRWAPremiumHistory
+// A bound candidate with s.OracleHistory left nil drives buildRWAPremiumHistory
 // straight into a nil-interface panic in rwaPremiumReferenceDays. Before the
 // recover was added, that panic escaped cachedRWAPremiumHistory with
 // s.rwaPremFlight still pointing at a channel nobody would ever close — every
@@ -441,7 +441,7 @@ func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *
 		},
 		rwaAt: time.Now(),
 		// oracleHistory left nil: buildRWAPremiumHistory calls
-		// s.oracleHistory.DailyOraclePrices on it once the bound candidate
+		// s.OracleHistory.DailyOraclePrices on it once the bound candidate
 		// clears the membership/scam gates, panicking on the nil interface.
 	}
 

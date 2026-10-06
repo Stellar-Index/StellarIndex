@@ -52,8 +52,8 @@ func (r *tokenSymbolResolver) resolve(contractC string) string {
 		if id == "native" {
 			return "XLM"
 		}
-		if r.s.verifiedCurrencies != nil {
-			if vc, ok := r.s.verifiedCurrencies.LookupByStellarAssetID(id); ok && vc.Ticker != "" {
+		if r.s.VerifiedCurrencies != nil {
+			if vc, ok := r.s.VerifiedCurrencies.LookupByStellarAssetID(id); ok && vc.Ticker != "" {
 				return vc.Ticker
 			}
 		}

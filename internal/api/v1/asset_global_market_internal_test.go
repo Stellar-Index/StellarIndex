@@ -45,10 +45,8 @@ func globalMarketServer(t *testing.T, streams ...canonical.OracleUpdate) *Server
 		t.Fatal(err)
 	}
 	return &Server{
-		logger:             slog.Default(),
-		verifiedCurrencies: cat,
-		oracle:             &streamOracle{streams: streams},
-		fiatPeggedClassics: map[string]canonical.Asset{globalTestUSDC: usd, globalTestUSDCLookalike: usd},
+		Options: Options{VerifiedCurrencies: cat, Oracle: &streamOracle{streams: streams}, FiatPeggedClassics: map[string]canonical.Asset{globalTestUSDC: usd, globalTestUSDCLookalike: usd}},
+		logger:  slog.Default(),
 	}
 }
 
@@ -186,7 +184,7 @@ func TestGlobalMarket_DeclaredUSDPegCarriesNoDivergence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.usdPeggedClassics = []canonical.Asset{usdc}
+	s.USDPeggedClassics = []canonical.Asset{usdc}
 	p := "1.00"
 	rows := []AssetDetail{{AssetID: globalTestUSDC, PriceUSD: &p}}
 	s.fillDeclaredPegPricesInListing(context.Background(), rows)

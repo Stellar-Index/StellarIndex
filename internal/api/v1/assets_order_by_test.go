@@ -65,7 +65,7 @@ func (a *orderCapturingAssets) GetAssetsATHBatch(
 func serveAssetList(t *testing.T, target string) (*orderCapturingAssets, *httptest.ResponseRecorder) {
 	t.Helper()
 	stub := &orderCapturingAssets{}
-	s := &Server{assetsReader: stub}
+	s := &Server{Options: Options{AssetsReader: stub}}
 	rec := httptest.NewRecorder()
 	s.handleAssetList(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	return stub, rec

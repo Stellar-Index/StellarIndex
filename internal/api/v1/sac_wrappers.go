@@ -22,7 +22,7 @@ import "net/http"
 // No query parameters. Cacheable; the map only changes when the
 // operator restarts the API process with a new config.
 func (s *Server) handleSACWrappers(w http.ResponseWriter, r *http.Request) {
-	out := s.sacWrappers
+	out := s.SACWrappers
 	if out == nil {
 		out = map[string]string{}
 	}

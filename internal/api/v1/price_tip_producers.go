@@ -814,7 +814,7 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 		// ev.ID is dropped: the id on the wire is the one Publish mints
 		// atomically with the ring insert.
 		if ev, ok := s.tipTickEvent(ctx, &gen, asset, quote, window); ok {
-			s.hub.Publish(key.topic(), ev.Type, ev.Data)
+			s.Hub.Publish(key.topic(), ev.Type, ev.Data)
 		}
 	}
 	emit() // immediate first publish, to the subscribers already attached

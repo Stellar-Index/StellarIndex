@@ -668,7 +668,7 @@ func ratFromScaledInt(value *big.Int, decimals uint8) *big.Rat {
 // publishes your instrument", which is a finding, and a read that did
 // not answer is not entitled to make it.
 func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
-	if s.oracle == nil {
+	if s.Oracle == nil {
 		return rwaReferences{}
 	}
 	s.rwaRefMu.Lock()
@@ -742,7 +742,7 @@ func (s *Server) fillRWAReferences(done chan struct{}) {
 	defer cancel()
 
 	var built rwaReferences
-	updates, err := s.oracle.LatestOracleStreams(ctx)
+	updates, err := s.Oracle.LatestOracleStreams(ctx)
 	if err != nil {
 		s.logger.Warn("rwa references: oracle stream read failed", "err", err)
 	} else {

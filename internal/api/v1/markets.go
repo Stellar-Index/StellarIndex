@@ -259,7 +259,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		dexSources = filtered
 	}
 
-	reader := s.markets
+	reader := s.Markets
 	if reader == nil {
 		writeJSON(w, []Pool{}, Flags{})
 		return
@@ -548,7 +548,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	reader := s.markets
+	reader := s.Markets
 	if reader == nil {
 		// Feature not wired — empty list is consistent with the
 		// contract and doesn't force a 503. Mirrors the /v1/assets
@@ -751,12 +751,12 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 //
 // Returns nil when no catalogue is wired or the slug is unknown.
 func (s *Server) expandSlugToAssetIDs(slug string) []string {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return nil
 	}
-	vc, ok := s.verifiedCurrencies.LookupBySlug(slug)
+	vc, ok := s.VerifiedCurrencies.LookupBySlug(slug)
 	if !ok {
-		vc, ok = s.verifiedCurrencies.LookupByTicker(slug)
+		vc, ok = s.VerifiedCurrencies.LookupByTicker(slug)
 	}
 	if !ok || vc == nil {
 		return nil
@@ -953,11 +953,11 @@ func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.A
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice
 	}
-	if scamWithheld(ctx, s.scam, base, quote, surface) {
+	if scamWithheld(ctx, s.Scam, base, quote, surface) {
 		return nil
 	}
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, quote)
 	if baseDec == quoteDec {
 		return lastPrice
 	}

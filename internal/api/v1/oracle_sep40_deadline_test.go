@@ -67,7 +67,7 @@ func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := quietServer()
-			s.prices = deadlinePriceReader{}
+			s.Prices = deadlinePriceReader{}
 
 			req := httptest.NewRequest(http.MethodGet, tc.query, nil)
 			if err := req.Context().Err(); err != nil {
@@ -113,7 +113,7 @@ func (brokenPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset,
 // separate "we are broken" from "we are slow".
 func TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500(t *testing.T) {
 	s := quietServer()
-	s.prices = brokenPriceReader{}
+	s.Prices = brokenPriceReader{}
 
 	rec := httptest.NewRecorder()
 	s.handleOracleLastPrice(rec, httptest.NewRequest(http.MethodGet, "/v1/oracle/lastprice?asset=native", nil))

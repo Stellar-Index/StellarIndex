@@ -21,21 +21,21 @@ func (s *Server) isKnownSAC(contractID string) bool {
 }
 
 func (s *Server) buildKnownSACs() map[string]struct{} {
-	set := make(map[string]struct{}, len(s.sacWrappers))
-	for cid := range s.sacWrappers {
+	set := make(map[string]struct{}, len(s.SACWrappers))
+	for cid := range s.SACWrappers {
 		set[cid] = struct{}{}
 	}
-	if s.networkPassphrase == "" {
+	if s.NetworkPassphrase == "" {
 		return set
 	}
 	add := func(assetID string) {
-		if cid, ok := xdrjson.SACContractID(assetID, s.networkPassphrase); ok {
+		if cid, ok := xdrjson.SACContractID(assetID, s.NetworkPassphrase); ok {
 			set[cid] = struct{}{}
 		}
 	}
 	add("native")
-	if s.verifiedCurrencies != nil {
-		for _, vc := range s.verifiedCurrencies.Browseable() {
+	if s.VerifiedCurrencies != nil {
+		for _, vc := range s.VerifiedCurrencies.Browseable() {
 			if se := vc.StellarEntry(); se != nil && se.AssetID != "" {
 				add(se.AssetID)
 			}

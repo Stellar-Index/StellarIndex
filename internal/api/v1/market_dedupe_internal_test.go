@@ -143,7 +143,7 @@ func TestUSDPeggedConstituentsAskForEachMarketOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClassicAsset USDC: %v", err)
 	}
-	srv := &Server{usdPeggedClassics: []canonical.Asset{usdc}}
+	srv := &Server{Options: Options{USDPeggedClassics: []canonical.Asset{usdc}}}
 
 	for _, base := range []string{"native", "crypto:XLM", "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"} {
 		target, err := canonical.NewPair(mustAsset(t, base), mustAsset(t, "fiat:USD"))

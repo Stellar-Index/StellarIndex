@@ -113,9 +113,8 @@ func lakeSupplyServer(t *testing.T, lakeTotal string) (*Server, *lakeSupplyStub)
 		}
 	}
 	return &Server{
-		logger:      slog.Default(),
-		tokenSupply: stub,
-		explorer:    &trustlineOnlyExplorer{supply: map[string]string{cetesAsset: cetesTrustlineOnly}},
+		Options: Options{TokenSupply: stub, Explorer: &trustlineOnlyExplorer{supply: map[string]string{cetesAsset: cetesTrustlineOnly}}},
+		logger:  slog.Default(),
 	}, stub
 }
 
@@ -273,7 +272,7 @@ func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := lakeSupplyServer(t, postBurnLake)
-			s.explorer = failingClassicExplorer{}
+			s.Explorer = failingClassicExplorer{}
 			s.classicSupplyCache = map[string]string{cetesAsset: cetesTrueSupply}
 			s.classicSupplyAt = time.Now().Add(-classicSupplyMaxAge - time.Minute)
 			s.classicSupplyAttemptAt = tc.attemptAt
@@ -301,7 +300,7 @@ func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {
 // while its refresh fails, and a lake figure below it is still refused.
 func TestFreshTrustlineSumStillFloorsTheLake(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "400000000")
-	s.explorer = failingClassicExplorer{}
+	s.Explorer = failingClassicExplorer{}
 	s.classicSupplyCache = map[string]string{cetesAsset: cetesTrueSupply}
 	s.classicSupplyAt = time.Now().Add(-classicSupplyTTL - time.Minute)
 	s.classicSupplyAttemptAt = time.Now()

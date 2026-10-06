@@ -56,14 +56,14 @@ type SignupIPThrottle interface {
 // Extracted from handleSignup to keep that function under the
 // gocognit threshold.
 func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool {
-	if s.signupIPThrottle == nil {
+	if s.SignupIPThrottle == nil {
 		return true
 	}
 	ip := middleware.RemoteIP(r)
 	if ip == "" {
 		return true
 	}
-	err := s.signupIPThrottle.CheckIP(r.Context(), ip)
+	err := s.SignupIPThrottle.CheckIP(r.Context(), ip)
 	if err == nil {
 		return true
 	}

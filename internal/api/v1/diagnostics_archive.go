@@ -88,14 +88,14 @@ type ArchiveGapRangeView struct {
 // Caching: covered by the `/v1/diagnostics/` prefix rule in
 // middleware/cachecontrol.go (`private, no-cache, must-revalidate`).
 func (s *Server) handleDiagnosticsArchive(w http.ResponseWriter, r *http.Request) {
-	if s.archiveReportPath == "" {
+	if s.ArchiveReportPath == "" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/archive-report-unavailable",
 			"Archive report not available", http.StatusServiceUnavailable,
 			"this deployment has no api.archive_report_path configured — the archive-completeness daemon's report is not served here")
 		return
 	}
-	raw, err := os.ReadFile(s.archiveReportPath)
+	raw, err := os.ReadFile(s.ArchiveReportPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			writeProblem(w, r,
@@ -104,7 +104,7 @@ func (s *Server) handleDiagnosticsArchive(w http.ResponseWriter, r *http.Request
 				"the archive-completeness daemon hasn't written a report yet — it runs on a daily timer, so a fresh deployment can legitimately be in this state")
 			return
 		}
-		s.logger.Error("archive report read failed", "path", s.archiveReportPath, "err", err)
+		s.logger.Error("archive report read failed", "path", s.ArchiveReportPath, "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -112,7 +112,7 @@ func (s *Server) handleDiagnosticsArchive(w http.ResponseWriter, r *http.Request
 	}
 	var view ArchiveReportView
 	if err := json.Unmarshal(raw, &view); err != nil {
-		s.logger.Error("archive report parse failed", "path", s.archiveReportPath, "err", err)
+		s.logger.Error("archive report parse failed", "path", s.ArchiveReportPath, "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")

@@ -104,12 +104,10 @@ func TestTransitivePriceFor_NormalisesNonstandardDecimals(t *testing.T) {
 				t.Fatalf("parse asset: %v", err)
 			}
 			s := &Server{
-				transitive: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: tc.raw, Hop: hopID}, ok: true},
-				substance: &stubListingGate{allow: map[string]bool{
+				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: tc.raw, Hop: hopID}, ok: true}, Substance: &stubListingGate{allow: map[string]bool{
 					tc.assetID + "|" + hopID: true,
 					hopID + "|native":        true,
-				}},
-				nonstandardDecimals: decimalsCacheFlagging(t, tc.flagged),
+				}}, NonstandardDecimals: decimalsCacheFlagging(t, tc.flagged)},
 			}
 			got, ok := s.transitivePriceFor(context.Background(), asset, tc.assetID)
 			if !ok {

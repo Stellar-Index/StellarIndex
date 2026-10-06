@@ -111,7 +111,7 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // alias spelling this connection subscribes to.
 //
 // BOTH LEGS on the scam side too, via [scamWithheld]. This line used to
-// spell `s.scam.Withheld(ctx, asset, ...)` — the base-only question —
+// spell `s.Scam.Withheld(ctx, asset, ...)` — the base-only question —
 // so a flagged issuer named as the QUOTE opened the stream at 200 and
 // was fanned its own market's price, inverted, once per closed bucket
 // for the hours an SSE connection lives, while the same issuer named as
@@ -123,12 +123,12 @@ const closedStreamGateBudget = tipStreamTickTimeout
 //
 // Nil gates (operator disabled [pricing_guard]) withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
-	if s.substance == nil && s.scam == nil {
+	if s.Substance == nil && s.Scam == nil {
 		return pricingguard.NotWithheld
 	}
 	ctx, cancel := context.WithTimeout(ctx, closedStreamGateBudget)
 	defer cancel()
-	return withheldBy(ctx, s.substance, s.scam, asset, quote, closedStreamGateSurface)
+	return withheldBy(ctx, s.Substance, s.Scam, asset, quote, closedStreamGateSurface)
 }
 
 // closedStreamSeries picks ONE alias spelling's series for a connection.
@@ -375,7 +375,7 @@ const closedStreamQueueDepth = 4
 // a query string. Both gates are applied here, at connect AND on every
 // forwarded bucket (see [Server.forwardClosedStream]).
 func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
-	if s.hub == nil {
+	if s.Hub == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/stream-unavailable",
 			"Closed-bucket stream not configured", http.StatusServiceUnavailable,
@@ -430,7 +430,7 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	series, topics := newClosedStreamSeries(asset, quote, window)
-	sub, cancelSub, err := s.hub.Subscribe(topics, streaming.LastEventIDFrom(r))
+	sub, cancelSub, err := s.Hub.Subscribe(topics, streaming.LastEventIDFrom(r))
 	if err != nil {
 		streaming.WriteSubscribeRefused(w)
 		return

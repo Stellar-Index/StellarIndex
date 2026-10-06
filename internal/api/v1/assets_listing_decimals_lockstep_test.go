@@ -51,7 +51,7 @@ func (r *listingLockstepConfirmedReader) LoadNonstandardDecimalsAssets(_ context
 // scale — instead of refusing.
 func TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded(t *testing.T) {
 	const contractID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-	s := &Server{tokenDecimals: &listingLockstepDecStub{d: 9, found: true}}
+	s := &Server{Options: Options{TokenDecimals: &listingLockstepDecStub{d: 9, found: true}}}
 	price := "41.32"
 	row := AssetDetail{
 		AssetID:  contractID,
@@ -93,8 +93,7 @@ func TestFillRowMarketCap_SorobanLockstep_Agreement(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 	s := &Server{
-		tokenDecimals:       &listingLockstepDecStub{d: 9, found: true},
-		nonstandardDecimals: cache,
+		Options: Options{TokenDecimals: &listingLockstepDecStub{d: 9, found: true}, NonstandardDecimals: cache},
 	}
 	price := "41.32"
 	row := AssetDetail{

@@ -50,7 +50,7 @@ func TestHandlePriceChanges_503WhenReaderNil(t *testing.T) {
 }
 
 func TestHandlePriceChanges_MissingAsset400(t *testing.T) {
-	s := &Server{priceAt: priceChangesAgeStub{}}
+	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes", nil))
 	if rec.Code != http.StatusBadRequest {
@@ -59,7 +59,7 @@ func TestHandlePriceChanges_MissingAsset400(t *testing.T) {
 }
 
 func TestHandlePriceChanges_Identity400(t *testing.T) {
-	s := &Server{priceAt: priceChangesAgeStub{}}
+	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=fiat:USD&quote=fiat:USD", nil))
 	if rec.Code != http.StatusBadRequest {
@@ -72,7 +72,7 @@ func TestHandlePriceChanges_Identity400(t *testing.T) {
 // no data that far back nulled + flagged available:false rather than
 // erroring the whole call.
 func TestHandlePriceChanges_HappyPath(t *testing.T) {
-	s := &Server{priceAt: priceChangesAgeStub{}}
+	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
 	if rec.Code != http.StatusOK {
@@ -100,7 +100,7 @@ func TestHandlePriceChanges_HappyPath(t *testing.T) {
 func TestHandlePriceChanges_404WhenNoCurrent(t *testing.T) {
 	// A pair-aware stub with an EMPTY table answers ErrPriceAtUnavailable
 	// for every pair — so there is no current price to anchor on.
-	s := &Server{priceAt: priceChangesPairStub{byPair: map[string]string{}}}
+	s := &Server{Options: Options{PriceAt: priceChangesPairStub{byPair: map[string]string{}}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
 	if rec.Code != http.StatusNotFound {
@@ -118,8 +118,7 @@ func TestHandlePriceChanges_StablecoinFallbackTriangulated(t *testing.T) {
 		t.Fatalf("parse USDC: %v", err)
 	}
 	s := &Server{
-		priceAt:           priceChangesPairStub{byPair: map[string]string{"native/" + usdc.String(): "0.16"}},
-		usdPeggedClassics: []canonical.Asset{usdc},
+		Options: Options{PriceAt: priceChangesPairStub{byPair: map[string]string{"native/" + usdc.String(): "0.16"}}, USDPeggedClassics: []canonical.Asset{usdc}},
 	}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
@@ -155,7 +154,7 @@ func (priceChangesWithheldStub) PriceAt(
 // errors/price-withheld type — same contract /v1/price and
 // /v1/price/at carry.
 func TestHandlePriceChanges_WithheldDistinctFromNotFound(t *testing.T) {
-	s := &Server{priceAt: priceChangesWithheldStub{}}
+	s := &Server{Options: Options{PriceAt: priceChangesWithheldStub{}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
 	if rec.Code != http.StatusNotFound {
@@ -193,7 +192,7 @@ func (priceChangesHorizonWithheldStub) PriceAt(
 // as "no history that far back" — both are unavailable, only the
 // refused one is withheld.
 func TestHandlePriceChanges_WithheldHorizonDistinctFromNoData(t *testing.T) {
-	s := &Server{priceAt: priceChangesHorizonWithheldStub{}}
+	s := &Server{Options: Options{PriceAt: priceChangesHorizonWithheldStub{}}}
 	rec := httptest.NewRecorder()
 	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
 	if rec.Code != http.StatusOK {

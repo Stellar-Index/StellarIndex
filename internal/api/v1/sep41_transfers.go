@@ -81,12 +81,12 @@ const sep41TransfersReadTimeout = 8 * time.Second
 // is published as the conversion factor for every amount beside it and a
 // guessed 7 on an 18-decimal token overstates each one 10^11-fold.
 func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (decimals int, ok bool) {
-	if s.tokenDecimals == nil {
+	if s.TokenDecimals == nil {
 		return defaultTokenDecimals, true
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
+	d, found, err := s.TokenDecimals.TokenDecimals(dctx, contractID)
 	if err != nil {
 		s.logger.Warn("token decimals read failed; refusing to publish a default scale",
 			"contract_id", contractID, "err", err)
@@ -130,7 +130,7 @@ func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemTyp
 // position queries — the Stellar moat feature CG/CMC structurally
 // cannot offer.
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
-	if s.sep41Transfers == nil {
+	if s.SEP41Transfers == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/sep41-transfers-unavailable",
 			"SEP-41 transfers unavailable", http.StatusServiceUnavailable,
@@ -158,7 +158,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	listCtx, listCancel := context.WithTimeout(r.Context(), sep41TransfersReadTimeout)
 	defer listCancel()
 
-	rows, err := s.sep41Transfers.ListSEP41Transfers(listCtx, contractID, fromAddr, toAddr, limit)
+	rows, err := s.SEP41Transfers.ListSEP41Transfers(listCtx, contractID, fromAddr, toAddr, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return

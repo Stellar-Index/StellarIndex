@@ -30,8 +30,8 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	detail := ""
 	if _, ok := external.Registry[name]; !ok {
 		detail = fmt.Sprintf("no registered source named %q — see /v1/sources for the catalogue", name)
-	} else if ok, _ := sourcenet.Applicable(name, s.network); !ok {
-		detail = fmt.Sprintf("source %q does not exist on network %s — see /v1/sources for the catalogue", name, s.network)
+	} else if ok, _ := sourcenet.Applicable(name, s.Network); !ok {
+		detail = fmt.Sprintf("source %q does not exist on network %s — see /v1/sources for the catalogue", name, s.Network)
 	}
 	if detail != "" {
 		writeProblem(w, r,

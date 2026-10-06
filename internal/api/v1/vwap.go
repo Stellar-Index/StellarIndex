@@ -73,7 +73,7 @@ type VWAPResult struct {
 // defaults to 0 (no filtering) — the aggregator's config-default of
 // 4σ is a different layer's decision.
 func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
-	reader := s.history
+	reader := s.History
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/vwap-unavailable",
@@ -172,11 +172,11 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 
 	// dex-nonstandard-decimals forward normalization: scale the raw
 	// Σquote/Σbase ratio by the confirmed per-leg decimals factor. A nil
-	// s.nonstandardDecimals or an unflagged pair resolves both legs to
+	// s.NonstandardDecimals or an unflagged pair resolves both legs to
 	// aggregate.StandardDecimals, making this an exact no-op.
 	price = aggregate.AdjustPrice(price,
-		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
-		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
+		aggregate.ResolveDecimals(s.NonstandardDecimals, base),
+		aggregate.ResolveDecimals(s.NonstandardDecimals, quote))
 
 	// No cross-reference verdict (GH-1045): the worker's verdict compares
 	// the aggregator's shortest-window VWAP now, and this value is computed
@@ -237,11 +237,11 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 // market (ADR-0018), so the verdict is admitted rather than withheld; the
 // scam half already ran, hence the nil scam gate.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
-	if s.substance == nil {
+	if s.Substance == nil {
 		return nil
 	}
 	admCtx, adm := WithThinAdmission(ctx, base, quote, true)
-	withheldBy(admCtx, s.substance, nil, base, quote, surface)
+	withheldBy(admCtx, s.Substance, nil, base, quote, surface)
 	if !adm.Admitted() {
 		return nil
 	}
@@ -360,7 +360,7 @@ func (s *Server) tradesInRangeWithStablecoinFallback(
 			if perr != nil {
 				continue // degenerate alias combination (identity pair)
 			}
-			trades, err := s.history.TradesInRange(ctx, ap, from, to, maxTrades)
+			trades, err := s.History.TradesInRange(ctx, ap, from, to, maxTrades)
 			if err != nil {
 				return aggregate.ScaledWindow{}, false, err
 			}

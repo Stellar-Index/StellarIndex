@@ -45,7 +45,7 @@ func TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503(t *testing.T) 
 		"/v1/markets/sources?base=native&quote=fiat:USD",
 	} {
 		s := quietServer()
-		s.marketSources = deadlineMarketSourceReader{}
+		s.MarketSources = deadlineMarketSourceReader{}
 
 		req := httptest.NewRequest(http.MethodGet, q, nil)
 		if err := req.Context().Err(); err != nil {
@@ -90,7 +90,7 @@ func (brokenMarketSourceReader) AssetSourceStats(context.Context, []string) ([]t
 // that separate "we are broken" from "we are slow".
 func TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500(t *testing.T) {
 	s := quietServer()
-	s.marketSources = brokenMarketSourceReader{}
+	s.MarketSources = brokenMarketSourceReader{}
 
 	rec := httptest.NewRecorder()
 	s.handleMarketSources(rec, httptest.NewRequest(http.MethodGet, "/v1/markets/sources?asset=native", nil))

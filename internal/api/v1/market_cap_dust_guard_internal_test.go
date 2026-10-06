@@ -113,7 +113,7 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 // $109.5M cap under XRP's ticker off its own manipulable market).
 // circulating_supply (a raw fact) still surfaces.
 func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
-	s := &Server{minMarketCapVolumeUSD: 1000}
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
 	price := "1.07"
 	row := AssetDetail{
 		AssetID:                   "XRP-GBXRPL45000000000000000000000000000000000000000000000",
@@ -136,7 +136,7 @@ func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
 // forces native's source_count to NULL (→ 0 here); with 0 now
 // suppressible, native needs the same carve-out the detail path has.
 func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
-	s := &Server{minMarketCapVolumeUSD: 1000}
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
 	price := "0.16"
 	vol := "10" // absurd, but must not matter for native
 	row := AssetDetail{
@@ -226,7 +226,7 @@ func TestApplySubstanceGateToListing(t *testing.T) {
 	gate := &stubListingGate{allow: map[string]bool{
 		deep + "|native": true, // deep pair passes vs XLM
 	}}
-	s := &Server{substance: gate, usdPeggedClassics: []canonical.Asset{peg}}
+	s := &Server{Options: Options{Substance: gate, USDPeggedClassics: []canonical.Asset{peg}}}
 
 	p1, p2, p3 := "0.001", "0.13", "0.16"
 	ch := "+1.00"

@@ -40,7 +40,7 @@ import (
 // concepts respectively; accepting them on /v1/observations would
 // silently let a stray query param select between consistency tiers.
 func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
-	if s.history == nil {
+	if s.History == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/observations-unavailable",
 			"Observations serving not configured", http.StatusServiceUnavailable,
@@ -141,7 +141,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// this endpoint. Documented on the /v1/observations OpenAPI schema.
 	//
 	// divergence_checked is ALSO structurally false here, BY DESIGN, and
-	// s.divergence is deliberately never consulted. The cross-reference
+	// s.Divergence is deliberately never consulted. The cross-reference
 	// worker compares the aggregator's VWAP for a base against external
 	// references and caches one verdict per base; /v1/price, its windowed
 	// variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap all serve

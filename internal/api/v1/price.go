@@ -348,7 +348,7 @@ func scamWithheld(ctx context.Context, gate PriceScamGate, base, quote canonical
 // reason-free problem told the client the market was too thin and to
 // recompute the price from the raw trades.
 func (s *Server) writeIfScamWithheld(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset, surface string) bool {
-	if !scamWithheld(r.Context(), s.scam, base, quote, surface) {
+	if !scamWithheld(r.Context(), s.Scam, base, quote, surface) {
 		return false
 	}
 	writePriceWithheldProblem(w, r, base, quote, PriceWithheldScamIssuer)
@@ -686,7 +686,7 @@ type TriangulatedPriceLooker interface {
 // serve path goes through. It refuses a value whose looker reported no
 // observation time: stamping one would be inventing it.
 func (s *Server) lookupCachedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (CachedVWAP, bool, error) {
-	v, found, err := s.triangulated.LookupTriangulatedVWAP(ctx, base, quote, window)
+	v, found, err := s.Triangulated.LookupTriangulatedVWAP(ctx, base, quote, window)
 	if err != nil || !found || v.ObservedAt.IsZero() {
 		return CachedVWAP{}, false, err
 	}
@@ -860,7 +860,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reader := s.prices
+	reader := s.Prices
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
@@ -1103,7 +1103,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	// deployment with no freeze looker at all has no such gap — there
 	// is no freeze verdict to be wrong about — so it keeps deriving
 	// from sources as before.
-	freezeReadFailed := s.freeze != nil && !frozenChecked
+	freezeReadFailed := s.Freeze != nil && !frozenChecked
 	switch {
 	case frozen:
 		flags.SingleSource = true
@@ -1186,7 +1186,7 @@ const triangulationLookupWindow = 5 * time.Minute
 // default path's freeze / composite-meta / divergence reads follow.
 // served is the base alias the value was read under.
 func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (snap PriceSnapshot, sources []string, served canonical.Asset, triangulated, ok bool) {
-	if s.triangulated == nil {
+	if s.Triangulated == nil {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
 	v, served, _, found := s.lookupCachedVWAPAliased(ctx, assetAliases(asset), []canonical.Asset{quote}, triangulationLookupWindow)
@@ -1302,8 +1302,8 @@ func sameAsset(a, b canonical.Asset) bool {
 // [canonical.AssetAliases] documents, applied across the whole peg list
 // rather than within one peg.
 func (s *Server) usdPegProxyQuotes() []canonical.Asset {
-	out := make([]canonical.Asset, 0, 2*len(s.usdPeggedClassics))
-	seen := make(map[string]struct{}, 2*len(s.usdPeggedClassics))
+	out := make([]canonical.Asset, 0, 2*len(s.USDPeggedClassics))
+	seen := make(map[string]struct{}, 2*len(s.USDPeggedClassics))
 	add := func(form canonical.Asset) {
 		k := form.String()
 		if _, dup := seen[k]; dup {
@@ -1314,11 +1314,11 @@ func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 	}
 	// Pass 1: the family's priority-first form of each peg — the classic
 	// spelling however the operator wrote the entry.
-	for _, peg := range s.usdPeggedClassics {
+	for _, peg := range s.USDPeggedClassics {
 		add(canonical.CanonicalAsset(peg))
 	}
 	// Pass 2: the rest of each family, SAC wrapper last within it.
-	for _, peg := range s.usdPeggedClassics {
+	for _, peg := range s.USDPeggedClassics {
 		for _, form := range assetAliases(peg) {
 			add(form)
 		}
@@ -1544,7 +1544,7 @@ func NormalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset,
 // wire bytes of every already-correct 7dp price (the CAGG's NUMERIC::text
 // rendering doesn't match ratToDecimal's fixed digit count).
 func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Asset) string {
-	return normalizeRawRatioStringWithLookup(value, base, quote, s.nonstandardDecimals)
+	return normalizeRawRatioStringWithLookup(value, base, quote, s.NonstandardDecimals)
 }
 
 // normalizeRawRatioStringWithLookup is the lookup-parameterized primitive
@@ -1621,7 +1621,7 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	// (F002/F019). Surface label stays "price_read": this is the same
 	// request-driven /v1/price + batch + oracle family the reader seam
 	// counts under, not a new serving path.
-	if scamWithheld(ctx, s.scam, asset, quote, "price_read") {
+	if scamWithheld(ctx, s.Scam, asset, quote, "price_read") {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
 	if snap, srcs, served, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
@@ -1743,7 +1743,7 @@ const basisMinUSDVenues = 2
 // leg. ok=false keeps the direct market — including every case where the
 // derivation misses, withholds or fails, so the rule never costs a price.
 func (s *Server) preferUSDAnchoredBasis(ctx context.Context, asset, quote canonical.Asset, direct PriceSnapshot, directSources []string) (fallbackResult, bool) {
-	if s.fiatBasisDisabled || !marketSingleSource(direct, directSources) {
+	if s.DisableFiatBasis || !marketSingleSource(direct, directSources) {
 		return fallbackResult{}, false
 	}
 	cross := s.closedUSDAnchoredFiatCross(ctx, asset, quote)
@@ -1880,10 +1880,10 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if quote.Code == "USD" {
 		return PriceSnapshot{}, nil, false, false
 	}
-	if s.currencies == nil {
+	if s.Currencies == nil {
 		return PriceSnapshot{}, nil, false, false
 	}
-	fx := s.currencies.Latest()
+	fx := s.Currencies.Latest()
 	if fx == nil {
 		return PriceSnapshot{}, nil, false, false
 	}
@@ -2005,7 +2005,7 @@ func (s *Server) resolveUSDLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (snap PriceSnapshot, sources []string, served canonical.Asset, stale, ok, withheld bool) {
 	usd := defaultPriceQuote
-	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.prices, asset, usd)
+	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.Prices, asset, usd)
 	switch {
 	case errors.Is(err, ErrPriceWithheld):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true
@@ -2170,7 +2170,7 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return PriceSnapshot{}, nil, false, false
 	}
-	if len(s.usdPeggedClassics) == 0 || s.prices == nil {
+	if len(s.USDPeggedClassics) == 0 || s.Prices == nil {
 		return PriceSnapshot{}, nil, false, false
 	}
 	if s.isDeclaredUSDPeg(asset) {
@@ -2210,7 +2210,7 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 // market — so the classic id printed the XLM cross while the C-address
 // printed 404 for the same asset in the same minute.
 func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
-	for _, peg := range s.usdPeggedClassics {
+	for _, peg := range s.USDPeggedClassics {
 		if sameAsset(peg, asset) {
 			return true
 		}
@@ -2251,8 +2251,8 @@ func (s *Server) walkUSDPegs(
 	// path is itself gated + fast), an empty one is skipped in ~one recent
 	// chunk. A gate ERROR falls through to LatestPrice so a probe blip can
 	// never suppress a real price.
-	gate, _ := s.prices.(proxyPairGate)
-	for _, peg := range s.usdPeggedClassics {
+	gate, _ := s.Prices.(proxyPairGate)
+	for _, peg := range s.USDPeggedClassics {
 		if gate != nil {
 			exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, peg)
 			if gerr == nil && !exists {
@@ -2263,7 +2263,7 @@ func (s *Server) walkUSDPegs(
 			// gerr != nil: fall through to LatestPrice (best-effort — a
 			// probe error must not hide a price the walk could still find).
 		}
-		snap, srcs, _, err := s.prices.LatestPrice(ctx, asset, peg)
+		snap, srcs, _, err := s.Prices.LatestPrice(ctx, asset, peg)
 		if err != nil {
 			// A WITHHELD verdict is not a miss — it means this asset HAS
 			// a price on the peg leg that policy declines to publish.
@@ -2389,7 +2389,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	if verdict != pegXLMLegPriced {
 		return PriceSnapshot{}, nil, verdict
 	}
-	xlmLeg, xlmSources, _, err := s.readPriceWithAliases(ctx, s.prices, xlm, quote)
+	xlmLeg, xlmSources, _, err := s.readPriceWithAliases(ctx, s.Prices, xlm, quote)
 	switch {
 	case errors.Is(err, ErrPriceWithheld):
 		return PriceSnapshot{}, nil, pegXLMLegRefused
@@ -2637,12 +2637,12 @@ func (s *Server) readPegXLMLegForSpelling(
 func (s *Server) readPegXLMLegPair(
 	ctx context.Context, base, xlm canonical.Asset,
 ) (PriceSnapshot, []string, bool, pegXLMLegVerdict) {
-	if gate, wired := s.prices.(proxyPairGate); wired {
+	if gate, wired := s.Prices.(proxyPairGate); wired {
 		if exists, gerr := gate.RecentClosedVWAP1mExists(ctx, base, xlm); gerr == nil && !exists {
 			return PriceSnapshot{}, nil, false, pegXLMLegNoMarket
 		}
 	}
-	snap, srcs, stale, err := s.prices.LatestPrice(ctx, base, xlm)
+	snap, srcs, stale, err := s.Prices.LatestPrice(ctx, base, xlm)
 	switch {
 	case errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldScamIssuer:
 		return PriceSnapshot{}, nil, false, pegXLMLegFlagged
@@ -2746,10 +2746,10 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 	if asset.Type != canonical.AssetFiat || quote.Type != canonical.AssetFiat {
 		return PriceSnapshot{}, nil, false
 	}
-	if s.currencies == nil {
+	if s.Currencies == nil {
 		return PriceSnapshot{}, nil, false
 	}
-	snap := s.currencies.Latest()
+	snap := s.Currencies.Latest()
 	if snap == nil {
 		return PriceSnapshot{}, nil, false
 	}
@@ -2869,7 +2869,7 @@ func heldWindow(frozen bool, snap PriceSnapshot, def time.Duration) time.Duratio
 // effort: cache misses + read errors leave the fields nil so the
 // response still ships cleanly without confidence enrichment.
 func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset, window time.Duration) {
-	if s.confidence == nil {
+	if s.Confidence == nil {
 		return
 	}
 	// Loop the alias set, exactly as readPriceWithAliases does for the
@@ -2883,7 +2883,7 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	// confidence as "unknown", so every client using Stellar's own
 	// canonical form got a permanent "unknown" (cold audit 2026-08-04).
 	for _, a := range assetAliases(asset) {
-		got, ok, err := s.confidence.LookupConfidence(r.Context(), a, quote, window)
+		got, ok, err := s.Confidence.LookupConfidence(r.Context(), a, quote, window)
 		if err != nil {
 			if !clientAborted(r, err) {
 				s.logger.Warn("confidence lookup failed",
@@ -2933,10 +2933,10 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 // refused, LOADING, a malformed cached blob — must still be logged even when
 // it surfaces beside a context that has already expired.
 func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (firing, checked bool) {
-	if s.divergence == nil {
+	if s.Divergence == nil {
 		return false, false
 	}
-	firing, checked, verdictWindow, err := s.divergence.DivergenceFiringFor(ctx, asset, quote)
+	firing, checked, verdictWindow, err := s.Divergence.DivergenceFiringFor(ctx, asset, quote)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("divergence lookup failed",
@@ -2982,7 +2982,7 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 	if requireTriangulated && !flags.Triangulated {
 		return
 	}
-	looker, ok := s.triangulated.(CompositeMetaLooker)
+	looker, ok := s.Triangulated.(CompositeMetaLooker)
 	if !ok {
 		return
 	}
@@ -3017,10 +3017,10 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 // lookupDivergenceFlag, so a caller can tell "confirmed not frozen"
 // from "unknown" instead of silently reading the latter as the former.
 func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (frozen, checked bool) {
-	if s.freeze == nil {
+	if s.Freeze == nil {
 		return false, false
 	}
-	frozen, err := s.freeze.FrozenForPair(r.Context(), asset, quote)
+	frozen, err := s.Freeze.FrozenForPair(r.Context(), asset, quote)
 	if err != nil {
 		if !clientAborted(r, err) {
 			obs.APIFreezeLookupFailuresTotal.Inc()
@@ -3119,7 +3119,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 	if !frozen {
 		return frozenResolution{outcome: frozenServeNotFrozen, checked: checked}
 	}
-	if s.triangulated == nil {
+	if s.Triangulated == nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
 	for _, window := range frozenHeldWindows {
@@ -3373,7 +3373,7 @@ func (s *Server) handlePriceBatchPost(w http.ResponseWriter, r *http.Request) {
 // helper writes its own problem+json on failure and signals back
 // via a sentinel return; the orchestrator only sequences them.
 func (s *Server) runPriceBatch(w http.ResponseWriter, r *http.Request, rawIDs []string, rawQuote string, limit int) {
-	if s.prices == nil {
+	if s.Prices == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
@@ -3571,7 +3571,7 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 	// queried the literal form only, so asset_ids=native returned
 	// stale/empty while /v1/price?asset=native served fresh CEX VWAP
 	// published under the crypto:XLM alias key.
-	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.prices, asset, quote)
+	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.Prices, asset, quote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Gated pair: omit the row and name it on the envelope's
 		// `withheld` list, and do NOT run priceFallback — the fallback
@@ -3661,10 +3661,10 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 // no reader wired). Failures are silent-nil by design: a missing
 // change must never cost a wallet the price itself.
 func (s *Server) batchChange24h(ctx context.Context, asset, quote canonical.Asset, price string) *string {
-	if s.change24h == nil || !quote.Equal(defaultPriceQuote) {
+	if s.Change24h == nil || !quote.Equal(defaultPriceQuote) {
 		return nil
 	}
-	then, err := s.change24h.USDPrice24hAgo(ctx, asset)
+	then, err := s.Change24h.USDPrice24hAgo(ctx, asset)
 	if err != nil {
 		return nil
 	}
