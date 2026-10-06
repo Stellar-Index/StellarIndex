@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,8 +13,8 @@ import (
 )
 
 // errLedgerAtNotFound means no captured ledger provably closed at or before
-// the requested instant: before the lake's first ledger, after its tip, or
-// in a gap the lake cannot answer across.
+// the requested instant: before the lake's first ledger, 1s or more after its
+// tip's close, or with the answer inside or just before a lake gap.
 var errLedgerAtNotFound = errors.New("no ledger resolvable at ts")
 
 // LedgerAt serves GET /v1/ledgers/at?ts= — the highest-sequence ledger whose
@@ -37,7 +38,7 @@ func (h *Handler) LedgerAt(w http.ResponseWriter, r *http.Request) {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/ledger-not-found",
 			"Ledger not found", http.StatusNotFound,
 			"no captured ledger closed at or before "+ts.UTC().Format(time.RFC3339Nano)+
-				" with its successor also captured; ts is before the lake's first ledger, after its tip, or inside a gap")
+				" with its successor also captured; ts is before the lake's first ledger, 1s or more after its tip's close, or inside or just before a gap")
 		return
 	case err != nil:
 		if h.ClientAborted(r, err) {
@@ -58,26 +59,28 @@ func (h *Handler) LedgerAt(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, ledgerView(l), stale)
 }
 
-// ledgerAtOrBefore resolves ts with ledgerSeqAtCloseTime's binary search over
-// LedgerBySeq point reads (at most ~32 sort-key lookups, no range scan). The
-// answer is returned only when it is proven: ledger c closed at or before ts
-// AND ledger c+1 closed after it (or c is the tip), so a lake hole that
-// misled the search yields errLedgerAtNotFound rather than a wrong ledger.
+// ledgerAtOrBefore finds the first captured ledger a that closed after ts and
+// returns a-1. The answer is served only when it is proven: a-1 is captured
+// and closed at or before ts, and its successor a closed after it. Only a lake
+// gap adjacent to the answer yields errLedgerAtNotFound, never a wrong ledger.
 func (h *Handler) ledgerAtOrBefore(ctx context.Context, ts time.Time) (clickhouse.LedgerHeader, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {
 		return clickhouse.LedgerHeader{}, err
 	}
-	if len(tip) == 0 || ts.After(tip[0].CloseTime) {
-		// A ledger not yet captured may still close at or before ts.
+	if len(tip) == 0 {
 		return clickhouse.LedgerHeader{}, errLedgerAtNotFound
 	}
-	if ts.Equal(tip[0].CloseTime) {
-		return tip[0], nil
+	if !ts.Before(tip[0].CloseTime) {
+		// Close times are whole seconds and strictly increase, so the next
+		// ledger closes at least 1s after the tip. Past that, a ledger not
+		// yet captured may still have closed at or before ts.
+		if ts.Before(tip[0].CloseTime.Add(time.Second)) {
+			return tip[0], nil
+		}
+		return clickhouse.LedgerHeader{}, errLedgerAtNotFound
 	}
-	// close_time is whole seconds, so "closed after ts" is "closed at or
-	// after the next whole second".
-	after, err := h.ledgerSeqAtCloseTime(ctx, tip[0].Seq, ts.Truncate(time.Second).Add(time.Second))
+	after, err := h.firstCapturedClosedAfter(ctx, tip[0].Seq, ts)
 	if err != nil {
 		return clickhouse.LedgerHeader{}, err
 	}
@@ -92,6 +95,30 @@ func (h *Handler) ledgerAtOrBefore(ctx context.Context, ts time.Time) (clickhous
 		return clickhouse.LedgerHeader{}, errLedgerAtNotFound
 	}
 	return l, nil
+}
+
+// firstCapturedClosedAfter binary-searches for the lowest captured ledger
+// whose close_time is after ts; tipSeq must be captured and close after ts.
+// Each probe reads the newest captured ledger at or below mid (a sort-key
+// range read), so a lake gap far from the answer cannot mislead the search.
+func (h *Handler) firstCapturedClosedAfter(ctx context.Context, tipSeq uint32, ts time.Time) (uint32, error) {
+	lo, hi := uint32(0), tipSeq
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		below, err := h.Reader.RecentLedgers(ctx, 1, mid+1)
+		if err != nil {
+			return 0, err
+		}
+		if len(below) == 0 || !below[0].CloseTime.After(ts) {
+			lo = mid + 1
+			continue
+		}
+		if below[0].Seq > mid {
+			return 0, fmt.Errorf("ledger read below %d returned ledger %d", mid+1, below[0].Seq)
+		}
+		hi = below[0].Seq
+	}
+	return lo, nil
 }
 
 // parseLedgerAtTS reads the required `ts`: RFC 3339 or non-negative unix

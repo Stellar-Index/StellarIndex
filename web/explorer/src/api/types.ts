@@ -4804,16 +4804,19 @@ export interface paths {
          *     - **Ties:** a ledger closed exactly at `ts` is returned. Close times
          *       strictly increase, so no two ledgers share one.
          *     - **Between closes:** the earlier ledger is returned, never the
-         *       next one. Close times are whole seconds; sub-second `ts` is honoured.
+         *       next one. Close times are whole seconds; sub-second `ts` is honoured,
+         *       so a `ts` less than one second after the tip's close returns the tip.
          *     - **Gaps:** the answer is served only when it is proven from the
          *       lake, meaning that ledger and its successor (unless it is the tip)
-         *       are both captured. When a gap in the lake makes it unprovable, the
-         *       response is 404, never a neighbouring ledger.
+         *       are both captured. A lake gap elsewhere does not affect the answer;
+         *       when the answer is inside a gap or is the ledger just before one,
+         *       the response is 404, never a neighbouring ledger.
          *
-         *     404 when `ts` is before the first captured ledger or after the
-         *     ingest tip's close time (a ledger not yet captured may still close
-         *     at or before it). The lookup is a binary search of point reads on
-         *     the ledger sequence, at most ~32 per request.
+         *     404 when `ts` is before the first captured ledger, one second or more
+         *     after the ingest tip's close time (a ledger not yet captured may still
+         *     close at or before it), or the answer is inside or just before a gap.
+         *     The lookup is a binary search of sort-key reads on the ledger
+         *     sequence, at most ~35 per request.
          */
         get: operations["getLedgerAt"];
         put?: never;
@@ -24163,7 +24166,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            /** @description No captured ledger provably closed at or before `ts`: before the first captured ledger, after the tip, or across a lake gap. */
+            /** @description No captured ledger provably closed at or before `ts`: before the first captured ledger, one second or more after the tip's close, or the answer is inside or just before a lake gap. */
             404: {
                 headers: {
                     [name: string]: unknown;
