@@ -352,8 +352,15 @@ if [[ "$(grep -c '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" -eq
 reset
 run; rc=$?
 before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+holder=""
+if command -v flock >/dev/null 2>&1; then
+  ( exec 9>"$TMP/state/lock"; flock -n 9 || exit 1; sleep 30 ) &
+  holder=$!
+fi
 sleep 1
 MOCK_LOCK_HELD=1 run; rc=$?
+[[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
+if [[ "$rc" -eq 0 ]]; then bad "a run-lock overlap exits non-zero (the lock was not held)"; fi
 if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a run-lock overlap keeps the previous last-success stamp"; else bad "a run-lock overlap keeps the previous last-success stamp"; fi
 
 echo
