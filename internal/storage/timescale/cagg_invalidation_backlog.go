@@ -107,6 +107,52 @@ func (s *Store) CAGGInvalidationBacklogs(ctx context.Context, views []string, cu
 	return out, nil
 }
 
+// CAGGInvalidatedRanges returns the half-open ranges of view's pending
+// invalidation entries, from its own log and its source hypertable's,
+// clipped to [from, to) and sorted by start; open-ended entries are
+// clipped like the rest. They may overlap. Like
+// [Store.CAGGInvalidationBacklogs] it reads TimescaleDB's internal catalog.
+func (s *Store) CAGGInvalidatedRanges(ctx context.Context, view string, from, to time.Time) ([][2]time.Time, error) {
+	var matID, rawID int64
+	err := s.db.QueryRowContext(ctx, `SELECT mat_hypertable_id, raw_hypertable_id FROM _timescaledb_catalog.continuous_agg
+		 WHERE user_view_schema = 'public' AND user_view_name = $1`, view).Scan(&matID, &rawID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("timescale: CAGGInvalidatedRanges: %s is not a continuous aggregate", view)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("timescale: CAGGInvalidatedRanges(%s): %w", view, err)
+	}
+	// Entries hold Timescale's internal time (Unix µs), both ends inclusive.
+	const q = `
+		SELECT _timescaledb_functions.to_timestamp(greatest(lo, $3::bigint)), _timescaledb_functions.to_timestamp(least(hi, $4::bigint - 1))
+		  FROM (SELECT lowest_modified_value AS lo, greatest_modified_value AS hi
+		          FROM _timescaledb_catalog.continuous_aggs_materialization_invalidation_log
+		         WHERE materialization_id = $1
+		        UNION ALL
+		        SELECT lowest_modified_value, greatest_modified_value
+		          FROM _timescaledb_catalog.continuous_aggs_hypertable_invalidation_log
+		         WHERE hypertable_id = $2) e
+		 WHERE lo < $4::bigint AND hi >= $3::bigint
+		 ORDER BY 1`
+	rows, err := s.db.QueryContext(ctx, q, matID, rawID, from.UnixMicro(), to.UnixMicro())
+	if err != nil {
+		return nil, fmt.Errorf("timescale: CAGGInvalidatedRanges(%s): %w", view, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out [][2]time.Time
+	for rows.Next() {
+		var lo, hi time.Time
+		if err := rows.Scan(&lo, &hi); err != nil {
+			return nil, fmt.Errorf("timescale: CAGGInvalidatedRanges(%s): scan: %w", view, err)
+		}
+		out = append(out, [2]time.Time{lo, hi.Add(time.Microsecond)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: CAGGInvalidatedRanges(%s): %w", view, err)
+	}
+	return out, nil
+}
+
 // TradeLedgersInTimeRange returns the ledgers of the first trade at or
 // after from and the last at or before to, the inverse of
 // [Store.LedgerRangeToTimeRange]. Each is one index probe on trades.ts.

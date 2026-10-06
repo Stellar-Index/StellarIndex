@@ -29,6 +29,7 @@ type fakeTradesCAGGStore struct {
 	// driftAt, when set, is a minute where prices_1m disagrees with trades.
 	driftAt  time.Time
 	compared [][2]time.Time
+	fakeInvalidated
 }
 
 // testCAGGNow is well after every span these tests refresh.
@@ -36,15 +37,26 @@ var testCAGGNow = time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 
 func (f *fakeTradesCAGGStore) TradesPrices1mDrift(_ context.Context, from, to time.Time) ([]timescale.TradesPrices1mDrift, error) {
 	f.compared = append(f.compared, [2]time.Time{from, to})
-	if f.driftAt.IsZero() || f.driftAt.Before(from) || !f.driftAt.Before(to) {
-		return nil, nil
+	return fakeDrift(f.driftAt, from, to), nil
+}
+
+func fakeDrift(at, from, to time.Time) []timescale.TradesPrices1mDrift {
+	if at.IsZero() || at.Before(from) || !at.Before(to) {
+		return nil
 	}
 	return []timescale.TradesPrices1mDrift{{
 		BaseAsset: "native", QuoteAsset: "fiat:USD",
 		TradeCount: "2", CAGGCount: "1",
 		TradeVolume: "31", CAGGVolume: "30",
 		TradeUSD: "2", CAGGUSD: "1",
-	}}, nil
+	}}
+}
+
+// fakeInvalidated is each view's pending invalidation ranges.
+type fakeInvalidated map[string][][2]time.Time
+
+func (f fakeInvalidated) CAGGInvalidatedRanges(_ context.Context, view string, from, to time.Time) ([][2]time.Time, error) {
+	return clipRanges(f[view], [2]time.Time{from, to}), nil
 }
 
 func (f *fakeTradesCAGGStore) LedgerRangeToTimeRange(context.Context, uint32, uint32) (time.Time, time.Time, error) {
@@ -346,6 +358,12 @@ type fakeTradesCAGGSizer struct {
 	earliest    time.Time
 	earliestErr error
 	cutoff      time.Time
+	driftAt     time.Time
+	fakeInvalidated
+}
+
+func (f *fakeTradesCAGGSizer) TradesPrices1mDrift(_ context.Context, from, to time.Time) ([]timescale.TradesPrices1mDrift, error) {
+	return fakeDrift(f.driftAt, from, to), nil
 }
 
 func (f *fakeTradesCAGGSizer) Prices1mEarliestBucket(context.Context) (time.Time, error) {
@@ -421,7 +439,7 @@ func TestSizeTradesCAGGBacklog(t *testing.T) {
 		},
 	}}
 	var out bytes.Buffer
-	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil {
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
@@ -445,12 +463,12 @@ func TestSizeTradesCAGGBacklog(t *testing.T) {
 
 	out.Reset()
 	f.ledgersErr = timescale.ErrNotFound
-	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil || !strings.Contains(out.String(), "holds no trades") {
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil || !strings.Contains(out.String(), "holds no trades") {
 		t.Errorf("hull with no trades: err = %v, out %q", err, out.String())
 	}
 
 	out.Reset()
-	if err := sizeTradesCAGGBacklog(context.Background(), &fakeTradesCAGGSizer{}, &out); err != nil ||
+	if err := sizeTradesCAGGBacklog(context.Background(), &fakeTradesCAGGSizer{}, testCAGGNow, &out); err != nil ||
 		!strings.HasSuffix(out.String(), "trades-cagg-refresh: pending none: no bounded invalidation range on any trades aggregate\n") {
 		t.Errorf("nothing pending: err = %v, out %q", err, out.String())
 	}
@@ -511,7 +529,7 @@ func TestSizeTradesCAGGBacklog_RangesBelowPrices1mFloor(t *testing.T) {
 		{View: "twap_1d", Ranges: 2, From: d(1), To: d(15), SourceRanges: 1, SourceFrom: d(2), SourceTo: d(5)},
 	}}
 	var out bytes.Buffer
-	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil {
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -534,15 +552,108 @@ func TestSizeTradesCAGGBacklog_RangesBelowPrices1mFloor(t *testing.T) {
 	out.Reset()
 	f.backlogs = f.backlogs[1:]
 	f.backlogs[0].To = d(9)
-	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil ||
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil ||
 		!strings.HasSuffix(out.String(), "trades-cagg-refresh: pending catch-up none: every bounded range is below-floor\n") {
 		t.Errorf("all below the floor: err = %v, out %q", err, out.String())
 	}
 
 	out.Reset()
 	f.earliestErr = timescale.ErrNotFound
-	if err := sizeTradesCAGGBacklog(context.Background(), f, &out); err != nil ||
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil ||
 		!strings.Contains(out.String(), "twap_1d below-floor from=2025-03-01T00:00:00Z to=2025-03-09T00:00:00Z: prices_1m holds no materialised bucket") {
 		t.Errorf("empty prices_1m: err = %v, out %q", err, out.String())
+	}
+}
+
+// A dropped stretch of prices_1m above its earliest bucket: the floor lets
+// the run through, so the twap buckets it would recompute must be proven
+// against trades first, less the minutes prices_1m's own step rebuilds.
+func TestRefreshTradesCAGGsOverLedgers_NonForcedRefusesTwapReadsPrices1mLacks(t *testing.T) {
+	h := func(hour int) time.Time { return time.Date(2025, 3, 10, hour, 0, 0, 0, time.UTC) }
+	for _, c := range []struct {
+		name    string
+		driftAt time.Time
+		force   bool
+		wantErr string
+	}{
+		{"missing minute in a pending twap bucket", h(6), false, "prices_1m disagrees with trades over [2025-03-10T05:01:00Z,2025-03-11T00:00:00Z)"},
+		{"stale minute prices_1m rebuilds first", h(5).Add(30 * time.Second), false, ""},
+		{"no pending twap bucket reads it", h(5).Add(-48 * time.Hour), false, ""},
+		{"forced", h(6), true, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeTradesCAGGStore{
+				from: h(12), to: h(13), earliest: h(0).AddDate(0, -2, 0), driftAt: c.driftAt,
+				fakeInvalidated: fakeInvalidated{
+					"twap_1d":   {{h(3), h(4)}},
+					"prices_1m": {{h(5).Add(10 * time.Second), h(5).Add(20 * time.Second)}},
+				},
+			}
+			var out bytes.Buffer
+			err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, c.force, testCAGGNow, &out)
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatalf("err = %v\n%s", err, out.String())
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) || !strings.Contains(err.Error(), "-force=true") {
+				t.Fatalf("err = %v, want a refusal containing %q and naming -force=true", err, c.wantErr)
+			}
+			if len(f.refreshed) != 0 {
+				t.Errorf("refreshed %v before refusing", f.refreshed)
+			}
+			if !strings.Contains(out.String(), "native/fiat:USD trades n=2") {
+				t.Errorf("stdout does not show the drifting pair:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// -size raises the floor past the newest prices_1m gap its catch-up's twap
+// buckets would read, so it never suggests a non-forced run over one.
+func TestSizeTradesCAGGBacklog_GapAbovePrices1mFloor(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2025, 3, day, 0, 0, 0, 0, time.UTC) }
+	f := &fakeTradesCAGGSizer{
+		earliest:        d(1),
+		backlogs:        []timescale.CAGGInvalidationBacklog{{View: "twap_1d", Ranges: 1, From: d(5), To: d(20)}},
+		driftAt:         d(9).Add(12 * time.Hour),
+		fakeInvalidated: fakeInvalidated{"twap_1d": {{d(5), d(20)}}},
+	}
+	var out bytes.Buffer
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"trades-cagg-refresh: pending prices_1m gap [2025-03-09T00:00:00Z,2025-03-10T00:00:00Z): ",
+		"trades-cagg-refresh: pending twap_1d below-floor from=2025-03-05T00:00:00Z to=2025-03-11T12:00:00Z: starts before " +
+			"2025-03-11T12:00:00Z, where twap windows reach the prices_1m gap [2025-03-09T00:00:00Z,2025-03-10T00:00:00Z), " +
+			"so -force=false refuses it; refresh it with -force=true\n",
+		"trades-cagg-refresh: pending hull=[2025-03-11T12:00:00Z,2025-03-20T00:00:00Z] ",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+
+	out.Reset()
+	f.driftAt = time.Time{}
+	if err := sizeTradesCAGGBacklog(context.Background(), f, testCAGGNow, &out); err != nil ||
+		strings.Contains(out.String(), " gap ") || !strings.Contains(out.String(), "hull=[2025-03-05T00:00:00Z,2025-03-20T00:00:00Z]") {
+		t.Errorf("no gap: err = %v, want the hull from the first range, out %q", err, out.String())
+	}
+}
+
+func TestSubtractRanges(t *testing.T) {
+	m := func(a, b int) [2]time.Time {
+		return [2]time.Time{time.Unix(int64(a)*60, 0), time.Unix(int64(b)*60, 0)}
+	}
+	rs := mergeRanges([][2]time.Time{m(10, 20), m(0, 5), m(5, 8), m(15, 30)})
+	if want := [][2]time.Time{m(0, 8), m(10, 30)}; !slices.Equal(rs, want) {
+		t.Fatalf("mergeRanges = %v, want %v", rs, want)
+	}
+	got := subtractRanges(rs, [][2]time.Time{m(2, 3), m(7, 12), m(20, 25), m(29, 40)})
+	if want := [][2]time.Time{m(0, 2), m(3, 7), m(12, 20), m(25, 29)}; !slices.Equal(got, want) {
+		t.Errorf("subtractRanges = %v, want %v", got, want)
 	}
 }

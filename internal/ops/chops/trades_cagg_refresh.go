@@ -38,7 +38,7 @@ type tradesCAGGStore interface {
 	RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
 	Prices1mEarliestBucket(ctx context.Context) (time.Time, error)
-	tradesDriftStore
+	twapCoverStore
 }
 
 // tradesCAGGSizer is the slice of *timescale.Store -size needs.
@@ -46,6 +46,7 @@ type tradesCAGGSizer interface {
 	CAGGInvalidationBacklogs(ctx context.Context, views []string, cutoff time.Time) ([]timescale.CAGGInvalidationBacklog, error)
 	TradeLedgersInTimeRange(ctx context.Context, from, to time.Time) (uint32, uint32, error)
 	Prices1mEarliestBucket(ctx context.Context) (time.Time, error)
+	twapCoverStore
 }
 
 type tradesCAGGRefreshArgs struct {
@@ -107,7 +108,7 @@ func tradesCAGGRefresh(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 	if a.size {
-		return sizeTradesCAGGBacklog(ctx, store, os.Stdout)
+		return sizeTradesCAGGBacklog(ctx, store, time.Now(), os.Stdout)
 	}
 	return refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
 }
@@ -117,7 +118,9 @@ func tradesCAGGRefresh(args []string) error {
 // their hull as the -from/-to ledgers that cover it. A range that starts
 // before [tradesCAGGNonForcedFloor] is left out of that hull and printed
 // on its own: the non-forced run refuses it ([refuseTwapsBelowPrices1mFloor]).
-func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, out io.Writer) error {
+// So is everything up to a gap in prices_1m the hull's twap buckets would
+// read ([refuseUncoveredTwapReads]): the floor rises past it.
+func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, now time.Time, out io.Writer) error {
 	views := make([]string, len(timescale.TradesCAGGs))
 	for i, c := range timescale.TradesCAGGs {
 		views[i] = c.Name
@@ -128,46 +131,93 @@ func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, out io.Writer
 		return err
 	}
 	floor := tradesCAGGNonForcedFloor(earliest)
+	why := func() string {
+		return "starts before " + floor.UTC().Format(time.RFC3339) + ", where twap windows reach below prices_1m's earliest bucket " +
+			earliest.UTC().Format(time.RFC3339)
+	}
 	if noFloor {
 		floor = time.Time{}
+		why = func() string { return "prices_1m holds no materialised bucket" }
 	}
 	backlogs, err := s.CAGGInvalidationBacklogs(ctx, views, floor)
 	if err != nil {
 		return err
 	}
-	type hull struct{ lo, hi time.Time }
-	widen := func(h *hull, from, to time.Time) {
-		if from.IsZero() {
-			return
+	below, catchUp := splitTradesCAGGBacklogs(backlogs, noFloor)
+	if !catchUp.lo.IsZero() {
+		plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+			return tradesCAGGRefreshWindow(catchUp.lo, catchUp.hi, c.MinWindow)
+		})
+		gap, _, ok, err := newestUncoveredTwapRead(ctx, s, plan, now.Add(-prices1mSettle))
+		if err != nil {
+			return err
 		}
-		if h.lo.IsZero() || from.Before(h.lo) {
-			h.lo = from
-		}
-		if h.hi.IsZero() || to.After(h.hi) {
-			h.hi = to
+		if ok {
+			floor = tradesCAGGNonForcedFloor(gap[1])
+			why = func() string {
+				return "starts before " + floor.UTC().Format(time.RFC3339) + ", where twap windows reach the prices_1m gap " + fmtDriftWindow(gap)
+			}
+			if backlogs, err = s.CAGGInvalidationBacklogs(ctx, views, floor); err != nil {
+				return err
+			}
+			below, catchUp = splitTradesCAGGBacklogs(backlogs, false)
+			if _, err := fmt.Fprintf(out, "%s prices_1m gap %s: prices_1m disagrees with trades in minutes a catch-up's twap buckets "+
+				"would read, and no pending invalidation rebuilds them, so -force=false refuses it; refresh it with -force=true\n",
+				tradesCAGGPendingPrefix, fmtDriftWindow(gap)); err != nil {
+				return err
+			}
 		}
 	}
-	var catchUp hull
-	below := make([]hull, len(backlogs))
+	if err := printTradesCAGGBacklogs(out, backlogs, below, why()); err != nil {
+		return err
+	}
+	return printTradesCAGGCatchUp(ctx, s, out, catchUp, slices.ContainsFunc(below, func(h tradesCAGGHull) bool { return !h.lo.IsZero() }))
+}
+
+type tradesCAGGHull struct{ lo, hi time.Time }
+
+func (h *tradesCAGGHull) widen(from, to time.Time) {
+	if from.IsZero() {
+		return
+	}
+	if h.lo.IsZero() || from.Before(h.lo) {
+		h.lo = from
+	}
+	if h.hi.IsZero() || to.After(h.hi) {
+		h.hi = to
+	}
+}
+
+// splitTradesCAGGBacklogs returns, per backlog, the hull a non-forced run
+// refuses, and the hull of everything it may catch up.
+func splitTradesCAGGBacklogs(backlogs []timescale.CAGGInvalidationBacklog, noFloor bool) ([]tradesCAGGHull, tradesCAGGHull) {
+	var catchUp tradesCAGGHull
+	below := make([]tradesCAGGHull, len(backlogs))
+	for i, b := range backlogs {
+		if !noFloor {
+			below[i].widen(b.BelowFrom, b.BelowTo)
+			catchUp.widen(b.AboveFrom, b.AboveTo)
+			continue
+		}
+		// No minute rows at all: nothing is safe to refresh non-forced.
+		if b.Ranges > 0 {
+			below[i].widen(b.From, b.To)
+		}
+		if b.SourceRanges > 0 {
+			below[i].widen(b.SourceFrom, b.SourceTo)
+		}
+	}
+	return below, catchUp
+}
+
+func printTradesCAGGBacklogs(out io.Writer, backlogs []timescale.CAGGInvalidationBacklog, below []tradesCAGGHull, why string) error {
 	ts := func(n int64, t time.Time) string {
 		if n == 0 {
 			return "-"
 		}
 		return t.UTC().Format(time.RFC3339)
 	}
-	for i, b := range backlogs {
-		if noFloor {
-			// No minute rows at all: nothing is safe to refresh non-forced.
-			if b.Ranges > 0 {
-				widen(&below[i], b.From, b.To)
-			}
-			if b.SourceRanges > 0 {
-				widen(&below[i], b.SourceFrom, b.SourceTo)
-			}
-		} else {
-			widen(&below[i], b.BelowFrom, b.BelowTo)
-			widen(&catchUp, b.AboveFrom, b.AboveTo)
-		}
+	for _, b := range backlogs {
 		if _, err := fmt.Fprintf(out, "%s %s ranges=%d span=%s from=%s to=%s open-ended=%d source-log=%d\n",
 			tradesCAGGPendingPrefix, b.View, b.Ranges, b.Span, ts(b.Ranges, b.From), ts(b.Ranges, b.To),
 			b.OpenEnded, b.SourceRanges); err != nil {
@@ -178,19 +228,18 @@ func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, out io.Writer
 		if h.lo.IsZero() {
 			continue
 		}
-		why := "prices_1m holds no materialised bucket"
-		if !noFloor {
-			why = "starts before " + floor.UTC().Format(time.RFC3339) + ", where twap windows reach below prices_1m's earliest bucket " +
-				earliest.UTC().Format(time.RFC3339)
-		}
 		if _, err := fmt.Fprintf(out, "%s %s below-floor from=%s to=%s: %s, so -force=false refuses it; refresh it with -force=true\n",
 			tradesCAGGPendingPrefix, backlogs[i].View, h.lo.UTC().Format(time.RFC3339), h.hi.UTC().Format(time.RFC3339), why); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func printTradesCAGGCatchUp(ctx context.Context, s tradesCAGGSizer, out io.Writer, catchUp tradesCAGGHull, anyBelow bool) error {
 	if catchUp.lo.IsZero() {
 		msg := "none: no bounded invalidation range on any trades aggregate"
-		if slices.ContainsFunc(below, func(h hull) bool { return !h.lo.IsZero() }) {
+		if anyBelow {
 			msg = "catch-up none: every bounded range is below-floor"
 		}
 		_, err := fmt.Fprintf(out, "%s %s\n", tradesCAGGPendingPrefix, msg)
@@ -284,6 +333,9 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 	})
 	if !force {
 		if err := refuseTwapsBelowPrices1mFloor(ctx, s, plan, from, to); err != nil {
+			return err
+		}
+		if err := refuseUncoveredTwapReads(ctx, s, plan, from, to, now, out); err != nil {
 			return err
 		}
 	}

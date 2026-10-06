@@ -139,40 +139,7 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	dsn := startTimescale(t, ctx)
-	applyMigrations(t, dsn)
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
-	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("[storage]\npostgres_dsn = %q\n", dsn)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) (string, error) {
-		t.Helper()
-		return captureStdout(t, func() error {
-			return chops.Run(append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...))
-		})
-	}
-	mustRun := func(args ...string) string {
-		t.Helper()
-		out, err := run(args...)
-		if err != nil {
-			t.Fatalf("trades-cagg-refresh %v: %v\n%s", args, err, out)
-		}
-		return out
-	}
-	twapTrades := func(bucket time.Time) int {
-		t.Helper()
-		var n int
-		if err := db.QueryRowContext(ctx,
-			`SELECT coalesce(sum(trade_count), 0) FROM twap_1d WHERE bucket = $1`, bucket).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
+	db, run, mustRun, twapTrades := tradesCAGGRefreshHarness(t, ctx)
 
 	old := time.Date(2024, 1, 10, 12, 0, 0, 0, time.UTC)
 	seedCAGGTrade(t, ctx, db, 50_000_000, 0, old, 10)
@@ -188,18 +155,7 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 
 	// What the armed policy does on its run; the policy itself stays
 	// disarmed, as migration 0156 ships it and as the operator leaves it.
-	var dropped int
-	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM drop_chunks('prices_1m', older_than => '2024-06-01'::timestamptz)`).Scan(&dropped); err != nil {
-		t.Fatal(err)
-	}
-	var oldMinutes int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM prices_1m WHERE bucket < '2024-06-01'`).Scan(&oldMinutes); err != nil {
-		t.Fatal(err)
-	}
-	if dropped == 0 || oldMinutes != 0 {
-		t.Fatalf("control: drop_chunks dropped %d chunk(s), %d old minute row(s) left; want the 2024 minutes gone", dropped, oldMinutes)
-	}
+	dropPrices1mBefore2024June(t, ctx, db)
 	var armed bool
 	if err := db.QueryRowContext(ctx, `SELECT coalesce(bool_or(scheduled), false) FROM timescaledb_information.jobs
 		 WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_1m'`).Scan(&armed); err != nil {
@@ -245,6 +201,117 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 	mustRun("-from", "50000000", "-to", "50000001")
 	if got := twapTrades(oldDay); got != 3 {
 		t.Errorf("twap_1d[2024-01-10] trade_count = %d after the forced remedy, want 3", got)
+	}
+}
+
+// TestTradesCAGGRefresh_NonForcedRefusesGapAbovePrices1mFloor pins a
+// dropped stretch of prices_1m that sits ABOVE its earliest bucket, once a
+// forced run over older history moved that bucket down: the floor no longer
+// covers it, so the non-forced run must prove prices_1m against trades over
+// the twap buckets it recomputes, and -size must not suggest a catch-up there.
+func TestTradesCAGGRefresh_NonForcedRefusesGapAbovePrices1mFloor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	db, run, mustRun, twapTrades := tradesCAGGRefreshHarness(t, ctx)
+
+	gapDay := time.Date(2024, 3, 10, 0, 0, 0, 0, time.UTC)
+	seedCAGGTrade(t, ctx, db, 50_000_000, 0, time.Date(2024, 1, 10, 12, 0, 0, 0, time.UTC), 10)
+	seedCAGGTrade(t, ctx, db, 52_000_000, 0, gapDay.Add(12*time.Hour), 10)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 0, time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC), 20)
+	mustRun("-from", "50000000", "-to", "61000000")
+	if got := twapTrades(gapDay); got != 1 {
+		t.Fatalf("control: twap_1d[2024-03-10] trade_count = %d after the forced refresh, want 1", got)
+	}
+	dropPrices1mBefore2024June(t, ctx, db)
+	// The forced remedy for the oldest range moves prices_1m's earliest
+	// bucket back below the gap day's still-dropped minutes.
+	mustRun("-from", "50000000", "-to", "50000000")
+
+	size := mustRun("-size")
+	if want := "trades-cagg-refresh: pending prices_1m gap [2024-03-10T00:00:00Z,2024-03-11T00:00:00Z): "; !strings.Contains(size, want) {
+		t.Errorf("-size output lacks %q:\n%s", want, size)
+	}
+	if strings.Contains(size, "-from 52000000") {
+		t.Errorf("-size suggests a non-forced catch-up over the gap:\n%s", size)
+	}
+
+	out, err := run("-force=false", "-from", "52000000", "-to", "52000000")
+	if err == nil || !strings.Contains(err.Error(), "prices_1m disagrees with trades over [2024-03-10T00:00:00Z,2024-03-11T00:00:00Z)") ||
+		!strings.Contains(err.Error(), "-force=true") {
+		t.Errorf("non-forced over the gap: err = %v, want a refusal naming the gap and -force=true\n%s", err, out)
+	}
+	if got := twapTrades(gapDay); got != 1 {
+		t.Errorf("twap_1d[2024-03-10] trade_count = %d after the refusal, want 1: it was recomputed from the dropped minute rows", got)
+	}
+
+	mustRun("-from", "52000000", "-to", "52000000")
+	if got := twapTrades(gapDay); got != 1 {
+		t.Errorf("twap_1d[2024-03-10] trade_count = %d after the forced remedy, want 1", got)
+	}
+	if out := mustRun("-force=false", "-from", "52000000", "-to", "52000000"); !strings.Contains(out, " forced=false ") {
+		t.Errorf("non-forced after the forced remedy: no success line: %q", out)
+	}
+}
+
+// tradesCAGGRefreshHarness migrates a fresh TimescaleDB and returns it, the
+// command run with and without failing on error, and twap_1d's trade_count
+// at a bucket.
+func tradesCAGGRefreshHarness(t *testing.T, ctx context.Context) (
+	*sql.DB, func(...string) (string, error), func(...string) string, func(time.Time) int,
+) {
+	t.Helper()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("[storage]\npostgres_dsn = %q\n", dsn)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		return captureStdout(t, func() error {
+			return chops.Run(append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...))
+		})
+	}
+	mustRun := func(args ...string) string {
+		t.Helper()
+		out, err := run(args...)
+		if err != nil {
+			t.Fatalf("trades-cagg-refresh %v: %v\n%s", args, err, out)
+		}
+		return out
+	}
+	twapTrades := func(bucket time.Time) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT coalesce(sum(trade_count), 0) FROM twap_1d WHERE bucket = $1`, bucket).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	return db, run, mustRun, twapTrades
+}
+
+// dropPrices1mBefore2024June does what an armed prices_1m retention policy
+// does on its run; the policy itself stays disarmed.
+func dropPrices1mBefore2024June(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	var dropped int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM drop_chunks('prices_1m', older_than => '2024-06-01'::timestamptz)`).Scan(&dropped); err != nil {
+		t.Fatal(err)
+	}
+	var oldMinutes int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM prices_1m WHERE bucket < '2024-06-01'`).Scan(&oldMinutes); err != nil {
+		t.Fatal(err)
+	}
+	if dropped == 0 || oldMinutes != 0 {
+		t.Fatalf("control: drop_chunks dropped %d chunk(s), %d old minute row(s) left; want the 2024 minutes gone", dropped, oldMinutes)
 	}
 }
 

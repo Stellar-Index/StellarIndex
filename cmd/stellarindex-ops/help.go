@@ -769,6 +769,10 @@ Subcommands:
                           -force=false refuses a range whose twap windows
                           reach below prices_1m's earliest bucket (a past
                           retention drop); -size lists those as below-floor.
+                          It also refuses when prices_1m disagrees with
+                          trades in a minute a recomputed twap bucket reads
+                          (a dropped stretch above that bucket); -size names
+                          it as a gap and raises the floor past it.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback
