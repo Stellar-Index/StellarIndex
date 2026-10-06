@@ -89,6 +89,7 @@ type ProjectorSpec struct {
 	// mode, so the dispatcher's events goroutine skips it. Set only once
 	// the source's full-history re-derive has landed and it is in the
 	// ADR-0033 reconcile catalogue (internal/ops/chops/reconciliation_catalogue.go).
+	// VerifySoleWriterCAGGCoverage then gates the aggregates over its tables.
 	SoleWriter bool
 }
 

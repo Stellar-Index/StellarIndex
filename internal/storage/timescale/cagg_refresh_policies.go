@@ -24,6 +24,9 @@ type CAGGRefreshWindow struct {
 	StartOffset time.Duration
 	// ScheduleInterval is how often the policy runs; zero without one.
 	ScheduleInterval time.Duration
+	// Hypertable is the raw table the view aggregates; for an aggregate
+	// built on another it is that parent's table, e.g. twap_1d -> trades.
+	Hypertable string
 }
 
 // caggRefreshWindowsSelect lists every continuous aggregate with its
@@ -32,6 +35,8 @@ type CAGGRefreshWindow struct {
 // offset is read in seconds so no caller parses an interval's text form.
 const caggRefreshWindowsSelect = `
 	SELECT c.view_name,
+	       c.hypertable_name,
+	       c.materialization_hypertable_name,
 	       j.job_id IS NOT NULL AS has_policy,
 	       EXTRACT(EPOCH FROM (j.config->>'start_offset')::interval)::bigint AS start_offset_seconds,
 	       COALESCE(EXTRACT(EPOCH FROM j.schedule_interval)::bigint, 0) AS schedule_interval_seconds
@@ -51,22 +56,41 @@ func (s *Store) CAGGRefreshWindows(ctx context.Context) ([]CAGGRefreshWindow, er
 	}
 	defer func() { _ = rows.Close() }()
 	var out []CAGGRefreshWindow
+	parentOf := map[string]string{} // materialization hypertable -> the table its view reads
 	for rows.Next() {
 		var (
-			w        CAGGRefreshWindow
-			seconds  sql.NullInt64
-			schedule int64
+			w            CAGGRefreshWindow
+			materialized string
+			seconds      sql.NullInt64
+			schedule     int64
 		)
-		if err := rows.Scan(&w.View, &w.HasPolicy, &seconds, &schedule); err != nil {
+		if err := rows.Scan(&w.View, &w.Hypertable, &materialized, &w.HasPolicy, &seconds, &schedule); err != nil {
 			return nil, fmt.Errorf("timescale: scan cagg refresh policy: %w", err)
 		}
 		w.Unbounded = w.HasPolicy && !seconds.Valid
 		w.StartOffset = time.Duration(seconds.Int64) * time.Second
 		w.ScheduleInterval = time.Duration(schedule) * time.Second
+		parentOf[materialized] = w.Hypertable
 		out = append(out, w)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: list cagg refresh policies: %w", err)
 	}
+	for i := range out {
+		out[i].Hypertable = rootHypertable(out[i].Hypertable, parentOf)
+	}
 	return out, nil
+}
+
+// rootHypertable follows an aggregate-on-aggregate chain down to the raw
+// table. The hop cap only guards a malformed catalogue against looping.
+func rootHypertable(table string, parentOf map[string]string) string {
+	for range len(parentOf) {
+		parent, ok := parentOf[table]
+		if !ok {
+			break
+		}
+		table = parent
+	}
+	return table
 }

@@ -86,17 +86,91 @@ func TestVerifySoleWriterCAGGCoverage_Phase4Verdicts(t *testing.T) {
 	}
 }
 
-// TestVerifySoleWriterCAGGCoverage_OnlyPhase4 pins that the gate never
-// blocks a mode in which the dispatcher still feeds the aggregates.
-func TestVerifySoleWriterCAGGCoverage_OnlyPhase4(t *testing.T) {
-	for _, mode := range []SinkMode{SinkModeAll, SinkModeSkipSoleWriter} {
-		r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{policy("oracle_prices_1m", 5*time.Minute)}}
-		if err := VerifySoleWriterCAGGCoverage(context.Background(), r, mode); err != nil {
-			t.Errorf("mode %v: err = %v, want nil", mode, err)
+// soleWriterTables lists, per SoleWriter source in the registry, the
+// tables its gap-detector targets name.
+func soleWriterTables(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for _, spec := range Specs() {
+		if spec.Projector == nil || !spec.Projector.SoleWriter {
+			continue
 		}
-		if r.calls != 0 {
-			t.Errorf("mode %v: read the policies %d times, want 0", mode, r.calls)
+		for _, target := range timescale.DefaultGapDetectorTargets {
+			if target.SourceNetKey() == spec.Name {
+				out[spec.Name] = append(out[spec.Name], target.Table)
+			}
 		}
+		if len(out[spec.Name]) == 0 {
+			t.Fatalf("sole-writer source %s has no gap-detector target naming its tables", spec.Name)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("the registry has no sole-writer source")
+	}
+	return out
+}
+
+// TestProjectedSourcesNameTheirTables keeps every projected source
+// promotable: the Phase-3 gate refuses a SoleWriter source whose tables
+// no gap-detector target names.
+func TestProjectedSourcesNameTheirTables(t *testing.T) {
+	named := map[string]bool{}
+	for _, target := range timescale.DefaultGapDetectorTargets {
+		named[target.SourceNetKey()] = true
+	}
+	for _, spec := range Specs() {
+		if spec.Projector != nil && !named[spec.Name] {
+			t.Errorf("projected source %s has no gap-detector target", spec.Name)
+		}
+	}
+}
+
+// TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3 pins that
+// Phase-3 mode gates the aggregates over a sole-writer source's tables:
+// the projector alone writes them there too, so a short lookback misses
+// its late rows. Aggregates the dispatcher still feeds live stay ungated.
+func TestVerifySoleWriterCAGGCoverage_SoleWriterTablesInPhase3(t *testing.T) {
+	for source, tables := range soleWriterTables(t) {
+		for _, table := range tables {
+			r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{
+				{View: "oracle_prices_1m", Hypertable: "oracle_updates", HasPolicy: true, StartOffset: 5 * time.Minute},
+				{View: table + "_1h", Hypertable: table, HasPolicy: true, StartOffset: 5 * time.Minute},
+			}}
+			err := VerifySoleWriterCAGGCoverage(context.Background(), r, SinkModeSkipSoleWriter)
+			if !errors.Is(err, ErrSoleWriterCAGGWindow) {
+				t.Fatalf("%s: aggregate over %s: err = %v, want ErrSoleWriterCAGGWindow", source, table, err)
+			}
+			if !strings.Contains(err.Error(), table+"_1h (start_offset 5m0s)") || strings.Contains(err.Error(), "oracle_prices_1m") {
+				t.Errorf("%s: err = %q, want it to name only %s_1h", source, err, table)
+			}
+		}
+	}
+}
+
+// TestVerifySoleWriterCAGGCoverage_Phase3SkipsDispatcherFedViews runs the
+// gate on the shipped catalogue shape: no aggregate reads a sep41 table,
+// and oracle_prices_1m's 5 minutes is fine while the dispatcher still
+// writes oracle_updates live.
+func TestVerifySoleWriterCAGGCoverage_Phase3SkipsDispatcherFedViews(t *testing.T) {
+	r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{
+		{View: "oracle_prices_1m", Hypertable: "oracle_updates", HasPolicy: true, StartOffset: 5 * time.Minute},
+		{View: "prices_1m", Hypertable: "trades", HasPolicy: true, StartOffset: 15 * time.Minute},
+		{View: "supply_1d", Hypertable: "asset_supply_history", HasPolicy: true, StartOffset: 7 * 24 * time.Hour},
+	}}
+	if err := VerifySoleWriterCAGGCoverage(context.Background(), r, SinkModeSkipSoleWriter); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if err := VerifySoleWriterCAGGCoverage(context.Background(), &fakeCAGGWindows{}, SinkModeSkipSoleWriter); !errors.Is(err, ErrSoleWriterCAGGWindow) {
+		t.Errorf("empty catalogue: err = %v, want ErrSoleWriterCAGGWindow", err)
+	}
+}
+
+// TestVerifySoleWriterCAGGCoverage_NoProjector pins that the gate never
+// reads the catalogue when the dispatcher writes everything.
+func TestVerifySoleWriterCAGGCoverage_NoProjector(t *testing.T) {
+	r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{policy("oracle_prices_1m", 5*time.Minute)}}
+	if err := VerifySoleWriterCAGGCoverage(context.Background(), r, SinkModeAll); err != nil || r.calls != 0 {
+		t.Errorf("err = %v, calls = %d; want nil, 0", err, r.calls)
 	}
 }
 
