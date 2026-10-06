@@ -32,7 +32,7 @@
 
 [Unit]
 Description=Stellar Index — per-process memory-mapping headroom probe (vm.max_map_count)
-Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#process-mappings
 # Ordering only, no Wants=: the probe must still run when ClickHouse is
 # down, because `procs 0` — "watching nothing" — is one of the states it
 # exists to report.

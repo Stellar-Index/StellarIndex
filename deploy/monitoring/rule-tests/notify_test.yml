@@ -53,7 +53,7 @@ tests:
               team: stellarindex
               component: notify
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
               summary: "360 sign-in/signup requests in 6h, but no transactional email send attempts"
               description: |
                 POST /v1/auth/login and POST /v1/signup answered 2xx
@@ -66,7 +66,7 @@ tests:
                 internal/notify.Sender.Send, and that the signup verification
                 emailer is configured.
 
-                Runbook: docs/operations/runbooks/notify-send-failure.md
+                Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
   # ── Case 1b: idle deployment — no demand, no sends, no alert ───────
   # Zero sends is the expected reading when nobody signs in or signs up;
@@ -137,7 +137,7 @@ tests:
               team: stellarindex
               component: notify
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
               summary: "Transactional email (magic-link) has been failing continuously for 1h"
               description: |
                 magic-link email sends have included at least one
@@ -146,7 +146,7 @@ tests:
                 threshold if send volume is high, but still means some fraction
                 of users never received their magic link or confirmation email.
 
-                Runbook: docs/operations/runbooks/notify-send-failure.md
+                Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
       # The pre-existing ratio rule must stay silent throughout — proves
       # this is a genuinely NEW signal, not a duplicate of the ratio alert.
       - eval_time: 90m
@@ -190,7 +190,7 @@ tests:
               team: stellarindex
               component: notify
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
               summary: "Transactional email is going out at 480/h (ceiling 300/h)"
               description: |
                 Successful transactional email sends, summed across every
@@ -201,7 +201,7 @@ tests:
                 for many addresses from many IPs. Sustained high volume spends
                 the sending domain's reputation for every recipient.
 
-                Runbook: docs/operations/runbooks/notify-send-failure.md
+                Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
   # ── Case 6: failed sends and organic volume stay under the ceiling ─
   # 2/min sent (120/h) plus 10/min failed: failures deliver nothing, so
@@ -239,7 +239,7 @@ tests:
               team: stellarindex
               component: notify
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
               summary: "Transactional email (magic-link) had 1 failed send(s) in the last hour"
               description: |
                 At least one magic-link email send failed in the
@@ -247,7 +247,7 @@ tests:
                 alerts, so this is the only signal for them. A user did not get
                 their magic link or confirmation email.
 
-                Runbook: docs/operations/runbooks/notify-send-failure.md
+                Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
       - eval_time: 5m
         alertname: stellarindex_notify_send_failure_ratio_high
         exp_alerts: []
@@ -298,8 +298,8 @@ tests:
               template: magic-link
             exp_annotations:
               summary: "Transactional email (magic-link) failing > 50% of sends"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md"
-              description: "More than half of magic-link email sends have failed\nfor 15+ minutes (66.67% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/notify-send-failure.md\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high"
+              description: "More than half of magic-link email sends have failed\nfor 15+ minutes (66.67% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high\n"
 
   # ── Case 9: rare failures (1 per 20m) fire the any-failure alert ───
   # Too sparse for the sustained rule's every-window dwell and far under the
@@ -321,7 +321,7 @@ tests:
               team: stellarindex
               component: notify
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
               # promtool 2.x (CI and r1) renders increase() here as exactly 3; 3.x extrapolates to 3.051.
               summary: "Transactional email (magic-link) had 3 failed send(s) in the last hour"
               description: |
@@ -330,7 +330,7 @@ tests:
                 alerts, so this is the only signal for them. A user did not get
                 their magic link or confirmation email.
 
-                Runbook: docs/operations/runbooks/notify-send-failure.md
+                Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
       - eval_time: 100m
         alertname: stellarindex_notify_send_failures_sustained
         exp_alerts: []
@@ -358,8 +358,8 @@ tests:
               template: magic-link
             exp_annotations:
               summary: "Transactional email (magic-link) failing > 50% of sends"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/notify-send-failure.md"
-              description: "More than half of magic-link email sends have failed\nfor 15+ minutes (100% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/notify-send-failure.md\n"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high"
+              description: "More than half of magic-link email sends have failed\nfor 15+ minutes (100% failed). The\nmail provider (Resend) is likely down, the API key is rotated/\ninvalid, or the sending domain is unverified. Customer impact:\nmagic-link dashboard LOGIN and/or API-signup CONFIRMATION stop\ndelivering — existing sessions and API keys are unaffected. Check\nthe Resend status + credentials per the runbook.\n\nRunbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high\n"
 
   # ── Case 11: zero traffic (0/0) fires none of the failure alerts ───
   - interval: 1m

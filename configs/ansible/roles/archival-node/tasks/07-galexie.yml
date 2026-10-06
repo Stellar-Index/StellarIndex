@@ -241,7 +241,7 @@
     content: "{{ galexie_version }}"
     mode: "0644"
 
-# Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md).
+# Drift guard (docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag).
 # Reads the ACTUAL RUNTIME OUTPUT of the installed binary — the same
 # ground truth stellar-stack-version-probe.sh reads — rather than
 # trusting the .galexie.tag stamp file above, which a hand-installed
@@ -327,7 +327,7 @@
       {{ "(the binary printed NOTHING on stdout or stderr — check it exists and is executable: " ~ galexie_running_version.rc | default("no rc") ~ ")" if (galexie_reported_version | default("")) == "" else "" }}
       but the ansible-pinned expected stamp (galexie_expected_version_string,
       defaults/main.yml) is '{{ galexie_expected_version_string }}'. See
-      docs/operations/runbooks/stellar-stack-version-lag.md.
+      docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag.
     success_msg: "installed galexie matches the pinned version stamp."
   tags: [observability, stellar-stack-version, drift-guard]
 
@@ -365,7 +365,7 @@
       ({{ galexie_binary_stat.stat.checksum | default('MISSING') }}) does not
       match the pinned galexie_expected_binary_sha256 — the binary was
       replaced without codifying it. See
-      docs/operations/runbooks/stellar-stack-version-lag.md.
+      docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag.
     success_msg: "installed galexie binary matches the pinned sha256."
   tags: [observability, stellar-stack-version, drift-guard]
 

@@ -26,6 +26,9 @@ Most gauges come from `data-freshness.sh` (`configs/ansible/roles/archival-node/
 - [`stellarindex_served_value_unit_failed`](#stellarindex_served_value_unit_failed)
 - [`stellarindex_serving_insert_frozen`](#stellarindex_serving_insert_frozen)
 - [`stellarindex_serving_insert_absent`](#stellarindex_serving_insert_absent)
+- [`stellarindex_assets_popular_priceless`](#stellarindex_assets_popular_priceless)
+- [`curated-rwa-sync`](#curated-rwa-sync)
+- [`fx-history-missing`](#fx-history-missing)
 
 ## stellarindex_data_source_stale
 
@@ -460,6 +463,562 @@ A source retired on purpose keeps its history and so alarms forever on [stellari
 
 Never silence the alert at Alertmanager instead: a blanket silence on `stellarindex_data_source_stale` hides every OTHER source's real outage (the watchdog alerts per `{domain, source}` precisely so one dead feed never costs visibility into the rest). A declared retired-source list the script reads is the durable form; not built yet (#1347).
 
+## stellarindex_assets_popular_priceless
+
+_Source page `data-freshness.md#stellarindex_assets_popular_priceless`: status living, severity P3, last verified 2026-08-28._
+
+Covers both tripwire alerts:
+
+- `stellarindex_assets_popular_priceless` — a real coverage gap exists.
+- `stellarindex_priceless_coverage_check_stale` — the tripwire itself
+  stopped sweeping (it is blind, so a gap would go unseen).
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_assets_popular_priceless` / `stellarindex_priceless_coverage_check_stale` |
+| Severity | P3 (ticket) |
+| Detected by | `deploy/monitoring/rules/pricing-coverage.yml` |
+| Emitted by | `internal/pricelesscoverage` (aggregator sweep, 10 min) |
+| Typical MTTR | 30–120 min (usually adding a missing USD quote-path) |
+| Impact | A genuinely-traded asset renders priceless on `/v1/assets` and every downstream surface. No wrong price is served (fail-closed) — the gap is a MISSING price, not a bad one. |
+
+### Background — what "popular + priceless + not withheld" means
+
+Each sweep the aggregator asks, per asset, whether ALL of the following
+hold (the classifier is `internal/pricelesscoverage.popularPriceless`):
+
+1. **Priceless** — no servable USD/XLM-proxy price
+   (`prices_1m` has no non-null VWAP against USDC / its SAC / `fiat:USD`
+   / `native` / the XLM SAC in the last 24 h), AND no `asset_price_snapshot`
+   row younger than the listing's staleness bound
+   (`assetPriceSnapshotMaxAge`, 15 min). A fresh snapshot row is priced by
+   definition: it is exactly what `/v1/assets` serves, whatever the quote
+   floors above say.
+2. **Not withheld** — the serving substance gate does not withhold its
+   USD price. The tripwire asks the gate itself
+   (`pricingguard.AssetSubstanceVerdict`, the verdict the `/v1/assets`
+   listing applies): all three floors (volume, distinct minutes, span)
+   over the alias union, against XLM, `fiat:USD` and each declared USD
+   peg. A withheld market's pricelessness is expected and does NOT
+   count; an asset the gate could not measure DOES count.
+3. **Not wash** — the busiest single unordered `(maker, taker)` account
+   pair owns **< 90 %** of its 7 d priced volume. A volume-painting wash
+   farm (the reported scam AUD: ~108/109 of its trades one wallet pair)
+   contributes NO market-character volume, so it can never be "popular".
+4. **Popular by market-character volume** — 7 d priced volume **> $10k**
+   OR 7 d trades **> 5,000**.
+
+The gauge is the COUNT of assets meeting all four. `> 0` for 1 h+ pages.
+
+> Why the market-character floor matters: a raw-volume floor would let
+> every wash farm self-select into this alert. The concentration filter
+> is what keeps the scam AUD (huge raw volume, one wallet pair) SILENT
+> while still catching a genuinely-traded asset that lost its price path.
+
+### Quick diagnosis (≤ 5 min)
+
+```sh
+# 1) How many assets, and is the sweep fresh?
+curl -fs http://localhost:9465/metrics \
+  | grep -E '^stellarindex_(assets_popular_priceless|priceless_coverage_check_)'
+
+# 2) WHICH assets — the worker logs each firing asset every sweep.
+journalctl -u stellarindex-aggregator -n 500 \
+  | grep 'priceless-popular coverage gap'
+#   -> asset_id, volume_7d_usd, trades_7d, top_account_pair_share
+```
+
+Each `priceless-popular coverage gap` warn line names the `asset_id` and
+its signals. Pick one and reproduce:
+
+```sh
+# Does /v1/assets/{asset_id} really serve no price_usd?
+curl -fs "https://api.stellarindex.io/v1/assets/<asset_id>" | jq '.data.price_usd'
+# What quotes does it actually trade against? (the missing-path clue)
+# BOTH stored directions — a pair is written as (A,B) AND (B,A), each
+# holding only PART of the market. Grouping on base_asset alone
+# under-reports the true bucket count by roughly half and will send you
+# chasing a thin-market theory that is not real (2026-08-27: CBIJ/XLM
+# reads 13 buckets one way, 14 the other, 27 unioned — floor is 20).
+psql "$STELLARINDEX_POSTGRES_DSN" -c \
+  "SELECT CASE WHEN base_asset = '<asset_id>' THEN quote_asset ELSE base_asset END AS counterparty,
+          count(*) AS buckets, sum(trade_count) AS trades, max(bucket) AS last_seen
+     FROM prices_1m
+    WHERE (base_asset = '<asset_id>' OR quote_asset = '<asset_id>')
+      AND bucket >= now() - INTERVAL '24 hours'
+    GROUP BY 1 ORDER BY 2 DESC;"
+
+# Is the asset in a catalogue spine? Classic assets via classic_assets;
+# Soroban-native contracts via discovered_assets + an asset_volume_24h
+# row (the listing AND detail spines share that bound since 2026-08-28).
+psql "$STELLARINDEX_POSTGRES_DSN" -c \
+  "SELECT (SELECT count(*) FROM classic_assets   WHERE asset_id = '<asset_id>') AS classic,
+          (SELECT count(*) FROM discovered_assets WHERE contract_id = '<asset_id>') AS discovered,
+          (SELECT count(*) FROM asset_volume_24h  WHERE asset_id = '<asset_id>') AS vol_rollup;"
+
+# Which DIRECTION is the XLM leg stored in? Only (CAS3J…/native, <id>)
+# rows == the SAC-as-base class (see the decision tree).
+psql "$STELLARINDEX_POSTGRES_DSN" -c \
+  "SELECT base_asset, quote_asset, count(*) AS buckets, max(bucket) AS last_seen
+     FROM prices_1m
+    WHERE (base_asset = '<asset_id>' OR quote_asset = '<asset_id>')
+      AND bucket >= now() - INTERVAL '24 hours'
+    GROUP BY 1, 2 ORDER BY 3 DESC;"
+```
+
+Note the gate itself is direction-safe — `Store.PairMarketSubstance`
+already unions both directions and every alias spelling of each leg, and
+de-dupes with `GROUP BY bucket`. It is
+the *ad-hoc diagnosis query* that misleads, not the production measurement.
+
+### Decision tree — `stellarindex_assets_popular_priceless`
+
+| Finding | Likely cause | Mitigation |
+| ------- | ------------ | ---------- |
+| Asset trades only against a stablecoin/quote NOT in the USD-proxy set | Missing USD-proxy bridge (the AUDD/EURC class — PR #152 added USDC/SAC) | Extend the proxy set in `listAssetsBaseSelect` + `coverageQuoteProxies` (keep them in lockstep) and re-derive |
+| Asset trades only against another classic asset with no USD path | No triangulation route to USD | Confirm the intermediate has a USD price; add the pair to the chain if warranted |
+| Asset is a SAC form of a classic that IS priced | Alias fold gap | Confirm `[supply].sac_wrappers` maps the SAC; the alias registry should fold it (task #28 Part A) |
+| Asset is genuinely a scam we should not price | It should be labelled/withheld, not surfaced here | Add it to the scam directory / withhold path so it stops counting |
+| Asset is **Soroban-native** (56-char `C…` contract, no classic twin) and `classic_assets` has no row for it | Both catalogue spines now UNION `discovered_assets` (bounded by `asset_volume_24h`), so a TRADED contract asset has a catalogue row. If it still has none, it has no 24h volume rollup row — check `asset_volume_24h` and the `assetvolrollup` worker. The substance gate is NOT the blocker — it runs and *allows* the asset, which is why `price_usd` is null with **no withheld reason** | Confirm the rollup row exists; then work the direction row below. Do **not** paper over it by recording a synthetic withheld verdict — that converts a real coverage gap into a silent one, which is precisely what this alert exists to catch |
+| Asset's XLM market is stored with **XLM (native or the SAC `CAS3J…`) as BASE** — `SELECT base_asset, quote_asset, count(*) FROM prices_1m WHERE (base_asset = '<id>' OR quote_asset = '<id>') AND bucket >= now() - INTERVAL '24 hours' GROUP BY 1,2` shows only `(CAS3J…, <id>)` rows | **Direction gap (fixed 2026-08-28).** Sources that write SWAP direction (aquarius: base = `token_in`, no `canonical.Orient`) store a token bought with XLM as `(XLM-SAC, token)`. Until 2026-08-28 every price path read the XLM leg base-side only (`base_asset = X AND quote_asset IN (native, SAC)`), so that market was invisible to the catalogue `asset_vs_xlm*` CTEs, to `TransitiveUSDPrice.hop_usd`, and to the tripwire's `priced_direct` — while the volume path read both directions, which is why the asset had $730k/7d and no price (r1, `CBIJ…`/`CAUP7…`) | Every read path now has an inverted arm (base-side preferred). If this fires again on a SAC-as-base asset, one of the four lists/arms has drifted — `TestProxyQuoteLists_Lockstep` and `TestXLMSacAsBase_PriceableThroughEveryPath` are the guards; run them first |
+
+**Soroban assets: SAC wrapper vs Soroban-native.** These behave completely
+differently and the distinction is the first thing to establish:
+
+- A **SAC wrapper** of a classic asset (AQUA, SHX, EURC, BTC, XRP, PYUSD,
+  sUSD, BLND, CETES, VELO…) is folded onto its classic form by the alias
+  registry and prices normally. Nothing to do.
+- A **Soroban-native** asset — a contract with no classic counterpart — has
+  no `classic_assets` row and so no price path at all.
+
+Measured 2026-08-27: of the 15 Soroban assets over $1k/24h, **13 were SAC
+wrappers (all correctly priced)** and exactly **2 were Soroban-native and
+unpriced** — `CBIJ…` ($19k/24h) and `CAUP7…` ($9.4k/24h). The gap is
+narrow, but it is a genuine capability gap, not a tuning problem.
+
+Note also that a Soroban-native asset may only be reachable through
+*another* Soroban-native asset: `CAUP7` trades against nothing but `CBIJ`,
+so pricing it needs a **transitive hop** (`CAUP7/CBIJ × CBIJ_usd`), which
+`Store.TransitiveUSDPrice` provides (one hop, both legs substance-gated
+by the API). The hop's own USD price is resolved: hop IS XLM (either
+identity) → `xlm_usd`; else direct USD proxy; else base-side XLM; else
+the INVERTED XLM market. The multi-hop graph router (`MaxHops=3`) only
+operates over `cfg.Pairs`, a ~10-pair operator allow-list that does not
+serve the long tail.
+
+**Keep the proxy lists AND the direction arms in lockstep.** Four places
+decide "what is a proxy": `coverageQuoteProxies` (tripwire — composed
+from the resolver's `usdProxyQuotes` + `xlmQuotes`), and the literal
+IN-lists in `listAssetsBaseSelect` + `getAssetBySlugSQL`. Each XLM-leg
+CTE has a base-side arm and an inverted arm. `TestProxyQuoteLists_Lockstep`
+(`internal/storage/timescale/proxy_lockstep_test.go`) fails if any of
+them drift.
+
+### Decision tree — `stellarindex_priceless_coverage_check_stale`
+
+| Finding | Likely cause | Mitigation |
+| ------- | ------------ | ---------- |
+| `candidate read failed` warns in the aggregator log | Postgres unreachable / query error | Restore Postgres reachability; sweep resumes next tick |
+| No `priceless-popular coverage tripwire: wired` at startup | Worker not started | Confirm the aggregator build + restart; check for a panic in `worker.Recover(logger, "priceless-coverage")` |
+| Sweep slow (full-catalogue scan) | Trades hypertable pressure | Check DB load; the scan is 24 h/7 d windowed and should be seconds |
+
+### Mitigation (≤ 120 min)
+
+- [ ] Identify the firing asset(s) from the warn logs.
+- [ ] Reproduce the missing `price_usd` and inspect the asset's quote mix.
+- [ ] Apply the appropriate fix from the decision tree (usually a
+      missing USD-proxy quote-path). Keep `coverageQuoteProxies`
+      (`internal/storage/timescale/priceless_coverage.go`) in lockstep
+      with the catalogue's `direct_usd` / `asset_vs_xlm` quote set.
+- [ ] Verify `stellarindex_assets_popular_priceless` returns to 0 on the
+      next sweep; the alert auto-resolves after 1 h.
+
+### Known false-positive patterns
+
+- **Just-listed asset mid-pricing**: an asset that crossed the
+  popularity floor minutes ago, before its first price bucket
+  materialised. The `for: 1h` gate masks this.
+- **Process restart**: `last_success_unix` reads its pre-sweep 0 until
+  the first sweep completes (seconds after start). The staleness
+  `for: 30m` gate masks this.
+
+### Changelog
+
+- 2026-08-25 — initial draft alongside the priceless-popular tripwire
+  (task #28 Part B).
+- 2026-08-28 — root cause of the `CBIJ…`/`CAUP7…` firing found and fixed:
+  the XLM leg was stored with the **XLM SAC as BASE** (aquarius writes
+  swap direction) and every price path read it base-side only, while
+  the volume path read both directions. Added the direction row, the
+  direction query, and the lockstep note; the Soroban-native row now
+  describes the shared `discovered_assets` spine rather than a
+  structural impossibility.
+- 2026-08-27 — added the **Soroban-native** decision-tree row after the
+  `CAUP7…` firing was misdiagnosed three times (as a routing gap, then a
+  thin-market/`MinBuckets` problem, then a pair-direction bug). None were
+  correct: `classic_assets` holds no contract assets, so the price is
+  never computed and the gate never withholds. Also corrected the quick-
+  diagnosis quote-mix query to union both stored pair directions — the
+  single-direction form under-reports buckets by ~half and is what
+  produced the false thin-market diagnosis.
+
+
+## curated-rwa-sync
+
+**Runbook — curated-rwa-sync**
+
+_Source page `data-freshness.md#curated-rwa-sync`: status ratified, severity P3, last verified 2026-10-06._
+
+Alerts: `stellarindex_curated_rwa_sync_stale`, `stellarindex_curated_rwa_sync_refused`, `stellarindex_curated_rwa_published_stale`. All P3 (`severity: ticket`), routed by `configs/alertmanager/alertmanager.r1.yml`. Rules: `deploy/monitoring/rules/curated-rwa-sync.yml` and `configs/prometheus/rules.r1/curated-rwa-sync.yml` (byte-identical; group `stellarindex.curated_rwa_sync`).
+
+- **Impact:** a comparison panel degrades; the verified RWA surface is untouched. The reader is fail-closed: a row whose `synced_at` is older than 48 h is not served, so `/v1/rwa/assets` reports `curated.status: unavailable` and the explorer panel says so. 30 h (one missed daily run plus jitter) fires with 18 h to spare.
+- **Scope:** r1 / pubnet (Dune's Stellar datasets are pubnet). The unit is installed on every network; a test net with no key stays `unwired` by design and these alerts do not fire there, because the metric is stamped on a dry run too. A test net whose unit never stamps will fire `_stale` (evaluated per instance): silence it in Alertmanager with an `instance` matcher if that net carries no key.
+- **Metric source:** `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom`, written by `stellarindex-ops curated-rwa-sync` at the end of every run (dry or wet, success or refusal) from `curated-rwa-sync.timer` (daily 04:12 UTC, `RandomizedDelaySec=600`). A failed read or write stamps nothing.
+- **Steady state:** `stellarindex_curated_rwa_sync_last_run_unix` advances daily; `_rows` ≈ 220–230 (monthly total series ~13 points plus per-subclass split ~210 rows); `_datapoints_read` a small constant (Dune metering for two result reads; a run never executes a query); `_executed_at_unix` advances about daily on the curator's own schedule.
+- **Companion:** [api-smoke-stale](sla-probe.md#stellarindex_api_smoke_stale) (same textfile-stamp pattern, same diagnosis order); `docs/methodology/rwa-coverage-reconciliation.md` § *The curated arm*.
+
+### At a glance
+
+- [`stellarindex_curated_rwa_sync_stale`](#stellarindex_curated_rwa_sync_stale)
+- [`stellarindex_curated_rwa_sync_refused`](#stellarindex_curated_rwa_sync_refused)
+- [`stellarindex_curated_rwa_published_stale`](#stellarindex_curated_rwa_published_stale)
+
+### Quick diagnosis
+
+```sh
+# 1. Timer scheduled? When did the unit last run?
+ssh r1 'systemctl list-timers curated-rwa-sync.timer'
+ssh r1 'systemctl show curated-rwa-sync.service -p Result,InactiveEnterTimestamp,ExecMainStartTimestamp'
+# Type=oneshot: read Result WITH its timestamp. Empty InactiveEnterTimestamp = no run for Result to describe.
+
+# 2. What did the last run say?
+ssh r1 'journalctl -u curated-rwa-sync -n 40 --no-pager'
+
+# 3. Textfile present and moving?
+ssh r1 'ls -la /var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom'
+ssh r1 'cat /var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom'
+
+# 4. Key present? (never print it)
+ssh r1 'grep -c "^DUNE_API_KEY=." /etc/default/curated-rwa-sync'   # 1 = set, 0 = empty placeholder
+
+# 5. Arm state per the API
+curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, assets, census, published: (.published | {total_usd, as_of, executed_at, gap_vs_verified_usd})}'
+```
+
+### stellarindex_curated_rwa_sync_stale
+
+Trips (`for: 10m`):
+
+```
+(time() - stellarindex_curated_rwa_sync_last_run_unix) > (30 * 3600)
+or
+(
+  absent_over_time(stellarindex_curated_rwa_sync_last_run_unix[30h])
+  and on() (count_over_time(up{job="node_exporter"}[30h]) > 1700)
+)
+```
+
+The absent arm is gated on Prometheus having watched 30 h of scrapes (~1,700 samples at 60 s is 28 h+), so a fresh rule load or Prometheus restart does not fire it. If it fires on a host that never stamped, the timer has not fired in 30 h: go to step 1. The two rule trees are identical.
+
+Means: no run has stamped `last_run_unix` in 30 h, or none ever has (timer not scheduled, unit failing before it writes, Dune read failing, textfile dir not writable). At 48 h the reader empties the arm.
+
+Triage, in order:
+
+1. **Timer not listed, or `NEXT` is `n/a`:** the timer was not enabled (deploy skipped task 14, or host bootstrapped before the unit existed). `systemctl enable --now curated-rwa-sync.timer`; the ansible role is the source of record, so re-run the archival-node playbook if it drifts again.
+2. **Journal `GET /api/v1/query/…/results: HTTP 4xx`:** Dune refused the read. `401`/`403`: key rotated or revoked; replace it (see `_refused` fix). `402`/`429`: credit allowance exhausted. A run reads two public query results, metered by datapoint (`datapoints_read`), never by execution, so this is almost always another consumer of the same key. Wait for the monthly reset or lower the cadence in `curated-rwa-sync.timer.j2`; the 48 h bound tolerates one missed day, not more. `404`: the curator deleted or privatised the query; find its successor at dune.com/stellar/rwas. The ids are constants in `internal/ops/ingest/curated_rwa_sync.go`.
+3. **Journal `latest execution is QUERY_STATE_…, not completed`:** the curator's own scheduled run failed. Nothing to do here: the previous day's rows stay served until the 48 h bound and the next successful curator run clears it. If it persists past a day the dashboard is broken: say so on the page's issue, not in code.
+4. **Journal `printed no usable row` / `printed N of the M rows it declared`:** the curator changed a column name/layout, or its paging broke. Rows are decoded STRICTLY (`duneMonthlyTotalRow`, `duneMonthlyBySubclassRow` in `internal/ops/ingest/curated_rwa_sync.go`); compare with the query's current columns on dune.com. A layout change is a code change with a test, not an ops fix.
+5. **Journal `Read N rows; kept …` then a Postgres error:** curator read, cache write failed (DSN, pool, constraint, or `-timeout` expiring mid-commit). A failed write stamps nothing, so `last_run_unix` keeps the last committed run's time. Fix the database side, re-run the unit.
+6. **Textfile written but `last_run_unix` frozen:** node_exporter is not scraping the directory (file permission, or collector flag missing). `ls -la` the file; check node_exporter args for `--collector.textfile.directory`.
+7. **All healthy and still firing:** the r1 scrape target (node_exporter) is down; the alert is a symptom.
+
+Clears on its own `for: 10m` after the next scrape of a fresh `last_run_unix`.
+
+### stellarindex_curated_rwa_sync_refused
+
+Trips:
+
+```
+stellarindex_curated_rwa_sync_refused == 1
+```
+
+`for: 2h`. Identical in both trees.
+
+Means: the run exited clean without reading the curator because `DUNE_API_KEY` is empty in `/etc/default/curated-rwa-sync`. It still stamps `last_run_unix` (so `_stale` measures the timer, not the key). Expected state of a fresh install until an operator sets the key. Confirm: step 4 above prints `0`. The arm reads `unwired`/`unavailable` meanwhile.
+
+Fix: the file is `root:root` mode `0600` (only systemd reads it, as PID 1; no group read unlike sibling `/etc/default/*` files). Set the key the way the role does so the next apply agrees with the host: set `vault_dune_api_key` in `inventory/r1.secrets.yml` (workstation, `configs/ansible/`), then
+
+```sh
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+  --tags stellarindex --check --diff            # always --check --diff first
+```
+
+The role renders `DUNE_API_KEY={{ vault_dune_api_key }}` whenever the vault defines a non-empty value; with the variable undefined it installs the empty placeholder once and never overwrites a pasted value. Pasting by hand works, but the vault is the source of record: a hand-set key is replaced by the vault's on the first apply after the variable is defined. Then `systemctl start curated-rwa-sync.service` and re-read the textfile; the gauge clears on that run. The reader recognises the arm within its 10-minute cache TTL.
+
+### stellarindex_curated_rwa_published_stale
+
+Trips:
+
+```
+(time() - stellarindex_curated_rwa_sync_executed_at_unix) > (72 * 3600)
+and
+stellarindex_curated_rwa_sync_executed_at_unix > 0
+```
+
+`for: 1h`. Identical in both trees. `executed_at_unix` is 0 when a run read nothing; the `_refused`/`_stale` rules own that case.
+
+Means: the sync is healthy (`last_run_unix` advances, arm recognised) but the CURATOR has stopped re-executing its public query, so the figure is frozen. Healthy worst case is ~48 h (daily curator read by daily sync, held a day), so 72 h is a full missed curator day beyond that. The API's `curated.published.executed_at` shows the same stamp. Past 48 h the API serves the block with `stale: true`; past 7 days it drops `curated.published` entirely (`curated.status` reads `unavailable` when no per-asset row is readable either). The split is a separate query: `curated.published.by_subclass_executed_at` is its own execution time, and a split older than 7 days is withheld while a fresher total is still served.
+
+Fix: nothing on this side. Confirm on dune.com that the curator's query schedule is paused or broken.
+
+
+## fx-history-missing
+
+**FX history empty / `fx_quotes` table missing**
+
+_Source page `data-freshness.md#fx-history-missing`: status living procedure, last verified 2026-08-29._
+
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Trigger | Customer report: "FX history is empty" / operator-noticed `history_1y: 0` on `/v1/assets/<fiat>`. No specific Prometheus alert fires today — surfaces as a recurring WARN in the API log. |
+| Severity | P3 (data-quality, not data-loss) |
+| Detected by | API log: `forex: fx_quotes persist failed ... pq: relation "fx_quotes" does not exist` |
+| Typical MTTR | 5–15 min (one-shot operator action: apply migration + restart) |
+| Impact | FX history endpoints serve `history_1y: 0` and `history_all: 0` for every ticker. `history_7d` populates normally because it reads from a different surface. The aggregator's stablecoin-fiat proxy is unaffected (uses `[trades].usd_pegged_classic_assets`, not `fx_quotes`). |
+
+Companion to [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full) and
+[`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked).
+Different shape: a database migration that ships in the repo
+(0028) but hasn't been applied to the deployment, so a feature
+that depends on the new table fails silently at runtime.
+
+This runbook captures the 2026-05-10 finding on r1 + the recovery
+sequence so future operators don't re-investigate from
+"FX history is empty for EUR" backwards. (Original 2026-05-10
+investigation was against `/v1/currencies/EUR`, retired in
+rc.48 — same data now flows through `/v1/assets/eur`; the
+underlying `fx_quotes` table is the same and the runbook below
+applies unchanged.)
+
+### Signal
+
+- `/v1/assets/eur` (or any other fiat ticker) returns
+  `history_1y: 0` and `history_all: 0` on the wire while
+  `history_7d` populates normally.
+- API log shows recurring WARN every forex refresh tick:
+  ```
+  {"level":"WARN","msg":"forex: fx_quotes persist failed",
+   "rows":810,
+   "err":"timescale: InsertFXQuoteBatch ticker=\"AED\":
+          pq: relation \"fx_quotes\" does not exist
+          at position 2:15 (42P01)"}
+  ```
+- `psql -tA -c "SELECT to_regclass('public.fx_quotes')"` returns
+  empty.
+- `psql -tA -c "SELECT version FROM schema_migrations
+  ORDER BY version DESC LIMIT 1"` returns a version below 28 —
+  the general signal. ("Returns 27" was the specific 2026-05-10
+  state on r1; HEAD's migrations run far past it — 0150 at the
+  2026-08-29 re-verification — so any `version < 28` means 0028
+  was never applied.)
+
+### Why this happens
+
+The `fx_quotes` hypertable was added in task #104
+("Persistent fx_quotes hypertable + 10y backfill") via migration
+0028. The migration ships in the repo at
+`migrations/0028_create_fx_quotes.up.sql`. Two operator-side
+steps make it live on a deployment:
+
+1. **Copy the migration file** to the deployment's canonical
+   migrations directory (`/usr/local/share/stellarindex/migrations/`
+   on r1 — the dir the deploy playbook syncs + applies from; NOT
+   `/var/lib/stellarindex/migrations/`, which is a stale unmanaged
+   leftover).
+2. **Apply it** via `stellarindex-migrate up`.
+
+> Note: as of the `migrations_skip | bool` fix, `deploy.yml` syncs +
+> applies pending migrations automatically before swapping binaries,
+> so a normal `gh workflow run deploy.yml` deploy already runs this.
+> The manual steps below are the fallback for an out-of-band fix.
+
+Once the table exists, the forex worker (running inside
+`stellarindex-api`) starts persisting on its next refresh tick,
+so live data backfills forward as it arrives. The live worker
+polls Massive (paid feed, `MASSIVE_API_KEY`) with a keyless ECB
+daily-reference-rates fallback; Frankfurter is used by the
+backfill script only. Historical depth needs the one-shot
+`fx-history-backfill` script — see step 3.
+
+### Triage (1 min)
+
+```sh
+# 1. Confirm the table is missing
+sudo -u postgres psql -d stellarindex -tA -c "SELECT to_regclass('public.fx_quotes')"
+# → empty line means missing
+
+# 2. Confirm migration version
+sudo -u postgres psql -d stellarindex -tA -c "SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1"
+# → 27|f means migration 0028 hasn't been applied yet
+
+# 3. Confirm the API log shows the symptom. The forex worker's
+#    refresh cadence is HOURLY (`time.Hour`, wired in
+#    cmd/stellarindex-api/main.go), so expect ONE WARN per hourly
+#    tick — grep a window wide enough to catch at least one:
+journalctl -u stellarindex-api --since "2 hours ago" -o cat | grep "fx_quotes persist failed" | tail -1
+```
+
+### Recovery (5 min)
+
+#### 1. Copy the migration file
+
+From your local checkout:
+
+```sh
+scp migrations/0028_create_fx_quotes.{up,down}.sql \
+    root@<host>:/usr/local/share/stellarindex/migrations/
+```
+
+(R1 host: `136.243.90.96`. `/usr/local/share/stellarindex/migrations`
+is the canonical path the deploy playbook syncs to with `delete:true`
+and that `stellarindex-migrate` should read. `/var/lib/stellarindex/migrations`
+is a stale unmanaged dir — don't use it.)
+
+#### 2. Apply the migration
+
+```sh
+ssh root@<host> '
+  set -e
+  set -a; . /etc/default/stellarindex; set +a
+  /usr/local/bin/stellarindex-migrate \
+    -migrations /usr/local/share/stellarindex/migrations \
+    -dsn "$STELLARINDEX_POSTGRES_DSN" \
+    up
+'
+```
+
+Expected output: `1/u create_fx_quotes` then exit 0.
+
+The migration is forward-only, additive, and idempotent on
+re-runs (the `create_hypertable` call uses `if_not_exists =>
+TRUE`; the table itself doesn't but won't be re-attempted because
+`schema_migrations.version` advances). Safe to apply on a live
+deployment — no service restart needed; the forex worker picks
+up the new table on its next refresh tick (hourly cadence — up
+to 1 h away).
+
+#### 3. Confirm the worker started persisting
+
+```sh
+# The refresh cadence is hourly, so post-fix confirmation can take
+# up to 1 h — a zero count here only proves absence-of-failure once
+# a tick has actually fired since the migration:
+journalctl -u stellarindex-api --since "2 hours ago" -o cat \
+  | grep -c "fx_quotes persist failed"
+# → 0 once the next refresh tick fires (hourly cadence)
+
+sudo -u postgres psql -d stellarindex -tA -c "SELECT count(*) FROM fx_quotes"
+# → > 0 within ~1 h
+```
+
+#### 4. Backfill historical depth (slow path — separate step)
+
+The forward-flow worker only writes the LATEST snapshot per
+refresh tick — it doesn't go back in time. The 1y / all-time
+fiat charts need historical data that the one-shot
+`fx-history-backfill` binary fetches from the ECB-backed
+Frankfurter API (frankfurter.dev) — free, no API key, ~32
+currencies, daily granularity back to 1999-01-04.
+
+```sh
+# On the operator's workstation:
+export DATABASE_URL=postgres://...:5432/stellarindex
+go run ./scripts/ops/fx-history-backfill --years=25
+```
+
+No cost — Frankfurter is free (ECB reference rates,
+maintained as a public utility). The script walks the window in
+5-year chunks (one HTTP request per chunk) so a 25-year backfill
+is ~6 requests total. Safe to interrupt and resume — the writer
+upserts on `(ticker, bucket)` so re-running on the same range
+is a no-op.
+
+The script logs one line per chunk to stderr; on completion it
+writes a final summary (total chunks, failed chunks, total rows,
+elapsed). It exits non-zero if any chunk failed or the run was
+interrupted before covering the whole window. Re-run the `--from`/`--to`
+range of each `chunk failed` line until the script exits 0.
+
+### Prevention
+
+The 2026-05-10 finding exposed a process gap: a release that
+adds a migration ships the binary changes via the deploy
+workflow, but the migration files + `stellarindex-migrate up`
+were operator-side actions not automated by the same workflow.
+
+**Path 1 is DONE (F-1220):** the deploy workflow now syncs the
+migrations directory and runs `stellarindex-migrate up` before
+any binary swap, unless the operator passes the
+`migrations_skip` input (`.github/workflows/deploy.yml` +
+`configs/ansible/playbooks/deploy-binary.yml`). A normal
+`gh workflow run deploy.yml` deploy cannot reproduce this
+incident class anymore; the manual steps above remain only as
+the out-of-band fallback.
+
+**Still open — the startup-gate idea:** `stellarindex-api`'s
+ready check could compare the binary's expected schema version
+(computed at build time from the embedded migrations) against
+`schema_migrations.version`; readyz returns 503 with a
+diagnostic if they diverge. Doesn't auto-apply but would catch
+any remaining out-of-band drift (e.g. a hand-copied binary)
+instead of letting it silently fail at runtime.
+TODO(maintainer): decide whether the startup gate is still worth it
+post-F-1220, or close it as superseded.
+
+### Changelog
+
+- 2026-08-29 — re-verified against HEAD (Wave I). The forex
+  worker's refresh cadence corrected from "~5 min" to HOURLY
+  (`time.Hour`) in the triage grep, the persist-pickup note, and
+  the post-fix confirmation windows; migration-version signal
+  generalised to `version < 28` (27 was the 2026-05-10 snapshot;
+  HEAD runs to 0150); Prevention path 1 marked DONE via F-1220
+  (deploy workflow syncs migrations + runs `stellarindex-migrate
+  up` pre-swap unless `migrations_skip`), leaving only the
+  startup-gate idea open; noted the live worker polls Massive
+  (`MASSIVE_API_KEY`) with keyless ECB fallback — Frankfurter is
+  backfill-only.
+
 ## Related
 
 - [Alerts catalogue](../alerts-catalog.md)
+
+**`stellarindex_assets_popular_priceless`**
+
+- `internal/pricelesscoverage/` — the tripwire worker + classifier.
+- `internal/storage/timescale/priceless_coverage.go` — the candidate SQL.
+- `internal/pricingguard/substance.go` — `AssetSubstanceVerdict`, the
+  withheld verdict the tripwire asks.
+- PR #152 (`assets:` USDC/SAC stablecoin-proxy bridge) — the class of fix
+  a firing alert usually needs.
+- `feat/scam-labels-and-volume-character` (PR #161) — the volume-character
+  design the market-character filter mirrors.
+
+**`curated-rwa-sync`**
+
+- `internal/ops/ingest/curated_rwa_sync.go`: sync command (query ids, paging loop, strict row shapes, textfile writer).
+- `internal/storage/timescale/rwa_curated_published.go`: reader with the 48 h recognition bound; `internal/api/v1/rwa_curated.go` turns an empty set into `curated.status: unavailable` and a full one into `published_totals`. (`rwa_curated_directory.go` is the per-asset reader; the first curator's per-asset tables are private, so it stays empty.)
+- `configs/ansible/roles/archival-node/templates/systemd/curated-rwa-sync.service.j2`: unit, `EnvironmentFile`, `ReadWritePaths` grant for the textfile directory.
+- `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`: the two tasks (vault render / first-install placeholder) owning `/etc/default/curated-rwa-sync`.
+
+**`fx-history-missing`**
+
+- [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full) — different shape; the
+  postgres-side disk-pressure surface.
+- [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked) —
+  another silent-runtime-failure shape (Redis writes blocked).

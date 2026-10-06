@@ -607,7 +607,7 @@ decoder no longer understands, i.e. that source is dark from that
 ledger on.
 
 Alert: `stellarindex_decoder_panicked` (`> 0`, page) → runbook
-[decoder-panicked](../../operations/runbooks/decoder-panicked.md).
+[decoder-panicked](../../operations/runbooks/ingestion.md#stellarindex_decoder_panicked).
 The expression deliberately reads the raw value rather than
 `increase(...)`: the counter is process-lifetime and a poison input
 typically panics once, so the series is born at 1 and never moves —
@@ -1194,7 +1194,7 @@ the repeated `Stream` calls the archive→live→catch-up path makes), so
 the SDK `BufferedStorageBackend` buffer metrics
 (`buffer_fetch_latency_seconds` etc.) are not exported. Alerted by
 `stellarindex_metrics_registry_absent`; remediation in
-`runbooks/metrics-registry-absent.md`.
+`runbooks/meta.md#stellarindex_metrics_registry_absent`.
 
 **NOTE (W5-mon-3):** this gauge no longer implies the ledgerstream-tier
 `both_missing` page is dead. `stellarindex_ledgerstream_tier_read_total`
@@ -1213,7 +1213,7 @@ tier served the request: `hot` = local `galexie-archive` MinIO, `cold` =
 neither tier had the object (the reader is stalled). A sustained
 `both_missing` increase is the **P1** data-integrity page
 `stellarindex_ledgerstream_tier_both_missing`
-(`runbooks/ledgerstream-tier-both-missing.md`); chart the `cold` rate as
+(`runbooks/ingestion.md#stellarindex_ledgerstream_tier_both_missing`); chart the `cold` rate as
 a proxy for "is the hot trim window sized right, or am I paying
 cross-Atlantic latency for ranges that should be hot?".
 
@@ -1561,7 +1561,7 @@ the per-tick delta.
   `stellarindex_ingestion_ch_live_sink_errors` (ticket) — until then
   both live-sink rules matched `outcome="dropped"` only, so this
   outcome had no alert of any kind. Runbook:
-  [ch-live-sink-errors](../../operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_errors).
+  [ch-live-sink-errors](../../operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_errors).
 
 ### `stellarindex_ch_live_sink_read_undercount_total`
 
@@ -1602,7 +1602,7 @@ would otherwise read as a run of ledgers with no Soroban events. An
 isolated step names a specific ledger in the indexer journal. Alerted
 by `stellarindex_ingestion_ch_live_sink_read_undercount` (ticket).
 Runbook:
-[ch-live-sink-read-undercount](../../operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_read_undercount).
+[ch-live-sink-read-undercount](../../operations/runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_read_undercount).
 The offline `census-backfill` writer does not emit this metric: it is a
 one-shot command with no scrape endpoint, and it already fails its run
 (non-zero exit, frozen resume checkpoint) on the same undercount.
@@ -4785,7 +4785,7 @@ minutes via `memory-mappings.timer`. NOT Go-declared, so not covered by
 §3 of `scripts/ci/lint-docs.sh` (same textfile-only convention as the
 `stellar_stack_*` / `zfs_snapshot_*` families). Alerted on by
 `deploy/monitoring/rules/memory-mappings.yml`; runbook
-`docs/operations/runbooks/memory-mappings.md`.
+`docs/operations/runbooks/infra.md#process-mappings`.
 
 Exists because ClickHouse exhausted `vm.max_map_count` on r1 on
 2026-09-10 (1,048,578 mappings against a 1,048,576 ceiling), crashed, and
@@ -5007,7 +5007,7 @@ Gauge. Unix time the last completed comparison wrote the file.
   nobody watching whether the installed Stellar toolchain lagged
   upstream. Full detail:
   `deploy/monitoring/rules/stellar-stack-version.yml` +
-  `docs/operations/runbooks/stellar-stack-version-lag.md`.
+  `docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag`.
 - 2026-07-09 — added `stellarindex_dex_trade_unit_ratio_total`
   (`source`), emitted by `internal/storage/timescale`'s `InsertTrade` +
   `BatchInsertTrades`. Sentinel for the 2026-07-07 Phoenix decoder

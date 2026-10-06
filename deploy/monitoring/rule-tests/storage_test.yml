@@ -188,7 +188,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#lock-table-pressure-stellarindex_timescale_lock_table_pressure
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_lock_table_pressure
               summary: "Postgres lock-table > 70% saturated (P3)"
               description: |
                 Lock-table utilisation is 75%.
@@ -241,7 +241,7 @@ tests:
               component: storage
               alert_family: timescale_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_disk_full
               summary: "Postgres disk 5% free (SEV-1)"
               description: |
                 Postgres data volume on r1:9100 has < 10 % free.
@@ -270,7 +270,7 @@ tests:
               component: storage
               alert_family: timescale_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_timescale_disk_full
               summary: "Postgres disk 15% free"
               description: |
                 Postgres data volume on r1:9100 under 20 %. Plan
@@ -313,7 +313,7 @@ tests:
               component: storage
               alert_family: node_root_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_full
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_full
               summary: "Root filesystem on r1:9100 5% free (SEV-1)"
               description: |
                 Root FS (/) under 10 % free on r1:9100.
@@ -351,7 +351,7 @@ tests:
               component: storage
               alert_family: node_root_disk
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_warning
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_warning
               summary: "Root filesystem on r1:9100 15% free"
               description: |
                 Root FS (/) under 20 % on r1:9100.
@@ -396,7 +396,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk.md#stellarindex_node_root_disk_filling_fast
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_node_root_disk_filling_fast
               summary: "Root filesystem on r1:9100 trending to FULL within 30 min"
               description: |
                 Root FS (/) on r1:9100 is filling fast enough

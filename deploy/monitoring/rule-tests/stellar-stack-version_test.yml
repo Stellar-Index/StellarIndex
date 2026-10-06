@@ -60,7 +60,7 @@ tests:
               team: stellarindex
               alert_family: stellar_stack_version_lag/galexie
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
               summary: "galexie is a PROTOCOL-MAJOR version behind upstream (P1)"
               description: |
                 The installed galexie is behind upstream
@@ -70,7 +70,7 @@ tests:
                 maintenance window NOW, well before any network protocol-
                 activation vote. See the "Remediation" section of the
                 runbook for the exact upgrade recipe per component.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
       - eval_time: 7h
         alertname: stellarindex_stellar_stack_probe_degraded
         exp_alerts: []
@@ -108,7 +108,7 @@ tests:
               severity: ticket
               team: stellarindex
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
               summary: "stellar-stack version probe is not classifying components"
               description: |
                 The daily stellar-stack-version-probe either could not
@@ -157,7 +157,7 @@ tests:
               severity: ticket
               team: stellarindex
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
               summary: "stellar-stack version probe is not classifying components"
               description: |
                 The daily stellar-stack-version-probe either could not
@@ -197,7 +197,7 @@ tests:
               team: stellarindex
               component: stellar-stack
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
               summary: "stellar-stack version probe is not classifying components"
               description: |
                 The daily stellar-stack-version-probe either could not

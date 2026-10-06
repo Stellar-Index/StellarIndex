@@ -93,7 +93,7 @@ scripting against these.
 
 `configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml` (Group D) creates a
 `prometheus-read` MinIO policy scoped to `admin:Prometheus` and a service account under root
-carrying it (procedure: [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)).
+carrying it (procedure: [runbooks/infra.md#minio-metrics-403](runbooks/infra.md#minio-metrics-403)).
 `mc admin user svcacct add` prints the secret **once**; the task writes it to
 `/etc/prometheus/minio.token` (`prometheus:prometheus`, `0400`) and notifies
 `Restart prometheus`. The task is gated on the file's absence, because re-running
@@ -115,7 +115,7 @@ then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags ex
 
 Symptoms: `minio_exporter_down` in
 [runbooks/meta.md#stellarindex_redis_exporter_down](runbooks/meta.md#stellarindex_minio_exporter_down); the 403 case in
-[runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md). The hourly
+[runbooks/infra.md#minio-metrics-403](runbooks/infra.md#minio-metrics-403). The hourly
 `minio_prometheus_token_present` check in `scripts/ops/config-assertions.sh` catches a
 missing, empty or wrong-owner file (stat only; never reads the token).
 
@@ -193,6 +193,6 @@ not configured. After deploying, confirm one full timer cycle.
 
 - [runbooks/config-assertion-failed.md](runbooks/config-assertion-failed.md)
 - [runbooks/meta.md#stellarindex_redis_exporter_down](runbooks/meta.md#stellarindex_redis_exporter_down)
-- [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md)
+- [runbooks/infra.md#minio-metrics-403](runbooks/infra.md#minio-metrics-403)
 - [r1-ansible-drift-2026-07-03.md](r1-ansible-drift-2026-07-03.md)
 - `configs/ansible/roles/archival-node/tasks/09-minio.yml`

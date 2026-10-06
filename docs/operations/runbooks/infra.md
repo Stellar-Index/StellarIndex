@@ -36,6 +36,9 @@ Alerts live in `configs/prometheus/rules.r1/infra.yml` and `storage.yml` (the fi
 - [`stellarindex_pgbackrest_backup_metrics_absent`](#stellarindex_pgbackrest_backup_metrics_absent)
 - [`stellarindex_pgbackrest_backup_unit_failed`](#stellarindex_pgbackrest_backup_unit_failed)
 - [`stellarindex_wal_archive_stale`](#stellarindex_wal_archive_stale)
+- [`minio-metrics-403`](#minio-metrics-403)
+- [`node-root-disk`](#node-root-disk)
+- [`process-mappings`](#process-mappings)
 
 ## Shared context
 
@@ -70,13 +73,13 @@ Fix:
 1. Exporter only: `systemctl restart prometheus-node-exporter`, `curl -s localhost:9100/metrics | head -1`, wait one 15 s scrape for `up` = 1.
 2. Host down: r1 has no failover; API, indexer, aggregator, galexie, ClickHouse, Postgres, Redis, MinIO, Prometheus and Alertmanager are all down and alerting is dark. Treat as SEV-1 manually: post in Discord #stellarindex-pages, update the status page (`sev-status-page-update.md`), Robot Reset → KVM. If nftables locked you out: `bootstrap-archival-node.md` §"Firewall locked us out".
 3. After return: `zpool status -x` shows `data` ONLINE (else zfs-degraded section) and `zfs list -o name,mountpoint,mounted` shows every `data/*` mounted; `systemctl --failed` empty; `systemctl is-active clickhouse-server postgresql@15-main redis-server galexie minio caddy cap67-movements stellarindex-indexer stellarindex-aggregator stellarindex-api prometheus-node-exporter prometheus` and `ss -ltnp | grep :9093` (Alertmanager). Caddy (:80/:443 → loopback API :3000, `tasks/19-caddy.yml`) returns with the host.
-4. Then service runbooks: `api.md#stellarindex_api_down`, `all-ingestion-down.md`, `archive.md#stellarindex_galexie_catchup_refused`, `ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion-lag.md` / `source-stopped.md` clear on their own.
-5. Textfile-driven alerts (`sla-probe.md#stellarindex_sla_probe_stale`, `supply.md#stellarindex_supply_snapshot_stale`, `archive.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-stack-version-lag.md`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
+4. Then service runbooks: `api.md#stellarindex_api_down`, `ingestion.md#stellarindex_ingestion_all_sources_stopped`, `archive.md#stellarindex_galexie_catchup_refused`, `clickhouse.md#stellarindex_ingestion_ch_live_sink_drops`. galexie needs ~9 min cold captive-core catchup before the indexer resumes: do not restart it repeatedly; `ingestion.md#stellarindex_ingestion_lag_high` / `ingestion.md#stellarindex_ingestion_source_stopped` clear on their own.
+5. Textfile-driven alerts (`sla-probe.md#stellarindex_sla_probe_stale`, `supply.md#stellarindex_supply_snapshot_stale`, `archive.md#stellarindex_archive_completeness_stale`, `binary-version-skew.md`, `stellar-node.md#stellar-stack-version-lag`) may fire until the writing timers' first post-boot run (`OnBootSec`: heartbeat 30 s, smoke 2 min, node-healthcheck 2 min, sla-probe 3 min; daily `OnCalendar` ones at their time). Don't chase them for ~15 min.
 6. Verify: `up{job="node_exporter"}` = 1, scrape_failing clears, deadmansswitch resumed, Healthchecks.io green.
 
 RCA: Robot KVM / status page and Hetzner network status for FSN1; `journalctl -b -1`; `smartctl` / `nvme smart-log` on all four NVMes; `dmesg | grep -i oom`.
 
-False positives: node_exporter OOM-killed on a starved box (real problem is memory, see memory section); Prometheus itself sick: if `up == 0` for node_exporter AND the other localhost jobs (`stellarindex-api`/`-indexer`/`-aggregator`, `caddy`, `galexie`) simultaneously, suspect Prometheus (restart, `/` full `node-root-disk.md#stellarindex_node_root_disk_full`, `prometheus-tsdb-corruption.md`); legacy unit looking dead is correct.
+False positives: node_exporter OOM-killed on a starved box (real problem is memory, see memory section); Prometheus itself sick: if `up == 0` for node_exporter AND the other localhost jobs (`stellarindex-api`/`-indexer`/`-aggregator`, `caddy`, `galexie`) simultaneously, suspect Prometheus (restart, `/` full `infra.md#stellarindex_node_root_disk_full`, `prometheus-tsdb-corruption.md`); legacy unit looking dead is correct.
 
 ## stellarindex_host_cpu_high
 
@@ -91,7 +94,7 @@ ssh root@136.243.90.96 'mpstat 1 5'     # user vs system vs iowait vs softirq; %
 
 Causes: one pegged process (hot path, unbounded goroutines, bad SQL plan); galexie captive-core catchup (CPU-bound; resolves in 30–120 min; it has no `/info` endpoint, so end-state is fresh objects in `galexie-live`; `stellar-node.md#stellarindex_stellar_core_ledger_age` / `stellar-node.md#stellarindex_stellar_rpc_lag` are inert on r1); Postgres plan regression (`pg_stat_statements` high `mean_exec_time`); pgBackRest `--process-max=4` or Timescale compression (CPU-heavy on purpose); an unwrapped heavy one-shot (shared context). `pg_repack` and `pg_hint_plan` are not installed.
 
-Fix: identify consumer; legitimate load → scale up, bug → incident; catchup → wait; plan regression → `runuser -u postgres -- psql -d stellarindex -c 'ANALYZE <table>'`, then rewrite the query; backup/compression running for hours → lower `--process-max`. Verify CPU < 70 % sustained and alert clears. Related: `postgres.md#stellarindex_timescale_connections_saturated`, `all-ingestion-down.md`.
+Fix: identify consumer; legitimate load → scale up, bug → incident; catchup → wait; plan regression → `runuser -u postgres -- psql -d stellarindex -c 'ANALYZE <table>'`, then rewrite the query; backup/compression running for hours → lower `--process-max`. Verify CPU < 70 % sustained and alert clears. Related: `postgres.md#stellarindex_timescale_connections_saturated`, `ingestion.md#stellarindex_ingestion_all_sources_stopped`.
 
 ## stellarindex_host_memory_high
 
@@ -137,7 +140,7 @@ Fix:
 4. Second drive fails during resilver: pool lost; no failover exists. DR path is the triage tree in `docs/operations/archival-node-bringup.md` (rebuild box, restore Postgres from pgBackRest, re-mirror galexie data from SDF / `aws-public-blockchain` per `docs/adr/0016-per-region-storage-strategy.md`).
 5. Verify: `zpool status data` ONLINE, no errors; `node_zfs_zpool_state{zpool="data",state="online"} == 1`.
 
-RCA: keep `smartctl` logs of the failed drive (warranty); install date (`docs/operations/r1-deployment-state.md`, Hetzner order records); did nvme_smart_warn / nvme_thermal_throttle fire earlier; SMART warnings on the other drives. False positive: planned replacement (DEGRADED → resilvering → HEALTHY); silence during the window. Related: zfs-pool-full sections (capacity side of the same pool), `db-disk-full.md`.
+RCA: keep `smartctl` logs of the failed drive (warranty); install date (`docs/operations/r1-deployment-state.md`, Hetzner order records); did nvme_smart_warn / nvme_thermal_throttle fire earlier; SMART warnings on the other drives. False positive: planned replacement (DEGRADED → resilvering → HEALTHY); silence during the window. Related: zfs-pool-full sections (capacity side of the same pool), `postgres.md#stellarindex_timescale_disk_full`.
 
 ## stellarindex_zfs_pool_low_space
 
@@ -252,7 +255,7 @@ ssh root@136.243.90.96 'sensors | grep -E "Composite|fan"'         # all drives 
 
 Causes: chassis airflow (clogged filter, failed fan; several drives at once); ambient DC temperature (all drives climb together); single drive (loose heatsink, poor slot); heavy work (scrub, resilver, backup, compaction; expected, throttle does its job).
 
-Fix: all vs one drive; reduce load (pause pgBackRest, cancel scrubs); Hetzner support ticket for remote hands (fans/filters); ambient cause: escalate to Hetzner, nothing to do at 3 AM. Verify < 65 °C sustained 15 min and write throughput at baseline. False positives: brief spikes in scrub/resilver; sensor glitch (one drive 85 °C beside 45 °C neighbours; cross-check `smartctl -x`). Related: `db-disk-full.md`, `timescale.md#stellarindex_timescale_compression_lag`.
+Fix: all vs one drive; reduce load (pause pgBackRest, cancel scrubs); Hetzner support ticket for remote hands (fans/filters); ambient cause: escalate to Hetzner, nothing to do at 3 AM. Verify < 65 °C sustained 15 min and write throughput at baseline. False positives: brief spikes in scrub/resilver; sensor glitch (one drive 85 °C beside 45 °C neighbours; cross-check `smartctl -x`). Related: `postgres.md#stellarindex_timescale_disk_full`, `timescale.md#stellarindex_timescale_compression_lag`.
 
 ## stellarindex_md_array_degraded
 
@@ -280,7 +283,7 @@ ssh <host> 'smartctl -a /dev/<underlying-device>'
 
 Causes: unrecoverable disk I/O error (pairs with `## stellarindex_nvme_smart_warn` / `## stellarindex_md_array_degraded`); detected metadata corruption (needs `fsck` before rw); ZFS pool fault presenting as a read-only dataset (`## stellarindex_zfs_pool_degraded`).
 
-Fix: first confirm the device is not failing (if it is, replace hardware first: remounting rw onto a failing disk repeats the event); if sound, `fsck` offline/unmounted then remount read-write; DB volume: confirm Postgres survived or needs a restart/crash-recovery pass (`db-disk-full.md` WAL considerations). Verify `mount` no longer shows `ro`, a test write succeeds, alert clears within 5 min of `node_filesystem_readonly` = 0. False positive: a legitimately read-only mount outside the fstype exclusion (CD image, deliberate `ro` snapshot): add the `mountpoint` to the exclusion rather than treating each as an incident.
+Fix: first confirm the device is not failing (if it is, replace hardware first: remounting rw onto a failing disk repeats the event); if sound, `fsck` offline/unmounted then remount read-write; DB volume: confirm Postgres survived or needs a restart/crash-recovery pass (`postgres.md#stellarindex_timescale_disk_full` WAL considerations). Verify `mount` no longer shows `ro`, a test write succeeds, alert clears within 5 min of `node_filesystem_readonly` = 0. False positive: a legitimately read-only mount outside the fstype exclusion (CD image, deliberate `ro` snapshot): add the `mountpoint` to the exclusion rather than treating each as an incident.
 
 ## stellarindex_systemd_unit_failed
 
@@ -316,7 +319,7 @@ curl -s http://<instance>:9100/metrics | grep node_textfile_scrape_error
 ls -la /var/lib/node_exporter/textfile_collector/                         # 0-byte / half-written file is the usual culprit
 ```
 
-Fix: identify the file from the log; stale partial write (writer unit died mid-run): remove it, the next run regenerates it; writer emitting bad syntax (regression): fix the writer and check its output with `scripts/ci/lint_textfile_exposition.py` (CI-time static lint; does not catch runtime disk-full/permissions/mid-write). Owning unit per file: `scripts/ci/textfile-producers.manifest`. Verify gauge back to 0 next scrape and the file's metrics reappear. RCA: crashed mid-write vs bad output every run; how long it was broken (first parse-error line) = how long dependent alerts were blind. No known false positives: a transient mid-write read should not survive a 15-minute `for:`; one that does means a writer racing its own rename. Related: `metrics-registry-absent.md` (same idea one level up, in-process Registry).
+Fix: identify the file from the log; stale partial write (writer unit died mid-run): remove it, the next run regenerates it; writer emitting bad syntax (regression): fix the writer and check its output with `scripts/ci/lint_textfile_exposition.py` (CI-time static lint; does not catch runtime disk-full/permissions/mid-write). Owning unit per file: `scripts/ci/textfile-producers.manifest`. Verify gauge back to 0 next scrape and the file's metrics reappear. RCA: crashed mid-write vs bad output every run; how long it was broken (first parse-error line) = how long dependent alerts were blind. No known false positives: a transient mid-write read should not survive a 15-minute `for:`; one that does means a writer racing its own rename. Related: `meta.md#stellarindex_metrics_registry_absent` (same idea one level up, in-process Registry).
 
 ## stellarindex_keepalived_textfile_stale
 
@@ -370,7 +373,7 @@ cat /var/lib/node_exporter/textfile_collector/pgbackrest_backup.prom   # which r
 ```
 
 Root causes:
-1. repo1 pool full (repo1 shares the DB's pool, so a full pool stops WAL archiving first and backups fail after; that is why `stellarindex_wal_archive_stale` is the leading signal) or bad permissions on `/var/lib/pgbackrest`: root-owned strays from a manual root run break the timer run. `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`; free space (zfs-pool-full sections / `db-disk-full.md`) and `chown -R postgres:postgres` the strays. S3 credential / bucket-policy / endpoint failures hit only `repo2`: `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero while `{repo="1"}` is 0, so the 24 h alerts stay green; the signal for a repo2 that keeps failing is `stellarindex_backup_offsite_stale` (`backup-offsite.md#stellarindex_backup_offsite_stale`).
+1. repo1 pool full (repo1 shares the DB's pool, so a full pool stops WAL archiving first and backups fail after; that is why `stellarindex_wal_archive_stale` is the leading signal) or bad permissions on `/var/lib/pgbackrest`: root-owned strays from a manual root run break the timer run. `find /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest -not -user postgres`; free space (zfs-pool-full sections / `postgres.md#stellarindex_timescale_disk_full`) and `chown -R postgres:postgres` the strays. S3 credential / bucket-policy / endpoint failures hit only `repo2`: `stellarindex_pgbackrest_backup_last_rc{repo="2"}` non-zero while `{repo="1"}` is 0, so the 24 h alerts stay green; the signal for a repo2 that keeps failing is `stellarindex_backup_offsite_stale` (`backup-offsite.md#stellarindex_backup_offsite_stale`).
 2. Primary resource pressure (no backup slot/buffer; rare, seen in heavy write bursts).
 3. WAL archive behind and the `archive-async` spool (`/var/spool/pgbackrest`) full: `pg_stat_archiver` `failed_count` rising; usually the same repo1 space/permission issue.
 4. pgBackRest binary vs repo format mismatch after a major upgrade; a repo cipher mismatch after a repo re-create (`docs/operations/pgbackrest-encryption.md`) looks identical.
@@ -437,6 +440,602 @@ Verify: the `curl` shows `pgbackrest_backup_since_last_completion_seconds{stanza
 - Meaning: continuous WAL archiving holds the 5-min RPO between full backups. A stalled archiver with backups otherwise green is a leading indicator: RPO is already wider than believed though `_none_24h` won't fire until a full backup is also overdue.
 - Fix: repo1 shares the DB's pool, so a full pool stops WAL archiving first and backups fail after; check `pg_stat_archiver.failed_count` and repo1 free space first (zfs-pool-full sections); same causes as backup root causes #1 and #3 usually explain both.
 
+## minio-metrics-403
+
+**Runbook — MinIO Prometheus scrape returns 403**
+
+_Source page `infra.md#minio-metrics-403`: status current, severity P1, last verified 2026-09-28._
+
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Symptom | Prometheus targets API shows `minio` job `down` with `lastError: server returned HTTP status 401 Unauthorized` or `403 Forbidden`. MinIO answers 401 for a missing/empty bearer file and 403 for a token whose service account lacks `admin:Prometheus`; both land here. |
+| Severity | P1 (page) — matches `stellarindex_minio_exporter_down`, which is what actually detects this |
+| Detected by | `stellarindex_minio_exporter_down` (`deploy/monitoring/rules/meta.yml` + the r1 overlay: `up{job="minio"} == 0 OR absent_over_time(up{job="minio"}[5m]) == 1`, `for: 2m`, **`severity: page`**). Its `runbook_url` points at [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down) — that is the alert's first-response page; come here for the token-provisioning procedure. |
+| Typical MTTR | 10 minutes (provision token + restart Prometheus) |
+| Impact | MinIO observability gap: no bucket-usage, replication, or write-latency metrics scraped. Operator can't alert on disk exhaustion of the MinIO data partition until the token is wired. |
+
+### Why this happens
+
+MinIO's `/minio/v2/metrics/cluster` endpoint requires a bearer
+token by default. `configs/prometheus/prometheus.r1.yml` already
+points Prometheus at the right URL with
+`bearer_token_file: /etc/prometheus/minio.token`, but the token
+file isn't created automatically — it's an operator-mint step. If
+no token has ever been provisioned, every scrape is rejected
+(401 with no/empty token, 403 with an under-privileged one) and
+the job stays `down`.
+
+Because MinIO is where galexie writes ledger metadata and the
+indexer reads it back (ADR-0002), a `down` MinIO target also makes
+every alert that depends on MinIO cluster metrics silently blind —
+which is why the detecting alert is a page, not a ticket. See
+`stellarindex_minio_exporter_down`'s own description in
+`deploy/monitoring/rules/meta.yml`.
+
+This is finding F-0045 / task #38 of audit-2026-05-26.
+
+### Provisioning procedure
+
+#### 1. Mint a service account on MinIO
+
+SSH to r1 and run `mc` against the local MinIO server. Replace
+the placeholder host alias `local` with whatever
+`/root/.mc/config.json` calls it (default `local`).
+
+```sh
+ssh root@136.243.90.96
+mc admin user svcacct add local "<MINIO_ROOT_USER>" \
+  --policy /etc/minio/policies/prometheus-read.json \
+  --name "prometheus-metrics-scrape" \
+  --description "Bearer-token scrape for /minio/v2/metrics/cluster"
+```
+
+`--policy` takes a JSON policy file, not a policy name. The
+archival-node role renders that file; on a host without it, create it
+(and the named policy) first:
+
+```sh
+mkdir -p /etc/minio/policies
+cat > /etc/minio/policies/prometheus-read.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["admin:Prometheus"],
+      "Resource": ["arn:aws:s3:::*"]
+    }
+  ]
+}
+EOF
+mc admin policy create local prometheus-read /etc/minio/policies/prometheus-read.json
+```
+
+The `svcacct add` command prints a `Secret Key` — that's the
+bearer token. Copy it; you only see it once.
+
+#### 2. Write the token file
+
+```sh
+# On r1, as root.
+umask 077
+echo "<the-secret-key>" > /etc/prometheus/minio.token
+chown prometheus:prometheus /etc/prometheus/minio.token
+chmod 0400 /etc/prometheus/minio.token
+```
+
+The token file is `0400` owned by `prometheus:prometheus` so
+only Prometheus can read it. Confirm:
+
+```sh
+ls -l /etc/prometheus/minio.token
+# -r-------- 1 prometheus prometheus 40 May 28 09:00 /etc/prometheus/minio.token
+```
+
+#### 3. Reload Prometheus
+
+```sh
+systemctl reload prometheus
+```
+
+Wait one scrape interval (15-30 s) and check the target health:
+
+```sh
+curl -sS http://localhost:9090/api/v1/targets \
+  | jq '.data.activeTargets[] | select(.labels.job=="minio") | {health, lastError}'
+```
+
+Expected:
+
+```json
+{
+  "health": "up",
+  "lastError": ""
+}
+```
+
+#### 4. Confirm metrics flow
+
+```sh
+curl -sS http://localhost:9090/api/v1/query \
+  --data-urlencode 'query=minio_cluster_capacity_usable_total_bytes' \
+  | jq '.data.result | length'
+# Expect: > 0
+```
+
+If the result is `0`, MinIO accepted the token (no 403) but isn't
+returning metrics — usually means the `prometheus-read` policy
+needs an additional permission. Re-check the policy JSON above
+against the upstream MinIO docs.
+
+### Failure modes
+
+- **Still 403 after token file written.** The token doesn't
+  match the service account that was minted, OR the
+  service-account policy doesn't include `admin:Prometheus`. Re-mint
+  the svcacct (it's free to do — just keep one alive at a time)
+  and try again. Confirm the policy is attached via
+  `mc admin user svcacct info local <svcacct-access-key>`.
+- **Prometheus permission denied on the token file.** Symptom:
+  `lastError: error reading bearer token file ... permission
+  denied`. Fix: ownership (`chown prometheus:prometheus`) and
+  mode (`0400`).
+- **Scrape times out.** MinIO under heavy load can take >5 s to
+  emit the metrics page. Bump `scrape_timeout` on the `minio`
+  job in `prometheus.r1.yml`; reload Prometheus.
+- **Service account revoked / token rotated.** Mint a new one and
+  re-run steps 2-3.
+
+### Long-term: Ansible
+
+Codified (INV-0981/INV-1144): Group D of
+`configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml`
+(`--tags exporters`, gated on `run_minio` + `run_observability`) runs
+exactly steps 1-3 above and writes the token, but ONLY when
+`/etc/prometheus/minio.token` is absent — a svcacct secret is shown
+once, so the task can never safely overwrite an existing file. This
+procedure stays the fall-back for a first-ever provisioning where the
+task's preconditions (MinIO up, the `local` mc alias configured by
+`09-minio.yml`) are not yet met, and for the rotation case, which is
+always this manual mint-then-delete-then-reapply sequence — see
+[credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-inv-0981inv-1144--now-codified).
+
+`scripts/ops/config-assertions.sh`'s `minio_prometheus_token_present`
+check (hourly) catches a missing, emptied, or wrong-owner file without
+reading it — see the same doc.
+
+### Changelog
+
+- 2026-09-24 — corrected the frontmatter/table `severity` from `P2
+  (ticket)` to `P1 (page)`: the alert this runbook documents,
+  `stellarindex_minio_exporter_down`, is `severity: page` in both
+  `deploy/monitoring/rules/meta.yml` and the alerts catalog, and the
+  body already said as much (see the 2026-08-29 entry below and
+  [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down)). The header disagreed with
+  its own body and with the sibling `meta.md#stellarindex_redis_exporter_down` runbook.
+- 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): "Detected by"
+  named operator inspection / a bare `up{job="minio"} == 0` — the real detector
+  is the P1 `stellarindex_minio_exporter_down` (page, `for: 2m`, with an
+  `absent_over_time` arm), whose `runbook_url` routes to `meta.md#stellarindex_redis_exporter_down`;
+  the symptom is 401 **or** 403 depending on whether the token is missing or
+  under-privileged; the Ansible-gap section re-confirmed (no task owns
+  `/etc/prometheus/minio.token`) and the stale "rendered by ansible" comment in
+  `configs/prometheus/prometheus.r1.yml` corrected in the same pass.
+- 2026-05-28 — initial draft (F-0045 procedure documentation).
+
+
+## node-root-disk
+
+**Runbook — node root disk alerts**
+
+_Source page `infra.md#node-root-disk`: status living, severity P1, last verified 2026-10-06._
+
+Three alerts on the host's ~49 G root filesystem (everything else on r1 is a ZFS dataset on the multi-TB `data` pool). Rules in `deploy/monitoring/rules/storage.yml` (multi-host source copy) and `configs/prometheus/rules.r1/storage.yml` (the single-host overlay r1 actually loads from `/etc/prometheus/rules.r1/*.yml` per `configs/prometheus/prometheus.r1.yml`; identical rules).
+
+Why root matters: if it fills, Redis MISCONF blocks every cache write (`/v1/price` 404s), Postgres can't write its log and crashes, journald corrupts. Incident class: 2026-05-10 SEV-2 (`internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`), 2026-05-13, 2026-06-11 ClickHouse log-channel wedge (`internal/incidents/data/2026-06-11-clickhouse-log-channel-wedge-root-full.md`, root filled at ~3.8 GB/min, healthy to full in ~5 min), 2026-08-05 recurrence to 81 % (rsyslog duplicate of the API access log, see `15-log-discipline.yml`).
+
+The static thresholds are too slow for a log-flood, hence the trend alert. Order of firing on a fast fill: filling_fast, then warning/full. If `filling_fast` fires, follow its section first.
+
+"Page" tier on r1 currently means Discord `#stellarindex-pages` only; no PagerDuty is wired (see `deploy/monitoring/README.md`), so nobody is automatically woken.
+
+At HEAD the `runbook_url` for `node_root_disk_full` and `node_root_disk_warning` in both rule files still points at `cache.md#stellarindex_redis_writes_blocked` (the 2026-05-10 incident procedure), so those pages do NOT link here; `docs/operations/alerts-catalog.md` does. If you arrived via the alert link, you are in the right place now.
+
+### At a glance
+
+| Alert | Severity | Trips | MTTR |
+| ----- | -------- | ----- | ---- |
+| [`stellarindex_node_root_disk_filling_fast`](#stellarindex_node_root_disk_filling_fast) | P1 (page) | predict_linear: root reaches 0 within 30 min (10-min linear fit) AND < 50 % free | 5-20 min |
+| [`stellarindex_node_root_disk_full`](#stellarindex_node_root_disk_full) | P1 (page) | root < 10 % free for >= 1 min | 15-60 min |
+| [`stellarindex_node_root_disk_warning`](#stellarindex_node_root_disk_warning) | P2 (`severity: ticket`) | root < 20 % free for >= 10 min | 30-60 min |
+
+### stellarindex_node_root_disk_filling_fast
+
+P1 page. Root (/) is trending to 0 bytes within 30 min on a 10-minute linear fit. The static `node_root_disk_full` (<10 %) page is correct but too slow for a log-flood: the 2026-06-11 ClickHouse log-channel wedge filled root at **~3.8 GB/min**. This alert fires on the *trend*, buying the 20+ minutes the static one can't.
+
+Symptoms:
+
+- Root free-space graph is a straight line pointing at zero.
+- `journalctl -f` shows one unit repeating at very high rate (2026-06-11 signature: `clickhouse-server` emitting `Cannot log message in OwnAsyncSplitChannel` / Poco rotate stacks).
+
+Diagnosis (60 seconds); the last command names the flooding unit directly:
+
+```sh
+df -h /
+du -xs /var/log/* /tmp /var/cache 2>/dev/null | sort -rh | head -8
+journalctl --since "-5min" --no-pager | awk '{print $5}' | sort | uniq -c | sort -rn | head -5
+```
+
+Remediation:
+
+1. **If the flooder is clickhouse-server** (the known wedge): freeing space does NOT unwedge the log channel; **restart CH**: `systemctl restart clickhouse-server`. Then free space (step 3).
+2. **Any other flooder**: stop or restart the unit; its journald output is rate-limited but check `/var/log/syslog` growth. If the unit is not covered by `/etc/rsyslog.d/10-suppress-noisy-units.conf`, add a `stop` rule there (and to ansible role 15-log-discipline.yml).
+3. **Free space fast**: `journalctl --vacuum-size=200M`; `rm /var/log/syslog.1` (already-rotated copy); truncate the live offender file if needed: `: > /var/log/<offender>`.
+4. Verify Redis + Postgres recovered: `redis-cli ping`, `systemctl is-active postgresql` (see [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked)).
+
+Prevention state (2026-07-03):
+
+- CH logs live on ZFS (`config.d/zzz-logpath.xml`); the primary 2026-06-11 writer can't touch root.
+- journald capped at 500M (`journald.conf.d/00-cap.conf`).
+- rsyslog drops loki + clickhouse-server unit output from syslog (`10-suppress-noisy-units.conf`, applied 2026-07-03; forensics showed it was NEVER live on r1, only codified in ansible role 15-log-discipline.yml, which does not auto-run against r1; the 2026-06-11 postmortem recorded codified-as-applied).
+- Margin item closed 2026-09-29: the root swap file (`/swap_f1209`) was resized 16G -> 4G (a separate 4G md0 swap partition remains), returning 12G of the 49G root; root usage fell 70% -> 40%.
+
+### stellarindex_node_root_disk_full
+
+P1 page. The host's root filesystem is < 10 % free. Cascading failures can follow within **minutes**, not hours: Redis BGSAVE blocks (every cache write returns MISCONF) -> `/v1/price` 404s on every rewritten/triangulated/stablecoin-proxy pair; **Postgres crashes** (its log lives on `/var/log/postgresql`, root FS, and `postgresql@15-main` will not restart until root is freed, 2026-06-11); postgres WAL stalls; systemd-journald corrupts.
+
+Symptoms:
+
+- `(node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10` for >= 1 min.
+- Root free-space graph is a straight line to zero; `stellarindex_node_root_disk_filling_fast` usually fires first.
+- Customer-side: `/v1/price` 404s on rewritten pairs; aggregator log shows repeating `WARN` lines about Redis Set MISCONF errors. Companion P1s: `stellarindex_redis_writes_blocked`, `stellarindex_aggregator_cache_write_errors`.
+- Synthetic: `cmd/stellarindex-sla-probe` (15-min timer, `configs/healthchecks/stellarindex-sla-probe.timer`) `/v1/price` sample fails -> `stellarindex_sla_probe_*` alerts. (Whether the public status page surfaces this is not verifiable from the repo.)
+
+Quick diagnosis (<= 5 min):
+
+```sh
+# What's filling the disk? -x = stay on the root FS.
+# /var/lib/{clickhouse,postgresql,galexie,minio,loki,prometheus,pgbackrest,stellarindex}
+# are ZFS datasets on the multi-TB `data` pool — never du them without -x.
+df -h /
+sudo du -xsh /var/log/* /tmp /var/cache 2>/dev/null | sort -rh | head -15
+
+# The two biggest known root consumers that du above will NOT explain:
+ls -lh /swap_f1209; swapon --show                    # 4 G swap file on the 49 G root (16 G until 2026-09-29)
+zfs list -o name,mountpoint,mounted data/prometheus data/loki data/clickhouse data/postgres
+# an UNMOUNTED dataset silently lands that data (e.g. ~13 G prometheus TSDB) back on root
+
+# Is it the journal?
+journalctl --disk-usage
+
+# Is it logs that haven't rotated?
+ls -lh /var/log/syslog* /var/log/postgresql/*.log 2>/dev/null
+
+# Who is writing? (names the flooding unit)
+journalctl --since '-5min' --no-pager | awk '{print $5}' | sort | uniq -c | sort -rn | head -5
+```
+
+If the flooder is `clickhouse-server` (2026-06-11 signature: `Cannot log message in OwnAsyncSplitChannel`), freeing space does NOT unwedge it; `sudo systemctl restart clickhouse-server` first (see the filling_fast section).
+
+Key signals:
+
+- **Multi-GB syslog**: one of: stellarindex-* API access log duplicated into syslog (~2.5 GB/day; guard = `/etc/rsyslog.d/30-stellarindex-journald-only.conf`, 2026-08-05); loki / clickhouse-server flood (guard = `/etc/rsyslog.d/10-suppress-noisy-units.conf`); the `/etc/logrotate.d/rsyslog` override silently skipped because it lacks `su root adm` ("insecure permissions"). Note logrotate.timer is daily, so `maxsize` cannot cap intra-day growth.
+- **3 GB+ journal**: `SystemMaxUse=500M` cap missing (`/etc/systemd/journald.conf.d/00-cap.conf`).
+- **`/var/log/stellarindex/*.log`**: operator one-shot job logs (logrotate 500M/weekly via `/etc/logrotate.d/stellarindex`); ad-hoc walk outputs land in `/tmp`. Heavy jobs should run under `/usr/local/sbin/run-heavy-job.sh`, which has a root-disk watchdog.
+- **postgres logs**: the repo template (`postgresql.conf.j2`) still sets `log_min_duration_statement=1000`, `log_connections=on`, `log_disconnections=on`, while r1 was hand-set to `-1`/`none`/`off` on 2026-06-11. Check the live value: `sudo -u postgres psql -Atc "show log_min_duration_statement; show log_statement; show log_connections;"`; an ansible apply reverts it.
+
+Mitigation (<= 15 min):
+
+```sh
+# 1. Free immediate space (vacuum the journal first — fast win)
+sudo journalctl --vacuum-size=200M
+
+# 2. Truncate any rotated-but-uncompressed syslog
+sudo truncate -s 0 /var/log/syslog.1
+sudo rm -f /var/log/syslog.[2-9]*
+
+# 3. Postgres log — ONLY if PG is down or the file is > 1 GB
+sudo truncate -s 0 /var/log/postgresql/postgresql-15-main.log
+
+# 4. Confirm Redis can BGSAVE again (Debian redis-server, 127.0.0.1:6379, no auth)
+redis-cli BGSAVE
+# Wait ~5 s then:
+redis-cli INFO persistence | grep rdb_last_bgsave_status
+# expect: rdb_last_bgsave_status:ok
+
+# 5. Did Postgres / ClickHouse survive?
+systemctl is-active postgresql@15-main clickhouse-server redis-server stellarindex-api stellarindex-aggregator stellarindex-indexer
+sudo systemctl start postgresql@15-main        # if it crashed on the full root
+journalctl -u stellarindex-indexer --since -5min | grep -c 'pool may be wedged'   # indexer PG pool
+```
+
+- [ ] Step 1: execute the recovery sequence above to drop usage below 80 %.
+- [ ] Step 2: confirm the customer-visible recovery: `curl http://localhost:3000/v1/price?asset=native&quote=fiat:USD` returns 200 with `flags.stale=false`.
+- [ ] Step 3: find which guard regressed: `curl -s 'http://localhost:9090/api/v1/query?query=stellarindex_config_assertion_ok' | jq '.data.result[] | {a:.metric.assertion, v:.value[1]}'` (hourly `config-assertions.timer`; assertions `rsyslog_ch_suppress`, `rsyslog_loki_suppress`, `journald_cap`, `ch_logs_on_zfs`, `syslog_maxsize`). Then re-apply ONLY the relevant tags: `ansible-playbook ... --tags logrotate,journald,rsyslog --check --diff` before a real run. Do NOT apply all of `15-log-discipline.yml` mid-incident; its handlers restart `clickhouse-server` and `redis`. Ansible does not auto-run against r1; 2026-06-11 rules were codified-but-never-applied until 2026-07-03.
+- [ ] Step 4: update the status page if customer-visible time exceeded 5 min (per SEV playbook).
+- [ ] Verification: `node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} > 0.30` (30% free); `stellarindex_node_root_disk_filling_fast` not firing; `stellarindex_config_assertion_ok == 1` for the five assertions above.
+
+Root cause (for postmortem):
+
+- The full output of `sudo du -xsh /var/log/* /tmp /var/cache` and `swapon --show` at the moment the alert fired.
+- The flooding unit from the `journalctl | awk` histogram.
+- The state of `/etc/logrotate.d/rsyslog` (incl. `su root adm` + `maxsize`), `/etc/systemd/journald.conf.d/00-cap.conf`, `/etc/rsyslog.d/10-suppress-noisy-units.conf`, `/etc/rsyslog.d/30-stellarindex-journald-only.conf`, `/etc/clickhouse-server/config.d/zzz-logpath.xml`, and the `stellarindex_config_assertion_ok` series over the preceding day.
+- Live PG logging settings vs the repo template.
+- The aggregator log around the moment Redis stopped accepting writes.
+
+#### If `pg_wal` is what filled it (2026-09-16)
+
+Root carries Postgres' WAL, and the path hides it: `pg_wal` in the data directory is a **symlink** out to `/pgwal/…` on root, while the data directory itself sits on the multi-terabyte pool. Reading the data directory's free space and concluding WAL has room is the mistake that caused this, and the volume has to be measured through the link:
+
+```bash
+readlink -f /var/lib/postgresql/15/main/pg_wal      # -> /pgwal/15-main/pg_wal
+df -h "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"
+du -sh "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"
+grep max_wal_size /etc/postgresql/15/main/postgresql.conf
+```
+
+Lowering `max_wal_size` is a `SIGHUP` (`systemctl reload postgresql@15-main`) and Postgres trims the directory over the next checkpoints; on 2026-09-16 that returned 7.7 GB within minutes of the restart. Fix it in ansible too, or the next apply pushes the value straight back; `05-postgres.yml` now refuses an apply whose `max_wal_size` does not fit the volume the symlink resolves to.
+
+**Never delete anything inside `pg_wal` by hand.** Postgres owns that directory and removing a segment it still needs is unrecoverable. Check the archive backlog instead; zero `.ready` files means every segment reached the repository and nothing is waiting:
+
+```bash
+ls "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"/archive_status | grep -c ready
+```
+
+**If Postgres has already failed**, `could not write to file "pg_wal/xlogtemp.N": No space left on device` during startup is this failure: it crashed, then could not complete crash recovery because recovery creates new segments. Free space first, then start it and watch recovery finish, then clear the units that failed behind it with `systemctl reset-failed`. Full account in [the 2026-09-16 post-mortem](../postmortems/2026-09-16-r1-pg-wal-fills-root.md).
+
+False positives: none known. Headroom can be under 5 min in a log-flood (3.8 GB/min on 2026-06-11), and the 49 G root carries a 4 G swap file (`/swap_f1209`, resized from 16 G on 2026-09-29). Fire = act immediately.
+
+### stellarindex_node_root_disk_warning
+
+P2 ticket. The host's 49 G root filesystem is < 20 % free. No customer impact yet, but the **P1** `stellarindex_node_root_disk_full` fires at < 10 % (for 1 m), and its cascade (Redis MISCONF stop-writes -> `/v1/price` 404s, incident 2026-05-10) is why root matters. Headroom is NOT predictable from this alert alone: the 2026-06-11 ClickHouse log-wedge filled root at ~3.8 GB/min (healthy -> full in ~5 min). The **P1** `stellarindex_node_root_disk_filling_fast` may fire before or alongside this warning; if it does, follow its section first.
+
+Symptoms:
+
+- `(node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20` for >= 10 min.
+- Trend in the Prometheus graph UI (`http://localhost:9090/graph` on r1, via SSH tunnel) shows a steady downward slope over recent days. There is no Grafana server on r1 (only the Grafana APT repo, used to install promtail).
+
+Measure the real headroom instead of guessing:
+
+```sh
+curl -s 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=node_filesystem_avail_bytes{mountpoint="/"}/node_filesystem_size_bytes{mountpoint="/"}'
+curl -s 'http://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[1h], 3600*12)'   # projected avail in 12 h
+```
+
+Quick diagnosis (<= 5 min): same as the `node_root_disk_full` quick diagnosis above (what's filling the disk?), plus:
+
+```sh
+df -h / && df -x zfs -h            # root is the ~49G device; everything else should be ZFS
+sudo du -xsh /var/log/* /tmp /var/tmp /var/cache/* /var/lib/* 2>/dev/null | sort -rh | head -20   # -x stays on the root FS
+journalctl --disk-usage            # expect ≤ 500M (SystemMaxUse cap)
+findmnt -n -o TARGET,FSTYPE /var/lib/postgresql /var/lib/clickhouse /var/lib/loki /var/lib/prometheus /var/lib/minio /var/lib/galexie /var/lib/pgbackrest /var/lib/stellarindex
+```
+
+`du -x` matters: `/var/lib/*` holds eight ZFS datasets sized in TB (`configs/ansible/roles/archival-node/defaults/main.yml` `zfs_datasets`); without `-x` the scan runs for a very long time and reports non-root consumers as the top entries. Every path in the `findmnt` line must report `zfs`; an empty or `ext4` result means the dataset is not mounted and that service is writing to root.
+
+Mitigation (<= 30 min). This is a warning, not an emergency; plan the cleanup, don't rush:
+
+- [ ] Step 1: identify the dominant consumer per the diagnosis above.
+- [ ] Step 2: apply the appropriate cleanup:
+  - **Logs**: confirm the `15-log-discipline.yml` guards are in place and re-apply the archival-node role with `--tags log-discipline` if any drifted. "Current" means:
+    - `/etc/logrotate.d/rsyslog`: `su root adm`, `maxsize 100M`, `rotate 7`, `delaycompress`;
+    - `/etc/rsyslog.d/10-suppress-noisy-units.conf`: stop-filters for `loki` + `clickhouse-server` unit output;
+    - `/etc/systemd/journald.conf.d/00-cap.conf`: `SystemMaxUse=500M`;
+    - `/etc/clickhouse-server/config.d/zzz-logpath.xml`: ClickHouse logs under `/var/lib/clickhouse/logs` (ZFS), NOT `/var/log/clickhouse-server`.
+  - **Known regression candidates**: ClickHouse logs reappearing under `/var/log/clickhouse-server` (2026-06-11 log-wedge loop; kill sequence in the filling_fast section), and Prometheus TSDB / Loki chunks appearing on root (`/var/lib/prometheus` and `/var/lib/loki` are ZFS datasets since 2026-06-30 / 2026-06-11; if `findmnt` shows them non-zfs, the dataset failed to mount).
+  - **Galexie / MinIO**: galexie writes ledger meta through an S3 datastore (`galexie.toml.j2`, `type = "S3"`) into local MinIO at `/var/lib/minio`; `/var/lib/galexie` is the galexie user's home/report dir. Both are ZFS datasets (ADR-0016 only says "galexie-archive: local MinIO"). If either shows fstype ≠ `zfs` in `findmnt`, the dataset failed to mount: **before** re-applying `--tags zfs`, run `zpool list -H data`; if it exits non-zero, the pool is not imported (this is what caused the failed mount) and `03-zfs.yml`'s create task will try to recreate it. Run `zpool import -d /dev/disk/by-id` first and confirm `data` is not listed as importable-but-foreign before re-applying; if it is the same pool, `zpool import data` to bring it back rather than letting the role recreate it (`zpool create -f` would silently overwrite an unimported pool). Once `zpool list -H data` exits 0, stop the writer (`systemctl stop galexie` / `systemctl stop minio`), move the data aside, re-apply the archival-node role `--tags zfs` (`03-zfs.yml`) to remount, then move the data back and restart.
+  - **Postgres logs**: `/var/log/postgresql/postgresql-<ver>-main.log` lives on root (`postgresql.conf.j2`: `logging_collector = on`, `log_min_duration_statement = 1000` ms). If it dominates, **raise** `log_min_duration_statement` (e.g. `5000`, or `-1` to disable) in `configs/ansible/roles/archival-node/templates/postgresql.conf.j2` and re-apply the role (editing the live file drifts back on the next apply), then `SELECT pg_reload_conf();`. The size cap is `/etc/stellarindex-pg-logrotate.conf` (`maxsize 500M`, role-managed), run hourly by `pg-logrotate.timer`; confirm it with `systemctl list-timers pg-logrotate.timer`; the stock `/etc/logrotate.d/postgresql-common` has no size cap. The Postgres data volume `/var/lib/postgresql` is its own ZFS dataset on r1, so vacuuming chunks never frees root; see `postgres.md#stellarindex_timescale_disk_full` for that volume.
+- [ ] Step 3: schedule a follow-up review in 24 h to confirm the trend reversed.
+- [ ] Verification: `node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} > 0.40` (40 % free) sustained for 1 hour. This is an operator target, stricter than the alert's own resolution at 20 %.
+
+Root cause: if this fires more than once a quarter, the disk-usage trend has a leak. Capture for a planning ticket: the 30-day trend of `node_filesystem_avail_bytes{mountpoint="/"}` from the Prometheus graph UI or `promtool query range`; per-directory growth rate via two `du -xsh /var/*` snapshots 7 days apart.
+
+False positive: **one-time large captures**. Manual debug captures and one-shot operator log dumps can take 5-10 GB transiently (historical example: the 2026-05-10 `/var/log/wasm-history-*.stderr` captures, 2.2 GB). WASM-audit walks now write under `/var/log/wasm-audit/` and are deleted once recorded (`docs/operations/wasm-audits/README.md` section 2); anything left there with no walk running is a missed cleanup, and loose `/var/log/wasm-history-*` files are a finding. If the trigger is identifiable and the data is needed, leave it; otherwise clean up.
+
+
+## process-mappings
+
+**Runbook — `stellarindex_process_mappings_*`**
+
+_Source page `infra.md#process-mappings`: status ratified, severity P1 | P3, last verified 2026-09-10._
+
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alerts | `stellarindex_process_mappings_high` (P3, ticket) · `stellarindex_process_mappings_critical` (P1, page) · `stellarindex_process_mappings_exhaustion_projected` (P1, page) · `stellarindex_process_mappings_probe_degraded` (P3, ticket) |
+| Severity | P3 → P1 escalation |
+| Detected by | Prometheus rules in `deploy/monitoring/rules/memory-mappings.yml` + `configs/prometheus/rules.r1/memory-mappings.yml` (byte-identical copies; group `stellarindex.memory_mappings`). Fired-state coverage: `deploy/monitoring/rule-tests/memory-mappings_test.yml`. |
+| Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/memory_mappings.prom`, refreshed every 5 min by `memory-mappings.timer` → `/usr/local/bin/memory-mappings` (`configs/ansible/roles/archival-node/files/memory-mappings.sh`) |
+| Steady-state | ~47,000–50,000 mappings for ClickHouse against `vm.max_map_count` = 1,048,576 — about **4.5 %** of the limit (measured on r1, 2026-09-10, immediately after the restart) |
+| Customer impact | None while the ticket is firing. At exhaustion the process cannot `mmap` at all: ClickHouse crashes, and the jobs behind it fail (`holders-rollup.service` did on 2026-09-10) |
+| Companions | [host-memory-high](infra.md#stellarindex_host_memory_high), [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed) |
+
+### Why this exists
+
+On **2026-09-10 13:53 CEST** ClickHouse on r1 exhausted the kernel's
+per-process virtual-memory-mapping limit. Its own error text:
+
+```
+Allocator: Cannot malloc 63.33 MiB: , errno: 12, strerror: Cannot allocate memory
+It looks like that the process is near the limit on number of virtual memory mappings.
+Current number of mappings (/proc/self/maps): 1048578.
+Limit on number of mappings (/proc/sys/vm/max_map_count): 1048576.
+```
+
+It went into a `std::bad_alloc` storm and crashed; systemd auto-restarted
+it (restart counter 1) and `holders-rollup.service` failed as collateral —
+its first failure ever, against 24 successful cycles in the preceding 48 h.
+
+The limit was **already** raised far above the kernel's 65530 default and
+was **already** codified — `/etc/sysctl.d/10-map-count.conf`,
+`vm.max_map_count=1048576` (2^20). What did not exist was any signal at
+all: no metric, no rule, no reference to `max_map_count` anywhere in the
+tree. **A server crash was the first and only signal.**
+
+Note what is NOT known: at ~4.5 % steady state, the excursion to
+1,048,578 was roughly **20x**, and its driver has not been established.
+Nothing here should be read as a diagnosis. The probe exists so the next
+excursion is watched on the way up rather than reconstructed afterwards,
+and the first job when one of these fires is to **capture evidence**.
+
+`node_exporter` has no per-process mapping series — its procfs collector
+is system-wide — which is why this is a textfile producer.
+
+### Quick diagnosis (≤ 5 min)
+
+```sh
+# 0. What the probe currently sees.
+ssh r1 'cat /var/lib/node_exporter/textfile_collector/memory_mappings.prom'
+#    ..._procs 0            → the probe is watching NOTHING (see below)
+#    ..._unreadable 1       → it matched but could not read the map
+#    ..._ratio              → the number the alerts compare
+
+# 1. Find the pid the probe reports: the HIGHEST-mapping process off the
+#    clickhouse binary. Never `pgrep -f clickhouse` — that self-matches
+#    the command line you are typing. r1 runs TWO: a watchdog parent
+#    (~97 mappings) and the real server (~47,000).
+ssh r1 'for x in /proc/[0-9]*; do e=$(readlink -f $x/exe 2>/dev/null); \
+  case "$e" in */clickhouse) echo "$(wc -l < $x/maps) ${x##*/}";; esac; done | sort -rn'
+
+# 2. The live count and the live limit.
+ssh r1 'wc -l < /proc/<pid>/maps; cat /proc/sys/vm/max_map_count'
+
+# 3. WHAT the mappings are — the one measurement that narrows the cause.
+ssh r1 'awk "{print \$6}" /proc/<pid>/maps | sort | uniq -c | sort -rn | head -20'
+#    Mostly file paths under /var/lib/clickhouse → file-backed growth
+#      (data parts / marks being mmapped; look at part counts next).
+#    Mostly blank (anonymous) → allocator / arena growth.
+ssh r1 'awk "{print \$6}" /proc/<pid>/maps | grep -c ^$'   # anonymous count
+
+# 4. If file-backed, the obvious ClickHouse-side quantities to read.
+#    These are candidates to MEASURE, not causes to assume.
+ssh r1 'clickhouse-client --port 9300 -q "SELECT count() AS parts, sum(rows) FROM system.parts WHERE active"'
+ssh r1 'clickhouse-client --port 9300 -q "SELECT * FROM system.asynchronous_metrics WHERE metric LIKE \"%Mmap%\" OR metric LIKE \"%OpenFile%\""'
+ssh r1 'clickhouse-client --port 9300 -q "SELECT name, value FROM system.settings WHERE name IN (\"mmap_cache_size\",\"min_bytes_to_use_mmap_io\",\"local_filesystem_read_method\")"'
+```
+
+### Mitigation (≤ 15 min)
+
+**Capture before you fix.** A restart clears the mappings and the
+explanation with them, and the alert resolves — which is exactly how this
+condition stayed invisible until it crashed a server.
+
+```sh
+ssh r1 'cp /proc/<pid>/maps /var/tmp/maps-$(date +%s).txt'
+ssh r1 'awk "{print \$6}" /proc/<pid>/maps | sort | uniq -c | sort -rn > /var/tmp/maps-summary-$(date +%s).txt'
+```
+
+Then, in order:
+
+1. **Buy headroom** (`_critical` / `_exhaustion_projected`). Raising the
+   limit is the standard remedy and takes effect immediately; it costs a
+   little kernel memory per mapping. It is a stopgap — the driver is not
+   established — but a crashed ClickHouse is worse than a larger ceiling.
+
+   ```sh
+   ssh r1 'sysctl -w vm.max_map_count=2097152'
+   # Persist it, or the next boot silently reverts to 1048576:
+   ssh r1 'sed -i s/1048576/2097152/ /etc/sysctl.d/10-map-count.conf && sysctl --system'
+   ```
+
+   The metric is published as a **ratio**, so every threshold moves with
+   the limit automatically — no rule edit is needed after a change.
+   `stellarindex_process_memory_mappings_limit` records what the probe
+   read, so the change is visible on the graph.
+
+   **`/etc/sysctl.d/10-map-count.conf` is NOT ansible-managed** — it is
+   an out-of-band file on r1, and `vm.max_map_count` appears nowhere in
+   this repo (checked 2026-09-10). The role's sysctl surface is the
+   `sysctl_tunings` map in
+   `configs/ansible/roles/archival-node/defaults/main.yml`, applied to
+   `/etc/sysctl.d/90-stellarindex.conf`; sysctl.d applies in lexical
+   order and the later file wins, so a value added there would take
+   precedence over the hand-written one. Adding it is the right long-term
+   move and is deliberately NOT done as part of an incident — an
+   emergency `sysctl -w` plus a note is; codify it afterwards, in a
+   change that can be reviewed with `--check --diff`.
+
+2. **Restart ClickHouse** only if it is already failing to allocate, and
+   only after step 0's capture. `systemctl restart clickhouse-server`.
+   Expect the mapping count to return to the ~47,000 band within minutes;
+   if it climbs straight back, that is a strong signal and worth its own
+   incident.
+
+3. **Watch the rollups behind it.** `holders-rollup.service` failed as
+   collateral on 2026-09-10. `systemctl --failed` and the
+   `stellarindex_systemd_unit_failed` ticket cover the rest.
+
+#### `probe_degraded` — the probe itself
+
+```sh
+ssh r1 'systemctl status memory-mappings.timer memory-mappings.service'
+ssh r1 'journalctl -u memory-mappings.service --since -1h'
+ssh r1 'bash scripts/ci/memory-mappings-test.sh'   # from a checkout: pins the shipped bytes
+```
+
+| Reading | Meaning | Action |
+| ------- | ------- | ------ |
+| `..._procs 0` | Matched **nothing**. The process is stopped, or its binary moved/was renamed. | The most dangerous state: the mapping gauges are *withheld* rather than published as 0, so every threshold alert above is silent and looks healthy. Confirm ClickHouse is running; if the exe path changed, update `MEMORY_MAPPINGS_WATCH` in `memory-mappings.service.j2`. |
+| `..._unreadable 1` | Matched, but `/proc/<pid>/maps` or `vm.max_map_count` could not be read. | The unit must run as `User=root` — `/proc/<pid>/{exe,maps}` are readable only by the owning uid or root, and ClickHouse runs as `clickhouse`. Check the unit was not de-privileged and that `ptrace_scope` was not tightened. |
+| unit `failed`, previous `.prom` intact | The probe rendered a line that does not parse as Prometheus exposition and **refused to publish**. | Read the journal — it names the offending line. node_exporter rejects an unparseable `.prom` *whole*, so refusing is deliberate: the stale file ages into this same ticket instead of taking every family in the file off the host (r1 2026-09-10, the timescale case). |
+| stamp older than 30 min | The timer stopped firing. | node_exporter re-serves a stale textfile verbatim on every scrape, so the gauges *freeze at their last healthy value* rather than going absent — `..._updated_unix` is the only series that can see this. `systemctl start memory-mappings.timer`. |
+
+### Known false-positive patterns
+
+- **A ClickHouse restart** drops the count to near zero and climbs back
+  to the steady band over a few minutes. The trend alert's `for: 5m` plus
+  its `ratio > 0.10` floor keep that recovery from paging.
+- **A deliberate `vm.max_map_count` change** moves the ratio for every
+  process at once. That is the metric working: the thresholds are
+  fractions of whatever limit the kernel currently reports.
+
+### Changelog
+
+| Date | Change |
+| ---- | ------ |
+| 2026-09-10 | Created after the ClickHouse `vm.max_map_count` exhaustion crash on r1. Probe, four alerts and this runbook landed together; the driver of the 20x excursion remains unestablished. |
+
 ## Related
 
 - [Alerts catalogue](../alerts-catalog.md)
+
+**`minio-metrics-403`**
+
+- ADR-0002 — self-hosted storage is S3-compatible (MinIO is the
+  default).
+- F-0045 (audit-2026-05-26) — original finding.
+- `configs/prometheus/prometheus.r1.yml` — the `job_name: minio` scrape stanza.
+- F-0152 closure — sibling exporters (redis / postgres /
+  pgbackrest) now installed; MinIO's token is the last piece,
+  closed by the Group D task above (INV-0981/INV-1144).
+- [meta.md#stellarindex_redis_exporter_down](meta.md#stellarindex_redis_exporter_down) — where
+  `stellarindex_minio_exporter_down` routes; its per-exporter notes
+  carry the day-to-day `Authorization: Bearer $(cat
+  /etc/prometheus/minio.token)` probe.
+- [credential-rotation.md](../credential-rotation.md) — regenerating the
+  bearer token after a MinIO **root** rotation.
+
+**`node-root-disk`**
+
+- [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked): the downstream cascade when these alerts were missed; the May-10 incident's primary remediation, and the `runbook_url` the full and warning rules currently link to.
+- `postgres.md#stellarindex_timescale_disk_full`: sibling for the postgres data volume (`stellarindex_timescale_disk_full` / `_warning`; separate ZFS dataset per `configs/ansible/roles/archival-node/defaults/main.yml` `zfs_datasets`).
+- `docs/operations/r1-ansible-drift-2026-07-03.md`: why hand-applied guards and the ansible role disagree.
+- ADR-0008: HA topology + DR posture (single-host R1 today; fewer fail-safes than R2/R3 will have).
+- 2026-05-10 and 2026-06-11 incident postmortems under `internal/incidents/data/` (paths above).
+
+**`process-mappings`**
+
+- [host-memory-high](infra.md#stellarindex_host_memory_high) — RSS pressure, a different
+  resource from mapping count: many small mappings are cheap in resident
+  bytes and expensive in map count, so these two can move independently.
+- [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed) — the catch-all that
+  picks up `memory-mappings.service` when it refuses to publish.
+- [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) — the other substrate limit that
+  takes ClickHouse down.
+- `docs/reference/metrics/README.md` — the metric family's reference entry.

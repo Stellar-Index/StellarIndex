@@ -228,9 +228,13 @@
     state: present
     filename: timescaledb
 
+# No unattended-upgrades blacklist needed: 12-hardening.yml allows only the
+# distro -security origin, so the packagecloud repo never auto-upgrades.
+# Downgrade is deliberately not allowed: a host already newer than the pin
+# fails loudly instead of mismatching its installed extension version.
 - name: Install TimescaleDB for Postgres {{ postgres_version }}
   ansible.builtin.apt:
-    name: "timescaledb-2-postgresql-{{ postgres_version }}"
+    name: "timescaledb-2-postgresql-{{ postgres_version }}={{ timescaledb_version }}*"
     state: present
     update_cache: true
   notify: Restart postgres

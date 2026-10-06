@@ -159,7 +159,7 @@ scrape_configs:
 {% if 'minio_cluster' in groups and groups['minio_cluster'] %}
   # The bearer token is operator-minted (`mc admin prometheus generate`),
   # as on r1; `promtool check config` rejects the render until it exists.
-  # Procedure: docs/operations/runbooks/minio-metrics-403.md
+  # Procedure: docs/operations/runbooks/infra.md#minio-metrics-403
   - job_name: "minio"
     scrape_interval: {{ prometheus_default_scrape_interval }}
     metrics_path: /minio/v2/metrics/cluster

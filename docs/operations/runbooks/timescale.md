@@ -184,7 +184,7 @@ False positives:
 
 P3 (`severity: informational`, `for: 24h`). Typical MTTR 1 h - 1 day. Producer: `stellarindex_timescale_chunks_overdue_compression{hypertable=…}` is written by `timescale-jobs-probe.timer` into the textfile, one row per compression policy including zeros. If the probe stops, or its compression query fails or returns nothing, **every** row goes absent and this alert is blind rather than quiet; that state is alerted as `stellarindex_timescale_probe_degraded`.
 
-Impact: not customer-visible directly. But uncompressed chunks use 5-20x more disk than compressed, so sustained lag is a runway to `db-disk-full.md`. The `for: 24h` threshold makes it a trending problem, not an incident.
+Impact: not customer-visible directly. But uncompressed chunks use 5-20x more disk than compressed, so sustained lag is a runway to `postgres.md#stellarindex_timescale_disk_full`. The `for: 24h` threshold makes it a trending problem, not an incident.
 
 **Not this alert:** a hypertable with **no** compression policy at all is invisible here by design; that is `compression_policies_applied` in `scripts/ops/config-assertions.sh`, surfaced through `stellarindex_config_assertion_failed`. On r1 2026-09-05 the `pools_per_source_1h` (92 GB) and `prices_1m` (52 GB) continuous-aggregate materialisations are entirely uncompressed for exactly that reason, and neither signal covers a CAGG.
 
@@ -357,6 +357,6 @@ Diagnose with step 0 and the `policy_refresh_continuous_aggregate` job listing i
 ## Related
 
 - [config-assertion-failed](config-assertion-failed.md): the same monitoring-of-monitoring shape one layer out, and the alert that catches codified-but-not-applied config.
-- `db-disk-full.md`: where uncompressed chunks end up if unchecked, and a different cause of job failure worth ruling out.
+- `postgres.md#stellarindex_timescale_disk_full`: where uncompressed chunks end up if unchecked, and a different cause of job failure worth ruling out.
 - `api.md#stellarindex_api_latency_p95_high`: downstream effect when VWAP queries fall back to raw aggregation. `api.md#stellarindex_api_price_stale`: aggregator staleness visible through the API. `postgres.md#stellarindex_timescale_connections_saturated`: can cascade if a refresh is holding connections.
 - Fixtures: `scripts/ci/timescale-jobs-probe-test.sh`; alert cases in `deploy/monitoring/rule-tests/storage_test.yml`.

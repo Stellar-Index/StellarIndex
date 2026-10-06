@@ -1373,7 +1373,7 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 // skipped and the stream moves on), so a series that appears at 1 and
 // stays there must still fire — which increase() over a series born
 // inside the lookback window cannot do.
-// Runbook: docs/operations/runbooks/decoder-panicked.md.
+// Runbook: docs/operations/runbooks/ingestion.md.
 var DecoderPanicsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_decoder_panics_total",

@@ -490,7 +490,7 @@
 # writing to the SAME node_exporter textfile dir with the SAME
 # chmod-644-before-mv discipline — see that probe's comments for why
 # both of those matter). Runbook:
-# docs/operations/runbooks/stellar-stack-version-lag.md
+# docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
 - name: stellar-stack version-lag probe (script)
   ansible.builtin.copy:
     dest: /usr/local/sbin/stellar-stack-version-probe.sh
@@ -501,7 +501,7 @@
       #!/usr/bin/env bash
       # stellar-stack-version-probe.sh — daily upstream version-lag
       # detector for the installed Stellar toolchain (core / galexie /
-      # archivist). See docs/operations/runbooks/stellar-stack-version-lag.md
+      # archivist). See docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
       # for the full incident background + remediation recipe.
       #
       # Classifies each component's lag:
@@ -700,7 +700,7 @@
     content: |
       [Unit]
       Description=Stellar Index — stellar-stack upstream version-lag probe
-      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/stellar-stack-version-probe.sh
@@ -724,7 +724,7 @@
     content: |
       [Unit]
       Description=Run the stellar-stack version-lag probe daily
-      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
       [Timer]
       OnCalendar=*-*-* 05:07:00 UTC
       RandomizedDelaySec=300
@@ -1150,7 +1150,7 @@
 #
 # Runbooks: docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale,
 # docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded,
-# docs/operations/runbooks/pg-lock-convoy.md
+# docs/operations/runbooks/postgres.md#stellarindex_pg_lock_convoy
 # Fixtures: scripts/ci/timescale-jobs-probe-test.sh
 - name: TimescaleDB job/CAGG health probe (script)
   ansible.builtin.copy:

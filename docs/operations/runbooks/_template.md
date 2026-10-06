@@ -24,8 +24,8 @@ alert class — drop or reshape as needed.
 When the alert covers a CLASS of failures that vary by source,
 tier, or operation label, add a per-class reference matrix
 instead of (or alongside) the "Quick diagnosis" section. See
-`decode-errors.md` (per-source decode-regression matrix),
-`source-stopped.md` (per-source cadence reference),
+`ingestion.md#stellarindex_ingestion_decode_error` (per-source decode-regression matrix),
+`ingestion.md#stellarindex_ingestion_source_stopped` (per-source cadence reference),
 `external-pollers.md` (vendor-specific 429
 patterns), and `stripe-platform-sync-errors.md`
 (per-`operation` triage paths) for the established pattern.

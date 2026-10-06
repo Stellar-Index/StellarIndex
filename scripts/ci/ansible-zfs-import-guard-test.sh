@@ -7,7 +7,7 @@
 # is true only while the pool is IMPORTED. A pool that exists on disk but
 # is unimported (OS mirror reinstalled with the data drives left intact;
 # zfs-import-cache failed at boot and an operator re-applies the role
-# per node-root-disk.md#stellarindex_node_root_disk_warning) is invisible to `zpool list`, and `-f`
+# per infra.md#stellarindex_node_root_disk_warning) is invisible to `zpool list`, and `-f`
 # overrides zpool's own exported/potentially-active refusal. There was no
 # `zpool import` probe anywhere in the role.
 #

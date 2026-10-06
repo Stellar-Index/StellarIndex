@@ -31,7 +31,7 @@ Probe-stale variant: `stellarindex_ledger_meta_decode_probe_stale` means the pro
 Fix:
 
 1. Identify the affected unit from the `unit` label.
-2. Check `stellarindex_stellar_stack_version_lag` (see the [stellar-stack-version-lag runbook](stellar-stack-version-lag.md)) to confirm which component and target version.
+2. Check `stellarindex_stellar_stack_version_lag` (see the [stellar-stack-version-lag runbook](stellar-node.md#stellar-stack-version-lag)) to confirm which component and target version.
 3. Follow the [protocol-upgrade procedure](../protocol-upgrades.md) to bump `galexie_version` / `stellar_core_version` / the release binary's `go-stellar-sdk` and re-apply.
 4. Confirm `stellarindex_ledger_meta_decode_failures_total` stops increasing and the component's ingest cursor resumes advancing.
 
@@ -68,7 +68,7 @@ Key signals:
 
 Mitigation (<= 15 min):
 
-- [ ] Step 1: if upstream is unhealthy, fix that first. The indexer reads ledger metadata from Galexie's MinIO output (`galexie-live` bucket); confirm Galexie is producing fresh objects (`ssh root@136.243.90.96 'mc ls local/galexie-live | tail'`) and that the indexer can reach MinIO. If MinIO/Galexie itself is the problem, jump to [all-ingestion-down](all-ingestion-down.md). The cursor will advance once ledgers start flowing again. (Pre-2026-04-23 deployments routed via stellar-rpc; that path was removed from r1 and isn't the upstream today.)
+- [ ] Step 1: if upstream is unhealthy, fix that first. The indexer reads ledger metadata from Galexie's MinIO output (`galexie-live` bucket); confirm Galexie is producing fresh objects (`ssh root@136.243.90.96 'mc ls local/galexie-live | tail'`) and that the indexer can reach MinIO. If MinIO/Galexie itself is the problem, jump to [all-ingestion-down](ingestion.md#stellarindex_ingestion_all_sources_stopped). The cursor will advance once ledgers start flowing again. (Pre-2026-04-23 deployments routed via stellar-rpc; that path was removed from r1 and isn't the upstream today.)
 - [ ] Step 2: if events are flowing but cursor is flat, capture recent logs (`journalctl -u stellarindex-indexer -n 500 --no-pager > /tmp/indexer.log` on the indexer host) then restart the unit. The current live path updates the cursor inline after successful ledger processing, so a flat cursor usually means repeated ledger failure or DB upsert trouble.
 
   ```sh
@@ -132,7 +132,7 @@ Key signals:
 
 Mitigation (<= 15 min):
 
-- [ ] Step 1: fix the upstream first if it is down: MinIO, then Galexie. Nothing the indexer does helps while the lake is unreadable; it resumes from its committed cursor on its own. Credential drift is the usual r1 cause; see `docs/operations/runbooks/all-ingestion-down.md`.
+- [ ] Step 1: fix the upstream first if it is down: MinIO, then Galexie. Nothing the indexer does helps while the lake is unreadable; it resumes from its committed cursor on its own. Credential drift is the usual r1 cause; see `docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped`.
 - [ ] Step 2: if the lake is healthy and the cursor is still flat, capture the journal (`journalctl -u stellarindex-indexer -n 1000 --no-pager > /tmp/indexer-stall.log`) **before** restarting; a wedge leaves no trace after the restart. `ssh root@136.243.90.96 systemctl restart stellarindex-indexer`.
 - [ ] Step 3: if Postgres is the blocker (commit failures, locks), work that incident first; the cursor is committed in the same path.
 - [ ] Verification: `stellarindex_cursor_last_ledger{source="ledgerstream"}` climbs again within ~1 min of the fix, and this alert clears about 10 min after that (5m window + `for: 5m`).
@@ -147,10 +147,10 @@ Known false-positive patterns:
 
 ## Related
 
-- [stellar-stack-version-lag runbook](stellar-stack-version-lag.md): the proactive signal the decode alert backstops. [Protocol upgrades](../protocol-upgrades.md): the upgrade procedure. [Alerts catalog](../alerts-catalog.md).
+- [stellar-stack-version-lag runbook](stellar-node.md#stellar-stack-version-lag): the proactive signal the decode alert backstops. [Protocol upgrades](../protocol-upgrades.md): the upgrade procedure. [Alerts catalog](../alerts-catalog.md).
 - [cursor-stuck](#stellarindex_ingestion_cursor_stuck): the per-SOURCE cursor ticket. It cannot fire for `source="ledgerstream"` (no `source_enabled` series to join against), which is the gap [ledger_stalled](#stellarindex_ingestion_ledger_stalled) fills.
-- `source-stopped.md`: adjacent alert when events stop flowing entirely.
-- [all-ingestion-down.md](all-ingestion-down.md): where to route when Galexie / MinIO (the actual upstream) is the problem, and the sibling page for "no events from ANY source"; that one covers the CEX/FX side going quiet too, this one covers the ledger path specifically.
+- `ingestion.md#stellarindex_ingestion_source_stopped`: adjacent alert when events stop flowing entirely.
+- [ingestion.md#stellarindex_ingestion_all_sources_stopped](ingestion.md#stellarindex_ingestion_all_sources_stopped): where to route when Galexie / MinIO (the actual upstream) is the problem, and the sibling page for "no events from ANY source"; that one covers the CEX/FX side going quiet too, this one covers the ledger path specifically.
 - `rpc-lag` (see [stellar-node.md](stellar-node.md#stellarindex_stellar_rpc_lag)): only relevant if your deployment routes through stellar-rpc (r1 doesn't).
 - [infra.md#stellarindex_systemd_unit_failed](infra.md#stellarindex_systemd_unit_failed): ticket, 15 m; will not fire while the unit is restart-looping inside its StartLimit budget.
 - Implementation: `cmd/stellarindex-indexer/main.go` (`processAndPersistCursor`, `recordCursorMetric`), `internal/ledgerstream/`.

@@ -35,6 +35,9 @@ Alertmanager down, not notifying and notifications failing are three distinct fa
 - [`stellarindex_alertmanager_optional_receiver_dark`](#stellarindex_alertmanager_optional_receiver_dark) (ticket): optional receiver has no URL
 - [`stellarindex_redis_exporter_down`](#stellarindex_redis_exporter_down), [`postgres`](#stellarindex_postgres_exporter_down), [`pgbackrest`](#stellarindex_pgbackrest_exporter_down), [`minio`](#stellarindex_minio_exporter_down) (page): exporter gone, dependent alerts blind
 - [`stellarindex_deadmansswitch`](#stellarindex_deadmansswitch) (inverted): page when it STOPS firing
+- [`stellarindex_metrics_registry_absent`](#stellarindex_metrics_registry_absent)
+- [`stellarindex_healthcheck_ping_undelivered`](#stellarindex_healthcheck_ping_undelivered)
+- [`stellarindex_notify_send_failure_ratio_high`](#stellarindex_notify_send_failure_ratio_high)
 
 ## stellarindex_prometheus_scrape_failing
 
@@ -302,9 +305,323 @@ Mitigation: find which component is down; restore it (`systemctl status promethe
 
 False positives: Healthchecks.io provider outage (cross-check from an independent network such as your phone); an egress firewall change blocking `hc-ping.com` (whitelist the hostname explicitly).
 
+## stellarindex_metrics_registry_absent
+
+_Source page `meta.md#stellarindex_metrics_registry_absent`: status draft, severity P3, last verified 2026-07-16._
+
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_metrics_registry_absent` |
+| Severity | P3 (informational — monitoring-coverage gap, not an active outage) |
+| Detected by | Prometheus rule in `deploy/monitoring/rules/metrics-registry.yml` |
+| Typical MTTR | code change + deploy (this is a wiring regression, not an incident) |
+| Impact | A component is running WITHOUT a Prometheus Registry, so the metrics it would export are never registered and any alert built on them can NEVER fire. A silent hole in monitoring coverage. |
+
+### Background (audit-2026-07-16 C4-4)
+
+Some components accept an optional `*prometheus.Registry` and, when it
+is nil, simply skip registering their metrics. That is convenient for
+tests but dangerous in production: an alert whose source metric is
+never registered is DEAD — it evaluates against "no data" forever and
+can never fire, so the failure it was meant to catch goes unnoticed.
+
+`internal/obs/metrics.go` exports the gauge
+`stellarindex_metrics_registry_present{component}` — set to `1` at boot
+when the named component received a Registry, `0` when it is running
+Registry-less. This alert fires on a present `0`. An ABSENT series
+means "this binary doesn't use the component" and is intentionally not
+alerted.
+
+### The known case: `component="ledgerstream"`
+
+`internal/ledgerstream` registers its SDK `BufferedStorageBackend`
+buffer metrics (`buffer_fetch_latency_seconds` etc., via the SDK's
+`WithMetrics` / `ApplyLedgerMetadata`) ONLY when `Config.Registry != nil`.
+
+The production builder `pipeline.LedgerstreamConfig` leaves `Registry`
+nil **on purpose**: the live indexer calls `ledgerstream.Stream`
+repeatedly (archive range → live tail → each ch-live-catchup
+tip-extend), and the SDK's metric registration is not idempotent — the
+second call with the same registry panics with a duplicate-registration
+error. Leaving the registry nil is the current way to avoid that panic.
+
+Consequence: the SDK buffer metrics (`buffer_fetch_latency_seconds`
+etc.) are not exported in production. That is a low-value operational
+coverage gap, not a dead page.
+
+**2026-08-05: the alert rule now EXCLUDES `component="ledgerstream"`**
+— it fired continuously for a week on this documented accepted state,
+which is alert-board noise, while staying unable to distinguish it
+from a new regression. The rule remains armed for every OTHER
+component. Queued real fix: a swappable gatherer-bridge collector —
+give the SDK a fresh sub-registry per `Stream` call and expose the
+CURRENT one through the main registry via an unchecked collector that
+converts `Gather()` output to const metrics — which makes repeated
+registration safe without SDK changes; remove the exclusion in the
+same PR that lands it.
+
+> **NOTE (W5-mon-3):** this alert USED to also mean the
+> `TieredDataStore` metrics were dead and the ledgerstream-tier
+> `both_missing` P1 page was inert. That is **no longer true.**
+> `stellarindex_ledgerstream_tier_read_total` and
+> `stellarindex_ledgerstream_cold_read_duration_seconds` are now
+> `internal/obs` package-level metrics registered unconditionally at
+> boot, so the `both_missing` page is **live in production regardless of
+> this gauge's value**. This alert now flags only the SDK buffer-metric
+> coverage gap.
+
+### What to do
+
+1. Confirm which component: check the `component` label on the firing
+   series (`stellarindex_metrics_registry_present == 0`).
+2. For `ledgerstream`, this is the known state, not a new regression,
+   and it now affects only the SDK buffer metrics (the `both_missing`
+   page is unaffected — see the note above). If you want the buffer
+   metrics too, the fix is a code change, not an ops action:
+   - Make the SDK metric registration idempotent — gate the SDK
+     `WithMetrics` / `ApplyLedgerMetadata` calls behind a package-level
+     `sync.Once` or an `AlreadyRegisteredError`-tolerant register, so
+     repeated `Stream` calls don't panic.
+   - Then wire `obs.Registry` (+ a `RegistryNamespace`) through
+     `pipeline.LedgerstreamConfig`.
+   - After deploy, `stellarindex_metrics_registry_present{component="ledgerstream"}`
+     flips to `1` and this alert clears.
+3. For any other component that starts reporting `0`, treat it as a
+   wiring regression: something stopped passing the Registry into that
+   component's constructor. Restore the wiring.
+
+### Verifying the fix
+
+After the change, `curl` the indexer's `/metrics` and confirm:
+
+- `stellarindex_metrics_registry_present{component="ledgerstream"} 1`
+- the SDK buffer metric `stellarindex_ledgerstream_buffer_fetch_latency_seconds`
+  (or the SDK's namespaced equivalent) is present.
+
+(`stellarindex_ledgerstream_tier_read_total` is present independent of
+this gauge — it is registered at boot regardless.)
+
+
+## stellarindex_healthcheck_ping_undelivered
+
+**Runbook — Healthchecks.io ping delivery**
+
+_Source page `meta.md#stellarindex_healthcheck_ping_undelivered`: status ratified, severity P3, last verified 2026-10-06._
+
+Healthchecks.io marks a check down by silence, so a stopped service and a
+ping that never left this host look identical to it. `configs/healthchecks/hc-ping.sh`
+(sourced by `heartbeat.sh`, `smoke.sh`, `sla-probe.sh` in that directory)
+records every failed delivery in the journal and in node_exporter's textfile
+collector (`/var/lib/node_exporter/textfile_collector/hc_ping_<check>.prom`).
+While the alert fires, a Healthchecks.io "down" notice for that check is about
+this host's egress, not the service.
+
+Impact: none to API consumers. Severity ticket (P3), typical MTTR 10 min.
+Wiring: `configs/ansible/roles/archival-node/tasks/17-stellarindex-healthchecks.yml`.
+Test: `internal/ops/chops/healthcheck_ping_delivery_test.go`.
+Companion runbooks (the checks whose emails this qualifies):
+[`sla-probe.md#stellarindex_api_smoke_failing`](sla-probe.md#stellarindex_api_smoke_failing),
+[`sla-probe.md#stellarindex_api_smoke_stale`](sla-probe.md#stellarindex_api_smoke_stale).
+
+### At a glance
+
+- [`stellarindex_healthcheck_ping_undelivered`](#stellarindex_healthcheck_ping_undelivered)
+
+Trips (identical in `deploy/monitoring/rules/healthcheck-ping.yml` and
+`configs/prometheus/rules.r1/healthcheck-ping.yml`), severity `ticket`:
+
+```
+increase(stellarindex_healthcheck_ping_failures_total[15m]) > 0
+and
+(time() - stellarindex_healthcheck_ping_last_success_unix) > (15 * 60)
+for: 5m
+```
+
+Two clauses so one lost ping stays silent: a blip that `hc_ping`'s own
+`--retry 2` did not absorb but that cleared on the next timer firing meets the
+first clause only. A check that never delivered has `last_success = 0`, so the
+second clause is true by construction (a wrong URL from install is reported).
+
+Symptoms: `stellarindex_healthcheck_ping_failures_total{check="…"}` rising for
+at least 15 min, `stellarindex_healthcheck_ping_last_success_unix` for that
+check not advancing, and possibly a Healthchecks.io "down" email while the
+service is fine.
+
+Diagnose (≤ 5 min):
+
+```sh
+# curl's exit code names the layer: 6 = DNS, 7 = connect refused,
+# 22 = HTTP error from hc-ping.com, 28 = timeout.
+journalctl -u 'stellarindex-*' --since '1 hour ago' | grep hc-ping
+
+# Is the service under the check actually healthy? Answer BEFORE acting on
+# any Healthchecks.io notice for it.
+curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/v1/healthz
+systemctl list-timers 'stellarindex-*' --all
+
+# Can this host reach the pinger at all? (No URL, so no secret.)
+curl -fsS -o /dev/null -w '%{http_code}\n' https://hc-ping.com/
+```
+
+Fix (≤ 15 min):
+
+- Service under the check unhealthy: this alert is secondary; work that
+  check's own runbook first.
+- `rc=6` DNS: check `/etc/resolv.conf` and that the host resolver is reachable.
+- `rc=7` or `rc=28` egress: check outbound HTTPS and whether hc-ping.com is up
+  (<https://status.healthchecks.io>).
+- `rc=22`: hc-ping.com rejected the request. Usual cause is a check deleted or
+  regenerated on the dashboard, leaving a stale URL in
+  `/etc/default/stellarindex-healthchecks`. Repaste the URL from the dashboard;
+  the file is operator-populated and Ansible does not overwrite it after first
+  install.
+- Verify: `stellarindex_healthcheck_ping_last_success_unix` advances within one
+  timer period (60 s heartbeats, 5 min smoke, 15 min SLA probe).
+
+Root cause: capture the curl exit code and check name from the journal, plus
+`stellarindex_healthcheck_ping_failures_total` at the start and end of the
+window. Climbed then flat on its own = hc-ping.com or network; climbing from a
+config change = the URL.
+
+False positives:
+
+- A just-reimaged host: `hc_ping` treats an empty URL as nothing to deliver and
+  stays silent, but a wrong non-empty URL gives `rc=22` legitimately.
+- Test-net VMs carry no Healthchecks.io URLs, so the series should be absent
+  there, not failing.
+
+
+## stellarindex_notify_send_failure_ratio_high
+
+_Source page `meta.md#stellarindex_notify_send_failure_ratio_high`: status ratified, severity P2, last verified 2026-08-25._
+
+
+### At a glance
+
+| Field | Value |
+| ----- | ----- |
+| Alert | `stellarindex_notify_send_failure_ratio_high` |
+| Severity | P2 (ticket — user-facing auth flows stop delivering, but existing sessions/keys are unaffected) |
+| Detected by | Prometheus rule in `deploy/monitoring/rules/notify.yml` (counter from `internal/notify` call sites) |
+| Typical MTTR | 15 min (credential/domain fix) – provider-dependent (Resend outage) |
+| Impact | The named `template` stops delivering: `magic-link` → no new dashboard sign-ins; `signup-verify` → API-signup confirmations don't arrive (the key still works, but `email_verified` never flips). Existing sessions and API keys keep working. |
+
+### Symptoms
+
+- `stellarindex_notify_sends_total{template="…",result="failed"}` climbing while
+  `result="sent"` is flat.
+- The failure ratio for a template exceeds 50% for 15+ minutes.
+- Users report "I never got the sign-in email" / "my confirmation link never
+  arrived".
+
+### What this metric watches
+
+`internal/notify` is the Resend client behind two mail paths and only two:
+
+- `magic-link` — the dashboard sign-in email (`internal/api/v1/dashboardauth`).
+  The login handler deliberately returns `200` whether or not the send
+  succeeds (so an attacker can't use the response to confirm an email exists),
+  so **the counter is the only signal the mail failed**.
+- `signup-verify` — the API-signup confirmation email
+  (`cmd/stellarindex-api` `signupVerifyEmailerAdapter`).
+
+Price alerts deliver via **webhooks**, not mail — they are unaffected by a mail
+outage and are watched separately.
+
+### Quick diagnosis (≤ 5 min)
+
+```sh
+# Which template is failing, and what's the ratio?
+#   promql: sum by (template) (rate(stellarindex_notify_sends_total{result="failed"}[15m]))
+#           / sum by (template) (rate(stellarindex_notify_sends_total[15m]))
+
+# The send error is logged at the call site. Look for the mapped error class
+# (ErrProviderRejected = 4xx, ErrTransient = 5xx/network, ErrInvalidMessage =
+# our own validation).
+ssh <api-host> 'journalctl -u stellarindex-api --since "30 min ago" --no-pager \
+  | grep -iE "send magic link email|signup.?verif" | tail -30'
+```
+
+| Log / error class | Likely cause |
+| ----------------- | ------------ |
+| `notify: transient provider failure` (5xx / network) | Resend outage or network egress problem — check https://resend-status.com |
+| `notify: provider rejected` (4xx) | API key rotated/invalid, sending domain unverified, or a bad From address |
+| `notify: invalid message` | A template/rendering regression produced an empty subject/body — a code bug, not a provider issue |
+
+### Mitigation
+
+- [ ] **Provider outage (transient/5xx)**: confirm on Resend's status page. If
+  it's them, there is no local fix — the counter recovers when they do. Note it
+  in the incident channel so support can tell affected users to retry.
+- [ ] **Credential / domain (4xx)**: verify `STELLARINDEX_RESEND_API_KEY` is set
+  and current, and that the sending domain is still verified in the Resend
+  dashboard. Rotating the key is a **separate operational action** (do not
+  commit a key); redeploy the API with the corrected secret.
+- [ ] **`invalid message` (our bug)**: this is a rendering/validation
+  regression, not a provider problem — check recent changes to
+  `internal/notify/templates.go` or the signup email body; roll back if needed.
+- [ ] **Verification**: `result="sent"` resumes climbing and the ratio falls
+  back below the threshold. Send yourself a magic link to confirm end-to-end.
+
+### Known false-positive patterns
+
+- **Very low mail volume**: the ratio is computed over a 15m window; a single
+  failure in an otherwise-empty window can briefly spike the ratio. The
+  `for: 15m` dwell absorbs one-off blips — a sustained firing is real.
+
+### `stellarindex_notify_send_failed` — any failed send in 1h
+
+Fires on one failed send (`increase(...{result="failed"}[1h]) > 0`, `for: 0m`)
+and clears an hour later. It exists for rare failures the ratio and
+sustained alerts cannot see. Read the call-site log for the mapped error
+class (see Quick diagnosis); a lone `ErrTransient` is a retried blip, a
+repeating `ErrProviderRejected` is a bad address or key.
+
+### `stellarindex_notify_send_rate_high` — sent volume above 300/h
+
+The opposite failure: mail is going out, too much of it. The login throttles
+cap each inbox and each IP, not the total, so this aggregate ceiling is the
+only signal for volume spread across many addresses and IPs.
+
+- [ ] Break the volume down: `sum by (template) (rate(stellarindex_notify_sends_total{result="sent"}[15m])) * 3600`.
+- [ ] `magic-link` dominating: look for many `/v1/auth/login` requests from
+  many IPs in the API log; tighten the edge rate limit on that route if the
+  pattern is abusive.
+- [ ] `signup-verify` / other template dominating with no matching request
+  volume: suspect a send loop in our code; roll back the recent change.
+- [ ] A genuine traffic spike (launch, press) is a valid cause: silence for
+  its duration rather than raising the ceiling.
+
+### Changelog
+
+- 2026-08-25 — initial draft alongside the task #33 / W8 recon 9c notify counter.
+
 ## Related
 
 - `configs/healthchecks/README.md`: per-binary heartbeat timers (also Healthchecks.io); the deadman says "alerting pipeline alive", the per-binary checks say which service died.
 - The Healthchecks.io status page (bookmark it).
 - Per-service runbooks if a service is down rather than unscrapeable.
 - F-0085 (audit-2026-05-26) and the 2026-05-10 SEV-2 postmortem: origin of the exporter-down family.
+
+**`stellarindex_metrics_registry_absent`**
+
+- `ingestion.md#stellarindex_ledgerstream_tier_both_missing` — the P1 page that is now LIVE
+  regardless of this gauge (W5-mon-3), no longer gated on it.
+- `internal/pipeline/datastore.go` — `LedgerstreamConfig`, the builder
+  that leaves `Registry` nil (affects only the SDK buffer metrics now).
+- `internal/ledgerstream/tiered.go` — the `TieredDataStore`, whose tier
+  metrics are sourced from `internal/obs` (always registered).
+
+**`stellarindex_healthcheck_ping_undelivered`**
+
+- [Alerts catalogue](../alerts-catalog.md)
+
+**`stellarindex_notify_send_failure_ratio_high`**
+
+- `internal/notify` — the Resend client and its `ErrProviderRejected` /
+  `ErrTransient` / `ErrInvalidMessage` error classes.
+- The dashboard-auth login flow (`internal/api/v1/dashboardauth`) and the
+  API-signup verify flow (`cmd/stellarindex-api`) — the two send call sites.

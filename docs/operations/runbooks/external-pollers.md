@@ -115,7 +115,7 @@ journalctl -u stellarindex-indexer -n 500 --no-pager | grep -iE 'poller error.*s
 curl -sv 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd' 2>&1 | head -20
 ```
 
-Signals: `/v1/sources?include=stats` shows the vendor with a stale `last_event_unix`; HTTP 429 = rate limit (compare cadence to the vendor cap, upgrade tier); 401/403 = key rotated/revoked (env var per `internal/sources/external/<vendor>/poller.go`; CoinGecko 403 often means the public tier was denied); 5xx = vendor outage; connect timeout = DNS/egress, and if every poller errors at once it is a host problem ([host-down](infra.md#stellarindex_host_down) / [all-ingestion-down](all-ingestion-down.md)); schema parse error = vendor changed shape (code update).
+Signals: `/v1/sources?include=stats` shows the vendor with a stale `last_event_unix`; HTTP 429 = rate limit (compare cadence to the vendor cap, upgrade tier); 401/403 = key rotated/revoked (env var per `internal/sources/external/<vendor>/poller.go`; CoinGecko 403 often means the public tier was denied); 5xx = vendor outage; connect timeout = DNS/egress, and if every poller errors at once it is a host problem ([host-down](infra.md#stellarindex_host_down) / [all-ingestion-down](ingestion.md#stellarindex_ingestion_all_sources_stopped)); schema parse error = vendor changed shape (code update).
 
 ### CoinGecko 429 pattern
 
@@ -204,7 +204,7 @@ Healthy: one `fx_quotes persisted` line per hour (r1 baseline ~803 rows/tick).
 |---|---|---|
 | `forex: rates fetch failed` | upstream HTTP | 429 / 401 / subscription lapse / 5xx |
 | `forex: names fetch failed` | upstream HTTP | same (names endpoint) |
-| `forex: fx_quotes persist failed` | DB write | Postgres down, `fx_quotes` migration missing ([fx-history-missing](fx-history-missing.md)), disk full |
+| `forex: fx_quotes persist failed` | DB write | Postgres down, `fx_quotes` migration missing ([fx-history-missing](data-freshness.md#fx-history-missing)), disk full |
 | no forex lines | worker not running | crashed / dry-run / not wired |
 
 Fix, `massive` is a PAID feed (429 or lapsed subscription shows as `forex: rates fetch failed` with `http 401/403/429`):
@@ -229,7 +229,7 @@ False positives: an API restart re-stamps the gauge within seconds (refresh on s
 
 Trips: `absent(stellarindex_external_fx_last_quote_unix)`, `for: 30m`, `severity: ticket`. No series for 30 min: the worker refreshes on startup, so a healthy boot stamps it in seconds; absence means it never succeeded since API start: dead worker, unset/invalid `MASSIVE_API_KEY`, or the `fx_quotes` persist path wedged from the first tick. Same impact and fix as `stellarindex_external_fx_feed_stale`, plus:
 - [ ] Confirm the API binary is up and NOT in dry-run mode (dry-run exits before the forex goroutine spawns; `cmd/stellarindex-api/main.go`).
-- [ ] Confirm the `fx_quotes` hypertable migration is applied (missing table = every persist fails; [fx-history-missing](fx-history-missing.md)).
+- [ ] Confirm the `fx_quotes` hypertable migration is applied (missing table = every persist fails; [fx-history-missing](data-freshness.md#fx-history-missing)).
 
 ## stellarindex_external_fx_rate_rejections
 
@@ -300,7 +300,7 @@ Diagnose: log `kraken trade entry skipped` (once per reason per minute; `err` na
 - `unknown_symbol`: venue sends a symbol not in `internal/sources/external/kraken/pairs.go::DefaultPairList`, usually a rename of a configured pair; update it.
 - `bad_qty` / `bad_price` / `bad_timestamp`: the venue changed a field's encoding (scientific notation, epoch timestamps); compare the logged value with `internal/sources/external/kraken/parse.go::buildTrade` and fix it with a test pinned to the new wire shape.
 
-Whole-frame decode failures are a different signal: [decode-errors](decode-errors.md) (`stellarindex_source_decode_errors_total`).
+Whole-frame decode failures are a different signal: [decode-errors](ingestion.md#stellarindex_ingestion_decode_error) (`stellarindex_source_decode_errors_total`).
 
 ## stellarindex_cex_stream_stalled
 

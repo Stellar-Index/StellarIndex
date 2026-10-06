@@ -505,7 +505,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unrepresentable_symbols
         summary: Oracle redstone published a feed_id the record layer cannot store
         description: |
           stellarindex_source_unrepresentable_symbols_total{source="redstone"}
@@ -548,7 +548,7 @@ tests:
         team: stellarindex
         component: ingestion
       exp_annotations:
-        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#sibling-alert--stellarindex_ingestion_oracle_unrepresentable_symbols
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unrepresentable_symbols
         summary: Oracle redstone published a feed_id the record layer cannot store
         description: |
           stellarindex_source_unrepresentable_symbols_total{source="redstone"}

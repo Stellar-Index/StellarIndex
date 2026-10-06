@@ -175,5 +175,5 @@ scrape_configs:
     # absence-of-series surfaces via meta.yml
     # (stellarindex_minio_exporter_down, page) and the operator gets a
     # clear "wire the token" signal.
-    # Procedure: docs/operations/runbooks/minio-metrics-403.md
+    # Procedure: docs/operations/runbooks/infra.md#minio-metrics-403
     bearer_token_file: /etc/prometheus/minio.token

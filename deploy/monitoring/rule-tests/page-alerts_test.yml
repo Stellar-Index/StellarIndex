@@ -212,7 +212,7 @@ tests:
               result: rolled_back
             exp_annotations:
               description: "stellar-core-auto-upgrade could not move core from\n to  with the\ngalexie tip advancing. rolled_back: the previous core is\nreinstalled and ingest continues, until the next protocol\nvote halts it. failed: ingest may be down now. Read\n`journalctl -u stellar-core-auto-upgrade -u galexie`, then\nfollow the runbook's coordinated-upgrade checklist by hand.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag"
               summary: "stellar-core auto-upgrade to  rolled_back ()"
 
   - interval: 30s
@@ -415,7 +415,7 @@ tests:
               source: s
             exp_annotations:
               description: "The s decoder panicked on a ledger input. The\ndispatcher skipped that input and ingest continued, so the cursor\nis advancing and every other source is unaffected \u2014 but this\ndecoder will keep dropping every event of that shape until a\nfixed binary ships. The raw event is still in the ClickHouse\nlake, so nothing is lost permanently. Runbook: find the\n`decoder panicked` log line (it carries ledger / tx_hash /\nop_index / stack), fix the decoder, then re-derive the window\nwith projector-replay or ch-rebuild.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decoder-panicked.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_decoder_panicked"
               summary: "decoder s panicked \u2014 its events are being SKIPPED (#371 F1)"
 
   - interval: 30s
