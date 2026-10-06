@@ -488,3 +488,43 @@ tests:
       - eval_time: 60m
         alertname: stellarindex_systemd_unit_failed
         exp_alerts: []
+
+  # A pending reboot only tickets after it has persisted for 7d.
+  - interval: 1m
+    name: reboot pending for over 7d tickets
+    input_series:
+      - series: 'node_reboot_required{instance="r1"}'
+        values: '1x10200'
+    alert_rule_test:
+      - eval_time: 6d
+        alertname: stellarindex_node_reboot_required
+        exp_alerts: []
+      - eval_time: 7d5m
+        alertname: stellarindex_node_reboot_required
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              instance: r1
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "r1 has needed a reboot for 7d+ (running superseded libraries or kernel)"
+              description: |
+                node_reboot_required has been 1 for a week: an unattended
+                security update installed something that only a reboot (or a
+                service restart) applies. needrestart is list-only here, so
+                nothing restarts services for us. Schedule a maintenance
+                window and see the needrestart maintenance notes in the
+                ops-job-stalled runbook before rebooting a node that is
+                running heavy jobs.
+
+  - interval: 1m
+    name: reboot flag cleared before 7d never tickets
+    input_series:
+      - series: 'node_reboot_required{instance="r1"}'
+        values: '1x5000 0x5000'
+    alert_rule_test:
+      - eval_time: 8d
+        alertname: stellarindex_node_reboot_required
+        exp_alerts: []
