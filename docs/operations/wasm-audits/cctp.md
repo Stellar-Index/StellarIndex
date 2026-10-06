@@ -195,10 +195,23 @@ Re-audit triggers: Prometheus alerts on `unknown_topic` per source, or a manual
 
 ## Live-traffic verification notes
 
-CCTP v2 on Stellar is brand-new (per the `project_protocol_coverage_additions`
-memory note, "brand-new on Stellar so short/no historical backfill"), so there
-is little on-mainnet traffic to verify against; live-traffic verification is
-deferred until real bridge usage starts.
+Spot-checked against r1 on 2026-10-06 (read-only). `cctp_events` held
+9,207 `deposit_for_burn`, 61,631 `mint_and_withdraw` and 61,539
+`mint_and_forward` rows over ledgers 62267588–64800016. Of 20 sampled rows
+(the two largest burns and mints included), each matched a
+`stellar.contract_events` row with the same contract, topic, ledger and tx.
+Each stored `amount` and `fee_collected` equalled the decoded `data_xdr`.
+Same-tx USDC SEP-41 `burn` and `mint` amounts confirm the documented scales:
+
+- `deposit_for_burn` and `mint_and_withdraw` carry the canonical 6-decimal
+  amount, so the SAC leg is exactly 10× that amount.
+- `mint_and_forward` carries the local 7-decimal amount (1:1).
+
+`protocol_bespoke_cctp.go` rule 2 handles this split. Every
+`counterparty_domain` seen (0, 5, 6) is a valid CCTP domain. For
+`deposit_for_burn`, `fee` holds `max_fee` by design (migration 0038 column
+note). Not row-checked: `message_sent`/`message_received` message bytes, and
+raw `destination_domain` against `counterparty_domain`.
 
 As `ClassBridge` with `DefaultWeight: 0` and `IncludeInVWAP: false` in
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
