@@ -2379,7 +2379,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/diagnostics/backups", s.handleDiagnosticsBackups)
 	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
 
-	// Protocols pillar (explorer-ux-plan §5): directory + per-protocol
+	// Protocols pillar (explorer-data-inventory.md §7.8): directory + per-protocol
 	// detail. Static registry always serves; dynamic joins degrade.
 	s.mux.HandleFunc("GET /v1/protocols", s.handleProtocolsList)
 	s.mux.HandleFunc("GET /v1/protocols/{name}", s.handleProtocolDetail)

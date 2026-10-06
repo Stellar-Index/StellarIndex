@@ -50,7 +50,7 @@ tests:
               component: completeness
               view: twap_1h
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
               summary: "Continuous aggregate twap_1h is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
               description: |
                 twap_1h is missing history the `trades` hypertable holds: the view
@@ -69,14 +69,14 @@ tests:
                 TWAP refresh deletes the history it was meant to restore. Then confirm this clears
                 on the next data-freshness tick.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
           - exp_labels:
               severity: ticket
               team: stellarindex
               component: completeness
               view: twap_1d
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
               summary: "Continuous aggregate twap_1d is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
               description: |
                 twap_1d is missing history the `trades` hypertable holds: the view
@@ -95,7 +95,7 @@ tests:
                 TWAP refresh deletes the history it was meant to restore. Then confirm this clears
                 on the next data-freshness tick.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
 
   # ── the refresh has NOT yet held for 2h ──────────────────────────
   # Same emptied state, but only 90 min in: the `for: 2h` gate must keep
@@ -149,7 +149,7 @@ tests:
               component: completeness
               view: prices_1d
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
               summary: "Continuous aggregate prices_1d is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
               description: |
                 prices_1d is missing history the `trades` hypertable holds: the view
@@ -168,7 +168,7 @@ tests:
                 TWAP refresh deletes the history it was meant to restore. Then confirm this clears
                 on the next data-freshness tick.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_twap_history_missing
 
   # ── a materialized prices_* view is silent ───────────────────────
   - interval: 1m

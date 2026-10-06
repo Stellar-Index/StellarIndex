@@ -137,7 +137,7 @@ type CachedResult struct {
 // firing flag to Redis with a TTL. The historical per-reference
 // deltas are lost. The durable mirror persists them so the
 // explorer /divergences page (explorer-data-inventory.md
-// §7.19) can plot the actual divergence over time and so incident
+// §7.17-7.19) can plot the actual divergence over time and so incident
 // post-mortems can verify "Reflector drifted N% from us at ledger
 // X" against ground truth.
 //

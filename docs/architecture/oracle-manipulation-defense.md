@@ -117,7 +117,7 @@ production-quality divergence coverage for it is L7.3, post-launch.
   `stellarindex_aggregator_outlier_trim_fraction` (24h) and
   `stellarindex_aggregator_outlier_volume_trim_fraction` (per window) alert on it
   ([runbook](../operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm)).
-  Divergence alerts: [price-divergence.md](../operations/runbooks/price-divergence.md).
+  Divergence alerts: [divergence.md](../operations/runbooks/divergence.md).
 - `stellarindex_anomaly_z_score` and `stellarindex_anomaly_confidence` do not exist in `internal/obs/metrics.go`; read z-score and confidence from the `/v1/price` response (`confidence_factors`) instead.
 
 ### Worked example: USTRY

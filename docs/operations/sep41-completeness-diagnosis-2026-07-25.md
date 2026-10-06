@@ -8,7 +8,7 @@ status: living
 
 `sep41_supply` and `sep41_transfers` showed `complete=false` with
 `lake_complete=true` on `/v1/coverage`. Durable findings, from the code at
-`main`. Generic runbook: [`runbooks/completeness-incomplete.md`](runbooks/completeness-incomplete.md).
+`main`. Generic runbook: [`runbooks/data-freshness.md#stellarindex_completeness_incomplete`](runbooks/data-freshness.md#stellarindex_completeness_incomplete).
 
 ## 1. Verdict math
 

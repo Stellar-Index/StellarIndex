@@ -133,7 +133,7 @@ Then address the underlying disk-full state per `db-disk-full.md`.
 
 **Prevention (in place):** root-FS alerts `stellarindex_node_root_disk_warning` (< 20% avail), `_full` (< 10%), `_filling_fast` (predict_linear) in `storage.yml`; logrotate/journald caps in `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml` (syslog `maxsize 100M`, 7 gzip rotations, journald `SystemMaxUse=500M`); wasm-audit walks write under `/var/log/wasm-audit/` ([`../wasm-audits/README.md`](../wasm-audits/README.md) §2).
 
-**See also:** [`db-disk-full.md`](db-disk-full.md); [`redis-master-down.md`](redis-master-down.md) (process exited); [`redis-memory.md`](redis-memory.md) (`stellarindex_redis_write_rejected_oom`, a different mechanism); [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed); `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md` (customer-facing post-mortem).
+**See also:** [`db-disk-full.md`](db-disk-full.md); [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down) (process exited); [`cache.md#stellarindex_redis_memory_saturated`](cache.md#stellarindex_redis_memory_saturated) (`stellarindex_redis_write_rejected_oom`, a different mechanism); [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed); `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md` (customer-facing post-mortem).
 
 ## stellarindex_aggregator_class_drop_spike
 

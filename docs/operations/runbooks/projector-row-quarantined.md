@@ -70,7 +70,7 @@ downstream PK/constraint violation, or a malformed on-chain payload).
 - [ ] Verification: the re-drive succeeds and no new
       `sink_quarantined` increments occur for that source; the ADR-0033
       completeness verdict for the source stays/returns to `complete=true`
-      (see `completeness-incomplete.md`) after the next
+      (see `data-freshness.md#stellarindex_completeness_incomplete`) after the next
       `compute-completeness` run.
 
 ## Root cause analysis
@@ -97,7 +97,7 @@ decoder or schema regression, not noise.
 
 - `projector-lag.md` — the projector's primary lag/cycle-error alerts;
   quarantine is a distinct, rarer failure mode from the same subsystem.
-- `completeness-incomplete.md` — a sustained quarantine (or several) on
+- `data-freshness.md#stellarindex_completeness_incomplete` — a sustained quarantine (or several) on
   one source will eventually show up as `complete=false` on the ADR-0033
   verdict.
 - `internal/projector/projector.go` (`quarantineCandidate`) and

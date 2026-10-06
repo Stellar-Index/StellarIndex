@@ -55,7 +55,7 @@ groups:
           team: stellarindex
           component: deploy
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md#stellarindex_binary_version_skew
           summary: "Installed stellarindex-* binaries disagree on version ({{ $value }} extra version(s))"
           description: |
             The installed stellarindex-* binaries are not all from the
@@ -87,7 +87,7 @@ groups:
           team: stellarindex
           component: deploy
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md#stellarindex_binary_version_probe_degraded
           summary: "Binary version-skew probe degraded — at least one binary would not report a version"
           description: |
             stellarindex-binary-version-probe.sh ran but at least one
@@ -148,7 +148,7 @@ groups:
           team: stellarindex
           component: deploy
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md#stellarindex_binary_version_probe_stale
           summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
           description: |
             stellarindex_binary_version.prom has not been rewritten, or

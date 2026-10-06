@@ -25,7 +25,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region.md#stellarindex_cross_region_divergence
               summary: "Cross-region divergence on XLM/USDC/vwap (P3)"
               description: |
                 stellarindex_cross_region_divergences_total has been
@@ -58,7 +58,7 @@ tests:
               team: stellarindex
               component: archive
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region-divergence.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cross-region.md#stellarindex_cross_region_check_stale
               summary: "Cross-region check loop has stopped completing sweeps (P3)"
               description: |
                 stellarindex_cross_region_last_run_timestamp_seconds has

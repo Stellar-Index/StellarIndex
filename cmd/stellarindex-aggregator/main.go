@@ -353,8 +353,8 @@ func run(cfgPath string, dryRun bool) error {
 		// freeze_events hypertable so the explorer /anomalies timeline
 		// has queryable history. Idempotent on the currently-firing
 		// row, so refreshing the Redis TTL doesn't create duplicates.
-		// See migrations/0018_create_freeze_events.up.sql + Phase 2
-		// of docs/architecture/explorer-implementation-plan.md.
+		// See migrations/0018_create_freeze_events.up.sql and
+		// docs/architecture/explorer-data-inventory.md §11.3.
 		sinkOpts := []timescale.FreezeEventSinkOption{
 			timescale.WithFreezeLedgerProvider(divergenceLedgerAdapter{cursors: store}),
 		}

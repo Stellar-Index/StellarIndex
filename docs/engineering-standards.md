@@ -375,7 +375,7 @@ openapi/            the API spec (source of truth for reference docs)
 
 - Add a new CEX connector: see docs/development/contributing-a-source.md.
 - Add a new on-chain DEX: same doc.
-- Investigate a price divergence: docs/operations/runbooks/price-divergence.md.
+- Investigate a price divergence: docs/operations/runbooks/divergence.md.
 - Why is `<metric>` alerting: docs/operations/runbooks/<metric>.md.
 
 ## Known footguns

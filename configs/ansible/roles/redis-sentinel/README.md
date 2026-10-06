@@ -15,7 +15,7 @@ in
   `down-after-milliseconds=5000` + `failover-timeout=60000`).
 
 Pairs with the `patroni` role: together they make
-[`docs/operations/runbooks/redis-master-down.md`](../../../../docs/operations/runbooks/redis-master-down.md)
+[`docs/operations/runbooks/cache.md#stellarindex_redis_master_down`](../../../../docs/operations/runbooks/cache.md#stellarindex_redis_master_down)
 and
 [`timescale-primary-down.md`](../../../../docs/operations/runbooks/timescale-primary-down.md)
 runbooks' *automatic-failover* sections the actual default, not
