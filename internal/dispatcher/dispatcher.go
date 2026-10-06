@@ -1312,11 +1312,11 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 // permanently ABOVE the truth with no path to self-correct. The decoders
 // already handled the other half, Restored.
 //
-// Emitted as Removed, deliberately, rather than a new change variant: an
-// evicted entry is no longer live state, which is exactly what every
-// entry decoder's Removed arm already means (a zero-balance removal
-// observation that the read path excludes from the served sum), and a
-// later Restored change reverses it. Removal is an absorbing STATE, not a
+// Emitted as Removed, deliberately, rather than a new change variant: it is
+// what every entry decoder's Removed arm already means, and a later Restored
+// change reverses it. Unlike the lake walker, which skips persistent keys
+// (archived, not deleted), every evicted key is dispatched here and the
+// decoders decide. Removal is an absorbing STATE, not a
 // delta, so re-ingesting the ledger rewrites the identical row rather than
 // double-subtracting.
 //

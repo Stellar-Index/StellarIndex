@@ -41,9 +41,10 @@ import (
 //     not walked — they are not transaction-scoped and carry no tx_hash;
 //     dispatcher.walkLedgerEntryChanges makes the identical choice.
 //   - A FOURTH phase records the ledger's state-archival EVICTIONS (evicted:
-//     the LCM's evicted-keys list) as `removed` rows, mirroring
-//     dispatcher.walkEvictedKeys. An evicted entry appears in no tx's meta,
-//     so without it ledger_entries_current keeps its last write as live.
+//     the LCM's evicted-keys list) as `removed` rows, but only temporary
+//     entries and TTL keys: a persistent entry or contract code is archived
+//     and restorable, so it stays live. Skipped keys still take their walk
+//     position, keeping intra_ledger_seq aligned with dispatcher.walkEvictedKeys.
 //
 // Within each LedgerEntryChanges block the changes are walked in
 // entrywalk.Canonical order (by ledger key), not as the export lists them:
