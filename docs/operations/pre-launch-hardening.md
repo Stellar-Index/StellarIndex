@@ -156,7 +156,10 @@ mc mirror /var/lib/galexie-archive remote-backup/galexie-archive-baseline-$(date
 ## Verification at the end
 
 `scripts/ops/pre-launch-check.sh` is read-only, prints `pass / warn / fail` per
-step, exit code = number of fails.
+step, exit code = number of fails. It also fails on any external venue below its
+USD pricing bar on `/v1/coverage` (`usd_volume_pricing.sources[].meets_bar`) and
+on any firing `usd-volume-coverage` alert, which covers the on-chain bar
+(Prometheus at `$PROMETHEUS_URL`, default `http://127.0.0.1:9090`).
 
 ```sh
 # Run end-to-end on R1:

@@ -238,6 +238,47 @@ else
 fi
 echo
 
+# ── 10. USD volume pricing bars
+# Valuation never gates `complete` (ADR-0033 is capture-only), so the bars
+# gate go-live here. The API publishes meets_bar for external venues only;
+# the firing usd-volume-coverage alerts also cover the on-chain bar.
+echo "  USD volume pricing"
+cov="$(curl -fsS --max-time 10 http://localhost:3000/v1/coverage 2>/dev/null)"
+if [ -z "$cov" ]; then
+  fail "/v1/coverage" "not responding — cannot read usd_volume_pricing"
+elif ! printf '%s' "$cov" | jq -e '.data | has("usd_volume_pricing")' >/dev/null 2>&1; then
+  fail "usd_volume_pricing" "absent from /v1/coverage — API predates the axis"
+elif printf '%s' "$cov" | jq -e '.data.usd_volume_pricing == null' >/dev/null 2>&1; then
+  warn "usd_volume_pricing not computed yet" "first refresh runs at API start; re-run in a few minutes"
+else
+  below="$(printf '%s' "$cov" | jq -r '.data.usd_volume_pricing.sources[]
+    | select(.meets_bar == false)
+    | "\(.source) priced_ratio=\(.priced_ratio // "none") bar=\(.bar) trades=\(.trades)"')"
+  if [ -z "$below" ]; then
+    pass "external venues meet the USD pricing bar" ""
+  else
+    while IFS= read -r line; do
+      fail "usd_volume below bar: ${line%% *}" "${line#* }"
+    done <<<"$below"
+  fi
+fi
+PROM_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
+firing="$(curl -fsS --max-time 10 -G "$PROM_URL/api/v1/query" \
+  --data-urlencode 'query=ALERTS{component="usd-volume-coverage",alertstate="firing"}' 2>/dev/null)"
+if ! printf '%s' "$firing" | jq -e '.status == "success"' >/dev/null 2>&1; then
+  fail "usd-volume-coverage alerts" "cannot query Prometheus at $PROM_URL"
+else
+  names="$(printf '%s' "$firing" | jq -r '.data.result[].metric | "\(.alertname) \(.source // "")"')"
+  if [ -z "$names" ]; then
+    pass "no usd-volume-coverage alerts firing" ""
+  else
+    while IFS= read -r line; do
+      fail "firing: ${line%% *}" "source=${line#* }"
+    done <<<"$names"
+  fi
+fi
+echo
+
 # ── Summary
 if [ "$FAILS" -eq 0 ] && [ "$WARNS" -eq 0 ]; then
   printf "%sAll checks passed — ready for DNS cutover.%s\n" "$GREEN" "$OFF"
