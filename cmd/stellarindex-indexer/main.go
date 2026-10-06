@@ -657,10 +657,11 @@ func run(cfgPath string, dryRun bool) error {
 	case pipeline.SinkModeAll:
 		// Projector disabled — events-goroutine writes every class.
 	}
-	// Both live trade writers below report their writes here, so trades
-	// landed after an outage longer than a policy's lookback still reach
-	// prices_1m and the other trades aggregates.
+	// Both live trade writers below record late trades here so they reach the trades caggs.
 	lateTrades := pipeline.NewLateTradeRefresher(store, pipeline.LateTradeRefresherOptions{Logger: logger.With("component", "late-trade-refresh")})
+	if err := lateTrades.Prime(rootCtx); err != nil {
+		logger.Warn("late-trade cagg refresh policies not loaded; every trade counts as late until the first flush loads them", "err", err)
+	}
 	go func() {
 		defer worker.Recover(logger, "late-trade-refresh")
 		lateTrades.Run(rootCtx)
@@ -1076,13 +1077,13 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 	// Run stopped on rootCtx; flush the late trades the writers' shutdown
-	// drain landed. After a drain timeout a writer may still be running,
-	// so flush what is pending anyway and say what it cannot cover. Fresh
+	// drain landed. After a drain timeout a writer may still be running;
+	// its durable window is kept for the next start. Fresh
 	// ctx for the same reason as the rewind above; ~70s of systemd's 120s
 	// TimeoutStopSec is the worst case to here.
 	if !writersStopped {
-		logger.Error("late-trade cagg flush runs before every trade writer stopped (drain timeout); " +
-			"late trades written after it may be unrefreshed — refresh the trades caggs over the outage window by hand")
+		logger.Warn("late-trade cagg flush runs before every trade writer stopped (drain timeout); " +
+			"late trades written after it are refreshed by the next start")
 	}
 	lctx, lcancel := context.WithTimeout(context.Background(), pipeline.LateTradeShutdownFlushBudget)
 	lateTrades.FlushOnShutdown(lctx) //nolint:contextcheck // deliberate fresh ctx, see above

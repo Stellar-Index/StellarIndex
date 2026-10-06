@@ -34,6 +34,9 @@ const LateTradeShutdownFlushBudget = 30 * time.Second
 // lateTradeCAGGStore is the slice of *timescale.Store the refresher needs.
 type lateTradeCAGGStore interface {
 	CAGGRefreshWindows(ctx context.Context) ([]timescale.CAGGRefreshWindow, error)
+	RecordCAGGLateRefreshWindow(ctx context.Context, family string, views []string, from, to time.Time) error
+	CAGGLateRefreshWindows(ctx context.Context, family string) ([]timescale.CAGGLateRefreshWindow, error)
+	ClearCAGGLateRefreshWindow(ctx context.Context, family, view string, gen int64) (bool, error)
 	timescale.CAGGStepRefresher
 }
 
@@ -44,8 +47,11 @@ type lateTradeCAGGStore interface {
 // resumed writers insert trades no policy ever revisits and the OHLC/TWAP
 // views under-report them for good.
 //
-// Writers call ObserveTrades / ObserveEvent after a write commits; that
-// only widens one pending ts window and never blocks. Run refreshes it
+// Before a late write, its writer records the window durably (migration
+// 0211); every flush unions those rows in, and Run flushes once at start,
+// so a window survives a crash. After the write commits, the writer calls
+// ObserveTrades / ObserveEvent, which widens the in-memory window and
+// kicks Run. Run refreshes it
 // once per debounce interval, one refresh in flight at a time, and each
 // view at most once per its own policy's schedule_interval, so a long
 // catch-up costs a refresh per interval rather than per batch. A failed
@@ -74,6 +80,17 @@ type LateTradeRefresher struct {
 	// as of the last flush; overdueSince is what was last published.
 	viewsDue     time.Time
 	overdueSince time.Time
+
+	// inflight counts late writes between beginWrite and their end;
+	// entered counts every one begun. A flush clears a durable row only if
+	// none was in flight when it read the rows and none has begun since.
+	inflight int
+	entered  uint64
+	// cover is the hour hull recorded durably since coverEpoch last moved;
+	// a write inside it skips the upsert. Reset before every clear.
+	covered          bool
+	coverLo, coverHi time.Time
+	coverEpoch       uint64
 
 	// flushMu serialises flushes (Run's and FlushOnShutdown's) and guards views.
 	flushMu sync.Mutex
@@ -145,19 +162,116 @@ func (r *LateTradeRefresher) ObserveEvent(ev consumer.Event) {
 	}
 }
 
-// ObservingSink wraps a projector sink so every event it handles without
-// error is observed. Nil-safe: a nil r returns sink unchanged.
+// ObservingSink wraps a projector sink so a late trade's window is
+// recorded before the sink runs and every event it handles without error
+// is observed. Nil-safe: a nil r returns sink unchanged.
 func (r *LateTradeRefresher) ObservingSink(sink func(context.Context, consumer.Event) error) func(context.Context, consumer.Event) error {
 	if r == nil {
 		return sink
 	}
 	return func(ctx context.Context, ev consumer.Event) error {
-		err := sink(ctx, ev)
+		t, isTrade := tradeFromEvent(ev)
+		if !isTrade {
+			return sink(ctx, ev)
+		}
+		end, err := r.beginWrite(ctx, []canonical.Trade{t})
+		if err != nil {
+			return err
+		}
+		defer end()
+		err = sink(ctx, ev)
 		if err == nil {
-			r.ObserveEvent(ev)
+			r.ObserveTrades(t)
 		}
 		return err
 	}
+}
+
+// Prime loads the refresh policies so writes before the first flush are
+// judged late against them rather than against nothing. Nil-safe.
+func (r *LateTradeRefresher) Prime(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	return r.loadPolicies(ctx)
+}
+
+// lateTradeViewNames are the views every durable trades window is recorded on.
+var lateTradeViewNames = func() []string {
+	out := make([]string, len(timescale.TradesCAGGs))
+	for i, c := range timescale.TradesCAGGs {
+		out[i] = c.Name
+	}
+	return out
+}()
+
+// beginWrite durably records the late trades' hour hull before they are
+// written; call end once the write has returned. Without a late trade it
+// records nothing and end is a no-op.
+func (r *LateTradeRefresher) beginWrite(ctx context.Context, trades []canonical.Trade) (end func(), err error) {
+	r.mu.Lock()
+	cutoff := r.now().Add(-r.lateAfter)
+	var lo, hi time.Time
+	found := false
+	for i := range trades {
+		ts := trades[i].Timestamp
+		if !ts.Before(cutoff) {
+			continue
+		}
+		if !found || ts.Before(lo) {
+			lo = ts
+		}
+		if !found || ts.After(hi) {
+			hi = ts
+		}
+		found = true
+	}
+	if !found {
+		r.mu.Unlock()
+		return func() {}, nil
+	}
+	lo, hi = lo.Truncate(time.Hour), hi.Truncate(time.Hour).Add(time.Hour)
+	r.inflight++
+	r.entered++
+	epoch := r.coverEpoch
+	covered := r.covered && !lo.Before(r.coverLo) && !hi.After(r.coverHi)
+	r.mu.Unlock()
+	end = func() {
+		r.mu.Lock()
+		r.inflight--
+		r.mu.Unlock()
+	}
+	if covered {
+		return end, nil
+	}
+	if err := r.store.RecordCAGGLateRefreshWindow(ctx, timescale.CAGGLateFamilyTrades, lateTradeViewNames, lo, hi); err != nil {
+		end()
+		return nil, fmt.Errorf("record late-trade cagg window: %w", err)
+	}
+	r.mu.Lock()
+	if r.coverEpoch == epoch {
+		if !r.covered || lo.Before(r.coverLo) {
+			r.coverLo = lo
+		}
+		if !r.covered || hi.After(r.coverHi) {
+			r.coverHi = hi
+		}
+		r.covered = true
+	}
+	r.mu.Unlock()
+	return end, nil
+}
+
+// lateClearGuard is the write-ahead state a flush read its durable rows under.
+type lateClearGuard struct {
+	idle    bool // no late write was in flight
+	entered uint64
+}
+
+// resetCoverLocked makes the next late write upsert again. Needs r.mu.
+func (r *LateTradeRefresher) resetCoverLocked() {
+	r.covered = false
+	r.coverEpoch++
 }
 
 func (r *LateTradeRefresher) widenLocked(lo, hi time.Time) {
@@ -200,6 +314,7 @@ func (r *LateTradeRefresher) signal() {
 // Run refreshes pending windows until ctx is done. What is still pending
 // then is FlushOnShutdown's.
 func (r *LateTradeRefresher) Run(ctx context.Context) {
+	r.signal() // refresh what a previous process recorded
 	wait := r.debounce
 	var held *time.Timer // fires when a view held by its rate limit falls due
 	defer func() {
@@ -250,9 +365,8 @@ func (r *LateTradeRefresher) Run(ctx context.Context) {
 
 // FlushOnShutdown refreshes everything still pending, ignoring the per-view
 // rate limit, under ctx. Call it once the trade writers have stopped and
-// Run's context is done. A failure or timeout logs at ERROR each window an
-// operator must refresh by hand; it is not counted, since /metrics goes
-// down right after and the next process starts from zero. Nil-safe.
+// Run's context is done. A failure or timeout logs at ERROR each window
+// left; the next process refreshes it from its durable row. Nil-safe.
 func (r *LateTradeRefresher) FlushOnShutdown(ctx context.Context) {
 	if r == nil {
 		return
@@ -272,7 +386,16 @@ func (r *LateTradeRefresher) FlushOnShutdown(ctx context.Context) {
 func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next time.Duration, err error) {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
-	if !r.anyPendingLocked() {
+	// Before the read: a write begun after it is visible in entered.
+	r.mu.Lock()
+	r.resetCoverLocked()
+	guard := lateClearGuard{idle: r.inflight == 0, entered: r.entered}
+	r.mu.Unlock()
+	durable, err := r.store.CAGGLateRefreshWindows(ctx, timescale.CAGGLateFamilyTrades)
+	if err != nil {
+		return 0, fmt.Errorf("load late-trade cagg windows: %w", err)
+	}
+	if !r.anyPendingLocked() && len(durable) == 0 {
 		return 0, nil
 	}
 	if err := r.loadPolicies(ctx); err != nil {
@@ -285,6 +408,17 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 	defer r.publishOverdueLocked(policies)
 
 	var errs []error
+	gens := make(map[string]int64, len(durable))
+	for _, d := range durable {
+		if w := policies[d.View]; w.HasPolicy && !w.Unbounded {
+			r.viewLocked(d.View).widen(d.From, d.To, d.FirstSeen)
+			gens[d.View] = d.Gen
+			continue
+		}
+		// Not ours to refresh: nothing would ever clear it.
+		errs = append(errs, r.clearDurable(ctx, d.View, d.Gen, guard))
+	}
+
 	refreshed := 0
 	prices1mWaiting := false // held or failed: the twaps built on it wait
 	for _, c := range timescale.TradesCAGGs {
@@ -298,7 +432,10 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 			errs = append(errs, err)
 		case viewRefreshed:
 			refreshed++
-		case viewSkipped:
+		case viewSkipped, viewCovered:
+		}
+		if gen, ok := gens[c.Name]; ok && (out == viewRefreshed || out == viewCovered) {
+			errs = append(errs, r.clearDurable(ctx, c.Name, gen, guard))
 		}
 		if out == viewHeld || out == viewFailed {
 			prices1mWaiting = prices1mWaiting || c.Name == "prices_1m"
@@ -311,6 +448,27 @@ func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next 
 		obs.LateTradeCAGGRefreshTotal.WithLabelValues("ok").Inc()
 	}
 	return next, errors.Join(errs...)
+}
+
+// clearDurable deletes view's durable row at gen, unless a late write was in
+// flight when the flush read it or has begun since: that write may commit
+// after the refresh ran, and only its row would remember it. A kept row is
+// unioned into the next flush, which this kicks. Needs r.flushMu.
+func (r *LateTradeRefresher) clearDurable(ctx context.Context, view string, gen int64, g lateClearGuard) error {
+	r.mu.Lock()
+	ok := g.idle && r.entered == g.entered
+	if ok {
+		r.resetCoverLocked()
+	}
+	r.mu.Unlock()
+	if !ok {
+		r.signal()
+		return nil
+	}
+	if _, err := r.store.ClearCAGGLateRefreshWindow(ctx, timescale.CAGGLateFamilyTrades, view, gen); err != nil {
+		return fmt.Errorf("clear late-trade cagg window %s: %w", view, err)
+	}
+	return nil
 }
 
 // distributePendingLocked moves the undistributed window onto every bounded
@@ -331,6 +489,7 @@ type viewOutcome int
 
 const (
 	viewSkipped viewOutcome = iota
+	viewCovered             // its policy reaches the whole window
 	viewHeld
 	viewFailed
 	viewRefreshed
@@ -349,7 +508,7 @@ func (r *LateTradeRefresher) flushView(ctx context.Context, c timescale.CAGGSpec
 	st, ok := lateTradeRefreshStep(c, w, v.lo, v.hi, now)
 	if !ok {
 		v.pending = false
-		return viewSkipped, 0, nil
+		return viewCovered, 0, nil
 	}
 	if lateTradeHierarchical[c.Name] && prices1mWaiting {
 		return viewSkipped, 0, nil
@@ -507,7 +666,7 @@ func lateTradeRefreshStep(c timescale.CAGGSpec, w timescale.CAGGRefreshWindow, l
 func (r *LateTradeRefresher) logAbandoned(err error) {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
-	const msg = "late-trade cagg refresh abandoned at shutdown; refresh this trades continuous aggregate over this window by hand"
+	const msg = "late-trade cagg refresh left pending at shutdown; the next indexer start refreshes it from cagg_late_refresh_windows"
 	r.mu.Lock()
 	if r.pending {
 		r.logger.Error(msg, "view", "all", "trades_from", r.lo.UTC().Format(time.RFC3339),
@@ -522,8 +681,8 @@ func (r *LateTradeRefresher) logAbandoned(err error) {
 	}
 }
 
-// writer returns store as the sink's trade writer, reporting each committed
-// write to r when r is non-nil.
+// writer returns store as the sink's trade writer, recording each late write
+// before it and reporting each committed one to r when r is non-nil.
 func (r *LateTradeRefresher) writer(store *timescale.Store) tradeWriter {
 	if r == nil || store == nil {
 		return store
@@ -531,14 +690,21 @@ func (r *LateTradeRefresher) writer(store *timescale.Store) tradeWriter {
 	return observingTradeWriter{tradeWriter: store, late: r}
 }
 
-// observingTradeWriter reports every trade write that succeeded.
+// observingTradeWriter records every late trade write before it and
+// reports every one that succeeded. A failed record fails the write, so
+// the sink's retry covers it.
 type observingTradeWriter struct {
 	tradeWriter
 	late *LateTradeRefresher
 }
 
 func (w observingTradeWriter) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
-	err := w.tradeWriter.BatchInsertTrades(ctx, trades)
+	end, err := w.late.beginWrite(ctx, trades)
+	if err != nil {
+		return err
+	}
+	defer end()
+	err = w.tradeWriter.BatchInsertTrades(ctx, trades)
 	if err == nil {
 		w.late.ObserveTrades(trades...)
 	}
@@ -546,7 +712,12 @@ func (w observingTradeWriter) BatchInsertTrades(ctx context.Context, trades []ca
 }
 
 func (w observingTradeWriter) InsertTrade(ctx context.Context, t canonical.Trade) error {
-	err := w.tradeWriter.InsertTrade(ctx, t)
+	end, err := w.late.beginWrite(ctx, []canonical.Trade{t})
+	if err != nil {
+		return err
+	}
+	defer end()
+	err = w.tradeWriter.InsertTrade(ctx, t)
 	if err == nil {
 		w.late.ObserveTrades(t)
 	}

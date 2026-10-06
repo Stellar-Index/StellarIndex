@@ -368,13 +368,14 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 Refresh `prices_1m` before `twap_1h` / `twap_1d`: the twaps are materialised from it.
 
-No alert covers shutdown. The indexer flushes the late-trade window once more at shutdown, bounded at 30 s; if that fails or times out it logs every pending window at ERROR, and after a drain timeout it also logs that late writes after the flush may be unrefreshed. The pending windows are held in memory only, so after any restart that followed an outage, check the log:
+Pending windows survive restarts. Each late write records its window in `cagg_late_refresh_windows` (one row per view) before the insert; the indexer refreshes every row on its next start, and deletes a view's row only after that view's refresh succeeds. A crash, SIGKILL or a failed shutdown flush therefore leaves a row, not a gap, and the overdue gauge resumes from the row's `first_seen`. To see what is pending:
 
 ```sh
-journalctl -u stellarindex-indexer --since -2h | grep -E 'late-trade cagg (refresh abandoned|flush runs before)'
+runuser -u postgres -- psql -d stellarindex -c \
+  "SELECT view, from_ts, to_ts, first_seen FROM cagg_late_refresh_windows ORDER BY view;"
 ```
 
-Each `abandoned` line carries `view`, `trades_from` and `trades_to`; refresh each view over that window as above, `prices_1m` first. Nothing else will: no policy reaches those buckets. A crash or SIGKILL skips the flush and leaves no line at all; after one that followed an outage, refresh the trades caggs over the outage window by hand.
+A row that stays put across several schedule intervals is the failing case above: refresh by hand over `[from_ts, to_ts]`, `prices_1m` first. The refresher clears the row on its next success. Only the indexer deletes rows; do not delete one by hand unless that view has been refreshed over its window.
 
 ## Related
 

@@ -37,6 +37,70 @@ type fakeLateCAGGStore struct {
 	failView  string // every refresh of this view fails
 	block     bool   // every refresh waits for its ctx to end
 	onRefresh func(view string)
+
+	durable   map[string]timescale.CAGGLateRefreshWindow // by view
+	gen       int64
+	records   int
+	recordErr error
+}
+
+func (f *fakeLateCAGGStore) RecordCAGGLateRefreshWindow(_ context.Context, _ string, views []string, from, to time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.recordErr != nil {
+		return f.recordErr
+	}
+	f.records++
+	if f.durable == nil {
+		f.durable = map[string]timescale.CAGGLateRefreshWindow{}
+	}
+	for _, v := range views {
+		f.gen++
+		w, ok := f.durable[v]
+		if !ok {
+			w = timescale.CAGGLateRefreshWindow{View: v, From: from, To: to, FirstSeen: lateTestNow}
+		}
+		if from.Before(w.From) {
+			w.From = from
+		}
+		if to.After(w.To) {
+			w.To = to
+		}
+		w.Gen = f.gen
+		f.durable[v] = w
+	}
+	return nil
+}
+
+func (f *fakeLateCAGGStore) CAGGLateRefreshWindows(context.Context, string) ([]timescale.CAGGLateRefreshWindow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []timescale.CAGGLateRefreshWindow
+	for _, w := range f.durable {
+		out = append(out, w)
+	}
+	return out, nil
+}
+
+func (f *fakeLateCAGGStore) ClearCAGGLateRefreshWindow(_ context.Context, _, view string, gen int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if w, ok := f.durable[view]; ok && w.Gen == gen {
+		delete(f.durable, view)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (f *fakeLateCAGGStore) durableViews() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for v := range f.durable {
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // The production policies (migrations 0002, 0036, 0064, 0068, 0165, 0187).
@@ -548,5 +612,123 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// recordingStub checks, at insert time, that the late window was already recorded.
+type recordingStub struct {
+	stubTradeWriter
+	f       *fakeLateCAGGStore
+	sawRows int
+}
+
+func (s *recordingStub) InsertTrade(context.Context, canonical.Trade) error {
+	s.sawRows = len(s.f.durableViews())
+	return nil
+}
+
+func TestObservingTradeWriter_RecordsLateWindowBeforeTheInsert(t *testing.T) {
+	f := &fakeLateCAGGStore{}
+	r := newTestLateRefresher(f)
+	inner := &recordingStub{f: f}
+	w := observingTradeWriter{tradeWriter: inner, late: r}
+	if err := w.InsertTrade(context.Background(), tradesAt(90 * time.Minute)[0]); err != nil {
+		t.Fatal(err)
+	}
+	if inner.sawRows != len(timescale.TradesCAGGs) {
+		t.Fatalf("insert ran with %d durable rows recorded, want one per trades cagg (%d)", inner.sawRows, len(timescale.TradesCAGGs))
+	}
+	got := f.durable["prices_1m"]
+	if from, to := lateTestNow.Add(-2*time.Hour), lateTestNow.Add(-time.Hour); !got.From.Equal(from) || !got.To.Equal(to) {
+		t.Errorf("recorded [%s, %s], want the trade's hour [%s, %s]", got.From, got.To, from, to)
+	}
+
+	f.recordErr = errors.New("down")
+	inner.sawRows = -1
+	if err := w.InsertTrade(context.Background(), tradesAt(5 * time.Hour)[0]); err == nil {
+		t.Fatal("a failed record did not fail the write")
+	}
+	if inner.sawRows != -1 {
+		t.Fatal("the insert ran without its window recorded")
+	}
+}
+
+func TestObservingTradeWriter_SameHourSkipsTheUpsertUntilAFlush(t *testing.T) {
+	f := &fakeLateCAGGStore{}
+	r := newTestLateRefresher(f)
+	w := observingTradeWriter{tradeWriter: stubTradeWriter{}, late: r}
+	for _, age := range []time.Duration{90 * time.Minute, 100 * time.Minute, 0} {
+		if err := w.InsertTrade(context.Background(), tradesAt(age)[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.records != 1 {
+		t.Fatalf("%d upserts for late trades in one hour (and one on time), want 1", f.records)
+	}
+	flushOK(t, r)
+	if err := w.InsertTrade(context.Background(), tradesAt(90 * time.Minute)[0]); err != nil {
+		t.Fatal(err)
+	}
+	if f.records != 2 {
+		t.Fatalf("%d upserts, want a second after the flush reset the cover", f.records)
+	}
+}
+
+// A flush that refreshes and would clear while a recorded write is still
+// uncommitted must keep the row: that write lands after the refresh ran.
+func TestLateTradeRefresh_InFlightWriteKeepsItsDurableRow(t *testing.T) {
+	f := &fakeLateCAGGStore{}
+	r := newTestLateRefresher(f)
+	end, err := r.beginWrite(context.Background(), tradesAt(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flushOK(t, r)
+	if len(f.snapshot()) == 0 {
+		t.Fatal("the flush refreshed nothing over the recorded window")
+	}
+	end()
+	if !slices.Contains(f.durableViews(), "prices_1m") {
+		t.Fatal("the flush cleared prices_1m's row while the write it covers was in flight")
+	}
+
+	// Idle again: the next flush clears every refreshed or covered view.
+	if _, err := r.flush(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.durableViews(); len(got) != 0 {
+		t.Fatalf("rows left after an idle flush: %v", got)
+	}
+}
+
+func TestLateTradeRefresh_FailingViewKeepsOnlyItsDurableRow(t *testing.T) {
+	f := &fakeLateCAGGStore{failView: "prices_15m"}
+	r := newTestLateRefresher(f)
+	w := observingTradeWriter{tradeWriter: stubTradeWriter{}, late: r}
+	if err := w.InsertTrade(context.Background(), tradesAt(2 * time.Hour)[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.flush(context.Background(), true); err == nil {
+		t.Fatal("prices_15m's failure was not reported")
+	}
+	if got := f.durableViews(); !slices.Equal(got, []string{"prices_15m"}) {
+		t.Fatalf("durable rows after one view failed = %v, want only [prices_15m]", got)
+	}
+}
+
+// A new process unions the rows its predecessor recorded and refreshes them.
+func TestLateTradeRefresh_FlushRefreshesRowsRecordedBeforeARestart(t *testing.T) {
+	f := &fakeLateCAGGStore{}
+	w := observingTradeWriter{tradeWriter: stubTradeWriter{}, late: newTestLateRefresher(f)}
+	if err := w.InsertTrade(context.Background(), tradesAt(2 * time.Hour)[0]); err != nil {
+		t.Fatal(err)
+	}
+	fresh := newTestLateRefresher(f)
+	flushOK(t, fresh)
+	if calls := f.snapshot(); len(calls) == 0 || calls[0].view != "prices_1m" {
+		t.Fatalf("restarted refresher refreshed %v, want prices_1m first", viewsOf(calls))
+	}
+	if got := f.durableViews(); len(got) != 0 {
+		t.Fatalf("rows left after the restarted flush: %v", got)
 	}
 }
