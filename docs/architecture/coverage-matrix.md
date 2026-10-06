@@ -318,6 +318,7 @@ Every outstanding item is launch-blocking except ⏳ ones. Tracking: `docs/opera
 
 1. S2.5 DIA mainnet ship: testnet only today; integration conditional on DIA's mainnet launch.
 2. S9.1 99.9 % availability measurement: needs ≥ 30 days production; number reported 90 days post-launch.
+3. Residual DeFi with no decoder (INV-1130, lake census 2026-07-10): FxDAO Vaults (~0 events; would need a `ContractCallDecoder` like Band), Slender (dormant since ledger 60,749,975), EquitX (4 `CDP` events ever, on contracts other than its documented ones). FxDAO's FXG and stablecoins are supply-watched only. Re-audit if activity resumes.
 
 #### Verification protocol
 

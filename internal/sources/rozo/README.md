@@ -8,7 +8,7 @@ Currently scoped to **v1 Payment** — the only mainnet-live Rozo
 contract at the time of writing. v2 Forwarder + IntentBridge and
 the newer rozo-intents schema are pre-mainnet and documented for
 follow-up implementation in
-[`docs/architecture/rozo-stellar-coverage.md`](../../../docs/architecture/rozo-stellar-coverage.md).
+[`docs/protocols/rozo.md`](../../../docs/protocols/rozo.md).
 
 | Variant | Status | Decoder support |
 |---|---|---|
@@ -106,7 +106,7 @@ widening this package; see the architecture doc §Decoder design.
 
 ## References
 
-- Architecture doc: [`docs/architecture/rozo-stellar-coverage.md`](../../../docs/architecture/rozo-stellar-coverage.md)
+- Architecture doc: [`docs/protocols/rozo.md`](../../../docs/protocols/rozo.md)
 - Upstream source: https://github.com/RozoAI/rozo-intents-contracts
 - v1 contract on StellarExpert:
   https://stellar.expert/explorer/public/contract/CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL

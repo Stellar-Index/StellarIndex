@@ -34,8 +34,9 @@ Migration is staged: spike, shadow deploy, cutover with the Pages project kept f
 - No file ceiling, no baked-error pages, and one render path once cleanup finishes.
 - A Workers runtime to operate, with request-level error alerting replacing build-time fail-hard.
 - Stage 1 (spike) is done and Stage 2 (shadow deploy) is gated on a Workers-scoped Cloudflare token and traffic-modeled Workers cost numbers must be reviewed before cutover, so this is a plan in progress, not deployed state.
+- Stage 1 findings Stage 2 must close: `dynamicParams = false` entity routes 404 under the Worker until flipped and the Pages Function shells deleted; `public/_headers` (CSP) does not cover Worker-rendered HTML; `buildFetch` fails hard, which is a bare 500 at request time; `staticAssetsIncrementalCache` is read-only, so real ISR needs an R2/KV cache, and Workers assets cap at 20,000 files.
 - Rejected: shrinking the prerender sets (keeps every failure class), a static-plus-Worker hybrid (two render paths forever), self-hosting Next on r1 (couples explorer uptime to one box).
 
 ## Evidence
 
-`docs/architecture/adr-0044-stage1-spike.md`, `web/explorer/wrangler.ssr.jsonc`, `.github/workflows/cf-ssr-shadow.yml`.
+`web/explorer/open-next.config.ts`, `web/explorer/wrangler.ssr.jsonc`, `.github/workflows/cf-ssr-shadow.yml`.

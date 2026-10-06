@@ -167,8 +167,6 @@ switch is a config-level kill-switch:
 - An ops kill-switch meant to be flipped during an incident is also
   documented in the relevant runbook.
 
-Full policy: [repo-hygiene-plan.md §6](architecture/repo-hygiene-plan.md#6-feature-flags).
-
 ### 2.7. No "temporary" workarounds
 
 Every workaround for an upstream bug / limitation has:

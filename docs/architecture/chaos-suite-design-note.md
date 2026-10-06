@@ -4,7 +4,6 @@ last_verified: 2026-07-24
 status: design ratified (Wave 1 shipped)
 related:
   - test/chaos/README.md
-  - docs/architecture/launch-readiness-backlog.md L5.5
   - docs/operations/sev-playbook.md §"Quarterly live chaos"
   - docs/architecture/ha-plan.md §7.3 (companion: load suite)
 ---

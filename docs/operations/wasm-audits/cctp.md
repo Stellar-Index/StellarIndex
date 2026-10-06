@@ -137,7 +137,7 @@ factory-deployed variants):
   and the ROADMAP #89b/89c topic-match audits below cover its topics.
 
 Decoder coverage matches the full event set the contracts emit, verified against
-the Rust source ([`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)),
+the Rust source ([`docs/protocols/cctp.md`](../../protocols/cctp.md)),
 which `internal/sources/cctp/events.go`'s 26 `Event*` constants mirror; the
 ROADMAP #89b/89c topic-match audits (2026-07-08/09) cross-checked every
 `topic_0_sym` the 3 contracts ever emitted on mainnet against that set and found
@@ -210,7 +210,7 @@ only `stellarindex-ops backfill --source=cctp`.
 - Procedure: [`README.md`](README.md)
 - Decoder source: [`internal/sources/cctp/{events,decode}.go`](../../../internal/sources/cctp/)
 - Source-package README: [`internal/sources/cctp/README.md`](../../../internal/sources/cctp/README.md)
-- Architecture: [`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)
+- Architecture: [`docs/protocols/cctp.md`](../../protocols/cctp.md)
 - Schema-evolution stance: [`docs/architecture/ingest-pipeline.md#contract-schema-evolution`](../../architecture/ingest-pipeline.md#contract-schema-evolution)
 - Backfill gate: `internal/sources/external/registry.go` — `Registry["cctp"].BackfillSafe`
 - Upstream contracts: <https://github.com/circlefin/stellar-cctp>

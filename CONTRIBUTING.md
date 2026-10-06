@@ -214,7 +214,7 @@ checks are enforced by CI; the judgement checks by your reviewer.
 - [ ] If it's an architectural change, there's an ADR.
 - [ ] Every new alert has a runbook.
 - [ ] A new kill-switch is an `internal/config` boolean whose `doc:` tag
-      says what it gates and why ([repo-hygiene-plan.md §6](docs/architecture/repo-hygiene-plan.md#6-feature-flags)).
+      says what it gates and why ([engineering-standards.md §2.6](docs/engineering-standards.md#26-feature-flag-hygiene)).
 
 Full rules: [engineering-standards.md §2.1](docs/engineering-standards.md).
 

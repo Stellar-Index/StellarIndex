@@ -1,297 +1,121 @@
 ---
 title: SemVer policy for Stellar Index
-last_verified: 2026-08-31
+last_verified: 2026-10-06
 status: ratified
 ---
 
 # SemVer policy
 
-The Stellar Index ships **two version dimensions**, but on **ONE
-tag clock** — the root `vX.Y.Z` tag. There is no second tag
-namespace.
+One Go module ([ADR-0005](../adr/0005-monorepo.md)), so **one tag clock**: the root `vX.Y.Z` tag.
+Binaries and `pkg/*` both ship inside it. There is no `pkg/*` tag namespace, because a
+`pkg/client/vX.Y.Z` tag would version nothing (`pkg/client` is a package, not a module). Do not create
+`pkg/*` tags and do not add a `pkg/client/go.mod`: that would remove the package from the root module
+for every consumer pinned on a root tag.
 
-| Surface | Tag form | Bump rules |
+| Surface | Tag | Bump rule |
 |---|---|---|
-| **`pkg/*` packages** (e.g. `pkg/client`) | none of its own — ships inside the root `vX.Y.Z` | A break in a `pkg/*` API bumps the ROOT minor (pre-v1.0) / major (post-v1.0) |
-| **Binary releases** (`stellarindex-api`, `stellarindex-indexer`, …) | `vX.Y.Z` (root tag) | Operator-impact SemVer (config / wire / behaviour) |
+| `pkg/*` (today `pkg/client`) | root `vX.Y.Z` | A `pkg/*` break bumps the root minor (pre-v1.0) or major (post-v1.0) |
+| Binaries (`stellarindex-api`, `stellarindex-indexer`, ...) | root `vX.Y.Z` | Operator-impact SemVer (config, wire, behaviour) |
 
-**Why there is only one clock.** Per ADR-0005 this repo is a SINGLE
-Go module: `find . -name go.mod` returns exactly one file, at the
-root. `pkg/client` is a *package* of `github.com/Stellar-Index/StellarIndex`,
-not a module of its own — so a `pkg/client/vX.Y.Z` git tag would
-version nothing. The Go module proxy agrees: the root module lists
-its full tag history while `.../pkg/client/@v/list` returns "no
-matching versions", and `go get …/pkg/client@v0.2.0` fails with
-`invalid version: unknown revision pkg/client/v0.2.0`. This
-document described that tag mechanism until 2026-08-31 (wave-D
-F-SDK-09, tracked in #361); it never worked. The one stray tag from that
-period, `pkg/client/v0.2.0`, versioned nothing a consumer could install
-and was deleted from the remote on 2026-09-28 (#1031). Do not create
-`pkg/*` tags.
-
-Consumers therefore pin the SDK on the root clock, which is what
-every install surface (README, the explorer's SDK page, llms.txt)
-already tells them to do:
+Consumers pin the SDK on the root clock:
 
 ```sh
 go get github.com/Stellar-Index/StellarIndex/pkg/client          # latest root tag
-go get github.com/Stellar-Index/StellarIndex@v0.50.0             # explicit pin
+go get github.com/Stellar-Index/StellarIndex@v0.105.0            # explicit pin
 ```
 
-A pin is a hash-immutable `require` on the root module, so an SDK
-break ships behind a boundary consumers can hold. What the single
-clock does NOT give them is a *signpost*: a root minor bump means
-"something changed", not "the SDK broke". That is why the
-CHANGELOG rule below is the load-bearing part of this policy — it
-is the only place an SDK break is announced.
+A root minor bump says "something changed", not "the SDK broke". The `CHANGELOG.md` entry is the only
+place an SDK break is announced, so it is mandatory.
 
-**Do NOT "fix" this by adding `pkg/client/go.mod`.** ADR-0005
-rejected the multi-module monorepo explicitly and its revisit
-triggers are unmet. Worse, the split is a live break: the moment
-`pkg/client/go.mod` lands under a root tag, that directory leaves
-the root module's package set, and every consumer currently pinned
-on `github.com/Stellar-Index/StellarIndex vX.Y.Z` loses the package
-on their next `go get -u`. That is strictly worse than the
-signposting gap it would close.
+Nothing enforces these rules mechanically: there is no apidiff or gorelease check in CI. Review and the
+CHANGELOG carry them.
 
 ## SemVer rules for `pkg/*`
 
-### What's covered
+Every package under `pkg/` is public API. `internal/*` is not: refactor, rename or delete it in any PR.
 
-Every package under `pkg/` is part of the public API surface and
-is bound by the rules below. **`internal/*` is NOT** — internal
-packages can be refactored, renamed, or deleted in any PR.
-
-Currently shipped:
-- `pkg/client` — Go SDK for the public API
-  (commit `a60264246`, "pkg/client/ Go SDK skeleton").
-  Wire-shape types (`Envelope`, `Flags`, `Pagination`,
-  `AssetDetail`, …) live in `pkg/client/types.go` rather than a
-  separate `pkg/types` package — see docs/architecture/overview.md#repo-map for the
-  rationale. The server's `internal/api/v1` defines its own
-  envelope intentionally; the duplication is the SemVer firewall
-  between the SDK's public surface and internal handler shapes.
+`pkg/client` is the Go SDK for the public API. Its wire-shape types (`Envelope`, `Flags`, `Pagination`,
+`AssetDetail`, ...) live in `pkg/client/types.go`. The server's `internal/api/v1` keeps its own envelope on
+purpose: the duplication is the firewall between the SDK surface and handler shapes.
 
 ### What constitutes a breaking change
 
-Any of the following bumps the **major** version:
+Major (minor while pre-v1.0):
 
-1. Removing or renaming a public identifier (type, function, variable, constant, method)
-2. Removing a struct field, method receiver, or interface method
-3. Changing a function/method signature in a non-additive way (changing parameter types, return types, or order)
-4. Adding a method to an interface (existing implementers stop satisfying the interface)
-5. Changing the JSON wire shape produced by a public type's `MarshalJSON` (or its generated default)
-6. Tightening input validation in a way that rejects previously-accepted inputs
-7. Changing the documented error semantics — e.g. a function that previously returned `nil, ErrNotFound` now returns `nil, nil`
+1. Removing or renaming an exported identifier (type, function, variable, constant, method).
+2. Removing a struct field or an interface method.
+3. A non-additive signature change (parameter or return types, or their order).
+4. Adding a method to an interface.
+5. Changing the JSON wire shape a public type marshals to.
+6. Tightening input validation so previously accepted inputs are rejected.
+7. Changing documented error semantics (for example `nil, ErrNotFound` becoming `nil, nil`).
 
-Any of the following bumps the **minor** version:
+Minor: a new exported identifier; a new struct field with a sensible zero value; loosened validation; a
+new optional config field; a new error sentinel that still matches the old one under `errors.Is`.
 
-1. Adding a new exported identifier
-2. Adding a new field to a struct (with a sensible zero value)
-3. Loosening input validation
-4. Adding a new optional configuration field
-5. Adding a new error sentinel that's a *more specific* version of an existing one (callers using `errors.Is` against the existing sentinel still match the new one)
+Patch: behaviour-preserving fixes, performance work, docs, tests, internal refactors.
 
-Any of the following is **patch**-only:
+### Pre-v1.0 (`v0.x`)
 
-1. Bug fixes that preserve documented behaviour
-2. Performance improvements with no API change
-3. Documentation-only changes
-4. Test-only changes
-5. Internal refactoring with no `pkg/*` impact
+- Breaking changes are allowed and bump the root **minor**. They MUST be called out in `CHANGELOG.md`
+  under the version where they land.
+- At `v1.0.0` the contract becomes binding; a break then needs `v2.0.0`.
 
-### Pre-v1.0 (`v0.x`) policy
+### Deprecation
 
-`pkg/client` has taken two breaking changes so far — the Unit-D
-wire collapse (9442d311, 2026-06-16) and `Client.Asset()`'s return
-type going `Envelope[AssetDetail]` -> `Envelope[AssetLookup]`
-(edb9057c, 2026-07-09, ADR-0042 LC-040). Neither carries a
-`pkg/client` version of its own, because as established above there
-is no `pkg/*` clock to carry one; both shipped inside the root tag
-current at the time, announced in `CHANGELOG.md`. Until the root
-module tags `v1.0.0`:
+1. Mark the identifier `// Deprecated: <reason>. Use <replacement>.` in the same release.
+2. Keep it for at least one minor version.
+3. Remove it only at the next major boundary.
+4. The CHANGELOG entry of the deprecating release calls it out, and so does the removing release.
 
-- Breaking changes are allowed but MUST be called out in `CHANGELOG.md` under the version where they land
-- Each breaking change should bump the *minor* version (`v0.1 → v0.2`), not the major — Go modules treat `v0.x` as inherently unstable per the spec
-- Public-facing release notes flag every breaking change loudly
+### Invariants
 
-When we tag `v1.0.0` (target: end of public-launch week), the
-contract becomes binding — breaking changes after that require a
-new major version (`v2.0.0`).
-
-### Deprecation policy
-
-When a `pkg/*` identifier is destined for removal:
-
-1. Mark the identifier with a `// Deprecated: <reason>. Use <replacement>.` godoc comment in the same release
-2. Keep it in place for at least **one minor version**
-3. Remove only at the next **major version** boundary
-4. CHANGELOG entry under the deprecating release calls it out; release notes for the removing release reiterate it
-
-Example:
-
-```go
-// Deprecated: use Client.PriceTip instead. Removed in v2.0.0.
-func (c *Client) PriceLive(ctx context.Context, asset string) (*Envelope[PriceSnapshot], error) {
-    return c.PriceTip(ctx, PriceQuery{Asset: asset})
-}
-```
-
-### Tagging mechanics
-
-**There are none for `pkg/*`.** A `pkg/*` change rides the next
-root `vX.Y.Z` tag like any other change; do not cut a
-`pkg/<name>/vX.Y.Z` tag, it would version nothing (see "Why there
-is only one clock" above). What a breaking `pkg/*` change DOES
-require is a CHANGELOG entry that says so in the body — that entry
-is the consumer's only notice.
-
-Two related invariants, so nobody re-derives them the hard way:
-
-- `pkg/client/client.go`'s `userAgent` constant stays **hand-bumped**.
-  Wiring it to `internal/version.Version` would report an empty
-  version to every SDK consumer — the ldflags that populate it only
-  fire on binary builds, never on a downstream `go build`.
-- `pkg/client` imports nothing from this repo. Keep it that way; it
-  is what makes the package safe to consume, and it is the
-  precondition for any future module split should ADR-0005's
-  revisit triggers ever be met.
-
-Pre-tag manual checks for the root tag (the
-[release runbook](../operations/release-process.md) §"Pre-flight"
-captures the same set for the binary clock):
-
-- Working tree matches `main` and the tagged commit (`git status`
-  is clean; `git log -1` is the commit you intend to tag).
-- `CHANGELOG.md` has an entry under the new version with the PRs
-  it includes.
-- The package's own version constant (if any) matches the tag.
-- `make test` is green at the tagged commit.
-
----
+- `pkg/client/client.go`'s `userAgent` constant is **hand-bumped**. Wiring it to `internal/version.Version`
+  would report an empty version to SDK consumers: the ldflags only fire on our own binary builds.
+- `pkg/client` imports nothing from this repo.
 
 ## SemVer rules for binary releases
 
-### Format
+`vX.Y.Z`, tagged once at the release commit. The Makefile's `git describe --tags --always --dirty`
+fills `internal/version.Version` through `-ldflags`, so every binary reports the same version.
 
-`vX.Y.Z`:
+- **Major**: an operator must act beyond a restart.
+- **Minor**: additive, no operator action.
+- **Patch**: operator-invisible.
 
-- **`X` (major)** — bumped when an operator MUST take action beyond the standard restart to upgrade (config schema break, removed endpoint, removed CLI flag, manual data backfill required, breaking wire-shape change)
-- **`Y` (minor)** — bumped on additive changes that need no operator action (new endpoint, new optional config field, new source connector, new aggregation behaviour with safe defaults)
-- **`Z` (patch)** — bumped on operator-invisible changes (bug fixes, performance, internal refactoring, doc-only)
+Pre-v1.0, a breaking change bumps the **minor** and the CHANGELOG entry names the operator action.
 
-Examples:
-- `v0.1.0` — initial public release
-- `v0.2.0` — adds new SSE endpoint (additive)
-- `v0.2.1` — patch fix for an aggregator off-by-one
-- `v1.0.0` — first stable cut, contract becomes binding
+Major-class (operator-breaking) changes:
 
-### Pre-v1.0 (`v0.x`) policy
+1. Config schema change that breaks existing configs.
+2. API wire-shape change for an existing endpoint.
+3. API endpoint removal or rename.
+4. CLI flag removal.
+5. A migration that needs a manual backfill beyond `stellarindex-migrate up`.
+6. Removing a source connector.
+7. A behaviour change in fallback semantics (VWAP, TWAP, last-trade chain).
 
-Until we tag `v1.0.0`:
+Minor-class: a new endpoint, CLI flag, config field (safe default), source connector (`enabled = false`
+by default), opt-in aggregation feature, forward-only migration, or metric.
 
-- Breaking changes bump the **minor** version (`v0.1.x → v0.2.0`), matching the `pkg/*` pre-v1 convention. Major bump is reserved for the v1.0 cut.
-- The CHANGELOG entry under the breaking version MUST call out the operator action explicitly (config edit, migration, etc.).
-- Release notes lead with the breaking change in the summary paragraph.
+Patch-class: fixes that keep documented behaviour, performance, `internal/*` churn, docs, tests,
+behaviour-neutral dependency bumps, rebuilds on a newer Go toolchain.
 
-### What constitutes a breaking change for binaries
+### Release notes
 
-Any of the following bumps minor (pre-v1) or major (post-v1):
+Each `## [<version>]` CHANGELOG section MUST have:
 
-1. **Config schema break** — a field in `/etc/stellarindex.toml` is removed, renamed, or its default semantics change in a way that affects existing operator configs
-2. **API wire-shape change** — JSON response shape changes for an existing endpoint (field removed, field renamed, type changed)
-3. **API endpoint removal or rename** — operators with hardcoded URLs break
-4. **CLI flag removal** — operators with hardcoded systemd unit `ExecStart=` lines break
-5. **DB migration that requires manual backfill** — `stellarindex-migrate up` is not sufficient; operator must run a separate one-off SQL/script
-6. **Source-connector removal** — an enabled source goes away; operators relying on its data must reconfigure
-7. **Behaviour change in fallback semantics** — VWAP→TWAP→last-trade fallback chain behaves differently in a way operators must learn
+1. **Operator action required: yes/no** on the first line.
+2. The Stellar protocol version the release was tested against.
+3. Any breaking `pkg/*` change, in prose (omit if none).
+4. Migration notes, or "None."
+5. The Added / Changed / Deprecated / Removed / Fixed / Security sections.
 
-Any of the following bumps the **minor** version (additive):
-
-1. New API endpoint
-2. New CLI flag (with safe default if omitted)
-3. New `/etc/stellarindex.toml` field (with safe default if omitted)
-4. New source connector (`enabled = false` by default — see `[external]` block convention)
-5. New aggregation feature behind an opt-in flag
-6. New migration that runs forward-only via `stellarindex-migrate up`
-7. New observability metric
-
-Any of the following is **patch**-only:
-
-1. Bug fixes that preserve documented behaviour
-2. Performance improvements with no operator-visible change
-3. Internal refactoring (`internal/*` churn)
-4. Documentation-only changes
-5. Test-only changes
-6. Dependency bumps that don't change behaviour
-7. Re-deploy of identical functionality (e.g. rebuild from same code with newer Go toolchain)
-
-### Tagging
-
-Single repo-level tag at the commit you want to release:
-
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The release builds every binary at this commit. `stellarindex-api
---version` and `stellarindex-indexer --version` both report
-`v0.2.0` for that release. The Makefile's `git describe --tags
---always --dirty` populates `internal/version.Version` at build
-time via `-ldflags`.
-
-### What goes in a binary release note
-
-Every release note (under `## [<version>]` in CHANGELOG.md) MUST
-include:
-
-1. **Stellar protocol version** the release was tested against (e.g. `Tested against pubnet protocol 23`)
-2. **Any breaking `pkg/*` API change** in the release, called out
-   in prose (there is no `pkg/*` version number to cite — see
-   "Why there is only one clock"). If none, omit the item.
-3. **Migration notes** for any change that affects operators (config schema additions, DB migrations, runbook changes). If none, write "None."
-4. **The standard Added/Changed/Deprecated/Removed/Fixed/Security sections**
-5. **Operator action required: yes/no** on the first line — operators reading at-a-glance need to know whether the upgrade is "restart and done" or "edit config first"
-
-### Why SemVer (not CalVer) for binaries
-
-We considered CalVer (`YYYY.MM.DD.N`) and switched to SemVer for the
-binary clock to match the `pkg/*` clock and to give operators a
-single mental model: **"is this a `vX.0.0` cut? must I edit my
-config?"** is more useful than "is this newer than what I'm running?"
-when releases land 2-3× per week.
-
-The release-process runbook still records every cut's UTC date in
-the CHANGELOG section header so the calendar dimension is preserved
-in human-readable form (`## [v0.2.0] — 2026-07-15`).
-
----
-
-## Stability tiers within `internal/*`
-
-`internal/*` is not version-controlled in the SemVer sense, but
-some packages are more refactor-safe than others:
-
-| Package | Stability | Refactor cost |
-|---|---|---|
-| `internal/canonical` | **High** — changes ripple through every source | Coordinated rename PR |
-| `internal/api/v1` | **High** — wire-shape changes break clients | New endpoint instead of field-shape change |
-| `internal/aggregate` | **Medium** — internal consumers only | Standard PR review |
-| `internal/sources/*` | **Low** — per-source decoders churn frequently | Author + CODEOWNER review |
-| `internal/divergence`, `internal/aggregate/anomaly`, `internal/aggregate/baseline`, `internal/aggregate/confidence`, `internal/aggregate/freeze`, `internal/archivecompleteness` | **Low** — recent additions, expected to grow | Standard PR review |
-
-This isn't a SemVer commitment — it's review-effort guidance. A
-PR touching `internal/canonical.Trade`'s field set should land
-with explicit migration notes for every consumer; a PR adding a
-new source in `internal/sources/<venue>/` is the normal flow.
-
----
+Section headers carry the UTC date (`## [v0.2.0] - 2026-07-15`). The runbook is
+[release-process.md](../operations/release-process.md); the GitHub Release body follows
+[RELEASE_NOTES_TEMPLATE.md](../../.github/RELEASE_NOTES_TEMPLATE.md).
 
 ## Cross-references
 
-- [ADR-0005](../adr/0005-monorepo.md) — monorepo / one-Go-module decision; the SemVer commitment on `pkg/*` lives here
-- [`docs/operations/release-process.md`](../operations/release-process.md) — runbook the release engineer follows; implements this policy
-- [`.github/RELEASE_NOTES_TEMPLATE.md`](../../.github/RELEASE_NOTES_TEMPLATE.md) — fill-in template for GitHub Release notes
-- [`CHANGELOG.md`](../../CHANGELOG.md) — every release's entry follows the rules above
-- [`pkg/client/doc.go`](../../pkg/client/doc.go) — package-level statement of v0.x stability promise
+- [ADR-0005](../adr/0005-monorepo.md): one Go module; the `pkg/*` SemVer commitment.
+- [`pkg/client/doc.go`](../../pkg/client/doc.go): the SDK's stated v0.x stability promise.

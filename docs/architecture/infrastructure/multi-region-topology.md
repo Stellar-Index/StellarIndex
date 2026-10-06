@@ -493,8 +493,8 @@ topology-layer summary.
    special case to remove later.
 2. **R2 (AWS us-east-1) joins.** Sync replica joins; Patroni grows
    from 1 → 2 nodes; etcd grows from 1 → 3 nodes. Application-layer
-   replication kicks in. Tracked as **L4.14** in
-   [`launch-readiness-backlog.md`](../launch-readiness-backlog.md).
+   replication kicks in. Tracked in
+   [`v1-launch-plan.md`](../../operations/v1-launch-plan.md).
    Validator 2 promotes at the same time (per validator-rollout
    Phase C).
 3. **R3 (Vultr Singapore) joins.** Async replica joins; etcd grows

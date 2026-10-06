@@ -16,10 +16,8 @@ describe('CompanyPage', () => {
     expect(screen.getByText(/still pre-v1/i)).toBeInTheDocument();
   });
 
-  // #321: the page told the public that "the roadmap that gets us to v1"
-  // lives in launch-readiness-backlog.md — a doc frozen since 2026-05-13
-  // that contains none of the actual v1 gate, and is now formally retired.
-  // The public roadmap link must point at the maintained plan.
+  // The public roadmap link must point at the maintained plan, not a
+  // retired tracker.
   it('points the public roadmap link at the maintained launch plan, not the retired backlog', () => {
     render(<CompanyPage />);
 

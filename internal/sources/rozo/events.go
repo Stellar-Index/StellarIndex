@@ -3,9 +3,9 @@
 // Currently scoped to **v1 Payment** — the only mainnet-live Rozo
 // contract at 2026-05-20. v2 Forwarder + IntentBridge and the newer
 // rozo-intents schema are pre-mainnet and documented in
-// docs/architecture/rozo-stellar-coverage.md for follow-up.
+// docs/protocols/rozo.md for follow-up.
 //
-// Design rationale: docs/architecture/rozo-stellar-coverage.md.
+// Design rationale: docs/protocols/rozo.md.
 //
 // Wiring (46e0087e8): decode.go decodes; consumer.go projects each event
 // into the canonical rozo.Event row; dispatcher_adapter.go is the

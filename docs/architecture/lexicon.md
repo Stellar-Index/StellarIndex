@@ -1,105 +1,52 @@
 ---
 title: Domain lexicon — one word per concept
-last_verified: 2026-08-31
+last_verified: 2026-10-06
 status: binding
 ---
 
 # Domain lexicon
 
-**One word per concept.** This is the codification pass of the
-2026-07-01 maintainability audit's D2 dimension
-(https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/maintainability-audit-2026-07-01/D2-naming-lexicon.md):
-the canonical term for every domain concept, the deviations that exist
-today (with file:symbol pointers), and the migration rule.
+One word per concept. `scripts/ci/lint-lexicon.sh` enforces the grep-able
+subset (verbs, slog-only, `coin` vocabulary and constructor-shape ratchet
+in `scripts/ci/lint-lexicon.baseline`); reviewers cite this file for the rest.
 
 ## The migration rule
 
-1. **New code MUST use the canonical term.** No new `Coin*` symbol, no
-   new `venue` outside config, no third asset-id encoding.
-   `scripts/ci/lint-lexicon.sh` enforces the grep-able subset (runs in
-   `verify.sh` and CI); the rest is review-enforced via this doc.
-2. **Renames ride other changes.** Do not open rename-only PRs; when a
-   deviating file is being materially edited anyway, migrate its
-   vocabulary in the same PR and delete its
-   `scripts/ci/lint-lexicon.baseline` entry.
-3. **The `Coin*`→`Asset*` bulk rename landed 2026-07-09** (audit
-   rename-map item 1; ROADMAP #47/D2). It swept the storage
-   read-layer (`internal/storage/timescale/asset_catalogue.go`) + the
-   api read-path (`internal/api/v1/asset_catalogue.go`,
-   `asset_catalogue_cache.go`, `asset_catalogue_extension.go`) in one
-   go, plus the `pkg/client` v0.2.0 breaking window (`CoinTopMarket`
-   → `AssetTopMarket`) and the `internal/currency`
-   `NetworkEntry`/`Networks` → `IssuanceEntry`/`Issuance` naming debt
-   that rode with it. The deviations below are what's left —
-   permanent, not pending: the entity_type="coin" wire vocabulary and
-   the literal proper name "USD Coin" don't mean "asset" and are out
-   of scope for this rename.
+1. New code MUST use the canonical term: no new `Coin*` symbol, no new
+   `venue` outside config, no third asset-id encoding.
+2. Renames ride other changes. No rename-only PRs; when a deviating file is
+   edited anyway, migrate its vocabulary and delete its baseline entry.
+   Baseline growth needs a `Baseline-Growth:` commit trailer.
 
 ## Concept → canonical term
 
-| Concept | Canonical | Deprecated / restricted synonyms | Where the deviations live |
-|---|---|---|---|
-| A tradeable asset (classic, SAC, SEP-41, fiat) | **asset** | **coin** (rename landed 2026-07-09 — `Coin*` → `Asset*` throughout `internal/storage/timescale/asset_catalogue.go`, `internal/api/v1/asset_catalogue*.go`, `pkg/client`; the dangling `CoinsOptions` doc comment on `pkg/client/endpoints.go` was deleted along with it). What's left is permanent, not a deviation to migrate: `internal/api/v1/changes.go:62` (wire `entity_type="coin"` on `/v1/changes/coin/{id}` — a fixed two-value wire enum, not our legacy catalogue naming), `cmd/stellarindex-aggregator/change_summary.go` (`seenCoins`/`Type: "coin"`, same wire enum), and the literal proper name `"USD Coin"` wherever a verified currency's real-world name is rendered (`internal/api/v1/assets.go`, `pkg/client/types.go`, test fixtures). **currency** (restricted): allowed ONLY for the verified-currency catalogue domain (`internal/currency/` — the hand-curated trust surface; that is its real name, keep it). Never for a generic asset. |
-| Asset identity (wire + storage) | **dash form**: `CODE-ISSUER`, `native`, `C…`, `fiat:USD` / `crypto:XLM` / `rwa:…` prefixes (`canonical.ParseAsset`) | **colon form** `CODE:ISSUER` + literal `XLM`: `internal/supply/key.go` (`supply.AssetKey`) — a second, deliberate encoding for supply hypertable keys. Net effect: native has three ids (`native`, `XLM`, `crypto:XLM`), every classic asset has two — a standing "why did the join return zero rows" source. Rule: NEVER introduce a third encoding; convert at the seam like `internal/storage/timescale/usd_volume_quote_spec.go` does (normalises `supply.AssetKey` colon form via `canonical.ParseAsset`). Audit rename-map item 2 (converge or rename to `SupplyKey`) is open. |
-| A base/quote trading pair | **pair** (`canonical.Pair`, `/v1/pairs`) | **market** — accepted ONLY as the public wire surface of `/v1/markets` + `/v1/markets/sources` (`internal/api/v1/market_sources.go`). Picking one public noun is an API-version decision (audit rename-map item 4); internally, say pair. |
-| A price value | **price** | **rate** — FX-vendor terminology only, inside the FX pollers and the forex worker (`internal/sources/external/ecb/`, `exchangeratesapi/`, `forex/`). NOTE: `RateLimit*` / `ratelimit` is UNRELATED (request throttling) — never sweep it in a rename. |
-| A data origin | **source** (`canonical.Trade.Source`, `external.Registry`) | **venue** — config-surface only (`internal/config/config.go:242` `ExternalVenueConfig` + AGENTS.md recipes); **exchange** — a source *class* (`external.ClassExchange`), not a synonym for source. New code: source. |
-| Ledger | **ledger** | Clean — zero `block` leakage. Keep it that way. Route note: `/v1/ledgers` (collection) vs `/v1/ledger/tip` + `/v1/ledger/stream` (singleton sub-resources) is accepted, documented drift. |
-| Transaction | **`Transaction`** for types/XDR; **`Tx`/`tx_hash`** for field names + short forms | The boundary is deliberate: full word for types, abbreviated for the ubiquitous hash field. Route drift: API `/v1/tx/{hash}` vs explorer `/transactions/{hash}` (SEO decision, 2026-06-24) — accepted, don't add a third. |
-| Operation index within a tx | **`OpIndex`** (~440 uses) | `OperationIndex` (~116 uses) — the minority form; converge to `OpIndex` when touching a file anyway (audit rename-map item 3). New code: `OpIndex`. |
-| Soroban contract event (transport level) | **event** (`consumer.Event`, `internal/events`, `soroban_events`) | — |
-| An executed swap/fill | **trade** (`canonical.Trade`, `trades`) | — |
-| A recorded per-source price point | **observation** (`/v1/price` … `Observations`, `divergence_observations`) | — |
-| An oracle push | **update** (`oracle_updates`) | — (event/trade/observation/update are four DISTINCT concepts, each with exactly one term — don't blur them) |
-| Asset issuer | **issuer** | **anchor** — restricted to the SEP-1/SEP-24 anchor sense (an anchor IS an issuer with services); not a general synonym. |
-| Restricting a caller-supplied value to a permitted range | **clamp** = SATURATE (the value is silently adjusted to the nearest permitted one and the request proceeds); **reject** = 400 (the request fails and nothing is served) | Say which one. The repo uses BOTH behaviours and they are not interchangeable: the ADR-0015 closed-bucket time adjustment genuinely saturates (`pkg/client/endpoints.go:348`), while every `limit` / `window_seconds` range is enforced by rejection (`internal/api/v1/price_tip.go`, `history.go`, `issuers.go` all return 400, and the OpenAPI `minimum`/`maximum` say so). Writing "clamps to [1, 60]" for the second kind tells a caller their out-of-range value will be quietly honoured at the boundary, when in fact the call fails — on a pricing surface that is the difference between a VWAP over a window they didn't ask for and a loud error. Corrected across `pkg/client` 2026-08-31 (wave-D F-SDK-09); `docs/adr/0018-api-consistency-surfaces.md:74` still reads "clamped 1-60 s" and is left alone — ADRs are immutable (`docs/adr/README.md`), superseded rather than edited. |
-
-## Verb lexicon (already consistent — enforced at zero)
-
-| Verb | Meaning | Notes |
+| Concept | Canonical | Restricted / deprecated |
 |---|---|---|
-| `Get…` | single keyed read | returns one item or error |
-| `List…` | slice read | plural noun; keyset pagination where applicable |
-| `…Batch` | multi-key read | e.g. `GetAssetsATHBatch` |
-| `New…` | constructor | the universal ctor verb — see engineering-standards "Go idioms" for the signature shape |
-| `Load…` | read embedded/file data | e.g. `currency.LoadEmbedded`, `incidents.Load` |
+| Tradeable asset | **asset** | **coin**: only the wire enum `entity_type="coin"` (`internal/api/v1/changes.go`) and the proper name "USD Coin". **currency**: only the verified-currency catalogue (`internal/currency/`), never a generic asset. |
+| Asset identity | dash form `CODE-ISSUER`, `native`, `C…`, `fiat:`/`crypto:`/`rwa:` prefixes (`canonical.ParseAsset`) | Colon form `CODE:ISSUER` + `XLM` lives only in `internal/supply/key.go`. NEVER add a third encoding; convert at the seam (see `usd_volume_quote_spec.go`). |
+| Base/quote pair | **pair** | **market** only for the public `/v1/markets*` routes. |
+| Price | **price** | **rate** only in FX pollers. `RateLimit*` is unrelated throttling. |
+| Data origin | **source** | **venue** only in config (`ExternalVenueConfig`); **exchange** is a source class. |
+| Transaction | `Transaction` for types, `Tx`/`tx_hash` for fields | Routes `/v1/tx/{hash}` vs explorer `/transactions/{hash}` are accepted drift; no third. |
+| Op index | `OpIndex` | `OperationIndex` (minority; converge when touching the file). |
+| Event / trade / observation / update | `consumer.Event` / `canonical.Trade` / per-source price point / oracle push | Four distinct concepts, one term each. Don't blur them. |
+| Issuer | **issuer** | **anchor** only in the SEP-1/SEP-24 sense. |
+| Range-limiting a caller value | **clamp** = saturate and proceed; **reject** = 400 | Say which. ADR-0015 closed-bucket adjustment saturates; `limit` / `window_seconds` ranges reject. |
 
-**Banned verbs:** `Fetch`, `Make`, `Enumerate`, accessor-`Read` — the
-repo has zero today and `lint-lexicon.sh` fails the build on the first
-one (`func Fetch…` / `func Make…`).
+## Verbs
 
-## Type-suffix system (already consistent — don't invent new ones)
+`Get…` single keyed read; `List…` slice read; `…Batch` multi-key read;
+`New…` constructor (signature shape: engineering-standards "Go idioms");
+`Load…` read embedded/file data. Banned: `Fetch`, `Make`, `Enumerate`,
+accessor-`Read` (lint fails on `func Fetch…` / `func Make…`).
 
-`*View` (wire projection) · `*Row` (storage row) · `Envelope[T]` (API
-envelope) · `*Snapshot` (point-in-time aggregate) · `*Response` (wire
-response; the lone `MarketSourcesResp` abbreviation in
-`internal/api/v1/market_sources.go:46` is grandfathered — public
-SemVer surface, accept-with-doc) · `*Options` (constructor options).
+## Type suffixes
 
-## What NOT to churn
+`*View` wire projection, `*Row` storage row, `Envelope[T]` API envelope,
+`*Snapshot` point-in-time aggregate, `*Response` wire response, `*Options`
+constructor options. Don't invent new ones.
 
-The audit found these consistent — leave them alone: the
-`fiat:`/`crypto:`/`rwa:` off-chain prefixes; `Source`/`SourceName`;
-plural collection routes (two documented singular exceptions above);
-package plural/singular mix (`events`/`incidents` vs
-`currency`/`supply` — cosmetic, M2, not worth the git-blame damage).
+## Leave alone
 
-## Enforcement
-
-- `scripts/ci/lint-lexicon.sh` — zero rules (Fetch/Make verbs,
-  non-slog loggers) + shrink-only per-file ratchet
-  (`scripts/ci/lint-lexicon.baseline`) for `coin` vocabulary and the
-  two non-canonical constructor shapes. Wired into `verify.sh`,
-  `make lint-lexicon`, and CI's import-checks job; baseline growth
-  requires a `Baseline-Growth:` commit trailer
-  (`scripts/ci/lint-baseline-growth.sh`).
-- Everything else in this doc is review-enforced; reviewers cite this
-  file by concept row.
-
-## Related
-
-- [engineering-standards.md](../engineering-standards.md) — the "Go
-  idioms" section (D6 companion to this doc).
-- [supply-pipeline.md § Asset identity](supply-pipeline.md#asset-identity) — the
-  `/v1/assets` contract left by the completed `/v1/coins` migration (the wire side is done;
-  this lexicon tracks the surviving internal vocabulary).
+`fiat:`/`crypto:`/`rwa:` prefixes, `Source`/`SourceName`, plural collection
+routes, package plural/singular mix.

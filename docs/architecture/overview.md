@@ -47,6 +47,13 @@ rational arithmetic (ADR-0003). Everything is served through a public
 - **Contract truth:** `openapi/stellar-index.v1.yaml`; handlers, SDK and
   explorer types are machine-reconciled against it.
 
+## Known gaps
+
+- Customer platform: no MFA of any kind (INV-1125). Staff are `users.is_staff`
+  on the ordinary 30-day session, with no IP allowlist or separate admin host.
+- `audit_log` is append-only (migration 0179) with no retention job; erasure
+  scrubs rows in place (0188).
+
 ## Repo map
 
 One Go module. `internal/` is private and `pkg/` is the public SemVer

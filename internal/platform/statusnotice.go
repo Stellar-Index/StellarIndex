@@ -49,7 +49,7 @@ const (
 )
 
 // StatusNotice is one operator-posted customer-facing status banner
-// (platform-spec §7.1 "Trigger maintenance mode banner"). Written only
+// Written only
 // by the operator-tier admin endpoints (every mutation audit-logged),
 // read by the public `/v1/status/notices` surface.
 type StatusNotice struct {

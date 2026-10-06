@@ -65,7 +65,7 @@ func newAdminTestServerWithPlatformKeys(
 }
 
 // postJSON POSTs with a stock X-Reason. Every admin write requires the
-// header (platform-spec §7.2); use status_notices_test.go's
+// header; use status_notices_test.go's
 // postJSONWithReason directly to exercise the missing-header path.
 func postJSON(t *testing.T, url, body string) *http.Response {
 	t.Helper()

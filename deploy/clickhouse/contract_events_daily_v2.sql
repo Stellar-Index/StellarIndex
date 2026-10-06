@@ -26,10 +26,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- contract_events_daily uniqExact → uniqCombined(17) rebuild (2026-07-09
--- incident). Full design + reader evidence + measured numbers:
---   docs/architecture/contract-events-daily-redesign.md
--- Exact r1 apply sequence (step-by-step, with verification queries):
---   docs/architecture/contract-events-daily-redesign.md § Procedure
+-- incident).
 --
 -- This file is NOT auto-applied by any bootstrap and is NOT idempotent
 -- re-run tooling — it is the operator-run migration artifact for an

@@ -724,7 +724,7 @@ ssh r1 'systemctl restart stellarindex-api'
 
 **Seal key (`STELLARINDEX_WEBHOOK_SEAL_KEY`)** Signing keys (current and rotation-previous) are sealed at rest under `vault_webhook_seal_key` (migration 0204). An unset key on the API logs a startup warning and every delivery to a sealed webhook counts `outcome="lookup_error"` and waits; set the vault value and redeploy to drain them. A changed key is terminal (`no_secret`) for every sealed webhook: there is no in-place seal-key rotation. To rotate, restore the old value, or accept that customers must recreate their webhooks (edit and delete work without the key).
 
-**Related** `internal/customerwebhook/worker.go`; [anomaly-freeze-engaged](anomaly.md#stellarindex_anomaly_freeze_engaged) (the upstream event that fires SEV-1 and then the customer webhook); [platform-spec](../../architecture/platform-spec.md) (this runbook covers OUTBOUND deliveries, us to customer; the Stripe billing bridge is the INBOUND surface, and a degraded bridge can leave dashboards stale while this worker is green).
+**Related** `internal/customerwebhook/worker.go`; [anomaly-freeze-engaged](anomaly.md#stellarindex_anomaly_freeze_engaged) (the upstream event that fires SEV-1 and then the customer webhook); (this runbook covers OUTBOUND deliveries, us to customer; the Stripe billing bridge is the INBOUND surface, and a degraded bridge can leave dashboards stale while this worker is green).
 
 ## stellarindex_customer_webhook_delivery_exhausted
 
