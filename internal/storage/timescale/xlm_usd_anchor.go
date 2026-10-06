@@ -84,8 +84,8 @@ func xlmUSDAnchorPick(lo, hi, sac string) string {
 
 // xlmUSDAnchorAt renders [xlmUSDAnchorPick] as of instant ts: no row when no
 // form printed within [xlmUSDAnchorMaxAge] before it. For single-row paths;
-// batch paths join [xlmUSDAnchorGridCTE], which TestXLMUSDAnchor_ShapesAgree
-// holds to the same value.
+// batch paths join [xlmUSDAnchorGridCTE], which
+// TestXLMUSDAnchor_ShapesShareOnePopulation holds to the same value.
 func xlmUSDAnchorAt(ts, sac string) string {
 	return xlmUSDAnchorPick("("+ts+") - INTERVAL '"+xlmUSDAnchorMaxAge+"'", ts, sac)
 }
