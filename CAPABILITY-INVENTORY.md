@@ -88,7 +88,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 ## Ingest / decode — `ledgerstream`, `dispatcher`, `pipeline`, `projector`
 - Stream archive/live LCM → `ledgerstream.Stream`, `StreamArchiveThenLive`, `NewTieredDataStore` (Galexie→MinIO only, never rpc)
 - Route a ledger → `dispatcher.New(decoders...)`; implement `Decoder`/`OpDecoder`/`ContractCallDecoder`/`LedgerEntryChangeDecoder` (pick by what the source emits)
-- Add a projected Soroban source → a case in `projector/registry.go::buildSource` + an arm in `pipeline/sink.go::IsProjectedEvent` (projector is the ONLY writer; catch-up = `projector-replay`)
+- Add a projected Soroban source → one `SourceSpec` in `pipeline/source_spec.go` with `Projector` set (projector is the ONLY writer; catch-up = `projector-replay`)
 - Add a CEX/FX venue → implement `external.Connector`/`Streamer`/`Poller`/`Backfiller` + register `Metadata` in `external/registry.go` (copy binance/kraken; NOT `consumer.Source`)
 - WS streamer lifecycle (dial/subscribe/read/reconnect + backoff/jitter/metrics) → `wsclient.Loop{...}.Run(ctx, out)` + `wsclient.Jitter`/`KeepAliveHTTPClient`/`ClassifyDisconnect` — never hand-roll a reconnect loop in a venue package
 

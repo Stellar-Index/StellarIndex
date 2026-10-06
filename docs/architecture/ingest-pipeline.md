@@ -93,13 +93,13 @@ or keep cursors. If you are about to add any of those, the work belongs
 in the dispatcher or `decode.go`.
 
 **Adding a source:** the decoder package; a registration on the right
-dispatcher seam; and, for a projected source, a case in
-`internal/projector/registry.go::buildSource` AND an arm in
-`internal/pipeline/sink.go::IsProjectedEvent`. The five wiring sites
-(`HandleEvent`, `IsProjectedEvent`, `tradeFromEvent`, `buildSource`,
-`BuildDispatcher`) are AST-checked together by
-`TestLockstep_RegistrySourcesFullyWired`
-(`internal/pipeline/lockstep_ast_test.go`).
+dispatcher seam; and, for a projected source, `Projector` set on the same
+`SourceSpec`. One entry in `internal/pipeline/source_spec.go` drives
+`BuildDispatcher`, the projector registry and `IsProjectedEvent`; the
+`HandleEvent` persist arm and `tradeFromEvent` stay per-event-type switches.
+`TestLockstep_SpecsListEveryEventType` and
+`TestLockstep_ProjectedEventsHavePersistArms`
+(`internal/pipeline/lockstep_ast_test.go`) check them together.
 
 ## The projector — one writer per projected domain
 
@@ -109,7 +109,7 @@ tables: trades for soroswap/aquarius/phoenix/comet/sushiswap_v3,
 `aquarius_*`, `upshift_vault_events`, `defindex_*`, `sorocredit_*`,
 `soroswap_skim`, `cctp_events`, `rozo_events`, `sep41_*`, and
 reflector/redstone `oracle_updates`. The authoritative list is
-`IsProjectedEvent`; its default branch is the non-projected list: `sdex`,
+the specs with `Projector` set in `internal/pipeline/source_spec.go`; its default branch is the non-projected list: `sdex`,
 `band`, `soroswap_router`, external CEX/FX, supply observers.
 
 - It reads ClickHouse `contract_events` by default
@@ -222,8 +222,8 @@ merge.
 `Replay-Plan:` commit trailer that `scripts/ci/lint-replay-plan.sh`
 requires on a decoder or allow-list change names a command from this
 table. First ask **who writes the domain** (invariant [7]): a source is
-PROJECTED if it has a case in `projector/registry.go::buildSource` and
-an arm in `pipeline/sink.go::IsProjectedEvent`.
+PROJECTED if its `SourceSpec` in `pipeline/source_spec.go` has `Projector`
+set.
 
 | The domain | The replay command |
 |---|---|

@@ -12,12 +12,10 @@ package projector_test
 // projector.
 
 import (
-	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -262,7 +260,7 @@ func TestProjectedEventSet_Golden(t *testing.T) {
 		}
 	}
 	// Reverse direction: a type added to the switch but not to the golden.
-	requireSame(t, "IsProjectedEvent case list (sink.go AST)", astProjectedCases(t), keysOf(goldenProjectedEvents))
+	requireSame(t, "projected event types listed by pipeline.Specs", specProjectedEvents(), keysOf(goldenProjectedEvents))
 }
 
 func TestSoleWriterSet_Golden(t *testing.T) {
@@ -397,33 +395,18 @@ func TestScriptKnownSources_Golden(t *testing.T) {
 	}
 }
 
-func astProjectedCases(t *testing.T) []string {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "pipeline", "sink.go"), nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	for _, d := range f.Decls {
-		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "IsProjectedEvent" {
+// specProjectedEvents names every event type a projected pipeline spec
+// lists, spelled as sink.go spells it (package dir basename + type).
+func specProjectedEvents() []string {
+	names := map[string]bool{}
+	for _, spec := range pipeline.Specs() {
+		if spec.Projector == nil {
 			continue
 		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			cc, ok := n.(*ast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, e := range cc.List {
-				if se, ok := e.(*ast.SelectorExpr); ok {
-					out = append(out, fmt.Sprintf("%s.%s", se.X.(*ast.Ident).Name, se.Sel.Name))
-				}
-			}
-			return true
-		})
+		for _, ev := range spec.Events {
+			t := reflect.TypeOf(ev)
+			names[path.Base(t.PkgPath())+"."+t.Name()] = true
+		}
 	}
-	if len(out) == 0 {
-		t.Fatal("no cases parsed from IsProjectedEvent")
-	}
-	return out
+	return keysOf(names)
 }

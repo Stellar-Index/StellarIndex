@@ -30,14 +30,12 @@ invariants #6 (ingest path), #7 (one writer per domain), ADR-0035 (gating).
 
 ## 2 — Wire it (6 edits — miss one and the source silently emits nothing)
 - [ ] `internal/config/validate.go` → add the name to **`KnownSources`** (map ~L31).
-- [ ] `internal/pipeline/dispatcher.go` → `BuildDispatcher`: `case <name>.SourceName:`
-      appending `<name>.NewDecoder(...)` to `decoders` (or `opDecoders`/`callDecoders`).
+- [ ] `internal/pipeline/source_spec.go` → add one `SourceSpec` to `specs` (`Name`, `Events`,
+      `NewDecoder`); `BuildDispatcher` and the projector registry derive from it. Set
+      `Projector` (a `ProjectorSpec`) **if** this is a projected Soroban source (writes via
+      `soroban_events`).
 - [ ] `internal/pipeline/sink.go` → `HandleEvent`: `case <name>.TradeEvent:` → your
       `persistTrade(...)` / `Store.Insert<X>` writer.
-- [ ] `internal/pipeline/sink.go` → **`IsProjectedEvent`**: add your event types to the
-      projected switch **if** this is a projected Soroban source (writes via `soroban_events`).
-- [ ] `internal/projector/registry.go` → `buildSource`: `case <name>.SourceName:` returning
-      a `Source{Decoder:…}` — required for any projected source.
 - [ ] `internal/sources/external/registry.go` → `Registry` map: a `Metadata{Class, Subclass,
       IncludeInVWAP, BackfillSafe:false, …}` entry (`BackfillSafe` stays false until a WASM audit).
 
@@ -97,7 +95,7 @@ contract roster, and the only line about it read
 reads identically for a protocol with no pools yet.
 
 ## Guards that will catch mistakes
-`TestIsProjectedEvent_TableDriven` fails if the sink/projector arms drift; `config.Validate`
+`TestIsProjectedEvent_TableDriven` and the projector golden source-set test fail if the spec drifts; `config.Validate`
 rejects an `enabled_sources` name missing from `KnownSources`; `lint-imports.sh` enforces
 boundaries; `scripts/ci/lint-source-enablement.sh` fails when a `KnownSources` name is
 neither enabled nor declared not-yet-enabled, and when a declared-unrun source is still

@@ -63,10 +63,10 @@ Copy the `binance` / `kraken` package as the template.
 **Full step-by-step checklist: [docs/contributing/add-onchain-source.md](../../docs/contributing/add-onchain-source.md).**
 The package is SIX files (`README.md`, `events.go`, `decode.go`, `consumer.go`,
 **`dispatcher_adapter.go`** — the production seam that implements `dispatcher.Decoder`;
-this is the object the dispatcher actually calls — and `source_test.go`), PLUS **six
-wiring edits in other packages** (config `KnownSources`, `pipeline/dispatcher.go`
-BuildDispatcher, `pipeline/sink.go` HandleEvent + IsProjectedEvent,
-`projector/registry.go` buildSource, `external/registry.go` Metadata). Miss a wiring
+this is the object the dispatcher actually calls — and `source_test.go`), PLUS **four
+wiring edits in other packages** (config `KnownSources`, one `SourceSpec` in
+`pipeline/source_spec.go` (set `Projector` for a projected source), `pipeline/sink.go`
+HandleEvent + tradeFromEvent, `external/registry.go` Metadata). Miss a wiring
 edit and the source compiles, registers nowhere, and silently emits nothing. Template:
 `internal/sources/soroswap/`. Reuse the shared helpers (`internal/scval`,
 `canonical.Amount`) — check CAPABILITY-INVENTORY.md before writing utilities.
