@@ -1176,6 +1176,8 @@ func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]
 // getAssetPriceHistory24hSQL is GetAssetPriceHistory24h's query,
 // hoisted to a package constant so the function body stays under the
 // funlen threshold (same treatment as getNativeAssetSQL).
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetPriceHistory24hSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
@@ -1250,20 +1252,8 @@ var getAssetPriceHistory24hSQL = `
 		      ) u
 		  ) z WHERE rn = 1
 		),
-		xlm_usd_per_hour AS (
-		  -- Same stablecoin-proxy fallback as the listing query —
-		  -- prices_1m doesn't carry (native, fiat:USD) rows.
-		  SELECT DISTINCT ON (h) date_trunc('hour', bucket) AS h, vwap::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   ORDER BY h, bucket DESC, ` + usdQuotePref + `
-		)
+		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_hour", "h", "hour",
+	`date_trunc('hour', now() - INTERVAL '23 hours')`, "$2::text") + `
 		SELECT
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
@@ -1317,6 +1307,8 @@ func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]A
 // getAssetPriceHistory7dSQL is GetAssetPriceHistory7d's query, hoisted
 // to a package constant so TestProxyQuoteLists_Lockstep can pin its XLM
 // arms alongside getAssetPriceHistory24hSQL.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetPriceHistory7dSQL = `
 		WITH days AS (
 		  SELECT generate_series(
@@ -1388,18 +1380,8 @@ var getAssetPriceHistory7dSQL = `
 		      ) u
 		  ) z WHERE rn = 1
 		),
-		xlm_usd_per_day AS (
-		  SELECT DISTINCT ON (d) date_trunc('day', bucket) AS d, vwap::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   ORDER BY d, bucket DESC, ` + usdQuotePref + `
-		)
+		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_day", "d", "day",
+	`date_trunc('day', now() - INTERVAL '6 days')`, "$2::text") + `
 		SELECT
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
@@ -1437,8 +1419,9 @@ var getAssetPriceHistory7dSQL = `
 // there is no Tether on Stellar (the verified catalogue lists no
 // stellar network for USDT); that asset trades unpegged (~\-e.09),
 // which fabricated an XLM "ATH" of \.78 on thin Jan-2025 days
-// (volume_usd=0 dust). USD proxies are the verified USDC issuer +
-// fiat:USD only; new proxies require a verified-catalogue entry.
+// (volume_usd=0 dust). USD proxies are [usdProxyQuotes]: the verified
+// USDC issuer, its SAC (where the Soroban XLM/USD book trades) and
+// fiat:USD; new proxies require a verified-catalogue entry.
 //
 // A day-bucket only counts if its pair cleared [athMinDayVolumeUSD] and
 // [athMinDayTrades], so a lone print on an empty book cannot set the high.
@@ -1458,8 +1441,8 @@ const (
 // GetAssetATH returns the asset's all-time-high USD price.
 //
 // Sources `prices_1d` filtered to USD-denominated quotes — i.e.
-// the canonical USDC issuer, plus the synthetic `fiat:USD`
-// quote used by off-chain CEX feeds. Returns the (vwap, bucket_day)
+// [usdProxyQuotes]: the canonical USDC issuer and its SAC, plus the
+// synthetic `fiat:USD` quote used by off-chain CEX feeds. Returns the (vwap, bucket_day)
 // tuple where vwap is maximal.
 //
 // For native XLM the asset is on the BASE side of every USD pair,
@@ -1476,10 +1459,7 @@ func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, err
 		    to_char(bucket, 'YYYY-MM-DD"T"00:00:00"Z"')
 		  FROM prices_1d
 		 WHERE base_asset = ANY($1)
-		   AND quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'fiat:USD'
-		   )
+		   AND quote_asset IN (` + usdProxyQuotes + `)
 		   AND vwap IS NOT NULL
 		   AND volume_usd >= $2::numeric
 		   AND trade_count >= $3::bigint
@@ -1521,10 +1501,7 @@ func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[s
 		  FROM prices_1d p
 		  JOIN want w ON w.form = p.base_asset
 		 WHERE p.base_asset = ANY($1)
-		   AND p.quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'fiat:USD'
-		   )
+		   AND p.quote_asset IN (` + usdProxyQuotes + `)
 		   AND p.vwap IS NOT NULL
 		   AND p.volume_usd >= $3::numeric
 		   AND p.trade_count >= $4::bigint
@@ -1770,7 +1747,7 @@ var getAssetBySlugSQL = `
 		    ) t
 		),
 		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)) + `,
-		` + xlmUSDCTEs + `
+		` + xlmUSDNativeCTEs("$2::text") + `
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.
 		    --
@@ -1815,7 +1792,7 @@ var getAssetBySlugSQL = `
 		    NULL::numeric                         AS sort_vol_usd,
 		    NULL::int                             AS rank_tier
 		  FROM chosen ca
-		  LEFT JOIN per_asset_24h_vol vol ON true` + priceArmJoins + `
+		  LEFT JOIN per_asset_24h_vol vol ON true` + priceArmJoins(xlmUSDLateralJoin("$2::text")) + `
 `
 
 // GetAssetBySlug looks up by friendly slug (USDC, AQUA, EURC),
@@ -1868,7 +1845,7 @@ func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow
 // Always returns a populated row (no sql.ErrNoRows path) — the
 // underlying CTEs LEFT JOIN out to NULL when there's no data.
 func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
-	row, err := scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL))
+	row, err := scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL, canonical.NativeSACContractID()))
 	if err != nil {
 		return row, err
 	}
@@ -1881,7 +1858,7 @@ func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
 // threshold. Returns the same column shape as listAssetsBaseSelect
 // + getAssetBySlugSQL — the shared scanAssetRow projector handles
 // it identically.
-const getNativeAssetSQL = `
+var getNativeAssetSQL = `
 		WITH per_asset_24h_vol AS (
 		  SELECT SUM(volume_usd) AS vol_usd
 		    FROM (
@@ -1898,7 +1875,7 @@ const getNativeAssetSQL = `
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
-		` + xlmUSDCTEs + `,
+		` + xlmUSDNativeCTEs("$1::text") + `,
 		ledger_bounds AS (
 		  -- Always return one row with placeholder zeros — the
 		  -- previous version scanned the trades hypertable for
@@ -2193,6 +2170,8 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 
 // getAssetsPriceHistory24hBatchSQL is GetAssetsPriceHistory24hBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetsPriceHistory24hBatchSQL = `
 		WITH hours AS (
 		  SELECT generate_series(
@@ -2257,18 +2236,8 @@ var getAssetsPriceHistory24hBatchSQL = `
 		    ) u
 		   ORDER BY asset_id, h, inverted, prio, bucket DESC, xlm_prio
 		),
-		xlm_usd_per_hour AS (
-		  SELECT DISTINCT ON (h) date_trunc('hour', bucket) AS h, vwap::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND vwap IS NOT NULL
-		   ORDER BY h, bucket DESC, ` + usdQuotePref + `
-		)
+		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_hour", "h", "hour",
+	`date_trunc('hour', now() - INTERVAL '23 hours')`, "$4::text") + `
 		SELECT
 		    w.asset_id,
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
@@ -2321,6 +2290,8 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 
 // getAssetsPriceHistory7dBatchSQL is GetAssetsPriceHistory7dBatch's
 // query, hoisted so TestProxyQuoteLists_Lockstep can pin its XLM arms.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var getAssetsPriceHistory7dBatchSQL = `
 		WITH days AS (
 		  SELECT generate_series(
@@ -2385,18 +2356,8 @@ var getAssetsPriceHistory7dBatchSQL = `
 		    ) u
 		   ORDER BY asset_id, d, inverted, prio, bucket DESC, xlm_prio
 		),
-		xlm_usd_per_day AS (
-		  SELECT DISTINCT ON (d) date_trunc('day', bucket) AS d, vwap::numeric AS vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
-		     AND vwap IS NOT NULL
-		   ORDER BY d, bucket DESC, ` + usdQuotePref + `
-		)
+		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_day", "d", "day",
+	`date_trunc('day', now() - INTERVAL '6 days')`, "$4::text") + `
 		SELECT
 		    w.asset_id,
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
