@@ -11,7 +11,7 @@
 #
 # Pre-launch posture (F-1234 audit-2026-05-12): only R1 is
 # deployed today; R2/R3 are tracked as future work in
-# docs/architecture/r2-r3-bringup.md. To skip a not-yet-deployed
+# docs/architecture/ha-plan.md §10. To skip a not-yet-deployed
 # region, set its env var empty (`R2= R3= ./verify-cross-region.sh`).
 # Single-region invocations report "no regions to compare against"
 # and exit 0 rather than failing — failing on absent R2/R3 just
@@ -79,7 +79,7 @@ CONFIGURED=0
 if [ "$CONFIGURED" -lt 2 ]; then
     bold "Only $CONFIGURED region configured."
     echo "Cross-region consistency check needs ≥ 2 regions to compare."
-    echo "R2/R3 bringup is tracked in docs/architecture/r2-r3-bringup.md;"
+    echo "R2/R3 bringup is tracked in docs/architecture/ha-plan.md §10;"
     echo "until those land, this script is a no-op — passing exit 0."
     exit 0
 fi

@@ -482,7 +482,7 @@ func TestRealBytes_accountMerge_success(t *testing.T) {
 // Real pre-P23 mainnet LP deposit/withdraw op bodies (ledger
 // ~50,000,000, well below the P23 boundary AND below
 // ledger_entry_changes' current per-op fidelity floor of
-// ~61,996,000 — research §3.2). This is exactly the "fidelity
+// ~61,996,000 — README boundaries). This is exactly the "fidelity
 // absent" era every classic-movements-backfill invocation runs in
 // TODAY: StreamEntryChanges returns zero rows for these ops, not
 // because nothing happened but because Phase 0's ch-backfill hasn't

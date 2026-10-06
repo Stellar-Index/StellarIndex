@@ -237,8 +237,8 @@ in
 [galexie-backfill.md § Tuning](../galexie-backfill.md#tuning--when-60-ledgerssec-isnt-enough)).
 The galexie backfill is the long pole when budgeting bring-up
 time for an archival node — see
-[archival-node-spec.md § 3.3.4](../../architecture/infrastructure/archival-node-spec.md#334-galexie-backfill-time-genesis--live-tip)
-for the per-tier breakdown.
+[archival-node-spec.md § 3.4](../../architecture/infrastructure/archival-node-spec.md#34-galexie-backfill-time)
+for the figures.
 
 ---
 
@@ -300,7 +300,7 @@ ZFS destroy + re-apply takes ~10 min.
 - [archival-node-spec.md](../../architecture/infrastructure/archival-node-spec.md)
 - [multi-region-topology.md](../../architecture/infrastructure/multi-region-topology.md)
 - [validator-rollout.md](../../architecture/infrastructure/validator-rollout.md)
-- [hosting-options.md](../../architecture/infrastructure/hosting-options.md)
+- [ADR-0008](../../adr/0008-ha-topology.md) and [ha-plan.md](../../architecture/ha-plan.md) — hosting and topology decisions
 - `configs/ansible/README.md`
 
 ---

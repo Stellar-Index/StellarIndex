@@ -4,8 +4,8 @@
 // withdrawals) from the ClickHouse raw lake — never Horizon
 // (ADR-0001), never a MinIO walk (ADR-0034). See
 // docs/adr/0047-pre-p23-classic-movement-reconstruction.md for the
-// full decision and docs/architecture/pre-p23-classic-movements-research.md
-// for the evidence base.
+// full decision and README.md for the protocol boundaries and the
+// operation inventory.
 //
 // # Phase 1-4 scope (op-only decode surface)
 //
@@ -13,9 +13,9 @@
 // its op-only decode surface (Matches / decodeOp / Decoder.Decode):
 // Payment and CreateAccount (ADR-0047 D3 Phase 1, both reconstruct
 // from the operation BODY alone once the operation result's success
-// code is confirmed — research §2 path (a)); PathPaymentStrictReceive
+// code is confirmed — inventory path (a)); PathPaymentStrictReceive
 // / PathPaymentStrictSend (Phase 2, reconstructed from the operation
-// RESULT — research §2 path (b): the destination leg is
+// RESULT — inventory path (b): the destination leg is
 // result.Success.Last.{Asset,Amount} for both op types uniformly; the
 // source leg is body.SendAmount (exact) for StrictSend, or derived
 // from the result's Offers for StrictReceive since SendMax is only a
@@ -46,7 +46,7 @@
 // duplicated here. Every other Phase 1-3 kind is one row per op
 // (leg_index always 0) — none of those ops have a second asset leg.
 //
-// Phase 4 adds AccountMerge to this op-only surface (research §2 path
+// Phase 4 adds AccountMerge to this op-only surface (inventory path
 // (b): the exact amount is AccountMergeResult.SourceAccountBalance,
 // never derivable from the body, which carries only the destination)
 // — the NINTH and last op-only-surface type.
@@ -55,7 +55,7 @@
 //
 // LiquidityPoolDeposit/Withdraw and the CAP-0038 AllowTrust/
 // SetTrustLineFlags trustline-revocation auto-liquidation edge case
-// (research §2 path (c)) are a SEPARATE decode surface —
+// (inventory path (c)) are a SEPARATE decode surface —
 // EntryChangeOpTypes / DecodeLiquidityPoolOp /
 // DecodeCAP0038Revocation in entrychanges.go — because their results
 // are bare success codes with zero data fields; the only ground

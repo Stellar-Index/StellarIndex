@@ -11,7 +11,7 @@ import (
 
 // allClassicOpTypes enumerates the CLOSED 27-value xdr.OperationType
 // enum (0..26, CreateAccount..RestoreFootprint — see
-// docs/architecture/pre-p23-classic-movements-research.md §2 for the
+// README.md's "Operation inventory" for the
 // full inventory this list was built from). ADR-0047 D3 treats
 // "closed enum, no unknown-future-contract problem" as the reason
 // recognition here reduces to a static switch-coverage check rather

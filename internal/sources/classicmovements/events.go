@@ -20,8 +20,7 @@ const SourceName = "classic-movements"
 // classic-asset movement already emits a unified CAP-67 event
 // (internal/sources/sep41_transfers) — this package's pre-P23
 // reconstruction has nothing to do at or beyond this ledger.
-// docs/architecture/pre-p23-classic-movements-research.md §1's
-// ledger-boundary table confirms this exact value against
+// README.md's "Protocol boundaries" table confirms this exact value against
 // stellar.ledgers on r1 — NOT an approximation.
 //
 // The canonical, exported home for this value: internal/ops/chops's
