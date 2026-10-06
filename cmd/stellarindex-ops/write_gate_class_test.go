@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,7 +44,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"docs-config":           ro(),
 	"mint-key":              pending("PG api key insert; -confirm-operator is an identity check, not a preview"),
 	"upgrade-key":           pending("PG api key rate-limit update"),
-	"emit-incident":         exemptBecause("the Redis publish IS the command; a preview would be a different command"),
+	"emit-incident":         pending("PG webhook_deliveries insert (customer webhook fan-out); no preview, a mistyped run notifies subscribers"),
 	"usage-rollup-backfill": gate(),
 	"freeze-unfreeze":       gate(),
 	"account-erase":         gate(),
@@ -144,6 +146,55 @@ var subcommandClasses = map[string]subcommandClass{
 	"wasm-drift":                 exemptBecause("verifier; writes its -textfile metrics only"),
 }
 
+// The two lists below are pinned literally so reclassifying a command is an
+// edit here, not a drive-by relabel. A pendingGate entry may leave only into
+// gated (the test then proves it takes -write); a readOnly one may not be a
+// writer.
+var pinnedPendingGate = []string{
+	"backfill-index",
+	"ch-cohort-rollup",
+	"ch-creators-rollup",
+	"ch-sponsors-rollup",
+	"ch-supply",
+	"classic-movements-backfill",
+	"compute-completeness",
+	"emit-incident",
+	"mint-key",
+	"projected-rebuild",
+	"seed-entry-counts",
+	"state-snapshot",
+	"trades-cagg-refresh",
+	"trim-galexie-archive",
+	"upgrade-key",
+}
+
+var pinnedReadOnly = []string{
+	"ch-gate",
+	"ch-recognition",
+	"ch-reproject",
+	"compare-entry-changes",
+	"cross-region-check",
+	"detect-gaps",
+	"discovery list",
+	"docs-config",
+	"find-data-gaps",
+	"hubble-check",
+	"hubble-soroban-events",
+	"list-cursors",
+	"reconcile-balances",
+	"rpc-probe",
+	"scan-soroban-events",
+	"sdex-claim-audit",
+	"supply audit",
+	"verify-contiguity",
+	"verify-decoders",
+	"verify-external",
+	"verify-hashchain",
+	"verify-recognition",
+	"verify-reconciliation",
+	"verify-usd-volume",
+}
+
 var namespaceUsageRe = regexp.MustCompile(`usage: (\S+) <?([a-z0-9|-]+)>?`)
 
 // TestEverySubcommandIsClassified makes the table above the coverage: a new
@@ -204,7 +255,12 @@ func TestSubcommandWriteGateMatchesItsClass(t *testing.T) {
 	sort.Strings(paths)
 	for _, path := range paths {
 		c := subcommandClasses[path]
-		usage := helpOutput(t, strings.Fields(path))
+		usage, err := helpResult(t, strings.Fields(path))
+		if c.class != readOnly {
+			if !errors.Is(err, flag.ErrHelp) || usage == "" {
+				t.Errorf("%s -h must return flag.ErrHelp with usage output before doing any work; got err=%v, %d bytes", path, err, len(usage))
+			}
+		}
 		writeLine := usageFlagBlock(usage, "write")
 		hasGate := strings.Contains(writeLine, opsutil.WriteFlagUsage)
 		switch c.class {
@@ -255,4 +311,26 @@ func usageFlagBlock(usage, name string) string {
 		return block
 	}
 	return ""
+}
+
+// TestWriteClassSetsArePinned fails when a command enters or leaves pendingGate
+// or readOnly without the pinned lists changing with it.
+func TestWriteClassSetsArePinned(t *testing.T) {
+	for _, tc := range []struct {
+		class  writeClass
+		pinned []string
+	}{{pendingGate, pinnedPendingGate}, {readOnly, pinnedReadOnly}} {
+		var got []string
+		for path, c := range subcommandClasses {
+			if c.class == tc.class {
+				got = append(got, path)
+			}
+		}
+		sort.Strings(got)
+		want := append([]string(nil), tc.pinned...)
+		sort.Strings(want)
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("class %d set drifted from its pinned list.\n got: %v\nwant: %v\nA pendingGate entry may only move to gated (after gaining -write); edit the pinned list deliberately.", tc.class, got, want)
+		}
+	}
 }
