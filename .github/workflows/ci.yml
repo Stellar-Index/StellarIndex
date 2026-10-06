@@ -1613,6 +1613,11 @@ jobs:
         # run against a file-backed `zfs`/`zpool` stub. No network, no
         # ansible, no real pool.
         run: ./scripts/ci/zfs-snapshot-test.sh
+      - name: ordinal-rederive-chunks wrapper self-test
+        # Chunk bounds (-to hi-1, BAND_END exclusive), the zfs avail floors
+        # (exit 3) and fail-closed unreadable avail (exit 4), against stubbed
+        # zfs and stellarindex-ops. No network, no pool, no ClickHouse.
+        run: ./scripts/ci/ordinal-rederive-chunks-test.sh
       - name: pgbackrest-backup wrapper self-test
         # 2026-08-29 (repo2 = S3 live on r1): pgBackRest's `backup` is
         # single-repo — with no --repo it writes ONLY repo1, so the nightly
