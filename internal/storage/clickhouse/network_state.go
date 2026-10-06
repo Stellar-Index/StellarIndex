@@ -83,7 +83,9 @@ type LumenTally struct {
 	LiquidityPools    *big.Int
 	ContractBalances  *big.Int
 	// Preimages counts keys whose current row is newer than Ledger and were
-	// resolved from that row's first later change instead.
+	// resolved from that row's first later change instead. A newer
+	// contract_data key that cannot hold native XLM is not resolved: it adds
+	// zero at every ledger.
 	Preimages int
 }
 
@@ -144,7 +146,7 @@ func (r *NetworkStateReader) LumenConservation(ctx context.Context, nativeSAC st
 }
 
 // foldCurrentLumens folds every resolved row at or below t.Ledger and returns
-// the keys whose row is newer.
+// the keys whose row is newer and that can hold native XLM.
 func (r *NetworkStateReader) foldCurrentLumens(ctx context.Context, t *LumenTally, sac xdr.ContractId, prefix string) ([]string, error) {
 	const q = `SELECT entry_type, if(ledger_seq > ?, key_xdr, '') AS key, change_type, ledger_seq, balance,
 			if(entry_type = 'account', '', entry_xdr) AS entry
@@ -167,7 +169,13 @@ func (r *NetworkStateReader) foldCurrentLumens(ctx context.Context, t *LumenTall
 			return nil, fmt.Errorf("clickhouse: lumen conservation: scan: %w", err)
 		}
 		if seq > t.Ledger {
-			pending = append(pending, key)
+			holds, err := keyHoldsNativeLumens(entryType, key, sac)
+			if err != nil {
+				return nil, err
+			}
+			if holds {
+				pending = append(pending, key)
+			}
 			continue
 		}
 		if changeType == "removed" {
@@ -178,6 +186,24 @@ func (r *NetworkStateReader) foldCurrentLumens(ctx context.Context, t *LumenTall
 		}
 	}
 	return pending, rows.Err()
+}
+
+// keyHoldsNativeLumens reports whether an entry under this key can hold native
+// XLM. Only contract_data is decidable from the key: an evicted temporary
+// entry (an allowance) has a `removed` row and no pre-image, yet holds none.
+func keyHoldsNativeLumens(entryType, keyXDR string, sac xdr.ContractId) (bool, error) {
+	if entryType != "contract_data" {
+		return true, nil
+	}
+	var k xdr.LedgerKey
+	if err := xdr.SafeUnmarshalBase64(keyXDR, &k); err != nil {
+		return false, fmt.Errorf("clickhouse: lumen conservation: decode contract_data key: %w", err)
+	}
+	cd, ok := k.GetContractData()
+	if !ok {
+		return false, fmt.Errorf("clickhouse: lumen conservation: contract_data row keyed as %s", k.Type)
+	}
+	return isNativeSACBalance(cd.Contract, cd.Key, sac), nil
 }
 
 // foldPreimageLumens resolves each pending key to its state as of t.Ledger
@@ -267,8 +293,7 @@ func foldNativeHolding(t *LumenTally, entryType string, balance int64, entryXDR 
 // foldSACBalance adds a native-SAC Balance(Address) entry's amount. The key
 // prefix spans 31 of the contract id's 32 bytes, so the id is re-checked here.
 func foldSACBalance(t *LumenTally, cd xdr.ContractDataEntry, sac xdr.ContractId) error {
-	if cd.Contract.Type != xdr.ScAddressTypeScAddressTypeContract || cd.Contract.ContractId == nil ||
-		!bytes.Equal(cd.Contract.ContractId[:], sac[:]) || !balanceKeyHolder(cd.Key) {
+	if !isNativeSACBalance(cd.Contract, cd.Key, sac) {
 		return nil
 	}
 	amount, ok := balanceAmount(cd.Val)
@@ -277,6 +302,11 @@ func foldSACBalance(t *LumenTally, cd xdr.ContractDataEntry, sac xdr.ContractId)
 	}
 	t.ContractBalances.Add(t.ContractBalances, amount)
 	return nil
+}
+
+func isNativeSACBalance(contract xdr.ScAddress, key xdr.ScVal, sac xdr.ContractId) bool {
+	return contract.Type == xdr.ScAddressTypeScAddressTypeContract && contract.ContractId != nil &&
+		bytes.Equal(contract.ContractId[:], sac[:]) && balanceKeyHolder(key)
 }
 
 // nativeSACKey decodes the native SAC id and its contract-data key prefix.

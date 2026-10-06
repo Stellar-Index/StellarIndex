@@ -357,6 +357,71 @@ func TestNetworkStateReader_LumenConservationAtCommittedTip(t *testing.T) {
 	}
 }
 
+func lumenSACAllowance(sac xdr.ContractId, amount int64) xdr.LedgerEntry {
+	sym := xdr.ScSymbol("Allowance")
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.ContractDataEntry{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &sac},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
+			Durability: xdr.ContractDataDurabilityTemporary,
+			Val:        xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Lo: xdr.Uint64(amount)}},
+		},
+	}}
+}
+
+// evictionRow is the lake walker's eviction row: a `removed` with no tx and no
+// preceding `state`, so it has no pre-image in ledger_entry_changes.
+func evictionRow(t *testing.T, seq, intra uint32, e xdr.LedgerEntry) chstore.LedgerEntryChangeRow {
+	row := entryChange(t, seq, intra, "removed", e)
+	row.TxHash, row.OpIndex, row.ChangeIndex = "", -1, 0
+	return row
+}
+
+// TestNetworkStateReader_LumenConservationEvictionPastTip: a native SAC
+// allowance evicted in a ledger whose header is not yet committed holds no
+// lumens and must not abort the tally; an evicted balance with no pre-image
+// still fails loud, since its lumens would otherwise vanish from the sum.
+func TestNetworkStateReader_LumenConservationEvictionPastTip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	resetNetworkStateLake(t, ctx)
+
+	sac := xdr.ContractId{0x5a, 0xc0}
+	sacID, err := strkey.Encode(strkey.VersionByteContract, sac[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tip = 100
+	insertNetworkStateLedger(t, ctx, tip, 1_050, 0)
+	insertEntryChanges(t, ctx,
+		entryChange(t, 90, 1, "created", lumenAccount(1, 1_000)),
+		entryChange(t, 95, 1, "created", lumenSACBalance(sac, 1, 50)),
+		entryChange(t, 95, 2, "created", lumenSACAllowance(sac, 7_777)),
+		evictionRow(t, tip+1, 1, lumenSACAllowance(sac, 0)),
+	)
+
+	reader, err := chstore.NewNetworkStateReader(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	got, err := reader.LumenConservation(ctx, sacID)
+	if err != nil {
+		t.Fatalf("LumenConservation with an allowance evicted past the tip: %v", err)
+	}
+	if got.Ledger != tip || got.Preimages != 0 || got.ContractBalances.Cmp(big.NewInt(50)) != 0 || got.Residual().Sign() != 0 {
+		t.Fatalf("tally = ledger %d, preimages %d, contract balances %s, residual %s; want %d, 0, 50, 0",
+			got.Ledger, got.Preimages, got.ContractBalances, got.Residual(), tip)
+	}
+
+	insertEntryChanges(t, ctx, evictionRow(t, tip+1, 2, lumenSACBalance(sac, 1, 0)))
+	if _, err := reader.LumenConservation(ctx, sacID); err == nil || !strings.Contains(err.Error(), "no pre-image") {
+		t.Fatalf("balance removed past the tip with no pre-image: err = %v, want a no-pre-image error", err)
+	}
+}
+
 func TestNetworkStateReader_CurrentEntries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
