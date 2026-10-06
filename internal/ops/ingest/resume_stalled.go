@@ -80,6 +80,9 @@ type stalledCursorPlan struct {
 	sources    []string // decoder CSV, sorted
 	skip       bool
 	skipReason string
+	// skipRawSorobanEvents marks a raw soroban-events cursor skipped by
+	// gateSourcePolicy, so it is logged and counted apart from other skips.
+	skipRawSorobanEvents bool
 }
 
 // soroban-aware source list. A stalled cursor whose decoder CSV
@@ -94,13 +97,15 @@ type stalledCursorPlan struct {
 // Do NOT hand-maintain this list again: a source added to
 // BuildDispatcher's switch without a matching entry in
 // pipeline.SorobanSourceNames silently mis-gates its stalled cursors
-// here (CA2-A19-correct-3). The SorobanEventsPseudoSource is not a
-// decoder and never reaches the gate: gateSourcePolicy skips it.
+// here (CA2-A19-correct-3). The SorobanEventsPseudoSource (raw
+// soroban_events-only cursor) is included; with the ClickHouse projector
+// source on, gateSourcePolicy skips it before the gate.
 var sorobanDecoderNames = func() map[string]struct{} {
-	m := make(map[string]struct{}, len(pipeline.SorobanSourceNames))
+	m := make(map[string]struct{}, len(pipeline.SorobanSourceNames)+1)
 	for _, name := range pipeline.SorobanSourceNames {
 		m[name] = struct{}{}
 	}
+	m[SorobanEventsPseudoSource] = struct{}{}
 	return m
 }()
 
@@ -247,8 +252,8 @@ func perDecoderGapTargets(decoder string) []timescale.GapDetectorTarget {
 }
 
 // distinctSorobanDecoderNames returns the sorted, de-duplicated set of
-// Soroban decoder names present in any not-yet-skipped plan's source
-// list — the set [buildDecoderGapIndex] needs to resolve.
+// real (non-pseudo) Soroban decoder names present in any not-yet-skipped
+// plan's source list — the set [buildDecoderGapIndex] needs to resolve.
 func distinctSorobanDecoderNames(plans []stalledCursorPlan) []string {
 	seen := make(map[string]struct{})
 	for _, p := range plans {
@@ -256,6 +261,9 @@ func distinctSorobanDecoderNames(plans []stalledCursorPlan) []string {
 			continue
 		}
 		for _, s := range p.sources {
+			if s == SorobanEventsPseudoSource {
+				continue
+			}
 			if _, ok := sorobanDecoderNames[s]; ok {
 				seen[s] = struct{}{}
 			}
@@ -270,15 +278,18 @@ func distinctSorobanDecoderNames(plans []stalledCursorPlan) []string {
 }
 
 // buildDecoderGapIndex resolves the per-decoder gap evidence
-// [gateAgainstDataGaps] needs. Every Soroban decoder actually
+// [gateAgainstDataGaps] needs. [SorobanEventsPseudoSource] always
+// resolves against sorobanEventsGaps. Every OTHER Soroban decoder actually
 // present in `plans` is resolved against the UNION of its OWN
 // registered [timescale.GapDetectorTarget] tables (see
 // [perDecoderGapTargets]) — never against soroban_events, which the
 // resumed decoders don't write (CA2-A19). A decoder with no registered
 // target resolves to resolved=false; the gate then fails closed
 // (stays actionable) rather than trusting evidence that doesn't exist.
-func buildDecoderGapIndex(ctx context.Context, store *timescale.Store, plans []stalledCursorPlan, tip uint32, minGapSize int64) (decoderGapIndex, error) {
-	idx := decoderGapIndex{}
+func buildDecoderGapIndex(ctx context.Context, store *timescale.Store, plans []stalledCursorPlan, sorobanEventsGaps []timescale.LedgerGap, tip uint32, minGapSize int64) (decoderGapIndex, error) {
+	idx := decoderGapIndex{
+		SorobanEventsPseudoSource: {resolved: true, gaps: sorobanEventsGaps},
+	}
 	for _, name := range distinctSorobanDecoderNames(plans) {
 		targets := perDecoderGapTargets(name)
 		if len(targets) == 0 {
@@ -681,7 +692,14 @@ func resumeStalled(args []string) error {
 	}
 	gateCtx, gateCancel := newDataGapGateContext(rootCtx)
 	defer gateCancel()
-	decoderGaps, err := buildDecoderGapIndex(gateCtx, store, plans, tipCursor.LastLedger, opts.dataGapMinSize)
+	var dataGaps []timescale.LedgerGap
+	if anyPlanHasSorobanEventsPseudo(plans) {
+		dataGaps, err = store.FindSorobanEventsLedgerGaps(gateCtx, 0, int64(tipCursor.LastLedger), opts.dataGapMinSize)
+		if err != nil {
+			return fmt.Errorf("find data gaps for gate: %w", err)
+		}
+	}
+	decoderGaps, err := buildDecoderGapIndex(gateCtx, store, plans, dataGaps, tipCursor.LastLedger, opts.dataGapMinSize)
 	if err != nil {
 		return fmt.Errorf("find per-decoder data gaps for gate: %w", err)
 	}
@@ -700,16 +718,21 @@ func resumeStalled(args []string) error {
 	plans = gateAgainstDataGaps(plans, decoderGaps, classicGate, opts.forceClassic)
 	plans = applyMaxResumesCap(plans, opts.maxResumes)
 
-	actionable := 0
+	actionable, skippedRaw := 0, 0
 	for _, p := range plans {
-		if !p.skip {
+		switch {
+		case !p.skip:
 			actionable++
+		case p.skipRawSorobanEvents:
+			skippedRaw++
 		}
 	}
 	logger.Info("resume-stalled plan",
 		"candidates", len(plans),
 		"actionable", actionable,
 		"skipped", len(plans)-actionable,
+		"skipped_soroban_events", skippedRaw,
+		"data_gaps", len(dataGaps),
 		"min_lag", opts.minLag.String(),
 		"source_filter", opts.sourceFilter,
 		"force_classic_cursors", opts.forceClassic,
@@ -753,7 +776,11 @@ func executeResumePlans(
 	var failures []error
 	for _, p := range plans {
 		if p.skip {
-			logger.Info("resume-stalled: skipping cursor",
+			lvl := slog.LevelInfo
+			if p.skipRawSorobanEvents {
+				lvl = slog.LevelWarn
+			}
+			logger.Log(ctx, lvl, "resume-stalled: skipping cursor",
 				"sub_source", p.cursor.Sub,
 				"last_ledger", p.cursor.LastLedger,
 				"reason", p.skipReason,
@@ -855,10 +882,11 @@ func runResumeForCursor(
 
 // gateSourcePolicy skips every plan whose decoder set `backfill` itself
 // would refuse today: an attestation withdrawn after the cursor was
-// written, or a source the projector now owns. It also skips raw
-// soroban-events cursors: the projector (by default) and the ops checks
-// read the ClickHouse lake, so a hole in that Postgres copy is no data
-// gap, and auto-resuming it would re-walk ranges for a retiring table.
+// written, or a source the projector now owns. With
+// ClickHouseProjectorSource on it also skips raw soroban-events cursors:
+// projection reads the lake, so a hole in the Postgres copy is no data
+// gap. With it off the projector reads that table, so the cursor stays
+// resumable.
 func gateSourcePolicy(plans []stalledCursorPlan, cfg config.Config) []stalledCursorPlan {
 	out := make([]stalledCursorPlan, len(plans))
 	copy(out, plans)
@@ -866,8 +894,9 @@ func gateSourcePolicy(plans []stalledCursorPlan, cfg config.Config) []stalledCur
 		if out[i].skip {
 			continue
 		}
-		if hasSorobanEventsPseudo(out[i].sources) {
+		if cfg.Storage.ClickHouseProjectorSource && hasSorobanEventsPseudo(out[i].sources) {
 			out[i].skip = true
+			out[i].skipRawSorobanEvents = true
 			out[i].skipReason = "raw soroban-events landing-zone cursor — projection reads the ClickHouse lake, so resume-stalled does not re-walk it; run `backfill -source soroban-events` by hand if the table is still needed"
 			continue
 		}
@@ -913,6 +942,17 @@ func planResumeStalled(
 		plans = append(plans, parseStalledCursor(c))
 	}
 	return plans, nil
+}
+
+// anyPlanHasSorobanEventsPseudo reports whether a not-yet-skipped plan is
+// a raw soroban-events cursor, i.e. needs the soroban_events gap scan.
+func anyPlanHasSorobanEventsPseudo(plans []stalledCursorPlan) bool {
+	for _, p := range plans {
+		if !p.skip && hasSorobanEventsPseudo(p.sources) {
+			return true
+		}
+	}
+	return false
 }
 
 // printResumePlan emits one human-readable line per cursor describing

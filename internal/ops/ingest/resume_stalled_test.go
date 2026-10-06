@@ -279,8 +279,7 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 		{name: "sdex only", sources: []string{"sdex"}, want: false},
 		{name: "aquarius alone", sources: []string{"aquarius"}, want: true},
 		{name: "defindex alone", sources: []string{"defindex"}, want: true},
-		// Not a decoder: gateSourcePolicy skips the raw-event cursor before the gate.
-		{name: "soroban-events pseudo", sources: []string{"soroban-events"}, want: false},
+		{name: "soroban-events pseudo", sources: []string{"soroban-events"}, want: true},
 		{name: "mixed sdex + Soroban DEXes", sources: []string{"aquarius", "comet", "phoenix", "sdex", "soroswap"}, want: true},
 		{name: "empty", sources: nil, want: false},
 		{name: "unknown decoder", sources: []string{"some-future-source"}, want: false},
@@ -924,7 +923,6 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 		{sources: []string{"aquarius"}, rangeFrom: 10, rangeTo: 20},
 		{sources: []string{"band"}, rangeFrom: 10, rangeTo: 20},
 		{sources: []string{"sdex"}, skip: true, skipReason: "earlier reason"},
-		{sources: []string{SorobanEventsPseudoSource}, rangeFrom: 10, rangeTo: 20},
 	}
 	got := gateSourcePolicy(plans, config.Config{})
 	if !got[0].skip || !strings.Contains(got[0].skipReason, "not BackfillSafe") {
@@ -939,11 +937,38 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 	if got[3].skipReason != "earlier reason" {
 		t.Errorf("an existing skip reason must be kept, got %q", got[3].skipReason)
 	}
-	if !got[4].skip || !strings.Contains(got[4].skipReason, "soroban-events landing-zone cursor") {
-		t.Errorf("raw soroban-events cursor must be skipped, not gated on soroban_events: skip=%v reason=%q", got[4].skip, got[4].skipReason)
-	}
 	if plans[0].skip {
 		t.Error("gateSourcePolicy must not mutate its input")
+	}
+}
+
+// TestGateSourcePolicyRawSorobanEvents pins that a raw soroban-events
+// cursor is skipped only when projection reads the ClickHouse lake; with it
+// off the projector reads Postgres soroban_events, so the gap is real.
+func TestGateSourcePolicyRawSorobanEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		chSource bool
+		wantSkip bool
+	}{
+		{"clickhouse projector source on", true, true},
+		{"clickhouse projector source off", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg config.Config
+			cfg.Storage.ClickHouseProjectorSource = tc.chSource
+			plans := []stalledCursorPlan{{sources: []string{SorobanEventsPseudoSource}, rangeFrom: 10, rangeTo: 20}}
+			got := gateSourcePolicy(plans, cfg)[0]
+			if got.skip != tc.wantSkip || got.skipRawSorobanEvents != tc.wantSkip {
+				t.Fatalf("skip=%v raw=%v, want %v", got.skip, got.skipRawSorobanEvents, tc.wantSkip)
+			}
+			if tc.wantSkip && !strings.Contains(got.skipReason, "soroban-events landing-zone cursor") {
+				t.Errorf("skip needs a reason, got %q", got.skipReason)
+			}
+			if !tc.wantSkip && got.skipReason != "" {
+				t.Errorf("must take the previous gate path, got reason %q", got.skipReason)
+			}
+		})
 	}
 }
 
