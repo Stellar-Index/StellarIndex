@@ -10,7 +10,7 @@ severity: P1
 > **⭐ THIS IS THE ONE PLAN.** Consolidated 2026-07-27 from every prior
 > launch/production document, with every carried item **re-verified against
 > live r1 + the repo on 2026-07-27** (not copied on trust). If you are
-> resuming: read §0 (verified state), then execute §2 in order.
+> resuming: read §0 (verified state), then work the items in the plan below (the old §2 is pre-cut: [PRE-CUT 3956-4797](https://github.com/Stellar-Index/StellarIndex/blob/52aacb972a5be5fe65e9d608227e8fe06dfe7fe2/docs/operations/v1-launch-plan.md#L3956-L4797)).
 >
 > Superseded by this doc (banners added; keep for history/recipes only):
 > the 2026-07-18 production-readiness master plan (the campaign log, since removed),
@@ -18,7 +18,7 @@ severity: P1
 > `launch-todo.md`, `launch-day-checklist.md`, `public-flip.md`,
 > `notes/ROADMAP.md`, `notes/BACKLOG.md`.
 > Still ACTIVE as companions: `production-confidence-campaign-2026-07-23.md`
-> (the adversarial proof harness — its E-gate is §2.6 here) and the
+> (the adversarial proof harness — its E-gate was pre-cut §2.6) and the
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
 
@@ -572,8 +572,7 @@ condition is being suppressed.
 
 > **Read this section first.** It replaces the 2026-07-27 operator inbox and
 > re-orders §2. Everything below §"Loop log" is kept for HISTORY and for the
-> execution RECIPES (§2.3's heavy-job commands, §2.8's launch sequence,
-> runbooks) — but where the old §1–§4 disagree with this section on *what is
+> execution RECIPES (runbooks; the heavy-job commands and launch sequence moved, see "Cut: moved evidence") — but where the old §1–§4 disagree with this section on *what is
 > still outstanding*, this section is right and they are stale.
 >
 > Every item carries a verification marker:
@@ -1743,7 +1742,7 @@ were all found to be done or half-done once checked).
     (34.96M rows from ledger 31.8M). The LP component self-heals
     because every swap re-observes the pool, so the measured cost was
     −0.14% of AQUA's LP component (516.5M vs Horizon's 517.3M; the 231
-    missing pools are dust; see §2.4's claimable-balance entry). The
+    missing pools are dust; see the claimable-balance row in "Cut: moved evidence"). The
     cost of not building it: an `as_of` supply
     below 63.3M has no LP component, and a pool dormant since before
     the cutoff stays unobserved. The cutoff is published in
@@ -1988,7 +1987,7 @@ Everything above this line is the pre-cut plan and is being deleted in stages (I
 - Every old `:NNN` line cite and `#L<n>` inventory pointer resolves at that sha, not at HEAD. Migrations 0051, 0106 and 0107 cite `:2486`: that means the "no unbounded trade-scan queries" rule, now in [domain-traps.md](../architecture/domain-traps.md#unbounded-trade-scans-cancelled-refreshes-and-aggregation-pitfalls).
 - Old row ids (1.x, W-x, D-x) cited by code resolve in "Cut: cited rows" and "Cut: decisions of record" below.
 - Commit ids older than the 2026 history rewrite may not resolve; find the successor with `git log` by date and subject.
-- Go-live gate and launch sequence: §0 above is the gate (an index of INV items), and the launch sequence is the pre-cut §2.8 (PRE-CUT lines 4610-4648; step 1 is in "Cut: moved evidence") plus INV-2707, INV-2708 and INV-2709 below.
+- Go-live gate and launch sequence: §0 above is the gate (an index of INV items), and the launch sequence is the pre-cut §2.8 (PRE-CUT lines 4610-4636; step 1 is in "Cut: moved evidence") plus INV-2707, INV-2708 and INV-2709 below.
 
 ## Cut: open work not in §0
 

@@ -6,7 +6,7 @@ status: operator runbook
 
 # Launch-day operator checklist
 
-> **SUPERSEDED by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8** ([pre-cut lines 4610-4648](https://github.com/Stellar-Index/StellarIndex/blob/52aacb972a5be5fe65e9d608227e8fe06dfe7fe2/docs/operations/v1-launch-plan.md#L4610-L4648)). The public-flip
+> **SUPERSEDED by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8** ([pre-cut lines 4610-4636](https://github.com/Stellar-Index/StellarIndex/blob/52aacb972a5be5fe65e9d608227e8fe06dfe7fe2/docs/operations/v1-launch-plan.md#L4610-L4636)). The public-flip
 > steps here already happened (2026-07-03, differently) and the CalVer tag format
 > is wrong (we use SemVer). The still-live content (`apikey_optional` warning,
 > F-0100 counter-presence check, first-24h watch) is carried in the new plan.

@@ -289,11 +289,13 @@ Test-net backfill:
 systemd-run --unit=galexie-backfill --property=User=galexie \
   --property=WorkingDirectory=/var/lib/galexie/backfill \
   --property=EnvironmentFile=/etc/default/galexie-backfill \
-  --property=CPUWeight=50 --property=IOWeight=50 --property=MemoryMax=5G \
+  --property=CPUWeight=50 --property=IOWeight=50 --property=MemoryMax=8G \
   /usr/local/bin/galexie scan-and-fill \
     --config-file /etc/galexie/galexie-backfill.toml \
     --start 2 --end <galexie_start_ledger − 1>
 ```
+
+On restart, resume from the archive's contiguous tip, not `--start 2`: the 5G cap OOM'd at ledger 2,254,083 and systemd re-ran from 2, re-applying every ledger (skip-existing-files is not skip-existing-work).
 
 Check early that the *"Selected archive …"* log lines name the right network's archives.
 
