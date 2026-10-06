@@ -693,7 +693,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// the check is blind to. pdetail already leads with the
 				// blind-spot summary (reconcileProjectionAggregate).
 				var claimDetail string
-				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name])
+				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name], newClaimScope(src, scopes, servedMins, targetFloors))
 				detail = append(detail, claimDetail)
 				if len(floorLoss) > 0 {
 					projOK = false
@@ -1278,6 +1278,9 @@ type projectionScope struct {
 	To   uint32 // inclusive
 }
 
+// empty reports a degenerate scope, which reconcileTarget skips uncounted.
+func (sc projectionScope) empty() bool { return sc.From > sc.To }
+
 // targetScope derives one target's reconcile range from the SERVED TIER'S OWN
 // DATA — servedMin is `MIN(ledger)` of that target over [genesis, hi], and
 // haveServedRows is false when the target holds nothing in range.
@@ -1695,7 +1698,8 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 //  3. A partial (incremental) run may CARRY FORWARD a prior clean verdict for
 //     the prefix it skipped, but only if that prior verdict is contiguous with
 //     this run's window (prior.tip+1 >= runFrom) and reached down to this
-//     run's servedFrom (prior.verifiedFrom <= servedFrom). Confirm, never upgrade.
+//     run's servedFrom (prior.verifiedFrom <= servedFrom), and every present
+//     target has a proven floor (unprovenCarryTargets). Confirm, never upgrade.
 //  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
 //     prior that leaves an unverified band — publishes false.
 //
@@ -1704,12 +1708,12 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 // served tier legitimately holds no sdex trades below ledger 61,609,957, and
 // each source's floor differs — soroswap's is 50,746,445; the genesis claim is
 // the separate lake_complete axis).
-func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection) (bool, string) {
+func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope claimScope) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail
 	}
 	if runFrom <= servedFrom {
-		return true, fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", servedFrom, hi)
+		return true, fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", servedFrom, hi, scope.text)
 	}
 	skipped := fmt.Sprintf("[%d,%d]", servedFrom, runFrom-1)
 	switch {
@@ -1721,8 +1725,10 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.tip, prior.tip+1, runFrom-1)
 	case prior.verifiedFrom > servedFrom:
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only covered from ledger %d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.verifiedFrom, servedFrom, prior.verifiedFrom-1)
+	case len(scope.unproven) > 0:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; carried prefix %s never reconciled %s — re-run without -from", runFrom, hi, skipped, strings.Join(scope.unproven, ", "))
 	default:
-		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
+		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run — %s", runFrom, hi, skipped, prior.tip, scope.text)
 	}
 }
 
@@ -2258,7 +2264,7 @@ type gatedContractSetter interface {
 // reconcileTarget compares one target's re-derived expected counts (clipped to
 // the target's own scope) against its served counts over that same scope.
 func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSource, tgt reconTarget, expected map[uint32]int, sc projectionScope) (int, string, error) {
-	if sc.From > sc.To {
+	if sc.empty() {
 		return 0, "", nil
 	}
 	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), sc.From, sc.To)

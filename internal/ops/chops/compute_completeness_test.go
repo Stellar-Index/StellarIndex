@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -537,7 +538,7 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 	)
 	failingPrior := priorProjection{known: true, ok: false, tip: 63_300_000}
 
-	ok, detail := projectionClaim(servedFrom, runFrom, hi, true /* this run's window is clean */, "", failingPrior)
+	ok, detail := projectionClaim(servedFrom, runFrom, hi, true /* this run's window is clean */, "", failingPrior, testScope)
 	if ok {
 		t.Fatalf("an incremental run that reconciled only [%d,%d] UPGRADED a failing verdict to complete=true without ever re-checking [%d,%d] (INV-5); detail=%q", runFrom, hi, servedFrom, runFrom-1, detail)
 	}
@@ -547,13 +548,13 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 
 	// A run that DID cover the whole served range is self-evidencing — this is
 	// the deliberate, full re-verify that clears a failing verdict.
-	if full, d := projectionClaim(servedFrom, servedFrom, hi, true, "", failingPrior); !full {
+	if full, d := projectionClaim(servedFrom, servedFrom, hi, true, "", failingPrior, testScope); !full {
 		t.Errorf("a full-scope clean run must be able to clear a failing prior verdict, got false: %s", d)
 	}
 
 	// A clean prior contiguous with this run's window may be carried forward.
 	cleanPrior := priorProjection{known: true, ok: true, tip: 63_300_000}
-	carry, carryDetail := projectionClaim(servedFrom, runFrom, hi, true, "", cleanPrior)
+	carry, carryDetail := projectionClaim(servedFrom, runFrom, hi, true, "", cleanPrior, testScope)
 	if !carry {
 		t.Errorf("a contiguous clean prior must carry the skipped prefix, got false: %s", carryDetail)
 	}
@@ -562,17 +563,17 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 	}
 
 	// No prior verdict at all → fail closed.
-	if noPrior, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{}); noPrior {
+	if noPrior, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{}, testScope); noPrior {
 		t.Errorf("a partial run with NO prior verdict must not claim the skipped prefix: %s", d)
 	}
 
 	// A stale prior leaves [prior.tip+1, runFrom-1] verified by nobody.
-	if stale, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{known: true, ok: true, tip: 62_000_000}); stale {
+	if stale, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{known: true, ok: true, tip: 62_000_000}, testScope); stale {
 		t.Errorf("a stale prior leaves an unverified band — must not claim it: %s", d)
 	}
 
 	// A mismatch found by THIS run always fails, whatever the prior said.
-	if found, d := projectionClaim(servedFrom, servedFrom, hi, false, "trades: 1 mismatched ledger(s)", priorProjection{known: true, ok: true, tip: hi}); found {
+	if found, d := projectionClaim(servedFrom, servedFrom, hi, false, "trades: 1 mismatched ledger(s)", priorProjection{known: true, ok: true, tip: hi}, testScope); found {
 		t.Errorf("a mismatch found by this run can never be laundered by a clean prior: %s", d)
 	}
 }
@@ -588,7 +589,7 @@ func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
 		servedFrom = uint32(61_500_000)
 		hi         = uint32(63_305_532)
 	)
-	ok, detail := projectionClaim(servedFrom, servedFrom, hi, true, "", priorProjection{known: true, ok: true, tip: hi})
+	ok, detail := projectionClaim(servedFrom, servedFrom, hi, true, "", priorProjection{known: true, ok: true, tip: hi}, testScope)
 	if !ok {
 		t.Fatalf("a clean full-scope run must publish true, got: %s", detail)
 	}
@@ -631,7 +632,7 @@ func TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip(t *testing.T)
 	// Exercise the actual gate a subsequent -from=tip run hits: the prior
 	// clean verdict must be rejected as stale, naming the unreconciled band.
 	runFrom := tip
-	ok, detail := projectionClaim(servedFrom, runFrom, tip, true, "", prior)
+	ok, detail := projectionClaim(servedFrom, runFrom, tip, true, "", prior, testScope)
 	if ok {
 		t.Fatalf("projectionClaim carried a prior verdict over [%d,%d], a band the prior run at watermark=%d never reconciled — false complete=true (RFC-4 class)", watermark+1, runFrom-1, watermark)
 	}
@@ -1791,7 +1792,7 @@ func passProjectionVerdict(genesis, hi uint32, expected, actual map[uint32]int, 
 	servedFrom := targetScope(servedMin, haveServedRows, genesis, 0, hi).From
 	sc := targetScope(servedMin, haveServedRows, genesis, projFrom, hi)
 	delta, detail := strictPerLedgerDelta("trades", clipCounts(expected, sc), clipCounts(actual, sc), sc.From, sc.To)
-	ok, claim := projectionClaim(servedFrom, sc.From, hi, delta == 0, detail, prior)
+	ok, claim := projectionClaim(servedFrom, sc.From, hi, delta == 0, detail, prior, testScope)
 	return ok, servedFrom, claim
 }
 
@@ -1844,7 +1845,7 @@ func TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed(t *testing.T) {
 	if verifiedFrom != sushiFirstTrade {
 		t.Errorf("projection_verified_from = %d, want %d (the served tier's own bottom edge)", verifiedFrom, sushiFirstTrade)
 	}
-	want := fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", sushiFirstTrade, sushiTip)
+	want := fmt.Sprintf("projection: verified [%d,%d] over the served range of the reconciled tables — %s", sushiFirstTrade, sushiTip, testScope.text)
 	if detail != want {
 		t.Errorf("detail = %q, want %q", detail, want)
 	}
@@ -1942,7 +1943,7 @@ func TestProjectionWithoutEvidence(t *testing.T) {
 	empty := []servedFloor{{present: false}, {present: false}}
 	servedFrom := targetScope(hi, false, genesis, 0, hi).From
 	delta, runDetail := strictPerLedgerDelta("trades", map[uint32]int{}, map[uint32]int{}, servedFrom, hi)
-	projOK, _ := projectionClaim(servedFrom, servedFrom, hi, delta == 0, runDetail, priorProjection{})
+	projOK, _ := projectionClaim(servedFrom, servedFrom, hi, delta == 0, runDetail, priorProjection{}, testScope)
 	if !projOK {
 		t.Fatal("precondition: projectionClaim certifies ∅ == ∅ over the full range — the vacuous green this gate exists to refuse")
 	}
@@ -2160,5 +2161,100 @@ func TestServedAxisVerdict_DeferredNeverAboveWindow(t *testing.T) {
 	}
 	if got := servedAxisVerdict(srW, false, false, timescale.ProjectionDirtyWindow{}); got.Complete {
 		t.Errorf("a failing served claim published complete: %+v", got)
+	}
+}
+
+var testScope = claimScope{text: "scope: reconciled 1 table(s) [t]"}
+
+func TestProjectionClaim_Rule2NamesScopeNotOverclaim(t *testing.T) {
+	ok, d := projectionClaim(100, 100, 200, true, "", priorProjection{}, testScope)
+	if !ok || !strings.Contains(d, testScope.text) || strings.Contains(d, "the full range the served tier holds") {
+		t.Errorf("ok=%v detail=%q", ok, d)
+	}
+	_, c := projectionClaim(100, 150, 200, true, "", priorProjection{known: true, ok: true, tip: 199, verifiedFrom: 100}, testScope)
+	if !strings.HasSuffix(c, "— "+testScope.text) {
+		t.Errorf("carried detail lacks scope: %q", c)
+	}
+}
+
+// INV-0210 PR B: a carried prefix is only as proven as its least-proven
+// target. completeness_target_floors records a target only after a clean
+// reconcile reached its bottom edge, so a present target without such a
+// floor was never reconciled over the prefix a carry would vouch for.
+func TestUnprovenCarryTargets(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	keyTrades := timescale.TargetFloorKey("soroswap", "trades", "source = 'soroswap'")
+	keySkim := timescale.TargetFloorKey("soroswap", "soroswap_skim_events", "")
+	const genesis, runFrom, hi = uint32(100), uint32(500), uint32(600)
+	inc := func(served []servedFloor) []projectionScope {
+		sc, _, _ := scopesFromServed(src, served, genesis, runFrom, hi)
+		return sc
+	}
+	present := []servedFloor{{min: 150, present: true}, {min: 200, present: true}}
+	tests := []struct {
+		name   string
+		served []servedFloor
+		floors map[string]uint32
+		want   []string
+	}{
+		{"skim never floored", present, map[string]uint32{keyTrades: 150}, []string{"soroswap_skim_events"}},
+		{"both floored", present, map[string]uint32{keyTrades: 150, keySkim: 200}, nil},
+		{"rows projected below the floor since", present, map[string]uint32{keyTrades: 150, keySkim: 300}, []string{"soroswap_skim_events"}},
+		{"empty target has no floor to compare", []servedFloor{{min: 150, present: true}, {}}, map[string]uint32{keyTrades: 150}, nil},
+		{"this run reached the target's bottom edge", []servedFloor{{min: 150, present: true}, {min: 550, present: true}}, map[string]uint32{keyTrades: 150}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			floors := map[string]timescale.CompletenessTargetFloor{}
+			for k, v := range tc.floors {
+				floors[k] = timescale.CompletenessTargetFloor{VerifiedFrom: v}
+			}
+			if got := unprovenCarryTargets(src, inc(tc.served), tc.served, floors); !slices.Equal(got, tc.want) {
+				t.Errorf("unprovenCarryTargets = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The run-level path: the claim scope built at the call site must refuse a
+// carry over a target no clean reconcile ever covered, and name it.
+func TestProjectionClaim_CarryRefusesUnprovenTarget(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	const genesis, runFrom, hi = uint32(100), uint32(500), uint32(600)
+	served := []servedFloor{{min: 150, present: true}, {min: 200, present: true}}
+	scopes, servedFrom, runLo := scopesFromServed(src, served, genesis, runFrom, hi)
+	prior := priorProjection{known: true, ok: true, tip: runFrom - 1, verifiedFrom: genesis}
+	floors := map[string]timescale.CompletenessTargetFloor{
+		timescale.TargetFloorKey("soroswap", "trades", "source = 'soroswap'"): {VerifiedFrom: 150},
+	}
+
+	ok, d := projectionClaim(servedFrom, runLo, hi, true, "", prior, newClaimScope(src, scopes, served, floors))
+	if ok || !strings.Contains(d, "never reconciled soroswap_skim_events") || !strings.Contains(d, "re-run without -from") {
+		t.Fatalf("carry over an unfloored present target: ok=%v detail=%q, want false naming soroswap_skim_events", ok, d)
+	}
+
+	floors[timescale.TargetFloorKey("soroswap", "soroswap_skim_events", "")] = timescale.CompletenessTargetFloor{VerifiedFrom: 200}
+	if ok, d := projectionClaim(servedFrom, runLo, hi, true, "", prior, newClaimScope(src, scopes, served, floors)); !ok {
+		t.Fatalf("every present target floored: carry refused: %q", d)
+	}
+}
+
+// The scope may name as reconciled only a target the run counted:
+// reconcileTarget skips an empty scope without counting it.
+func TestProjectionScope_NamesOnlyCountedTargets(t *testing.T) {
+	src := reconSource{name: "soroswap", targets: []reconTarget{
+		{table: "trades", whereFilter: "source = 'soroswap'"},
+		{table: "soroswap_skim_events"},
+	}}
+	got := src.projectionScope([]projectionScope{{From: 1, To: 9}, {From: 10, To: 9}})
+	want := "scope: reconciled 1 table(s) [trades[source = 'soroswap']], not reconciled: soroswap_skim_events (empty scope this run)"
+	if got != want {
+		t.Errorf("projectionScope = %q, want %q", got, want)
 	}
 }
