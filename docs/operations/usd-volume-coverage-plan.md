@@ -1,7 +1,7 @@
 ---
 title: USD volume coverage — 100% CEX / 99.5% SDEX
-last_verified: 2026-07-22
-status: IMPLEMENTED + verified live (v0.19.0); verdict-surface gate outstanding (INV-0975)
+last_verified: 2026-10-06
+status: IMPLEMENTED + verified live (v0.19.0); ratio served on /v1/coverage as usd_volume_pricing
 ---
 
 # USD volume coverage
@@ -98,8 +98,15 @@ dispatcher batch path and all external connectors). Alerts
 `stellarindex_onchain_usd_volume_coverage_low` enforce the two bars
 (`configs/prometheus/rules.r1/usd-volume-coverage.yml`).
 
-**Outstanding (INV-0975):** fold the unpriced ratio into the completeness/verdict
-surface so it gates go-live.
+`GET /v1/coverage` publishes the ratio as `usd_volume_pricing`: exact
+priced / unpriced / unroutable counts per source over a fixed 24h window,
+`priced_ratio`, `bar`, `meets_bar` (external venues only, since on-chain
+`unpriced` still includes thin markets) and `lower_bound`. It is an axis beside
+the source verdicts and never changes `complete` or `lake_complete`: ADR-0033
+defines those as capture, with no valuation threshold. Go-live is gated by
+`scripts/ops/pre-launch-check.sh`, the cutover gate: it fails on any external
+venue with `meets_bar: false` and on any firing `usd-volume-coverage` alert,
+which also covers the on-chain bar the API does not yet publish.
 
 ### Backfill
 
