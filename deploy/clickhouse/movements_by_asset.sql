@@ -97,6 +97,17 @@ FROM stellar.account_movements;
 --
 -- Expect src_rows = dst_rows and src_keys = dst_keys.
 --
+-- Only when EVERY partition 0..TIP/1000000 passes, record the marker. Until it
+-- exists GET /v1/assets/{asset_id}/movements answers lower_bound=true:
+--
+--   INSERT INTO stellar.cap67_movements_watermark (name, thru_ledger)
+--   VALUES ('movements_by_asset_backfill', $TIP)
+--
+-- An asset-relabelling re-derive (OPERATOR NOTE above) deletes the marker
+-- until its partitions are re-copied and re-verified:
+--   ALTER TABLE stellar.cap67_movements_watermark DELETE WHERE name = 'movements_by_asset_backfill'
+--
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 --   DROP TABLE IF EXISTS stellar.movements_by_asset_mv;
 --   DROP TABLE IF EXISTS stellar.movements_by_asset SYNC;
+--   ALTER TABLE stellar.cap67_movements_watermark DELETE WHERE name = 'movements_by_asset_backfill'

@@ -175,6 +175,7 @@ var uncoveredOperations = map[string]string{
 	"GET /external/assets/{slug}":        "reference (non-Stellar) asset detail — explorer surface",
 	"GET /assets/{asset_id}/supply":      "supply drill-down — explorer surface",
 	"GET /assets/{asset_id}/holders":     "holders drill-down — explorer surface",
+	"GET /assets/{asset_id}/movements":   "asset movement feed — explorer surface",
 	"GET /markets/sources":               "markets-by-source directory — explorer surface",
 	"GET /protocols":                     "protocol analytics — explorer surface",
 	"GET /protocols/{name}":              "protocol analytics — explorer surface",

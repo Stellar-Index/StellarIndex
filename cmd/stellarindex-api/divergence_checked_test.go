@@ -9,6 +9,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
@@ -140,7 +141,7 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 			cached.ComputedAt = time.Now().UTC()
 			seedCachedDivergence(t, rdb, pair, cached)
 
-			adapter := newDivergenceAdapter(svc)
+			adapter := wiring.NewDivergenceAdapter(svc)
 			firing, checked, _, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
 			if err != nil {
 				t.Fatalf("DivergenceFiringFor: %v", err)
@@ -200,7 +201,7 @@ func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 		WindowSeconds: 300,
 	})
 
-	adapter := newDivergenceAdapter(svc)
+	adapter := wiring.NewDivergenceAdapter(svc)
 	firing, checked, window, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
 	if err != nil {
 		t.Fatalf("DivergenceFiringFor: %v", err)
@@ -242,7 +243,7 @@ func TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked(t *testing.T) {
 		seedCachedDivergence(t, rdb, canonical.Pair{Base: xlm, Quote: usd}, divergence.CachedResult{
 			SuccessCount: 1, AgreementCount: 1, ComputedAt: time.Now().UTC(),
 		})
-		_, checked, _, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm, usd)
+		_, checked, _, err := wiring.NewDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm, usd)
 		if err != nil {
 			t.Fatalf("DivergenceFiringFor: %v", err)
 		}

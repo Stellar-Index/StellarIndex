@@ -69,7 +69,6 @@ cmd/stellarindex-api/main.go	#985
 cmd/stellarindex-api/main.go	2026-05-09
 cmd/stellarindex-api/main.go	2026-05-10
 cmd/stellarindex-api/main.go	2026-05-10
-cmd/stellarindex-api/main.go	2026-05-12
 cmd/stellarindex-api/main.go	2026-05-13
 cmd/stellarindex-api/main.go	2026-05-13
 cmd/stellarindex-api/main.go	2026-05-20
@@ -132,7 +131,6 @@ cmd/stellarindex-api/main.go	F-0008
 cmd/stellarindex-api/main.go	F-0009
 cmd/stellarindex-api/main.go	F-0011
 cmd/stellarindex-api/main.go	F-0013
-cmd/stellarindex-api/main.go	F-0020
 cmd/stellarindex-api/main.go	F-0039
 cmd/stellarindex-api/main.go	F-0051
 cmd/stellarindex-api/main.go	F-1218
@@ -150,7 +148,6 @@ cmd/stellarindex-api/main.go	F-1232
 cmd/stellarindex-api/main.go	F-1238
 cmd/stellarindex-api/main.go	F-1255
 cmd/stellarindex-api/main.go	F-1255
-cmd/stellarindex-api/main.go	F-1258
 cmd/stellarindex-api/main.go	F-1258
 cmd/stellarindex-api/main.go	F-1258
 cmd/stellarindex-api/main.go	F-1270
