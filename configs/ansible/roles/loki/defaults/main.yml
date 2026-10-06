@@ -16,7 +16,7 @@ loki_retention_days: 30
 # disk; both share /var by default.
 loki_var_min_free_gb: 50
 # HTTP API listen address — loopback-only by default (matches the
-# design note docs/architecture/loki-ansible-role-design-note.md and
+# docs/architecture/ha-plan.md §6 (loopback admin surfaces) and
 # the grpc_listen_address below, both 127.0.0.1). r1 is single-host:
 # promtail ships to loki_push_url = http://localhost:3100, so loopback
 # is sufficient and keeps the auth_enabled:false server off every

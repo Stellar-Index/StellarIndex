@@ -1,6 +1,6 @@
 # `test/load/` — k6 load test suite
 
-Per [Task #74 design note](../../docs/architecture/k6-load-tests-design-note.md).
+Design and decisions: [`docs/architecture/ha-plan.md` §7.3](../../docs/architecture/ha-plan.md#73-load-testing-k6).
 
 Synthetic traffic against the Stellar Index API, asserting:
 
@@ -143,7 +143,7 @@ k6 archive --quiet test/load/scenarios/01-price-hot-path.js
 
 ## See also
 
-- [`docs/architecture/k6-load-tests-design-note.md`](../../docs/architecture/k6-load-tests-design-note.md) — full design (effort breakdown, edge cases, traffic-shape rationale).
+- [`docs/architecture/ha-plan.md` §7.3](../../docs/architecture/ha-plan.md#73-load-testing-k6) — design decisions; the traffic-shape rationale is in `scenarios/06-mixed-realistic.js`.
 - [`docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high`](../../docs/operations/runbooks/api.md#stellarindex_api_latency_p95_high) — the alert this suite proves we don't trip.
 - [`deploy/monitoring/rules/slo.yml`](../../deploy/monitoring/rules/slo.yml) — the multi-window SLO rules whose budget this proves we stay within.
 - [Coverage matrix S9.2](../../docs/architecture/coverage-matrix.md) — Freighter SLA contract requirement.

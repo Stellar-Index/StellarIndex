@@ -19,7 +19,7 @@ ADR binds its load-bearing decisions for per-region infrastructure.
 
 1. **Per-region HA is the shape; multi-region is ADR-0050.** Each region runs full HA, with cold DR in
    the cloud. The original "multi-region active/active out of scope for v1" call was overturned by
-   ADR-0050; [docs/architecture/multi-region-ha.md](../architecture/multi-region-ha.md) governs
+   ADR-0050; [docs/architecture/ha-plan.md](../architecture/ha-plan.md) governs
    anything multi-region, and this topology is its Phase 1.
 2. **Three tiers, three failure domains.** Hot: Redis with Sentinel, not Cluster (ADR-0007,
    ADR-0024). Warm: Patroni-managed TimescaleDB, one primary plus two sync replicas. Cold: MinIO

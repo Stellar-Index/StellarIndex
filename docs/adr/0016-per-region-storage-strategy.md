@@ -16,7 +16,7 @@ ADR-0015 makes served output byte-equivalent across regions, which leaves each r
 
 ## Decision
 
-Superseded by ADR-0050 (2026-08-21); `docs/architecture/multi-region-ha.md` is authoritative and no region is implemented from this ADR.
+Superseded by ADR-0050 (2026-08-21); `docs/architecture/ha-plan.md` is authoritative and no region is implemented from this ADR.
 Rejected by ADR-0050: Model A (Postgres replication from R1 as the canonical history), the R2-on-AWS shape, and ClickHouse-blind per-region sizing.
 What survives is one principle, carried into ADR-0050 section 4: regions may use different storage plumbing but must serve byte-identical closed-bucket output.
 The archive verification tiers it defined still apply:

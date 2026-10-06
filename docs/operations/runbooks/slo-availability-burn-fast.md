@@ -98,7 +98,7 @@ For postmortem:
 - `api.md#stellarindex_api_down` — when scrape `up{job="stellarindex-api"} == 0`.
 - `api.md#stellarindex_api_error_rate_critical` (the alert's `runbook_url` target) / `api.md#stellarindex_api_latency_p95_high` — adjacent route-level alerts.
 - `wire-paging.md` — confirm the `chat-page` receiver actually reaches a human.
-- ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/multi-region-ha.md`).
+- ADR-0008 — HA topology + availability target (multi-region decision amended by ADR-0050 / `docs/architecture/ha-plan.md`).
 - ADR-0009 — latency budget (separate from availability budget).
 
 ## Changelog

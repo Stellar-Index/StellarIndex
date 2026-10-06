@@ -6,7 +6,7 @@ related:
   - scripts/ops/sla-proof-from-probe.sh
   - scripts/ci/render-sla-proof.sh
   - test/load/scenarios/06-mixed-realistic.js
-  - docs/architecture/k6-load-tests-design-note.md §"How the proof report (Task #77) is generated"
+  - docs/architecture/ha-plan.md §7.3
   - docs/architecture/launch-readiness-backlog.md L5.* / L6.*
 ---
 
@@ -31,8 +31,8 @@ launch-readiness backlog.
 > is unset. The weekly report names that in its "does not prove" section. See
 > [§Blocked on an operator](#blocked-on-an-operator).
 
-Scenarios: [`test/load/scenarios/`](../../test/load/scenarios/) (Task #74), design note
-[`k6-load-tests-design-note.md`](../architecture/k6-load-tests-design-note.md).
+Scenarios: [`test/load/scenarios/`](../../test/load/scenarios/) (Task #74), design and decisions in
+[`ha-plan.md` §7.3](../architecture/ha-plan.md#73-load-testing-k6).
 
 ## What we're proving
 
@@ -326,7 +326,7 @@ report's "does not prove" section (auto-written) and in the backlog, never a bla
   alerts [`sla-probe.yml`](../../deploy/monitoring/rules/sla-probe.yml)
 - Report generator (k6): [`render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh), self-test
   [`render-sla-proof-test.sh`](../../scripts/ci/render-sla-proof-test.sh)
-- Scenario [`06-mixed-realistic.js`](../../test/load/scenarios/06-mixed-realistic.js); design note
-  [`k6-load-tests-design-note.md`](../architecture/k6-load-tests-design-note.md)
+- Scenario [`06-mixed-realistic.js`](../../test/load/scenarios/06-mixed-realistic.js); design in
+  [`ha-plan.md` §7.3](../architecture/ha-plan.md#73-load-testing-k6)
 - [ADR-0009](../adr/0009-latency-budget.md); reports README
   [`test/load/reports/README.md`](../../test/load/reports/README.md)

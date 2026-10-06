@@ -13,7 +13,7 @@ Implements the topology pinned in
 
 Pairs with the `patroni` and `redis-sentinel` roles to complete
 the launch-critical HA topology. Design rationale lives in
-[`docs/architecture/haproxy-ansible-role-design-note.md`](../../../../docs/architecture/haproxy-ansible-role-design-note.md).
+[`docs/architecture/ha-plan.md` §3.1](../../../../docs/architecture/ha-plan.md#31-edge-and-load-balancer).
 
 ## Prerequisites
 

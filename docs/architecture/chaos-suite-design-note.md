@@ -6,14 +6,14 @@ related:
   - test/chaos/README.md
   - docs/architecture/launch-readiness-backlog.md L5.5
   - docs/operations/sev-playbook.md §"Quarterly live chaos"
-  - docs/architecture/k6-load-tests-design-note.md (companion: load suite)
+  - docs/architecture/ha-plan.md §7.3 (companion: load suite)
 ---
 
 # Chaos suite — design note
 
 Forced-failure smoke for the Stellar Index stack, run as a deliberate
 "break one component, assert sane behaviour" exercise. Companion to
-the [k6 load suite](k6-load-tests-design-note.md) — load proves
+the [k6 load suite](ha-plan.md#73-load-testing-k6) — load proves
 "healthy stack stays within SLA," chaos proves "broken stack fails
 in documented ways."
 
