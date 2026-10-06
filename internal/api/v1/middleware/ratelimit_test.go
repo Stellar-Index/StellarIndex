@@ -1,7 +1,10 @@
 package middleware_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -25,6 +28,24 @@ func newRLRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	return c, mr
+}
+
+// newDownRedis returns a client whose every dial fails, in one attempt.
+// The address of a closed miniredis is not a down Redis: during go-redis's
+// dial retries another process on the runner can bind the freed port and
+// answer the script, so the "failed" take succeeds.
+func newDownRedis(t *testing.T) *redis.Client {
+	t.Helper()
+	c := redis.NewClient(&redis.Options{
+		Addr:          "redis-down.invalid:6379",
+		MaxRetries:    -1,
+		DialerRetries: 1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("redis down")
+		},
+	})
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }
 
 // okHandler always returns 200 OK so the middleware's effect is
@@ -225,21 +246,7 @@ func TestRateLimit_TruncatesLongKeys(t *testing.T) {
 }
 
 func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
-	// Deterministically-broken Redis: a client dialed at a miniredis
-	// that is closed BEFORE the client ever connects, with connection
-	// pooling that can't smuggle a live conn past the close. The
-	// previous shape (newRLRedis then mr.Close() mid-test) raced on CI:
-	// go-redis could complete one command on an already-pooled
-	// connection during miniredis's shutdown drain on a slow runner, so
-	// Take() succeeded and the "headers absent" assertion failed
-	// (ci-health flood, 2026-08-08). Closing first + a fresh client
-	// makes every Take() a dial failure — the exact production
-	// condition the test models.
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
-	mr.Close()
-	rdb := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newDownRedis(t)
 	b := ratelimit.New(rdb, 1, time.Minute)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k4"), nil, nil)(okHandler())
@@ -259,11 +266,7 @@ func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
 // A sustained Redis outage flips the limiter to fail-closed 503s; each one
 // must be counted, since the fail-open counter stops moving at that point.
 func TestRateLimit_FailClosedPastDwellIsCounted(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
-	mr.Close()
-	rdb := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newDownRedis(t)
 	clock := newManualClock()
 	b := ratelimit.New(rdb, 1, time.Minute, ratelimit.WithClock(clock.now))
 	h := middleware.RateLimit(b, fixedKeyFn("k-closed"), nil, nil)(okHandler())
