@@ -6,11 +6,13 @@ package chops
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // testBackfillConfig is the r1-shaped storage block: both buckets named,
@@ -172,6 +174,58 @@ func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
 		err := chBackfill(append(append([]string{}, base...), mode))
 		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
 			t.Errorf("%s: err = %v, want the mode accepted and the run to reach config load", mode, err)
+		}
+	}
+}
+
+// TestChangesOnlyExtract_KeepsCommitMarkerAndChangesOnly fills every slice
+// field of LedgerExtract by reflection, so a table added later is covered:
+// -changes-only must write it nowhere.
+func TestChangesOnlyExtract_KeepsCommitMarkerAndChangesOnly(t *testing.T) {
+	var in clickhouse.LedgerExtract
+	v := reflect.ValueOf(&in).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		if f := v.Field(i); f.Kind() == reflect.Slice {
+			f.Set(reflect.MakeSlice(f.Type(), 1, 1))
+		}
+	}
+	in.Ledger.LedgerSeq = 58_762_517
+	in.Changes[0].LedgerSeq = 58_762_517
+
+	out := changesOnlyExtract(in)
+
+	if out.Ledger != in.Ledger {
+		t.Fatalf("ledgers row changed: got %+v, want %+v — it is the commit marker and must be written", out.Ledger, in.Ledger)
+	}
+	if !reflect.DeepEqual(out.Changes, in.Changes) {
+		t.Fatalf("Changes = %+v, want %+v", out.Changes, in.Changes)
+	}
+	ov := reflect.ValueOf(out)
+	for i := 0; i < ov.NumField(); i++ {
+		name := ov.Type().Field(i).Name
+		if f := ov.Field(i); f.Kind() == reflect.Slice && name != "Changes" && f.Len() != 0 {
+			t.Errorf("%s kept %d row(s); -changes-only must drop every table but ledgers and ledger_entry_changes", name, f.Len())
+		}
+	}
+	if len(in.Txs) != 1 {
+		t.Error("changesOnlyExtract mutated its input")
+	}
+}
+
+// TestCHBackfill_ChangesOnlyFollowsTheModeGate — -changes-only is a filter,
+// not a mode: alone it must still refuse, and with -write or -dry-run it must
+// parse and reach config load like the default path.
+func TestCHBackfill_ChangesOnlyFollowsTheModeGate(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
+	base := []string{"-config", cfgPath, "-from", "2", "-to", "3", "-changes-only"}
+
+	if err := chBackfill(base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("-changes-only with no mode flag: err = %v, want opsutil.ErrWriteModeUnstated", err)
+	}
+	for _, mode := range []string{"-write", "-dry-run"} {
+		err := chBackfill(append(append([]string{}, base...), mode))
+		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
+			t.Errorf("-changes-only %s: err = %v, want the run to reach config load", mode, err)
 		}
 	}
 }

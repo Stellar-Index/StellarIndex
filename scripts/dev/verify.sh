@@ -648,6 +648,7 @@ lane_d() { # everything else
     echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
     echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+    echo "=== ordinal-rederive-chunks wrapper self-test ===" && ./scripts/ci/ordinal-rederive-chunks-test.sh
     # The behavioural twin above pins HOW the job snapshots; this pins WHICH
     # datasets it is given (NS03 — the Galexie LCM archive the other two
     # tiers are derived from had none). Renders the role template, so the
