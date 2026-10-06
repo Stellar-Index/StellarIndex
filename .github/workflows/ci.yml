@@ -106,29 +106,15 @@ jobs:
   # ALSO computes the path-change classes (§B) that gate the expensive
   # jobs below, and the Dependabot toolchain guard (§C).
   #
-  # REQUIRED-CHECK NOTE (§B) on HOW the gating below is done, and why
-  # not with a job-level `if:`. This file currently disagrees with
-  # itself about what a SKIPPED job means to a required status check:
-  # `lint`'s CID-02 comment reads a skip as satisfying ("passing") a
-  # required check, while `integration-test`'s comment reads the
-  # opposite ("a skipped required check never turns green either") and
-  # is why that job runs `if: always()` and actively fails rather than
-  # letting a skip stand in for a verdict. Main's active rules block
-  # deletion and force-push only — no required status checks (see
-  # `branch-protection-status` below) — so neither reading is exercised
-  # today and this cannot be resolved by observation before this PR.
-  # Given that, every job gated below by path class does it with a
-  # STEP-level `if: needs.preflight.outputs.<class> == 'true'` on the
-  # WORK steps only — never a job-level `if:` — so the job's own
-  # conclusion is always `success` or `failure`, never `skipped`,
-  # regardless of which reading of the contradiction above turns out to
-  # be true. `needs: [preflight]` (no job-level `if:`) is kept so a
-  # `preflight` FAILURE still cascades to skip the expensive jobs (the
-  # "~40s, not the full matrix" saving from §A) — that cascade is the
-  # rare path and, even if it reads as a wedge under the pessimistic
-  # interpretation, is resolved by `preflight` itself failing.
-  # Whoever next touches branch protection should resolve the
-  # contradiction above with a real PR before relying on either.
+  # REQUIRED-CHECK NOTE (§B): the six `integration-test-shard` runners use
+  # a JOB-level `if: needs.preflight.outputs.integration == 'true'`, so a
+  # non-integration diff skips them outright. The `integration tests
+  # (Docker)` aggregate always runs (`if: always()`) and is the required
+  # check: it succeeds when the class is explicitly 'false' and the shards
+  # were skipped, and fails closed on anything else (a failed preflight, a
+  # failed or cancelled shard, an empty class output). A skipped shard is
+  # therefore never the required check's own conclusion. The other
+  # path-gated jobs below keep step-level `if:` on their work steps.
   preflight:
     name: preflight (fast-fail)
     runs-on: ubuntu-latest
@@ -323,6 +309,13 @@ jobs:
               - 'test/integration/**'
               - 'test/harness/**'
               - 'go.mod'
+              # Read by the shard script / integration tests themselves.
+              - 'go.sum'
+              - 'Makefile'
+              - 'scripts/ci/integration-shard.sh'
+              - '.github/workflows/ci.yml'
+              - 'deploy/clickhouse/*.sql'
+              - 'configs/ansible/roles/redis-sentinel/templates/users.acl.j2'
             go:
               - '**/*.go'
               - 'go.mod'
@@ -604,15 +597,8 @@ jobs:
     # for a change confined to them. A docs/web-only PR still gets zero
     # additional signal from a 20-minute Docker round-trip.
     #
-    # Gated with a STEP-level `if:` on "integration shard N of 6" below,
-    # NOT a job-level one: this job's comment two lines down already
-    # explains that `integration-test` treats a SKIPPED shard result as
-    # a failure, on purpose, because a skipped required check does not
-    # reliably turn green (see the REQUIRED-CHECK NOTE on `preflight`).
-    # A job-level `if:` here would make every out-of-scope PR trip that
-    # exact failure. Step-level gating keeps this job's conclusion
-    # `success` (a fast no-op) when out of scope, so the aggregate
-    # below needs no change at all.
+    # Gated by the job-level `if:` above; the aggregate below carries the
+    # required check and fails closed unless the class output is 'false'.
     # 4-way shard (2026-08-29): main CI's wall-clock was ~23 min and this
     # job alone was ~1230 s (20.5 min) — the suite has ~158 tests, zero
     # t.Parallel(), one testcontainers set per test, so it ran strictly
@@ -649,7 +635,6 @@ jobs:
         # 502 that red-failed #172 and generated a run of "CI failed" emails
         # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
         # the build; a genuine missing/renamed module still fails after 3.
-        if: needs.preflight.outputs.integration == 'true'
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -664,7 +649,6 @@ jobs:
         # tests; the per-slice go-test deadline (15m) lives in the script
         # and the job timeout above is its ceiling. Shard 0 also runs the
         # non-sharded INT_TEST_PKGS packages (seconds).
-        if: needs.preflight.outputs.integration == 'true'
         run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 6
 
   integration-test:
@@ -672,9 +656,9 @@ jobs:
     # protection requires ("integration tests (Docker)") — a matrix job's
     # per-shard names would each need listing and would silently drift when
     # the shard count changes. `if: always()` so it runs (and FAILS) when a
-    # shard fails, is cancelled, or is skipped; a plain `needs:` would skip
-    # it and a skipped required check never turns green either, but the
-    # failure reason would be invisible.
+    # shard fails or is cancelled, or when preflight fails and the shards
+    # are skipped as a result. Shards skipped because the integration class
+    # is explicitly 'false' pass; an empty or missing class output fails.
     name: integration tests (Docker)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -688,7 +672,7 @@ jobs:
           INTEGRATION_CLASS: ${{ needs.preflight.outputs.integration }}
         run: |
           echo "preflight=${PREFLIGHT_RESULT} integration-class=${INTEGRATION_CLASS} shards=${SHARDS_RESULT}"
-          if [ "${PREFLIGHT_RESULT}" = "success" ] && [ "${INTEGRATION_CLASS}" != "true" ] && [ "${SHARDS_RESULT}" = "skipped" ]; then
+          if [ "${PREFLIGHT_RESULT}" = "success" ] && [ "${INTEGRATION_CLASS}" = "false" ] && [ "${SHARDS_RESULT}" = "skipped" ]; then
             echo "no integration-class change: shards skipped by design"
             exit 0
           fi

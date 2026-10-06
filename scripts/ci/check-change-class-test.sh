@@ -105,6 +105,12 @@ expect "test/harness/** triggers integration (INT_TEST_PKGS member)" 0
 run integration "internal/ops/runbook.go"
 expect "internal/ops outside archive/ DOES trigger integration (internal/** is matched as a whole)" 0
 
+for f in go.sum Makefile scripts/ci/integration-shard.sh .github/workflows/ci.yml \
+  deploy/clickhouse/account_activity.sql configs/ansible/roles/redis-sentinel/templates/users.acl.j2; do
+  run integration "$f"
+  expect "$f triggers integration (shard script / integration test input)" 0
+done
+
 run integration "scripts/ci/check-change-class.sh"
 expect "scripts/ci (not scripts/ops) does NOT trigger integration" 1
 
