@@ -342,7 +342,7 @@ done
 #
 # A header is not the only place an operator is handed SQL. Runbooks,
 # alert annotations and ops scripts hand it over too, and no gate read
-# them: both rule trees and the twap-history-missing runbook prescribed
+# them: both rule trees and the data-freshness runbook prescribed
 # the NULL-start TWAP refresh 0156 marks DO NOT RUN, and an ops script ran
 # an unbounded UPDATE on trades. The rules below are about DESTRUCTION,
 # not coverage, so they hold for every file in scope with no baseline and
@@ -501,7 +501,7 @@ A NULL start makes the refresh process every invalidation a retention
 drop wrote, against a source whose old chunks are gone, and it DELETES
 that history (migrations/0156_prices_1m_retention.up.sql, "TWAP").
 Rewrite it windowed — an explicit start, `force => true`, after the
-source's own rebuild — as docs/operations/runbooks/twap-history-missing.md
+source's own rebuild — as docs/operations/runbooks/data-freshness.md
 does. If the form is quoted so an operator recognises it, put
 `DO NOT RUN:` immediately before it.
 NULLSTART

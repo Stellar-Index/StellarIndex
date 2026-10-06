@@ -50,7 +50,7 @@ tests:
               team: stellarindex
               component: data-freshness
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_probe_frozen
               summary: "data-freshness.prom has not been rewritten in 45m — gauges may be frozen, not fresh"
               description: |
                 data_freshness.prom's mtime is > 45m old (timer runs every
@@ -62,7 +62,7 @@ tests:
                 and the file's mtime directly before trusting any
                 stellarindex_data_freshness_stale reading as current.
 
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_freshness_probe_frozen
 
       - eval_time: 150m
         alertname: stellarindex_data_freshness_watchdog_silent

@@ -588,8 +588,7 @@ type Config struct {
 	// reads from a postgres-resident history rather than recomputing
 	// at request time. Best-effort — sink failures log + continue.
 	//
-	// See migrations/0026 + Phase 2 of
-	// docs/architecture/explorer-implementation-plan.md.
+	// See migrations/0026 and docs/architecture/explorer-data-inventory.md §11.3.
 	ContributionSink ContributionSink
 
 	// DecimalsLookup, when non-nil, is consulted immediately after each

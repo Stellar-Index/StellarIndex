@@ -192,7 +192,7 @@ which is exactly what happened across 2026-07-08 → 2026-07-09.
       upgrade is exactly the class of change most likely to surface
       a new decode-error class; check
       `stellarindex_source_decode_errors_total` and the completeness
-      verdict (`docs/operations/runbooks/completeness-incomplete.md`)
+      verdict (`docs/operations/runbooks/data-freshness.md#stellarindex_completeness_incomplete`)
       aren't regressing.
 
 ## Why the galexie comparison is date-based, not version-based

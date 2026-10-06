@@ -165,7 +165,7 @@ This section also serves the SLO availability burn alerts `stellarindex_slo_avai
    ```
 
    - `postgres.ok == false`: [timescale-primary-down](timescale-primary-down.md).
-   - `redis.ok == false`: [redis-master-down](redis-master-down.md).
+   - `redis.ok == false`: [redis-master-down](cache.md#stellarindex_redis_master_down).
    - All OK but 5xx elevated: handler bug (Fix B).
 4. Log patterns. Access-log lines carry method/path/status/latency_ms/request_id but no `.level` and no `.err`; the ERROR-level lines with the underlying error are separate lines. This filter selects the latter:
 
@@ -211,7 +211,7 @@ This section also serves the SLO availability burn alerts `stellarindex_slo_avai
   2. Feature-flag deny (if a flag exists for the endpoint): edit `/etc/stellarindex.toml` (via the ansible overlay), then `systemctl restart stellarindex-api`.
 
   If the bug hits every handler (e.g. middleware panic), treat as A even if the deploy is not recent: roll back to last-known-good; you cannot path-gate around middleware.
-- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](timescale-primary-down.md), [redis-master-down](redis-master-down.md), [all-ingestion-down](all-ingestion-down.md). This alert auto-resolves once the dep recovers.
+- **C. Dependency failure.** Follow the dependency's runbook: [timescale-primary-down](timescale-primary-down.md), [redis-master-down](cache.md#stellarindex_redis_master_down), [all-ingestion-down](all-ingestion-down.md). This alert auto-resolves once the dep recovers.
 - **D. Load-induced** (viral traffic, DDoS): error rate climbs with no deploy, dep failure or log pattern; `stellarindex_api_latency_p99_high` fires in tandem; `http_requests_total` rate sharply above baseline. Bare metal does not auto-scale and r1 is fixed capacity [multi-host: fixed per ADR-0008 section 4], so shed load:
   1. Tighten edge rate limits: Cloudflare WAF short-TTL per-IP rule (the API is CF-fronted; the Caddyfile `trusted_proxies` block exists for this).
   2. Drop the heaviest non-essential paths (SSE `/v1/price/stream`, batch reads) with a temporary Caddy `handle`/`respond 503` gate as in B.1 [multi-host: HAProxy 503 equivalent].
@@ -344,7 +344,7 @@ Caddy's active health check probes `/v1/healthz` only (`health_uri /v1/healthz`,
 - Any API restart over 60 s: single host, so every deploy/restart briefly drives `up == 0` and `for: 60s` means a restart exceeding 60 s (StartLimit exhaustion, slow startup) pages. Check `journalctl -u stellarindex-api` for a deploy-workflow restart before treating it as an incident.
 - Scrape-path breakage: if Prometheus cannot reach `127.0.0.1:3000`, `up == 0` looks like a real outage. Cross-check Caddy's journald access log (real traffic) and sla-probe metrics (`stellarindex_sla_probe_availability_pct`, `stellarindex_sla_probe_unit_failed`, `rules.r1/sla-probe.yml`); `stellarindex_prometheus_scrape_failing` (`rules.r1/meta.yml`) discriminates the scrape path. Caddy serving 200s while Prometheus says `up==0` = scrape path, not the API.
 
-**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (handlers erroring, hosts healthy); [stellarindex_api_latency_p95_high](#stellarindex_api_latency_p95_high); [`timescale-primary-down.md`](timescale-primary-down.md), [`redis-master-down.md`](redis-master-down.md); [`binary-version-skew.md`](binary-version-skew.md); [HA plan section 9](../../architecture/ha-plan.md); [`release-process.md`](../release-process.md) -> Rollback.
+**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (handlers erroring, hosts healthy); [stellarindex_api_latency_p95_high](#stellarindex_api_latency_p95_high); [`timescale-primary-down.md`](timescale-primary-down.md), [`cache.md#stellarindex_redis_master_down`](cache.md#stellarindex_redis_master_down); [`binary-version-skew.md`](binary-version-skew.md); [HA plan section 9](../../architecture/ha-plan.md); [`release-process.md`](../release-process.md) -> Rollback.
 
 ## stellarindex_api_latency_p95_high
 
@@ -383,7 +383,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 
 **Typical causes** (roughly by frequency).
 
-1. Redis cache-miss storm: a popular asset's price key is evicted/TTL'd, every `/v1/price?asset=X` becomes a Timescale query, Timescale saturates, pileup. Signal: `stellarindex_api_cache_ops_total{result="miss"}` rate jumps per `(cache, op)` (see [stellarindex_api_cache_miss_rate_high](#stellarindex_api_cache_miss_rate_high)); Redis `keyspace_misses` / `evicted_keys` climbing in `INFO stats`. Fix: warm the cache or scale Redis memory; `redis-memory.md`.
+1. Redis cache-miss storm: a popular asset's price key is evicted/TTL'd, every `/v1/price?asset=X` becomes a Timescale query, Timescale saturates, pileup. Signal: `stellarindex_api_cache_ops_total{result="miss"}` rate jumps per `(cache, op)` (see [stellarindex_api_cache_miss_rate_high](#stellarindex_api_cache_miss_rate_high)); Redis `keyspace_misses` / `evicted_keys` climbing in `INFO stats`. Fix: warm the cache or scale Redis memory; `cache.md#stellarindex_redis_memory_saturated`.
 2. Timescale contention: a long-running query (manual backfill, an unbounded exploratory `SELECT`) holds locks or fills the pool. Signal: `pg_stat_activity` shows a query older than 30 s. Fix: `SELECT pg_cancel_backend(pid)` on the offender after confirming it is not production traffic.
 3. CAGG not refreshed: `/v1/vwap` / `/v1/twap` fall back to raw-trades aggregation (O(trades), seconds). Signal: `stellarindex_timescale_cagg_stale` usually fires too. Fix: refresh the CAGG manually; `cagg-stale.md`.
 4. Noisy neighbor on the host pegging CPU or IO. Signal: `stellarindex_host_cpu_high` on the same instance. Fix: scale horizontally or move to a dedicated node.
@@ -392,7 +392,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 **Fix.**
 
 1. Narrow to the slow endpoint (above); walk causes in order, each has a faster check than the next.
-2. Redis-driven: `redis-memory.md`. Timescale-driven: `pg-conns-saturated.md` or `replica-lag.md` (replica-lag is multi-host only; inert on r1, no replica).
+2. Redis-driven: `cache.md#stellarindex_redis_memory_saturated`. Timescale-driven: `pg-conns-saturated.md` or `replica-lag.md` (replica-lag is multi-host only; inert on r1, no replica).
 3. Scale the API up only if the hot path is CPU-bound and other causes are ruled out; it is a bandaid, file a follow-up.
 4. Verify: p95 back under 200 ms (SLA target, not the 500 ms alarm threshold) for 15 min; do not leave it oscillating between 200 and 500 ms.
 
@@ -404,7 +404,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 - Large `limit=500` `/v1/markets` scan after a fresh deploy with cold Timescale buffers; warms within a minute.
 - `/v1/markets` baseline above 200 ms: it does `GROUP BY base_asset, quote_asset` across the 14-day chunk window of the trades hypertable. Baseline about 540 ms cold / 50 ms warm; during a concurrent heavy backfill cold balloons to about 7 s and warm settles about 400 ms (backfill writes evict recent chunks from shared buffers; columnstore-compress policy lags). Per-route SLA carve-out p95 <= 300 ms / p99 <= 1 s; during backfill it is exceeded and the global p95 > 500 ms alert may fire on the first request after a deploy or buffer churn. Transient load artefact, not a route regression; warm returns to about 50 ms once the backfill completes.
 
-**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `redis-memory.md`, `cagg-stale.md`, `pg-conns-saturated.md`.
+**Related.** [stellarindex_api_error_rate_critical](#stellarindex_api_error_rate_critical) (errors, not slowness); `cache.md#stellarindex_redis_memory_saturated`, `cagg-stale.md`, `pg-conns-saturated.md`.
 
 ## stellarindex_api_latency_p99_high
 
@@ -522,7 +522,7 @@ ssh root@<host> "journalctl -u stellarindex-aggregator -n 200 --output=cat | gre
 - Aggregator restart: `lastWriteAt` resets so every pair reports about 0 then climbs; a newly configured pair is stamped "just observed" on first sighting. If no VWAP write lands within 2 min of restart, the alert is real.
 - Chain halt: if Stellar mainnet stops producing ledgers every asset goes stale at once; correlates with `core-lag.md` / `rpc-lag.md`, which are the real alerts.
 
-**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `cagg-stale.md`; `oracle-stale.md`; `sla-probe-freshness-breach.md` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-source-stale.md`, `served-value-drift.md`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
+**Related.** `aggregator.md#stellarindex_aggregator_silent` (absent branch); `source-stopped.md`; `cagg-stale.md`; `divergence.md#stellarindex_oracle_stale`; `sla-probe-freshness-breach.md` (customer-facing freshness: `/v1/price/tip` > 30 s, other endpoints > 180 s); `data-freshness.md#stellarindex_data_source_stale`, `data-freshness.md#stellarindex_served_value_drift`; `binary-version-skew.md`; HA plan section 9: `docs/architecture/ha-plan.md`.
 
 ## stellarindex_api_price_stream_not_delivering
 
@@ -658,7 +658,7 @@ clickhouse-client --port 9300 -q "SELECT name FROM system.columns
 
 **False positives.** No traffic since the object was repopulated: probes run only when a request needs them, so the gauge keeps the last answer until one request to the affected route settles it. A deployment that deliberately omits an optional object: fallback is correct; the alert is a standing ticket until built, so silence it with an expiry, not indefinitely.
 
-**Related.** [clickhouse-server-health](clickhouse-server-health.md) (lake down or failing queries); `docs/reference/metrics/README.md` for `stellarindex_ch_schema_probe_present` and `stellarindex_ch_schema_probe_unanswered_total`.
+**Related.** [clickhouse-server-health](clickhouse.md) (lake down or failing queries); `docs/reference/metrics/README.md` for `stellarindex_ch_schema_probe_present` and `stellarindex_ch_schema_probe_unanswered_total`.
 
 ## stellarindex_customer_webhook_delivery_failing
 

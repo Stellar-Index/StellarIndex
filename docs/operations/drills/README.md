@@ -31,7 +31,7 @@ response.
 | [sev1-patroni-failover](scenarios/sev1-patroni-failover.md) | storage, Patroni failover | `timescale-primary-down.md`, `replica-lag.md` | no: unvalidated draft |
 | [sev1-anomaly-freeze-stuck](scenarios/sev1-anomaly-freeze-stuck.md) | aggregator | `anomaly.md#stellarindex_anomaly_freeze_engaged` | yes |
 | [sev2-source-decoder-regression](scenarios/sev2-source-decoder-regression.md) | ingest | `decode-errors.md` | yes |
-| [sev2-redis-sentinel-failover](scenarios/sev2-redis-sentinel-failover.md) | cache, master swap | `redis-master-down.md` | no: role exists (ADR-0024), not deployed |
+| [sev2-redis-sentinel-failover](scenarios/sev2-redis-sentinel-failover.md) | cache, master swap | `cache.md` | no: role exists (ADR-0024), not deployed |
 
 ## Tabletop protocol (monthly)
 

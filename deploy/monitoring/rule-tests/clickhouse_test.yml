@@ -64,7 +64,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_server_down
               summary: "ClickHouse is not answering its metrics endpoint — the lake read path is unobservable"
               description: |
                 The `clickhouse` scrape target (clickhouse-server's own
@@ -101,7 +101,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_server_down
               summary: "ClickHouse is not answering its metrics endpoint — the lake read path is unobservable"
               description: |
                 The `clickhouse` scrape target (clickhouse-server's own
@@ -137,7 +137,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_query_failures_high
               summary: "ClickHouse is failing 0.20 queries/s on localhost:9363"
               description: |
                 More than 0.1 failed queries/s (≈ 6/min) for 15 minutes,
@@ -185,7 +185,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
               summary: "ClickHouse rejected 180 inserts on localhost:9363 in the last hour — too many parts"
               description: |
                 ClickHouse refused at least one INSERT in the trailing hour
@@ -232,7 +232,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
               summary: "ClickHouse rejected 1 inserts on localhost:9363 in the last hour — too many parts"
               description: |
                 ClickHouse refused at least one INSERT in the trailing hour
@@ -260,7 +260,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
               summary: "ClickHouse rejected 1 inserts on localhost:9363 in the last hour — too many parts"
               description: |
                 ClickHouse refused at least one INSERT in the trailing hour
@@ -303,7 +303,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
               summary: "ClickHouse rejected 10k inserts on localhost:9363 in the last hour — too many parts"
               description: |
                 ClickHouse refused at least one INSERT in the trailing hour
@@ -331,7 +331,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected
               summary: "ClickHouse rejected 10k inserts on localhost:9363 in the last hour — too many parts"
               description: |
                 ClickHouse refused at least one INSERT in the trailing hour

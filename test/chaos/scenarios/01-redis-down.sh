@@ -13,7 +13,7 @@
 #
 # This scenario exercises the API's graceful-degradation path
 # documented in:
-#   - docs/operations/runbooks/redis-master-down.md
+#   - docs/operations/runbooks/cache.md#stellarindex_redis_master_down
 #   - internal/api/middleware/ratelimit (fail-open behaviour)
 #
 # Assumes the docker-compose dev stack (`make dev`) is running and

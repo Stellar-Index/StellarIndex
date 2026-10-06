@@ -89,4 +89,4 @@ suppression.
 
 - [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) — dedicated alert, excluded here.
 - [`backup-failed.md`](backup-failed.md) — `stellarindex_pgbackrest_backup_unit_failed`, dedicated alert, excluded here.
-- [`price-divergence.md`](price-divergence.md) — where a stale `account_directory` eventually shows up.
+- [`divergence.md`](divergence.md) — where a stale `account_directory` eventually shows up.

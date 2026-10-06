@@ -302,7 +302,7 @@ MD
 check "a DO NOT RUN docs/ block is exempt" 0 "$docs_do_not_run"
 
 # ── the operator corpus: NULL-start refresh of a view over a retained source
-# The historical defect: both alert-rule trees and the twap-history-missing
+# The historical defect: both alert-rule trees and the data-freshness
 # runbook told the on-call to run the NULL-start TWAP refresh that 0156
 # marks DO NOT RUN, and no gate read either file.
 echo "lint-migration-commands-test: operator-corpus verdicts"

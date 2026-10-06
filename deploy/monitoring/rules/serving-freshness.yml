@@ -42,7 +42,7 @@ groups:
           team: stellarindex
           component: serving
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_serving_insert_frozen
           summary: "Served tier frozen — no successful insert from ANY source in {{ $value | humanizeDuration }}"
           description: |
             time() - max(stellarindex_source_last_insert_unix) is over 30
@@ -56,7 +56,7 @@ groups:
             insert ON-CONFLICT-noops or fails). Check Timescale write
             health and the trade-insert backpressure metric first.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_serving_insert_frozen
 
       # NULL: the served-insert timestamp family is entirely absent from
       # scrape — the indexer is down, the metric was dropped, or no
@@ -70,7 +70,7 @@ groups:
           team: stellarindex
           component: serving
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_serving_insert_absent
           summary: "Served-insert freshness metric is ABSENT — freshness monitoring is blind"
           description: |
             stellarindex_source_last_insert_unix has no series in scrape for
@@ -81,4 +81,4 @@ groups:
             backstop that keeps served-freshness monitoring from silently
             going blind.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_serving_insert_absent
