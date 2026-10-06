@@ -10,7 +10,7 @@
 -- an account-movements page for an active address would seq-scan the
 -- whole hypertable — the exact "no unbounded trade-scan queries"
 -- failure mode already learned the hard way once (see
--- docs/operations/v1-launch-plan.md:2486. The original citation,
+-- docs/architecture/domain-traps.md. The original citation,
 -- `feedback_no_unbounded_trade_scan.md`, is an agent auto-memory note
 -- that has never been in this repo; corrected 2026-09-02, #358).
 --
