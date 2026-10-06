@@ -995,8 +995,8 @@ func (o *Orchestrator) inheritLegFreeze(
 	o.keepFrozenVWAPAlive(ctx, chain.Target, window, cachekeys.FreezeTTL)
 
 	// The target has no lifecycle of its own, so frozen_since is the leg's.
-	legFiredAt := o.freezeStates[leg.String()+":"+window.String()].FiredAt
-	o.streamFrozenOnce(ctx, chain.Target, window, o.tickClock().Truncate(closedBucket), legFiredAt)
+	// Zero firedAt omits frozen_since: the target may have priced via a reroute after the leg froze.
+	o.streamFrozenOnce(ctx, chain.Target, window, o.tickClock().Truncate(closedBucket), time.Time{})
 
 	if o.cfg.FreezeWriter == nil {
 		return

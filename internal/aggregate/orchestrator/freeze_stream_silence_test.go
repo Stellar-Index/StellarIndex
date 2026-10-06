@@ -115,9 +115,9 @@ func TestTriangulate_InheritedFreeze_StreamCarriesAMarker(t *testing.T) {
 		if got[i].window != window || !got[i].observedAt.Equal(want) {
 			t.Errorf("marker %d = %+v, want %s at %s", i, got[i], window, want)
 		}
-		if !got[i].frozenSince.Equal(firstBucket) {
-			t.Errorf("marker %d frozenSince = %s, want the leg freeze's first refused bucket %s",
-				i, got[i].frozenSince, firstBucket)
+		if !got[i].frozenSince.IsZero() {
+			t.Errorf("marker %d frozenSince = %s, want absent (the leg's freeze bucket is not the target's)",
+				i, got[i].frozenSince)
 		}
 	}
 }
