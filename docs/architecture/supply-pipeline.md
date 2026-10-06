@@ -73,8 +73,7 @@ counting. A removed claimable balance or LP entry carries no asset in its key;
 `claimable_balances` and `liquidity_pools` resolve it from the same-ledger
 STATE pre-image (`dispatcher_adapter.go` memo), and an unattributable removal
 is a decode error, not a silent drop. Pinned by
-`internal/sources/{claimable_balances,liquidity_pools}/removal_supply_test.go`
-([45b findings](../operations/45b-verify-first-findings.md#gated--larger-items)).
+`internal/sources/{claimable_balances,liquidity_pools}/removal_supply_test.go`.
 
 ## The chained-fallback reader pattern
 
