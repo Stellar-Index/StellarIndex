@@ -104,6 +104,22 @@ provisioned. Until then no key is published: say in your first
 message that you want an encrypted channel and one is arranged
 before any detail changes hands.
 
+## Dependency advisories
+
+Automatic:
+
+- Dependabot (`.github/dependabot.yml`) opens update PRs weekly, Mondays,
+  for Go modules, GitHub Actions, Docker base images and both web apps.
+- `govulncheck` runs in `ci.yml` on every pull request that changes Go code,
+  gated by the accepted-risk allowlist `scripts/ci/govulncheck-allow.txt`.
+- Trivy scans the web lockfiles on every pull request (`ci.yml`) and the
+  whole filesystem weekly, Mondays 06:17 UTC (`security.yml`).
+
+Human: the maintainer reviews open advisories monthly. That covers open
+Dependabot security alerts and PRs, and any allowlist entry that has outlived
+its reason. Anything rated high or critical is handled on discovery, not at
+the monthly review.
+
 ## Scope of the Stellar network itself
 
 Our service depends on Stellar-network correctness. Vulnerabilities
