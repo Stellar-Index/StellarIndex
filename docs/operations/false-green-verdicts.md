@@ -132,10 +132,10 @@ require_affected "disarm" 1 -- psql -f disarm.sql
 
 ### Runbooks still reading the wrong thing
 
-- `docs/operations/runbooks/supply-snapshot-never-initialized.md`
+- `docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_never_initialized`
   annotates `systemctl status supply-snapshot.service` as "most recent
   run", but its alert fires exactly when there has been no run.
-- Precedent to follow: `runbooks/restore-drill-offsite-stale.md` reads
+- Precedent to follow: `runbooks/restore-drill.md#stellarindex_restore_drill_offsite_stale` reads
   `stellarindex_restore_drill_last_success_unix` (carries its own
   freshness); AGENTS.md "Working style", `docs/contributing/procedures/verify-done.md`
   and `scripts/dev/cut-release.sh` read the sentinel from a log.

@@ -51,7 +51,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
               summary: "Projector source reflector-fx lagging > 256 ledgers"
               description: |
                 The ADR-0032 projector's per-source cursor for reflector-fx
@@ -60,7 +60,7 @@ tests:
                 so per-source projections (trades, blend_*, phoenix_*, ...) will
                 increasingly diverge from the raw store.
 
-                Runbook: docs/operations/runbooks/projector-lag.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
       # ...and the stalled-replay rule stays silent: there is no replay.
       - eval_time: 20m
         alertname: stellarindex_projector_replay_stalled
@@ -121,7 +121,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-replay.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled
               summary: "Projector replay for reflector-fx has STOPPED advancing"
               description: |
                 An operator-initiated projector-replay is in progress for
@@ -137,7 +137,7 @@ tests:
                 first — a floored window or a held sink is the usual cause — and
                 follow the replay runbook's decompress-first pre-flight.
 
-                Runbook: docs/operations/runbooks/projector-replay.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled
       # The lag ticket stays excused while the replay window is open —
       # replay_stalled is the signal that covers this state.
       - eval_time: 25m
@@ -192,7 +192,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
               summary: "Projector source aquarius lagging > 256 ledgers"
               description: |
                 The ADR-0032 projector's per-source cursor for aquarius
@@ -201,7 +201,7 @@ tests:
                 so per-source projections (trades, blend_*, phoenix_*, ...) will
                 increasingly diverge from the raw store.
 
-                Runbook: docs/operations/runbooks/projector-lag.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
       - eval_time: 20m
         alertname: stellarindex_projector_replay_stalled
         exp_alerts: []
@@ -234,7 +234,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_ratio_high
               summary: "Projector source blend_emitter is dropping 100% of its events at decode"
               description: |
                 Over the last hour the ADR-0032 projector for blend_emitter
@@ -246,14 +246,14 @@ tests:
                 Fix the decoder, then re-drive with `stellarindex-ops
                 projector-replay -source blend_emitter`.
 
-                Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
           - exp_labels:
               source: rozo
               severity: ticket
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-decode-error-rate.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_ratio_high
               summary: "Projector source rozo is dropping 100% of its events at decode"
               description: |
                 Over the last hour the ADR-0032 projector for rozo
@@ -265,7 +265,7 @@ tests:
                 Fix the decoder, then re-drive with `stellarindex-ops
                 projector-replay -source rozo`.
 
-                Runbook: docs/operations/runbooks/projector-decode-error-rate.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
   # ══ 6. decode-error ratio: scattered poison rows stay quiet ════════
   # A busy source dropping 6 rows/hour is 0.1% of its volume; a quiet source

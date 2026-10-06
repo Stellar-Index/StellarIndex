@@ -94,7 +94,7 @@ Route by the result:
   step 3 above; `mc ls --json --recursive local/galexie-live/ | jq …`).
   The newest object should be within ~1 minute. If MinIO itself is
   unhealthy: `systemctl status minio`; MinIO exporter-down →
-  [exporter-down](exporter-down.md); MinIO scrape 403 →
+  [exporter-down](meta.md#stellarindex_redis_exporter_down); MinIO scrape 403 →
   [minio-metrics-403](minio-metrics-403.md). There is no
   minio-down runbook yet.
 - Wider network problem? `stellarindex-ops rpc-probe https://mainnet.sorobanrpc.com`
@@ -213,7 +213,7 @@ Patterns observed:
 
 - [rpc-lag](stellar-node.md#stellarindex_stellar_rpc_lag) — only for deployments that still route through stellar-rpc (not r1).
 - [ledgerstream-tier-both-missing](ledgerstream-tier-both-missing.md) — reader can find the ledger in neither MinIO tier.
-- [exporter-down](exporter-down.md) / [minio-metrics-403](minio-metrics-403.md) — MinIO monitoring.
+- [exporter-down](meta.md#stellarindex_redis_exporter_down) / [minio-metrics-403](minio-metrics-403.md) — MinIO monitoring.
 - [binary-version-skew](binary-version-skew.md) — expected after a partial rollback.
 - [timescale-primary-down](timescale-primary-down.md) — next step when DB is the root cause.
 - [ingestion-lag](ingestion-lag.md) — single-source-lag runbook.

@@ -20,7 +20,7 @@ alert was deaf for 18 h.
 
 | Field | Value |
 | ----- | ----- |
-| Alert | none fires — no `prometheus_down` alert rule exists in either tree, and there is no per-unit Healthchecks heartbeat for `prometheus.service`. Detection is the `stellarindex_deadmansswitch` heartbeat going SILENT (see [deadmansswitch.md](deadmansswitch.md)). |
+| Alert | none fires — no `prometheus_down` alert rule exists in either tree, and there is no per-unit Healthchecks heartbeat for `prometheus.service`. Detection is the `stellarindex_deadmansswitch` heartbeat going SILENT (see [meta.md#stellarindex_deadmansswitch](meta.md#stellarindex_deadmansswitch)). |
 | Severity | P1 |
 | Detected by | `stellarindex_deadmansswitch` (`configs/prometheus/rules.r1/meta.yml`, group `stellarindex.meta`; multi-host twin in `deploy/monitoring/rules/`) — a `vector(1)` alert that fires constantly and routes to Alertmanager's `deadmansswitch` receiver every 60 s. When Prometheus is down, the heartbeat STOPS arriving at Healthchecks.io, which pages via its own out-of-band channel. |
 | Typical MTTR | 5 min (quick path) / 30 min (rebuild) |

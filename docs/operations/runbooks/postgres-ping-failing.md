@@ -129,7 +129,7 @@ If postgres is UP but ping still fails:
 - A network partition between indexer + DB will look identical to
   a pool problem from this alert's perspective; correlate with
   `up{job="postgres_exporter"}` (the scrape job landed 2026-05-27,
-  F-0152 — see `exporter-down.md`).
+  F-0152 — see `meta.md#stellarindex_redis_exporter_down`).
 
 ## Related
 

@@ -126,7 +126,7 @@ tests:
               asset_key: XLM
             exp_annotations:
               description: "Per ADR-0011 native XLM circulating = total - \u03a3(SDF reserves).\nA zero or negative value means either the operator-managed\nreserve_balances_stroops sum exceeds the frozen total\n(config error), or the XLMComputer math is broken (bug).\nRunbook: dry-run the writer with the live config; check\nthe operator-supplied balances against SDF's latest\nannouncement.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-circulating-zero.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot.md#stellarindex_supply_snapshot_circulating_zero"
               summary: "XLM circulating supply gauge is 0 \u2014 operator config or computer bug"
 
   - interval: 30s

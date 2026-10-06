@@ -174,7 +174,7 @@ Status: ✅ verified live, ⚠ shipped with a caveat, ❌ gap (launch blocker), 
 | S4.3 | Per-pair configurable min USD volume | `aggregate.min_usd_volume` in `config` | 📦 |
 | S4.4 | TWAP fallback below volume threshold | `/v1/twap` | ✅ |
 | S5.1 | Live event ingest | Galexie/MinIO → `ledgerstream` → `dispatcher` → `sources/*` | ✅ |
-| S5.2 | ≤ 30 s price staleness | `cmd/stellarindex-sla-probe`; `/v1/price/tip` (see [Freshness](#freshness-what-the-30-s-sla-means)); pager `stellarindex_sla_probe_freshness_breach` ([runbook](../operations/runbooks/sla-probe-freshness-breach.md)) | ✅ |
+| S5.2 | ≤ 30 s price staleness | `cmd/stellarindex-sla-probe`; `/v1/price/tip` (see [Freshness](#freshness-what-the-30-s-sla-means)); pager `stellarindex_sla_probe_freshness_breach` ([runbook](../operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach)) | ✅ |
 | S5.3 | SSE streaming | `api/streaming`; `/v1/{price,price/tip,observations}/stream` | ✅ |
 | S5.4 | Degradation flags (`stale`, `reduced_redundancy`, `triangulated`, `divergence_warning`) | `api/envelope` | ✅ |
 | S6.1 | Since-inception backfill | `stellarindex-ops backfill`; `/v1/history/since-inception` starts 2021-02-01, not 2015 (intent unconfirmed) | ✅ |
@@ -227,7 +227,7 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | F3.1 | API p95 ≤ 200 ms | `api` + sla-probe `_p95_breach` alert | ✅ |
 | F3.2 | API p99 ≤ 500 ms | sla-probe `stellarindex_sla_probe_p99_breach` alert (`deploy/monitoring/rules/sla-probe.yml`) | ✅ |
 | F3.3 | Responsiveness ≥ 99.9 % | ADR-0008 + sla-probe; needs ≥ 30 days + multi-region | ⚠ |
-| F3.4 | Price freshness ≤ 30 s | `dispatcher` + sla-probe `stellarindex_sla_probe_freshness_breach` pager ([runbook](../operations/runbooks/sla-probe-freshness-breach.md)); as S5.2 | ✅ |
+| F3.4 | Price freshness ≤ 30 s | `dispatcher` + sla-probe `stellarindex_sla_probe_freshness_breach` pager ([runbook](../operations/runbooks/sla-probe.md#stellarindex_sla_probe_freshness_breach)); as S5.2 | ✅ |
 | F3.5 | SEV-1 detect ≤ 15 min / respond ≤ 30 min | `docs/operations/sev-playbook.md`, runbooks, drills | ⚠ |
 | F3.6 | SEV-2 detect ≤ 30 min / respond ≤ 60 min | same playbook | ⚠ |
 

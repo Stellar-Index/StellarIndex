@@ -13,8 +13,7 @@ cd "$(dirname "$0")/../.." || exit 1
 
 UNIT_J2="configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-a.service.j2"
 RUNBOOKS=(
-  docs/operations/runbooks/verify-archive-unit-failed.md
-  docs/operations/runbooks/verify-archive-run-stale.md
+  docs/operations/runbooks/verify-archive.md
 )
 
 [ -f "$UNIT_J2" ] || { echo "lint-verify-archive-lock-name: $UNIT_J2 missing"; exit 2; }

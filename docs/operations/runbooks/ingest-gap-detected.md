@@ -138,7 +138,7 @@ count through `GapDetectorTarget.DistinctLedgerCountSQL`.
 
 ## Related
 
-- [projector-replay.md](projector-replay.md) — per-source projection-table repair via projector cursor rewind. Replaces the former `cascade-window-drain` orchestrator subcommand (ADR-0032 Phase 5).
+- [projector.md#stellarindex_projector_replay_stalled](projector.md#stellarindex_projector_replay_stalled) — per-source projection-table repair via projector cursor rewind. Replaces the former `cascade-window-drain` orchestrator subcommand (ADR-0032 Phase 5).
 - `docs/operations/backfill-with-live-ingest.md` — operational posture for running backfills alongside live ingest (F-0020 closure).
 - F-0020 (audit-2026-05-26) — original cascade-window incident that motivated this detector.
 - `stellarindex-ops find-data-gaps` — the operator-facing diagnostic this alert points at.

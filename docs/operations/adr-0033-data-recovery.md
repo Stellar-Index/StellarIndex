@@ -130,7 +130,7 @@ parse and name `projector-replay`, which reads the lake through the real
 gated registry. For a rewind larger than about **1M ledgers** use
 `stellarindex-ops projected-rebuild … -write` instead (`projector-replay` is
 bound by the live projector's 5 s tick and 60 s per-source timeout; see
-[runbooks/projector-replay.md](runbooks/projector-replay.md)). Never run the
+[runbooks/projector.md#stellarindex_projector_replay_stalled](runbooks/projector.md#stellarindex_projector_replay_stalled)). Never run the
 two concurrently over the same source's history.
 
 ```sh

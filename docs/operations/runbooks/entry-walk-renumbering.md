@@ -265,7 +265,7 @@ GROUP BY key_xdr;
 - [supply-divergence](supply-divergence.md) — where a missed repair surfaces:
   the classic-vs-SAC cross-check widens when an observation component is
   stale.
-- [projector-lag](projector-lag.md) — the re-derive itself runs through the
+- [projector-lag](projector.md#stellarindex_projector_lag_high) — the re-derive itself runs through the
   projector path; watch it while a range replays.
 - `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql` — the
   codified side-by-side projection rebuild (Option B) and the Step-2

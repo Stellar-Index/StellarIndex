@@ -32,4 +32,4 @@ Every per-source hypertable is registered as a `GapDetectorTarget` in `internal/
 
 - `internal/storage/timescale/per_source_gaps.go`, `gap_detector.go`, `gap_targets_test.go`.
 - Alert `stellarindex_ingest_gap_detected`: `deploy/monitoring/rules/ingestion.yml`.
-- Runbooks: `docs/operations/runbooks/ingest-gap-detected.md`, `sdex-gap-detected.md`, `projector-replay.md`.
+- Runbooks: `docs/operations/runbooks/ingest-gap-detected.md`, `sdex-gap-detected.md`, `projector.md#stellarindex_projector_replay_stalled`.

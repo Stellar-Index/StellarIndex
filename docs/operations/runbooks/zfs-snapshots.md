@@ -427,7 +427,7 @@ pushes its WAL into the live pgBackRest stanza.
   tag `zfs-snapshots`; vars `zfs_snapshot_*` in `defaults/main.yml`.
 - Companion runbooks: [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) (pool
   capacity, the percentage-based alert), [backup-failed](infra.md#stellarindex_timescale_backup_none_24h)
-  / [restore-drill-stale](restore-drill-stale.md) (pgBackRest, the
+  / [restore-drill-stale](restore-drill.md#stellarindex_restore_drill_stale) (pgBackRest, the
   off-host path), [ch-schema-restore](ch-schema-restore.md) (schema,
   not data).
 - `docs/operations/clickhouse-destructive-ddl.md` — the DROP/ALTER

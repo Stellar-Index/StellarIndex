@@ -132,7 +132,7 @@ the failure mode nothing else can see.
 
 ## Related
 
-- [alertmanager-bad-config.md](alertmanager-bad-config.md) — when
+- [meta.md#stellarindex_alertmanager_config_bad](meta.md#stellarindex_alertmanager_config_bad) — when
   `apply.sh` validation fails or Alertmanager refuses to reload.
 - [../sev-playbook.md](../sev-playbook.md) — what to do once a page
   actually reaches you.

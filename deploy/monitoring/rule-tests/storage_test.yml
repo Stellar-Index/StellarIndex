@@ -1802,7 +1802,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale
               summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill.prom has not been refreshed in 35d+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill.prom
@@ -1816,7 +1816,7 @@ tests:
               team: stellarindex
               component: storage
             exp_annotations:
-              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale
               summary: "restore-drill textfile /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom has not been refreshed in 35d+ on r1:9100"
               description: |
                 node_exporter has not seen a fresh mtime on /var/lib/node_exporter/textfile_collector/restore_drill_repo2.prom

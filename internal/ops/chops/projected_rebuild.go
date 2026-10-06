@@ -82,7 +82,7 @@ import (
 // window.
 //
 // See docs/architecture/ingest-pipeline.md's catch-up discussion and
-// docs/operations/runbooks/projector-replay.md for when to use this vs
+// docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled for when to use this vs
 // projector-replay (rule of thumb: projector-replay for rewinds under
 // ~1M ledgers, projected-rebuild for anything bigger).
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.

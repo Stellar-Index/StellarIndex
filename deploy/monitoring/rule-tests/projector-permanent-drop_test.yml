@@ -69,7 +69,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_row_dropped_permanent"
               summary: "Projector permanently dropped a row on sep41_transfers — the sink rejected its VALUES"
               description: |
                 stellarindex_projector_events_decoded_total{source="sep41_transfers",outcome="sink_permanent"}
@@ -93,7 +93,7 @@ tests:
                 (runs_total{outcome="sink_retry"}, rising lag) while it holds the
                 window. Fix the schema before that budget expires.
 
-                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
       - eval_time: 15m
         alertname: stellarindex_projector_row_dropped_permanent
         exp_alerts: *dropped_alert
@@ -158,7 +158,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_i128_overflow"
               summary: "i128 OVERFLOW on soroswap — an int64 has reached an amount path (ADR-0003 SEV-1)"
               description: |
                 stellarindex_projector_events_decoded_total{source="soroswap",outcome="sink_i128_overflow"}
@@ -177,7 +177,7 @@ tests:
                 rows that did NOT overflow are the dangerous ones, because they
                 landed.
 
-                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
       - eval_time: 15m
         alertname: stellarindex_projector_i128_overflow
         exp_alerts: *i128_alert

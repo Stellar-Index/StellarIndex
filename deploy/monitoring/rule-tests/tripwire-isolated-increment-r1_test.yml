@@ -275,7 +275,7 @@ tests:
               team: stellarindex
               component: projector
             exp_annotations:
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined"
               summary: "Projector quarantined a row on sep41_transfers — poison-row escape hatch fired"
               description: |
                 stellarindex_projector_events_decoded_total{source="sep41_transfers",outcome="sink_quarantined"}
@@ -287,7 +287,7 @@ tests:
                 sep41_transfers` after the underlying defect is fixed.
                 Any nonzero rate needs eyes.
 
-                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
       - eval_time: 15m
         alertname: stellarindex_projector_row_quarantined
         exp_alerts: *row_quarantined_alert

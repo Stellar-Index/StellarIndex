@@ -61,7 +61,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_stalled
           summary: "supply refresher has recorded no successful tick across any watched asset in the last 30m (cadence 5m)"
           description: |
             The aggregator-resident supply refresher emits
@@ -97,7 +97,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_never_initialized
           summary: "supply refresher (goroutine path) has never recorded a successful tick"
           description: |
             stellarindex_aggregator_supply_refresh_total{outcome="ok"}
@@ -107,10 +107,11 @@ groups:
             path), or the orchestrator hasn't fired its first tick.
             Distinct from `_stalled` (which requires the metric to
             have existed at some point); together they cover both
-            "was working, stopped" and "never worked." Routes to
-            the same runbook as the timer-path equivalent
-            (`supply-snapshot-never-initialized`) since the fix is
-            symmetric: pick Path A or Path B.
+            "was working, stopped" and "never worked." Runbook is
+            the supply-refresh page; the timer-path sibling is
+            `stellarindex_supply_snapshot_never_initialized`. Only
+            enabling the goroutine path clears this one; r1 runs
+            both paths.
 
       - alert: stellarindex_aggregator_supply_refresh_error_dominant
         # F-1320: aggregate PER ASSET (`by (asset_key)`), not fleet-wide —
@@ -135,7 +136,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_error_dominant
           summary: "supply refresher: > 50% of ticks non-ok for asset {{ $labels.asset_key }} for ≥ 30m"
           description: |
             More than half of the supply refresher's ticks for
@@ -171,7 +172,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_aggregator_supply_refresh_dormant_fleet
           summary: "supply refresher: {{ $value }} assets reporting dormant together for ≥ 30m — a component observer has likely stalled"
           description: |
             {{ $value }} watched assets are reporting outcome `dormant`
@@ -200,7 +201,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep41-supply-rollup-no-cursor.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_sep41_supply_rollup_no_cursor
           summary: "sep41 supply rollup for {{ $labels.contract_id }} pinned for ≥ 30m: projector cursor (projector, sep41_supply) is absent"
           description: |
             Every rollup pass for {{ $labels.contract_id }} in the last
@@ -231,7 +232,7 @@ groups:
           team: stellarindex
           component: supply
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-supply-gapfill-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh.md#stellarindex_ch_supply_gapfill_failed
           summary: "ch-supply SEP-41 supply gap-fill failed on {{ $labels.instance }}"
           description: |
             The most-recent run of `ch-supply.service` ended in the `failed`
