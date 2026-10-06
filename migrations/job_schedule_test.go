@@ -14,7 +14,7 @@ import (
 // is per job, so a job scheduled every T accrues at most window/T failures:
 // the arm can only fire for T <= window/minFailures. Policies that omit
 // schedule_interval take TimescaleDB's derived default (12h for compression
-// on r1, per runbooks/compression-lag.md), which is inside that bound.
+// on r1, per runbooks/timescale.md#stellarindex_timescale_compression_lag), which is inside that bound.
 const (
 	jobFailureSlowWindow  = 72 * time.Hour
 	jobFailureMinFailures = 3

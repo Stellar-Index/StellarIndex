@@ -252,7 +252,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_stalled
           summary: "Ledger ingest has stalled — the indexer is not committing ledgers (SEV-1)"
           description: |
             stellarindex_cursor_last_ledger{source="ledgerstream"} has not
@@ -263,7 +263,7 @@ groups:
             `all_sources_stopped` is NOT firing.
             First checks: is the lake readable (MinIO / galexie-live), is
             Postgres accepting writes, is the unit restart-looping?
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_stalled
 
       - alert: stellarindex_ingestion_cursor_stuck
         expr: |
@@ -275,7 +275,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cursor-stuck.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck
           summary: "Cursor for {{ $labels.source }} not advancing"
           description: |
             The persisted cursor hasn't moved in 5 minutes while the source is
@@ -455,7 +455,7 @@ groups:
       # Applies equally to stellarindex_ingestion_discovery_record_failures
       # and the two stellarindex_ingestion_ch_live_sink_drops* rules below
       # ("drops are normal in rare bursts … fires when dropping is
-      # continuous" — ch-live-sink-drops.md).
+      # continuous" — ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops).
       # The marker below is what scripts/ci/lint-tripwire-window.py reads;
       # each of those rules carries its own, because a waiver covers only
       # the rule directly beneath it.
@@ -530,7 +530,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
           summary: "Persist drops on {{ $labels.source }}/{{ $labels.kind }} (any rate)"
           description: |
             A trade, soroswap-router or defindex persist write failed for
@@ -544,7 +544,7 @@ groups:
             one through the dispatcher drain was dropped. Check Timescale
             health and the poison-row logs.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
       # audit-2026-07-16 C4-3: discovery Recorder.Record failures were
       # log-only inside the async sink, so a recorder outage silently
@@ -575,7 +575,7 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
 
-      # lint-tripwire-window:sustained: ch-live-sink-drops.md: "drops are
+      # lint-tripwire-window:sustained: ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops: "drops are
       # normal in rare bursts", healed by the ch-live-catchup timer; this
       # tickets only when dropping is continuous (see the Q261 note above
       # discovery_drops)
@@ -588,7 +588,7 @@ groups:
           component: ingestion
           alert_family: ingestion_ch_live_sink_drops
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops
           summary: "ClickHouse live-sink is dropping ledger extracts"
           description: |
             The real-time CH dual-sink dropped at least one whole ledger
@@ -610,7 +610,7 @@ groups:
           component: ingestion
           alert_family: ingestion_ch_live_sink_drops
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_drops
           summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
           description: |
             Ledger extracts have been dropping continuously for an hour.
@@ -640,7 +640,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_errors
           summary: "ClickHouse live-sink is erroring on ledger extracts"
           description: |
             stellarindex_ch_live_sink_ledgers_total{outcome="errored"}
@@ -671,7 +671,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-read-undercount.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_read_undercount
           summary: "Indexer read path could not fully decode ledgers ({{ $labels.kind }})"
           description: |
             stellarindex_ch_live_sink_read_undercount_total{kind="{{ $labels.kind }}"}
@@ -709,7 +709,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sink-undrained-rows.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_sink_undrained_rows
           summary: "{{ $labels.sink }} sink abandoned {{ $labels.kind }} rows at shutdown — served-tier gap to re-derive"
           description: |
             The {{ $labels.sink }} sink's bounded shutdown drain gave up
@@ -740,7 +740,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
           summary: "Trade sink retrying under backpressure — Postgres write path blocked"
           description: |
             The trade sink has been retrying infrastructure-classified
@@ -750,7 +750,7 @@ groups:
             tier is frozen and external (CEX/FX) price freshness is
             degrading (watch stellarindex_trade_insert_buffer_depth).
             Almost always a Postgres outage/restart.
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
 
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
@@ -760,7 +760,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
           summary: "Insert errors on {{ $labels.source }}/{{ $labels.kind }} at {{ $value }}/sec"
           description: |
             Source {{ $labels.source }} failed to persist {{ $labels.kind }}
@@ -803,7 +803,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
           summary: "External trade(s) permanently dropped on {{ $labels.source }} — buffer overflow or data fault during backpressure"
           description: |
             stellarindex_source_insert_errors_total{source="{{ $labels.source }}",kind="dropped"}
@@ -817,7 +817,7 @@ groups:
             the coarse stellarindex_ingestion_insert_errors alert only
             trips above 0.1/s fleet-wide and can miss a slow trickle.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
 
       # INV-0786: classic-supply companion to stellarindex_ingestion_persist_drop
       # / trade_buffer_drop above, same reason — kind="trustline_observation"
@@ -840,7 +840,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
           summary: "trustline_observation persist errors on {{ $labels.source }} (any rate)"
           description: |
             A trustline_observation insert failed for {{ $labels.source }}
@@ -852,7 +852,7 @@ groups:
             0.1/s fleet-wide and misses this class's low, sustained rate
             (INV-0786). Check Timescale health and the poison-row logs.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
       # Detects cursor-replay / stuck-tip pattern via the
       # trade_insert_outcome_total counter (added 2026-05-28).
@@ -876,7 +876,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
           summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
           description: |
             Source {{ $labels.source }} has been attempting >0.5
@@ -890,7 +890,7 @@ groups:
             channel feeding the sink from an old replay loop, or a
             back-pressure event that lost in-flight events.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
 
       # Unit-ratio trade sentinel (2026-07-07 Phoenix incident). Mirror
       # of the rule in deploy/monitoring/rules/ingestion.yml; the
@@ -975,7 +975,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
           summary: "Source {{ $labels.source }} hasn't landed a new row in >1h"
           description: |
             stellarindex_source_last_insert_unix{source="{{ $labels.source }}"}
@@ -989,7 +989,7 @@ groups:
             dispatcher is still matching events, the gap is the
             stuck-tip diagnostic (cursor advances, data doesn't).
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
 
       # Data-derived gap detector — mirrors the multi-host rule.
       # See deploy/monitoring/rules/ingestion.yml for the full

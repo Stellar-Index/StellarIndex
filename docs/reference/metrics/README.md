@@ -1270,7 +1270,7 @@ or `LoadSchema` failed: MinIO down, credentials rejected, bucket gone).
 Emitted by `internal/ledgerstream`'s `retryLiveStart` (#371 F3).
 
 **When to look at it:** the first branch of
-`runbooks/ledger-ingest-stalled.md`. This is the only series that moves
+`runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_stalled`. This is the only series that moves
 while the indexer is up, healthy in every other respect, and simply
 cannot read the lake — so it splits that runbook's first two checks
 apart without an ssh:
@@ -1561,7 +1561,7 @@ the per-tick delta.
   `stellarindex_ingestion_ch_live_sink_errors` (ticket) — until then
   both live-sink rules matched `outcome="dropped"` only, so this
   outcome had no alert of any kind. Runbook:
-  [ch-live-sink-errors](../../operations/runbooks/ch-live-sink-errors.md).
+  [ch-live-sink-errors](../../operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_errors).
 
 ### `stellarindex_ch_live_sink_read_undercount_total`
 
@@ -1602,7 +1602,7 @@ would otherwise read as a run of ledgers with no Soroban events. An
 isolated step names a specific ledger in the indexer journal. Alerted
 by `stellarindex_ingestion_ch_live_sink_read_undercount` (ticket).
 Runbook:
-[ch-live-sink-read-undercount](../../operations/runbooks/ch-live-sink-read-undercount.md).
+[ch-live-sink-read-undercount](../../operations/runbooks/ch-live-sink.md#stellarindex_ingestion_ch_live_sink_read_undercount).
 The offline `census-backfill` writer does not emit this metric: it is a
 one-shot command with no scrape endpoint, and it already fails its run
 (non-zero exit, frozen resume checkpoint) on the same undercount.
@@ -1645,7 +1645,7 @@ before the process exits (the drain budget is derived from
 journal ERROR line is authoritative, the alert
 `stellarindex_ingestion_sink_undrained_rows` (ticket, `for: 0m`) is
 the machine-readable best-effort signal on top of it. Runbook:
-[sink-undrained-rows](../../operations/runbooks/sink-undrained-rows.md).
+[sink-undrained-rows](../../operations/runbooks/ingestion-sink.md#stellarindex_ingestion_sink_undrained_rows).
 
 ### `stellarindex_hashdb_append_total`
 

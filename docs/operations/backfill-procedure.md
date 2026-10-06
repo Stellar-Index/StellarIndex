@@ -270,7 +270,7 @@ week in September 2026) and dominate `list-cursors`, `/diagnostics` and
    ```
    `-older-than` (default `168h`, floor `24h`) sets the cutoff; `-source` narrows
    to one job. `ledgerstream` and `projector` are never reaped: an old row there
-   is [cursor-stuck](runbooks/cursor-stuck.md). Reaping deletes the resume record,
+   is [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck). Reaping deletes the resume record,
    never data.
 
 ## When NOT to use this

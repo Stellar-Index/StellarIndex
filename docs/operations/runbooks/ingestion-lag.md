@@ -81,7 +81,7 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
    like; if the RPC is 10 min behind wall-clock, we look 10 min
    lagged.
    - Signal: `rpc_latest_ledger_age_seconds` also elevated.
-   - Mitigation: `rpc-lag.md`.
+   - Mitigation: `stellar-node.md#stellarindex_stellar_rpc_lag`.
 
 ## Mitigation
 
@@ -142,9 +142,9 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
 ## Related
 
 - `source-stopped.md` — the "stopped" variant.
-- `rpc-lag.md` — if the upstream is the bottleneck.
-- `insert-errors.md` — if persistence is failing (not just slow).
-- `cursor-stuck.md` — when the cursor doesn't advance at all.
+- `stellar-node.md#stellarindex_stellar_rpc_lag` — if the upstream is the bottleneck.
+- `ingestion-sink.md#stellarindex_ingestion_insert_errors` — if persistence is failing (not just slow).
+- `ledger-ingest.md#stellarindex_ingestion_cursor_stuck` — when the cursor doesn't advance at all.
 
 ## Changelog
 

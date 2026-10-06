@@ -222,19 +222,9 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 			required:  []string{"`stellarindex_slo_availability_burn_fast` | 99.9% non-5xx"},
 		},
 		{
-			path:      "docs/operations/runbooks/slo-availability-burn-fast.md",
-			forbidden: []string{"(99.99 % non-5xx over 30 d", "slo `api_availability_3_nines_9`", "14.4 × 0.0001"},
-			required:  []string{"(99.9 % non-5xx over 30 d", "slo `api_availability_3_nines`)", "14.4 × 0.001 = **1.44 %**"},
-		},
-		{
-			path:      "docs/operations/runbooks/slo-availability-burn-medium.md",
-			forbidden: []string{"(99.99 % non-5xx over 30 d", "slo `api_availability_3_nines_9`", "6 × 0.0001"},
-			required:  []string{"(99.9 % non-5xx over 30 d", "slo `api_availability_3_nines`)", "6 × 0.001 = 0.6 %"},
-		},
-		{
-			path:      "docs/operations/runbooks/slo-availability-burn-slow.md",
-			forbidden: []string{"(99.99 % non-5xx over 30 d", "slo `api_availability_3_nines_9`", "1 × 0.0001"},
-			required:  []string{"(99.9 % non-5xx over 30 d", "slo `api_availability_3_nines`)", "1 × 0.001 = 0.1 %"},
+			path:      "docs/operations/runbooks/slo.md",
+			forbidden: []string{"(99.99 % non-5xx over 30 d", "slo `api_availability_3_nines_9`", "14.4 × 0.0001", "6 × 0.0001", "1 × 0.0001"},
+			required:  []string{"(99.9 % non-5xx over 30 d", "slo `api_availability_3_nines`)", "14.4 × 0.001 = **1.44 %**", "6 × 0.001 = 0.6 %", "1 × 0.001 = 0.1 %"},
 		},
 		{
 			path:      "docs/operations/runbooks/api.md",

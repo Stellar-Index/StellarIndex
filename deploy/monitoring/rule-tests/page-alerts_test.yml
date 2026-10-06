@@ -240,7 +240,7 @@ tests:
               component: ingestion
             exp_annotations:
               description: "A component cannot decode ledger meta the network is now\nproducing. This is almost always \"we are behind a protocol\nupgrade\": the installed galexie / indexer predates an XDR change\n(e.g. P28's ParallelTxExecutionStage) and refuses the ledger.\n\nData is NOT corrupted \u2014 the decode is fail-closed \u2014 but that\ncomponent has STOPPED ingesting and will not resume on its own.\n\nFix: identify the unit from the `unit` label, bump it\n(galexie_version / stellar_core_version / the release binary's\ngo-stellar-sdk), and re-apply. See protocol-upgrades.md.\nCheck stellarindex_stellar_stack_version_lag for which component.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-meta-decode-failing.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ledger_meta_decode_failing"
               summary: "Ledger-meta XDR decode failing \u2014 a component is behind a protocol"
 
   - interval: 30s
@@ -268,7 +268,7 @@ tests:
               component: stellar
             exp_annotations:
               description: "stellar-core hasn't applied a ledger in > 60 s. Either the node\nis out of sync (catchup required) or it's disconnected from the\nnetwork. Upstream data to our pipeline halts.\n"
-              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md"
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-node.md#stellarindex_stellar_core_ledger_age"
               summary: "stellar-core ledger age 5m 0s (SEV-1)"
 
   - interval: 30s

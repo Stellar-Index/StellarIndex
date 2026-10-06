@@ -252,7 +252,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-meta-decode-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ledger_meta_decode_failing
           summary: "Ledger-meta XDR decode failing — a component is behind a protocol"
           description: |
             A component cannot decode ledger meta the network is now
@@ -277,7 +277,7 @@ groups:
           team: stellarindex
           component: ingestion
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-meta-decode-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest.md#stellarindex_ledger_meta_decode_failing
           summary: "Ledger-meta decode probe stale — decode failures would go unseen"
           description: |
             ledger-meta-decode-probe has not written its textfile metric in

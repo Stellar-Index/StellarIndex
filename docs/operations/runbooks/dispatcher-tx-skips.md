@@ -93,7 +93,7 @@ For the postmortem, gather:
 
 ## Related
 
-- `insert-errors.md` — storage-layer write failures; a different failure
+- `ingestion-sink.md#stellarindex_ingestion_insert_errors` — storage-layer write failures; a different failure
   mode (the row decoded fine but couldn't persist).
 - ADR-0029 (raw-event landing zone) / ADR-0032 (projector cursor replay) /
   ADR-0034 (CH lake re-derive).

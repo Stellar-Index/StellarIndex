@@ -137,7 +137,7 @@ for the canonical exercise of this pattern.
 ## Related
 
 - `orphan-events.md` — adjacent failure mode (events well-formed but partnerless).
-- `insert-errors.md` — downstream failure mode (events decoded OK but write-path broke).
+- `ingestion-sink.md#stellarindex_ingestion_insert_errors` — downstream failure mode (events decoded OK but write-path broke).
 - `source-stopped.md` — when the rate hits 100% of pulled events, effectively stopping the source.
 - `internal/sources/*/decode.go` — per-source decoder.
 

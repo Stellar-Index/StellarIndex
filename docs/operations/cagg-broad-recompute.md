@@ -20,7 +20,7 @@ range. Run it after the raw window widens; the policies cover everything forward
 - 14:00-22:00 UTC (peak SDEX + Soroswap ingest), or beside another heavy job
   (`verify-archive`, bulk-trim, Soroban backfill).
 - With the `data` zpool over 85% full.
-- For "this CAGG looks stale": that is [cagg-stale](runbooks/cagg-stale.md).
+- For "this CAGG looks stale": that is [cagg-stale](runbooks/timescale.md#stellarindex_timescale_cagg_stale).
 
 ## Procedure
 

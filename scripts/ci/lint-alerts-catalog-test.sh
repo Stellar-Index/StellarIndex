@@ -28,10 +28,10 @@ check "unmodified catalogue passes" ok "$CATALOG"
 
 # The SLO latency fast-burn rule's runbook_url is api.md#stellarindex_api_latency_p95_high;
 # point the row's first link at the per-tier page instead — the drift RLT-010 found.
-sed -E '/^\| .stellarindex_slo_latency_burn_fast. /s#\[api-latency\]\(runbooks/api\.md\#stellarindex_api_latency_p95_high\)#[slo-latency-burn-fast](runbooks/slo-latency-burn-fast.md)#' \
+sed -E '/^\| .stellarindex_slo_latency_burn_fast. /s#\[api-latency\]\(runbooks/api\.md\#stellarindex_api_latency_p95_high\)#[slo-latency-burn-fast](runbooks/slo.md\#stellarindex_slo_latency_burn_fast)#' \
   "$CATALOG" >"$TMP"
 check "first Runbook link differing from runbook_url is rejected" red "$TMP" \
-  "stellarindex_slo_latency_burn_fast: catalogue Runbook column links 'runbooks/slo-latency-burn-fast.md' first"
+  "stellarindex_slo_latency_burn_fast: catalogue Runbook column links 'runbooks/slo.md#stellarindex_slo_latency_burn_fast' first"
 
 # A per-alert supplement AFTER the primary link is allowed.
 sed -E '/^\| .stellarindex_projector_lag_high. /s#\[projector-lag\]\(runbooks/projector\.md\#stellarindex_projector_lag_high\) \|$#[projector-lag](runbooks/projector.md\#stellarindex_projector_lag_high) + see [projector-replay](runbooks/projector.md\#stellarindex_projector_replay_stalled) |#' \
