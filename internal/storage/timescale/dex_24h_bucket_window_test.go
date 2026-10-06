@@ -43,11 +43,4 @@ func TestDex24hBucketWindowMatchesSourceVolumeHistory(t *testing.T) {
 	if !strings.Contains(history, wantHistory) {
 		t.Errorf("sourceVolumeHistoryQuery must bind the shared strict bucket predicate %q — got a different window than the bespoke 24h readers:\n%s", wantHistory, history)
 	}
-
-	// The value expression itself (migration 0068's read contract) must
-	// also be the SAME formula, not an independent hand-copy that can
-	// re-diverge from the bucket-predicate fix.
-	if !strings.Contains(history, dexHourlyValueExpr(false)) {
-		t.Errorf("sourceVolumeHistoryQuery must apply dexHourlyValueExpr(false), the same formula dexXLMLegUSD wraps for the aggregated readers:\n%s", history)
-	}
 }

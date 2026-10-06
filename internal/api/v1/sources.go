@@ -80,6 +80,14 @@ func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int)
 	return out
 }
 
+func markXLMUnpriced(into map[string]bool, buckets []timescale.SourceVolumeBucket) {
+	for _, b := range buckets {
+		if b.XLMUnpriced {
+			into[b.Source] = true
+		}
+	}
+}
+
 // Source is the wire shape for /v1/sources entries.
 //
 // Mirrors external.Metadata 1:1 today. Field-by-field on the wire
@@ -127,9 +135,13 @@ type Source struct {
 	Selectable bool `json:"selectable"`
 	// Stats columns — populated only when `?include=stats` is set.
 	// 0 / "" when the source had no trades in 24h.
-	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
-	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
-	MarketsCount24h int64  `json:"markets_count_24h,omitempty"`
+	TradeCount24h int64  `json:"trade_count_24h,omitempty"`
+	VolumeUSD24h  string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound is true when the USD volume figures (24h total and
+	// the volume histories) leave out XLM-leg trades that carry no
+	// trade-time usd_volume. Those are never valued at today's XLM price.
+	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
+	MarketsCount24h  int64 `json:"markets_count_24h,omitempty"`
 	// VolumeHistory24h — per-hour USD volume buckets for the
 	// trailing 24h. Populated only when the request includes
 	// `sparkline` (e.g. `?include=stats,sparkline`). Holes are
@@ -220,6 +232,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	// Any soft-failed read below ships a partial listing the next request fills.
 	partial := false
 	historyBySource := map[string][]VolumeBucket{}
+	lowerBound := map[string]bool{}
 	history7dBySource := map[string][]VolumeBucket{}
 	if includeStats && s.sourcesStats != nil {
 		// 8s ceiling on the stats fan-out — same pattern as
@@ -240,6 +253,9 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 				if ss.VolumeUSD24h.Valid {
 					vol = ss.VolumeUSD24h.String
 				}
+				if ss.UnpricedTrades24h > 0 {
+					lowerBound[ss.Source] = true
+				}
 				statsBySource[ss.Source] = stats{
 					trades:  ss.TradeCount24h,
 					volume:  vol,
@@ -258,6 +274,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			partial = true
 		} else {
 			historyBySource = buildSourceVolumeHistory(buckets, 24)
+			markXLMUnpriced(lowerBound, buckets)
 		}
 	}
 	if includeSparkline7d && s.sourcesStats != nil {
@@ -269,6 +286,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			partial = true
 		} else {
 			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
+			markXLMUnpriced(lowerBound, buckets)
 		}
 	}
 
@@ -296,6 +314,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			Selectable:        sourceSelectable(name),
 			TradeCount24h:     st.trades,
 			VolumeUSD24h:      st.volume,
+			VolumeLowerBound:  lowerBound[name],
 			MarketsCount24h:   st.markets,
 			VolumeHistory24h:  historyBySource[name],
 			VolumeHistory7d:   history7dBySource[name],

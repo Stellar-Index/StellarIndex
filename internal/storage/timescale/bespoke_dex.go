@@ -50,16 +50,11 @@ package timescale
 // served when the window has taker-stamped rows, omitted (with a Note)
 // when it observably has none.
 //
-// USD figures come from trades.usd_volume (or its CAGG sums), with ONE
-// deliberate exception: the 24h volume KPI + hourly series also carry the
-// XLM-denominated legs that valuation left unpriced, valued at the
-// current XLM/USD vwap, because that is source_volume_1h's documented
-// read contract (see "the source_volume_1h read contract" below) and the
-// figure the source page's own chart shows for the same source and
-// window. Everything else — every >1d figure and every per-pair surface —
-// is usd_volume only, never ad-hoc pricing; its NULL-usd trades are
-// excluded from USD sums and averages but still count toward trade
-// totals. All division is exact NUMERIC (ADR-0003); rounding is
+// Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
+// never ad-hoc pricing. At 24h the XLM legs valuation left unpriced are
+// named and the figure is served as a lower bound; elsewhere NULL-usd
+// trades are excluded from USD sums and averages but still count toward
+// trade totals. All division is exact NUMERIC (ADR-0003); rounding is
 // round(x, 2) — never a float literal.
 
 import (
@@ -113,59 +108,18 @@ func dexWindowSQL(windowDays int, col string) string {
 
 // ─── the source_volume_1h read contract ──────────────────────────────────
 //
-// source_volume_1h (migration 0068) does NOT materialize a finished USD
-// figure: the XLM/USD multiply can't live in a continuous aggregate (it
-// cross-references prices_1m), so the CAGG stores the raw INPUTS and the
-// migration prescribes the read expression
-//
-//	sum_usd_priced + (sum_xlm_base + sum_xlm_quote)/10^7 * <XLM/USD vwap>
-//
-// Reading only `sum_usd_priced` serves every XLM-denominated leg the
-// ingest-time valuation left unpriced as $0 — the leg the CAGG exists to
-// carry. The other reader of this CAGG (sourceVolumeHistory,
-// sources_stats.go, behind /v1/sources' per-source volume + the source
-// page's own 24h/7d chart) applies the full expression, so a half read
-// here also served two different 24h volumes for one source on one page.
-//
-// dexXLMUSDVwapCTE / dexHourlyValueExpr are the two halves, and
-// dexHourlyValueExpr is now the ONLY place migration 0068's formula is
-// written (GH-1113): sourceVolumeHistory (sources_stats.go) used to carry
-// its own byte-for-byte copy, and a future edit to one and not the other
-// would silently re-diverge the two readers of this CAGG. The stroop
-// divisor is spelled 10000000 rather than `1e7` because the DEX suite's
-// ADR-0003 guard (assertDEXNumericSafe) rejects exponent literals in these
-// query strings.
-const dexXLMUSDVwapCTE = `
-		WITH xlm_usd AS (
-		  ` + xlmUSDVolumeSelect + `
-		)`
+// source_volume_1h (migration 0068) stores sum_usd_priced (trade-time
+// usd_volume) plus the XLM legs of trades left unpriced. Readers sum only
+// sum_usd_priced: valuing the XLM legs at today's XLM/USD would make a
+// historical window move with spot. The unpriced XLM is reported
+// (dexXLMLegUnvalued) so the figure is served as a named lower bound,
+// the same rule sourceVolumeHistory applies.
+const dexPricedUSD = "COALESCE(sum(sum_usd_priced),0)"
 
-// dexHourlyValueExpr renders migration 0068's source_volume_1h read
-// expression. agg wraps the three input columns in sum() for a caller
-// that GROUPs multiple buckets into one figure (the window KPI/series);
-// a caller reading one already-aggregated (source, bucket) row at a time
-// (sourceVolumeHistory) passes false.
-func dexHourlyValueExpr(agg bool) string {
-	usd, base, quote := "sum_usd_priced", "sum_xlm_base", "sum_xlm_quote"
-	if agg {
-		usd, base, quote = "sum(sum_usd_priced)", "sum(sum_xlm_base)", "sum(sum_xlm_quote)"
-	}
-	return "COALESCE(" + usd + ",0)" +
-		" + (COALESCE(" + base + ",0) + COALESCE(" + quote + ",0))" +
-		" / 10000000::numeric * COALESCE((SELECT vwap FROM xlm_usd),0)"
-}
-
-// dexXLMLegUSD is the aggregated (window KPI / activity series) form of
-// dexHourlyValueExpr.
-var dexXLMLegUSD = dexHourlyValueExpr(true)
-
-// dexXLMLegUnvalued is the XLM amount dexXLMLegUSD's COALESCE valued at
-// $0 because xlm_usd is empty, or the empty string when nothing was
-// dropped. The
-// anchor outage that empties the CTE is the one that parks volume in
-// the XLM legs, so the caller must disclose it rather than serve a total.
-var dexXLMLegUnvalued = `COALESCE(CASE WHEN (SELECT vwap FROM xlm_usd) IS NULL
-		           AND COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0) > 0
+// dexXLMLegUnvalued is the unpriced XLM amount excluded from dexPricedUSD,
+// or the empty string when there is none. The stroop divisor is spelled
+// 10000000 because assertDEXNumericSafe rejects exponent literals.
+const dexXLMLegUnvalued = `COALESCE(CASE WHEN COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0) > 0
 		         THEN round((COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0))
 		           / 10000000::numeric, 7)::text END, '')`
 
@@ -184,12 +138,11 @@ func dexHourlyBucketWindow(intervalParam int) string {
 // dexActivitySeriesQuery returns the (bucket, usd_volume, trades) series
 // at the window's grain: hourly from the real-time source_volume_1h CAGG
 // at 24h (24 rows, 17ms on sdex), daily from dex_volume_by_pair_1d
-// otherwise (87 rows, 0.43s on sdex 90d). The 24h form applies migration
-// 0068's full read expression (see above), not just the priced leg.
+// otherwise (87 rows, 0.43s on sdex 90d).
 func dexActivitySeriesQuery(windowDays int) string {
 	if windowDays == 1 {
-		return dexXLMUSDVwapCTE + `
-			SELECT to_char(bucket, 'YYYY-MM-DD"T"HH24:00'), (` + dexXLMLegUSD + `)::text, COALESCE(sum(trade_count),0)::text
+		return `
+			SELECT to_char(bucket, 'YYYY-MM-DD"T"HH24:00'), (` + dexPricedUSD + `)::text, COALESCE(sum(trade_count),0)::text
 			FROM source_volume_1h WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket") + `
 			GROUP BY 1 ORDER BY 1 ASC`
 	}
@@ -205,13 +158,12 @@ func dexActivitySeriesQuery(windowDays int) string {
 // the latter measured 6.0s on sdex 90d vs 0.67s for this shape (99,562
 // pairs). The 24h form reads source_volume_1h, which has no pair
 // dimension — the caller fills active-pairs from the raw KPI query
-// (dexRawWindowOK is always true at 24h), and its USD volume applies
-// migration 0068's full read expression (dexXLMLegUSD) plus the XLM it
-// could not value (dexXLMLegUnvalued) in place of the pair count.
+// (dexRawWindowOK is always true at 24h); it returns the unpriced XLM
+// (dexXLMLegUnvalued) in place of the pair count.
 func dexWindowKPIQuery(windowDays int) string {
 	if windowDays == 1 {
-		return dexXLMUSDVwapCTE + `
-			SELECT round(` + dexXLMLegUSD + `,2)::text, COALESCE(sum(trade_count),0)::text,
+		return `
+			SELECT round(` + dexPricedUSD + `,2)::text, COALESCE(sum(trade_count),0)::text,
 			       ` + dexXLMLegUnvalued + `
 			FROM source_volume_1h WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket")
 	}
@@ -430,33 +382,12 @@ func dexPairLabel(base, quote string) string {
 // ─── block assembly ──────────────────────────────────────────────────────
 
 // dexUSDValuationNote is the block's served statement of how its USD
-// figures are derived, and it is WINDOW-SPECIFIC because the derivation
-// is: every window sums the ingest-time trades.usd_volume valuation, and
-// the 24h window's volume KPI + hourly series additionally value the
-// XLM-denominated legs that valuation left unpriced, at the current
-// on-chain XLM/USD vwap (migration 0068's read contract, shared byte-for-
-// byte with sourceVolumeHistory's reader of the same source_volume_1h
-// CAGG via dexHourlyValueExpr/dexHourlyBucketWindow — GH-1113).
-//
-// That parity is with /v1/sources' 24h volume HISTORY (the per-hour
-// sparkline), not its headline total: GetSourceStats derives the headline
-// from an exact rolling window over raw trades, a different table at a
-// different (unbucketed) granularity, so it can differ from this
-// hourly-bucketed figure by up to the partial current hour. The note says
-// so rather than claiming a parity this block cannot deliver.
-//
-// The 24h per-pair surfaces (breakdown, top-pairs, largest trades, avg
-// trade size) come from raw trades and stay usd_volume-only — no CAGG
-// carries the XLM inputs per pair — so the note says where the extra leg
-// is counted rather than implying it is everywhere. xlmUnvalued is
-// dexXLMLegUnvalued's result: non-empty means the XLM/USD anchor was
-// missing and the extra leg was NOT valued.
+// figures are derived. Every window sums trade-time trades.usd_volume
+// only; at 24h xlmUnvalued (dexXLMLegUnvalued's result) names the unpriced
+// XLM the volume KPI and hourly series exclude, which makes them lower bounds.
 func dexUSDValuationNote(windowDays int, xlmUnvalued string) string {
 	if windowDays == 1 && xlmUnvalued != "" {
-		return "USD figures are sums of the ingest-time trades.usd_volume valuation. No on-chain XLM/USD vwap exists in the trailing 24h, so " + xlmUnvalued + " XLM of XLM-denominated legs that valuation left unpriced are NOT valued: the 24h volume KPI and hourly volume series are lower bounds covering priced trades only. Trades no path can price are excluded from USD sums and averages but still count toward trade totals."
-	}
-	if windowDays == 1 {
-		return "USD figures are sums of the ingest-time trades.usd_volume valuation; the 24h volume KPI and hourly volume series additionally value XLM-denominated legs that valuation left unpriced, at the current on-chain XLM/USD vwap (the same hourly-bucketed derivation /v1/sources' 24h volume history reports for the same source and window; /v1/sources' own headline total is an exact rolling window over raw trades and can differ at the margin), so they can exceed the average trade size and the per-pair breakdowns and tables, which stay usd_volume-only. Trades neither path can price are excluded from USD sums and averages but still count toward trade totals."
+		return "USD figures are sums of the ingest-time trades.usd_volume valuation. " + xlmUnvalued + " XLM of XLM-denominated legs that valuation left unpriced are NOT valued: the 24h volume KPI and hourly volume series are lower bounds covering priced trades only. Trades no path can price are excluded from USD sums and averages but still count toward trade totals."
 	}
 	return "USD figures are sums of the ingest-time trades.usd_volume valuation only — never ad-hoc pricing. Trades whose quote never resolved to a USD price are excluded from USD sums and averages but still count toward trade totals."
 }
@@ -562,19 +493,14 @@ func (s *Store) dexWindowParts(ctx context.Context, blk *BespokeBlock, source, s
 	return nil
 }
 
-// dexVolumeKPIHint states the KPI's derivation for the window it was
-// computed on — the 24h figure carries the XLM-anchored leg that
-// migration 0068's read contract adds, the longer windows do not (the
-// daily pair CAGG materializes no XLM inputs). A non-empty xlmUnvalued
-// means the anchor was missing, so the figure is a lower bound (AGENTS.md
-// money rule: a partial total is served as a lower bound, naming what it
-// excludes).
+// dexVolumeKPIHint states the KPI's derivation. A non-empty xlmUnvalued
+// makes the 24h figure a named lower bound (AGENTS.md money rule).
 func dexVolumeKPIHint(windowDays int, xlmUnvalued string) string {
 	if windowDays == 1 && xlmUnvalued != "" {
-		return "LOWER BOUND: summed usd_volume of priced trades only; excludes " + xlmUnvalued + " XLM of unpriced XLM-denominated legs because no on-chain XLM/USD vwap exists in the trailing 24h"
+		return "LOWER BOUND: summed usd_volume of priced trades only; excludes " + xlmUnvalued + " XLM of unpriced XLM-denominated legs that were never priced at trade time"
 	}
 	if windowDays == 1 {
-		return "summed usd_volume of priced trades, plus unpriced XLM-denominated legs at the current XLM/USD vwap"
+		return "summed usd_volume of priced trades over the trailing 24 hours"
 	}
 	return fmt.Sprintf("summed usd_volume of priced trades over the %d complete UTC days before today", windowDays)
 }
@@ -629,15 +555,10 @@ func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since
 	return takers == "0", nil
 }
 
-// dexAvgTradeHint states the average's derivation. It is always the raw
-// trades.usd_volume sum ÷ priced trades; at 24h that is NOT the volume
-// KPI beside it, which additionally values unpriced XLM legs.
-func dexAvgTradeHint(windowDays int) string {
-	const h = "summed usd_volume of priced trades ÷ priced trades (exact NUMERIC division; unpriced trades excluded from both sides)"
-	if windowDays == 1 {
-		return h + "; excludes the XLM-denominated legs the 24h USD volume KPI additionally values, so it is not that KPI ÷ trades"
-	}
-	return h
+// dexAvgTradeHint states the average's derivation: raw trades.usd_volume
+// sum ÷ priced trades, the same numerator as the volume KPI.
+func dexAvgTradeHint(int) string {
+	return "summed usd_volume of priced trades ÷ priced trades (exact NUMERIC division; unpriced trades excluded from both sides)"
 }
 
 // dexActivitySeries appends the volume + trade-count series (one scan) and

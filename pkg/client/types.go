@@ -873,11 +873,11 @@ type Source struct {
 	// Selectable is true when `source=` accepts this name: on-chain
 	// sources and CEX venues. False for data vendors, which 400.
 	Selectable bool `json:"selectable"`
-	// Stats columns — populated only when the request used
-	// `?include=stats`; zero values otherwise.
-	TradeCount24h   int64  `json:"trade_count_24h,omitempty"`
-	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
-	MarketsCount24h int64  `json:"markets_count_24h,omitempty"`
+	// Stats columns — populated only with `?include=stats`; zero values otherwise.
+	TradeCount24h    int64  `json:"trade_count_24h,omitempty"`
+	VolumeUSD24h     string `json:"volume_24h_usd,omitempty"`
+	MarketsCount24h  int64  `json:"markets_count_24h,omitempty"`
+	VolumeLowerBound bool   `json:"volume_lower_bound,omitempty"` // USD figures exclude unpriced trades
 	// VolumeHistory24h / VolumeHistory7d — per-hour USD-volume
 	// buckets (24 / 168 entries, oldest → newest, zero-filled).
 	// Populated only when the request includes `sparkline` /
