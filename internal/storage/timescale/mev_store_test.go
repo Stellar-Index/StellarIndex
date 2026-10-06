@@ -139,7 +139,7 @@ func TestTradesForArbScan_ExplicitLimitIsBound(t *testing.T) {
 //	  the detector); an ascending LIMIT drops the same burst tail every tick;
 //	the XLM-leg USD fallback — SDEX arb legs quote XLM/token and carry a
 //	  NULL usd_volume, so without it the feed reported "$0" notionals on
-//	  real cycles (2026-06-19).
+//	  real cycles; it reads the XLM/USD anchor at the trade's minute.
 func TestTradesForArbScanQueryShape(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: []string{
 		"source", "ledger", "tx_hash", "op_index", "ts",
@@ -165,6 +165,11 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 	if !strings.Contains(q, "base_amount / 1e7::numeric") ||
 		!strings.Contains(q, "quote_amount / 1e7::numeric") {
 		t.Error("TradesForArbScan lost the XLM-leg USD fallback — SDEX arb legs would report $0 notionals again")
+	}
+	if !strings.Contains(q, xlmUSDAnchorGridCTE("xlm_usd_grid", "$1::timestamptz", "$3::text")) ||
+		!strings.Contains(q, xlmUSDGridJoin("xa", "date_trunc('minute', t.ts)")) ||
+		strings.Contains(q, xlmUSDVolumeSelect) {
+		t.Errorf("the XLM-leg fallback must read the shared anchor at the trade's own minute, never the current scalar:\n%s", q)
 	}
 	if strings.Contains(q, mevXLMSAC) || !strings.Contains(q, "IN ('native', $3::text)") {
 		t.Errorf("the XLM-leg fallback must bind the native-XLM SAC at $3, not hard-code it:\n%s", q)

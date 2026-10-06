@@ -35,16 +35,17 @@ type MarketSourceReader interface {
 }
 
 // SourceVolume is one source's trailing-24h contribution to a market
-// (or asset). VolumeUSD24h is stringified per ADR-0003; omitted when no
-// trade in the window carried a derivable USD volume (e.g. a pure
-// SEP-41/SEP-41 pair with no XLM leg). SharePct is this source's share
-// of the total derivable USD volume across all sources (0 when the
-// total is unknown).
+// (or asset). VolumeUSD24h is the sum of trade-time usd_volume,
+// stringified per ADR-0003; omitted when no trade in the window was
+// priced. VolumeLowerBound is true when unpriced trades were excluded
+// from it. SharePct is this source's share of the total priced USD
+// volume across all sources (0 when the total is unknown).
 type SourceVolume struct {
-	Source        string  `json:"source"`
-	VolumeUSD24h  *string `json:"volume_24h_usd,omitempty"`
-	TradeCount24h int64   `json:"trade_count_24h"`
-	SharePct      float64 `json:"share_pct"`
+	Source           string  `json:"source"`
+	VolumeUSD24h     *string `json:"volume_24h_usd,omitempty"`
+	VolumeLowerBound bool    `json:"volume_lower_bound,omitempty"`
+	TradeCount24h    int64   `json:"trade_count_24h"`
+	SharePct         float64 `json:"share_pct"`
 }
 
 // MarketSourcesResp is the wire shape for /v1/markets/sources. Exactly
@@ -66,9 +67,10 @@ type MarketSourcesResp struct {
 // /v1/history feed only samples recent trades, so an accurate 24h
 // share needs this server-side aggregate.
 //
-// Volume derivation matches /v1/sources?include=stats (XLM/USD fallback
-// for native / XLM-SAC legs); sources whose trades carry no derivable
-// USD volume still appear with their trade count and a null volume.
+// Volume derivation matches /v1/sources?include=stats: trade-time
+// usd_volume only, never today's XLM price; a source with unpriced
+// trades is flagged volume_lower_bound, and one with no priced trade
+// still appears with its trade count and a null volume.
 func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	base := q.Get("base")
@@ -137,7 +139,11 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		Sources:    make([]SourceVolume, 0, len(rows)),
 	}
 	for _, ss := range rows {
-		sv := SourceVolume{Source: ss.Source, TradeCount24h: ss.TradeCount24h}
+		sv := SourceVolume{
+			Source:           ss.Source,
+			TradeCount24h:    ss.TradeCount24h,
+			VolumeLowerBound: ss.UnpricedTrades24h > 0,
+		}
 		if ss.VolumeUSD24h.Valid {
 			v := ss.VolumeUSD24h.String
 			sv.VolumeUSD24h = &v

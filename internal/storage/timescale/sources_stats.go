@@ -21,7 +21,7 @@ type SourceStats struct {
 	VolumeUSD24h sql.NullString
 	// UnpricedTrades24h counts trades with no
 	// usd_volume. They are excluded from VolumeUSD24h, which is then a
-	// lower bound. Populated by GetSourceStats only.
+	// lower bound.
 	UnpricedTrades24h int64
 	// MarketsCount24h is the number of distinct markets the source
 	// observed in the trailing 24h, a market being its unordered
@@ -190,10 +190,11 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 	return out, nil
 }
 
-// The shared CTE + SELECT for the per-source breakdowns. Two fully
-// static query strings (NOT string-concatenated — gosec G202) that
-// differ only in the WHERE predicate; unlike GetSourceStats (trade-time
-// usd_volume only), they still value unpriced XLM legs at the current XLM/USD.
+// The per-source breakdowns: two fully static query strings (NOT
+// string-concatenated — gosec G202) that differ only in the WHERE
+// predicate. Volume is SUM(usd_volume), the value stamped at trade time,
+// as in GetSourceStats; trades with no usd_volume are counted in
+// unpriced_trades_24h instead of being valued at today's XLM price.
 //
 // The asset filters use `= ANY($n)` against a bound string[] so the
 // handler can pass every canonical FORM of an asset (XLM's three:
@@ -205,15 +206,6 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // base_asset/quote_asset columns, planned as an index scan / BitmapOr)
 // — NOT a function on the column.
 //
-// MEMBERSHIP MUST MATCH VALUATION (C4-012, audit-2026-07-23). The
-// volume CASE below treats the XLM SAC literal as XLM — it applies the
-// XLM/USD rate to a SAC leg — so the caller's form set MUST include the
-// SAC too, or Soroban XLM trades are excluded from the population while
-// being priced as XLM wherever they do match. That is precisely the
-// live undercount on /v1/markets/sources?asset=native this note exists
-// to stop recurring: if you edit either the CASE's IN-list or
-// [canonical.AssetAliases], edit both.
-//
 // The pair query reads BOTH stored orientations, one UNION ALL arm each
 // as pairMarketQuery does: a venue that writes base = token_in stores
 // one market as (A,B) and (B,A). The second arm excludes the first's
@@ -222,31 +214,19 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // strings stay static).
 const (
 	pairSourceStatsQuery = `
-		WITH xlm_usd AS (
-		  ` + xlmUSDVolumeSelect + `
-		),
-		per_source AS (
+		WITH per_source AS (
 		SELECT source,
 		       COUNT(*)::bigint AS trades_24h,
-		       SUM(
-		         CASE
-		           WHEN usd_volume IS NOT NULL
-		             THEN usd_volume::numeric
-		           WHEN base_asset IN ('native', $3::text)
-		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           WHEN quote_asset IN ('native', $3::text)
-		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		         END
-		       )::text AS volume_usd_24h,
-		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h
+		       SUM(usd_volume::numeric)::text AS volume_usd_24h,
+		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h,
+		       COUNT(*) FILTER (WHERE usd_volume IS NULL)::bigint AS unpriced_trades_24h
 		  FROM (
-		    SELECT source, base_asset, quote_asset, usd_volume, base_amount, quote_amount
+		    SELECT source, base_asset, quote_asset, usd_volume
 		      FROM trades
 		     WHERE ts >= now() - INTERVAL '24 hours'
 		       AND base_asset = ANY($1) AND quote_asset = ANY($2)
 		    UNION ALL
-		    SELECT source, base_asset, quote_asset, usd_volume, base_amount, quote_amount
+		    SELECT source, base_asset, quote_asset, usd_volume
 		      FROM trades
 		     WHERE ts >= now() - INTERVAL '24 hours'
 		       AND base_asset = ANY($2) AND quote_asset = ANY($1)
@@ -254,41 +234,29 @@ const (
 		  ) t
 		 GROUP BY source
 		)
-		SELECT source, trades_24h, volume_usd_24h, markets_24h FROM per_source
+		SELECT source, trades_24h, volume_usd_24h, markets_24h, unpriced_trades_24h FROM per_source
 		 ORDER BY volume_usd_24h::numeric DESC NULLS LAST, trades_24h DESC, source
 	`
 	assetSourceStatsQuery = `
-		WITH xlm_usd AS (
-		  ` + xlmUSDVolumeSelect + `
-		),
-		per_source AS (
+		WITH per_source AS (
 		SELECT source,
 		       COUNT(*)::bigint AS trades_24h,
-		       SUM(
-		         CASE
-		           WHEN usd_volume IS NOT NULL
-		             THEN usd_volume::numeric
-		           WHEN base_asset IN ('native', $2::text)
-		             THEN (base_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           WHEN quote_asset IN ('native', $2::text)
-		             THEN (quote_amount / 1e7::numeric) * (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		         END
-		       )::text AS volume_usd_24h,
-		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h
+		       SUM(usd_volume::numeric)::text AS volume_usd_24h,
+		       COUNT(DISTINCT (LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)))::bigint AS markets_24h,
+		       COUNT(*) FILTER (WHERE usd_volume IS NULL)::bigint AS unpriced_trades_24h
 		  FROM trades
 		 WHERE ts >= now() - INTERVAL '24 hours'
 		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		 GROUP BY source
 		)
-		SELECT source, trades_24h, volume_usd_24h, markets_24h FROM per_source
+		SELECT source, trades_24h, volume_usd_24h, markets_24h, unpriced_trades_24h FROM per_source
 		 ORDER BY volume_usd_24h::numeric DESC NULLS LAST, trades_24h DESC, source
 	`
 )
 
 // PairSourceStats returns trailing-24h per-source USD volume + trade
 // count for a single (base, quote) market, ordered by USD volume desc
-// (underivable volume last), then trade count, then source.
+// (unpriced volume last), then trade count, then source.
 // Backs the volume-by-source breakdown (pie) on the market-pair page —
 // the recent-trades feed only samples a page of rows, so an accurate
 // 24h share needs this aggregate.
@@ -298,7 +266,7 @@ const (
 // `native` and `crypto:XLM` legs both count); pass a single-element
 // slice for a single form.
 func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote, canonical.NativeSACContractID())
+	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
 }
 
 // AssetSourceStats returns trailing-24h per-source USD volume + trade
@@ -309,7 +277,7 @@ func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]So
 // asset is the full set of canonical FORMS to match (see
 // PairSourceStats) so a multi-form asset's legs aggregate together.
 func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset, canonical.NativeSACContractID())
+	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
 }
 
 // scanSourceStats runs a (static) per-source-breakdown query with the
@@ -330,6 +298,7 @@ func (s *Store) scanSourceStats(ctx context.Context, query string, args ...any) 
 			&ss.TradeCount24h,
 			&ss.VolumeUSD24h,
 			&ss.MarketsCount24h,
+			&ss.UnpricedTrades24h,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: scanSourceStats scan: %w", err)
 		}
