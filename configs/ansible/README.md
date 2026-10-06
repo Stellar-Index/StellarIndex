@@ -121,7 +121,8 @@ Runtime on a clean Hetzner EX63: ~15 minutes for config, then
    a configurable target. `stellar-core-prometheus-exporter`
    only runs alongside stellar-core (`run_stellar_core: true`).
 9. **Hardening** — SSH keys-only, fail2ban, unattended-upgrades
-   for security only, auditd with CIS L2 profile.
+   for security only (needrestart list-only, so no service restarts
+   unattended), auditd with CIS L2 profile.
 
 **Phase-3 / validator hosts** (`run_stellar_core: true`)
 additionally install and configure **stellar-core** (apt.stellar.org,

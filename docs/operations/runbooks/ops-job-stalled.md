@@ -307,6 +307,25 @@ afterwards — `1`, or the host is still on the 90 s default. A scope
 keeps the properties it was created with, so a job already running at
 apply time stays on 90 s until it is relaunched.
 
+## Applying pending service restarts (maintenance step)
+
+Unattended security upgrades install patches but do not restart anything:
+needrestart is list-only (`/etc/needrestart/conf.d/50-stellarindex-list-only.conf`,
+`12-hardening.yml`). Under Ubuntu's default it restarted every daemon on an
+outdated library after the morning `apt-daily-upgrade` run, so a libc6 fix
+bounced Postgres around 06:24 and killed the heavy jobs using it. A patched
+library is not in effect until its daemon restarts, so apply restarts in a
+maintenance window:
+
+```sh
+needrestart -b -r l                             # NEEDRESTART-SVC lines = pending restarts; KSTA 2/3 = reboot pending
+systemctl list-units 'heavy-*.scope' --no-pager # must be empty: wait, or stop by scope (above)
+systemctl restart <unit> ...                    # the listed units; or `needrestart -r a` for all of them
+```
+
+A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same
+window; `Automatic-Reboot` is off.
+
 ## Clearing the alert
 
 The textfile persists after the process dies — deliberately, so a job
@@ -345,6 +364,8 @@ record why, because the range is then knowingly un-backfilled.
 
 ## Changelog
 
+- 2026-10-06 — added "Applying pending service restarts": needrestart
+  is list-only, so library-fix restarts are a maintenance step.
 - 2026-09-30 — resolved the two follow-ups: added "A ClickHouse merge
   outlives its client" (cancel an `OPTIMIZE … FINAL` with `SYSTEM STOP
   MERGES` after the scope stop), and corrected the `verify-archive`

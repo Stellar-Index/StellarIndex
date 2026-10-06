@@ -106,12 +106,10 @@ func gateSeamProblems(t *testing.T, bin, dir string) (int, []string) {
 				continue
 			}
 			name := gateFuncName(fn)
-			for _, call := range selectorCalls(fn.Body) {
-				if halfMethods[call.Sel.Name] {
-					problems = append(problems, bin+": "+name+" calls ."+call.Sel.Name+
-						" at "+fset.Position(call.Pos()).String()+" — a gate half consulted outside "+
-						"pricingguard.Gate can withhold on one gate and forget the other")
-				}
+			for _, sel := range halfReferences(fn.Body) {
+				problems = append(problems, bin+": "+name+" calls ."+sel.Sel.Name+
+					" at "+fset.Position(sel.Pos()).String()+" — a gate half consulted outside "+
+					"pricingguard.Gate can withhold on one gate and forget the other")
 			}
 			if !readsClosedVWAPAnyReceiver(fn.Body) {
 				continue
@@ -166,27 +164,92 @@ func asksGate(body *ast.BlockStmt, chokepoints map[string]bool) bool {
 	return found
 }
 
+// readsClosedVWAPAnyReceiver reports whether body references a
+// *ClosedVWAP* method: a call, or a method value (f := r.db.X) that
+// reads the same bucket when called.
 func readsClosedVWAPAnyReceiver(body *ast.BlockStmt) bool {
-	for _, sel := range selectorCalls(body) {
-		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
-			return true
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && strings.Contains(sel.Sel.Name, "ClosedVWAP") {
+			found = true
 		}
-	}
-	return false
+		return !found
+	})
+	return found
 }
 
-// selectorCalls returns the X.Sel of every method-style call in body.
-func selectorCalls(body *ast.BlockStmt) []*ast.SelectorExpr {
-	var out []*ast.SelectorExpr
+// gateHolderNames are the field names a SubstanceGate or ScamGate is held
+// under across the binaries.
+var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
+
+// halfReferences returns every gate-half selector in body: each call on any
+// receiver, and a method value taken from a gate holder or a local alias of
+// one (g := r.scam; f := g.WithheldPair), which is a call deferred.
+// Non-call references need a holder because the half names are generic:
+// a rate-limit result carries a plain Allowed field.
+func halfReferences(body *ast.BlockStmt) []*ast.SelectorExpr {
+	calls := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(body, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-				out = append(out, sel)
+				calls[sel] = true
 			}
 		}
 		return true
 	})
+	aliases := gateHolderAliases(body)
+	var out []*ast.SelectorExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if ok && halfMethods[sel.Sel.Name] && (calls[sel] || isGateHolder(sel.X, aliases)) {
+			out = append(out, sel)
+		}
+		return true
+	})
 	return out
+}
+
+// gateHolderAliases returns the locals body binds to a gate holder.
+func gateHolderAliases(body *ast.BlockStmt) map[string]bool {
+	aliases := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		var lhs []*ast.Ident
+		var rhs []ast.Expr
+		switch st := n.(type) {
+		case *ast.AssignStmt:
+			for _, e := range st.Lhs {
+				id, _ := e.(*ast.Ident)
+				lhs = append(lhs, id)
+			}
+			rhs = st.Rhs
+		case *ast.ValueSpec:
+			lhs, rhs = st.Names, st.Values
+		}
+		if len(lhs) != len(rhs) {
+			return true
+		}
+		for i, id := range lhs {
+			if id != nil && isGateHolder(rhs[i], nil) {
+				aliases[id.Name] = true
+			}
+		}
+		return true
+	})
+	return aliases
+}
+
+// isGateHolder reports whether expr names a gate: a holder field
+// (s.substance, r.Scam), a bare holder parameter, or a local alias of one.
+func isGateHolder(expr ast.Expr, aliases map[string]bool) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return gateHolderNames[x.Sel.Name]
+	case *ast.Ident:
+		return gateHolderNames[x.Name] || aliases[x.Name]
+	case *ast.ParenExpr:
+		return isGateHolder(x.X, aliases)
+	}
+	return false
 }
 
 func gateFuncName(fn *ast.FuncDecl) string {
@@ -215,6 +278,10 @@ func (r reader) Latest() {
 	r.db.LatestClosedVWAP1mForPair(nil, nil)
 	_ = r.scam.WithheldPair(nil, a, b, "x") || !r.substance.Allowed(nil, a, b, "x")
 }`,
+		"ungated seam through a method value": `package main
+func (r reader) Latest() { f := r.db.LatestClosedVWAP1mForPair; f(nil, nil) }`,
+		"ungated seam through a store alias": `package main
+func (r reader) Latest() { st := r.db; st.LatestClosedVWAP1mForPair(nil, nil) }`,
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -241,4 +308,29 @@ func (r reader) Latest() { r.db.LatestClosedVWAP1mForPair(nil, nil); _ = withhel
 			t.Fatalf("seams=%d problems=%v, want one gated seam", n, problems)
 		}
 	})
+}
+
+// TestGateHalfScanCatchesMethodValues: a half folded outside Gate is named
+// however it is spelled, with no closed-bucket read to make the case fail
+// for another reason, and a non-gate Allowed field is left alone.
+func TestGateHalfScanCatchesMethodValues(t *testing.T) {
+	cases := []struct {
+		name, src string
+		want      int
+	}{
+		{"direct call", `func (r reader) ok() bool { return r.scam.WithheldPair(nil, a, b, "x") }`, 1},
+		{"method value", `func (r reader) ok() bool { f := r.scam.WithheldPair; return f(nil, a, b, "x") }`, 1},
+		{"method value through a gate alias", `func (r reader) ok() bool { g := r.substance; return apply(g.Allowed) }`, 1},
+		{"a non-gate Allowed field", `func (r reader) ok() bool { res := r.limiter.Take(); return res.Allowed }`, 0},
+	}
+	for _, c := range cases {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"+c.src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		n, problems := gateSeamProblems(t, "synthetic", dir)
+		if n != 0 || len(problems) != c.want {
+			t.Errorf("%s: seams=%d problems=%v, want 0 seams and %d problems", c.name, n, problems, c.want)
+		}
+	}
 }
