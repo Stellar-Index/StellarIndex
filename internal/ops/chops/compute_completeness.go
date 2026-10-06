@@ -150,8 +150,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor. A frozen cursor is refused either way unless -allow-frozen-cursor is set")
 	allowFrozenCursor := fs.Bool("allow-frozen-cursor", false, "Stamp a verdict even though the ledgerstream cursor is provably behind the network (operator override; requires -to)")
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
-	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch; without it, SDEX's projection still re-derives from the lake)")
+	useCH := fs.Bool("ch", false, "Required: read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive), off the serving DB (ADR-0033 + ADR-0034). A run without it fails")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	skipSubstrate := fs.Bool("skip-substrate", false, "Skip the hash-chain re-scan and CARRY the prior substrate verdict — fast per-source iteration once substrate is proven. This run scans nothing, so it can only CONFIRM a prior clean verdict that already reached this run's tip; a FAILING or short prior verdict publishes substrate_ok=false with the unverified band named in the detail (C4-057). It no longer asserts substrate_ok=true unconditionally.")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
@@ -168,11 +168,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if *timeout <= 0 {
 		return fmt.Errorf("-timeout must be > 0, got %s", *timeout)
 	}
+	// Explicit rather than implied so a caller still written for the removed
+	// Postgres soroban_events path fails here instead of silently verifying less.
+	if !*useCH {
+		return fmt.Errorf("compute-completeness: -ch is required (every claim reads the certified ClickHouse lake; the Postgres soroban_events path is removed)")
+	}
 	// Fail CLOSED on -pass combined with the per-source / per-chunk knobs it
 	// replaces (validatePassFlags): a partial pass that publishes over a subset
 	// of sources, or carries a stale substrate/recognition verdict, would look
 	// complete while re-opening exactly the redundancy + flap this mode fixes.
-	if perr := validatePassFlags(*pass, *useCH, *only, *fromLedger, *skipSubstrate, *skipRecognition); perr != nil {
+	if perr := validatePassFlags(*pass, *only, *fromLedger, *skipSubstrate, *skipRecognition); perr != nil {
 		return fmt.Errorf("compute-completeness: %w", perr)
 	}
 
@@ -305,23 +310,20 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		soroswapOpts = append(soroswapOpts, soroswap.WithSeededPairTokensDecoder(seed))
 	}
 	recGaps, recErr := runRecognitionScan(*skipRecognition, func() ([]completeness.RecognitionGap, error) {
-		if *useCH {
-			// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
-			// topic shape a gated contract has EVER emitted recognized by some
-			// decoder" — NOT an incremental one. It must NOT be scoped to the
-			// incremental -from window: a low-volume source's rare wrong-topic
-			// event (rozo emitted 393 payment_events over ~2 months, none in a
-			// recent incremental window) would slip through and never flip
-			// recognition_ok — the 2026-07-07 rozo blind spot (BACKLOG #89).
-			// DistinctTopicShapes is bounded-memory at any lake size (windowed
-			// per-partition narrow-column scan + batched exemplar fetch — the
-			// single-query argMax-over-wide-XDR form died at any server memory
-			// cap once P23/CAP-67 grew the distinct set), so always scan from
-			// genesis regardless of -from — which correctly scopes only the
-			// expensive row-by-row projection reconcile below.
-			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
-		}
-		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, sorobanFloor, tip, soroswapOpts...)
+		// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
+		// topic shape a gated contract has EVER emitted recognized by some
+		// decoder" — NOT an incremental one. It must NOT be scoped to the
+		// incremental -from window: a low-volume source's rare wrong-topic
+		// event (rozo emitted 393 payment_events over ~2 months, none in a
+		// recent incremental window) would slip through and never flip
+		// recognition_ok (the rozo blind spot).
+		// DistinctTopicShapes is bounded-memory at any lake size (windowed
+		// per-partition narrow-column scan + batched exemplar fetch — the
+		// single-query argMax-over-wide-XDR form died at any server memory
+		// cap once P23/CAP-67 grew the distinct set), so always scan from
+		// genesis regardless of -from — which correctly scopes only the
+		// expensive row-by-row projection reconcile below.
+		return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
@@ -366,10 +368,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// below needs it per source: it is what makes the difference between
 	// "proven from genesis" and "trusted below a floor" (C4-057).
 	subScanFrom := tip + 1
-	switch {
-	case *useCH && *skipSubstrate:
+	if *skipSubstrate {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-substrate — no substrate scan; the prior verdict is carried, not re-proven")
-	case *useCH:
+	} else {
 		subScanFrom = uint32(2)
 		if *fromLedger > 2 {
 			subScanFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
@@ -379,11 +380,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// ledgers over the whole Soroban era every run — including -skip-substrate
 	// and -from runs, whose carried prefix is exactly where a dropped partition
 	// hides (eventCensusLoss).
-	var evCensus []clickhouse.EventCensusShortfall
-	if *useCH {
-		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip); err != nil {
-			return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
-		}
+	evCensus, err := clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip)
+	if err != nil {
+		return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
 	}
 
 	// Prior verdicts (INV-5). An INCREMENTAL run (-from) reconciles only a
@@ -474,103 +473,82 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 
 		// Claim 1: substrate continuity + hash chain over [genesis, tip].
 		var substrateOK, eventsShort bool
-		if *useCH {
-			// Scan THIS source's own [genesis,tip] (memoised per floor — see
-			// substrateForGenesis); it's this source's problem only if the
-			// reported problem ledger falls at/after the source's genesis.
-			// SubstrateProblem returns coverage-correct problem ledgers for
-			// empty/head/tail absences (see its substrateHeadProblem doc) so
-			// a high-genesis source can't read a COVERAGE failure as "below
-			// my genesis, I'm fine" (F1 fail-open).
-			srcScanFrom := subScanFrom
-			if genesis > srcScanFrom {
-				srcScanFrom = genesis
+		// Scan THIS source's own [genesis,tip] (memoised per floor — see
+		// substrateForGenesis); it's this source's problem only if the
+		// reported problem ledger falls at/after the source's genesis.
+		// SubstrateProblem returns coverage-correct problem ledgers for
+		// empty/head/tail absences (see its substrateHeadProblem doc) so
+		// a high-genesis source can't read a COVERAGE failure as "below
+		// my genesis, I'm fine" (F1 fail-open).
+		srcScanFrom := subScanFrom
+		if genesis > srcScanFrom {
+			srcScanFrom = genesis
+		}
+		srcSub, serr := substrateForGenesis(ctx, chSubstrateScanner, chSubstrateCache, genesis, subScanFrom, tip)
+		if serr != nil {
+			return fmt.Errorf("%s: ch substrate [%d,%d]: %w", src.name, srcScanFrom, tip, serr)
+		}
+		switch {
+		case srcSub.has:
+			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate problem for %s at %d (%s)\n", src.name, srcSub.problem, srcSub.detail)
+		case subScanFrom <= tip:
+			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] for %s — contiguous + hash-chained\n", srcScanFrom, src.name)
+		}
+		scanClean := sourceSubstrateOK(srcSub.problem, srcSub.has, genesis)
+		if !scanClean {
+			problems = append(problems, srcSub.problem)
+		}
+		// C4-057: gate what the run may PUBLISH on the range it actually
+		// scanned. The scan floor and the claim are different things and
+		// only the projection axis used to know that.
+		var subDetail string
+		substrateOK, subDetail = substrateClaim(genesis, tip, srcScanFrom, scanClean, srcSub.problem, priorSub[src.name])
+		detail = append(detail, subDetail)
+		// C4-057 (numeric-field gap): substrateClaim can refuse a CLEAN
+		// suffix scan (no prior / a FAILING prior / a stale prior leaving an
+		// unverified band) — cases where `problems` holds no substrate ledger
+		// yet substrate_ok is false. Feed the unproven-prefix floor into
+		// `problems` so the NUMERIC coverage watermark (coverage_pct /
+		// watermark_ledger / first_problem) tracks substrate_ok exactly as
+		// srW.Complete does, never publishing coverage_pct=1.0 / watermark=tip
+		// while substrate_ok=false. See lakeCoverageProblem.
+		if p := lakeCoverageProblem(genesis, scanClean, substrateOK, priorSub[src.name]); p != 0 {
+			problems = append(problems, p)
+		}
+		// W1-flowcompleteness-2: the substrate twin of detectFloorLoss.
+		// An incremental run scanned only [subScanFrom, tip] and
+		// substrateClaim rule 3 CARRIES the prior clean [genesis,
+		// subScanFrom] verdict — so a capacity-archive DROP PARTITION (the
+		// documented archive-to-S3 plan) that deletes the source's oldest
+		// ledgers BELOW subScanFrom is invisible to the scan, and
+		// substrate_ok / lake_complete stay true over an absent prefix.
+		// Projection catches its own bottom-edge loss (detectFloorLoss +
+		// completeness_target_floors, migration 0116); substrate had no
+		// equivalent. Probe the bottom edge directly: unlike the projection
+		// floor (a served-tier MIN needing a durable row to tell "lost" from
+		// "never written"), the substrate floor is the FIXED src.genesis —
+		// the first-possible-data ledger the lake must always reach — so no
+		// durable floor is needed. A cheap 1-ledger SubstrateProblem at
+		// genesis reports whether the lake still holds it; an absent/broken
+		// genesis is bottom-edge loss that must fail substrate_ok. Only
+		// probed when the run CARRIES a prefix (subScanFrom > genesis); a
+		// deep scan (subScanFrom <= genesis) already re-reads genesis and its
+		// own head-presence guard reports the same loss.
+		if subScanFrom > genesis {
+			fp, fh, _, ferr := clickhouse.SubstrateProblem(ctx, *chAddr, genesis, genesis)
+			if ferr != nil {
+				return fmt.Errorf("%s: substrate bottom-edge probe: %w", src.name, ferr)
 			}
-			srcSub, serr := substrateForGenesis(ctx, chSubstrateScanner, chSubstrateCache, genesis, subScanFrom, tip)
-			if serr != nil {
-				return fmt.Errorf("%s: ch substrate [%d,%d]: %w", src.name, srcScanFrom, tip, serr)
-			}
-			switch {
-			case srcSub.has:
-				fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate problem for %s at %d (%s)\n", src.name, srcSub.problem, srcSub.detail)
-			case subScanFrom <= tip:
-				fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] for %s — contiguous + hash-chained\n", srcScanFrom, src.name)
-			}
-			scanClean := sourceSubstrateOK(srcSub.problem, srcSub.has, genesis)
-			if !scanClean {
-				problems = append(problems, srcSub.problem)
-			}
-			// C4-057: gate what the run may PUBLISH on the range it actually
-			// scanned. The scan floor and the claim are different things and
-			// only the projection axis used to know that.
-			var subDetail string
-			substrateOK, subDetail = substrateClaim(genesis, tip, srcScanFrom, scanClean, srcSub.problem, priorSub[src.name])
-			detail = append(detail, subDetail)
-			// C4-057 (numeric-field gap): substrateClaim can refuse a CLEAN
-			// suffix scan (no prior / a FAILING prior / a stale prior leaving an
-			// unverified band) — cases where `problems` holds no substrate ledger
-			// yet substrate_ok is false. Feed the unproven-prefix floor into
-			// `problems` so the NUMERIC coverage watermark (coverage_pct /
-			// watermark_ledger / first_problem) tracks substrate_ok exactly as
-			// srW.Complete does, never publishing coverage_pct=1.0 / watermark=tip
-			// while substrate_ok=false. See lakeCoverageProblem.
-			if p := lakeCoverageProblem(genesis, scanClean, substrateOK, priorSub[src.name]); p != 0 {
-				problems = append(problems, p)
-			}
-			// W1-flowcompleteness-2: the substrate twin of detectFloorLoss.
-			// An incremental run scanned only [subScanFrom, tip] and
-			// substrateClaim rule 3 CARRIES the prior clean [genesis,
-			// subScanFrom] verdict — so a capacity-archive DROP PARTITION (the
-			// documented archive-to-S3 plan) that deletes the source's oldest
-			// ledgers BELOW subScanFrom is invisible to the scan, and
-			// substrate_ok / lake_complete stay true over an absent prefix.
-			// Projection catches its own bottom-edge loss (detectFloorLoss +
-			// completeness_target_floors, migration 0116); substrate had no
-			// equivalent. Probe the bottom edge directly: unlike the projection
-			// floor (a served-tier MIN needing a durable row to tell "lost" from
-			// "never written"), the substrate floor is the FIXED src.genesis —
-			// the first-possible-data ledger the lake must always reach — so no
-			// durable floor is needed. A cheap 1-ledger SubstrateProblem at
-			// genesis reports whether the lake still holds it; an absent/broken
-			// genesis is bottom-edge loss that must fail substrate_ok. Only
-			// probed when the run CARRIES a prefix (subScanFrom > genesis); a
-			// deep scan (subScanFrom <= genesis) already re-reads genesis and its
-			// own head-presence guard reports the same loss.
-			if subScanFrom > genesis {
-				fp, fh, _, ferr := clickhouse.SubstrateProblem(ctx, *chAddr, genesis, genesis)
-				if ferr != nil {
-					return fmt.Errorf("%s: substrate bottom-edge probe: %w", src.name, ferr)
-				}
-				if p, lost, d := substrateFloorLoss(genesis, subScanFrom, fp, fh); lost {
-					substrateOK = false
-					problems = append(problems, p)
-					detail = append(detail, d)
-				}
-			}
-			if p, short, d := eventCensusLoss(src, genesis, evCensus); short {
-				substrateOK, eventsShort = false, true
+			if p, lost, d := substrateFloorLoss(genesis, subScanFrom, fp, fh); lost {
+				substrateOK = false
 				problems = append(problems, p)
 				detail = append(detail, d)
 			}
-		} else {
-			subGaps, err := store.FindLedgerIngestGaps(ctx, genesis, tip)
-			if err != nil {
-				return fmt.Errorf("%s: substrate gaps: %w", src.name, err)
-			}
-			breaks, err := store.VerifyLedgerHashChain(ctx, genesis, tip)
-			if err != nil {
-				return fmt.Errorf("%s: hash chain: %w", src.name, err)
-			}
-			substrateOK = len(subGaps) == 0 && len(breaks) == 0
-			for _, g := range subGaps {
-				problems = append(problems, uint32(g.Start))
-			}
-			for _, b := range breaks {
-				problems = append(problems, b.LedgerSeq)
-			}
-			if !substrateOK {
-				detail = append(detail, fmt.Sprintf("substrate: %d gap(s), %d chain break(s)", len(subGaps), len(breaks)))
-			}
+		}
+		if p, short, d := eventCensusLoss(src, genesis, evCensus); short {
+			substrateOK, eventsShort = false, true
+			problems = append(problems, p)
+			detail = append(detail, d)
 		}
 
 		// Claim 2a: recognition gaps attributed to this source's contracts
@@ -589,10 +567,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// fidelity claim on the served tier, evaluated separately so its keying
 		// artifacts / retention-scoping don't corrupt the coverage signal.
 		srW := completeness.ComputeWatermark(genesis, tip, problems)
-		// Lake (archive) axis: substrate ∧ recognition only. `problems` at
-		// this point holds no projection gaps in either branch below (the
-		// CH branch never adds them here; the PG/legacy branch only
-		// appends its projection gaps to `problems` AFTER this line), so
+		// Lake (archive) axis: substrate ∧ recognition only. `problems`
+		// never carries projection gaps, so
 		// srW.Complete is genuinely decoupled from projection — the
 		// ADR-0033/0034 two-axis verdict (decision brief
 		// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option
@@ -616,7 +592,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// free text, so a consumer reading the typed fields saw
 		// genesis_ledger (the LAKE floor, often ledger 2) and read the
 		// served-tier claim as reaching back to it. 0 stays "not
-		// evaluated" — the else branches below leave it alone.
+		// evaluated" — the non-reconciling cases below leave it alone.
 		var projVerifiedFrom uint32
 		// Set only when the CH reconcile FOUND a failure; carried to the
 		// write so a lower-tip run still records it.
@@ -628,7 +604,6 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			evidencedNow       bool
 			evidencedAt        time.Time
 		)
-		var w completeness.Watermark
 		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
 		// THIS source's own prior watermark, so substrate + recognition stay
@@ -646,109 +621,77 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// reconciled at all, so no claim covers it.
 		dirtyWin, hasDirty := dirtyWindows[src.name]
 		projFrom, deferDirty := projectionPlan(src, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger, srW.Ledger, dirtyWin, hasDirty)
-		if *useCH {
-			switch {
-			case deferDirty:
-				// Detail is written by the window disposition below.
-			case srW.Ledger >= projFrom:
-				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
-				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
-				if serr != nil {
-					return fmt.Errorf("%s: served floor: %w", src.name, serr)
-				}
-				projVerifiedFrom = servedFrom
-				// N-F2 residual: a bottom-edge truncation is invisible to the
-				// reconcile itself, because the reconcile's own floor moves with
-				// it. Compare against the durable floor BEFORE reconciling, and
-				// treat loss as a hard projection failure — the surviving rows
-				// will reconcile perfectly and would otherwise read complete.
-				floorLoss := detectFloorLoss(src, servedMins, targetFloors)
-				delta, blind, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
-				if perr != nil {
-					return fmt.Errorf("%s: projection: %w", src.name, perr)
-				}
-				projFound = projectionFoundProblem(delta, blind, floorLoss)
-				// Only a clean reconcile earns the right to record verified
-				// ground; a run that found a mismatch must not enshrine its
-				// range as verified. A run that DETECTED loss must not record
-				// either, or it would immediately adopt the post-loss floor as
-				// the new truth and erase the evidence on the very next run.
-				//
-				// C4-059: a blind re-derive earns no ground either. Its zero
-				// delta is an artifact of both sides dropping the same rows,
-				// so recording the floor would enshrine an unverified range.
-				if delta == 0 && len(floorLoss) == 0 && !blind.Any() {
-					if ferr := recordFloors(ctx, store, src, scopes, servedMins); ferr != nil {
-						return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
-					}
-				}
-				// The scope travels WITH the verdict: a run may only claim the
-				// range it actually reconciled (ADR-0033 — a source is complete
-				// through W iff every claim holds contiguously to W).
-				//
-				// C4-059: `delta == 0 && !blind.Any()` is the honest "clean"
-				// predicate. A ledger whose rows neither side could decode
-				// contributes 0 to delta while proving nothing, so a bare
-				// delta==0 would certify projection_ok on exactly the ledgers
-				// the check is blind to. pdetail already leads with the
-				// blind-spot summary (reconcileProjectionAggregate).
-				var claimDetail string
-				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name], newClaimScope(src, scopes, servedMins, targetFloors))
-				detail = append(detail, claimDetail)
-				if len(floorLoss) > 0 {
-					projOK = false
-					detail = append(detail, floorLoss...)
-				}
-				if vacuous, d := projectionWithoutEvidence(projOK, len(src.targets), servedMins, genesis, srW.Ledger); vacuous {
-					projOK, projVerifiedFrom = false, 0
-					detail = append(detail, d)
-				}
-				projReconciledFrom = runFrom
-				evidencedNow, evidencedAt = projectionEvidence(projOK, servedFrom, runFrom, priorProj[src.name])
-				if projOK && !evidencedNow {
-					detail = append(detail, carriedEvidenceDetail(evidencedAt))
-				}
-			default:
-				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
+		switch {
+		case deferDirty:
+			// Detail is written by the window disposition below.
+		case srW.Ledger >= projFrom:
+			streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
+			scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
+			if serr != nil {
+				return fmt.Errorf("%s: served floor: %w", src.name, serr)
 			}
-			// Coverage = substrate∧recognition (proven data capture). complete
-			// additionally requires the served-tier projection to reconcile;
-			// lakeComplete (set above, pre-projection) never does. The served
-			// axis can never be stronger than the lake axis it sits on, so an
-			// unproven substrate claim (C4-057) gates it too — that is what
-			// lakeComplete already carries.
-			w = servedAxisVerdict(srW, lakeComplete && projOK, deferDirty, dirtyWin)
-		} else {
-			// Legacy Postgres path: strict per-ledger projection pins the watermark.
-			if srW.Ledger >= genesis {
-				// This path reconciles the FULL [genesis, watermark] range,
-				// so its published floor is genesis — not a served-tier
-				// minimum.
-				projVerifiedFrom = genesis
-				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, *chAddr, nil, src, genesis, srW.Ledger)
-				if perr != nil {
-					return fmt.Errorf("%s: projection: %w", src.name, perr)
-				}
-				projOK = len(pgaps) == 0 && !pblind.Any()
-				projReconciledFrom, evidencedNow = genesis, projOK
-				problems = append(problems, pgaps...)
-				problems = append(problems, pblind.Ledgers...)
-				// C4-059: name the two classes separately. A count mismatch
-				// and a ledger the re-derive could not READ are different
-				// findings with different fixes, and folding blind ledgers
-				// into "N mismatched ledger(s)" sends an operator hunting
-				// for a row-count discrepancy that does not exist.
-				if len(pgaps) > 0 {
-					detail = append(detail, fmt.Sprintf("projection: %d mismatched ledger(s) in [%d,%d]", len(pgaps), genesis, srW.Ledger))
-				}
-				if d := pblind.Detail(); d != "" {
-					detail = append(detail, "projection: "+d)
-				}
-			} else {
-				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
+			projVerifiedFrom = servedFrom
+			// N-F2 residual: a bottom-edge truncation is invisible to the
+			// reconcile itself, because the reconcile's own floor moves with
+			// it. Compare against the durable floor BEFORE reconciling, and
+			// treat loss as a hard projection failure — the surviving rows
+			// will reconcile perfectly and would otherwise read complete.
+			floorLoss := detectFloorLoss(src, servedMins, targetFloors)
+			delta, blind, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
+			if perr != nil {
+				return fmt.Errorf("%s: projection: %w", src.name, perr)
 			}
-			w = completeness.ComputeWatermark(genesis, tip, problems)
+			projFound = projectionFoundProblem(delta, blind, floorLoss)
+			// Only a clean reconcile earns the right to record verified
+			// ground; a run that found a mismatch must not enshrine its
+			// range as verified. A run that DETECTED loss must not record
+			// either, or it would immediately adopt the post-loss floor as
+			// the new truth and erase the evidence on the very next run.
+			//
+			// C4-059: a blind re-derive earns no ground either. Its zero
+			// delta is an artifact of both sides dropping the same rows,
+			// so recording the floor would enshrine an unverified range.
+			if delta == 0 && len(floorLoss) == 0 && !blind.Any() {
+				if ferr := recordFloors(ctx, store, src, scopes, servedMins); ferr != nil {
+					return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
+				}
+			}
+			// The scope travels WITH the verdict: a run may only claim the
+			// range it actually reconciled (ADR-0033 — a source is complete
+			// through W iff every claim holds contiguously to W).
+			//
+			// C4-059: `delta == 0 && !blind.Any()` is the honest "clean"
+			// predicate. A ledger whose rows neither side could decode
+			// contributes 0 to delta while proving nothing, so a bare
+			// delta==0 would certify projection_ok on exactly the ledgers
+			// the check is blind to. pdetail already leads with the
+			// blind-spot summary (reconcileProjectionAggregate).
+			var claimDetail string
+			projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name], newClaimScope(src, scopes, servedMins, targetFloors))
+			detail = append(detail, claimDetail)
+			if len(floorLoss) > 0 {
+				projOK = false
+				detail = append(detail, floorLoss...)
+			}
+			if vacuous, d := projectionWithoutEvidence(projOK, len(src.targets), servedMins, genesis, srW.Ledger); vacuous {
+				projOK, projVerifiedFrom = false, 0
+				detail = append(detail, d)
+			}
+			projReconciledFrom = runFrom
+			evidencedNow, evidencedAt = projectionEvidence(projOK, servedFrom, runFrom, priorProj[src.name])
+			if projOK && !evidencedNow {
+				detail = append(detail, carriedEvidenceDetail(evidencedAt))
+			}
+		default:
+			detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 		}
+		// Coverage = substrate∧recognition (proven data capture). complete
+		// additionally requires the served-tier projection to reconcile;
+		// lakeComplete (set above, pre-projection) never does. The served
+		// axis can never be stronger than the lake axis it sits on, so an
+		// unproven substrate claim (C4-057) gates it too — that is what
+		// lakeComplete already carries.
+		w := servedAxisVerdict(srW, lakeComplete && projOK, deferDirty, dirtyWin)
 
 		// Replay-rewind window disposition. The clear is earned by the
 		// reconcile itself, not the carry: only a run whose CLEAN projection
@@ -757,13 +700,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// extending its floor over the rewound range until one verifies it.
 		var dirtyCleared bool
 		if hasDirty {
-			reconcileFloor := projFrom
-			if !*useCH {
-				// The legacy PG path always reconciles the full
-				// [genesis, watermark] range — its floor is genesis.
-				reconcileFloor = genesis
-			}
-			dirtyCleared = dirtyWindowSatisfied(dirtyWin, projOK, reconcileFloor, genesis, srW.Ledger)
+			dirtyCleared = dirtyWindowSatisfied(dirtyWin, projOK, projFrom, genesis, srW.Ledger)
 			if dirtyCleared {
 				detail = append(detail, fmt.Sprintf(
 					"projection: replay-rewind window [%d,%d] re-verified clean this run — clearing it",
@@ -1032,17 +969,13 @@ func sourceProjectionFloor(src reconSource, pass bool, prior priorProjection, pr
 //     prove it fresh, which is the staleness the pass fixes; for substrate,
 //     skipping the full-tip proof is what re-opens the CS-083 low-tip flap.
 //
-// -pass also requires -ch: the full-tip substrate proof and the projection
-// re-derive it relies on are certified-ClickHouse-lake operations. Rejecting
-// these combinations rather than silently ignoring them keeps an operator (or a
+// Rejecting these combinations rather than silently ignoring them keeps an operator (or a
 // mis-edited wrapper) from publishing a partial pass that looks complete. Pure.
-func validatePassFlags(pass, useCH bool, source string, fromLedger uint, skipSubstrate, skipRecognition bool) error {
+func validatePassFlags(pass bool, source string, fromLedger uint, skipSubstrate, skipRecognition bool) error {
 	if !pass {
 		return nil
 	}
 	switch {
-	case !useCH:
-		return fmt.Errorf("-pass requires -ch (the whole-pass substrate proof + projection re-derive read the certified ClickHouse lake)")
 	case source != "":
 		return fmt.Errorf("-pass computes EVERY source in one process and is incompatible with -source %q", source)
 	case fromLedger != 0:
@@ -1966,61 +1899,6 @@ func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior prio
 	return floor
 }
 
-// reconcileSourceProjection reconciles every table a source writes over
-// [genesis, hi] and returns the union of mismatched ledgers. SDEX re-derives
-// its served projection from the lake's operations (the ledger_ingest_log
-// census counts one-side-zero fills the trades table cannot hold); event
-// sources re-derive (by kind) and project each table's kinds.
-func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chAddr string, chStreamer completeness.EventStreamer, src reconSource, genesis, hi uint32) ([]uint32, completeness.BlindSpots, error) {
-	var mismatched []uint32
-	if src.census {
-		expected, blind, eerr := sdexProjectionExpected(ctx, chAddr, genesis, hi)
-		if eerr != nil {
-			return nil, completeness.BlindSpots{}, eerr
-		}
-		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
-			if aerr != nil {
-				return nil, completeness.BlindSpots{}, aerr
-			}
-			for _, g := range completeness.ReconcileCounts(expected, actual) {
-				mismatched = append(mismatched, g.Ledger)
-			}
-		}
-		return mismatched, blind, nil
-	}
-
-	// Re-derive expected outputs: from the CH lake (certified, off the serving
-	// DB) when -ch, else from Postgres soroban_events.
-	var byKind map[string]map[uint32]int
-	var blind completeness.BlindSpots
-	var derr error
-	if chStreamer != nil {
-		byKind, blind, derr = completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
-	} else {
-		byKind, blind, derr = completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
-	}
-	if derr != nil {
-		return nil, completeness.BlindSpots{}, derr
-	}
-	// C4-059: a ledger the re-derive could not decode is a ledger this
-	// function cannot certify — the projector dropped the same rows, so the
-	// per-ledger diff nets to zero and reads clean. Returned SEPARATELY from
-	// the count mismatches: both pin the watermark, but they are different
-	// findings and the caller's verdict names them apart.
-	for _, tgt := range src.targets {
-		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.countFilter(), genesis, hi)
-		if aerr != nil {
-			return nil, completeness.BlindSpots{}, aerr
-		}
-		for _, g := range completeness.ReconcileCounts(expected, actual) {
-			mismatched = append(mismatched, g.Ledger)
-		}
-	}
-	return mismatched, blind, nil
-}
-
 // reconcileProjectionAggregate is the CH-backed projection check
 // (ADR-0033 Claim 2b). Since the CS-084 fix it compares STRICT
 // PER-LEDGER counts by default (via projectionDelta →
@@ -2079,7 +1957,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 // re-derive hit. Three oracles, by source class, and TWO of them can be
 // blind:
 //
-//   - the decoder-driven oracle (soroban_events / contract_events), and
+//   - the decoder-driven oracle (contract_events), and
 //   - the ContractCall census, which soft-fails PER CALL in
 //     forEachContractCallEvent — symmetric with the ch-rebuild writer that
 //     shares that same function, so a band or soroswap-router call whose
@@ -2666,8 +2544,7 @@ var recognitionGlobalExcludeSyms = clickhouse.FirehoseExcludeSyms
 
 // computeRecognitionGapsCH is the CH-backed recognition audit: distinct
 // (contract, topic) shapes from the certified lake, run through the
-// dispatcher's Recognize(). Fast + off the serving DB vs the Postgres
-// soroban_events scan in computeRecognitionGaps.
+// dispatcher's Recognize(), off the serving DB.
 //
 // The global scan excludes FirehoseExcludeSyms (the CAP-67 classic-token
 // topics minus set_admin — see that var's doc): auditing every contract in
@@ -2741,23 +2618,6 @@ func watchedSep41RecognitionShapes(ctx context.Context, cfg config.Config, chAdd
 		return nil, nil
 	}
 	return clickhouse.DistinctTopicShapesForWatchedContracts(ctx, chAddr, from, tip, clickhouse.FirehoseExcludeSyms, watched)
-}
-
-// computeRecognitionGaps runs the global recognition audit over [from, tip]
-// and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, from, tip uint32, soroswapOpts ...soroswap.DecoderOption) ([]completeness.RecognitionGap, error) {
-	disp, err := buildCensusDispatcher(cfg, gated, soroswapOpts...)
-	if err != nil {
-		return nil, err
-	}
-	samples, err := store.DistinctSorobanTopicSamples(ctx, from, tip)
-	if err != nil {
-		return nil, err
-	}
-	if verr := recognitionScanEmptyErr(len(samples), from, tip); verr != nil {
-		return nil, verr
-	}
-	return completeness.AuditRecognition(samples, disp), nil
 }
 
 // recognitionScanEmptyErr fails closed on a recognition scan that read zero

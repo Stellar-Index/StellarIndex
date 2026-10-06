@@ -7,11 +7,10 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 )
 
 // Decoder is the per-source decode surface the reconciler re-runs over
-// soroban_events. Satisfied by every internal/sources/<venue> decoder
+// the lake's contract_events. Satisfied by every internal/sources/<venue> decoder
 // (and by dispatcher routing). Matches + Decode are the SAME functions
 // the projector uses, so the re-derive is the deterministic
 // recomputation of what the projector should have written — not a
@@ -46,21 +45,8 @@ func countLedger(out consumer.Event, streamLedger uint32) uint32 {
 	return streamLedger
 }
 
-// SorobanEventStreamer is the read side the reconciler needs.
-// *timescale.Store satisfies it via StreamSorobanEvents.
-type SorobanEventStreamer interface {
-	StreamSorobanEvents(
-		ctx context.Context,
-		from, to uint32,
-		contractIDs []string,
-		topic0Syms []string,
-		excludeTopic0Syms []string,
-		fn func(sorobanevents.Row) error,
-	) error
-}
-
 // ProjectionGap is a ledger where the number of rows the decoder would
-// emit from soroban_events (Expected) disagrees with the number
+// emit from the raw events (Expected) disagrees with the number
 // actually present in the protocol table (Actual). Expected > Actual is
 // a projection/persistence drop; Actual > Expected is a phantom row
 // (or a pre-event_index-fix duplicate). Either is a real discrepancy
@@ -264,81 +250,26 @@ func safeMatches(dec Decoder, ev events.Event) (matched bool, err error) {
 	return matched, nil
 }
 
-// ReDeriveOutputCounts re-runs the decoder over the raw events in
-// [from, to] and returns how many outputs it emits per ledger. Outputs
-// are attributed to the triggering row's ledger; because every
-// correlation group (Phoenix's 8 events, Soroswap's swap+sync) shares a
-// single (ledger, tx, op), the group always completes within its own
-// ledger and the per-ledger count is exact.
-//
-// contractIDs / topic0Syms are the same SQL prefilters the projector
-// passes for this source (empty = match-by-topic across all contracts).
-//
-// Malformed / undecodable rows are still SKIPPED (mirroring the projector's
-// soft-fail) but are no longer silent: they are returned as [BlindSpots], so
-// a caller certifying completeness can refuse to call a ledger clean that the
-// re-derive could not actually evaluate. See [BlindSpots] for why a row-count
-// reconcile cannot detect this class on its own.
-func ReDeriveOutputCounts(
-	ctx context.Context,
-	s SorobanEventStreamer,
-	dec Decoder,
-	contractIDs, topic0Syms []string,
-	from, to uint32,
-) (map[uint32]int, BlindSpots, error) {
-	counts := make(map[uint32]int)
-	blind := NewBlindTracker()
-	err := s.StreamSorobanEvents(ctx, from, to, contractIDs, topic0Syms, nil,
-		func(row sorobanevents.Row) error {
-			ev, rerr := sorobanevents.Reconstruct(row)
-			if rerr != nil {
-				blind.Unreconstructable(row.Ledger)
-				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot, not swallowed.
-			}
-			matched, merr := safeMatches(dec, ev)
-			if merr != nil {
-				blind.Undecodable(row.Ledger)
-				return nil //nolint:nilerr // panicking Matches: skip the row, pin the verdict.
-			}
-			if !matched {
-				return nil
-			}
-			outs, derr := safeDecode(dec, ev)
-			if derr != nil {
-				blind.Undecodable(row.Ledger)
-				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
-			}
-			if len(outs) > 0 {
-				counts[row.Ledger] += len(outs)
-			}
-			return nil
-		})
-	if err != nil {
-		return nil, BlindSpots{}, err
-	}
-	return counts, blind.Result(), nil
-}
-
-// EventStreamer yields decoded-ready [events.Event] directly — the ClickHouse
-// lake path, where contract_events ARE events.Event (no soroban_events Row +
-// Reconstruct round-trip). A clickhouse adapter over StreamContractEventsFiltered
+// EventStreamer yields decoded-ready [events.Event] from the ClickHouse lake's
+// contract_events. A clickhouse adapter over StreamContractEventsFiltered
 // satisfies it structurally.
 type EventStreamer interface {
 	StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error
 }
 
-// ReDeriveOutputCountsByKindFromEvents is [ReDeriveOutputCountsByKind] sourced
-// from the CH lake instead of Postgres soroban_events: it streams events.Event
-// straight from contract_events (no Reconstruct), decodes, and counts outputs
-// by EventKind() per ledger. Same soft-fail semantics (an event that fails
-// Decode is skipped, not fatal) and the same C4-059 accounting: every skipped
-// match is returned as a [BlindSpots] entry so a clean reconcile over a range
-// the decoder could not read does not certify as complete. Used by the
-// CH-backed completeness verification so projection reconciliation reads the
-// certified lake, off the serving DB.
+// ReDeriveOutputCountsByKindFromEvents re-runs the decoder over the lake's
+// contract_events in [from, to] and returns the output counts keyed by the
+// output's EventKind(), then by ledger. A single decoder routes different
+// output kinds to different tables (soroswap emits "soroswap.trade" → trades
+// AND "soroswap.skim" → soroswap_skim_events; blend emits five kinds across
+// four tables), so reconciliation per table must count ONLY the kinds that
+// land in that table — [SumKinds] projects them per target.
 //
-// BlindSpots.Unreconstructable is always 0 here — this path has no
-// soroban_events Row to rebuild.
+// contractIDs / topic0Syms are the same prefilters the projector passes for
+// this source (empty = match-by-topic across all contracts). An event that
+// fails Decode is skipped, not fatal, and returned as a C4-059 [BlindSpots]
+// entry so a clean reconcile over a range the decoder could not read does not
+// certify as complete. BlindSpots.Unreconstructable is always 0 here.
 func ReDeriveOutputCountsByKindFromEvents(
 	ctx context.Context,
 	es EventStreamer,
@@ -384,62 +315,6 @@ func ReDeriveOutputCountsByKindFromEvents(
 					byKind[k] = make(map[uint32]int)
 				}
 				byKind[k][countLedger(out, ev.Ledger)]++
-			}
-			return nil
-		})
-	if err != nil {
-		return nil, BlindSpots{}, err
-	}
-	return byKind, blind.Result(), nil
-}
-
-// ReDeriveOutputCountsByKind is the multi-table generalization of
-// ReDeriveOutputCounts: it returns the re-derived output counts keyed by
-// the output's EventKind(), then by ledger. A single decoder routes
-// different output kinds to different tables (soroswap emits
-// "soroswap.trade" → trades AND "soroswap.skim" → soroswap_skim_events;
-// blend emits five kinds across four tables), so reconciliation per
-// table must count ONLY the kinds that land in that table — counting
-// every output would overcount any table that receives a subset.
-//
-// Stream once per source; SumKinds then projects the kinds for each
-// target table. Same soft-fail semantics as ReDeriveOutputCounts — and the
-// same C4-059 [BlindSpots] accounting for the rows it soft-fails on.
-func ReDeriveOutputCountsByKind(
-	ctx context.Context,
-	s SorobanEventStreamer,
-	dec Decoder,
-	contractIDs, topic0Syms []string,
-	from, to uint32,
-) (map[string]map[uint32]int, BlindSpots, error) {
-	byKind := make(map[string]map[uint32]int)
-	blind := NewBlindTracker()
-	err := s.StreamSorobanEvents(ctx, from, to, contractIDs, topic0Syms, nil,
-		func(row sorobanevents.Row) error {
-			ev, rerr := sorobanevents.Reconstruct(row)
-			if rerr != nil {
-				blind.Unreconstructable(row.Ledger)
-				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot.
-			}
-			matched, merr := safeMatches(dec, ev)
-			if merr != nil {
-				blind.Undecodable(row.Ledger)
-				return nil //nolint:nilerr // panicking Matches: skip the row, pin the verdict.
-			}
-			if !matched {
-				return nil
-			}
-			outs, derr := safeDecode(dec, ev)
-			if derr != nil {
-				blind.Undecodable(row.Ledger)
-				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
-			}
-			for _, out := range outs {
-				k := out.EventKind()
-				if byKind[k] == nil {
-					byKind[k] = make(map[uint32]int)
-				}
-				byKind[k][countLedger(out, row.Ledger)]++
 			}
 			return nil
 		})

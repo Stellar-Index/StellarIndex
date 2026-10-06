@@ -1145,14 +1145,15 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH [-to N] [-allow-frozen-cursor] [-source S] [-ch -pass]
+  compute-completeness -config PATH -ch [-ch-addr A] [-to N] [-allow-frozen-cursor] [-source S] [-pass]
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
                           system recognition verdict, and write them to
                           completeness_snapshots for the API + status page.
-                          -to defaults to the live ledgerstream tip. Run on
-                          a cron; the headline replaces density/gap_free.
+                          -to defaults to the live ledgerstream tip. -ch is
+                          required: every claim reads the ClickHouse lake.
+                          Run on a cron; the headline replaces density/gap_free.
                           -ch -pass is the nightly whole-pass driver: prove
                           recognition + substrate once at full range, then
                           reconcile every source's projection incrementally
