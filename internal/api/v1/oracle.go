@@ -37,7 +37,7 @@ type OracleReader interface {
 }
 
 // oracleAtReader is what the TTL cache adds to OracleReader: each read also
-// returns the served entry's fill time, which the handlers stamp as as_of.
+// returns when the served rows were computed, which the handlers stamp as as_of.
 type oracleAtReader interface {
 	LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error)
 	LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error)

@@ -306,31 +306,16 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 	}
 	if includeSparkline && reads != nil {
-		// Same 8s ceiling as the stats fan-out above.
-		sparkCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		buckets, at, err := reads.GetSourceVolumeHistory24hAt(sparkCtx)
-		cancel()
-		if err != nil {
-			s.logger.Warn("source volume history", "err", err)
-			partial = true
-		} else {
-			vintage.note(at)
-			historyBySource = buildSourceVolumeHistory(buckets, 24)
-			markXLMUnpriced(lowerBound, buckets)
-		}
+		var failed bool
+		historyBySource, failed = s.sourceVolumeHistory(r.Context(), reads.GetSourceVolumeHistory24hAt, 24,
+			"source volume history", &vintage, lowerBound)
+		partial = partial || failed
 	}
 	if includeSparkline7d && reads != nil {
-		sparkCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		buckets, at, err := reads.GetSourceVolumeHistory7dAt(sparkCtx)
-		cancel()
-		if err != nil {
-			s.logger.Warn("source volume history 7d", "err", err)
-			partial = true
-		} else {
-			vintage.note(at)
-			history7dBySource = buildSourceVolumeHistory(buckets, 24*7)
-			markXLMUnpriced(lowerBound, buckets)
-		}
+		var failed bool
+		history7dBySource, failed = s.sourceVolumeHistory(r.Context(), reads.GetSourceVolumeHistory7dAt, 24*7,
+			"source volume history 7d", &vintage, lowerBound)
+		partial = partial || failed
 	}
 
 	out := make([]Source, 0, len(external.Registry))
@@ -365,4 +350,26 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Degraded: partial}})
+}
+
+// sourceVolumeHistory loads one sparkline series under the same 8s ceiling
+// as the stats fan-out. A failed read soft-fails: empty series, failed=true.
+func (s *Server) sourceVolumeHistory(
+	ctx context.Context,
+	read func(context.Context) ([]timescale.SourceVolumeBucket, time.Time, error),
+	hours int,
+	what string,
+	vintage *dataVintage,
+	lowerBound map[string]bool,
+) (map[string][]VolumeBucket, bool) {
+	sparkCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	buckets, at, err := read(sparkCtx)
+	cancel()
+	if err != nil {
+		s.logger.Warn(what, "err", err)
+		return map[string][]VolumeBucket{}, true
+	}
+	vintage.note(at)
+	markXLMUnpriced(lowerBound, buckets)
+	return buildSourceVolumeHistory(buckets, hours), false
 }

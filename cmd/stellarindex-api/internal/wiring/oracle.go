@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -50,8 +51,26 @@ func (r CachedOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, ass
 }
 
 func (r CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
+	rows, _, err := r.LatestOracleUpdatesForAssetsAt(ctx, assets, sourceFilter)
+	return rows, err
+}
+
+// oracleLatestEntry is the Redis value: the rows plus when the DB query that
+// produced them started, so a reader stamps as_of with the data's time, not
+// the time it re-read Redis.
+type oracleLatestEntry struct {
+	ComputedAt time.Time                `json:"computed_at"`
+	Updates    []canonical.OracleUpdate `json:"updates"`
+}
+
+// LatestOracleUpdatesForAssetsAt is LatestOracleUpdatesForAssets plus the
+// time the served rows were computed. A legacy bare-array entry carries no
+// time, so it is read as a miss rather than stamped.
+func (r CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, time.Time, error) {
 	if r.RDB == nil {
-		return r.Inner.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
+		computedAt := time.Now()
+		rows, err := r.Inner.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
+		return rows, computedAt, err
 	}
 
 	keys := make([]string, len(assets))
@@ -63,14 +82,8 @@ func (r CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, as
 	raw, err := r.RDB.Get(ctx, cacheKey.String()).Bytes()
 	switch {
 	case err == nil:
-		var out []canonical.OracleUpdate
-		if jerr := json.Unmarshal(raw, &out); jerr == nil {
-			return out, nil
-		} else {
-			// Bad payload — log and re-read; don't fail the request
-			// on a cache deserialisation glitch.
-			r.Log.Warn("oracle cache decode failed; falling through to DB",
-				"key", cacheKey, "err", jerr)
+		if entry, ok := r.decodeEntry(cacheKey, raw); ok {
+			return entry.Updates, entry.ComputedAt, nil
 		}
 	case errors.Is(err, redis.Nil):
 		// miss — proceed to DB
@@ -79,16 +92,33 @@ func (r CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, as
 			"key", cacheKey, "err", err)
 	}
 
+	computedAt := time.Now()
 	updates, err := r.Inner.LatestOracleUpdatesForAssets(ctx, assets, sourceFilter)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	if buf, jerr := json.Marshal(updates); jerr == nil {
+	if buf, jerr := json.Marshal(oracleLatestEntry{ComputedAt: computedAt, Updates: updates}); jerr == nil {
 		if serr := r.RDB.Set(ctx, cacheKey.String(), buf, cachekeys.OracleLatestTTL).Err(); serr != nil {
 			r.Log.Warn("oracle cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
-	return updates, nil
+	return updates, computedAt, nil
+}
+
+// decodeEntry reports false for anything that cannot supply a computed time:
+// a legacy bare-array entry, a zero time, or a payload that fails to decode.
+func (r CachedOracleReader) decodeEntry(key cachekeys.OracleLatestKey, raw []byte) (oracleLatestEntry, bool) {
+	var entry oracleLatestEntry
+	if len(raw) > 0 && raw[0] == '[' {
+		return entry, false
+	}
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		// Bad payload — log and re-read; don't fail the request on a
+		// cache deserialisation glitch.
+		r.Log.Warn("oracle cache decode failed; falling through to DB", "key", key, "err", err)
+		return entry, false
+	}
+	return entry, !entry.ComputedAt.IsZero()
 }
 
 // LatestOracleStreams pass-through — the underlying scan is one
