@@ -188,7 +188,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		// job simply has not got there yet. Without the span the two
 		// are indistinguishable and the run reports the fill lag as
 		// missing data.
-		mirrorCoverage = readArchiveMirrorCoverage(*archiveRoot)
+		mirrorCoverage = readArchiveMirrorCoverage(*archiveRoot, mirrorLedger)
 		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s (mirror coverage %s)\n",
 			*archiveRoot, mirrorCoverage)
 		if !mirrorCoverage.Known {
@@ -1008,7 +1008,7 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRo
 	for _, p := range peers {
 		fmt.Fprintf(os.Stderr, "  peer: %s\n", p)
 	}
-	selfCov := readArchiveMirrorCoverage(archiveRoot)
+	selfCov := readArchiveMirrorCoverage(archiveRoot, mirrorHistory)
 	fmt.Fprintf(os.Stderr, "  self: %s (mirror coverage %s)\n", archiveRoot, selfCov)
 	var self peerSelfTally
 
@@ -1310,14 +1310,24 @@ func (c archiveMirrorCoverage) String() string {
 	return fmt.Sprintf("[%d, %d]", c.Floor, c.HighWater)
 }
 
+// mirrorCategory is one checkpoint-file tree of the archive layout. The
+// fill job maintains ledger/ only, so each tier must measure coverage
+// from the tree it actually reads.
+type mirrorCategory struct{ dir, suffix string }
+
+var (
+	mirrorLedger  = mirrorCategory{dir: "ledger", suffix: ".xdr.gz"}
+	mirrorHistory = mirrorCategory{dir: "history", suffix: ".json"}
+)
+
 // readArchiveMirrorCoverage measures the checkpoint span held under
-// <archiveRoot>/ledger by descending the hex-nested tree to its least
+// <archiveRoot>/<cat.dir> by descending the hex-nested tree to its least
 // and greatest leaf. Four readdirs per bound (with backtracking past
 // empty branches), so it costs nothing next to the walk itself.
-func readArchiveMirrorCoverage(archiveRoot string) archiveMirrorCoverage {
-	root := filepath.Join(archiveRoot, "ledger")
-	low, lowOK := extremeMirrorCheckpoint(root, 0, false)
-	high, highOK := extremeMirrorCheckpoint(root, 0, true)
+func readArchiveMirrorCoverage(archiveRoot string, cat mirrorCategory) archiveMirrorCoverage {
+	root := filepath.Join(archiveRoot, cat.dir)
+	low, lowOK := extremeMirrorCheckpoint(root, cat, 0, false)
+	high, highOK := extremeMirrorCheckpoint(root, cat, 0, true)
 	if !lowOK || !highOK {
 		return archiveMirrorCoverage{}
 	}
@@ -1334,7 +1344,7 @@ const mirrorTreeDepth = 3
 // Names at every level are fixed-width hex, so lexical order is
 // numeric order. A branch that holds no conforming leaf is skipped, so
 // an empty or half-created directory cannot shorten the answer.
-func extremeMirrorCheckpoint(dir string, depth int, highest bool) (uint32, bool) {
+func extremeMirrorCheckpoint(dir string, cat mirrorCategory, depth int, highest bool) (uint32, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, false
@@ -1349,29 +1359,29 @@ func extremeMirrorCheckpoint(dir string, depth int, highest bool) (uint32, bool)
 	}
 	for _, name := range names {
 		if depth < mirrorTreeDepth {
-			if seq, ok := extremeMirrorCheckpoint(filepath.Join(dir, name), depth+1, highest); ok {
+			if seq, ok := extremeMirrorCheckpoint(filepath.Join(dir, name), cat, depth+1, highest); ok {
 				return seq, true
 			}
 			continue
 		}
-		if seq, ok := parseMirrorLedgerFile(name); ok {
+		if seq, ok := parseMirrorCheckpointFile(cat, name); ok {
 			return seq, true
 		}
 	}
 	return 0, false
 }
 
-// parseMirrorLedgerFile reads the checkpoint sequence out of a mirror
+// parseMirrorCheckpointFile reads the checkpoint sequence out of a mirror
 // leaf file name (`ledger-0000007f.xdr.gz` → 127). Anything that is not
-// a checkpoint-shaped ledger file is rejected: the tree also carries
+// a checkpoint-shaped file of cat is rejected: the tree also carries
 // the archivist's own scratch files, and admitting one would move the
 // measured bound off a checkpoint boundary.
-func parseMirrorLedgerFile(name string) (uint32, bool) {
-	hexSeq, ok := strings.CutPrefix(name, "ledger-")
+func parseMirrorCheckpointFile(cat mirrorCategory, name string) (uint32, bool) {
+	hexSeq, ok := strings.CutPrefix(name, cat.dir+"-")
 	if !ok {
 		return 0, false
 	}
-	hexSeq, ok = strings.CutSuffix(hexSeq, ".xdr.gz")
+	hexSeq, ok = strings.CutSuffix(hexSeq, cat.suffix)
 	if !ok || len(hexSeq) != 8 {
 		return 0, false
 	}
