@@ -19,8 +19,7 @@ import (
 // 20 cycles ≈ 100s at [Interval] — long enough for every genuinely transient
 // non-infra fault we have observed (deadlock 40P01, serialization 40001,
 // lock_not_available 55P03, statement_timeout 57014) to clear on a retry,
-// short enough that a poison row costs the source ~2 minutes rather than
-// forever (COR-11 / COR-01, audit-2026-07-23).
+// short enough that a poison row costs the source ~2 minutes rather than forever.
 const QuarantineAfterCycles = 20
 
 // QuarantineAfterCyclesNoProgress is the (much longer) retry budget that
@@ -44,10 +43,9 @@ const QuarantineAfterCyclesNoProgress = 720
 // for ANY class 22/23 error, and those classes are not always row-local — a
 // migration that adds a NOT NULL or a CHECK the live rows violate makes every
 // row of the window "poison" at once. Shedding them all on the first cycle
-// (what this arm did before RLT-131) turns a global, fixable fault into an
-// immediate unbounded loss: the cursor sails past the whole backlog, and the
-// raw events stay in the lake but nothing in the served tier says which rows
-// went missing.
+// would turn a global, fixable fault into an immediate unbounded loss: the
+// cursor would sail past the whole backlog, and the raw events would stay in
+// the lake but nothing in the served tier would say which rows went missing.
 //
 // So the skip arm borrows BOTH halves of the quarantine arm's rail:
 //
@@ -71,8 +69,8 @@ const PermanentSkipPerCycle = 1
 // first failing cycle and every Nth after, mirroring the sink's own
 // infraRetryLogEvery: a held row is retried every [Interval] for as long as
 // the fault lasts (forever, for an infra fault), and one line per row per
-// cycle turned a sustained outage into thousands of identical warnings that
-// buried the ERROR lines an operator actually needs. The cycle-level
+// cycle would turn a sustained outage into thousands of identical warnings
+// that bury the ERROR lines an operator actually needs. The cycle-level
 // signals (runs_total{outcome="sink_retry"}, the per-cycle held-progress
 // warning, lag) are unaffected and remain the paging surface.
 const heldRowLogEvery = 20
@@ -81,17 +79,16 @@ const heldRowLogEvery = 20
 // failure. It answers exactly one question: may the cursor advance past this
 // row?
 //
-// The taxonomy is deliberately three-valued rather than the boolean
-// permanent/transient split that wedged the sole-writer sources (COR-11 /
-// COR-01, audit-2026-07-23). The boolean collapsed "positively known to be
+// The taxonomy is deliberately three-valued rather than a boolean
+// permanent/transient split. A boolean collapses "positively known to be
 // transient" and "we could not classify it" into the same retry-forever
 // bucket, so any DETERMINISTIC failure the classifier did not recognise — a
 // pre-SQL store validation error such as `InsertSEP41TransferBatch: row 0
-// transfer negative Amount -1`, or an `OracleUpdate.Validate` rejection — held
-// the per-source cursor forever. Under INV-4 (one writer per Soroban-derived
-// domain) there is no second writer to make progress, so one hostile or
-// malformed on-chain value halted the whole domain, silently, visible only as
-// growing lag.
+// transfer negative Amount -1`, or an `OracleUpdate.Validate` rejection —
+// would hold the per-source cursor forever. With one writer per
+// Soroban-derived domain (ADR-0031) there is no second writer to make
+// progress, so one hostile or malformed on-chain value would halt the whole
+// domain, silently, visible only as growing lag.
 type sinkDisposition int
 
 const (
@@ -101,8 +98,8 @@ const (
 	// Retrying can never succeed, so the row is counted, logged loudly and
 	// skipped — on the FIRST cycle when the cycle also PROVED the sink is
 	// otherwise healthy, and at most [PermanentSkipPerCycle] rows of one
-	// cycle, because the same SQLSTATE classes also arrive globally
-	// (RLT-131). Without that proof the wait is
+	// cycle, because the same SQLSTATE classes also arrive globally.
+	// Without that proof the wait is
 	// [QuarantineAfterCyclesNoProgress]. A row over the cap, or short of the
 	// budget, holds the cursor and is shed by a later cycle.
 	dispositionSkip sinkDisposition = iota
@@ -112,7 +109,7 @@ const (
 	// cancellation; the cycle deadline). The fault is global, not row-local,
 	// and it clears on its own, so the cursor is held below the row and the
 	// row is retried FOREVER. Never quarantined: dropping live rows because
-	// the database is down is the C2-1 silent-loss bug, not a fix for it.
+	// the database is down would be silent loss, not a fix for it.
 	dispositionRetry
 
 	// dispositionUnclassified — everything else. Retried like
@@ -120,7 +117,7 @@ const (
 	// ([QuarantineAfterCycles] / [QuarantineAfterCyclesNoProgress]): a row
 	// that re-fails identically for the whole budget is deterministic in
 	// practice whatever its error type, and is quarantined so it cannot wedge
-	// the source. This is the arm that makes the fix robust to error types
+	// the source. This is the arm that makes the classifier robust to error types
 	// nobody has enumerated yet — a NEW deterministic failure mode lands here
 	// and self-heals instead of stalling the domain indefinitely.
 	dispositionUnclassified
@@ -212,7 +209,7 @@ func classifySinkFault(err error) sinkDisposition {
 // just the one that tripped the check. So the drop is counted under its own
 // `outcome` rather than folded into the ordinary class-22/23 count, which is
 // what gives that promise a rule to hang on
-// (stellarindex_projector_i128_overflow, RLT-131).
+// (stellarindex_projector_i128_overflow).
 func isI128Overflow(err error) bool {
 	return errors.Is(err, canonical.ErrI128Overflow)
 }
