@@ -252,10 +252,10 @@ func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
 			// (cctp, rozo, defindex, reflector-dex, redstone, …).
 			// projector.KnownProjectorSources is buildSource's own
 			// registered-name set, so this can't drift the way a
-			// hand-copied switch would (replay
-			// refuses an unknown source, so a wrong command fails loudly
-			// rather than exiting 0 — but a false "not projected" message
-			// is worse, since the operator never tries the real command).
+			// hand-copied switch would (replay refuses an unknown source, so a
+			// wrong command fails loudly rather than exiting 0 — but a false
+			// "not projected" message is worse, since the operator never tries
+			// the real command).
 			if _, ok := projector.KnownProjectorSources[r.ProjectorSource]; ok {
 				_, _ = fmt.Fprintf(w,
 					"      %2d  stellarindex-ops projector-replay --config /etc/stellarindex.toml --source %s --from %d\n",

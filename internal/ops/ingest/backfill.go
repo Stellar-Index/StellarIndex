@@ -514,9 +514,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			// would move the resume watermark PAST rows still buffered in the
 			// sink channel / trade batch / rawSink — a crash between this
 			// enqueue and the async commit would lose those rows with the
-			// cursor already beyond them. Record
-			// only the last fully-enqueued ledger; the durable advance happens
-			// after <-sinkDone + rawSink.Stop() below prove the rows committed.
+			// cursor already beyond them. Record only the last fully-enqueued
+			// ledger; the durable advance happens after <-sinkDone +
+			// rawSink.Stop() below prove the rows committed.
 			lastFullyEnqueued = lcm.LedgerSequence()
 			return nil
 		},
@@ -530,12 +530,11 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// is durable; every checkpoint below uses the capped value.
 	lastFullyEnqueued, lossErr := capCheckpointAtLoss(lastFullyEnqueued, startFrom, persistLoss, rawMin, rawUnlanded)
 
-	// The resume cursor advances ONLY after this point, and ONLY
-	// after a successful — or
-	// explicitly-skipped — CAGG refresh below. The sink goroutine has
-	// fully drained (<-sinkDone: every enqueued event either committed
-	// or block-and-retried per ADR-0041) and the soroban rawSink has
-	// flushed its final batch (Stop above), and lastFullyEnqueued is
+	// The resume cursor advances ONLY after this point, and ONLY after a
+	// successful — or explicitly-skipped — CAGG refresh below. The sink
+	// goroutine has fully drained (<-sinkDone: every enqueued event either
+	// committed or block-and-retried per ADR-0041) and the soroban rawSink
+	// has flushed its final batch (Stop above), and lastFullyEnqueued is
 	// capped below anything either dropped or abandoned, so every row
 	// for ledgers [startFrom, lastFullyEnqueued] is durable — but a chunk
 	// is not "complete" for resume purposes until its CAGGs are
@@ -625,10 +624,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// ([timescale.TradesCAGGs], [timescale.OracleCAGGs]): a view left
 		// out keeps a permanent hole in every backfilled range.
 		//
-		// A refresh failure here is FATAL to the
-		// chunk — the function returns before the checkpoint below, so
-		// the durable cursor does NOT advance past an unmaterialised
-		// chunk. A resume re-walks and re-attempts the refresh.
+		// A refresh failure here is FATAL to the chunk — the function returns
+		// before the checkpoint below, so the durable cursor does NOT advance
+		// past an unmaterialised chunk. A resume re-walks and re-attempts the
+		// refresh.
 		if err := refreshCAGGsForChunk(ctx, logger, store, chunk); err != nil {
 			return fmt.Errorf("post-chunk CAGG refresh: %w", err)
 		}
@@ -825,9 +824,8 @@ type caggRefresher interface {
 // chunk's trade count, hundreds of thousands of rows for a sub-chunk
 // of the documented `-parallel 4` weekly loop. A worker that loses
 // that race retries for a fixed budget and then fails — and a
-// refresh failure is FATAL to the chunk, so the
-// cursor does not checkpoint and the loop halts on a collision that
-// is not a fault at all.
+// refresh failure is FATAL to the chunk, so the cursor does not checkpoint
+// and the loop halts on a collision that is not a fault at all.
 //
 // The lock is BROADER than the race it removes, and that is a real
 // cost rather than a free one. Timescale's 55P03 is per continuous

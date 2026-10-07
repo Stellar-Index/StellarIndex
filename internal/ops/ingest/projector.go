@@ -308,8 +308,8 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 // checkBackfillSources. projector-replay is the documented catch-up
 // procedure for every projected source, so a gate on `backfill` alone
 // would never run on the path operators actually use. No override
-// flag, matching `backfill`: the
-// way through is the audit plus the registry flip, in one reviewed PR.
+// flag, matching `backfill`: the way through is the audit plus the registry
+// flip, in one reviewed PR.
 //
 // The question is asked through [external.ReplayBackfillSafe], which
 // resolves the three projector source names that deliberately have no

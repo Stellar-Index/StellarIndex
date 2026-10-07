@@ -24,12 +24,11 @@ import (
 // invocations that march each cursor to its assigned `to` ledger.
 //
 // Why this exists. A decoder-density read found 167 stalled `backfill`
-// cursors with cumulative
-// 100-150 K missing ledgers per source — the dominant population
-// preventing 100% decoder density. Each stalled cursor's sub_source
-// embeds its target as `<from>-<to>:<decoder-csv>`, so the remaining
-// range is well-defined; this command resumes every stall in one shot,
-// without a hand-rolled SQL+shell loop.
+// cursors with cumulative 100-150 K missing ledgers per source — the
+// dominant population preventing 100% decoder density. Each stalled
+// cursor's sub_source embeds its target as `<from>-<to>:<decoder-csv>`, so
+// the remaining range is well-defined; this command resumes every stall in
+// one shot, without a hand-rolled SQL+shell loop.
 //
 // This subcommand:
 //
@@ -97,9 +96,9 @@ type stalledCursorPlan struct {
 // Do NOT hand-maintain this list: a source added to
 // BuildDispatcher's switch without a matching entry in
 // pipeline.SorobanSourceNames silently mis-gates its stalled cursors
-// here. The SorobanEventsPseudoSource (raw
-// soroban_events-only cursor) is included; with the ClickHouse projector
-// source on, gateSourcePolicy skips it before the gate.
+// here. The SorobanEventsPseudoSource (raw soroban_events-only cursor) is
+// included; with the ClickHouse projector source on, gateSourcePolicy
+// skips it before the gate.
 var sorobanDecoderNames = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(pipeline.SorobanSourceNames)+1)
 	for _, name := range pipeline.SorobanSourceNames {
@@ -220,9 +219,9 @@ func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 // Callers MUST treat unresolved as "cannot confirm clean", never as
 // "clean": the whole point of per-decoder gating is that a decoder's
 // OWN table is the only honest evidence of its own rows: the
-// soroban_events pseudo-table is written
-// by live ingest regardless of which decoders are backfilled, so it
-// says nothing about a specific decoder's rows.
+// soroban_events pseudo-table is written by live ingest regardless of
+// which decoders are backfilled, so it says nothing about a specific
+// decoder's rows.
 type decoderGapResult struct {
 	resolved bool
 	gaps     []timescale.LedgerGap
@@ -352,9 +351,8 @@ func sorobanSourcesOf(sources []string) []string {
 // and SDEX decoders present) gate against BOTH — see gateMixedPlan.
 //
 // Without this gate, a dry-run on r1 surfaced 50 "actionable" plans,
-// most of which were
-// false positives — sibling cursors had already completed the work
-// and the data was already served. Walking them would
+// most of which were false positives — sibling cursors had already
+// completed the work and the data was already served. Walking them would
 // have been days of redundant LCM I/O.
 func gateAgainstDataGaps(plans []stalledCursorPlan, decoderGaps decoderGapIndex, classic classicGapGate, forceClassic bool) []stalledCursorPlan {
 	out := make([]stalledCursorPlan, len(plans))
@@ -655,15 +653,15 @@ func resumeStalled(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// resume-stalled marches stalled cursors
-	// through the SAME runBackfillChunk trade-write path as the main
-	// `backfill` subcommand, so it MUST arm the store for a trade-writing
-	// re-derive exactly like backfill.go does — a positive generation so a
-	// corrected re-derive wins the writers' ON CONFLICT guard, AND the
-	// USD-volume resolvers so on-chain DEX trades resolve a real usd_volume
-	// instead of NULL. Skipping this would write DEX usd_volume=NULL at gen 0
-	// for the whole resumed range and leave the reDeriveNullVolumeGuard
-	// inert (it only fires once the generation is positive).
+	// resume-stalled marches stalled cursors through the SAME runBackfillChunk
+	// trade-write path as the main `backfill` subcommand, so it MUST arm the
+	// store for a trade-writing re-derive exactly like backfill.go does — a
+	// positive generation so a corrected re-derive wins the writers' ON
+	// CONFLICT guard, AND the USD-volume resolvers so on-chain DEX trades
+	// resolve a real usd_volume instead of NULL. Skipping this would write
+	// DEX usd_volume=NULL at gen 0 for the whole resumed range and leave the
+	// reDeriveNullVolumeGuard inert (it only fires once the generation is
+	// positive).
 	if err := ArmTradeWriteStore(store, cfg); err != nil {
 		return err
 	}

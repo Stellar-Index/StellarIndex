@@ -26,12 +26,11 @@ import (
 // which 4,703 had not been written to in over a week — 4,523
 // projected-rebuild shards, and 91 SDEX backfill shards from an abandoned
 // attempt whose lag had reached ~9.7M seconds. `list-cursors`, the
-// /diagnostics page and the public
-// `/v1/diagnostics/cursors` endpoint all list that table, so the dead
-// rows were the bulk of what every consumer saw. The API side
-// defaults to the non-abandoned set; this is the other half — the way
-// to actually remove the records once an operator has decided the work
-// they describe is over.
+// /diagnostics page and the public `/v1/diagnostics/cursors` endpoint all
+// list that table, so the dead rows were the bulk of what every consumer
+// saw. The API side defaults to the non-abandoned set; this is the other
+// half — the way to actually remove the records once an operator has
+// decided the work they describe is over.
 //
 // Posture:
 //

@@ -109,9 +109,9 @@ func detectGaps(args []string) error {
 
 	minBySource := minLedgerBySource(cursors)
 	if len(minBySource) == 0 {
-		// An empty (or all-one-shot)
-		// cursor table is exactly the "every live source is stalled"
-		// state this probe exists to catch — it must not read as ok.
+		// An empty (or all-one-shot) cursor table is exactly the "every live
+		// source is stalled" state this probe exists to catch — it must not
+		// read as ok.
 		// Runbooks (ingestion.md, ingestion-sink.md, ledger-ingest.md)
 		// send an operator here expecting a non-zero exit to mean
 		// something; a silent 0 would bury that signal.
