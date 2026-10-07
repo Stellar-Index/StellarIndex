@@ -12,9 +12,8 @@
 // AUD: ~108/109 of its trades one wallet pair) trades huge raw USD volume,
 // so a raw-volume floor would let every wash farm self-select into the
 // alert. The classifier excludes volume concentrated in a single account
-// pair, mirroring the volume-character rollup design
-// (feat/scam-labels-and-volume-character, PR #161): while that branch is
-// unmerged the same single-account-pair filter is computed inline here.
+// pair, the same single-account-pair filter the volume-character rollup
+// design uses, computed inline here.
 //
 // The concentration is measured on EVERY venue that records a
 // counterparty, not only the order book: an AMM fill names the taker and
@@ -74,8 +73,8 @@ const (
 	// washConcentrationThreshold — a single unordered counterparty key
 	// (the (maker,taker) pair on the order book, the lone taker account on
 	// an AMM) owning >= this share of an asset's 7d priced volume is the
-	// volume-painting / ping-pong / dust signature. Matches PR #161's
-	// volumeCharacterConcentrationThreshold. A wash-concentrated asset
+	// volume-painting / ping-pong / dust signature. Matches the volume-character
+	// rollup's concentration threshold. A wash-concentrated asset
 	// contributes NO market-character volume, so it can never be "popular".
 	washConcentrationThreshold = 0.90
 )
@@ -128,7 +127,7 @@ type Options struct {
 type Worker struct {
 	reader CandidateReader
 	// resolveSAC is optional and may be wired after construction
-	// (SetResolveSAC) by a background dial retry (K024), while Sweep is
+	// (SetResolveSAC) by a background dial retry, while Sweep is
 	// already ticking on another goroutine — hence atomic rather than a
 	// plain field.
 	resolveSAC   atomic.Pointer[func(ctx context.Context, contractID string) (string, bool)]
@@ -180,7 +179,7 @@ func New(reader CandidateReader, opts Options) *Worker {
 
 // SetResolveSAC wires (or re-wires) the SAC-to-classic-asset resolver
 // after construction. Safe to call concurrently with Run/Sweep: a
-// background ClickHouse dial retry (K024) arms the SAC alias check once
+// background ClickHouse dial retry arms the SAC alias check once
 // the lake answers, rather than the sweep either blocking start on that
 // dial or giving up on it forever after one failure.
 func (w *Worker) SetResolveSAC(f func(ctx context.Context, contractID string) (string, bool)) {

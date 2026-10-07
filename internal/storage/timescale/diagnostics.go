@@ -415,8 +415,7 @@ func (s *Store) refreshCAGG(ctx context.Context, viewName string, from, to time.
 	// stored-procedure CALL path doesn't propagate the declared
 	// parameter types from the procedure signature, so an
 	// untyped placeholder fails with `42P18: could not determine
-	// data type of parameter $1`. Caught live 2026-05-14 on the
-	// first real backfill that exercised this path.
+	// data type of parameter $1`.
 	forceArg := ""
 	if force {
 		forceArg = ", force => true"
@@ -425,9 +424,8 @@ func (s *Store) refreshCAGG(ctx context.Context, viewName string, from, to time.
 	// Retry on 55P03 (concurrent refresh) — Timescale serializes
 	// refresh of the same CAGG, but it does so by REJECTING the
 	// loser immediately rather than blocking it, so two callers
-	// racing one view need a retry on this side. Caught live
-	// 2026-05-14 on a `-parallel 4` SDEX backfill: every chunk's
-	// prices_1mo refresh raced.
+	// racing one view need a retry on this side. A `-parallel 4` SDEX
+	// backfill races every chunk's prices_1mo refresh.
 	//
 	// The budget below is ~3.0s total, and it is NOT sized to
 	// outlast a contending refresh. That reading was true only for
@@ -575,7 +573,7 @@ type BackfillCoverage struct {
 //
 // Why it does nothing: it used to scan `trades` per source for
 // earliest/latest ledger + an approximate trade count, cached by
-// CoverageCache and read via buildBackfillCoverage. The 2026-05
+// CoverageCache and read via buildBackfillCoverage. The
 // cursor-first refactor made that output 100% dead — every mapped
 // source's density/covered/earliest/latest is derived from the
 // backfill-cursor union, and buildBackfillCoverage's cacheRows path

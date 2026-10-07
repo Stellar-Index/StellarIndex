@@ -34,7 +34,7 @@ type Streamer struct {
 
 	// InitialBackoff is the first reconnect delay after a dropped
 	// connection. Each subsequent failure doubles it (with jitter)
-	// up to MaxBackoff. Defaults to 5 s (F-0029).
+	// up to MaxBackoff. Defaults to 5 s.
 	InitialBackoff time.Duration
 
 	// MaxBackoff caps the exponential growth. Defaults to 60 s.
@@ -44,12 +44,12 @@ type Streamer struct {
 // NewStreamer constructs a Streamer with the supplied pair map and
 // sensible defaults for the rest. Logger defaults to slog.Default().
 //
-// Backoff defaults (F-0029, audit-2026-05-27): InitialBackoff 5 s,
+// Backoff defaults: InitialBackoff 5 s,
 // MaxBackoff 60 s. Combined with the healthy-connection reset in the
 // shared wsclient.Loop (a connection that stays alive ≥
 // wsclient.DefaultHealthyConnectionThreshold rewinds backoff to
 // InitialBackoff on its next failure), the effect is bounded 5-60 s
-// reconnect windows instead of the 60 s blanket observed pre-fix on r1.
+// reconnect windows instead of a 60 s blanket.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,

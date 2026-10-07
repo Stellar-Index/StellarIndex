@@ -171,7 +171,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	if lr.Timestamp == 0 {
-		// Refuse rather than stamp wall-clock (#371 F7). The venue's
+		// Refuse rather than stamp wall-clock. The venue's
 		// `timestamp` is when the RATE was observed; substituting
 		// time.Now() re-labels a quote of unknown age as fresh, and
 		// this connector is IncludeInVWAP — so a stale (or replayed)

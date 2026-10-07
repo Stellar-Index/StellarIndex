@@ -30,8 +30,7 @@ import (
 // prod and BLOCKED the PK-swap-after-decompress that migrations
 // 0053–0060 do on compressed hypertables (error 0A000) — so the
 // migration round-trip was red AND validated the migrations against a
-// TimescaleDB we don't deploy. (audit-2026-06-15, migration dry-run /
-// test-vs-prod version drift.)
+// TimescaleDB we don't deploy.
 const TimescaleImage = "timescale/timescaledb:2.26.4-pg15"
 
 // timescaleStartupTimeout is the budget for EACH readiness check
@@ -78,7 +77,7 @@ func StartTimescale(t *testing.T, ctx context.Context) string {
 		tcpostgres.WithDatabase("stellarindex"),
 		tcpostgres.WithUsername("stellarindex"),
 		tcpostgres.WithPassword("stellarindex-test"),
-		// ZERO background workers (2026-08-13). The migration chain
+		// ZERO background workers. The migration chain
 		// DROPs the very hypertables whose compression / CAGG-refresh
 		// policies it has just created, and TimescaleDB's job scheduler
 		// runs those policies concurrently — so a DROP's

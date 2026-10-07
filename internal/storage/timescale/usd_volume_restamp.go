@@ -19,16 +19,15 @@ import (
 // The population it exists for: trades stamped BEFORE the peg identity was
 // the insert path (the pre-2026-07-23 era — measured 2026-07-30 at 66 dirty
 // days, every violation `[base_pegged] sdex` USDC-base rows valued by the
-// resolver's VWAP instead of the $1 peg; ~+0.7% drift on dust groups). The
-// 2026-07-30 fix was a hand SQL UPDATE on r1; this is that UPDATE as a
-// tool, with the discipline the hand run lacked baked in:
+// resolver's VWAP instead of the $1 peg; ~+0.7% drift on dust groups). This
+// is the corrective UPDATE as a tool, with this discipline baked in:
 //
 //   - the tier and the scale come from [ClassifyUSDVolumeTier] — the
 //     SAME classifier the verifier uses, which is itself lock-stepped to
 //     the insert waterfall by TestClassifyUSDVolumeTier_TracksTheWaterfall.
 //     The tool never decides "which leg / which scale" on its own (the
 //     verifier header's reimplementation-trap warning);
-//   - INV-3: every corrected row is stamped with the run's
+//   - every corrected row is stamped with the run's
 //     `derive_generation`, and the write is guarded by
 //     `derive_generation <= $gen` exactly like the InsertTrade upsert, so
 //     a later live gen-0 replay can never claw a correction back and an
@@ -130,7 +129,7 @@ type USDVolumeRestampParams struct {
 	// FillNull also restamps rows whose usd_volume is NULL. Off by
 	// default — see the file header.
 	FillNull bool
-	// Generation is the run's derive_generation (INV-3). Rows already at
+	// Generation is the run's derive_generation. Rows already at
 	// a HIGHER generation are never touched, and every row written is
 	// stamped with it.
 	Generation int64
@@ -263,7 +262,7 @@ func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 // 265k). It also pins a CUSTOM plan: the `ts` bounds are what let the
 // planner prune the statement to the chunks it covers, a GENERIC plan
 // cannot know them, and equal-shaped batches reuse one prepared statement
-// ([Store.applyXLMBaseRestampBatch] carries the 2026-09-06 measurement).
+// ([Store.applyXLMBaseRestampBatch] carries the measurement).
 //
 // `SET LOCAL`, and POSTGRES scopes it — not the driver. A session `SET`
 // OUTLIVES the call: pgx v5's stdlib adapter resets nothing on reuse (its
