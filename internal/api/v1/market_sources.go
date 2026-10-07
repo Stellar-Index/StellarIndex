@@ -179,20 +179,19 @@ func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request,
 
 // sourceStatsAliases expands a raw asset_id query param into every
 // canonical FORM the per-source aggregate should match, reusing the
-// price path's alias primitive (rc.89). XLM is the live multi-form
+// price path's alias primitive. XLM is the live multi-form
 // case: SDEX writes `native`, every CEX writes `crypto:XLM`, and
 // Soroban AMMs write the SAC C-address, so filtering on one form alone
 // undercounts the market's volume-by-source split.
 //
-// C4-012 (audit-2026-07-23) — the membership/valuation contradiction:
-// the per-source queries' volume CASE has ALWAYS treated
-// `CAS3J7GY…` as XLM (it applies the XLM/USD rate to a SAC leg), while
-// this filter passed only `native` + `crypto:XLM`. Every Soroban XLM
-// trade was therefore excluded from the population but would have been
-// valued as XLM had it matched — so /v1/markets/sources?asset=native
-// undercounted Soroban volume by construction. Both sides now agree
-// because both derive from [canonical.AssetAliases]; the SQL binds
-// [canonical.NativeSACContractID], the same SAC this expansion emits.
+// Membership and valuation must agree: the per-source queries' volume
+// CASE treats `CAS3J7GY…` as XLM (it applies the XLM/USD rate to a SAC
+// leg), so a filter passing only `native` + `crypto:XLM` would exclude
+// every Soroban XLM trade that would have been valued as XLM, and
+// /v1/markets/sources?asset=native would undercount Soroban volume by
+// construction. Both sides derive from [canonical.AssetAliases]; the
+// SQL binds [canonical.NativeSACContractID], the same SAC this
+// expansion emits.
 //
 // Falls back to the literal id when it doesn't parse as a canonical
 // asset, so a malformed param still produces a (single-form) query

@@ -102,7 +102,7 @@ type MarketsReader interface {
 	GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error)
 
 	// FirstTradeBatch returns each pair's first daily bucket — the
-	// ?include=inception enrichment on /v1/markets (board #44).
+	// ?include=inception enrichment on /v1/markets.
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
@@ -113,8 +113,8 @@ type MarketsReader interface {
 // handleMarkets stamps an honest as_of (the served data's real
 // observation time) and flags.stale, instead of the cache's SWR
 // stale-serve path silently asserting stale:false / as_of=now over
-// arbitrarily-old rows while its background refresh keeps failing (W8
-// reconciliation; mirrors the /v1/contracts REC-05 fix — commit bb64ff3c).
+// arbitrarily-old rows while its background refresh keeps failing
+// (mirrors /v1/contracts).
 //
 // The *At methods parallel MarketsReader's shape with two extra returns:
 // observedAt (the served rows' fetch time; zero → as_of=now, not stale)
@@ -194,11 +194,11 @@ type Pool struct {
 // from the input — bare "XLM" and "NATIVE" (added so CoinGecko/CMC users
 // can type what they know) and the Horizon-style "CODE:ISSUER" — while
 // the stores hold only the canonical form and the SQL compares with `=`.
-// Validating and then discarding the parsed value meant those documented
-// aliases produced an authoritative HTTP 200 with an EMPTY list, cached
-// under their own key for 60s. Measured on r1 before the fix:
-// /v1/markets?asset=XLM returned 0 rows while ?asset=native returned 5
-// (cold audit 2026-08-03).
+// Validating and then discarding the parsed value would make those
+// documented aliases produce an authoritative HTTP 200 with an EMPTY list,
+// cached under their own key for 60s. Measured on r1 without the
+// canonicalisation: /v1/markets?asset=XLM returned 0 rows while
+// ?asset=native returned 5.
 //
 // Residual (separate, pre-existing): `native` and `crypto:XLM` are stored
 // as distinct rows, so canonicalising to one form does not merge them —
@@ -293,9 +293,9 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 			return
 		}
 	}
-	// Validate base/quote up front (P2/C3-9, audit-2026-07-16): the
-	// `asset` filter above already runs ParseAsset, but base/quote flowed
-	// raw into the trades-hypertable scan. Reject malformed input here
+	// Validate base/quote up front: the `asset` filter above already runs
+	// ParseAsset, but base/quote would otherwise flow raw into the
+	// trades-hypertable scan. Reject malformed input here
 	// rather than let it reach the query — the same silent-empty-page /
 	// DoS-lever guard the `asset` filter enforces.
 	if baseFilter != "" {
@@ -357,11 +357,10 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	if rows == nil {
 		rows = []Pool{}
 	}
-	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
-	// the deferred CAGG-reading tail from docs/operations/runbooks/
-	// dex.md): /v1/pools's last_price was never
-	// guarded at all — pools_per_source_1h's bucket_last_price is the
-	// same raw quote/base ratio /v1/price's closed-1m-bucket path serves.
+	// dex-nonstandard-decimals forward normalization (see
+	// docs/operations/runbooks/dex.md): /v1/pools's last_price needs it
+	// too — pools_per_source_1h's bucket_last_price is the same raw
+	// quote/base ratio /v1/price's closed-1m-bucket path serves.
 	// See adjustListingPriceStrings for the byte-identical-on-7dp contract.
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
@@ -401,11 +400,11 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 //     construction). Provided for symmetry with the daily VWAP
 //     surfaces; do NOT use for staleness computations.
 //
-// F-0065 fix (2026-05-27): the field formerly named `last_trade_at`
-// was sourced from `MAX(prices_1d.bucket)` (daily bucket-start),
-// so most rows returned exactly-midnight UTC values and clients
-// saw spuriously-large staleness. The honest semantics are now
-// split across the two fields.
+// `last_trade_at` is minute-precise for any pair that traded in the
+// trailing 24h rather than `MAX(prices_1d.bucket)` (daily bucket-start):
+// that would put exactly-midnight UTC values on most rows and show
+// clients spuriously-large staleness, so the two semantics are split
+// across the two fields.
 type Market struct {
 	Base          string   `json:"base"`
 	Quote         string   `json:"quote"`
@@ -427,7 +426,7 @@ type Market struct {
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
 	// FirstTradeAt is the pair's first recorded daily bucket — the
 	// RFP's "since inception = first recorded trade", queryable per
-	// market (board #44). Populated only with `?include=inception`
+	// market. Populated only with `?include=inception`
 	// without `?source=`; day precision.
 	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
@@ -446,7 +445,7 @@ type MarketVolumeBucket struct {
 //   - cursor   (optional): opaque, from a prior response's pagination.next.
 //   - limit    (optional): integer 1-500, default 100.
 //   - order_by (optional): "pair" or "volume_24h_usd_desc" (DEFAULT,
-//     switched 2026-05-10 — see the `case ""` arm below).
+//     see the `case ""` arm below).
 //     The latter surfaces high-USD-volume pairs first so clients
 //     don't paginate alphabetically through ~5K dust pairs to find
 //     the ones with real activity.
@@ -476,14 +475,10 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	var order timescale.MarketsOrder
 	switch r.URL.Query().Get("order_by") {
 	case "":
-		// Default switched from MarketsOrderPair to volume-desc on
-		// 2026-05-10. The alphabetical default surfaced spam tokens
-		// (`0-…`, `0TAX-…`, `0x1F3D4-…`) at the top of the listing
-		// — useless for callers expecting a "what's interesting on
-		// Stellar" view, and the explorer always passed
-		// `?order_by=volume_24h_usd_desc` explicitly to work around
-		// it. Now the implicit default matches what every consumer
-		// actually wants. R-014 in `docs/review-2026-05-10.md`.
+		// Default is volume-desc, not MarketsOrderPair: an alphabetical
+		// default surfaces spam tokens (`0-…`, `0TAX-…`, `0x1F3D4-…`)
+		// at the top of the listing, useless for callers expecting a
+		// "what's interesting on Stellar" view.
 		// Callers wanting the alphabetical view pass `?order_by=pair`.
 		order = timescale.MarketsOrderVolume24hDesc
 	case "pair":
@@ -576,7 +571,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// the same fix shipped on /v1/pools; without it the
 	// user sees a hung request that eventually times out at the
 	// ingress (observed 6.9s for /v1/markets?limit=5 on prod
-	// 2026-05-08 because limit=5 missed the prewarm-25-only set).
+	// when limit=5 missed the prewarm-25-only set).
 	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer mCancel()
 	switch {

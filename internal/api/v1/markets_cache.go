@@ -38,11 +38,10 @@ import (
 // handleMarkets and handlePools write their rows in place (the
 // dex-nonstandard-decimals last_price correction, plus the
 // ?include=sparkline / inception enrichment), and that correction is
-// not idempotent: handed the shared array, every hit re-multiplied the
-// already-corrected price by K (41.32 → 4132 → 413200 → …), opt-in
-// enrichment leaked into requests that never asked for it, and
-// concurrent requests raced on the same elements (audit 2026-09-02
-// F014 / K038).
+// not idempotent: handed the shared array, every hit would re-multiply
+// the already-corrected price by K (41.32 → 4132 → 413200 → …), opt-in
+// enrichment would leak into requests that never asked for it, and
+// concurrent requests would race on the same elements.
 //
 // The copy is one level deep — the row structs. Pointer and slice
 // FIELDS (LastPrice, Volume24hUSD, VolumeHistory24h, …) still alias
@@ -71,11 +70,11 @@ type CachedMarketsReader struct {
 // Cache keys carry client-controlled components — notably `cursor`,
 // which is validated for SHAPE ONLY (it need merely contain the right
 // delimiter; there is no allowlist, HMAC or canonical round-trip), plus
-// free-text `q` and asset ids. Successful entries were never evicted,
-// so one anonymous caller inside the documented 6000/min budget minted
-// a permanent, full-page entry per distinct cursor — hundreds of MB per
-// minute of unreclaimable heap, walking the process to its 8G
-// MemoryMax and into a systemd restart-storm (cold audit 2026-08-03).
+// free-text `q` and asset ids. Without eviction, one anonymous caller
+// inside the documented 6000/min budget could mint a permanent,
+// full-page entry per distinct cursor — hundreds of MB per minute of
+// unreclaimable heap, walking the process to its 8G MemoryMax and into
+// a systemd restart-storm.
 //
 // The cap + oldest-first eviction matches the bounded siblings
 // (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
@@ -151,7 +150,7 @@ func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context,
 }
 
 // FirstTradeBatch passes through uncached — inception is immutable
-// once set and the call is opt-in via ?include=inception (board #44).
+// once set and the call is opt-in via ?include=inception.
 func (c *CachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
 	return c.upstream.FirstTradeBatch(ctx, pairs)
 }
@@ -169,7 +168,7 @@ func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor strin
 // an honest as_of (the served data's real observation time) and
 // flags.stale, instead of the SWR stale-serve path silently asserting
 // stale:false / as_of=now over arbitrarily-old rows when refreshes keep
-// failing (W8 reconciliation; mirrors the /v1/contracts REC-05 fix).
+// failing (the same posture as /v1/contracts).
 //
 // observedAt is the zero time (→ caller stamps as_of=now, not stale) when
 // the cache is disabled: an uncached read comes straight from upstream and
@@ -275,7 +274,7 @@ const marketsRefreshBudget = 30 * time.Second
 // (true whenever the served bytes are past the TTL, i.e. taken from the
 // SWR branch). /v1/markets stamps these into the envelope's as_of +
 // flags.stale so a stale-serve (refresh failing) is never asserted as
-// fresh (W8 reconciliation; matches the REC-05 age>TTL bound). observedAt
+// fresh (the same age>TTL bound /v1/contracts uses). observedAt
 // is the zero time on a cold miss/error, where there is nothing served to
 // date.
 //

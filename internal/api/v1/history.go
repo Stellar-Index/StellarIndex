@@ -32,7 +32,7 @@ type HistoryReader interface {
 	// When the window holds more than `limit` trades, implementations
 	// MUST keep the NEWEST `limit` rows (and still return them ts ASC),
 	// not the oldest: a truncated aggregate has to run up to the window
-	// end or a busy 24h VWAP reports a price from hours ago (F-1319).
+	// end or a busy 24h VWAP reports a price from hours ago.
 	// The handlers' `truncated` flag is documented against this
 	// guarantee — see VWAPResult.Truncated.
 	TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error)
@@ -98,7 +98,7 @@ type HistoryReader interface {
 	// finer-grain CAGG when the interval doesn't have a native one
 	// (the table's folded rows).
 	//
-	// Used by /v1/ohlc's multi-bar mode (F-0071, CG/CMC parity).
+	// Used by /v1/ohlc's multi-bar mode (CG/CMC parity).
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
 	// LatestTradePerSource returns the most-recent trade FROM EACH
@@ -129,8 +129,7 @@ type HistoryReader interface {
 	// `DISTINCT ON (source) … ORDER BY source, ts DESC` scan per
 	// stored direction, unioned, with no time bound.
 	//
-	// COST, re-measured on r1 2026-08-03 (this comment was wrong in
-	// BOTH directions before): `trades_pair_source_ts_idx` (migration
+	// COST, measured on r1: `trades_pair_source_ts_idx` (migration
 	// 0037) DOES exist, and Timescale plans this as a Merge Append of
 	// per-chunk SkipScans over the compressed index — 49 ms execution
 	// across 249 chunks for native/fiat:USD, 289 ms for the heaviest
@@ -144,10 +143,10 @@ type HistoryReader interface {
 	// re-plans across the wide chunk set. Those figures are per
 	// DIRECTION: each arm of the union is the scan they were measured
 	// on, so the whole read is twice a number that was already tens of
-	// milliseconds, well inside the surface's 8s ceiling. Not
-	// re-measured on r1 since the second arm was added.
+	// milliseconds, well inside the surface's 8s ceiling. The two-arm
+	// read is estimated, not measured, on r1.
 	//
-	// [CachedHistoryReader] still SWR-caches this method (#29) to
+	// [CachedHistoryReader] still SWR-caches this method to
 	// keep the status page's poll off the database entirely.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
@@ -353,7 +352,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// dex-nonstandard-decimals: /v1/history reads exclusively from raw
 	// trades via TradesInRangeAfter below (no CAGG involved — that's a
 	// different reader method, HistoryPoints, used by /v1/chart), so it
-	// no longer needs the decline guard. The per-row Price field is
+	// needs no decline guard. The per-row Price field is
 	// normalized after decimals are resolved further down.
 
 	source, ok := historySourceParam(w, r, reader)
@@ -449,12 +448,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// while this resolver returns 7 for anything non-Soroban. A page can
 	// mix both — /v1/history?base=crypto:XLM&quote=fiat:USD returns sdex
 	// rows at 1e7 beside coinbase rows at 1e8 — so "constant across the
-	// page" was never true, and a consumer following this field's own
-	// documented conversion (amount / 10^decimals) overstated every CEX
-	// trade by exactly 10x. Verified live 2026-08-04: coinbase rows
-	// served base_decimals 7 against a parser that stamps 8. The `price`
-	// field is scale-invariant, so nothing in the response contradicted
-	// it (cold audit 2026-08-04).
+	// page" does not hold, and a consumer following this field's own
+	// documented conversion (amount / 10^decimals) would overstate every
+	// CEX trade by exactly 10x. The `price` field is scale-invariant, so
+	// nothing else in the response would contradict it.
 	baseDec, baseOK := s.resolveAssetDecimals(hCtx, base)
 	quoteDec, quoteOK := s.resolveAssetDecimals(hCtx, quote)
 	if !baseOK || !quoteOK {
@@ -622,7 +619,7 @@ func isLowerHex64(s string) bool {
 // Returns (base, quote, true) on success; writes a problem response
 // and returns ok=false on failure.
 //
-// `asset=` is accepted as an alias for `base=` (F-0061 closure) so
+// `asset=` is accepted as an alias for `base=` so
 // clients copying URLs from /v1/price (which uses asset/quote) don't
 // hit a 400 on their first try. Passing BOTH `base` and `asset` is
 // a 400 — they're conflicting controls for the same value and the
@@ -776,7 +773,8 @@ const (
 	// handler checks the read's own row count (`len(points) ==
 	// historyMaxPoints`) and stamps `row_cap_truncated` + `data_ends_at`
 	// on the response, so `?granularity=1m` on the flagship pair still
-	// returns exactly 50,000 points ending 2018-02-21, but now says so.
+	// returns exactly 50,000 points ending in February 2018, and says
+	// so.
 	// Plain /v1/history is not this shape either: it pages raw trades
 	// through `limit`/`cursor` and takes no `granularity`.
 	historyMaxPoints = 50_000
@@ -795,8 +793,8 @@ const (
 // the base token and every other grain its point count's multiple of
 // the default's, rounded DOWN — conservative, as the /v1/assets weights
 // are: 1m / 15m / 1h cost 13 against a measured production ratio of
-// ~15 (50,000 points at 1m vs 3,341 at 1d on the flagship pair,
-// 2026-09-09). An unknown grain costs the base token; it is a 400
+// ~15 (50,000 points at 1m vs 3,341 at 1d on the flagship pair).
+// An unknown grain costs the base token; it is a 400
 // before any read.
 func sinceInceptionCost(gran string) int {
 	width := timescale.HistoryGranularity(gran).BucketDuration()
@@ -884,9 +882,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	// same reason: this endpoint is named for the raw-trade family but
 	// serves the AGGREGATED CAGG VWAP series, so withholding a flagged
 	// issuer's price point everywhere else while handing over the whole
-	// trajectory here defeated the gate. /v1/chart?timeframe=all and
+	// trajectory here would defeat the gate. /v1/chart?timeframe=all and
 	// this route answer the identical question about the identical
-	// pair; only this one answered it (audit-2026-09-02 T012). The raw
+	// pair, so both must withhold it. The raw
 	// surfaces scam.go promises stay visible — /v1/history's trade rows
 	// and /v1/observations — are untouched.
 	if s.seriesWithheldForScam(w, r, pair, "history_series") {
@@ -991,18 +989,17 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 // UNION, not first-hit. Serving the first alias form with a non-empty
 // page is unsound under pagination: the cursor carries no asset/form
 // field ([historyCursor]), so once the form that minted a cursor drains,
-// the next page fell through to a SIBLING form and resumed it from a
+// the next page falls through to a SIBLING form and resumes it from a
 // `ts` bound that excludes every one of ITS rows at or before that
-// point — not spliced in with a jump, silently gone (traced against a
-// two-form timeline with interleaved timestamps, CA2-A04-harden-7).
+// point — not spliced in with a jump, silently gone.
 // [mergeTradeStreams] instead merges every alias form's both-direction
 // streams into one keyset-ordered page under a single cursor over the
 // whole union — the same tie-group completion the two-direction merge
 // already needed, generalised across however many streams
 // [readAliasFormStreams] built. The literal form still leads on a tie
 // (ties break on stream order, earliest first), so a populated literal
-// pair still answers with its own rows first; it is just no longer the
-// ONLY form a page can ever carry.
+// pair still answers with its own rows first; it is just not the ONLY
+// form a page can carry.
 //
 // Cross-form trade FUSION at the bucket granularity remains
 // [Server.chartMergeAliasPairs]'s separate design decision to rank forms

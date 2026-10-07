@@ -31,7 +31,7 @@ type scamFlag struct {
 // uncurated G-strkeys (no home_domain in /v1/issuers) against
 // api.stellar.expert/explorer/public/directory/<g> and adding any
 // row whose tags include "malicious" or "unsafe". The Reason
-// captures the directory's `name` field. All verified 2026-05-08.
+// captures the directory's `name` field.
 var scamIssuers = map[string]scamFlag{
 	// "Scam Assets" — malicious, unsafe.
 	"GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK": {

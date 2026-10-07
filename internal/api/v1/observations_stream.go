@@ -56,12 +56,12 @@ const (
 // — its name deliberately differs from `window_seconds` because the
 // raw-observations surface has no aggregation window.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
-	// REL-05: admit against the concurrency caps FIRST, before the
+	// Admit against the concurrency caps FIRST, before the
 	// synchronous pre-flight compute below (computeObservations) runs.
-	// Without this, a client already at its stream cap still paid for
+	// Otherwise a client already at its stream cap would still pay for
 	// the full pre-flight DB scan before being rejected — the caps
-	// bounded connection COUNT but not the compute a rejected client
-	// could still trigger. release is idempotent and deferred here so
+	// would bound connection COUNT but not the compute a rejected
+	// client could still trigger. release is idempotent and deferred here so
 	// every return path (validation errors, a failed pre-flight
 	// compute, or the eventual stream teardown) releases exactly once;
 	// the stream is handed off via StreamFromChannelPreAdmitted below
@@ -153,21 +153,21 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 // and [Server.handleObservationsStream]. Returns the post-aggregate
 // trade slice ready for wire encoding.
 //
-// Alias fan-in (cold audit 2026-08-03, streaming/metadata): trades are
-// stored under whichever canonical spelling the decoder stamped —
-// SDEX XLM legs under `native`, CEX feeds under `crypto:XLM` — and the
-// literal single-pair lookup made `?asset=native` silently blind to
-// the CEX observations (and vice versa). Every alias spelling of the
-// pair is scanned and the results merge keeping the newest trade per
-// source, mirroring the assetAliases loop the price read paths run.
+// Alias fan-in: trades are stored under whichever canonical spelling
+// the decoder stamped — SDEX XLM legs under `native`, CEX feeds under
+// `crypto:XLM` — so a literal single-pair lookup would make
+// `?asset=native` silently blind to the CEX observations (and vice
+// versa). Every alias spelling of the pair is scanned and the results
+// merge keeping the newest trade per source, mirroring the assetAliases
+// loop the price read paths run.
 // Non-XLM pairs have exactly one spelling, so they still do one scan.
 func (s *Server) computeObservations(
 	ctx context.Context, pair canonical.Pair, source, aggregate string,
 ) ([]canonical.Trade, error) {
 	// Bound the trades scan even on the stream path (the request handler
-	// wraps its own 8s ceiling; the stream prelude + ticks previously had
-	// none, so a cold-cache lookup could hold the connection open
-	// unboundedly per tick — G2-04). One ceiling spans ALL alias scans:
+	// wraps its own 8s ceiling; the stream prelude + ticks have no
+	// ceiling of their own, so without this a cold-cache lookup could
+	// hold the connection open unboundedly per tick). One ceiling spans ALL alias scans:
 	// the alias loop must not multiply the endpoint's worst-case hold.
 	scanCtx, cancel := context.WithTimeout(ctx, observationsScanTimeout)
 	defer cancel()
@@ -271,7 +271,7 @@ func (s *Server) runObservationsStreamProducer(
 	intervalSeconds int,
 	first []canonical.Trade,
 ) {
-	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// This producer runs in its OWN goroutine, so an
 	// unrecovered panic in the compute path below terminates the WHOLE process —
 	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
 	// stream is reachable unauthenticated. Recover here so a panic tears down only

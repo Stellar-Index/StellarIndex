@@ -63,9 +63,9 @@ type Issuer struct {
 	OrgName string `json:"org_name,omitempty"`
 	// OrgVerified is true only when the issuer's SEP-1 toml lists it back
 	// (bidirectional proof — one-way is spoofable). When false, OrgName is
-	// issuer-self-declared; clients MUST NOT render it as authoritative
-	// (CS-100 impersonation). Always present so the absence of the field
-	// can't be mistaken for "verified".
+	// issuer-self-declared; clients MUST NOT render it as authoritative,
+	// or it becomes an impersonation vector. Always present so the
+	// absence of the field can't be mistaken for "verified".
 	OrgVerified bool `json:"org_verified"`
 	// ScamReason is non-empty when the issuer is flagged as scam /
 	// malicious by the curated `known_scams.go` map (sourced from
@@ -75,8 +75,8 @@ type Issuer struct {
 	AuthRevocable *bool  `json:"auth_revocable,omitempty"`
 	AuthImmutable *bool  `json:"auth_immutable,omitempty"`
 	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
-	// AuthFlagsSource says how the four auth_* flags above were obtained
-	// (#374). `live` — decoded from the account's CURRENT on-chain
+	// AuthFlagsSource says how the four auth_* flags above were obtained.
+	// `live` — decoded from the account's CURRENT on-chain
 	// AccountEntry. `last_known_before_removal` — the issuer has MERGED ITS
 	// ACCOUNT AWAY and these are its flags as of `auth_flags_as_of_ledger`;
 	// they are a historical record, NOT the issuer's current authorisation
@@ -206,7 +206,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	for i, r := range rows {
 		homeDomain, orgName := enrichIssuer(r.GStrkey, r.HomeDomain, r.OrgName)
 		reason := scamReason(r.GStrkey)
-		// Identity suppression (site-audit S-010): a flagged,
+		// Identity suppression: a flagged,
 		// UNVERIFIED issuer's org_name/home_domain are self-declared
 		// on-chain values — for counterfeiters that is the
 		// impersonation itself (a "SCAM Counterfeiter" declaring
@@ -255,7 +255,7 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	// Stellar G-strkeys are uppercase base32 by SEP-23 convention;
 	// the storage layer keys off the canonical uppercase form.
 	// URL clients (chat clients, search tools, manual typing)
-	// regularly lowercase, which used to 404 outright. Normalise
+	// regularly lowercase, which would otherwise 404. Normalise
 	// at input — base32 alphabet is case-insensitive in Stellar
 	// SDK validation, so the underlying ed25519 public key is the
 	// same. No risk of merging two distinct accounts.
@@ -307,17 +307,14 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		CreationLedger:      row.CreationLedger,
 		CoverageNote:        assetsCoverageNote,
 	}
-	// Identity precedence (2026-08-06): DB row → live on-chain
-	// account state → curated knownIssuers map. The curated map used
-	// to run FIRST, so a stale entry beat the account's own signed
-	// home_domain (the ex-apay ETH issuer rendered apay.io while
-	// on-chain said ultracapital.xyz).
+	// Identity precedence: DB row → live on-chain account state →
+	// curated knownIssuers map. The curated map only fills blanks, so a
+	// stale entry cannot beat the account's own signed home_domain.
 	s.enrichIssuerFromAccountState(iCtx, gStrkey, &out)
 	out.HomeDomain, out.OrgName = enrichIssuer(row.GStrkey, out.HomeDomain, out.OrgName)
-	// Identity suppression runs LAST (S-010): a flagged, unverified
-	// issuer's self-declared identity is the impersonation. Before
-	// this reorder the suppression ran ahead of the account-state
-	// enrich, which then REFILLED the cleared home_domain straight
+	// Identity suppression runs LAST: a flagged, unverified issuer's
+	// self-declared identity is the impersonation. Run any earlier, the
+	// account-state enrich would refill the cleared home_domain straight
 	// from the scammer's own on-chain field. Auth flags stay — they
 	// are objective account state, not identity claims.
 	//
