@@ -50,7 +50,7 @@ import (
 // clickhouse-package helper of the same name (this package cannot import an
 // unexported type); this copy additionally carries the flight's ERROR so a
 // cold-path waiter can serve the compute's real failure (a deadline maps to
-// the 503 timeout contract, C-F1) instead of a shapeless sentinel.
+// the 503 timeout contract) instead of a shapeless sentinel.
 type perKeyFlight struct {
 	mu      sync.Mutex
 	inGoing map[string]*keyFlight

@@ -335,8 +335,8 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the panel — `op_type_stats` is omitempty) while a DETACHED single-flight
 // refresh runs. For a 24-hour aggregate, numbers a few minutes old are
 // still truthful, whereas an empty panel is not — and recomputing INLINE on
-// the request context fails: the day-window FINAL GROUP BY shares the
-// directory's 8s budget and drags the whole /v1/operations page into its
+// the request context would fail: the day-window FINAL GROUP BY would share
+// the directory's 8s budget and drag the whole /v1/operations page into its
 // 503 class every 5 minutes.
 func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
