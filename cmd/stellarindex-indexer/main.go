@@ -977,13 +977,12 @@ func run(cfgPath string, dryRun bool) error {
 	// cancelled; on the producer-error path it is NOT, because `cancel` is
 	// only deferred and therefore fires after run() returns.
 	//
-	// Without this cancel, that asymmetry would make the drain a hang:
+	// Without this cancel, the producer-error path would defeat the drain:
 	// externalWait() is a WaitGroup over the external connectors, and those
-	// are bound to rootCtx (startExternalConnectors(rootCtx, ...)). With
-	// rootCtx still live, nothing would tell them to stop, so the drain
-	// would wait on them instead of draining. With external connectors
-	// enabled, a single MinIO blip would trigger that, which is worse than
-	// the dropped buffer the drain exists to prevent.
+	// are bound to rootCtx (startExternalConnectors(rootCtx, ...)), as is the
+	// sink. With rootCtx still live, nothing would tell them to stop, so the
+	// bounded wait below would spend the whole shutdown budget, leave events
+	// open, and drop the very buffer the drain exists to persist.
 	//
 	// Cancelling here makes both paths identical: connectors unwind, the
 	// sink drains via its ctx.Done() arm (the same arm the signal path
