@@ -322,11 +322,10 @@ func classifyDrop(reason string) string {
 		// no mismatch); one-side-zero claims ARE trades Hubble records but our
 		// OR-guard rejects — the exact off-by-one vs Hubble.
 		//
-		// NOTE: the current DECODER does not reject one-side-zero
-		// fills, so they never appear here — but they are still dropped, one
-		// layer down, by filterStorableTrades (the trades CHECK forbids a
-		// zero leg). The off-by-one vs Hubble therefore persists, outside
-		// this tool's view.
+		// NOTE: the current DECODER does not reject one-side-zero fills,
+		// so they never appear here; Trade.Validate admits them and the
+		// writer stores them (migration 0191 dropped the trades amount
+		// CHECKs), so the served tier counts them as Hubble does.
 		if strings.Contains(reason, "sold=0 bought=0") {
 			return "non-positive: both-zero (Hubble also drops)"
 		}

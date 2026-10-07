@@ -125,7 +125,8 @@ type reconSource struct {
 	// events.Event.OpArgs (redstone zips write_prices feed_ids from the op
 	// args). The -ch projection reconcile trims the WIDE op_args_xdr column
 	// from the lake read for every other source; reading it across the
-	// sep41/CAP-67 firehose drives compute-completeness out of memory.
+	// sep41/CAP-67 firehose is one of the loads that run
+	// compute-completeness out of memory.
 	needsOpArgs bool
 
 	// needsStateWriteKeys marks the decoder class that consumes
@@ -745,7 +746,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		cat = append(cat, reconSource{
 			name:    "redstone",
 			genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
-			needsOpArgs:         true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs)
+			needsOpArgs:         true, // reads feed_ids from write_prices op args (Event.OpArgs)
 			needsStateWriteKeys: true, // exact subset attribution from the op's written per-feed contract-data keys
 			targets:             []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
 		})
@@ -782,8 +783,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		targets:      []reconTarget{{"soroswap_router_swaps", "", nil}},
 	})
 
-	// sep41 promotion — see the doc comment above. Gated the same way buildSEP41ReconSources's own
-	// EmptyWatchedSetErrors precondition expects: only attempt it when a
+	// sep41 promotion — see the doc comment above. Gated the same way
+	// buildSEP41ReconSources's own EmptyWatchedSetErrors precondition expects: only attempt it when a
 	// watched set is actually configured, so a deployment that never opted
 	// into SEP-41 supply/transfer capture gets an empty (not an error)
 	// promotion — matching the dispatcher's own non-opted-in behavior.

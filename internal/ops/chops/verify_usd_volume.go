@@ -166,10 +166,9 @@ func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
 // base-amount sum to whole XLM. The scale is a CONNECTOR property, not
 // an asset one: on-chain DEX
 // rows stamp stroops (1e7), off-chain CEX rows 1e8, the FX pollers
-// 1e6. A hardcoded 1e7 flags every
-// honest kraken/bitstamp XLM/EUR day at ratio ≈ 0.100 — the check
-// wrong, not the data. Same subclass dispatch the insert path's
-// usdVolumeDecimals uses.
+// 1e6. A hardcoded 1e7 would flag every honest kraken/bitstamp XLM/EUR
+// day at ratio ≈ 0.100 — the check would be wrong, not the data.
+// Same subclass dispatch the insert path's usdVolumeDecimals uses.
 func xlmBaseLegScale(source string) *big.Rat {
 	baseDecimals := int64(7) // on-chain stroop scale
 	md := external.Lookup(source)
@@ -392,8 +391,8 @@ func classifyExactTierGroups(
 // usdVolumeTotalViolations combines the exact-tier and XLM-bound violation
 // counts with parseErrs: an unclassifiable or unparseable group on a
 // LANDED trade — a mis-spelled asset id, a scale ClassifyUSDVolumeTier
-// couldn't resolve — is a defect, not a benign skip. Printed but not
-// folded in, a day with nothing but unclassifiable
+// couldn't resolve — is a defect, not a benign skip. If parseErrs were
+// printed but not folded in, a day with nothing but unclassifiable
 // groups would exit 0.
 func usdVolumeTotalViolations(exactViolations, xlmBoundViolations, parseErrs int) int {
 	return exactViolations + xlmBoundViolations + parseErrs

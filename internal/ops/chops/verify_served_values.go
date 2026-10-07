@@ -19,7 +19,7 @@ import (
 
 // verify-served-values — the "data-correct, not just code-correct"
 // harness: proving the CODE sound does not prove a served VALUE right
-// (the flagship XLM market cap has read +58% with sound code until
+// (the flagship XLM market cap read +58% with sound code until it was
 // sampled by hand).
 //
 // It fetches a curated set of values we SERVE and reconciles each

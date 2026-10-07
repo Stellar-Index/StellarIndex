@@ -266,8 +266,9 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 //
 // [timescale.TradesCAGGs] is the one list: every aggregate rooted on
 // `trades`, prices_1m first and the hierarchical twaps last. A second
-// copy here drifts: two copies have diverged to seven and twelve entries,
-// with five of the twelve unrefreshable through RefreshContinuousAggregate.
+// copy here would drift: two measured copies held seven and twelve
+// entries, with five of the twelve unrefreshable through
+// RefreshContinuousAggregate.
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
