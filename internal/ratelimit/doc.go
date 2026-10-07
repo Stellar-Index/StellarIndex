@@ -1,115 +1,19 @@
-// Package ratelimit is a Redis-backed fixed-window rate limiter.
+// Package ratelimit is a Redis-backed fixed-window rate limiter: one
+// atomic Lua INCRBY/EXPIRE per request on `rl:<key>:<unix_seconds/60>`
+// (ADR-0007), keys expiring after 120 s. A client can spend its limit at
+// the end of one minute and again at the start of the next, so size a
+// tier so that 2× its limit for a moment is survivable.
 //
-// # Why fixed-window, not token bucket or sliding window?
+// [Bucket.Take] spends one token; [Bucket.Charge] spends a cost clamped
+// into [1, limit]. Any handler whose uncached store work a client
+// parameter selects, or that fans out per request, must re-price itself
+// through middleware.ChargeRateLimit before reading; nothing enforces
+// this across routes, so a new route of that shape is enrolled by hand.
 //
-// The limits are per-minute ceilings per client, set per tier by
-// `api.anon_rate_limit_per_min` and `api.key_rate_limit_per_min` (the
-// spec asks for at least 1000 req/min per client; the deployed values
-// live in config, not here). A fixed 1-minute window keyed on
-// `rl:<key>:<min>` enforces that ceiling per calendar minute at one
-// Redis round-trip per request.
-//
-// It does NOT enforce it per rolling minute: a client that spends its
-// whole limit in the last second of one window and again in the first
-// second of the next gets 2× the limit inside ~2 s. That boundary burst
-// is inherent to the design (see [FixedWindowCounter]), and
-// X-RateLimit-Reset publishes the boundary it can be timed against.
-// Size a tier's limit so that 2× it for a moment is survivable.
-//
-// Sliding windows need two counters and weighted maths; token
-// buckets need INCRBYFLOAT + drift correction + more state per
-// key. Neither is worth the complexity here.
-//
-// # Atomicity
-//
-// The check is a Lua script (EVAL) that does INCRBY + EXPIRE-on-first
-// + TTL-return atomically. No race between "read counter" and "set
-// TTL" — if two requests arrive simultaneously on a cold key, only
-// one sets the expiry and both see the correct incremented count.
-//
-// # Weighted charges
-//
-// A request is not always worth one token. [Bucket.Take] spends one;
-// [Bucket.Charge] spends a caller-supplied cost in the same single
-// round-trip, and takes the per-subject LIMIT override as a separate
-// argument so a cost can never be mistaken for a ceiling.
-//
-// The production middleware charges one token before dispatch and
-// lets a handler re-price the request once it knows what the request
-// will read (middleware.ChargeRateLimit). The rule for which routes
-// must do so: any handler whose uncached store work a client parameter
-// selects — a query plan, a collection size, a bucket granularity — or
-// that fans out into many reads per request prices the request by that
-// work before reading. Its call sites carry the weights:
-// GET/POST /v1/price/batch (one token per de-duplicated asset id),
-// GET /v1/assets (by query plan), GET /v1/history/since-inception and
-// GET /v1/chart?timeframe=all (by granularity), and GET /v1/rwa/assets (one per listing read). Nothing enforces
-// the rule across routes yet, so a new route of that shape has to be
-// enrolled by hand. Cost is clamped into [1, limit]; see
-// [Bucket.Charge] for why neither end is an error.
-//
-// # Redis key shape
-//
-// Matches ADR-0007:
-//
-//	rl:<key>:<minute-epoch>
-//
-// where `<key>` is an API-key hash or IP address and
-// `<minute-epoch>` is `unix_seconds / 60` — deterministic so every
-// API pod derives the same key. Keys TTL at 120 s (2× window), so
-// they drain out on their own.
-//
-// # Usage
-//
-//	b := ratelimit.New(rdb, 1000, time.Minute)
-//	res, err := b.Take(ctx, "rek_abc123")
-//	if err != nil {
-//	    if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-//	        // Redis has been down past the dwell-time — fail CLOSED.
-//	        w.Header().Set("Retry-After", "30")
-//	        http.Error(w, "throttle unavailable", http.StatusServiceUnavailable)
-//	        return
-//	    }
-//	    // Transient Redis error inside the dwell-time — fail OPEN + log.
-//	    log.Debug("ratelimit: redis error, failing open", "err", err)
-//	    next(w, r)
-//	    return
-//	}
-//	if !res.Allowed {
-//	    w.Header().Set("Retry-After", strconv.Itoa(int(res.RetryAfter.Seconds())))
-//	    http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-//	    return
-//	}
-//	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(b.Max()))
-//	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-//
-// # Failure mode — dwell-time fail-open inversion (F-0050 / F-0150)
-//
-// The failure policy is NOT unconditional fail-open. Take() returns
-// two distinct error kinds so the caller can invert its behaviour as
-// an outage lengthens:
-//
-//   - A transient Redis error (a wrapped transport error) is returned
-//     while the outage is still inside the dwell-time window (default
-//     [DefaultDwellTime] = 30s). The caller fails OPEN — accept the
-//     request + log — because a brief Redis blip must not refuse every
-//     request.
-//   - [ErrThrottleUnavailable] is returned once Redis has been failing
-//     continuously for LONGER than the dwell-time. The caller fails
-//     CLOSED (HTTP 503 + Retry-After), because a sustained outage would
-//     otherwise let an attacker pivot to unbounded request volume by
-//     keeping the limiter offline. A single genuine recovery (a full
-//     dwell-time of unbroken successes) resets the clock and fail-open
-//     resumes; a stray success under a flapping Redis does NOT reset it
-//     (see [Bucket]).
-//
-// Callers MUST branch on `errors.Is(err, ErrThrottleUnavailable)` — a
-// caller that treats every error as fail-open re-introduces the
-// sustained-outage bypass this inversion exists to close. The
-// production middleware
-// (internal/api/v1/middleware.RateLimit / .RateLimitBySubject) is the
-// reference implementation of the branch.
-//
-// The HA plan §9 documents the transient (fail-open) case as a
-// stale_flag=true scenario.
+// Failure is fail-open only for [DefaultDwellTime]: inside it Take
+// returns the transport error and the caller serves the request; past
+// it Take returns [ErrThrottleUnavailable] and the caller must answer
+// 503 with Retry-After, or a sustained outage becomes an unlimited
+// bypass. Callers MUST branch on errors.Is(err, ErrThrottleUnavailable);
+// middleware.RateLimit is the reference.
 package ratelimit

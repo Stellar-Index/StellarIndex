@@ -50,7 +50,6 @@ internal/ops/ingest/backfill_index.go	2018-02-15
 internal/ops/ingest/backfill_index.go	pre-2018
 internal/ops/usage/usage_rollup_backfill.go	2026-07-19
 internal/pricelesscoverage/worker.go	2026-09-17
-internal/ratelimit/doc.go	F-0050
 internal/ratelimit/fixedwindow.go	2026-07-23
 internal/ratelimit/inprocess.go	2026-07-23
 internal/rwa/constant_nav.go	2026-09-16
@@ -136,8 +135,6 @@ internal/sources/upshift/dispatcher_adapter.go	INV-3
 internal/sources/upshift/events.go	2026-09-09
 internal/sources/upshift/events.go	2026-09-09
 internal/sources/upshift/events.go	2026-09-09
-internal/stellarrpc/doc.go	2026-04-23
-internal/stellarrpc/doc.go	2026-04-23
 internal/stellarrpc/types.go	2025-12-16
 internal/storage/timescale/aggregates.go	2000-01-03
 internal/storage/timescale/bespoke_dex.go	2026-03-18
