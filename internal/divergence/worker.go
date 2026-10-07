@@ -447,26 +447,12 @@ func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
 	obs.DivergencePairQuorumMet.WithLabelValues(pair.String()).Set(met)
 }
 
-// RefreshPair runs one divergence check for the supplied pair +
-// our-price, then writes the cached result to Redis at
-// div:<base>/<quote> and records the quote in the per-base index
-// set. The aggregator calls this from the bucket-close path AFTER
-// the VWAP has been written to its own Redis key.
-//
-// Returns nil when the worker has no References configured (silent
-// no-op so an operator who hasn't enabled divergence yet doesn't
-// see a torrent of "skipped" log lines). Returns the underlying
-// error when Compare's network calls all fail, but cache-write
-// errors are returned separately so the caller can decide whether
-// to retry.
-// ErrNoReferenceResponded is returned by RefreshPair when references ARE
-// configured but every one failed for this pair (SuccessCount == 0). The
-// cache is still written (recording the outage state), but the caller gets a
-// distinct signal so a total reference outage can be alerted on instead of
-// silently counting as a successful refresh. It is NOT returned when
-// no references are configured at all — that's an intentional-disabled state.
+// ErrNoReferenceResponded is returned by RefreshPair when no configured reference answered
+// and at least one genuinely failed; the outage result is still cached, so it can be paged on.
 var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
 
+// RefreshPair compares ourPrice with the references and caches the result at div:<base>/<quote>.
+// It returns nil when no references are configured, ErrNoReferenceResponded, or a cache error.
 func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error {
 	return s.refresh(ctx, pair, ourPrice, observedAt, false)
 }
