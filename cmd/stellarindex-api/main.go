@@ -114,10 +114,10 @@ import (
 // logged error instead of a process exit.
 //
 // An unrecovered panic in any goroutine terminates the whole Go process — it is
-// not confined to that goroutine. So before this, a panic in any of the nine
+// not confined to that goroutine. So a panic in any of the nine
 // background workers below (forex poller, TLS-cert probe, two cache refreshers,
 // the supply/wealth prewarm, stream publisher, customer-webhook sender, usage
-// rollup, signup reaper) took the entire API down, including every healthy
+// rollup, signup reaper) would take the entire API down, including every healthy
 // request in flight. None of those workers is on the serving path; none of them
 // is worth an outage.
 //
@@ -1564,7 +1564,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// rendered without it. Its 5-minute TTL matches this cadence exactly.
 	// PrewarmNetworkThroughput joins them: the
 	// /v1/network/throughput series is a FINAL scan over up to a year of
-	// ledgers that used to run inline on the 8s request budget, so a cold
+	// ledgers that would run inline on the 8s request budget, so a cold
 	// or loaded /network first load lost the panel entirely. Its cache
 	// also has a 5-minute TTL — this cadence keeps it permanently fresh.
 	// PrewarmNativeLiquidityPools joins them: the
@@ -1577,17 +1577,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// call is a no-op whenever the entry is already warm.
 	// PrewarmSep1Images joins them: the /v1/assets logo map
 	// is a scan over every issuer's cached stellar.toml — 448 MB of JSON
-	// across 35,829 issuers on r1, and growing — which used to be
-	// rebuilt INLINE on whichever request happened to find it expired,
-	// costing that request 10-13 s and firing the assets smoke check for
-	// two days. The rebuild is detached now, so a cold map costs a
-	// request nothing but its logos; this is what stops it being cold in
-	// the first place. Its 10-minute TTL gives this cadence two cycles of
+	// across 35,829 issuers on r1, and growing — rebuilt INLINE would cost
+	// whichever request found it expired 10-13 s. The rebuild is detached,
+	// so a cold map costs a request nothing but its logos; this is what
+	// stops it being cold in the first place. Its 10-minute TTL gives this cadence two cycles of
 	// slack, exactly like PrewarmClassicSupply above.
 	// PrewarmContractProtocolIndex joins them: the cohort
 	// view's contract → protocol map is seventeen registry reads that
-	// used to run inline on whichever request found it expired — and a
-	// request that had already spent its budget cached a statics-only
+	// would run inline on whichever request found it expired — and a
+	// request that had already spent its budget would cache a statics-only
 	// map for everyone. Its 10-minute TTL gives this cadence the same two
 	// cycles of slack; an incomplete build retries within 30 s.
 	bgWG.Add(1)
@@ -2529,7 +2527,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		// AND the session-resolver Middleware. NewHandlers now takes
 		// &authCfg, so validate()'s defaults land on this same struct
 		// and both paths share one clock. Still set explicitly: leaving
-		// it nil previously nil-derefed cfg.Now() in resolveSession on
+		// it nil nil-derefs cfg.Now() in resolveSession on
 		// every authenticated request (the magic-link cookie resolved
 		// fine, then /v1/account/me 500'd, so login looked broken).
 		Now:              func() time.Time { return time.Now().UTC() },
@@ -3903,7 +3901,7 @@ func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMa
 // expensive shape in production. The query-shape logging
 // is what made the real distribution visible.
 //
-// Measured on r1 over 100 minutes after the v0.54.0 deploy, slow
+// Measured on r1 over 100 minutes, slow
 // requests (>=500 ms) grouped by shape, excluding SSE streams:
 //
 //	18x  avg 4053 ms   72.9 s total   real   ?limit=50

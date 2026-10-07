@@ -241,10 +241,9 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 const defaultVWAPFreshness = 15 * time.Minute
 
 // PriceWithheld is THE withholding chokepoint for every price-serving
-// read seam (MSP cluster, wave D). The scam/substance decision was
-// previously inlined at StorePriceReader only, which is exactly how it
-// came to leak at /v1/price/at, /v1/price/changes and friends: a new
-// seam had no obligation to remember it. Every seam that serves a
+// read seam (MSP cluster, wave D). The scam/substance decision lives
+// here rather than inline in each reader, because a new seam has no
+// obligation to remember it. Every seam that serves a
 // number derived from a closed VWAP bucket routes through here, and
 // TestPriceServingSeamsAreGated enumerates those seams so a new
 // ungated one fails CI rather than shipping.
@@ -339,11 +338,10 @@ func (r StorePriceReader) freshnessWindow() time.Duration {
 // stale once its CLOSE (bucket start + 1 minute) is older than the
 // freshness window, or whenever the read was low-confidence.
 //
-// Extracted so a test can exercise the REAL rule. It previously lived
-// inline in LatestPrice, and the test that certified it re-implemented
-// the expression locally — so deleting the `> r.freshnessWindow()` term
-// left the suite green while /v1/price resumed serving months-old
-// buckets with stale=false, which IS the bug it exists to stop.
+// Separate from LatestPrice so a test can exercise the REAL rule: a test
+// that re-implemented the expression locally would stay green after
+// deleting the `> r.freshnessWindow()` term while /v1/price served
+// months-old buckets with stale=false, which IS the bug it exists to stop.
 // LatestPrice needs a live *timescale.Store, so calling it from a unit
 // test is not possible; calling this is.
 //
@@ -363,7 +361,7 @@ func (r StorePriceReader) guardedSnapshot(
 ) (v1.PriceSnapshot, bool) {
 	// The bucket closes at Bucket+1min; flag stale when that
 	// close is older than the freshness window, so a dormant pair's
-	// months-old VWAP is no longer served as stale=false. Applied to the
+	// months-old VWAP is not served as stale=false. Applied to the
 	// bucket we actually serve (candidate, or the older last-known-good
 	// on a guard rejection).
 	//
@@ -477,12 +475,11 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// visible on /v1/observations). Off-chain pairs (never
 	// substance-gated) keep the last-trade fallback.
 	//
-	// This arm consults BOTH gates via the chokepoint. It previously
-	// spelled out substance only, so `disable_substance_gate=true` — an
-	// operator relaxing the thin-market floor to diagnose a coverage
-	// complaint — silently also published a directory-flagged issuer's
-	// last trade as its price, reversing a separate owner-level trust
-	// decision the operator never touched (wave-D MSP-07).
+	// This arm consults BOTH gates via the chokepoint. Checking substance
+	// only would let `disable_substance_gate=true` — an operator relaxing the
+	// thin-market floor to diagnose a coverage complaint — silently also
+	// publish a directory-flagged issuer's last trade as its price, reversing
+	// a separate owner-level trust decision the operator never touched.
 	if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
 		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 	}

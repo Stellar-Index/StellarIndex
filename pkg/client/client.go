@@ -34,11 +34,8 @@ const DefaultTimeout = 30 * time.Second
 //
 // Bumped 0.1.0 -> 0.2.0 for the Client.Asset() breaking change
 // (ADR-0042 LC-040: return type Envelope[AssetDetail] ->
-// Envelope[AssetLookup]). This is the first time this constant has
-// moved since the package was created — including through the
-// Unit-D wire-collapse breaking change that already shipped
-// (9442d311, 2026-06-16) — because no pkg/client/vX.Y.Z tag has ever
-// actually been cut; see docs/architecture/semver-policy.md's
+// Envelope[AssetLookup]). No pkg/client/vX.Y.Z tag has ever
+// been cut; see docs/architecture/semver-policy.md's
 // opening section (one root tag clock, no pkg/* tags).
 const userAgent = "stellarindex-go-sdk/0.2.0"
 
@@ -260,10 +257,10 @@ func decodeJSONResponse(resp *http.Response, method, path string, out any) error
 	//
 	// Read maxResponseBytes+1 and error on `>`, rather than reading
 	// exactly the cap: LimitReader returns (n, nil) AT the limit, so a
-	// truncated body was previously indistinguishable from a complete
-	// one and got parsed as JSON — surfacing as a confusing decode error
+	// truncated body would be indistinguishable from a complete
+	// one and get parsed as JSON — surfacing as a confusing decode error
 	// about the payload rather than the truth, which is that the
-	// response was too large (wave-D F-SDK-08). The +1 makes overshoot
+	// response was too large The +1 makes overshoot
 	// detectable; same idiom as internal/stellarrpc.
 	//
 	// The message deliberately offers NO escape hatch. maxResponseBytes

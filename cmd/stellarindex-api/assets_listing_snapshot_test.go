@@ -147,7 +147,7 @@ func TestAssetsListingSnapshotKeyIsStable(t *testing.T) {
 	}
 }
 
-// TestSeedAssetListingsFromSnapshotsRemovesTheColdRead is the #459 fix
+// TestSeedAssetListingsFromSnapshotsRemovesTheColdRead guards the cold-read fix
 // end to end at the binary's seam: what the prewarm persisted on the
 // previous boot must, on this one, be serving before anything queries
 // Postgres.

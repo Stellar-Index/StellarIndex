@@ -36,7 +36,7 @@ type Envelope[T any] struct {
 	// is absent. A value type here made `omitempty` a no-op (omitempty
 	// never elides a non-pointer struct), so re-encoding a non-list
 	// response emitted `"pagination":{}` where the server omits it
-	// entirely — round-trip drift (audit-2026-06-14 A14-01). Consumers
+	// entirely — round-trip drift. Consumers
 	// must nil-check before reading `.Next`.
 	Pagination *Pagination `json:"pagination,omitempty"`
 }
@@ -68,26 +68,25 @@ type Flags struct {
 
 	// DivergenceChecked reports whether the cross-reference divergence
 	// check reached a verdict at all. When false the check was blind, so
-	// a false warning must not be read as "prices agree" (CS-087); a true
+	// a false warning must not be read as "prices agree"; a true
 	// warning is the last evaluated verdict carried forward, not a fresh
 	// one. Without this field a consumer
 	// gating on !DivergenceWarning passes 100% of the time while being
-	// structurally unable to detect the blindness (cold audit
-	// 2026-08-04).
+	// structurally unable to detect the blindness.
 	DivergenceChecked bool `json:"divergence_checked"`
 	// OutsideCoverage marks an empty answer whose requested range ends
 	// at or before the envelope's CoverageFrom — the window predates the
 	// server's history for the pair, so there was nothing to return.
 	// Mirrors the server's envelope flag; dropping it would leave a
 	// consumer unable to distinguish the two meanings of an empty series
-	// (the CS-087 shape: a false that reads as a verdict when it is
+	// (a false that reads as a verdict when it is
 	// really "not applicable").
 	OutsideCoverage bool `json:"outside_coverage,omitempty"`
 	Frozen          bool `json:"frozen,omitempty"`
 	// FrozenChecked reports whether the freeze marker was actually
 	// read. When false, Frozen is NOT meaningful — the check never
 	// ran (looker not wired, or the read failed), so a false Frozen
-	// must not be read as "confirmed not frozen". Same CS-087 shape
+	// must not be read as "confirmed not frozen". Same shape
 	// as DivergenceChecked.
 	FrozenChecked bool `json:"frozen_checked,omitempty"`
 	SingleSource  bool `json:"single_source,omitempty"`
@@ -342,8 +341,8 @@ type AssetDetail struct {
 	//
 	// It is NOT a unit scale and must never enter amount math. Divide by
 	// 10^[AssetDetail.Decimals]; round the result for display to this.
-	// The two are separate fields because conflating them was a real
-	// money bug: F-1321 found that setting the unit scale from this
+	// The two are separate fields because conflating them is a real
+	// money bug: setting the unit scale from this
 	// issuer-controlled hint inflated market_cap_usd by up to
 	// 10^(7-display_decimals)× on verified classic assets, an
 	// issuer-controlled manipulation vector.
@@ -391,7 +390,7 @@ type AssetDetail struct {
 	// second round-trip on every asset-detail render. Null when
 	// no USD price can be derived (no on-chain trades, prices_1m
 	// has no row, or operator hasn't enabled stablecoin-fiat
-	// proxy). F-1271 (audit-2026-05-12).
+	// proxy).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
 	// PriceBasis identifies a PriceUSD that is NOT a direct market
@@ -499,7 +498,7 @@ type AssetDetail struct {
 	//   - Phase 1 — on-chain DEX trades populate it when the quote
 	//     asset is on the operator's `[trades].usd_pegged_classic_assets`
 	//     list (trusted 1:1 peg).
-	//   - Phase 2 (F-1268) — on-chain DEX trades whose quote is NOT
+	//   - Phase 2 — on-chain DEX trades whose quote is NOT
 	//     on the peg list still populate this when the resolver
 	//     finds a recent `<quote>/<USD-peg>` VWAP in prices_1m at
 	//     the trade's timestamp. Wired when `[trades].usd_pegged_classic_assets`
@@ -584,8 +583,8 @@ type AssetDetail struct {
 	// fiat denomination.
 	FiatCodeAnchor *FiatCodeAnchor `json:"fiat_code_anchor,omitempty"`
 
-	// ─── Asset-catalogue overlay listing fields (spec'd 2026-07-02,
-	// board #33; populated when the server's AssetsReader is wired) ──
+	// ─── Asset-catalogue overlay listing fields (populated when
+	// the server's AssetsReader is wired) ──
 	Slug             string           `json:"slug,omitempty"`
 	Class            string           `json:"class,omitempty"`
 	Change1hPct      *string          `json:"change_1h_pct,omitempty"`
@@ -975,8 +974,7 @@ type MethodologyReference struct {
 //
 // BucketCloseAt is the start-of-day UTC of the prices_1d bucket
 // the pair was last active in. Aligns to UTC midnight by
-// construction; do NOT use for staleness — pre-2026-05-27 this
-// value was incorrectly served as `last_trade_at` (F-0065).
+// construction; do NOT use for staleness; it is not `last_trade_at`.
 type Market struct {
 	Base          string    `json:"base"`
 	Quote         string    `json:"quote"`
@@ -1133,7 +1131,7 @@ type IssuerListEntry struct {
 	OrgName               string `json:"org_name,omitempty"`
 	AssetCount            int64  `json:"asset_count"`
 	TotalObservationCount int64  `json:"total_observation_count"`
-	// OrgVerified — bidirectional SEP-1 proof (CS-100).
+	// OrgVerified — bidirectional SEP-1 proof.
 	OrgVerified bool `json:"org_verified"`
 	// ScamReason is non-empty when the issuer is in the curated
 	// scam directory.
@@ -1166,7 +1164,7 @@ type Issuer struct {
 	// OrgVerified is true only when the SEP-1 verification is
 	// BIDIRECTIONAL: the issuer's home_domain serves a stellar.toml
 	// that lists this issuer back. One-way resolution is spoofable
-	// and does NOT set this flag (CS-100).
+	// and does NOT set this flag.
 	OrgVerified bool `json:"org_verified"`
 	// ScamReason is non-empty when the issuer is in the curated
 	// scam directory — render as a warning.
@@ -1177,7 +1175,7 @@ type Issuer struct {
 	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
 	// AuthFlagsSource says WHERE the four flags above came from:
 	// "live" for a current ledger entry, "last_known" for an account
-	// that has since been removed (#374). A last_known row is a
+	// that has since been removed. A last_known row is a
 	// historical fact, not a current one — do not present it as the
 	// issuer's present configuration, and note it carries no
 	// home_domain, because a dead account must not keep advertising one.
@@ -1266,9 +1264,8 @@ type StatusLatency struct {
 	WindowSecs int     `json:"window_secs"`
 	// P95TargetMs / P99TargetMs are the server's own SLO thresholds,
 	// echoed so a consumer judges latency against the SAME numbers the
-	// status rollup does. Hardcoding them client-side is what produced
-	// site-audit S31 — two red SLO bars under a green
-	// "All systems operational" banner (cold audit 2026-08-04).
+	// status rollup does. Hardcoding them client-side risks
+	// two red SLO bars under a green "All systems operational" banner.
 	P95TargetMs float64 `json:"p95_target_ms"`
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
@@ -1354,8 +1351,8 @@ type Version struct {
 // true, GapStartsAt + GapEndsAt bound the widest such gap. Truncated
 // speaks only for the series' start and never fires for
 // `Timeframe: "all"`, and the envelope's coverage annotation speaks
-// only for a series that is entirely empty — so a holed series had
-// nothing on the wire to declare itself before this field.
+// only for a series that is entirely empty — so a holed series has
+// nothing else on the wire to declare itself.
 type ChartSeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
@@ -1387,8 +1384,8 @@ type ChartSeries struct {
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
 // — per-entity multi-window delta rollup. The *_value fields are money
-// (a price / market-cap snapshot) and are JSON STRINGS end to end (M7,
-// INV-2), matching every other money field the API serves; the
+// (a price / market-cap snapshot) and are JSON STRINGS end to end,
+// matching every other money field the API serves; the
 // *_delta_pct fields are percentages and stay numbers.
 type ChangeSummary struct {
 	EntityType   string `json:"entity_type"`

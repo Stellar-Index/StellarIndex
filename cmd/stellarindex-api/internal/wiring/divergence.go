@@ -21,10 +21,9 @@ func NewDivergenceAdapter(svc *divergence.Service) DivergenceAdapter {
 }
 
 // DivergenceFiringFor reads the cached verdict for the EXACT (asset,
-// quote) pair — never another quote of the same base. GH-1045: the
-// prior implementation called LookupCached(asset), which ORs every
-// quote's WarningFired together, so a diverging XLM/GBP flagged a
-// clean XLM/USD response. A pair that fails to construct (asset ==
+// quote) pair — never another quote of the same base. LookupCached(asset)
+// would OR every quote's WarningFired together, so a diverging XLM/GBP
+// would flag a clean XLM/USD response. A pair that fails to construct (asset ==
 // quote — callers should never reach this, since parsing already
 // rejects an identity price) reports unchecked rather than panicking.
 // The quorum behind `checked` (LookupCachedPairVerdict) is the

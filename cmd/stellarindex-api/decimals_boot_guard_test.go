@@ -2,11 +2,10 @@ package main
 
 // Source-level tripwire, the API twin of
 // cmd/stellarindex-aggregator/decimals_boot_guard_test.go — but the two
-// have DIFFERENT verdicts. The aggregator's boot refresh is fatal (#368
-// M9): it has no readiness surface between it and the orchestrator loop
-// that publishes prices. The API sits behind `/v1/readyz`, so RLT-366's
-// original fatal-on-boot version (make run() return an error) was
-// replaced by Q198's synchronous prime + critical readiness check
+// have DIFFERENT verdicts. The aggregator's boot refresh is fatal: it has no readiness surface between it and the orchestrator loop
+// that publishes prices. The API sits behind `/v1/readyz`, so a fatal-on-boot
+// load (make run() return an error) is replaced by a synchronous prime +
+// critical readiness check
 // (wiring.PrimeNonstandardDecimalsCache, see nonstandard_decimals_ready_test.go):
 // a failed first load now keeps the process up but red, instead of
 // putting systemd into a restart loop on a Postgres blip.

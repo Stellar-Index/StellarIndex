@@ -1,6 +1,6 @@
 package main
 
-// Finding T038, proven through the PRODUCTION seam: storePriceAtReader
+// Proven through the PRODUCTION seam: storePriceAtReader
 // is the one reader behind /v1/price/at and every /v1/price/changes
 // horizon, and it asked the thin-market gate about the trailing 24h
 // ending NOW while serving the bucket at-or-before a past `ts`.

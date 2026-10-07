@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Arg-parity between prewarmCaches and the handlers (#340 item 3).
+// Arg-parity between prewarmCaches and the handlers.
 //
 // The prewarm loop and the request handlers are two independent callers
 // of the SAME cached readers. A cache slot is selected by the exact
@@ -36,8 +36,8 @@ import (
 // prewarmLight's own comments:
 //
 //   - ORDER. /v1/pools defaults to MarketsOrderVolume24hDesc; the
-//     prewarm passed MarketsOrderPair. Live on 2026-05-09:
-//     /v1/pools?source=sdex 27s, soroswap 16s, phoenix 12s, comet 11s.
+//     prewarm passed MarketsOrderPair. A cold slot made
+//     /v1/pools?source=sdex take 27s, soroswap 16s, phoenix 12s, comet 11s.
 //   - SOURCES. The unfiltered /v1/pools handler builds
 //     `PoolsFilter{Sources: DexSourceNames()}`, not `Sources: nil`. The
 //     prewarm passed the zero filter, whose key fragment is `[]` rather
@@ -248,7 +248,7 @@ func runPrewarmLightForParity(t *testing.T) *callLog {
 
 	// catalogueLen large enough that catalogueFillPrewarmOptions adds
 	// nothing here — this test is about markets-reader call parity, not
-	// T279.
+	// catalogue fill.
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 	return log
 }
@@ -366,16 +366,15 @@ func sortedKeys(m map[string]bool) []string {
 // its zero value, so Order is AssetsOrderObservationCountDesc. Its
 // comment explained 199 as "/v1/coins?limit=200, minus the row
 // prependNative splices in". BOTH of those are gone: the /v1/coins route
-// was removed in rc.48 (see the AssetsReader field comment in
-// internal/api/v1/server.go) and `prependNative` no longer exists
-// anywhere in the tree. The slot the call warms TODAY is
+// does not exist (see the AssetsReader field comment in
+// internal/api/v1/server.go) and `prependNative` is not in the tree. The slot the call warms TODAY is
 // /v1/assets?limit=198 with no order_by — a limit that is not in
 // assetListingPrewarmLimits and that no known caller sends.
 //
 // This test states that correspondence so the constant is not
 // mysterious, and so whoever next touches it can see what it buys. It
 // deliberately does NOT assert that warming 198 is worthwhile: that is a
-// product call, recorded in #340, not an invariant.
+// product call, not an invariant.
 func TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot(t *testing.T) {
 	t.Parallel()
 

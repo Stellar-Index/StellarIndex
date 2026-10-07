@@ -218,9 +218,8 @@ func parseRetryAfter(v string) time.Duration {
 		// Overflow guard. time.Duration is int64 NANOSECONDS, so any
 		// delta-seconds value above ~292 years wraps: a hostile or
 		// misconfigured Retry-After of 9223372037 seconds silently
-		// became a NEGATIVE duration, and a caller sleeping on it would
-		// retry immediately — the opposite of back-off (wave-D
-		// F-SDK-06).
+		// becomes a NEGATIVE duration, and a caller sleeping on it would
+		// retry immediately — the opposite of back-off.
 		//
 		// Returns 0, the field's documented absent/unparseable sentinel
 		// that RetryAfterDuration already understands. NOT a clamp:
