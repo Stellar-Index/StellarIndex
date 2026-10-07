@@ -1271,7 +1271,7 @@ tests:
 
   # ── guard: the fraction arm — busy parity morning, 2% of flow ─────
   # The sdex wrapper-morning shape: 60 unit-ratio trades in
-  # 30m would trip the old absolute threshold, but they are 2% of the
+  # 30m would trip an absolute threshold, but they are 2% of the
   # source's flow so the >50% arm must keep it silent.
   - interval: 1m
     name: unit-ratio trades at a small fraction of flow raise nothing

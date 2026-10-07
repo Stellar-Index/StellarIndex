@@ -327,12 +327,12 @@ tests:
           Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
           '
-# Guard for the #323 restart shape: RunGapDetector pre-registers
+# Guard for the restart shape: RunGapDetector pre-registers
 # runs_total{outcome=ok|error} at 0 for every target on process start,
 # and the cursor-seeded schedule may defer every scan for hours. Series
 # present at 0 + a fresh stamp must satisfy none of the three clauses
 # (stamp fresh; family present; error counter not > 0). Rule-level only,
-# so it holds with or without #323's Go change.
+# so it holds with or without the Go-side pre-registration.
 - interval: 1m
   name: pre-registered runs_total at 0 with a fresh stamp and no scan due stays silent
   input_series:
@@ -518,7 +518,7 @@ tests:
           a replay of the affected ledgers. See the runbook.
   # The two counters are independent series: a dropped (unstorable)
   # slot must NOT masquerade as a recorded raw: row, which is exactly
-  # the operator confusion #291's separate counter exists to prevent.
+  # the operator confusion the separate counter exists to prevent.
   - eval_time: 60m
     alertname: stellarindex_ingestion_oracle_unknown_symbols
     exp_alerts: []
