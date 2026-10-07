@@ -1,20 +1,17 @@
-# systemd unit: pgBackRest restore-drill (ADR-0043 / CS-110).
+# systemd unit: pgBackRest restore-drill (ADR-0043).
 #
 # Rendered by Ansible. Runs scripts/ops/restore-drill.sh — a
 # NON-DESTRUCTIVE scratch restore of the pgBackRest stanza into a
 # disposable Postgres, proving the backup chain is actually
 # restorable rather than just "present" (a backup nobody has ever
-# restored is a hope, not a backup — CS-110). Results append to the
+# restored is a hope, not a backup). Results append to the
 # drill evidence log the script maintains.
 #
-# Sequencing (audit-2026-07-23 REL-backup-restore): this unit is
-# installed but NOT enabled by the ansible role — see
-# 18-pgbackrest-backup.yml. R1 was mid Phase-A capacity relief
-# (ZFS pool ~94% full) when this landed; the drill needs
-# MIN_FREE_GB=200 free on the drill volume and the script itself
-# refuses to run below that (safe-by-construction), but starting a
-# NEW heavy recurring job while capacity is this tight is an operator
-# call, not a default. Enable once Phase A clears:
+# Enabling is an operator call: this unit is installed but NOT enabled
+# by the ansible role (see 18-pgbackrest-backup.yml). The drill needs
+# MIN_FREE_GB=200 free on the drill volume and the script refuses to
+# run below that (safe-by-construction), but starting a heavy recurring
+# job on a capacity-tight pool is a decision, not a default. Enable with:
 #   systemctl enable --now restore-drill.timer
 
 [Unit]
@@ -31,11 +28,11 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/stellarindex-ops
-# #343 (2026-09-02): ADR-0043 §2.2 says the drill re-derives a random 100k-
-# ledger window from the archive and MEASURES throughput, "giving an honest
-# RTO figure". The unit never set this, so the CH stage had never once run on
-# the schedule and the lake RTO was an unmeasured claim. Dry-run (decode
-# only, nothing written); the script emits the throughput gauges to the
+# ADR-0043 §2.2 says the drill re-derives a random 100k-ledger window
+# from the archive and MEASURES throughput, "giving an honest RTO
+# figure". Without this set the CH stage never runs on the schedule
+# and the lake RTO is an unmeasured claim. Dry-run (decode only,
+# nothing written); the script emits the throughput gauges to the
 # node_exporter textfile dir when this is set.
 Environment=DRILL_CH_WINDOW=100000
 # 75 = run-heavy-job.sh skipped this fire (lock held): not a failure.
@@ -52,7 +49,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh restore-drill /usr/local/bin/restore-
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
 
-# BDR-03: the drill's deliverable is DR EVIDENCE, and journald rotates.
+# The drill's deliverable is DR EVIDENCE, and journald rotates.
 # Persist the run log off journald as belt-and-suspenders alongside the
 # script's own durable evidence file (RESTORE_DRILL_LOG_DIR, default
 # /var/lib/stellarindex/restore-drills) and its node_exporter metric.
@@ -78,30 +75,28 @@ TimeoutStartSec=57600
 # /var/lib/stellarindex/restore-drills (RESTORE_DRILL_LOG_DIR — created at
 # runtime via mkdir -p), its node_exporter metric under
 # /var/lib/node_exporter/textfile_collector, and its run log to
-# /var/log/restore-drill.log (BDR-03). ReadWritePaths is intentionally NOT
+# /var/log/restore-drill.log. ReadWritePaths is intentionally NOT
 # extended for these: they may not pre-exist, and a missing path in
 # ReadWritePaths fails namespace setup before ExecStart — full already
 # grants them.
 #
-# BDR-04 (2026-08-19): there is now NO ReadWritePaths at all. The single
-# remaining entry was /var/tmp/restore-drill, and that path can NEVER
+# There is NO ReadWritePaths at all. /var/tmp/restore-drill can NEVER
 # resolve here — PrivateTmp=true (below) gives this unit its own empty
-# /tmp and /var/tmp, so the host's ZFS drill dataset is invisible inside
-# the namespace. systemd therefore failed the unit at namespace setup
-# (226/NAMESPACE) before ExecStart on every scheduled fire, which is why
-# the drill had never once run on its timer: the only passing evidence on
-# record came from manual runs, which have no namespace. The dataset moved
-# to /var/lib/stellarindex/restore-drill (defaults/main.yml), which
-# ProtectSystem=full leaves writable and PrivateTmp does not shadow — so
-# the directive that broke it is not needed at all.
-# NoNewPrivileges is deliberately NOT set (BDR-04, 2026-08-19). This unit
-# runs as root by design and DROPS privilege with `sudo -u postgres` for
-# every pg operation. no-new-privs blocks sudo's setuid transition, so the
-# drill died instantly with "unable to open /etc/sudoers: Operation not
-# permitted" — the second namespace-class blocker found the same evening.
-# It also buys almost nothing here: a process already running as root has
-# nothing left to escalate to, so the directive was pure downside — it
-# disabled the one mechanism the script uses to run with LESS privilege.
+# /tmp and /var/tmp, so a drill dataset there is invisible inside the
+# namespace and systemd fails the unit at namespace setup
+# (226/NAMESPACE) before ExecStart on every scheduled fire (on r1 the
+# drill never once ran on its timer that way; manual runs, which have
+# no namespace, hid it). The dataset lives at
+# /var/lib/stellarindex/restore-drill (defaults/main.yml), which
+# ProtectSystem=full leaves writable and PrivateTmp does not shadow.
+# NoNewPrivileges is deliberately NOT set. This unit runs as root by
+# design and DROPS privilege with `sudo -u postgres` for every pg
+# operation. no-new-privs blocks sudo's setuid transition, so the drill
+# dies instantly with "unable to open /etc/sudoers: Operation not
+# permitted". It also buys almost nothing here: a process already
+# running as root has nothing left to escalate to, so the directive is
+# pure downside — it disables the one mechanism the script uses to run
+# with LESS privilege.
 PrivateTmp=true
 ProtectSystem=full
 ProtectKernelTunables=true

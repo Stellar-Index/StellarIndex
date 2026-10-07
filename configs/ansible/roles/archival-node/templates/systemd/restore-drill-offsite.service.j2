@@ -1,4 +1,4 @@
-# systemd unit: OFF-SITE pgBackRest restore-drill — repo2 (ADR-0043 / CS-110).
+# systemd unit: OFF-SITE pgBackRest restore-drill — repo2 (ADR-0043).
 #
 # Rendered by Ansible. Runs scripts/ops/restore-drill.sh with DRILL_REPO=2:
 # the same NON-DESTRUCTIVE scratch restore restore-drill.service performs
@@ -7,8 +7,8 @@
 # green repo1 drill says nothing about repo2: it reads the same disks the
 # live database is on.
 #
-# Cost and RTO, measured on the first and (before this unit) only off-site
-# drill, 2026-09-03: restore 2813 s, ~269 GB pulled from S3 for ~$24 of
+# Cost and RTO, measured on an off-site drill on r1: restore 2813 s,
+# ~269 GB pulled from S3 for ~$24 of
 # egress, tip lag 17 ledgers, hash-chain breaks 0, trades window match
 # 2,726,303 = 2,726,303, failures 0 — an off-site RTO of ~47 min against
 # ~9 min from repo1. Monthly, that is ~$24/month of egress bought for a
@@ -70,7 +70,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh restore-drill-offsite /usr/local/bin/
 # the actual pg/pgbackrest operations) — see its own EUID check.
 User=root
 
-# BDR-03: the drill's deliverable is DR EVIDENCE, and journald rotates.
+# The drill's deliverable is DR EVIDENCE, and journald rotates.
 # Persist the run log off journald, in its own file so a repo2 diagnosis
 # (S3 credentials, endpoint, cipher) is not interleaved with repo1's.
 StandardOutput=append:/var/log/restore-drill-offsite.log
@@ -88,7 +88,7 @@ IOSchedulingPriority=7
 TimeoutStartSec=57600
 
 # Hardening — identical to restore-drill.service.j2, for the same reasons
-# recorded there (BDR-04): ProtectSystem=full leaves /var, /srv and /run
+# recorded there: ProtectSystem=full leaves /var, /srv and /run
 # writable for the scratch datadir, the evidence log, the textfile metric,
 # the run log and the lock; no ReadWritePaths, because a listed path that
 # does not pre-exist fails namespace setup before ExecStart; PrivateTmp

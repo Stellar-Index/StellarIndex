@@ -1,11 +1,11 @@
-# systemd timer: monthly OFF-SITE pgBackRest restore-drill, repo2 (ADR-0043 / CS-110).
+# systemd timer: monthly OFF-SITE pgBackRest restore-drill, repo2 (ADR-0043).
 #
 # Rendered by Ansible; enabled where a repo2 bucket is configured
 # (restore_drill_offsite_enabled in defaults/main.yml).
 #
 # Cadence: MONTHLY, the same commitment ADR-0043 §1/§3 makes for the
 # on-box drill — each run pulls ~269 GB from S3 (~$24 of egress at the
-# 2026-09-03 size) and holds the drill volume for ~1 h, so monthly is the
+# measured size) and holds the drill volume for ~1 h, so monthly is the
 # heaviest cadence worth paying for and the lightest that keeps the proof
 # current.
 #

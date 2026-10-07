@@ -1,20 +1,19 @@
 ---
-# promtool unit tests for stellarindex_restore_drill_stale (BDR-03,
-# audit-2026-08-14), stellarindex_restore_drill_offsite_stale (off-site
-# drill, 2026-09-04) and stellarindex_restore_drill_failed (audit-2026-08-28
-# backup-restore-4).
+# promtool unit tests for stellarindex_restore_drill_stale,
+# stellarindex_restore_drill_offsite_stale and
+# stellarindex_restore_drill_failed.
 #
 #   promtool test rules deploy/monitoring/rule-tests/restore-drill_test.yml
 #
-# BDR-03: the installed restore-drill produced NO durable evidence and NO
-# metric (its $0-relative LOG_DIR resolved to a non-existent path and the
-# whole evidence phase was silently skipped). The fix makes the script
-# emit stellarindex_restore_drill_last_success_unix on a fully-clean run
-# and adds this staleness alert as the monitored signal.
+# An installed restore-drill whose $0-relative LOG_DIR resolves to a
+# non-existent path skips the whole evidence phase silently and
+# produces NO durable evidence and NO metric. The script therefore
+# emits stellarindex_restore_drill_last_success_unix on a fully-clean
+# run, and this staleness alert is the monitored signal.
 #
 # The script stamps last_success ONLY on a clean run and rewrites the
 # textfile each run, so an every-run-failed / dead-timer / never-ran drill
-# makes the series ABSENT (not old) — exactly the OBS-2 pattern. The plain
+# makes the series ABSENT (not old). The plain
 # `time() - last_success` branch evaluates over an empty vector there and
 # can never fire; the `absent_over_time(...)` branch restores that
 # coverage.
@@ -24,12 +23,12 @@
 # case (series absent) reports 0 firing alerts (FAIL), because with the
 # series absent nothing selects it.
 #
-# PROVEN-RED (off-site, 2026-09-04): run this file against the rules as
-# they stood before the off-site alert existed — every
+# PROVEN-RED (off-site): remove the off-site alert and unscope the
+# on-box rule, then run this file — every
 # stellarindex_restore_drill_offsite_stale case fails ("alertname not
 # found" / expected 1 got 0), and the "repo2 healthy, repo1 never drilled"
 # isolation case fails because the unscoped on-box absent_over_time branch
-# saw repo2's sample and stayed silent. The un-labelled cases pass either
+# sees repo2's sample and stays silent. The un-labelled cases pass either
 # way: the on-box rule selects repo=~"1|", whose empty alternative the
 # pre-label series satisfies — that is the compatibility the scoping was
 # chosen for. The repo3 case below carries its own red for the step from
@@ -111,7 +110,7 @@ tests:
                 `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
                 run `/usr/local/bin/restore-drill.sh` by hand.
 
-  # ── the labelled repo1 series (post-2026-09-04 script) is read the same ──
+  # ── the labelled repo1 series is read the same ──
   # The `time() - last_success` branch carries the label through to the
   # alert, so a responder sees which repo went stale.
   - interval: 1h
@@ -165,8 +164,8 @@ tests:
   # after it (900 h, must fire), so the number in the rule is what is
   # pinned, not merely "eventually fires".
 
-  # never ran / every run failed: the repo2 series is absent. The 2026-09-03
-  # hand-run wrote an UN-LABELLED series; it does not count for repo2.
+  # never ran / every run failed: the repo2 series is absent. An
+  # UN-LABELLED series does not count for repo2.
   - interval: 1h
     name: off-site drill never recorded (repo2 series absent) fires after 35d
     input_series:
@@ -335,15 +334,15 @@ tests:
                 run `/usr/local/bin/restore-drill.sh` by hand.
 
   # repo3 fresh, repo1 never drilled: the on-box selector must not accept
-  # a repo it was not written for. An earlier `repo!="2"` let ANY repo
+  # a repo it was not written for. `repo!="2"` would let ANY repo
   # other than 2 satisfy its absent branch, so with a repo3 series fresh
-  # and repo1 never drilled this ticket stayed SILENT — the same masking
+  # and repo1 never drilled this ticket would stay SILENT — the same masking
   # inversion the per-repo scoping exists to fix, one repo over. It is
   # reachable: the script takes any positive-integer DRILL_REPO and writes
   # restore_drill_repo<N>.prom with repo="N". `repo=~"1|"` selects repo1
   # and the un-labelled series only, so the absent branch fires here.
   #
-  # PROVEN-RED (2026-09-04): put `{repo!="2"}` back on both branches of
+  # PROVEN-RED: put `{repo!="2"}` back on both branches of
   # stellarindex_restore_drill_stale and re-run — this case reports
   # "expected 1 alerts but got 0", while the other seven still pass.
   - interval: 1h
