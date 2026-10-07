@@ -1,14 +1,13 @@
 // Package band decodes on-chain price updates from Band Protocol's
 // Soroban StandardReference contract.
 //
-// Architectural note: Band's Stellar contract **emits zero events**
-// (verified 2026-04-22 via grep across
-// bandprotocol/band-std-reference-contracts-soroban; confirmed
-// 2026-04-24 against the pinned source). A conventional
-// dispatcher.Decoder running on emitted events would never fire. So
-// this package plugs into dispatcher.ContractCallDecoder instead —
-// it observes the InvokeContract op itself, decoding the relayer's
-// call args as the authoritative payload.
+// Architectural note: Band's Stellar contract **emits zero events**.
+// The pinned source of bandprotocol/band-std-reference-contracts-soroban
+// publishes none, so a conventional dispatcher.Decoder running on
+// emitted events would never fire. This package plugs into
+// dispatcher.ContractCallDecoder instead — it observes the
+// InvokeContract op itself, decoding the relayer's call args as the
+// authoritative payload.
 //
 // Wire shape (verified
 // .discovery-repos/band-soroban/src/contract.rs:23-35):
@@ -55,17 +54,15 @@ const DefaultDecimals uint8 = 9
 // documentation — `stellarindex_oracle_stale` alerts at 10× this
 // value, so the constant IS the alert threshold for this source.
 //
-// It was 60 until 2026-09-01, taken from "the poll-cadence
-// recommendation in the discovery doc" — how often a CONSUMER might
-// poll, not how often the relayer publishes. That made the threshold
-// 10 minutes against an oracle that updates hourly, and
-// `stellarindex_oracle_stale{source="band"}` fired for 100% of
-// samples over the trailing 7 days, for both crypto:USDC and
-// crypto:XLM. An alert that is always firing carries no information
-// and desensitises the one signal that would show a real oracle
-// outage.
+// A value of 60, taken from the discovery doc's poll-cadence
+// recommendation — how often a CONSUMER might poll, not how often the
+// relayer publishes — made the threshold 10 minutes against an oracle
+// that updates hourly: `stellarindex_oracle_stale{source="band"}` fired
+// for 100% of samples over a trailing 7 days, for both crypto:USDC and
+// crypto:XLM. An alert that is always firing carries no information and
+// desensitises the one signal that would show a real oracle outage.
 //
-// Measured on r1, 2026-09-01, over 24h:
+// Measured on r1 over 24h:
 //
 //	changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
 //	  crypto:USDC = 24    crypto:XLM = 24     → every 3600s
@@ -102,10 +99,7 @@ var (
 	// ErrEmptyRates — every slot of a non-empty symbol_rates vector
 	// was USD / rate 0, or relay()'s resolve_time falls outside the
 	// contract's acceptance window (an empty vector is a no-op, not
-	// this error). Since the oracle
-	// capture-totality change (PR-2) an unmapped symbol is NOT a
-	// reason: it is recorded verbatim as a `raw:<symbol>` row
-	// (canonical.AssetOracleRaw). The former ErrUnknownSymbol
-	// per-entry skip sentinel was retired with that change.
+	// this error). An unmapped symbol is NOT a reason: it is recorded
+	// verbatim as a `raw:<symbol>` row (canonical.AssetOracleRaw).
 	ErrEmptyRates = errors.New("band: empty symbol_rates vector")
 )

@@ -66,9 +66,8 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.Type != "contract" {
 		return false
 	}
-	// The projector reuses this same watched-set decoder (F-1316) — it
-	// must reproduce exactly what the dispatcher writes, so the watched
-	// set is the gate on both paths.
+	// The projector runs this same watched-set decoder, so the watched
+	// set is the gate on every path that decodes these events.
 	if _, watched := d.watched[ev.ContractID]; !watched {
 		return false
 	}

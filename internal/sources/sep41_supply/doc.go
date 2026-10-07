@@ -23,7 +23,7 @@
 //
 // Supply-affecting events arrive in three on-chain shapes that
 // differ in counterparty POSITION — the topic count alone does
-// not disambiguate them (lake-verified on r1, 2026-06-15):
+// not disambiguate them (lake-verified on r1):
 //
 //	legacy SAC    mint     ["mint", admin, to]                  (to @ topic[2])
 //	              clawback ["clawback", admin, from]            (from @ topic[2])
@@ -33,11 +33,10 @@
 //	bare SEP-41   mint     ["mint", to]                          (to @ topic[1])
 //	              burn     ["burn", from]                         (from @ topic[1])
 //
-// CAP-67 (Whisk, mainnet 2025-09-03) replaced the legacy admin-
-// prefixed SAC form with the SEP-41-spec form + a trailing
-// sep0011_asset STRING — so the same topic count (3) can carry
-// the counterparty at a DIFFERENT index. sep0011_asset is a
-// String (ScvString), not an Address.
+// CAP-67 (Whisk) replaced the legacy admin-prefixed SAC form with the
+// SEP-41-spec form + a trailing sep0011_asset STRING — so the same
+// topic count (3) can carry the counterparty at a DIFFERENT index.
+// sep0011_asset is a String (ScvString), not an Address.
 //
 // Body (event.Value) carries the amount in stroops in ONE of two
 // shapes (SEP-41 is decimal-agnostic at the wire level; total /
@@ -51,8 +50,8 @@
 // when the issuer stamps a memo string into `to_muxed_id` (mainnet-
 // observed on watched tokens, e.g. "Auto recharge transaction"). The
 // amount then lives in the map's `amount` field — [decodeAmount]
-// type-tests and unwraps it (2026-07-06 dropped-mints finding: the old
-// i128-only decode rejected every map body and dropped the row).
+// type-tests and unwraps it; an i128-only decode would reject every
+// map body and drop the row.
 //
 // # Counterparty extraction
 //

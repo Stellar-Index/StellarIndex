@@ -78,17 +78,15 @@ type Decoder struct {
 	// evictedBareSync counts sync-without-swap evictions, which
 	// deposit/withdraw/skim manufacture on every call (README Q2)
 	// and are expected LP-traffic noise, not lost trades. Splitting
-	// them keeps evictedOrphans legible: on a venue with heavy LP
-	// traffic a single undifferentiated counter sits permanently in
-	// the thousands and a real lost swap adds 1 to a number nobody
-	// can read (GH-1308).
+	// them keeps evictedOrphans legible: on a venue with heavy LP traffic
+	// a single undifferentiated counter would sit in the thousands, and a
+	// real lost swap would add 1 to a number nobody can read.
 	//
 	// evictedOrphans is read by internal/dispatcher via the
 	// EvictedOrphans() duck-typed interface and wired to
 	// obs.SourceOrphanEventsTotal (internal/pipeline/processor.go).
-	// skippedUnknownPair is read via UnknownContractDrops() and
-	// wired to obs.SourceDecodeErrorsTotal — see [GH-1307] on
-	// [Decoder.UnknownContractDrops].
+	// skippedUnknownPair is read via UnknownContractDrops() and wired
+	// to obs.SourceDecodeErrorsTotal — see [Decoder.UnknownContractDrops].
 	evictedOrphans     int
 	evictedBareSync    int
 	skippedUnknownPair int
@@ -179,8 +177,8 @@ func (*Decoder) Name() string { return SourceName }
 //     canonical Soroswap factories (MainnetFactories — Soroswap has more
 //     than one; see that var). This is the load-bearing gate: without it a
 //     foreign contract could inject a pair→tokens mapping into the registry
-//     and have its own swaps mis-attributed as Soroswap trades (G6-02 /
-//     F-1347); with only ONE factory it would miss the others' pairs.
+//     and have its own swaps mis-attributed as Soroswap trades; with
+//     only ONE factory it would miss the others' pairs.
 //   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY
 //     when the emitter is a REGISTERED Soroswap pair. The registry is
 //     seeded from factory new_pair events (live), a startup DB warm, and
@@ -206,8 +204,8 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	// the events of any LP-share token an operator later adds to
 	// [supply] watched_sep41_contracts. Soroswap projects nothing from
 	// them either way (expected-zero), so not claiming them is the
-	// honest AND safe arm. (Verified 2026-07-31: no watched SEP-41
-	// contract is a registered pair, so nothing changes today.)
+	// honest AND safe arm. At the last check no watched SEP-41 contract
+	// was a registered pair.
 	if kind == EventPairToken {
 		return false
 	}
@@ -268,9 +266,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 	// Pair-contract deposit/withdraw: LP add / remove. Self-contained
 	// (does NOT feed the swap+sync correlation buffer). Emit a
-	// LiquidityEvent so the sink lands a soroswap_liquidity row. These
-	// were classified + Matched but dropped until audit 2026-08-03
-	// (every-event mission).
+	// LiquidityEvent so the sink lands a soroswap_liquidity row.
 	if kind == EventDeposit || kind == EventWithdraw {
 		return d.emitLiquidity(ev, kind)
 	}
@@ -298,17 +294,16 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // absorbEvent feeds one swap/sync into the correlation buffer under the
 // decoder lock and returns the pairs that just completed.
 //
-// A method with `defer d.mu.Unlock()` rather than the inline
-// Lock/…/Unlock this used to be, because the dispatcher RECOVERS a
-// decoder panic and carries on (internal/dispatcher/panic_guard.go,
-// #371 F1). A panic raised inside a critical section whose Unlock sits
-// on the line below it never runs that Unlock: d.mu stays held for the
-// life of the process, the very next event's Matches blocks on
-// RLock, and the whole dispatch goroutine deadlocks with /metrics
-// still answering and the unit still `active`. That is strictly worse
-// than the crash-loop the guard replaced — a wedge systemd cannot see.
-// Every other stateful adapter in the guarded set (phoenix,
-// liquidity_pools, claimable_balances) already unlocks via defer.
+// A method with `defer d.mu.Unlock()` rather than an inline
+// Lock/…/Unlock, because the dispatcher RECOVERS a decoder panic and
+// carries on (internal/dispatcher/panic_guard.go). A panic raised
+// inside a critical section whose Unlock sits on the line below it
+// never runs that Unlock: d.mu stays held for the life of the process,
+// the very next event's Matches blocks on RLock, and the whole dispatch
+// goroutine deadlocks with /metrics still answering and the unit still
+// `active`. That is strictly worse than a crash-loop — a wedge systemd
+// cannot see. Every other stateful adapter in the guarded set (phoenix,
+// liquidity_pools, claimable_balances) unlocks via defer too.
 func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time) []RawPair {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -474,7 +469,7 @@ func (d *Decoder) Drain() []consumer.Event {
 
 // EvictedOrphans is the count of swap-only (no matching sync) buffer
 // entries dropped by age-out — a real lost trade. Excludes bare-sync
-// evictions (see [Decoder.EvictedBareSync]); GH-1308.
+// evictions (see [Decoder.EvictedBareSync]).
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -485,7 +480,7 @@ func (d *Decoder) EvictedOrphans() int {
 // entries dropped by age-out. Deposits, withdrawals and skims each
 // emit a sync with no preceding swap (README Q2) — expected LP
 // traffic, not a lost trade. Kept separate from [Decoder.EvictedOrphans]
-// so that counter stays a legible loss signal (GH-1308).
+// so that counter stays a legible loss signal.
 func (d *Decoder) EvictedBareSync() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -504,7 +499,7 @@ func (d *Decoder) SkippedUnknownPair() int {
 // reporter interface (mirrors [Decoder.EvictedOrphans]) so a
 // completed swap dropped for want of a pair-token mapping is
 // surfaced to obs.SourceDecodeErrorsTotal instead of vanishing with
-// no error, log or metric (GH-1307).
+// no error, log or metric.
 func (d *Decoder) UnknownContractDrops() int {
 	return d.SkippedUnknownPair()
 }

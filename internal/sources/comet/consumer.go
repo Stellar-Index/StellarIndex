@@ -39,10 +39,10 @@ type LiquidityEvent struct {
 	TxHash     string
 	OpIndex    uint32
 	// EventIndex is the contract event's index within its operation —
-	// the per-event discriminator added to the comet_liquidity PK by
-	// migration 0059 (F-1324). The swap path already fans op_index via
-	// canonical.FanoutOpIndex; the liquidity path keys on event_index
-	// directly so two same-(kind,token) events in one op don't collide.
+	// the per-event discriminator in the comet_liquidity PK (migration
+	// 0059). The swap path fans op_index via canonical.FanoutOpIndex;
+	// the liquidity path keys on event_index directly so two
+	// same-(kind,token) events in one op don't collide.
 	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         LiquidityKind

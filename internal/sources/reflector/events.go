@@ -69,7 +69,7 @@ const DefaultDecimals uint8 = 14
 // oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300
 
-// Event-topic constants. Re-verified 2026-04-23 against
+// Event-topic constants. Verified against
 // `reflector-contract/oracle/src/events.rs:4-10` — soroban-sdk 25.3.0.
 //
 // The contract definition is:
@@ -127,13 +127,10 @@ var (
 	// ErrEmptyPrices — every slot of a non-empty prices vector was
 	// non-positive (an empty on-wire vector is a no-op, not this
 	// error). Reflector filters zero prices before publish, so this
-	// should never fire; guard against it defensively. Since the oracle capture-totality change (PR-2)
-	// an unmapped symbol is NOT a reason: it is recorded verbatim
-	// as a `raw:<symbol>` row (canonical.AssetOracleRaw), so an
-	// all-unknown vector decodes to rows, not to this error. The
-	// former ErrUnknownSymbol sentinel (per-entry skip of symbols
-	// outside the ADR-0010 / ADR-0014 allow-lists) was retired
-	// with that change — nothing skips on mapping any more.
+	// should never fire; guard against it defensively. An unmapped
+	// symbol is NOT a reason: it is recorded verbatim as a
+	// `raw:<symbol>` row (canonical.AssetOracleRaw), so an all-unknown
+	// vector decodes to rows, not to this error.
 	ErrEmptyPrices = errors.New("reflector: empty prices vector")
 
 	// ErrPriceVectorOverflow — prices vector size exceeded the
@@ -147,14 +144,13 @@ var (
 	// a feed explosion or a decoder bug.
 	ErrPriceVectorOverflow = errors.New("reflector: price vector exceeds OpIndex fanout stride")
 
-	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride
-	// (DAT-06/trap-15, audit-2026-07-23). The synthetic OpIndex packs
-	// (OperationIndex, EventIndex, vector position) into one uint32;
-	// an EventIndex this large would spill into the next operation's
-	// synthetic range. Real Reflector-adjacent ops emit at most a
-	// handful of contract events, so hitting the stride means either
-	// a decoder bug or a contract emitting far more events per op
-	// than anything observed.
+	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride.
+	// The synthetic OpIndex packs (OperationIndex, EventIndex, vector
+	// position) into one uint32; an EventIndex this large would spill
+	// into the next operation's synthetic range. Real Reflector-adjacent
+	// ops emit at most a handful of contract events, so hitting the
+	// stride means either a decoder bug or a contract emitting far more
+	// events per op than anything observed.
 	ErrEventIndexOverflow = errors.New("reflector: EventIndex exceeds OpIndex fanout stride")
 
 	// ErrOperationIndexOverflow — e.OperationIndex is negative or at least

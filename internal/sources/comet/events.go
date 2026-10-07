@@ -3,10 +3,10 @@
 // N ≥ 2 tokens with arbitrary weights; trading preserves the
 // weighted-geometric-mean invariant.
 //
-// Wire shape, verified 2026-04-23 against the public contract source
+// Wire shape, verified against the public contract source
 // (comet-contracts-v1/contracts/src/c_pool/event.rs and
-// call_logic/pool.rs:21,184-191; re-verified 2026-05-26 against
-// upstream `main` for the join/exit/deposit/withdraw additions):
+// call_logic/pool.rs:21,184-191) and against upstream `main` for the
+// join/exit/deposit/withdraw additions:
 //
 //	topic[0] = Symbol("POOL")
 //	topic[1] = Symbol("<event_name>")
@@ -54,7 +54,7 @@
 // `POOL` is a shared topic namespace across every Comet pool contract
 // — ROUTING (which decoder claims the event) is by topic bytes, but
 // ATTRIBUTION is gated on contract identity AT DISPATCH TIME
-// (ADR-0035/0040, CS-026): Decoder.Matches (dispatcher_adapter.go)
+// (ADR-0035/0040): Decoder.Matches (dispatcher_adapter.go)
 // only claims an event whose ContractID is in the curated registry
 // (MainnetGatedSet + protocol_contracts warm) — the bare topic tuple
 // is forgeable by any pubnet contract built from (or mimicking) the
@@ -175,7 +175,7 @@ var (
 // Errors returned by the decode path.
 var (
 	// ErrNotCometSwap — topic[0..1] doesn't match (POOL, swap).
-	// Returned by the legacy `decodeSwap` entry point when invoked
+	// Returned by the `decodeSwap` entry point when invoked
 	// against a non-swap event. New decoders should prefer
 	// ErrNotCometEvent.
 	ErrNotCometSwap = errors.New("comet: not a Comet POOL.swap event")
@@ -183,10 +183,10 @@ var (
 	// ErrNotCometEvent — topic[0..1] doesn't match any known Comet
 	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
 	// future contract upgrade, or an unrelated contract entirely.
-	// NOTE (cold audit 2026-08-03): unknown kinds are rejected in
-	// Matches (classify == ""), so they land in the dispatcher's
-	// GLOBAL unmatched tally (decoder_stats_5m) — comet implements no
-	// EvictedOrphans() reporter, so the per-source
+	// NOTE: unknown kinds are rejected in Matches (classify == ""), so
+	// they land in the dispatcher's GLOBAL unmatched tally
+	// (decoder_stats_5m) — comet implements no EvictedOrphans()
+	// reporter, so the per-source
 	// `stellarindex_source_orphan_events_total{source="comet"}` series
 	// never populates and no alert fires on it. The real live signal
 	// for a new kind on the gated pool is the ADR-0033 recognition
@@ -202,11 +202,10 @@ var (
 	// is zero / negative. A valid swap always has positive amounts
 	// on both sides; zero-amount is either a contract bug or an
 	// edge case we'd rather skip+count than emit. Liquidity events
-	// also reject non-positive amounts. CAVEAT (cold audit
-	// 2026-08-03, traced in the upstream Rust): the
-	// wdr_tokn_amt_in_get_lp_tokns_out withdraw variant asserts
-	// pool_amount_in > 0 but NOT token_amount_out > 0, so a dust BPT
-	// withdraw with min_amount_out=0 can emit
+	// also reject non-positive amounts. CAVEAT (traced in the upstream
+	// Rust): the wdr_tokn_amt_in_get_lp_tokns_out withdraw variant
+	// asserts pool_amount_in > 0 but NOT token_amount_out > 0, so a
+	// dust BPT withdraw with min_amount_out=0 can emit
 	// {token_amount_out: 0, pool_amount_in: >0} while genuinely
 	// burning BPT — a real state change this reject drops. The drop
 	// is honest-blind, not silent: the event Matches but fails

@@ -22,9 +22,9 @@ const auctionTopicArity = 3
 //
 // classify covers only the three auction topics. The dispatcher
 // adapter routes through classifyAny (decode_money_market.go), which
-// also maps the money-market / admin / credit-risk topics now that
-// those decoders have shipped. classify is retained as the narrow
-// auction-only fast path used by the auction decode_test.go cases.
+// also maps the money-market / admin / credit-risk topics. classify is
+// the narrow auction-only fast path used by the auction decode_test.go
+// cases.
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -65,9 +65,8 @@ type AssetAmount struct {
 // structs — but Blend's struct uses NAMED fields, so wire form is
 // ScvMap with three entries keyed by symbol.
 //
-// Open item from docs/discovery/dexes-amms/blend.md: confirmed at
-// the contract source level; binary-shape-confirmation will land
-// alongside the Blend WASM audit (Task #45).
+// The shape is confirmed at the contract source level
+// (docs/discovery/dexes-amms/blend.md).
 type AuctionData struct {
 	// Bid is the map of (asset, amount) pairs the filler spends
 	// to clear the auction.
@@ -92,10 +91,10 @@ type NewAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	// EventIndex is the contract event's index within its operation —
-	// the per-event discriminator added to the blend_auctions PK by
-	// migration 0058 (F-1324) so multiple auction events from one op
-	// don't collide on ON CONFLICT DO NOTHING.
+	// EventIndex is the contract event's index within its operation — the
+	// per-event discriminator in the blend_auctions PK (migration 0058), so
+	// multiple auction events from one op don't collide on ON CONFLICT DO
+	// NOTHING.
 	EventIndex uint32
 	Timestamp  time.Time
 }
@@ -117,9 +116,9 @@ type FillAuctionEvent struct {
 	Ledger  uint32
 	TxHash  string
 	OpIndex uint32
-	// EventIndex — per-event discriminator (blend_auctions PK,
-	// migration 0058 / F-1324). A liquidation that fills several
-	// positions in one op emits multiple fill_auction events.
+	// EventIndex — per-event discriminator (blend_auctions PK, migration
+	// 0058). A liquidation that fills several positions in one op emits
+	// multiple fill_auction events.
 	EventIndex uint32
 	Timestamp  time.Time
 }
@@ -134,8 +133,7 @@ type DeleteAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	// EventIndex — per-event discriminator (blend_auctions PK,
-	// migration 0058 / F-1324).
+	// EventIndex — per-event discriminator (blend_auctions PK, migration 0058).
 	EventIndex uint32
 	Timestamp  time.Time
 }
