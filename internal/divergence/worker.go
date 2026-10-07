@@ -22,7 +22,7 @@ import (
 // interface so tests can substitute miniredis or a fake without
 // pulling the full redis.UniversalClient surface.
 //
-// SAdd / SMembers / Expire were added for F-1344: the worker keys
+// SAdd / SMembers / Expire exist because the worker keys
 // divergence results per-pair (`div:<base>/<quote>`) and maintains a
 // per-base index SET (`div:idx:<base>`) so the by-asset reader can
 // discover and OR every quote's WarningFired flag without a
@@ -57,16 +57,16 @@ type CachedResult struct {
 	//   - DivergencePct > Threshold — the median of the references
 	//     disagrees with our price; or
 	//   - AgreementCount == 0 — NO responding reference corroborates
-	//     our price within Threshold (MNY-22).
+	//     our price within Threshold.
 	//
 	// The second leg exists because the median gate alone is blind to
 	// symmetric disagreement: references straddling our price (one
 	// +8%, one −8%) produce a median equal to our price and a
-	// DivergencePct of ~0, so total disagreement read as agreement.
+	// DivergencePct of ~0, so total disagreement would read as agreement.
 	// See [Service.RefreshPair] for why the leg is "nobody agrees"
 	// rather than "somebody disagrees".
 	//
-	// W3-guards-2: the raw condition above must additionally have
+	// The raw condition above must additionally have
 	// PERSISTED for at least ServiceOptions.WarningPersistence (default
 	// 5m) before this flips true. OurPrice is a shortest-window VWAP
 	// while the references are instantaneous spot quotes, so on a fast
@@ -105,7 +105,7 @@ type CachedResult struct {
 	// AgreementCount=4 reads "five references answered, four agree
 	// with us".
 	//
-	// CS-087 semantics: failed references neither agree nor
+	// Failed references neither agree nor
 	// disagree, so consumers MUST gate on SuccessCount before
 	// interpreting this — SuccessCount=0 ⇒ AgreementCount=0 means
 	// "unchecked", not "unanimous disagreement".
@@ -156,7 +156,7 @@ type ObservationSink interface {
 // so the sink can evolve without the Service changing.
 //
 // Canonical definition lives in [domain.DivergenceObservationRecord]
-// (D8 M0-1: internal/storage/timescale reads/writes this shape and
+// (internal/storage/timescale reads/writes this shape and
 // must not import upward into this package to do so); this is a
 // transparent alias so every existing caller of
 // divergence.ObservationRecord is unaffected.
@@ -169,8 +169,7 @@ type ObservationRecord = domain.DivergenceObservationRecord
 // and the default divergence-refresh interval. That is exactly the
 // horizon over which a fast-move gap between our windowed VWAP and a
 // reference spot self-clears, so a divergence that outlives it is real
-// rather than the artefact of the two values pricing different instants
-// (W3-guards-2).
+// rather than the artefact of the two values pricing different instants.
 const DefaultWarningPersistence = 5 * time.Minute
 
 // ServiceOptions configures a [Service].
@@ -202,13 +201,13 @@ type ServiceOptions struct {
 	// spot quotes): on a fast price move the VWAP lags the spot by up
 	// to one window, so a legitimate move momentarily reads as a
 	// divergence that self-clears within a window, while a genuine
-	// divergence persists past it (W3-guards-2). It is a debounce, not
+	// divergence persists past it. It is a debounce, not
 	// a threshold bump, so it suppresses ONLY transient gaps and never
 	// blinds a sustained one — however small.
 	//
 	// Zero (unset) defaults to [DefaultWarningPersistence] (5m). A
-	// NEGATIVE value disables the gate (immediate firing, the
-	// pre-debounce behaviour) for operators who accept the
+	// NEGATIVE value disables the gate (immediate firing) for
+	// operators who accept the
 	// false-positive trade-off, and for unit tests isolating the
 	// threshold/agreement logic from the debounce.
 	WarningPersistence time.Duration
@@ -240,11 +239,11 @@ type ServiceOptions struct {
 	// ObservationSink, when non-nil, receives one record per (pair,
 	// reference) tuple every refresh. Persists the per-reference
 	// delta history that the Redis cache discards. Optional — nil
-	// keeps legacy Redis-only behaviour.
+	// leaves the Redis cache as the only record.
 	ObservationSink ObservationSink
 
 	// Logger, when non-nil, receives WARN-level log lines for sink
-	// failures. Optional — nil silences the path (legacy behaviour).
+	// failures. Optional — nil silences the path.
 	// The aggregator passes its component logger so failures land
 	// in the same journal stream as the rest of the orchestrator.
 	Logger *slog.Logger
@@ -293,20 +292,19 @@ type Service struct {
 	sink        ObservationSink
 	// logger is optional — nil-safe. When set, sink failures are
 	// logged at WARN per (pair, reference) instead of being
-	// silently dropped. Pre-2026-05-10 the missing-log meant
-	// Postgres write failures (e.g. during the disk-full SEV-2
-	// cascade) silently dropped every divergence_observations row
-	// — operators only saw it when the explorer's /divergences
-	// page surfaced a gap, days later.
+	// silently dropped. Without the log, Postgres write failures
+	// (e.g. on a full disk) silently drop every
+	// divergence_observations row, and operators only see it when
+	// the explorer's /divergences page surfaces a gap.
 	logger *slog.Logger
 
 	// onWarning + warningState power the edge-triggered fan-out
-	// hook (F-1249 codex audit-2026-05-12). `warningState` maps
+	// hook. `warningState` maps
 	// pair.String() → the WarningFired of the most recent EVALUATED
 	// refresh; the hook fires only on `false → true` transitions, and a
 	// below-quorum refresh carries this value forward untouched.
 	//
-	// firingSince (W3-guards-2) maps pair.String() → the current
+	// firingSince maps pair.String() → the current
 	// uninterrupted raw-firing streak (its first and latest firing
 	// comparison times), and powers the WarningPersistence debounce in
 	// [Service.warningPersists]. It is cleared the moment a refresh
@@ -465,7 +463,7 @@ func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
 // configured but every one failed for this pair (SuccessCount == 0). The
 // cache is still written (recording the outage state), but the caller gets a
 // distinct signal so a total reference outage can be alerted on instead of
-// silently counting as a successful refresh (CS-088). It is NOT returned when
+// silently counting as a successful refresh. It is NOT returned when
 // no references are configured at all — that's an intentional-disabled state.
 var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
 
@@ -503,27 +501,26 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// fire" for that reference.
 	agreeing := CountAgreeing(ourPrice, res.Sources, s.threshold)
 
-	// MNY-22: the warning gate is median-vs-ourPrice OR nobody-agrees.
+	// The warning gate is median-vs-ourPrice OR nobody-agrees.
 	// The median leg alone masks symmetric disagreement — two
 	// references at ±8% put the median exactly on our price, so
-	// DivergencePct ≈ 0 and the warning stayed silent while NO
-	// reference actually corroborated us. AgreementCount was already
-	// computed for the confidence score and captured precisely that,
-	// but nothing gated on it.
+	// DivergencePct ≈ 0 and the warning would stay silent while NO
+	// reference actually corroborated us. AgreementCount, also a
+	// confidence-score input, captures precisely that.
 	//
 	// The leg is "AgreementCount == 0" (no responding reference
 	// corroborates us), NOT "any reference disagrees": with three or
 	// more references a single flaky one would otherwise pin the
 	// warning on permanently, which is a false-positive machine rather
-	// than a signal. Both legs are gated on SuccessCount >= minSources
-	// per CS-087 — with no responses, AgreementCount == 0 means
+	// than a signal. Both legs are gated on SuccessCount >= minSources:
+	// with no responses, AgreementCount == 0 means
 	// "unchecked", not "unanimous disagreement".
 	checked := res.SuccessCount >= s.minSources
 	evaluated := checked && !pinned
 	recordReferenceHealth(pair, res, checked)
 	s.gaps.observe(pair.String(), ourPrice, res.Sources, pinned, time.Now())
 
-	// W3-guards-2: our value is a shortest-window VWAP; the references
+	// Our value is a shortest-window VWAP; the references
 	// are instantaneous spot quotes. On a fast price move the VWAP lags
 	// the spot for up to one window, so rawFiring trips on a legitimate
 	// move that self-clears within that window. Only publish the warning
@@ -543,7 +540,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// latch, so it carries the last evaluated verdict forward.
 	warningFired, firingSince := s.lastWarning(pair.String()), s.lastFiringSince(pair.String())
 	if evaluated {
-		// #1041: at the quorum floor (SuccessCount==2) the median is an
+		// At the quorum floor (SuccessCount==2) the median is an
 		// arithmetic mean, so ONE reference off by more than 2×threshold
 		// fires the median leg even when the OTHER reference agrees to
 		// the last decimal — agreeing==0 only vetoes total
@@ -552,7 +549,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		// median leg can fire: majority corroboration means the
 		// divergence is attributable to the disagreeing minority, not to
 		// us. This does not touch the agreeing==0 leg above it — that
-		// one fires independent of DivergencePct (MNY-22: two references
+		// one fires independent of DivergencePct (two references
 		// symmetric around ourPrice put the median AT ourPrice while
 		// nobody individually agrees).
 		medianLegFiring := res.DivergencePct > s.threshold && agreeing < (res.SuccessCount+1)/2
@@ -584,9 +581,9 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		return fmt.Errorf("divergence: marshal cached result: %w", err)
 	}
 
-	// F-1344 (G16-03): write a PER-PAIR key, not a per-base key. The
-	// orchestrator calls RefreshPair once per configured pair; a
-	// per-base key let the last pair in iteration order clobber the
+	// Write a PER-PAIR key, not a per-base key. The orchestrator
+	// calls RefreshPair once per configured pair; a per-base key
+	// would let the last pair in iteration order clobber the
 	// asset's divergence verdict. The per-pair key keeps each pair's
 	// result independent; the by-asset reader (LookupCached) ORs them.
 	if err := s.cache.Set(ctx, key.String(), body, s.cacheTTL).Err(); err != nil {
@@ -612,15 +609,15 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// load-bearing operation that drives flags.divergence_warning
 	// on the API response — has already succeeded.
 	if s.sink != nil {
-		// COR-12: stamp the durable observation with the COMPARISON
+		// Stamp the durable observation with the COMPARISON
 		// time — the same instant handed to Compare, and therefore the
 		// instant each reference priced — not the wall clock at write
 		// time, which trails it by the whole reference fan-out (up to
 		// PerReferenceTimeout). observed_at is also part of the row's
 		// conflict key, so this additionally makes a re-run of the same
 		// comparison idempotent instead of inserting a near-duplicate.
-		// A caller that supplies no comparison time falls back to the
-		// previous behaviour rather than persisting a zero timestamp.
+		// A caller that supplies no comparison time falls back to
+		// ComputedAt rather than persisting a zero timestamp.
 		stampedAt := observedAt.UTC()
 		if observedAt.IsZero() {
 			stampedAt = cached.ComputedAt
@@ -631,20 +628,19 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	if evaluated {
 		s.recordWarning(ctx, pair, cached)
 	}
-	// CS-088: references were configured but none responded — the cache now
+	// References were configured but none responded — the cache now
 	// holds a SuccessCount=0 result carrying the last verdict forward, which
 	// nothing on the wire distinguishes from a fresh one except the quorum.
 	// Signal the outage so the refresh loop can emit a distinct outcome and
 	// page on a dark checker.
 	//
-	// #1044: asset_unsupported is structural non-coverage ("no reference
-	// for this pair on this source", reference.go:103-106), not a
-	// degradation — [ErrAssetUnsupported]'s own doc says so — but it was
-	// folded into FailureCount alongside real transport failures, so a
-	// pair whose every reference is unsupported (e.g. an FX-only oracle
-	// map queried for a pair with no configured coverage) tripped this
-	// exactly like a total outage and paged "checker running blind"
-	// forever. Only page when a GENUINE failure exists beyond the
+	// asset_unsupported is structural non-coverage ("no reference for
+	// this pair on this source"), not a degradation —
+	// [ErrAssetUnsupported]'s own doc says so — but FailureCount counts
+	// it alongside real transport failures, so a pair whose every
+	// reference is unsupported (e.g. an FX-only oracle map queried for a
+	// pair with no configured coverage) would trip this exactly like a
+	// total outage and page "checker running blind" forever. Only page when a GENUINE failure exists beyond the
 	// structurally-unsupported ones.
 	if res.SuccessCount == 0 {
 		unsupported := countOutcome(res.Outcomes, OutcomeAssetUnsupported)
@@ -674,7 +670,7 @@ func (s *Service) lastFiringSince(pairKey string) time.Time {
 }
 
 // recordWarning latches an evaluated refresh's verdict and runs the
-// F-1249 edge-triggered hook: it fires once per episode, so the
+// edge-triggered hook: it fires once per episode, so the
 // customer-webhook queue gets one POST per episode rather than one per
 // refresh-while-firing, and a return to false re-arms it. A hook error
 // leaves the episode undelivered so the next firing refresh retries it;
@@ -703,7 +699,7 @@ func (s *Service) recordWarning(ctx context.Context, pair canonical.Pair, cached
 	}
 }
 
-// warningPersists is the W3-guards-2 debounce that separates a genuine
+// warningPersists is the debounce that separates a genuine
 // sustained divergence from the transient artefact of comparing our
 // shortest-window VWAP against an instantaneous reference spot. A raw
 // firing only becomes a published WarningFired once it has held for at
@@ -842,8 +838,7 @@ func (s *Service) flushObservations(
 		}); err != nil && s.logger != nil {
 			// Best-effort write — the Redis cache (load-bearing for
 			// flags.divergence_warning) already succeeded. Log so
-			// operators see the durable-mirror gap; pre-2026-05-10
-			// this was a fully-silent drop.
+			// operators see the durable-mirror gap.
 			s.logger.Warn("divergence: sink RecordObservation failed",
 				"pair", pair.String(),
 				"reference", refName,
@@ -877,7 +872,7 @@ type AssetVerdict struct {
 }
 
 // LookupCached returns the divergence verdict for a BASE asset,
-// aggregated across every quote that asset trades against (F-1344).
+// aggregated across every quote that asset trades against.
 // Both verdicts are ORs over the per-pair entries, so neither depends
 // on the order pairs are refreshed in nor on which pair is picked as
 // [AssetVerdict.Detail]: a below-quorum quote with a large delta cannot
@@ -986,9 +981,9 @@ func (s *Service) lookupCachedQuote(ctx context.Context, asset canonical.Asset, 
 // which ORs every quote of the base together. A caller serving a value
 // for a SPECIFIC quote (the API's per-pair read paths) must use this:
 // ORing in another quote's verdict attaches a warning computed against
-// a market the served value never touched (GH-1045 — a GBP divergence
-// warning was shown on a clean USD price because LookupCached folded
-// every quote of the base into one flag).
+// a market the served value never touched (a GBP divergence warning
+// on a clean USD price, because LookupCached folds every quote of the
+// base into one flag).
 //
 // Returns (_, false, nil) on a cache miss (no key written yet, or the
 // entry TTL'd out) — same posture as LookupCached. Read/decode errors
