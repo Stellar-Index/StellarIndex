@@ -78,7 +78,7 @@ groups:
             are being held back until it catches up — look for saturation on
             the replica.
 
-      # T586: patroni-textfile-scraper.timer runs every 30s
+      # patroni-textfile-scraper.timer runs every 30s
       # (OnUnitActiveSec=30s, patroni role 11-monitoring.yml) and
       # node_exporter re-serves patroni.prom's last values on every
       # scrape regardless of whether the timer is still alive — the
@@ -1324,7 +1324,7 @@ groups:
             stellarindex_ch_schema_drift_intent_info for the two
             releases actually compared.
 
-      # T604: the staleness leg the two alerts above have no way to
+      # The staleness leg the two alerts above have no way to
       # cover on their own. ch-schema-drift.timer runs once daily
       # (04:10 UTC); node_exporter re-serves ch_schema_drift.prom's
       # last-written gauges on every scrape regardless of whether the

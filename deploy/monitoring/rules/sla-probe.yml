@@ -99,17 +99,15 @@ groups:
       # old by design (bucket width + CAGG end_offset + schedule
       # interval), and /sla publishes 150 s as its bound — past that the
       # closed-bucket pipeline has fallen behind its design. Everything
-      # else — /price/tip today, and any endpoint that grows an
-      # observed_at tomorrow — is held to the 30 s pricing SLA.
+      # else — /price/tip, and any endpoint that grows an observed_at —
+      # is held to the 30 s pricing SLA.
       #
-      # The selector used to read `{endpoint!="price-tip"} > 180`,
-      # which handed the closed-bucket exemption to every endpoint that
-      # is not the tip. Nothing else emitted freshness yet, so it was
-      # latent rather than live: the first endpoint to publish an
-      # observed_at (e.g. /oracle/latest) would have inherited a bound
-      # justified only by ADR-0015. Inverted to a positive matcher so the
-      # exemption is granted by name and the SLA is what a new endpoint
-      # falls back to.
+      # The matcher is positive on purpose. A negative one
+      # (`{endpoint!="price-tip"} > 180`) hands the closed-bucket
+      # exemption to every endpoint that is not the tip, so the next
+      # endpoint to publish an observed_at (e.g. /oracle/latest) would
+      # inherit a bound justified only by ADR-0015. Granting the exemption
+      # by name makes the SLA what a new endpoint falls back to.
       - alert: stellarindex_sla_probe_freshness_breach
         expr: |
           stellarindex_sla_probe_freshness_sec{endpoint="price"} > 150
@@ -163,7 +161,7 @@ groups:
       # running or every run since has failed. P2 page either way —
       # we lose the SLA-evidence trail when the probe is silent.
       #
-      # OBS-2: the probe writes last_pass_timestamp ONLY on a passing
+      # The probe writes last_pass_timestamp ONLY on a passing
       # run and rewrites the whole textfile each run, so a run that
       # fails DROPS the series — node_exporter stops exporting it and
       # Prometheus marks it absent within ~5m. On the every-run-failed

@@ -1,10 +1,9 @@
 ---
 # External-poller staleness alerts — fires when an aggregator /
 # CEX poller stops producing successful polls. Catches the class
-# of bug shipped on r1 2026-05-09 where CoinGecko throttled the
-# unauthenticated tier and the only signal was a per-minute WARN
-# log (no metric, no alert) — the poller was effectively down for
-# 13 h before discovery.
+# of bug where CoinGecko throttles the unauthenticated tier and the
+# only signal is a per-minute WARN log (no metric, no alert) — a
+# poller can be effectively down for 13 h before anyone notices.
 
 groups:
   - name: stellarindex.external_pollers
@@ -19,10 +18,6 @@ groups:
       # internal/sources/external/ecb/poller.go::DefaultPollInterval),
       # so the 30m threshold would fire after every successful
       # poll. ECB gets its own slower threshold in the rule below.
-      # (F-1208, codex audit-2026-05-13: prior single rule with a
-      # comment claiming ECB polls every 60s with cached responses
-      # was inconsistent with the source code; the implementation
-      # is 6h.)
       - alert: stellarindex_external_poller_stale
         expr: |
           (time() - stellarindex_external_poller_last_success_unix{source!~"ecb|tiingo"}) > 1800
@@ -121,13 +116,13 @@ groups:
       # so a dead feed prices fine off a stale row until that window
       # expires, THEN fiat pairs silently break with no earlier signal.
       # This closes that gap. r1's forex worker writes exactly hourly
-      # (verified 2026-07-07: 803 rows/tick, dead-regular); 6h = 6
+      # (measured: 803 rows/tick, dead-regular); 6h = 6
       # missed cycles, comfortably above the normal cadence + transient
       # upstream-fetch failures, and ~6.75 days below the 7-day cliff.
       # `max` (no by) is fleet-level: fires only when EVERY FX source's
       # freshest quote is stale, so re-enabling exchangeratesapi /
-      # exchangeratesapi as fallbacks naturally clears it. Found silent
-      # ~4h on 2026-07-07 with no alert — this is the fix.
+      # exchangeratesapi as fallbacks naturally clears it. Without this
+      # rule a dead feed sat silent ~4h with no alert.
       - alert: stellarindex_external_fx_feed_stale
         expr: |
           (time() - max(stellarindex_external_fx_last_quote_unix)) > 21600
@@ -184,7 +179,7 @@ groups:
             the first tick. Same customer-impact profile + same runbook
             as stellarindex_external_fx_feed_stale.
 
-      # C2-030 (audit-2026-07-23): the forex worker's sanity band refused
+      # The forex worker's sanity band refused
       # to persist an upstream rate. fx_quotes is the denominator of every
       # fiat-quoted usd_volume the X2.5 triangulation derives, so one bad
       # bar (decimal shift, unit-scale change, zeroed field) would
@@ -202,11 +197,11 @@ groups:
       # metric is deliberately not labelled by ticker).
       # reason="history_deviation_stuck" is EXCLUDED: after 12 consecutive
       # refusals of the SAME broken history bar the worker reclassifies the
-      # repeats (the Massive ETB=44 incident, 2026-08-24 — the guard kept
-      # correctly refusing one documented bar for days and this alert
-      # carried no new information). reason="deviation_history_conflict_stuck"
+      # repeats (the Massive ETB=44 bar — the guard correctly refuses one
+      # documented bar for days and this alert carries no new
+      # information). reason="deviation_history_conflict_stuck"
       # is excluded for the same reason: it is the confirm-veto's stuck
-      # variant (the Massive UZS broken CURRENT bar, 2026-08-24 — the
+      # variant (the Massive UZS broken CURRENT bar — the
       # history-majority veto keeps refusing the same documented value's
       # pending confirmation). The FRESH deviation_history_conflict reason
       # still alerts. Fresh disagreement — a new value, a new ticker, or
@@ -301,13 +296,12 @@ groups:
       # >50% of attempts return non-nil err. Lower severity than
       # the staleness alert because at least *some* data is flowing.
       - alert: stellarindex_external_poller_error_rate_high
-        # The denominator was `rate(…{outcome="success"}) +
-        # rate(…{outcome="error"})` with no matcher. PromQL's default
-        # one-to-one matching compares the FULL label signature, and
-        # `outcome` differs on every candidate pair, so the `+` yielded
-        # the empty vector unconditionally — the division was empty, the
-        # comparison was empty, and this alert could never fire at any
-        # error rate (wave-D ALERT-03).
+        # A denominator of `rate(…{outcome="success"}) +
+        # rate(…{outcome="error"})` with no matcher is always empty.
+        # PromQL's default one-to-one matching compares the FULL label
+        # signature, and `outcome` differs on every candidate pair, so the
+        # `+` yields the empty vector unconditionally and this alert could
+        # never fire at any error rate.
         #
         # `sum without (outcome)` collapses the two children into one
         # series, and `ignoring(outcome)` lets the numerator match it
@@ -319,8 +313,8 @@ groups:
         # post-429 cooldown), and the runbook records that it is excluded
         # on purpose: a throttled poller must not dilute the ratio.
         # Summing ALL outcomes instead would make this alert dead during
-        # throttling — the exact incident shape it exists for — which is
-        # worse than the status quo, because it would look fixed.
+        # throttling — the exact incident shape it exists for — while
+        # looking healthy.
         expr: |
           (
             rate(stellarindex_external_poller_polls_total{outcome="error"}[15m])
@@ -389,8 +383,8 @@ groups:
             logs "kraken trade entry skipped" once per reason per minute
             with the offending symbol or field value.
 
-      # GH-941: the half-open-socket detector (wsclient's stall reason,
-      # C2-017) is the operationally important disconnect reason — the
+      # The half-open-socket detector (wsclient's stall reason) is the
+      # operationally important disconnect reason — the
       # connection LOOKS alive but has stopped answering pings. A single
       # stall is worth a ticket, so `for` is shorter than the `increase`
       # window (`for` == window would make the pending period unable to
@@ -414,7 +408,7 @@ groups:
             indexer's WARN log line "stream stalled" for
             {{ $labels.source }}.
 
-      # GH-941: a sustained high dust-drop rate means a venue is
+      # A sustained high dust-drop rate means a venue is
       # mis-scaling amounts (e.g. a decimals regression) rather than
       # genuinely streaming sub-$0.001 fills — dust drops are otherwise
       # a routine, low, nonzero background rate.
