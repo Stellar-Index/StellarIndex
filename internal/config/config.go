@@ -101,11 +101,10 @@ func (hc HashDBConfig) validate() error {
 	if hc.VerifyIntervalMinutes < 0 {
 		return fmt.Errorf("hashdb: verify_interval_minutes must be >= 0, got %d", hc.VerifyIntervalMinutes)
 	}
-	// Above ~1 day between sweeps the periodic half of ADR-0016's
-	// drift detector stops meaningfully bounding how long a rewrite
-	// can go unnoticed — the incident this was built for was found
-	// within a day. 0 defers to the 60m library default, so it's
-	// exempt from the ceiling.
+	// Above ~1 day between sweeps the periodic half of the hashdb drift
+	// detector stops meaningfully bounding how long a rewrite can go
+	// unnoticed. 0 defers to the indexer's 60m default, so it's exempt
+	// from the ceiling.
 	if hc.VerifyIntervalMinutes > maxHashDBVerifyIntervalMinutes {
 		return fmt.Errorf("hashdb: verify_interval_minutes must be <= %d (24h), got %d",
 			maxHashDBVerifyIntervalMinutes, hc.VerifyIntervalMinutes)
@@ -1267,10 +1266,10 @@ type IngestionConfig struct {
 //
 // PersistPerSource governs only the sources still in Phase-3 parallel.
 // Domains the projector has EARNED sole-writer status for (the
-// SoleWriter specs in internal/pipeline/source_spec.go) are exempt: pipeline.SinkModeForProjector routes
-// them through the projector alone whenever it is enabled, regardless
-// of this flag, so no value of it can drop their rows. See
-// pipeline.IsSoleWriterProjected.
+// SoleWriter specs in internal/pipeline/source_spec.go) are exempt:
+// pipeline.SinkModeForProjector routes them through the projector alone
+// whenever it is enabled, regardless of this flag, so no value of it can
+// drop their rows. See pipeline.IsSoleWriterProjected.
 //
 // Low lag alone does not make Phase 4 safe: one lake hole stalls the
 // projector, and an aggregate whose refresh lookback is shorter than the
@@ -1455,8 +1454,8 @@ type APIConfig struct {
 
 	// RateLimitDwell wires ratelimit.WithDwellTime for the anon/key/
 	// failed-auth buckets, so the dwell window can be tuned around the
-	// stellarindex_ratelimit_fail_open alert (10-minute rule window)
-	// without a rebuild. A negative value
+	// stellarindex_ratelimit_fail_open alert (more than 100 fail-open
+	// requests in a 15-minute window) without a rebuild. A negative value
 	// disables the fail-open→fail-closed inversion.
 	RateLimitDwell time.Duration `toml:"rate_limit_dwell" doc:"Fail-open dwell window for the anon/key/failed-auth rate-limit buckets before Take starts returning ratelimit.ErrThrottleUnavailable (fail-CLOSED, 503) on sustained Redis errors. Mirrors ratelimit.DefaultDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
 

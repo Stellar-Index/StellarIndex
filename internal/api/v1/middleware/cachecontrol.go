@@ -53,10 +53,11 @@ import (
 // envelope404 middleware that rewrites the mux's text/plain 404/405,
 // writeAuthProblem, writeKeyPolicyDenied, writeEmailUnverified, and
 // the monthly-quota writer) explicitly set `Cache-Control: no-store`
-// before WriteHeader — a new problem writer MUST do the same. Without that override an error response would inherit
-// (e.g.) `public, max-age=60, s-maxage=300` from the catalogue
-// surface and a CDN would happily cache the transient failure for
-// 5 minutes against the same key as the success response.
+// before WriteHeader — a new problem writer MUST do the same. Without
+// that override an error response would inherit (e.g.) `public,
+// max-age=60, s-maxage=300` from the catalogue surface and a CDN would
+// happily cache the transient failure for 5 minutes against the same
+// key as the success response.
 //
 // Backwards-compat shim: behaves like cdn_enabled=true. Operators
 // who run the API behind no CDN should use [CacheControlWithCDN]
@@ -165,28 +166,16 @@ func sharedCacheReusable(values []string) bool {
 	return true
 }
 
-// policyForPath classifies a request path into a Cache-Control
-// directive. Exposed at package scope so tests can pin the policy
-// table without spinning up a full handler.
-//
-// Order matters — the more-specific prefix MUST win over the
-// less-specific. `/v1/price/tip` is private; `/v1/price` is public —
-// both share the prefix `/v1/price` so the tip rule must run first.
-//
-// `cdnEnabled` controls whether `s-maxage` (CDN-tier) directives
-// are emitted on cacheable routes. When false, only `max-age`
-// (client tier) survives — operators without a CDN in front of
-// the API set this so a CDN they don't have can't cache anything.
-// Closed-ledger detail paths. A ledger's own row, its transaction list and
-// a transaction by hash are IMMUTABLE once the ledger has closed, so they do
-// not take the conservative default's `private, no-store`, which would make
-// the explorer re-fetch a 71 KB transaction list on every visit to a ledger
-// page. The band below is deliberately
-// modest (1 min client / 5 min CDN), not a year: policyForPath knows
-// nothing about the tip, and a ledger a few seconds old can be served
-// before every downstream projection for it has landed, so a long TTL
-// could pin a partial view. Five minutes rides out that lag and still
-// absorbs the repeat-visit cost.
+// ledgerDetailPath and txDetailPath match closed-ledger detail paths. A
+// ledger's own row, its transaction list and a transaction by hash are
+// IMMUTABLE once the ledger has closed, so they do not take the
+// conservative default's `private, no-store`, which would make the
+// explorer re-fetch a 71 KB transaction list on every visit to a ledger
+// page. Their band is deliberately modest (1 min client / 5 min CDN), not
+// a year: policyForPath knows nothing about the tip, and a ledger a few
+// seconds old can be served before every downstream projection for it has
+// landed, so a long TTL could pin a partial view. Five minutes rides out
+// that lag and still absorbs the repeat-visit cost.
 var (
 	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
 	txDetailPath     = regexp.MustCompile(`^/v1/tx/[0-9a-fA-F]{64}$`)
@@ -210,22 +199,21 @@ var (
 //   - A ledger's own row, its transaction/operation list and a transaction by
 //     hash are IMMUTABLE once the ledger closes; the conservative default's
 //     `private, no-store` would make the explorer re-fetch a 71 KB transaction
-//     list on every visit to a ledger page. The
-//     band is deliberately modest (1 min client / 5 min CDN), not a year:
-//     policyForPath knows nothing about the tip, and a ledger a few seconds
-//     old can be served before every downstream projection for it has
-//     landed, so a long TTL could pin a partial view.
+//     list on every visit to a ledger page. The band is deliberately modest
+//     (1 min client / 5 min CDN), not a year: policyForPath knows nothing
+//     about the tip, and a ledger a few seconds old can be served before
+//     every downstream projection for it has landed, so a long TTL could pin
+//     a partial view.
 //
 //   - /v1/ledgers (the list) moves every ~5 s and /v1/network/throughput
 //     already has a server-side cache; both get the status-like short band.
 //
-//   - /v1/operations joins them. It is /v1/ledgers'
-//     sibling listing — the network-wide operations directory, advancing once
-//     per ledger — and it too already has a server-side cache (opsDirCache,
-//     10 s TTL + stale-while-revalidate). The conservative default would ship
-//     it `private, no-store`: an 18 KB
-//     body that no client and no CDN could reuse for even one ledger. Nothing
-//     in it is per-user or auth-tied.
+//   - /v1/operations joins them. It is /v1/ledgers' sibling listing — the
+//     network-wide operations directory, advancing once per ledger — and it
+//     too already has a server-side cache (opsDirCache, 10 s TTL +
+//     stale-while-revalidate). The conservative default would ship it
+//     `private, no-store`: an 18 KB body that no client and no CDN could
+//     reuse for even one ledger. Nothing in it is per-user or auth-tied.
 //
 //     The directory is deliberately NOT given the longer 60 s/300 s band:
 //     opsDirCache serves stale on expiry and only refreshes ON a request, so at
@@ -234,11 +222,10 @@ var (
 //     quiet window). A 300 s edge TTL would compound that real staleness.
 //
 //   - /v1/contracts joins them on the same evidence. It is the contracts
-//     directory, fronted by the same
-//     stale-while-revalidate server cache (recentContractsCached), and
-//     nothing in it is per-user or auth-tied. The EXACT-path match matters:
-//     /v1/contracts/{id} is a different surface and keeps its own
-//     adjudication.
+//     directory, fronted by the same stale-while-revalidate server cache
+//     (recentContractsCached), and nothing in it is per-user or auth-tied.
+//     The EXACT-path match matters: /v1/contracts/{id} is a different
+//     surface and keeps its own adjudication.
 //
 //   - /v1/contracts/{id}, /interactions and /code-history take the same band:
 //     they are served through contractDetailCached, the same
@@ -250,8 +237,9 @@ var (
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
-	// cached probe is a lie. (Moved here from the main switch with the
-	// ledger cases so policyForPath stays under the gocyclo ceiling.)
+	// cached probe is a lie. They sit here with the ledger cases rather
+	// than in the main switch so policyForPath stays under the gocyclo
+	// ceiling.
 	case path == "/v1/healthz", path == "/v1/readyz", path == "/v1/version", path == "/metrics":
 		return "no-store", true
 	case ledgerDetailPath.MatchString(path), txDetailPath.MatchString(path):
@@ -413,6 +401,18 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 	return "public, max-age=60"
 }
 
+// policyForPath classifies a request path into a Cache-Control
+// directive. Exposed at package scope so tests can pin the policy
+// table without spinning up a full handler.
+//
+// Order matters — the more-specific prefix MUST win over the
+// less-specific. `/v1/price/tip` is private; `/v1/price` is public —
+// both share the prefix `/v1/price` so the tip rule must run first.
+//
+// `cdnEnabled` controls whether `s-maxage` (CDN-tier) directives
+// are emitted on cacheable routes. When false, only `max-age`
+// (client tier) survives — operators without a CDN in front of
+// the API set this so a CDN they don't have can't cache anything.
 func policyForPath(path string, cdnEnabled bool) string {
 	// Closed-ledger detail + the two fast-moving explorer reads
 	// live in their own helper so this switch stays under the gocyclo

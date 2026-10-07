@@ -8,52 +8,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Logger emits one structured log entry per request:
-//   - 5xx → ERROR
-//   - 4xx (except 429) → WARN
-//   - 429 → skipped (see below)
-//   - a SUCCESSFUL request from first-party synthetic traffic → DEBUG
-//   - everything else → INFO
-//
-// Fields (minimum):
-//   - method, path, status, bytes, latency_ms
-//   - request_id (from RequestID middleware)
-//   - remote_ip ([RemoteIP]: the rightmost X-Forwarded-For hop outside
-//     the trusted-proxy CIDRs when the peer is a trusted proxy, else
-//     r.RemoteAddr stripped of the port — never the first hop, which
-//     the caller writes)
-//   - user_agent
-//
-// 429 special case: a single misconfigured client (or a load
-// generator without an API key) can produce thousands of 429s per
-// second on a public origin. r1 evidence — a 60-second
-// 4-worker probe run produced 343 k suppressed `systemd-journald`
-// entries before journald's own rate limiter kicked in, dropping
-// other-service messages that operators would actually want.
-// Visibility is preserved by the
-// `stellarindex_http_requests_total{status="429"}` counter (see
-// `internal/obs/http_middleware.go`); the per-line log adds journal
-// pressure without diagnostic value the metric doesn't already
-// carry.
-//
-// Synthetic traffic at DEBUG, same argument as the 429 case above and
-// the same judgement the SLO uses ([obs.IsSyntheticRequest]). The SLA probe
-// drives ~800 requests per endpoint per run across ten endpoints every
-// 15 minutes; measured on r1 that was 287,914 API entries in
-// 5.4 hours — 98% of everything the journal held. With SystemMaxUse at
-// 500 MB, a MaxRetentionSec of 14 d delivered about five hours, so
-// a morning's outage had aged out of the journal by lunchtime.
-// A log that cannot answer a question about yesterday is not a log.
-//
-// Only SUCCESSFUL synthetic requests are demoted. A probe seeing a 4xx
-// or 5xx is exactly the line worth keeping, and it stays at WARN/ERROR.
-// Counts remain exact either way — a demoted line is still emitted, at
-// a level the journal is not configured to store, and
-// `stellarindex_http_requests_total` is unaffected.
-//
-// Does NOT log query parameters or request bodies — they may
-// carry API keys or PII. Add named fields in specific handlers
-// when needed.
 // SlowRequestThreshold is the latency at or above which a request also
 // logs its query shape and a `slow=true` marker.
 //
@@ -79,6 +33,51 @@ const (
 	maxLoggedUserAgentLen = 256
 )
 
+// Logger emits one structured log entry per request:
+//   - 5xx → ERROR
+//   - 4xx (except 429) → WARN
+//   - 429 → skipped (see below)
+//   - a SUCCESSFUL request from first-party synthetic traffic → DEBUG
+//   - everything else → INFO
+//
+// Fields (minimum):
+//   - method, path, status, bytes, latency_ms
+//   - request_id (from RequestID middleware)
+//   - remote_ip ([RemoteIP]: the rightmost X-Forwarded-For hop outside
+//     the trusted-proxy CIDRs when the peer is a trusted proxy, else
+//     r.RemoteAddr stripped of the port — never the first hop, which
+//     the caller writes)
+//   - user_agent
+//
+// 429 special case: a single misconfigured client (or a load
+// generator without an API key) can produce thousands of 429s per
+// second on a public origin. On r1 a 60-second 4-worker probe run
+// produced 343 k suppressed `systemd-journald` entries before
+// journald's own rate limiter kicked in, dropping other-service
+// messages that operators would actually want. Visibility is
+// preserved by the `stellarindex_http_requests_total{status="429"}`
+// counter (see `internal/obs/http_middleware.go`); the per-line log
+// adds journal pressure without diagnostic value the metric doesn't
+// already carry.
+//
+// Synthetic traffic at DEBUG, same argument as the 429 case above and
+// the same judgement the SLO uses ([obs.IsSyntheticRequest]). The SLA probe
+// drives ~800 requests per endpoint per run across ten endpoints every
+// 15 minutes; measured on r1 that was 287,914 API entries in
+// 5.4 hours — 98% of everything the journal held. With SystemMaxUse at
+// 500 MB, a MaxRetentionSec of 14 d delivered about five hours, so
+// a morning's outage had aged out of the journal by lunchtime.
+// A log that cannot answer a question about yesterday is not a log.
+//
+// Only SUCCESSFUL synthetic requests are demoted. A probe seeing a 4xx
+// or 5xx is exactly the line worth keeping, and it stays at WARN/ERROR.
+// Counts remain exact either way — a demoted line is still emitted, at
+// a level the journal is not configured to store, and
+// `stellarindex_http_requests_total` is unaffected.
+//
+// Does NOT log query parameters or request bodies — they may
+// carry API keys or PII. Add named fields in specific handlers
+// when needed.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

@@ -2160,12 +2160,13 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
 		}
 		// No market anywhere priced this peg, and none was refused on
-		// substance — publish the declaration itself. No sources (nil): the value comes from the peg
-		// assumption, not from VWAP-contributing trades, so the handler's
-		// len(sources)==1 rule leaves SingleSource=false — an empty source
-		// set is not "single-sourced". Flipping the flag would mean
-		// emitting a synthetic source into the wire `sources[]` array,
-		// which is deliberately not done.
+		// substance — publish the declaration itself. No sources (nil):
+		// the value comes from the peg assumption, not from
+		// VWAP-contributing trades, so the handler's len(sources)==1 rule
+		// leaves SingleSource=false — an empty source set is not
+		// "single-sourced". Flipping the flag would mean emitting a
+		// synthetic source into the wire `sources[]` array, which is
+		// deliberately not done.
 		return s.declaredPegSnapshot(asset, quote), nil, true, false
 	}
 	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
@@ -2216,9 +2217,10 @@ func (s *Server) walkUSDPegs(
 	// Empty-proxy-pair gate. Each peg lookup below is a
 	// LatestPrice(asset, <peg>), and a <peg> quote is a CLASSIC asset —
 	// so on a VWAP miss LatestPrice does NOT take the synthetic-fiat fast
-	// path; it falls through to an UNBOUNDED last-trade scan. A pure-Soroban token that only trades vs
-	// XLM has zero rows for every <token>/<peg> pair, so the proxy would
-	// run that cold full-history walk once PER PEG before returning a miss.
+	// path; it falls through to an UNBOUNDED last-trade scan. A
+	// pure-Soroban token that only trades vs XLM has zero rows for every
+	// <token>/<peg> pair, so the proxy would run that cold full-history
+	// walk once PER PEG before returning a miss.
 	// When the reader exposes the cheap bounded recent-existence probe,
 	// skip any peg with no closed 1m bucket in the freshness horizon before
 	// paying for LatestPrice — a live proxy pair still hits it (its VWAP
