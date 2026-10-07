@@ -46,8 +46,7 @@ func (a LiquidityAction) IsValid() bool {
 // POST-STATE reserve vector (one i128 per pool token, in the pool's
 // canonical token order — 2 for a volatile pool, N for stableswap).
 // The sink fans it out to one aquarius_reserves row per token
-// position. This is the first real Aquarius TVL / liquidity-depth
-// signal.
+// position. It is the Aquarius TVL / liquidity-depth signal.
 //
 // update_reserves carries NO token address in its topics (topic[0] is
 // the only topic); the reserve is identified only by position, which
@@ -121,7 +120,7 @@ func (LiquidityEvent) EventKind() string { return "aquarius.liquidity" }
 func (LiquidityEvent) Source() string { return SourceName }
 
 // RewardsAction discriminates the twelve rewards-gauge event kinds
-// (migration 0099, ROADMAP #89). String values match the
+// (migration 0099). String values match the
 // aquarius_rewards_events.event_kind CHECK constraint.
 type RewardsAction string
 
@@ -182,7 +181,7 @@ func (RewardsEvent) EventKind() string { return "aquarius.rewards" }
 func (RewardsEvent) Source() string { return SourceName }
 
 // AdminAction discriminates the eight governance/upgrade admin event
-// kinds (migration 0100, ROADMAP #89). String values match the
+// kinds (migration 0100). String values match the
 // aquarius_admin.event_kind CHECK constraint.
 type AdminAction string
 
@@ -262,9 +261,10 @@ type FeeEvent struct {
 	HasOldFee bool
 	// claim_protocol_fee — the fee-sweep destination + swept amount
 	// (i128, per ADR-0003). One event per token claimed. Token is the
-	// claimed token's contract address, carried in topic[1] (audit
-	// 2026-08-04 finding 5: the body Vec has no token; every sampled
-	// event has an ScvAddress at topic[1], and two same-tx claims of
+	// claimed token's contract address, carried in topic[1] (the body
+	// Vec has no token; every sampled event has an ScvAddress at
+	// topic[1], and two same-tx claims of
+
 	// DIFFERENT tokens prove per-pool amounts are meaningless without
 	// it — summing them adds USDC-scale and XLM-scale integers).
 	Recipient string
