@@ -69,8 +69,7 @@ type adminCreateKeyRequest struct {
 // Requires an `X-Reason` header, the same contract
 // as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}. Minting
 // a privileged credential is at least as consequential as setting a
-// per-account override or killing a key, and it was the one admin write
-// that captured no reason (C3-107, audit-2026-07-23).
+// per-account override or killing a key.
 //
 // Every successful mint is audit-logged: a structured log line
 // unconditionally, plus a persisted audit_log row ("key.mint",
@@ -126,7 +125,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// calls itself "the single chokepoint every mint path funnels
 	// through"; this call is what makes that true for the admin path.
 	// The same clamp bounds rate_limit_per_min, so a scope-narrowed
-	// operator cannot mint 100k/min keys (GH-1147).
+	// operator cannot mint 100k/min keys.
 	scopes, ok := s.clampMintToCaller(w, r, subject, req.Scopes, req.RateLimitPerMin)
 	if !ok {
 		return
@@ -139,8 +138,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// rateLimitPerMin > 0), so an unset request would otherwise persist
 	// as 0 — the deployment/tier default, which can exceed a
 	// rate-limited caller's own ceiling. Inherit the caller's ceiling
-	// explicitly, mirroring ChildKeyRequest's unconditional copy
-	// (GH-1147).
+	// explicitly, mirroring ChildKeyRequest's unconditional copy.
 	if req.RateLimitPerMin == 0 && subject.RateLimitPerMin > 0 {
 		req.RateLimitPerMin = subject.RateLimitPerMin
 	}
@@ -198,7 +196,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 // clampMintToCaller applies [auth.ClampToMinter] ahead of the store's own
 // re-check so a refused escalation is a 403 naming the reason, logged at
 // WARN with the actor and counted in [obs.MintScopeClampRefusedTotal]
-// (GH-1146) — otherwise a repeated escalation probe leaves no telemetry
+// — otherwise a repeated escalation probe leaves no telemetry
 // an alert could fire on.
 func (s *Server) clampMintToCaller(
 	w http.ResponseWriter, r *http.Request, caller auth.Subject, scopes []string, rateLimitPerMin int,
@@ -219,7 +217,7 @@ func (s *Server) clampMintToCaller(
 }
 
 // revokeKeyEverywhere revokes a credential in every store that might
-// hold a live record for it (GH-978). Redis is the working
+// hold a live record for it. Redis is the working
 // credential under the default auth_backend=redis; Postgres's
 // api_keys row is the durable management record that
 // mintRegisterKey ALSO writes for the same KeyID. Revoking only
@@ -287,13 +285,12 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 
 // handleAdminKeysRevoke serves DELETE
 // /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch
-// for a leaked or abused credential (C3-010, audit-2026-07-23).
+// for a leaked or abused credential.
 //
-// Pre-fix there was no way for staff to kill an arbitrary key at all:
-// self-service revoke (DELETE /v1/account/keys/{keyID}) is scoped to the
-// caller's OWN identifier, so it requires the compromised customer's
-// credential, and the dashboard staff surface is explicitly read-only.
-// A leaked key could only be stopped by hand-editing Redis.
+// It is the only way for staff to kill an arbitrary key: self-service
+// revoke (DELETE /v1/account/keys/{keyID}) is scoped to the caller's OWN
+// identifier, so it requires the compromised customer's credential, and
+// the dashboard staff surface is explicitly read-only.
 //
 // `identifier` is required rather than inferred: the key store is
 // keyed by secret hash and indexed by (identifier, key_id), and scoping
@@ -409,7 +406,7 @@ func (s *Server) recordAdminKeyRevokeAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.Audit.Append(r.Context(), entry); err != nil {
-		// C3-067: the revoke already happened; the audit row did not. Count
+		// The revoke already happened; the audit row did not. Count
 		// it so the hole in the trail is observable, not just logged.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_revoke").Inc()
 		s.logger.Warn("admin key revoke: audit append failed (best-effort)",
@@ -574,7 +571,7 @@ func (s *Server) recordAdminKeyMintAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.Audit.Append(r.Context(), entry); err != nil {
-		// C3-067: a live credential exists with no record of who minted it.
+		// A live credential exists with no record of who minted it.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_mint").Inc()
 		s.logger.Warn("admin key mint: audit append failed (best-effort)",
 			"err", err, "minted_key_id", mintedKeyID, "target_identifier", req.Identifier)

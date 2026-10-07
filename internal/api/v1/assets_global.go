@@ -21,7 +21,7 @@ import (
 // lives on the canonical `/v1/assets/{asset_id}` surface.
 type GlobalAssetView struct {
 	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
-	// oneOf (ADR-0042 LC-040). Always "catalogue" on this struct — see
+	// oneOf (ADR-0042). Always "catalogue" on this struct — see
 	// the contrasting doc comment on AssetDetail.Kind vs AssetDetail.Type.
 	Kind string `json:"kind"`
 
@@ -36,7 +36,7 @@ type GlobalAssetView struct {
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
 
 	// ─── Headline price (from ComputeGlobalPrice's three-tier
-	// fallback chain, R-018 Phase 1.3a) ─────────────────────────────
+	// fallback chain) ─────────────────────────────
 	//
 	// All four fields are null/empty together when nothing produced
 	// a price (typically a Stellar-only token like AQUA where neither
@@ -174,11 +174,11 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	}
 
 	// Same substance/scam gate the classic /v1/assets listing and
-	// /v1/price hold this pair to (RLT-352): unlike
+	// /v1/price hold this pair to. Unlike
 	// [fillGlobalPriceFromOnChain]'s on-chain fallback below, and
-	// unlike [populateFiatView]'s reference-rate path, this tier had no
-	// gate of its own, so a scam-flagged issuer or a dust-thin market
-	// withheld everywhere else could still headline here.
+	// unlike [populateFiatView]'s reference-rate path, this tier has no
+	// other gate, so without this check a scam-flagged issuer or a
+	// dust-thin market withheld everywhere else could headline here.
 	if withheldBy(ctx, s.Substance, s.Scam, base, quote, "global_asset") != pricingguard.NotWithheld {
 		return view
 	}
@@ -245,8 +245,8 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		return view
 	}
 	// Shared with the listing path — see [Server.fiatUSDPriceFor]. Calling
-	// PriceReader directly here is what made this endpoint serve null
-	// price_usd / market_cap_usd for every non-USD fiat (COR-14).
+	// PriceReader directly here would serve null price_usd /
+	// market_cap_usd for every non-USD fiat.
 	price, obs, sources, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
 	if !ok {
 		return view
@@ -322,15 +322,12 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // ([Server.fiatMarketCapUSD]) and the asset DETAIL path
 // ([Server.populateFiatView]).
 //
-// It exists because those two paths had DRIFTED. The listing path was fixed
-// under COR-14 (50c93ecd) to try fx_quotes before PriceReader; the detail
-// path was never updated and still called PriceReader alone — which
-// storePriceReader fast-paths to ErrPriceNotFound for any fiat-quoted
-// request, since no on-chain trades exist for a fiat/fiat pair. So
-// GET /v1/assets/{fiat-slug} served price_usd: null and market_cap_usd:
-// null for every non-USD currency, while the listing beside it showed
-// correct values for the same asset. Sharing the resolver is the fix AND
-// the guard against the two drifting apart again.
+// Sharing it keeps the two paths from drifting. A path that called
+// PriceReader alone would get ErrPriceNotFound for any fiat-quoted request
+// (storePriceReader fast-paths it, since no on-chain trades exist for a
+// fiat/fiat pair), so GET /v1/assets/{fiat-slug} would serve price_usd:
+// null and market_cap_usd: null for every non-USD currency while the
+// listing beside it showed correct values for the same asset.
 //
 // Order is load-bearing: fx_quotes first (Massive-backed daily
 // grouped-aggregate rates — the authoritative store the forex worker
@@ -385,13 +382,12 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 //     trailing 7-day window and uses its InverseUSD as the
 //     fiat→USD price. This is the authoritative path because
 //     fx_quotes is where the continuous forex worker lands.
-//  2. PriceReader.LatestPrice as a last resort. Pre-fix the
-//     ordering was reversed: PriceReader was tried first and
-//     storePriceReader fast-paths a `quote.Type==fiat` request to
-//     ErrPriceNotFound (see cmd/stellarindex-api/main.go:1935),
-//     so this layer never returned a value for fiat→fiat. With
+//  2. PriceReader.LatestPrice as a last resort. It cannot go
+//     first: storePriceReader fast-paths a `quote.Type==fiat`
+//     request to ErrPriceNotFound (see cmd/stellarindex-api/main.go),
+//     so this layer would never return a value for fiat→fiat. With
 //     fx_quotes tried first, the 19 catalogue fiats with a
-//     populated circulating_supply now all get a market_cap_usd
+//     populated circulating_supply all get a market_cap_usd
 //     (verified on r1 with EUR/CNY/JPY/GBP/CAD/CHF/…).
 //
 // Returns nil when neither path returns a price or the supply
@@ -419,11 +415,10 @@ func computeFiatMarketCap(supplyStr string, decimals int, priceStr string) *stri
 	if supplyStr == "" || priceStr == "" {
 		return nil
 	}
-	// Exact big.Rat — no float64 on served money (INV-2 / ADR-0003),
-	// matching the crypto market-cap path's usdMarketValue. The prior
-	// big.Float(128) path was near-exact for realistic fiat sizes but
-	// still not rational-exact; big.Rat removes any ambiguity for a
-	// supply string that would overflow a float64's 53-bit mantissa.
+	// Exact big.Rat — no float64 on served money (ADR-0003),
+	// matching the crypto market-cap path's usdMarketValue. big.Rat
+	// stays exact even for a supply string that would overflow a
+	// float64's 53-bit mantissa.
 	supply, ok := fiatSupplyWholeUnits(supplyStr, decimals)
 	if !ok {
 		return nil
@@ -488,7 +483,7 @@ type VerifiedCurrencyListItem struct {
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	// Image is the asset's logo URL from the issuer's SEP-1 TOML
 	// (sanitized; https only). Wallets bulk-load logos from this
-	// listing (board #47). Empty when the issuer's TOML is missing
+	// listing. Empty when the issuer's TOML is missing
 	// or carries no image for the matched currency.
 	Image             string `json:"image,omitempty"`
 	CMCID             string `json:"coinmarketcap_id,omitempty"`
@@ -506,7 +501,7 @@ type VerifiedCurrencyListItem struct {
 // handleAssetsVerified serves GET /v1/assets/verified — the full
 // verified-currency catalogue as a directory listing. Drives the
 // explorer's "verified currencies" section at the top of the
-// /assets page (R-018 Phase 1.5d).
+// /assets page.
 //
 // Order matches the seed-file order (deterministic; the catalogue
 // loader preserves entry order). 503 when no catalogue is wired; an
@@ -531,7 +526,7 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachVerifiedImages fills each verified row's Image from the
-// issuer's cached SEP-1 currency entry (board #47 — wallets bulk-load
+// issuer's cached SEP-1 currency entry (wallets bulk-load
 // logos from this listing). Bounded by the catalogue size (~50 rows);
 // reads only the sep1_payload cache (no live HTTPS), best-effort per
 // row. The same isSafeImageURL gate as the detail overlay applies.
@@ -587,12 +582,12 @@ func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []Verifie
 // parallel via fiatMarketCapUSD (M2 × FX rate). No-op only when
 // NEITHER rate source is wired.
 //
-// COR-14: fiatMarketCapUSD tries fxHistory FIRST and only falls back
-// to PriceReader (or skips it entirely for the USD ticker itself) —
-// so gating the whole fan-out on `s.Prices == nil` alone skipped every
+// fiatMarketCapUSD tries fxHistory FIRST and only falls back to
+// PriceReader (or skips it entirely for the USD ticker itself), so
+// gating the whole fan-out on `s.Prices == nil` alone would skip every
 // fiat market cap on a deployment that wired fxHistory but not
-// PriceReader, even though fiatMarketCapUSD would have served them
-// fine from fxHistory or the USD shortcut.
+// PriceReader, even though fiatMarketCapUSD can serve them from
+// fxHistory or the USD shortcut.
 func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Prices == nil && s.FXHistory == nil {
 		return
