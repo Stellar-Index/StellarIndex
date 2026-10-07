@@ -9,14 +9,12 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- asset_holders_rollup — precomputed per-asset holders boards
--- (inventory #4, open-fixes-inventory-2026-08-08).
+-- asset_holders_rollup — precomputed per-asset holders boards.
 --
--- WHY: GET /v1/assets/{id}/holders ran TWO ledger_entries_current FINAL
--- scans (ranking + count) PER REQUEST — 8-15s each under load, an
--- effectively-100% failure rate for random assets in the 2026-08-07
--- audit, and squarely outside the sub-second page budget (operator goal
--- 2026-08-08).
+-- WHY: served live, GET /v1/assets/{id}/holders runs TWO
+-- ledger_entries_current FINAL scans (ranking + count) PER REQUEST — 8-15s
+-- each under load, an effectively-100% failure rate for random assets, and
+-- squarely outside the sub-second page budget.
 --
 -- SHAPE: `stellarindex-ops ch-holders-rollup` (30-min timer) recomputes
 -- every asset's top-500 board + holder count into the *_staging twins

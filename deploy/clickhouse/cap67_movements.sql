@@ -10,8 +10,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- cap67_movements_watermark — resume + serving watermark for the
--- `stellarindex-ops ch-cap67-movements` derive (inventory #1,
--- docs/operations/open-fixes-inventory-2026-08-08.md): the post-P23
+-- `stellarindex-ops ch-cap67-movements` derive: the post-P23
 -- continuation of stellar.account_movements, derived from the lake's
 -- CAP-67 transfer events for EVERY asset (native XLM included —
 -- deliberately unwatched by the Postgres sep41_transfers projection).

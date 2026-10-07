@@ -10,7 +10,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- contracts_census_daily — day-keyed per-contract event counts behind
--- the /v1/contracts directory (open-fixes inventory #26 item 2).
+-- the /v1/contracts directory.
 --
 -- WHY: the directory's census query (uniqExact over the PK of
 -- billions-row contract_events, GROUP BY contract_id over multi-day

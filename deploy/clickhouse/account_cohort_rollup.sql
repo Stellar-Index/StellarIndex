@@ -27,7 +27,7 @@
 -- are truncated and refilled every cycle and never read by the API.
 --
 -- account_cohort_* — what the accounts this address CREATED or SPONSORED
--- went on to hold and do. The sponsor and creator boards (#351) rank an
+-- went on to hold and do. The sponsor and creator boards rank an
 -- address by how many accounts it stood behind; these tables answer the
 -- question that ranking invites — what value did that cohort bring to
 -- the network — from the cohort's own ledger footprint: current

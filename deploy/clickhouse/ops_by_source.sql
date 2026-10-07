@@ -17,7 +17,7 @@
 -- (explorer_reader.go accountTransactionsQuery / accountOperationsQuery
 -- arm 1) resolved `source_account = ?` via the bloom skip-index over the
 -- full 23B-row transactions / 34B-row operations tables. Granule-pruned
--- but still scan-shaped: MEASURED on r1 2026-07-30 for a 328-op account,
+-- but still scan-shaped: MEASURED on r1 for a 328-op account,
 -- arm 1 = 6.17 s vs arm 2 (operation_participants, PK-prefixed) = 0.056 s
 -- — 110×, and the reason /v1/accounts/{g}/transactions|operations sat in
 -- the 8s 503 class under load. This projection is the same fix class as
@@ -99,7 +99,7 @@ WHERE source_account != '';
 --
 --   SELECT countIf(a != b) FROM (
 --     SELECT
---       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (first verify run 2026-07-30 flagged 20/20 'mismatches' that were exactly this)
+--       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (a first verify run flagged 20/20 'mismatches' that were exactly this)
 --       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.ops_by_source
 --         WHERE source_account = t.sa AND op_index = 4294967295) AS b,
 --       sa
