@@ -3,9 +3,8 @@
 
 // Package diagnostics holds the stellarindex-ops operator diagnostic
 // subcommands: `rpc-probe`, `verify-decoders`, `verify-external`,
-// `hubble-check`, `hubble-soroban-events`. Extracted from
-// cmd/stellarindex-ops (maintainability audit 2026-07-01, D1 finding
-// M1-5); main.go's dispatch table calls Run below.
+// `hubble-check`, `hubble-soroban-events`. cmd/stellarindex-ops's
+// dispatch table calls Run below.
 package diagnostics
 
 import (

@@ -83,7 +83,7 @@
 //	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(b.Max()))
 //	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
 //
-// # Failure mode — dwell-time fail-open inversion (F-0050 / F-0150)
+// # Failure mode — dwell-time fail-open inversion
 //
 // The failure policy is NOT unconditional fail-open. Take() returns
 // two distinct error kinds so the caller can invert its behaviour as

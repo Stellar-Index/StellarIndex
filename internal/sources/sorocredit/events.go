@@ -90,8 +90,7 @@ const (
 	TopicSupportedAssetAdded   = "SupportedAssetAdded"
 	TopicCollateralHashUpdated = "CollateralHashUpdated"
 	// TopicTreasuryUpdated is a config event rotating the protocol treasury
-	// pointer. Found by the ADR-0033 recognition audit (2026-08-18): 1 real
-	// lake event on the main contract at ledger 63,847,367 that classify()
+	// pointer: 1 real lake event on the main contract at ledger 63,847,367 that classify()
 	// dropped, tripping recognition_ok=FALSE. Body is Vec[Address, Address]
 	// (old → new treasury) — captured verbatim like BeaconUpdated /
 	// CollateralHashUpdated; no promoted column (see decodeConfigBody).

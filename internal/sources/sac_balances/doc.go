@@ -12,7 +12,7 @@
 // underlying classic asset's identity. Operators supply that
 // mapping, typically derived from the SAC contract's
 // deterministic deployment (each classic asset has exactly one
-// SAC wrapper per network). PR 5/5 surfaces this as
+// SAC wrapper per network), configured as
 // `[supply.sac_wrappers]` in operator TOML.
 //
 // # Balance value variants

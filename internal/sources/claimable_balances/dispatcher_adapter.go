@@ -15,7 +15,7 @@ import (
 )
 
 // Observer is the dispatcher-facing ClaimableBalanceEntry
-// observer per ADR-0022 PR 3/5. Implements
+// observer per ADR-0022. Implements
 // [dispatcher.LedgerEntryChangeDecoder].
 //
 // Watched-asset driven via the same operator config the
@@ -146,8 +146,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 			// that stops SumClaimableBalancesAtOrBefore counting a claimed
 			// balance, so the stale amount stays in the served total
 			// FOREVER, over-reporting supply with no counter moving.
-			// Erroring bumps the per-source decode-error counter instead
-			// (cold audit 2026-08-04).
+			// Erroring bumps the per-source decode-error counter instead.
 			return nil, fmt.Errorf(
 				"%w: removed claimable %s has no pre-image in ledger %d's memo — "+
 					"a watched balance was claimed and cannot be attributed, so its "+

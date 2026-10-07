@@ -79,8 +79,7 @@ func displayScalar(v xdr.ScVal) string {
 		// dereferences it. scval.AsBool guards this exact case by name;
 		// Display did not, and Display is the one accessor reachable from a
 		// default-constructed ScVal — MapField returns xdr.ScVal{} on a miss,
-		// so logging the value on a miss path panicked the goroutine
-		// (cold audit 2026-08-04).
+		// so logging the value on a miss path panicked the goroutine.
 		if v.B == nil {
 			return "bool"
 		}
@@ -149,8 +148,7 @@ func int256String(p xdr.Int256Parts) string {
 // whose multi-byte rune straddled byte 120 produced invalid UTF-8 —
 // encoding/json substitutes U+FFFD so the API doesn't error, but a
 // consumer writing the field to a strict-UTF-8 sink rejects the row. The
-// string is contract-supplied, so the input is attacker-chosen
-// (cold audit 2026-08-04).
+// string is contract-supplied, so the input is attacker-chosen.
 func truncateDisplay(s string) string {
 	const maxLen = 120
 	if len(s) <= maxLen {

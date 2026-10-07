@@ -531,7 +531,7 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 // figure that explains a per-ledger shortfall is `both`, NOT `anyZero`.
 //
 // This comment used to say the guard was `||` and that anyZero should
-// equal the shortfall (corrected 2026-08-04, cold audit). Following the
+// equal the shortfall. Following the
 // old text, an operator seeing anyZero == shortfall would conclude "fully
 // explained by the zero-amount artifact — not a decoder gap", and write
 // off every one-side-zero fill in (shortfall - both) as expected. Those

@@ -293,9 +293,10 @@ Consequences consumers actually hit:
   bucket-pinned to an explicit `[from, to)` and clamp an implicit "now"
   to the 30 s closed-bucket boundary, so they reproduce exactly.
 
-The in-code map is the package doc of `internal/api/v1` ("Current-price
-surfaces and their windows"), which names the producer function behind
-each surface.
+Producers in `internal/api/v1`: `/v1/price` reads
+`PriceReader.LatestPrice` (Redis `price:<pair>`, `prices_1m` fallback);
+`/v1/price/tip` is `Server.handlePriceTip`; asset `price_usd` comes from
+`CachedAssetsReader`'s catalogue overlay, else `Server.lookupUSDPrice`.
 
 ### 5.4 Historical price + OHLC
 

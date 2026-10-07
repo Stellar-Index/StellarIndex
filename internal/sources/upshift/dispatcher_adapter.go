@@ -85,7 +85,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 // state of their own (see the package doc for why each is skipped), so
 // the re-derive must count their ledgers as expected-zero. Returning an
 // error instead would mark the ledger blind and hold this source's
-// completeness verdict open forever — the INV-3 do-nothing re-derive
+// completeness verdict open forever — the do-nothing re-derive
 // trap that kept `comet` permanently incomplete. The error path stays
 // reserved for INDETERMINATE parse failures, which must remain blind.
 //

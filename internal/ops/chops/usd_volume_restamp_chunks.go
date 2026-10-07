@@ -157,8 +157,7 @@ import (
 //     skipped without being decompressed, so a rerun of the same command
 //     walks past the finished prefix at dry-run cost and resumes at the
 //     first unfinished chunk. -generation lets the rerun carry the first
-//     run's generation so the whole span ends up at ONE generation
-//     (INV-3).
+//     run's generation so the whole span ends up at ONE generation.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
@@ -189,7 +188,7 @@ type chunkRestampTier interface {
 	// probe answers, READ-ONLY, whether [lo, hi) still holds a row this run
 	// would change. A chunk that probes clean is skipped without being
 	// decompressed — what makes a rerun resume at the first unfinished
-	// chunk (INV-3: at the run's own generation). A clean probe still
+	// chunk (at the run's own generation). A clean probe still
 	// counts toward the closing report, which names the whole window.
 	probe(ctx context.Context, lo, hi time.Time) (bool, error)
 	// preview is the dry run's read-only pass over [lo, hi): it folds the
