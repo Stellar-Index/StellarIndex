@@ -29,7 +29,7 @@ type Streamer struct {
 
 // NewStreamer constructs a Streamer with sensible defaults.
 //
-// Backoff defaults (F-0029, ported G10-03): InitialBackoff 5 s,
+// Backoff defaults: InitialBackoff 5 s,
 // MaxBackoff 60 s, plus the healthy-connection reset in the shared
 // wsclient.Loop.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {

@@ -204,7 +204,7 @@ type createResponse struct {
 	// server-side + verifies each delivery by recomputing
 	// HMAC-SHA-256(secret, X-StellarIndex-Timestamp + "." + rawBody)
 	// against X-StellarIndex-Signature (sha256=…), and rejecting a
-	// timestamp outside a tolerance window to bound replay (CS-055).
+	// timestamp outside a tolerance window to bound replay.
 	// X-StellarIndex-Signature-V2 also binds the Delivery-Id and Event
 	// headers; the worker's signDeliveryHMACSHA256 documents it.
 	Secret string `json:"secret"`
@@ -228,14 +228,9 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// F-1248 (codex audit-2026-05-12): the handler used to do a
-	// `ListWebhooksForAccount` precheck here before the insert,
-	// which was raceable — N parallel HandleCreate at-the-limit
-	// requests could each pass the precheck. The store now
-	// enforces `maxPerAccount` atomically inside the INSERT, so
-	// the precheck only remains as a fast-path UX nicety: it
-	// surfaces the same 409 message without spending a write
-	// budget. The atomic insert is the actual gate.
+	// Fast-path UX only: the precheck is raceable, so the store
+	// enforces `maxPerAccount` atomically inside the INSERT, which is
+	// the actual gate. This surfaces the same 409 without a write.
 	maxHooks := h.maxWebhooksFor(sc.Account.Tier)
 	if status, problem := h.checkQuota(r, sc.Account.ID, maxHooks); problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
@@ -265,7 +260,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.cfg.Webhooks.CreateWebhook(r.Context(), rec, maxHooks)
 	if err != nil {
-		// F-1248: race-window loser. The atomic gate inside
+		// Race-window loser. The atomic gate inside
 		// CreateWebhook returns ErrWebhookQuotaExceeded when the
 		// account hits the cap between the precheck and the
 		// INSERT.
@@ -597,7 +592,7 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	if err != nil {
 		return fmt.Errorf("url is malformed: %w", err)
 	}
-	// F-1245 (codex audit-2026-05-12): SSRF defence-in-depth.
+	// SSRF defence-in-depth.
 	// Reject embedded credentials, non-https schemes (already
 	// caught above but defensive), and resolve the hostname to
 	// confirm it isn't in a private / loopback / link-local /
@@ -674,9 +669,8 @@ func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 	return nil
 }
 
-// (SSRF IP-block and reserved-TLD logic moved to internal/nettools — the single
-// canonical union blocklist shared with SEP-1 resolution + webhook delivery,
-// CS-008. Registration + delivery now agree by construction.)
+// SSRF IP-block and reserved-TLD logic lives in internal/nettools, shared
+// with SEP-1 resolution and webhook delivery so they agree by construction.
 
 // supportedEventList renders [platform.WebhookEventTypes] for the 400 body.
 func supportedEventList() string {

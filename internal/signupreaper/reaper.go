@@ -1,7 +1,7 @@
 // Package signupreaper deletes the orphan "speculative-account" rows
-// that the F-1255 lost-signup-race recovery path leaves behind.
+// that the lost-signup-race recovery path leaves behind.
 //
-// Background (F-1255, codex audit-2026-05-12): two concurrent
+// Background: two concurrent
 // /v1/auth/callback provisions for the same just-verified email can
 // both pass the GetUserByEmail check and both create an `accounts`
 // row, but only one CreateUser wins on the `users_email_idx` unique
@@ -30,7 +30,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SignupRaceReasonPrefix is the `suspended_reason` prefix the F-1255
+// SignupRaceReasonPrefix is the `suspended_reason` prefix the signup-race
 // recovery path stamps on the losing account
 // ("signup-race: orphan speculative account"). The reaper
 // matches only rows whose reason starts with this exact literal.
@@ -80,7 +80,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// Reaper periodically deletes F-1255 speculative-account orphans.
+// Reaper periodically deletes signup-race speculative-account orphans.
 type Reaper struct {
 	store    OrphanStore
 	interval time.Duration
@@ -152,7 +152,7 @@ func (r *Reaper) Sweep(ctx context.Context) {
 			"deleted", deleted)
 	}
 	r.refreshRowGauges(ctx)
-	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
+	// Liveness: the sweep COMPLETED — including the failure arm
 	// above; only the cancelled early return skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup).Set(float64(r.now().Unix()))
 }

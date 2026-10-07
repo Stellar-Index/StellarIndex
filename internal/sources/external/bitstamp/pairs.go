@@ -71,8 +71,8 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		{"xlmeur", xlm, fiats["EUR"]},
 		{"xlmgbp", xlm, fiats["GBP"]},
 		{"xlmbtc", xlm, btc},
-		// BTC + ETH cross-fiat (2026-05-14): adding btcgbp, etheur,
-		// ethgbp so the cross-venue VWAP set has full BTC+ETH × {USD,
+		// BTC + ETH cross-fiat: btcgbp, etheur, ethgbp
+		// so the cross-venue VWAP set has full BTC+ETH × {USD,
 		// EUR, GBP} parity across all 4 CEXes (binance, coinbase,
 		// kraken, bitstamp).
 		{"btcusd", btc, fiats["USD"]},

@@ -39,7 +39,7 @@ const krakenMaxResponse = 720
 // context — which carries no deadline. So a venue that accepts the
 // connection and then never writes a response is bounded by this and
 // nothing else; without it the backfill wedges until an operator
-// notices (#371 F5).
+// notices.
 //
 // A var rather than a const purely so the backfill tests can drive the
 // real production path against a black-holing server without waiting

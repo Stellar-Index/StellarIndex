@@ -80,8 +80,7 @@ type Poller struct {
 	Interval time.Duration
 
 	// CMCIDs maps upper-case ticker → CMC numeric id (as a
-	// string, e.g. "512" for XLM). F-1237 (codex audit-2026-05-12):
-	// querying CMC by `symbol=` is ambiguous — multiple coins can
+	// string, e.g. "512" for XLM). Querying CMC by `symbol=` is ambiguous — multiple coins can
 	// share the same ticker (LUNA, LUNC, etc.) and CMC picks the
 	// highest-ranked match, which can drift between tickers and
 	// over time. Every ticker present here is queried by
