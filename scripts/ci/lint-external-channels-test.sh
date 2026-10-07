@@ -21,7 +21,7 @@ FIX="docs/zz-external-channels-fixture.md"
 FIXTURE_PAT="zz-dead-channel-fixture-string"
 TMP=$(mktemp -d)
 PASS=0; FAIL=0
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() { rm -f "$FIX"; rm -rf "$TMP"; }
 trap cleanup EXIT
 
