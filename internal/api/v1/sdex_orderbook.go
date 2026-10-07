@@ -35,7 +35,7 @@ const SDEXOrderBookAdvanceInterval = 60 * time.Second
 // SDEXOrderBookStaleAfter gates `flags.stale`: 2x the advance cadence,
 // the same missed-refresh-cycles convention changeSummaryStaleAfter
 // uses (one missed tick can be a slow ClickHouse read, not yet a
-// wedged Advance; two cannot). GH-987: Advance returns early on a
+// wedged Advance; two cannot). Advance returns early on a
 // read error without moving `c.updated`, so an in-memory book that has
 // stopped advancing otherwise keeps serving `stale: false` forever.
 const SDEXOrderBookStaleAfter = 2 * SDEXOrderBookAdvanceInterval
@@ -51,7 +51,7 @@ const (
 // sweep (called once per advance tick by the maintainer goroutine in
 // cmd/stellarindex-api/main.go). Each pending offer costs one
 // partition-pruned (ledger, key) probe against ledger_entry_changes —
-// ~1.5 ms/key measured on r1 (2026-07-31) — so a 2,500 batch is ~4 s
+// ~1.5 ms/key measured on r1 — so a 2,500 batch is ~4 s
 // of the 60 s tick, and a fully zombie-laden book (~10^6 suspects)
 // converges in hours, not days. The quarantined suspects are NOT
 // served meanwhile — each response counts them per side as
@@ -95,8 +95,8 @@ type SDEXOfferBookReader interface {
 	LoadLiveOffers(ctx context.Context) ([]clickhouse.LiveOffer, uint32, error)
 	OfferChangesSince(ctx context.Context, fromLedger uint32) ([]clickhouse.OfferChange, uint32, error)
 	// OfferRemovedAt reports which refs have a `removed` change row at
-	// their own winning ledger — the version-tie zombie probe (see the
-	// clickhouse implementation for the full defect narrative).
+	// their own winning ledger — the version-tie zombie probe (the
+	// clickhouse implementation's doc explains the tie).
 	OfferRemovedAt(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error)
 }
 
@@ -108,7 +108,7 @@ type SDEXOfferBookReader interface {
 // microseconds). Before the first Load completes the handler serves an
 // honest 503 "snapshot loading" problem, never fabricated emptiness.
 //
-// Trust discipline (the 2026-07-31 crossed-book fix): a loaded offer
+// Trust discipline (what keeps the book from crossing): a loaded offer
 // whose winning version carries intra_ledger_seq == 0 is AMBIGUOUS —
 // either a pre-intra-era backfill row whose same-ledger siblings
 // (including a possible removal) lost the ReplacingMergeTree version
@@ -401,7 +401,7 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 		// this exactly the way pre-Load ticks are deliberately unobserved
 		// above: no error is ever raised, so the served book can go stale
 		// for as long as the hold lasts with maintain_failing silent the
-		// whole time (INV-0780). Mirrors the projector's watermark_held
+		// whole time. Mirrors the projector's watermark_held
 		// outcome for the identical guard (sdex_offer_book_reader.go).
 		observeMaintainOutcome("advance_held", start)
 		return nil
@@ -619,7 +619,7 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 		BidOffersWithheld: snap.withheldBids,
 		Depth:             depth,
 	}
-	// GH-987: snap.at is the last SUCCESSFUL Advance (a failed one
+	// snap.at is the last SUCCESSFUL Advance (a failed one
 	// leaves it untouched — see Advance's early return), so this is the
 	// only honest staleness signal a wedged book has.
 	// A stale book is the last good snapshot carried past failed advances.

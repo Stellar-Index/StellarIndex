@@ -50,7 +50,7 @@ const rwaMembershipTTL = 10 * time.Minute
 
 // rwaMaxIssuers bounds the per-issuer listing reads one rebuild will
 // make. The qualifying issuer set is small by construction (four on the
-// production network, 2026-09-05) because R3 requires an independent
+// production network when measured) because R3 requires an independent
 // party to have named the account; the cap is a guard against a
 // directory sync that suddenly tags thousands of accounts, not an
 // expected condition. When it binds, the surface says so rather than
@@ -68,18 +68,14 @@ const rwaAssetsPerIssuer = 500
 // reason rather than an error, exactly as the logo overlay degrades.
 //
 // WHERE THE CANDIDATE POOL COMES FROM, because it is not obvious from
-// here and it silently bounded this surface for the whole of its life:
-// the implementation reads `issuers WHERE sep1_payload IS NOT NULL`, and
-// `issuers` rows are created ONLY by the classic-asset registry writer.
-// Until migration 0158 that writer ran only on a TRADE, so an issuer
-// whose assets are held but never traded on the SDEX never became a
-// candidate at all — not refused by a requirement, absent from the
-// `refused` counts, invisible. 61% of the classic-asset population was
-// in that state (512,496 assets with a trustline against 199,793
-// registered, measured 2026-09-10), Franklin Templeton's BENJI included.
-// The registry now also registers from trustline holdings, so the pool
-// is the held population — once `asset-registry-backfill`,
-// `issuer-enrich` and `sep1-refresh` have each reached a given issuer.
+// here and it silently bounds this surface: the implementation reads
+// `issuers WHERE sep1_payload IS NOT NULL`, and `issuers` rows are
+// created ONLY by the classic-asset registry writer. That writer
+// registers from trades and from trustline holdings, so the pool is the
+// held population — once `asset-registry-backfill`, `issuer-enrich` and
+// `sep1-refresh` have each reached a given issuer. An issuer it has not
+// reached is not refused by a requirement: it is absent from the
+// `refused` counts, invisible.
 type Sep1BoundCurrencyReader interface {
 	BoundSep1Currencies(
 		ctx context.Context, keep timescale.Sep1CurrencyFilter,
@@ -154,8 +150,8 @@ type RWAAssetsView struct {
 	//
 	// They are not refused by any requirement. There is nothing to
 	// refuse: no token of theirs was ever collected, so none was ever
-	// evaluated. Measured on r1 2026-09-10, Franklin Templeton and Spiko
-	// are both in this position — recognised, correct domains, and
+	// evaluated. Measured on r1, Franklin Templeton and Spiko were both
+	// in this position — recognised, correct domains, and
 	// absent from the issuers table entirely, because that table is
 	// populated only when a CLASSIC asset is registered.
 	//
@@ -204,12 +200,12 @@ type RWAFunnel struct {
 	// Balanced is true — the two are one statement in two forms and
 	// cannot disagree.
 	//
-	// Every reason in it was already being computed: each census
-	// publishes a Check() that returns the invariant it broke, and each
-	// adjacent stage pair reports the arithmetic that failed. All of it
-	// was reduced to a boolean at this boundary and the sentences went
-	// to a log, so a reader was told the accounting does not close and
-	// given no way to find out what did not close. Semicolon-separated
+	// Every reason in it comes from a check that already runs: each
+	// census publishes a Check() that returns the invariant it broke, and
+	// each adjacent stage pair reports the arithmetic that failed.
+	// Carrying those sentences here, instead of reducing them to a
+	// boolean and a log line, tells a reader what did not close and not
+	// only that the accounting does not. Semicolon-separated
 	// when more than one check failed, because they are independent and
 	// the first is not necessarily the cause of the rest.
 	Imbalance string `json:"imbalance,omitempty"`
@@ -231,14 +227,12 @@ type RWAFunnel struct {
 // rebuild that produced it finished, and whether the copy being served
 // is past its own lifetime.
 //
-// It exists because the response could not say how old the thing it was
-// describing was, and on 2026-09-15 that cost most of an afternoon. The
-// envelope's `as_of` is the RESPONSE's instant and moves sub-second
-// between requests; read as the set's build time it says the set is
-// refreshing continuously, which is the opposite of what was happening.
-// Every field here is named to make that substitution impossible:
-// `built_at`, not `as_of`, because a set is BUILT and a response is AS
-// OF — two different events that were being read as one.
+// It exists because the envelope's `as_of` is the RESPONSE's instant
+// and moves sub-second between requests; read as the set's build time it
+// says the set is refreshing continuously, which can be the opposite of
+// what is happening. Every field here is named to make that substitution
+// impossible: `built_at`, not `as_of`, because a set is BUILT and a
+// response is AS OF — two different events that are easy to read as one.
 //
 // # The state this is loudest about
 //
@@ -286,14 +280,14 @@ type RWAMembershipSet struct {
 // RWAListingDirectory is what the independent listing directory looked
 // like at the moment the served set was built.
 //
-// It exists because the funnel published a VERDICT and none of the
-// evidence for it, and the verdict alone cannot be acted on. A `listing`
+// It exists because a VERDICT published without the evidence for it
+// cannot be acted on. A `listing`
 // arm reporting nothing corroborated is produced by three different
 // states of the world — a directory nobody has ever synced, a sync that
 // stopped days ago, and a perfectly healthy directory that this set
 // simply predates — and they call for three different responses, from
-// "run the sync" through "go and fix it" to "do nothing at all". Told
-// apart, before this block, only by somebody with a database prompt.
+// "run the sync" through "go and fix it" to "do nothing at all". Without
+// this block only somebody with a database prompt can tell them apart.
 //
 // Read it as a decision table. Entries counts the FRESH rows only —
 // `Entries = Contracts + Classic`, with Stale counted beside them and
@@ -362,8 +356,7 @@ type RWAFunnelStage struct {
 	// WITHIN an arm and never across the boundary between them. Without
 	// this field a reader would try to subtract the last classic stage
 	// from the first contract one and find no relation, which is exactly
-	// the misreading the per-stage `unit` was added to prevent one level
-	// down.
+	// the misreading the per-stage `unit` prevents one level down.
 	Arm string `json:"arm"`
 	// Stage names the population.
 	Stage string `json:"stage"`
@@ -1059,9 +1052,9 @@ type rwaMembership struct {
 	overIssuerCap int
 	// duplicateDeclarations counts candidates naming a (code, issuer)
 	// already admitted. A toml may declare the same asset twice — the
-	// spec does not forbid it — and each declaration used to become its
-	// own member, so the asset was served twice and its market cap
-	// entered every total twice.
+	// spec does not forbid it — and admitting each declaration as its
+	// own member would serve the asset twice and add its market cap to
+	// every total twice.
 	duplicateDeclarations int
 	// available is false when no attestation reader is wired, which is
 	// a configuration statement rather than an empty population.
@@ -1388,7 +1381,7 @@ const rwaMembershipRetryGap = 60 * time.Second
 // rwaMembershipBudget is the DETACHED rebuild's own deadline. It is not
 // a request budget: the whole point of detaching is that no request is
 // waiting on it. It has to exceed the measured build cost with room to
-// spare — the production build was ~11.5 s on 2026-09-15 — or the
+// spare — the production build measured ~11.5 s — or the
 // refresh that was supposed to keep the entry warm is killed halfway
 // and the entry never warms at all.
 const rwaMembershipBudget = 2 * time.Minute
@@ -1401,18 +1394,18 @@ const rwaMembershipBudget = 2 * time.Minute
 // its TTL is the same set, and waiting for the rescan is what cost the
 // request the wall-clock time.
 //
-// That wait was the whole of this surface's latency. Measured on r1
-// (2026-09-15) the route was perfectly bimodal — 39 of 43 requests
+// That wait would be the whole of this surface's latency. Measured on r1
+// with the rebuild inline, the route was perfectly bimodal — 39 of 43 requests
 // under 1 s, the other 4 over 10 s — because the rebuild is an
 // indexed scan over every issuer-bound SEP-1 payload (1.18M currency
 // entries) plus the curated-directory walk, and whichever request
 // happened to find the ten-minute entry expired paid all ~11.5 s of it
 // inline. With no more than one page load per TTL window, that is
-// roughly one visitor in ten meeting a twelve-second page. It is the
-// same defect, with the same fix, as the SEP-1 logo map in
-// [Server.readSep1Images].
+// roughly one visitor in ten meeting a twelve-second page. The SEP-1 logo
+// map in [Server.readSep1Images] is served the same way for the same
+// reason.
 //
-// The ONE case that still waits is a cache that has never been filled.
+// The ONE case that waits is a cache that has never been filled.
 // An empty set there is not a stale answer, it is the false statement
 // that no real-world asset exists on Stellar — so a cold process waits
 // for its first build rather than publishing that. [Server.PrewarmRWA]
@@ -1554,11 +1547,11 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 	// measurement, and a partial measurement may not be published as
 	// the set.
 	//
-	// It used to be enough for EITHER arm to answer, which sounds like
-	// the same rule and is not: a failed classic scan beside a healthy
-	// contract scan wrote a set with no classic members over the last
-	// good one, re-dated it to now and cleared the failure stamp below,
-	// so the surface served a half-empty set reporting `stale: false`
+	// Requiring only EITHER arm to answer sounds like the same rule and
+	// is not: a failed classic scan beside a healthy
+	// contract scan would write a set with no classic members over the
+	// last good one, re-date it to now and clear the failure stamp below,
+	// so the surface would serve a half-empty set reporting `stale: false`
 	// and no `rebuild_failed_at` for the whole ten-minute lifetime.
 	// Membership is what this index CALLS a real-world asset, so that
 	// is published coverage which is wrong AND self-certified fresh —
@@ -1858,9 +1851,9 @@ func rwaDefinition() RWADefinition {
 }
 
 // rwaCatalogueJoin counts what the join from the admitted set to the
-// asset catalogue removed. Both of its fields used to be silent drops
-// at the very end of the funnel, where an asset that met every
-// requirement could still vanish without appearing in any tally.
+// asset catalogue removed. Both of its fields count drops at the very
+// end of the funnel, where an asset that met every requirement could
+// otherwise vanish without appearing in any tally.
 type rwaCatalogueJoin struct {
 	// pagesTruncated counts member issuers whose classic-asset listing
 	// page filled to rwaAssetsPerIssuer, so their long tail went unread
@@ -1933,8 +1926,8 @@ func (s *Server) rwaListingRows(
 		}
 		// A full page means the issuer has more classic assets than one
 		// read covers, so a member in the unread tail would disappear
-		// from the set with nothing to show for it. The cap has always
-		// been documented as reported; until now it was not.
+		// from the set with nothing to show for it. The cap is documented
+		// as reported, so the truncation is counted here.
 		if len(rows) >= rwaAssetsPerIssuer {
 			join.pagesTruncated++
 		}
@@ -2096,8 +2089,8 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale, carried from the listing row. The
 			// reference valuation divides by it, and a constant in its
-			// place would be the hardcoded-decimals defect the
-			// market-cap path already had to fix, in a new coordinate.
+			// place would misprice every asset whose scale differs (see
+			// [rwaReferenceValueUSD]).
 			Decimals:     rwaDecimalsOf(d),
 			Volume24hUSD: d.VolumeUSD24h,
 		}

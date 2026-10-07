@@ -63,10 +63,10 @@ import (
 // aggregated price claim is withheld for a pair whose trailing market
 // activity is below the operator's floor, because on a permissionless
 // DEX an attacker can mint a token, seed a handful of dust trades and
-// have their own rate published as ours (the 2026-08-04 valuation
-// incident). A history built on the raw daily VWAP would publish, for
-// every past day, exactly the claim the live surface refuses — the gate
-// routed around by changing the time axis.
+// have their own rate published as ours. A history built on the raw
+// daily VWAP would publish, for every past day, exactly the claim the
+// live surface refuses — the gate routed around by changing the time
+// axis.
 //
 // So each day's market leg is measured and then held to a floor of the
 // same shape ([Server.rwaPremiumDayFloorFor]), and a day that fails it is
@@ -108,7 +108,7 @@ const rwaPremiumHistoryTTL = 10 * time.Minute
 // Tied to [maxHandlerBudget] rather than a separate literal, for the
 // same reason as [rwaHistoryBudget]: the handler reaches
 // buildRWAPremiumHistory synchronously on a cache miss, so a budget
-// past the blanket request deadline can never fire (RLT-043).
+// past the blanket request deadline can never fire.
 const rwaPremiumHistoryBudget = maxHandlerBudget
 
 // rwaPremiumHistoryMaxPoints caps the served point count per series.
@@ -126,7 +126,7 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 // in main.go) rather than the pricingguard package defaults — an
 // operator who moves the live serving floor away from those defaults
 // must move this one with it, or the premium history silently measures
-// against a floor /v1/price no longer enforces (RLT-041).
+// against a floor /v1/price does not enforce.
 //
 // It is [pricingguard.SubstancePolicy] — the same three legs, evaluated
 // by the same pure decision ([pricingguard.SubstanceOK]) — with each
