@@ -46,6 +46,8 @@ _Source page `ingest-gap.md#stellarindex_ingest_gap_detected`: status ratified, 
 
    Output prints each `[from, to]` range + a ready-to-paste `stellarindex-ops backfill` command per gap.
 
+   `find-data-gaps` is ledger-scoped and cannot see CEX/oracle sources (no ledger). For those, run `scripts/ops/find-external-gaps.sh [source...]` on the host (needs `STELLARINDEX_POSTGRES_DSN`; `MIN_GAP_DAYS` defaults to 2). It reports day-level holes in `kraken coinbase bitstamp binance`; a venue that genuinely did not trade is not a defect, so a human judges each hole.
+
 2. **Classify the gap pattern:**
    - **One large contiguous gap (>50 K ledgers)** → cascade signature. Suspect ingest halt (Redis MISCONF, Postgres back-pressure, AsyncSink wedge). Cross-check F-0020-cluster alerts (`stellarindex_redis_writes_blocked`, `stellarindex_postgres_connections_high`).
    - **Many small gaps (each ~100-500 ledgers)** → flaky-write pattern. Suspect MinIO blip, transient ledgerstream reconnect, or a partial-batch sink failure.
