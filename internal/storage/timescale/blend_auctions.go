@@ -68,8 +68,7 @@ func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 // emitted by one operation don't collide; the ON CONFLICT arm is DO
 // UPDATE guarded by derive_generation (migration 0110), not DO NOTHING.
 //
-// Per docs/discovery/dexes-amms/blend.md the auction lifecycle
-// produces multiple rows in this table:
+// The auction lifecycle produces multiple rows in this table:
 //
 //	new_auction      → event_kind='new'
 //	fill_auction(s)  → event_kind='fill'

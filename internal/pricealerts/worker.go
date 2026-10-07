@@ -31,7 +31,7 @@ const alertTimeoutDivisor = 3
 // (timescale.latestVWAPGateWindow) allows a bucket up to 14 DAYS old —
 // generous for general price serving, but a "price crossed a threshold"
 // notification built off a bucket that stale is no longer describing a
-// live crossing (GH-664). 15 one-minute buckets is a wide margin over
+// live crossing. 15 one-minute buckets is a wide margin over
 // the evaluator's own 30 s-default sweep cadence while still rejecting
 // the multi-day-stale case the gate lets through.
 const maxPriceStaleness = 15 * time.Minute
@@ -295,10 +295,10 @@ func (w *Worker) checkCrossing(ctx context.Context, a platform.PriceAlert, now t
 		return nil, outcomeNoPrice, nil
 	}
 	if age := now.Sub(bucketClose); age > maxPriceStaleness {
-		// The bucket is real but too old to describe a live crossing
-		// (GH-664) — LatestVWAP's own freshness gate is generous (up to
-		// 14 days) for general price serving, so the evaluator enforces
-		// its own tighter budget rather than notifying off a stale price.
+		// The bucket is real but too old to describe a live crossing —
+		// LatestVWAP's own freshness gate is generous (up to 14 days) for
+		// general price serving, so the evaluator enforces its own tighter
+		// budget rather than notifying off a stale price.
 		w.logger.Debug("price alert price stale — skipping",
 			"alert_id", a.ID, "account_id", a.AccountID,
 			"bucket_close", bucketClose, "age", age)
@@ -334,7 +334,7 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	if err != nil {
 		return "", fmt.Errorf("build payload: %w", err)
 	}
-	// Claim the crossing BEFORE enqueuing (NTF-PA-01): the claim disarms the
+	// Claim the crossing BEFORE enqueuing: the claim disarms the
 	// alert, so a mid-fan-out failure never re-notifies a webhook (once per
 	// crossing). A fan-out that enqueued nothing re-arms below, so it retries.
 	//
@@ -343,7 +343,7 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	// the LastFiredAt snapshot ListEnabledPriceAlerts took at the top of
 	// this sweep, so two evaluators (a second aggregator, an R2/R3
 	// standby, an overlapping deploy) both pass it on the same crossing.
-	// Only one of them can win the row-locked UPDATE (#368 M10).
+	// Only one of them can win the row-locked UPDATE.
 	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a, now)
 	if err != nil {
 		return "", fmt.Errorf("claim fire: %w", err)

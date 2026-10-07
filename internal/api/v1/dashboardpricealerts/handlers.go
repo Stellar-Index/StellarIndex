@@ -37,7 +37,7 @@ type Config struct {
 	AlertQuotas map[platform.Tier]int
 
 	// idempotency backs the optional Idempotency-Key header on
-	// HandleCreate (T284): a client that retries a create after a
+	// HandleCreate: a client that retries a create after a
 	// timeout gets the original response replayed instead of
 	// registering a second alert. Lazily initialized by validate().
 	idempotency *middleware.IdempotencyStore
@@ -76,11 +76,10 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // anonymous request is refused before any other layer runs; the
 // handlers still read the session for its account.
 //
-// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
-// (C3-031 / C3-057): these routes authenticate with the session
-// COOKIE, so a cross-site page could otherwise drive them on a
-// logged-in customer's behalf. Reads stay unwrapped — safe methods
-// change nothing.
+// Every mutation is wrapped in [middleware.RequireSameSiteWrite]:
+// these routes authenticate with the session COOKIE, so a cross-site
+// page could otherwise drive them on a logged-in customer's behalf.
+// Reads stay unwrapped — safe methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)

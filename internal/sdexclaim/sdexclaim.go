@@ -78,14 +78,13 @@ func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool)
 //     atom whose sold and bought assets are the same asset is not a
 //     trade.
 //
-// C2-010 (audit-2026-07-23): pre-fix this predicate was rule 2 alone.
-// Rules 1, 3 and 4 were applied only inside the decoder, so both census
-// counters over-reported every self-cross and every non-alphanumeric-code
-// fill. The census is the ADR-0033 oracle that is supposed to prove the
-// decoders lost nothing — an oracle that counts rows the writer
-// deterministically refuses can NEVER reconcile, so a genuine future
-// trade-loss bug would have been indistinguishable from this permanent
-// baseline discrepancy.
+// All four rules must apply here, not only inside the decoder: a
+// predicate of rule 2 alone makes both census counters over-report every
+// self-cross and every non-alphanumeric-code fill. The census is the
+// ADR-0033 oracle that is supposed to prove the decoders lost nothing —
+// an oracle that counts rows the writer deterministically refuses can
+// NEVER reconcile, so a genuine future trade loss would be
+// indistinguishable from that permanent baseline discrepancy.
 func IsRealTrade(a xdr.ClaimAtom) bool {
 	sold, bought, soldAsset, boughtAsset, known := parts(a)
 	if !known {

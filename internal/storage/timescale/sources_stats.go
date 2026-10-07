@@ -78,7 +78,7 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 func sourceStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL(1)
 	return `
-		-- Two-level aggregate (site-audit S38). The natural form of this
+		-- Two-level aggregate. The natural form of this
 		-- query — a single GROUP BY source carrying
 		-- COUNT(DISTINCT (base_asset, quote_asset)) — measured 15.1 s on
 		-- production, because COUNT(DISTINCT) forces a per-group SORT of

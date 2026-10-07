@@ -52,9 +52,9 @@ var ErrTransient = errors.New("notify: transient provider failure")
 // credential and therefore cannot deliver anything. It is a FAILURE,
 // never a success: a caller that counts sends must count it as
 // failed, and a caller that reports delivery must not report "sent"
-// (RLT-321 — an empty Resend key used to resolve to a transport whose
-// Send returned nil, so undeliverable sign-in mail was counted and
-// reported as sent and the failure-ratio alert read 0).
+// (a transport whose Send returned nil for an empty Resend key would
+// count and report undeliverable sign-in mail as sent, and the
+// failure-ratio alert would read 0).
 var ErrNotConfigured = errors.New("notify: mail transport is not configured")
 
 // UnconfiguredSender is the transport a deployment gets when it has

@@ -1,6 +1,5 @@
 // Package accounterasure erases a platform account: the one writer both
-// DELETE /v1/dashboard/account and `stellarindex-ops account-erase` call
-// (GH #809).
+// DELETE /v1/dashboard/account and `stellarindex-ops account-erase` call.
 //
 // Sequence, each step safe to repeat:
 //

@@ -659,12 +659,11 @@ func TestPools_InvalidAsset400(t *testing.T) {
 	}
 }
 
-// TestMarkets_DefaultOrderIsVolumeDesc pins the post-2026-05-10
-// default. R-014 in `docs/review-2026-05-10.md` — the
-// alphabetical default surfaced spam tokens (`0-…`, `0TAX-…`)
-// at the top of every cold listing. The explorer always passed
-// `?order_by=volume_24h_usd_desc` explicitly to work around it;
-// now the implicit default matches what every consumer wants.
+// TestMarkets_DefaultOrderIsVolumeDesc pins the default order, 24h
+// USD volume descending. An alphabetical default would surface spam
+// tokens (`0-…`, `0TAX-…`) at the top of every cold listing, and
+// every consumer would pass `?order_by=volume_24h_usd_desc` to work
+// around it.
 //
 // Callers paginating the entire universe of pairs in lex order
 // can still pass `?order_by=pair` explicitly.

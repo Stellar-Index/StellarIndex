@@ -49,8 +49,8 @@ var (
 
 	// ErrScValType wraps a "wrong SCVal kind" assertion — e.g. caller
 	// expected Symbol but got I128. Usually indicates a schema change
-	// in the target contract (per docs/architecture/contract-schema-
-	// evolution.md) or a decoder writing to the wrong shape.
+	// in the target contract (per docs/architecture/ingest-pipeline.md
+	// §Contract schema evolution) or a decoder writing to the wrong shape.
 	ErrScValType = errors.New("scval: unexpected SCVal type")
 
 	// ErrScValMissingKey — a map-lookup by field name found no entry.

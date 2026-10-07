@@ -737,7 +737,7 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 // envelope flips Truncated=true and surfaces both DataStartsAt and
 // RequestedFrom so consumers can render a "history begins ..." hint
 // instead of guessing whether the deployment is data-thin or the
-// asset is genuinely flat. R-013 in `docs/review-2026-05-10.md`.
+// asset is genuinely flat.
 func TestChart_TruncatedFlagOnRetentionShortfall(t *testing.T) {
 	// 7 days of 1d points, but request `timeframe=1y` (=365d window).
 	now := time.Now().UTC().Truncate(24 * time.Hour)

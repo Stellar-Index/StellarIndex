@@ -24,8 +24,7 @@ var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 //
 // Per ADR-0027 the production hot tier is local galexie-archive
 // (MinIO on r1) and the cold tier is `aws-public-blockchain` S3
-// (the Open Data Sponsorship bucket — the same source R2 reads
-// per ADR-0016). The cold path is read-only; PutFile +
+// (the Open Data Sponsorship bucket). The cold path is read-only; PutFile +
 // PutFileIfNotExists always target hot.
 //
 // Fail-loud-not-silent: transient errors from the hot store

@@ -1,12 +1,5 @@
 # History citations in product Go comments, one per comment line: <path>\t<first match>.
 # Shrink-only: delete a line when its citation goes; scripts/ci/lint-comments fails on new or stale entries.
-cmd/stellarindex-migrate/main.go	#346
-cmd/stellarindex-ops/main.go	2026-07-01
-cmd/stellarindex-sla-probe/main.go	2026-06-02
-internal/accounterasure/eraser.go	#809
-internal/api/streampublish/publisher.go	2026-08-03
-internal/api/v1/dashboardpricealerts/doc.go	F-1235
-internal/api/v1/dashboardpricealerts/handlers.go	T284
 internal/api/v1/dashboardwebhooks/doc.go	F-1235
 internal/api/v1/dashboardwebhooks/doc.go	F-1270
 internal/api/v1/dashboardwebhooks/handlers.go	CS-008
@@ -24,7 +17,6 @@ internal/cachekeys/keys.go	#1294
 internal/cachekeys/keys.go	#1317
 internal/cachekeys/keys.go	F-0014
 internal/cachekeys/keys.go	F-1344
-internal/canonical/discovery/sink.go	2026-07-16
 internal/canonical/discovery/sniffer.go	2026-07-10
 internal/canonical/safetime.go	2001-09-09
 internal/canonical/safetime.go	2001-09-09
@@ -33,7 +25,6 @@ internal/completeness/audit_axis.go	#465
 internal/completeness/reconcile.go	#371
 internal/completeness/reconcile.go	2026-07-23
 internal/completeness/rollup.go	2026-07-06
-internal/consumer/doc.go	2026-04-23
 internal/currency/verified.go	2026-05-11
 internal/currency/verified.go	2026-08-04
 internal/currency/verified.go	K033
@@ -52,19 +43,9 @@ internal/decimalsguard/guard.go	2026-08-05
 internal/domain/accounts.go	2026-07-16
 internal/domain/blend.go	2026-07-10
 internal/domain/sorobanevents.go	2026-07-16
-internal/incidents/incidents.go	2026-08-03
-internal/incidents/incidents.go	2026-08-03
-internal/logincodereaper/reaper.go	#368
-internal/magiclinkreaper/reaper.go	#368
 internal/metadata/sep1.go	2026-09-16
 internal/metadata/sep1.go	CS-008
 internal/metadata/sep1.go	F-1336
-internal/nettools/ssrf.go	2026-07-23
-internal/nettools/ssrf.go	CS-008
-internal/notify/noop.go	RLT-321
-internal/notify/sender.go	RLT-321
-internal/obstest/histogram.go	2026-05-13
-internal/ops/accounts/account_erase.go	#809
 internal/ops/chops/ch_rebuild.go	INV-3
 internal/ops/chops/ch_rebuild.go	INV-3
 internal/ops/chops/projected_rebuild.go	INV-3
@@ -78,18 +59,13 @@ internal/ops/diagnostics/hubble_check.go	2026-08-04
 internal/ops/diagnostics/verify_decoders.go	RLT-282
 internal/ops/diagnostics/verify_decoders.go	RLT-282
 internal/ops/diagnostics/verify_external.go	F-1237
-internal/ops/discovery/discovery.go	2026-07-01
 internal/ops/incident/emit_incident.go	2026-05-12
-internal/ops/incident/emit_incident.go	F-1249
 internal/ops/ingest/backfill_index.go	2017-08-23
 internal/ops/ingest/backfill_index.go	2017-11-15
 internal/ops/ingest/backfill_index.go	2018-02-15
 internal/ops/ingest/backfill_index.go	pre-2018
-internal/ops/keys/mint_key.go	2026-07-23
 internal/ops/keys/upgrade_key.go	2026-09
 internal/ops/usage/usage_rollup_backfill.go	2026-07-19
-internal/pii/pii.go	#346
-internal/pricealerts/worker.go	#368
 internal/pricelesscoverage/worker.go	#161
 internal/pricelesscoverage/worker.go	#161
 internal/pricelesscoverage/worker.go	2026-09-17
@@ -103,7 +79,6 @@ internal/ratelimit/bucket.go	K009
 internal/ratelimit/doc.go	F-0050
 internal/ratelimit/fixedwindow.go	2026-07-23
 internal/ratelimit/inprocess.go	2026-07-23
-internal/redact/redact.go	F077
 internal/rwa/constant_nav.go	2026-09-16
 internal/rwa/contract.go	2026-09-10
 internal/rwa/contract.go	2026-09-15
@@ -117,13 +92,11 @@ internal/scval/display.go	2026-08-04
 internal/scval/display.go	2026-08-04
 internal/scval/scval.go	2025-09-03
 internal/scval/scval.go	2026-05-28
-internal/sdexclaim/sdexclaim.go	2026-07-23
 internal/signupreaper/reaper.go	#368
 internal/signupreaper/reaper.go	F-1255
 internal/signupreaper/reaper.go	F-1255
 internal/signupreaper/reaper.go	F-1255
 internal/signupreaper/reaper.go	F-1255
-internal/sourcenet/sourcenet.go	#483
 internal/sources/blend_emitter/events.go	2026-07-09
 internal/sources/blend_emitter/events.go	2026-07-09
 internal/sources/blend_emitter/events.go	2026-07-09
@@ -160,14 +133,11 @@ internal/sources/external/coingecko/poller.go	F-0030
 internal/sources/external/coinmarketcap/poller.go	#600
 internal/sources/external/coinmarketcap/poller.go	2026-04-24
 internal/sources/external/coinmarketcap/poller.go	F-1237
-internal/sources/external/cryptocompare/poller.go	#600
 internal/sources/external/ecb/poller.go	2026-04-23
 internal/sources/external/ecb/poller.go	2026-04-24
 internal/sources/external/exchangeratesapi/events.go	2026-04-24
 internal/sources/external/exchangeratesapi/events.go	2026-04-24
 internal/sources/external/exchangeratesapi/poller.go	#371
-internal/sources/external/frankfurter/client.go	#600
-internal/sources/external/frankfurter/client.go	#600
 internal/sources/external/kraken/backfill.go	#371
 internal/sources/external/kraken/backfill_trades.go	#371
 internal/sources/external/kraken/events.go	2026-04
@@ -175,7 +145,6 @@ internal/sources/external/kraken/pairs.go	2026-05-05
 internal/sources/external/kraken/pairs.go	Pre-2026
 internal/sources/external/kraken/parse.go	2026-04-24
 internal/sources/external/kraken/streamer.go	F-0029
-internal/sources/external/scale/scale.go	2026-08-03
 internal/sources/external/tiingo/events.go	2026-09
 internal/sources/external/tiingo/events.go	2026-09-22
 internal/sources/liquidity_pools/dispatcher_adapter.go	2026-08-04
@@ -212,8 +181,6 @@ internal/sources/sorocredit/events.go	2026-08-18
 internal/sources/soroswap_router/events.go	2026-05-19
 internal/sources/sushiswap_v3/events.go	2026-09-05
 internal/sources/sushiswap_v3/events.go	2026-09-05
-internal/sources/trustlines/dispatcher_adapter.go	PR 2
-internal/sources/trustlines/events.go	2026-07-16
 internal/sources/upshift/dispatcher_adapter.go	INV-3
 internal/sources/upshift/events.go	2026-09-09
 internal/sources/upshift/events.go	2026-09-09
@@ -221,7 +188,6 @@ internal/sources/upshift/events.go	2026-09-09
 internal/stellarrpc/doc.go	2026-04-23
 internal/stellarrpc/doc.go	2026-04-23
 internal/stellarrpc/types.go	2025-12-16
-internal/storage/redisclient/redisclient.go	F-1213
 internal/storage/timescale/aggregates.go	2000-01-03
 internal/storage/timescale/bespoke_dex.go	2026-03-18
 internal/storage/timescale/bespoke_dex.go	2026-03-18
@@ -394,23 +360,13 @@ internal/usage/counter.go	2026-08-03
 internal/usage/counter.go	F-1226
 internal/usage/counter.go	F-1258
 internal/usage/counter.go	RLT-404
-internal/worker/guardscan/guardscan.go	#368
-internal/worker/guardscan/guardscan.go	#558
-internal/worker/recover.go	#368
-scripts/ci/lint-chaos-ci-wiring/main.go	T430
-scripts/ci/lint-chaos-ci-wiring/main.go	T430
-scripts/ci/lint-derive-generation-guard/main.go	INV-3
-scripts/ci/lint-derive-generation-guard/main.go	T351
 scripts/ci/lint-golangci-config/main.go	#275
 scripts/ci/lint-golangci-config/main.go	#317
 scripts/ci/lint-golangci-config/main.go	2026-08-28
-scripts/ci/lint-pk-discriminators/main.go	F-1324
 scripts/ci/lint-rule-equivalence/main.go	CS-098
 scripts/ci/lint-rule-equivalence/main.go	F-1222
 scripts/ops/circulation-fetch/main.go	2026-05-08
 scripts/ops/fx-history-backfill/main.go	2026-08-14
 scripts/ops/fx-history-backfill/main.go	INV-3
-test/controlwiring/doc.go	K023
 test/harness/timescale.go	2026-06-15
 test/harness/timescale.go	2026-08-13
-test/integration/doc.go	F-1334

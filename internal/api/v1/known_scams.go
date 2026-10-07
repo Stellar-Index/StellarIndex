@@ -18,9 +18,7 @@ import "github.com/Stellar-Index/StellarIndex/internal/canonical"
 // To verify an entry: `curl https://api.stellar.expert/explorer/
 // public/directory/<g>` and confirm the `tags` array.
 //
-// Adding a new entry requires a sibling note in the issuer-tagging
-// runbook (docs/operations/runbooks/scam-issuers.md, future). For
-// now: add the entry, cite the stellar.expert lookup, ship it.
+// A new entry cites its stellar.expert lookup.
 type scamFlag struct {
 	Reason string // human-readable label rendered in the warning badge
 }

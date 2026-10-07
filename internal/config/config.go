@@ -40,7 +40,7 @@ type Config struct {
 	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
 	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
 	SignupReaper  SignupReaperConfig  `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
-	HashDB        HashDBConfig        `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
+	HashDB        HashDBConfig        `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
 	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
@@ -76,7 +76,7 @@ type HashDBConfig struct {
 	// VerifyIntervalMinutes is the gap between periodic verify
 	// sweeps. 0 falls back to the indexer's default (60m) rather than
 	// reaching time.NewTicker(0) at runtime.
-	VerifyIntervalMinutes int `toml:"verify_interval_minutes" doc:"Minutes between hashdb verify sweeps. 0 = library default (60)." default:"60"`
+	VerifyIntervalMinutes int `toml:"verify_interval_minutes" doc:"Minutes between hashdb verify sweeps. 0 = the indexer default (60)." default:"60"`
 
 	// VerifyWindowLedgers is how many trailing ledgers each sweep
 	// re-reads from the bucket and re-verifies against hashdb. 0
@@ -84,7 +84,7 @@ type HashDBConfig struct {
 	// ledger closes at ~5s/ledger). Kept well below the indexer's
 	// live-append edge (see the SafetyMargin in the verify loop) so
 	// the sweep never races an in-flight Append for the same ledger.
-	VerifyWindowLedgers uint32 `toml:"verify_window_ledgers" doc:"Trailing ledger count each verify sweep re-checks against hashdb. 0 = library default (20000, ~1 day)." default:"20000"`
+	VerifyWindowLedgers uint32 `toml:"verify_window_ledgers" doc:"Trailing ledger count each verify sweep re-checks against hashdb. 0 = the indexer default (20000, ~1 day)." default:"20000"`
 }
 
 // validate enforces HashDBConfig's constraints only when Enabled —
@@ -947,7 +947,7 @@ type ReflectorOracleConfig struct {
 // RedStone's 19 per-feed contracts are thin proxies that don't emit
 // events (verified via stellar.expert's contract API) —
 // all event activity is on the single Adapter, so one address is
-// the full configuration surface. See docs/discovery/oracles/redstone.md.
+// the full configuration surface. See docs/protocols/redstone.md.
 type RedstoneOracleConfig struct {
 	AdapterContract string `toml:"adapter_contract" doc:"RedStone Adapter contract (C-prefix) on mainnet — CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG."`
 }
@@ -956,7 +956,7 @@ type RedstoneOracleConfig struct {
 // address. Band's Stellar contract emits zero events — we observe
 // `relay()` / `force_relay()` InvokeContract calls via the
 // dispatcher's ContractCallDecoder interface. See
-// docs/discovery/oracles/band.md.
+// docs/protocols/band.md.
 type BandOracleConfig struct {
 	StandardReferenceContract string `toml:"standard_reference_contract" doc:"Band Protocol StandardReference contract (C-prefix) on mainnet — CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M."`
 }
@@ -2347,7 +2347,7 @@ func Default() Config {
 		},
 		Oracle: OracleConfig{
 			// Reflector mainnet addresses are operator-supplied
-			// (see docs/discovery/oracles/reflector.md). Empty by
+			// (see docs/protocols/reflector.md). Empty by
 			// default — enabling a reflector-* source without
 			// setting its address is a startup error.
 			Reflector: ReflectorOracleConfig{},

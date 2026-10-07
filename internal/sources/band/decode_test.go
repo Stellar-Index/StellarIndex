@@ -18,7 +18,7 @@ import (
 
 const (
 	// adapterC is the mainnet StandardReference address per
-	// docs/discovery/oracles/band.md. The decoder matches against it
+	// docs/protocols/band.md. The decoder matches against it
 	// but doesn't otherwise touch network — any valid C-strkey works.
 	adapterC = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M"
 )

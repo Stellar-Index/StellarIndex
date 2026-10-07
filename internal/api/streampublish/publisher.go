@@ -243,7 +243,7 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		return
 	}
 
-	// dex-nonstandard-decimals forward normalization (M2). reader.LatestPrice
+	// Apply the dex-nonstandard-decimals forward normalization. reader.LatestPrice
 	// returns the RAW closed-1m/last-trade ratio (see
 	// v1.Server.normalizeRawPriceSnapshot's doc comment) — the handler-side
 	// /v1/price path corrects it before serving, and this producer must too,
@@ -253,11 +253,10 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 	v1.NormalizeRawPriceSnapshot(&snap, pair.Base, pair.Quote, p.decimals)
 
 	// The DOCUMENTED envelope shape — field-compatible with /v1/price
-	// responses and the redispub bridge's fan-out (cold audit
-	// 2026-08-03: this producer previously emitted a bespoke
-	// {snapshot, sources, stale} shape that matched neither). as_of is
-	// the bucket's ObservedAt — deterministic, preserving the
-	// byte-identical cross-region property this package's docs promise.
+	// responses and the redispub bridge's fan-out, never a bespoke shape
+	// that matches neither. as_of is the bucket's ObservedAt —
+	// deterministic, preserving the byte-identical cross-region property
+	// this package's docs promise.
 	// AsOf is v1.WireTime, not time.Time, for the same reason every
 	// timestamp on the v1 wire is: ObservedAt carries whatever location
 	// the stored bucket decoded into, and a plain time.Time field would

@@ -46,11 +46,8 @@
 //     chosen date range — the recovery path for a day the API's
 //     two-day rollup window skipped).
 //
-// This split (maintainability audit 2026-07-01, D1 finding M1-5) is
-// mechanical, not a behavior change: every subcommand keeps its exact
-// name, flags, defaults, and exit codes — only the Go package holding
-// its implementation moved. The canonical subcommand list is the
-// `subcommands` map below + the `stellarindex-ops --help` output.
+// The canonical subcommand list is the `subcommands` map below + the
+// `stellarindex-ops --help` output.
 package main
 
 import (
@@ -80,11 +77,11 @@ import (
 
 // main is a thin shim over realMain so deferred functions (notably
 // the SilenceSDKChecksumWarnings flush) execute on every exit
-// path. os.Exit skips defers — see SilenceSDKChecksumWarnings
-// docstring for the rc.77 regression where short-lived subcommands
-// (`backfill -dry-run`, `backfill` with an error) printed only
-// their first line then ate the rest because the consumer goroutine
-// behind fd 2's filter was killed mid-buffer.
+// path. os.Exit skips defers — see the SilenceSDKChecksumWarnings
+// docstring: without the flush, short-lived subcommands
+// (`backfill -dry-run`, `backfill` with an error) would print only
+// their first line and eat the rest, because the consumer goroutine
+// behind fd 2's filter is killed mid-buffer.
 func main() {
 	os.Exit(realMain())
 }
@@ -237,9 +234,8 @@ func realMain() int {
 	// captures os.Stderr. Drops the per-S3-GET "Response has no
 	// supported checksum" WARN that floods journald during
 	// verify-archive's 12-way parallel walk (~22k WARN/30s on
-	// r1, ballooning logs to 1.65 GB). The rc.72 env-var
-	// approach (QuietS3ChecksumWarnings) was a no-op because
-	// go-stellar-sdk's datastore/s3.go:161 hardcodes
+	// r1, ballooning logs to 1.65 GB). An env-var approach is a no-op
+	// because go-stellar-sdk's datastore/s3.go:161 hardcodes
 	// ChecksumMode: Enabled per request. Fail-soft.
 	//
 	// flush MUST be deferred so realMain's return paths drain

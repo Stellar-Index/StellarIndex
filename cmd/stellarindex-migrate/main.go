@@ -367,7 +367,7 @@ func closeSilent(m *migrate.Migrate) {
 // which renders the WHOLE URL, so a password containing an unescaped
 // `%`, `#` or space printed the live credential in full. Redacting the
 // two call sites that exist today would leave the next one to remember;
-// redacting at the write inherits it (#346 F3).
+// redacting at the write inherits it.
 //
 // Scrubbing output is a backstop, not a licence to format a secret on
 // purpose — see internal/redact for which helper renders a value we

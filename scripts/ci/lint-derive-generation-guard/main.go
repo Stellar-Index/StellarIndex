@@ -1,4 +1,4 @@
-// lint-derive-generation-guard enforces INV-3 (migrations 0109/0110): every
+// lint-derive-generation-guard enforces the migrations 0109/0110 generation guard: every
 // hand-written `INSERT INTO <table> ... ON CONFLICT ... DO UPDATE` writer for
 // a table that carries a `derive_generation` column MUST guard the update
 // with `WHERE <table>.derive_generation <= EXCLUDED.derive_generation`, so a
@@ -7,8 +7,8 @@
 // UPDATE missing the WHERE) silently no-ops a correction — the only way out
 // is a destructive DELETE + full re-backfill.
 //
-// Until now this was enforced only by copy-paste convention across ~39
-// files (T351): nothing rejected a 40th writer that forgot the WHERE clause.
+// Without this lint the guard is only a copy-paste convention (~39 files when
+// the lint was added), and nothing rejects a writer that forgets the WHERE clause.
 // This is the static PR-time complement to the two representative-table
 // integration test (test/integration/derive_generation_guard_protocol_test.go).
 //

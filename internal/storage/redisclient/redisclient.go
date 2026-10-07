@@ -34,10 +34,9 @@ import (
 // The returned client is safe for concurrent use; close it via
 // [redis.UniversalClient.Close] on shutdown.
 func Build(cfg config.StorageConfig) redis.UniversalClient {
-	// Username is empty by default (legacy default-user path) and
-	// set to "stellarindex" (or per-component) when the operator
-	// flipped redis_acl_lockdown=true in the redis-sentinel ansible
-	// role. F-1213 (audit-2026-05-12).
+	// Username is empty by default (Redis's default-user path) and set
+	// to "stellarindex" (or per-component) when the operator sets
+	// redis_acl_lockdown=true in the redis-sentinel ansible role.
 	var c redis.UniversalClient
 	switch {
 	case len(cfg.RedisSentinelAddrs) > 0:

@@ -54,6 +54,6 @@ type Observation struct {
 	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). The
 	// writer guards its last-writer-wins upsert on it so an out-of-order
 	// PersistEvents worker can never overwrite a later intra-ledger change
-	// with an earlier one (audit-2026-07-16 C2-6).
+	// with an earlier one.
 	IntraLedgerSeq uint32
 }

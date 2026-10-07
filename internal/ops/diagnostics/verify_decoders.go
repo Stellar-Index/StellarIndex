@@ -135,9 +135,9 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	}
 
 	// Optional Soroswap factory seed. Without it, pairs created
-	// before the -from ledger are invisible to the decoder (see
-	// docs/discovery/dexes-amms/soroswap.md on the swap event's
-	// missing token identities).
+	// before the -from ledger are invisible to the decoder (see Q6
+	// in internal/sources/soroswap/README.md on swaps whose pair has
+	// no token mapping).
 	if cfg.Oracle.Soroswap.FactoryContract != "" {
 		seedEndpoint := cfg.Oracle.Soroswap.SeedRPCEndpoint
 		if seedEndpoint == "" && len(cfg.Stellar.RPCEndpoints) > 0 {

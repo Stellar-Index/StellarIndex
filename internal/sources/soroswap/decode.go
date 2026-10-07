@@ -429,8 +429,7 @@ func sdkDecodeNewPair(valueB64 string) (NewPairFields, error) {
 // the difference between the contract's actual token balance and the
 // stored reserves goes to the caller's chosen address).
 //
-// Contract reference (pair/src/event.rs — Phase-1 capture in
-// docs/discovery/dexes-amms/soroswap.md §"SoroswapPair, skim"):
+// Contract reference (pair/src/event.rs):
 //
 //	struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
 //

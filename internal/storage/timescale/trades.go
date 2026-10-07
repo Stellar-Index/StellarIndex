@@ -1437,10 +1437,10 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
             -- ORDER BY source: mixed-source batches row-lock one
             -- source_entry_counts row per source; deterministic order
-            -- prevents cross-batch AB/BA deadlocks (2026-07-09 — the
-            -- second lock resource the trades-row batch sort missed).
-            -- count(*) FILTER (WHERE inserted): a re-derive UPDATE (INV-3,
-            -- migration 0109) must NOT inflate the per-source tally, so
+            -- prevents cross-batch AB/BA deadlocks; sorting the trades
+            -- rows alone does not cover this second lock resource.
+            -- count(*) FILTER (WHERE inserted): a re-derive UPDATE (migration
+            -- 0109) must NOT inflate the per-source tally, so
             -- only genuinely-inserted rows (xmax = 0) count — the
             -- multi-source twin of InsertTrade's landed-only bump gate.
             SELECT source, count(*) FILTER (WHERE inserted), now() FROM ins
@@ -1455,7 +1455,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
         -- returned per-source counts; we now return one row per genuinely-
         -- inserted trade so the caller can (a) tally new/unit-ratio in Go and
         -- (b) drive the classic-asset/issuer registry hook off the SAME
-        -- landed set the single-row InsertTrade path uses (C2-13b). is_unit_ratio
+        -- landed set the single-row InsertTrade path uses. is_unit_ratio
         -- keeps the numeric comparison in SQL (ledger already gated non-zero,
         -- and WHERE inserted already gates landed) to avoid Go-side decimal
         -- equality drift.

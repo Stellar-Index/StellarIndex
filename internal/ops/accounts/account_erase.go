@@ -22,7 +22,7 @@ import (
 
 // Erase is the operator path for an erasure request received
 // outside the dashboard, and for finishing one whose post-commit Redis
-// cleanup did not complete (GH #809). It calls the same
+// cleanup did not complete. It calls the same
 // accounterasure.Eraser as DELETE /v1/dashboard/account.
 //
 //	stellarindex-ops account-erase -config PATH -account-id UUID [-write]

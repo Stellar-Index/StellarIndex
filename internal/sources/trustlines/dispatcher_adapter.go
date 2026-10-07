@@ -12,8 +12,7 @@ import (
 )
 
 // Observer is the dispatcher-facing TrustlineEntry observer per
-// ADR-0022 PR 2/5. Implements
-// [dispatcher.LedgerEntryChangeDecoder].
+// ADR-0022. Implements [dispatcher.LedgerEntryChangeDecoder].
 //
 // Watched-asset driven: the observer only fires on changes
 // touching trustlines whose asset_key is in the operator-

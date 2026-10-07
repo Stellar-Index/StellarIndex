@@ -513,9 +513,8 @@ func cutHeld(text string, held []heldSecret) string {
 // eats the text the narrower one is recognised by. For
 // `postgres://host:5432/db?password=HEAD@TAIL` the userinfo reading runs
 // from the `:` of `host:` to the last `@`, so cutting it consumes the
-// `password=` anchor and leaves `@TAIL` — a password's tail, printed,
-// which is the shape F077 names. Extending through every anchor the cut
-// covers removes the whole of both.
+// `password=` anchor and leaves `@TAIL` — a password's tail, printed.
+// Extending through every anchor the cut covers removes the whole of both.
 func extendPastNested(text string, i, n int, held []heldSecret) int {
 	for grew := n > 0; grew; {
 		grew = false

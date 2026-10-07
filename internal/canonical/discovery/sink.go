@@ -24,10 +24,10 @@ import (
 // which [AsyncSink.Stop] flushes as a single Record call carrying
 // [Hit.Count] set to the true accumulated observation count. Without
 // this, event_count and last_seen_ledger would advance only once per
-// (key, process lifetime) instead of tracking real event volume
-// (CA2-A10-correct-4). The skip counter is exposed via
-// [AsyncSink.SkippedCount] alongside [AsyncSink.DroppedCount] so
-// operators can see how much of the pre-dedup volume was duplicates.
+// (key, process lifetime) instead of tracking real event volume. The
+// skip counter is exposed via [AsyncSink.SkippedCount] alongside
+// [AsyncSink.DroppedCount] so operators can see how much of the
+// pre-dedup volume was duplicates.
 // A process restart resets the set; the first Push for any key after
 // restart still records (the recorder's upsert handles the
 // already-known case).
@@ -265,7 +265,7 @@ func (s *AsyncSink) SkippedCount() uint64 {
 // failed (recorder outage/timeout). Bridged to
 // obs.DiscoveryRecordFailuresTotal for alerting — a sustained non-zero
 // rate means discovery coverage is degrading under recorder pressure,
-// which was invisible while the failure was only logged (C4-3).
+// which a log line alone would not surface.
 func (s *AsyncSink) FailedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,9 +299,8 @@ func (s *AsyncSink) run() {
 		}
 		ctx, cancel := context.WithTimeout(s.drainCtx, s.timeout)
 		if err := s.rec.Record(ctx, hit); err != nil {
-			// Count the write failure (audit-2026-07-16 C4-3) — previously
-			// this was a log-only path, so a recorder outage silently
-			// stopped discovered_assets from growing. Exposed via
+			// Count the write failure: a log-only path would let a recorder
+			// outage silently stop discovered_assets from growing. Exposed via
 			// FailedCount() and bridged to obs.DiscoveryRecordFailuresTotal
 			// by the indexer, mirroring dropped/skipped. Record's contract
 			// is best-effort (the contract re-appears on a later event), so
@@ -309,13 +308,13 @@ func (s *AsyncSink) run() {
 			s.mu.Lock()
 			s.failed++
 			// Roll back the seen-mark, exactly as the buffer-full path
-			// does (DAT-09/DAT-11). Record IS best-effort — but only
-			// because "the contract re-appears on a later event", and
-			// the seen-set suppresses every later Push for this key. So
-			// without this rollback a contract first sighted DURING a
-			// recorder outage was dropped from discovery permanently,
-			// for the lifetime of the process, with nothing but a
-			// failure counter to show for it.
+			// does. Record IS best-effort — but only because "the
+			// contract re-appears on a later event", and the seen-set
+			// suppresses every later Push for this key. So without this
+			// rollback a contract first sighted DURING a recorder outage
+			// would be dropped from discovery permanently, for the
+			// lifetime of the process, with nothing but a failure
+			// counter to show for it.
 			delete(s.seen, seenKey(hit))
 			s.mu.Unlock()
 			s.logger.Warn("discovery: record failed",
