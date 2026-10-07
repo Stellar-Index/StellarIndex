@@ -601,7 +601,7 @@ groups:
             exited with error` log lines and ClickHouse reachability,
             then the runbook.
 
-      # ─── Customer-webhook FAN-OUT losing events (C3-023) ───
+      # ─── Customer-webhook FAN-OUT losing events ───
       # Distinct from the two delivery alerts in api.yml, which only
       # start counting once a `webhook_deliveries` row exists. This one
       # fires EARLIER in the chain: the freeze / divergence / incident

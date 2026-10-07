@@ -141,16 +141,15 @@ groups:
             SEV-1 and follow the api-5xx runbook.
 
       - alert: stellarindex_api_price_stale
-        # F-0104: the staleness gauge is emitted by the aggregator
+        # The staleness gauge is emitted by the aggregator
         # at end-of-tick. Under cascade the aggregator tick wedges,
         # the gauge stops being scraped, and a bare `> 120` would
-        # see no-data and never fire — i.e. the alert designed to
-        # catch exactly this cascade was itself a victim of it. The
+        # see no-data and never fire — the alert designed to catch
+        # exactly this cascade would itself be a victim of it. The
         # absent_over_time() branch fires the alert when the series
         # has been missing for 10 m, surfacing the wedge as a
         # staleness signal in its own right. Same pattern as
-        # aggregator_silent (F-0080) and the exporter-down meta-
-        # alerts (F-0085).
+        # aggregator_silent and the exporter-down meta-alerts.
         expr: |
           stellarindex_price_staleness_seconds > 120
           OR
@@ -243,7 +242,7 @@ groups:
             upstream store (Postgres / ClickHouse) for that op.
             See the cache-miss-rate-high runbook, "Refresh failures".
 
-      # Customer-webhook delivery health (F-1270 audit-2026-05-12).
+      # Customer-webhook delivery health.
       #
       # Threshold vs the worker's ceiling: one endpoint's rows are
       # delivered serially under a 10s attempt timeout (defaultHTTPTimeout),
@@ -302,17 +301,17 @@ groups:
             missed, oldest first, 7 days per sweep. Days older than 35
             days are lost.
 
-      # Q261: `for:` was 1h, equal to the rate() window. rate() is
+      # Q261: no `for:` equal to the rate() window. rate() is
       # increase()/W, so after ONE exhausted delivery the expression is true
-      # for exactly 1h and a 1h pending period could never complete — this
-      # fired only when deliveries kept exhausting for a second hour on end,
-      # while the description below is about a single one ("A delivery hit
-      # the 15-attempt retry budget"). An exhausted delivery is already the
-      # end of ~8h of retries, so there is no transient left for a `for:` to
-      # filter, and any `for:` shorter than the window would only delay the
-      # ticket (the expression cannot go false sooner than 1h after the
+      # for exactly 1h, and a 1h pending period could never complete — it
+      # would fire only when deliveries kept exhausting for a second hour on
+      # end, while the description below is about a single one ("A delivery
+      # hit the 15-attempt retry budget"). An exhausted delivery is already
+      # the end of ~8h of retries, so there is no transient left for a `for:`
+      # to filter, and any `for:` shorter than the window would only delay
+      # the ticket (the expression cannot go false sooner than 1h after the
       # event). No born-inside-the-window arm: every outcome child is
-      # pre-seeded at 0 (obs.seedBoundedLabelSeries, #368 M6), so the first
+      # pre-seeded at 0 (obs.seedBoundedLabelSeries), so the first
       # exhaustion of a process life is a 0 -> 1 step that rate() sees.
       # Pinned by rule-tests/tripwire-isolated-increment{,-r1}_test.yml.
       - alert: stellarindex_customer_webhook_delivery_exhausted
@@ -332,17 +331,16 @@ groups:
             the event. Operator should reach out before the
             customer notices via their own monitoring.
 
-      # #368 M6: `mark_error` is the delivery worker completing a POST
-      # and then failing to RECORD it. markTerminal's godoc already
-      # said this counter "makes the loop visible to an alert" — no
-      # such alert existed in either tree, so the loop was visible only
-      # in the journal.
+      # `mark_error` is the delivery worker completing a POST and then
+      # failing to RECORD it, so the row re-POSTs in a loop. markTerminal's
+      # godoc promises this counter "makes the loop visible to an alert";
+      # this is that alert.
       #
       # Its own rule rather than an extra arm on
       # `…_delivery_failing` above: that rule's > 0.05/s threshold
       # describes a customer endpoint failing under load, and one
       # wedged row re-POSTing on its 5-minute claim lease is ~0.003/s —
-      # fifteen times below it. Folding them would have produced a rule
+      # fifteen times below it. Folding them would produce a rule
       # that cannot fire on this fault at all.
       #
       # Range [30m] against `for: 15m` so a single step stays true for
@@ -371,9 +369,8 @@ groups:
             write succeeds — a duplicate-delivery loop with no retry
             budget to end it. Check Postgres health first.
 
-      # F-0051 (audit-2026-05-26). Mirror of the rule in
-      # deploy/monitoring/rules/api.yml; wave-96 pair lint
-      # requires both copies to stay in sync.
+      # Mirror of the rule in deploy/monitoring/rules/api.yml; the pair
+      # lint requires both copies to stay in sync.
       #
       # Q191: the prober (internal/api/v1/tls_probe.go) that emits this
       # gauge can itself wedge or crash, in which case the series goes
@@ -417,27 +414,23 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_tls_cert_expiring_soon
 
-      # C6-032 (audit-2026-07-23): stellarindex_ratelimit_fail_open_total
-      # has been registered + incremented since the rate limiter shipped
-      # (internal/api/v1/middleware/ratelimit.go:96,190) and NOTHING in
-      # either rule tree selected it. The limiter deliberately fails OPEN
-      # on a Redis error so a cache outage can't take the API down — a
-      # sound choice that also means the DoS/abuse control silently turns
-      # ITSELF OFF, with the only trace a counter no one looked at. This
-      # is precisely the registered-but-unalerted class metrics-registry.yml
-      # was built for, and it did not catch this one (that alert covers a
-      # missing Registry, not an unreferenced metric).
+      # stellarindex_ratelimit_fail_open_total
+      # (internal/api/v1/middleware/ratelimit.go). The limiter deliberately
+      # fails OPEN on a Redis error so a cache outage can't take the API
+      # down — a sound choice that also means the DoS/abuse control silently
+      # turns ITSELF OFF, with the only trace this counter. The
+      # registered-but-unalerted class is not caught by metrics-registry.yml
+      # (that alert covers a missing Registry, not an unreferenced metric).
       #
-      # 14d-review (2026-09-27): `rate(...[5m]) > 0 for: 10m` can NEVER
-      # fire. The limiter's fail-open window is capped at
+      # A count over a wide window, not `rate(...[5m]) > 0 for: 10m`, which
+      # can NEVER fire: the limiter's fail-open window is capped at
       # ratelimit.DefaultDwellTime (30s) — past that it fails CLOSED
       # instead (503, see stellarindex_ratelimit_fail_closed below) and
       # the counter goes flat. A sustained-rate condition needs ten
       # straight minutes of nonzero rate, which this metric structurally
-      # cannot produce once the dwell time has chopped it up. Switched to
-      # a count over a wider window: >100 bypassed requests in 15m
-      # tickets regardless of how the dwell time shapes the underlying
-      # rate.
+      # cannot produce once the dwell time has chopped it up. >100 bypassed
+      # requests in 15m tickets regardless of how the dwell time shapes the
+      # underlying rate.
       - alert: stellarindex_ratelimit_fail_open
         expr: sum(increase(stellarindex_ratelimit_fail_open_total[15m])) > 100
         for: 0m
@@ -467,8 +460,8 @@ groups:
       # every request in the affected bucket gets a 503
       # (errors/throttle-unavailable, Retry-After: 30) instead of being
       # served. That is the whole API down for anyone hitting a
-      # rate-limited path, not a narrowed surface: the 2026-09-16
-      # incident held this state for 2h53m and served 2.03M 503s.
+      # rate-limited path, not a narrowed surface (one such state on r1
+      # lasted 2h53m and served 2.03M 503s).
       # `for: 2m`, not 10m — a fail-closed window is an ongoing outage
       # from the first second, not a tolerable blip.
       - alert: stellarindex_ratelimit_fail_closed
@@ -491,13 +484,11 @@ groups:
             state for 2h53m and served 2.03M 503s. Clears once Redis has
             answered without error for the same dwell time.
 
-      # C3-082 (audit-2026-07-23): the monthly-quota middleware fails OPEN
-      # on a backing-store error — correct, because the cap is billing
-      # fairness and not a security boundary, so a Redis blip must not 429
-      # paying customers. But the pre-fix trace was a `logger.Debug` line,
-      # i.e. nothing at all at the API's production log level, and no
-      # counter: the metered-spend ceiling could be off indefinitely with
-      # zero signal.
+      # The monthly-quota middleware fails OPEN on a backing-store
+      # error — correct, because the cap is billing fairness and not a
+      # security boundary, so a Redis blip must not 429 paying customers.
+      # Without this counter + alert the metered-spend ceiling could be
+      # off indefinitely with zero signal.
       #
       # This is the revenue-side twin of stellarindex_ratelimit_fail_open
       # and is deliberately shaped identically. The exposure is the
@@ -551,10 +542,10 @@ groups:
             customers are denied service until the counter answers
             without error for the same dwell time.
 
-      # GH-1277: the write side of the usage meter had no observability
-      # at all — a failed Increment/IncrementDetailBy logged at Debug
-      # and was otherwise invisible. stellarindex_usage_units_dropped_total
-      # now counts every dropped request unit by counter (billable|detail);
+      # Without this alert the write side of the usage meter has no
+      # observability — a failed Increment/IncrementDetailBy logs at Debug
+      # and is otherwise invisible. stellarindex_usage_units_dropped_total
+      # counts every dropped request unit by counter (billable|detail);
       # this is its consumer, the write-side twin of
       # stellarindex_monthly_quota_fail_open above: that alert fires when
       # the READ of the counter fails and the quota is bypassed; this one
@@ -586,10 +577,10 @@ groups:
             are mutually exclusive per request. Check Redis health and the
             usage-counter key namespace first.
 
-      # GH-627: UsageTracker/TouchUsage post-response bookkeeping runs on
+      # UsageTracker/TouchUsage post-response bookkeeping runs on
       # the shared middleware.AfterResponse worker pool, off the request
-      # goroutine, so a wedged store can no longer add client-visible
-      # latency. A saturated pool now drops the task instead — silent
+      # goroutine, so a wedged store cannot add client-visible
+      # latency. A saturated pool drops the task instead — silent
       # unless watched.
       - alert: stellarindex_after_response_tasks_dropping
         expr: sum(rate(stellarindex_after_response_tasks_dropped_total[5m])) > 0
@@ -657,13 +648,12 @@ groups:
             not a genuine upstream correction, pin directory-sync to the
             last good upstream commit (-url + -sha256) and re-run it.
 
-      # C3-067 (audit-2026-07-23): every privileged mutation on the admin
-      # surfaces appends its audit row best-effort. The mutation
-      # has already committed by then, so swallowing the error is right —
-      # but it means an account tier, an API credential or a public status
-      # notice can change with NO durable record of who did it or why, and
-      # before this metric the only trace was one `logger.Warn` line.
-      #
+      # Every privileged mutation on the admin surfaces appends its
+      # audit row best-effort. The mutation has already committed by
+      # then, so swallowing the error is right — but it means an account
+      # tier, an API credential or a public status notice can change with
+      # NO durable record of who did it or why, and without this metric
+      # the only trace is one `logger.Warn` line.
       # increase() over 1h with for: 5m, not rate()>0: these are rare,
       # bursty events (a single audit-DB outage produces a handful), and
       # the operator response is "reconstruct the missing rows from the
@@ -747,7 +737,7 @@ groups:
             by remote_ip to tell a handful of capped sources from a
             distributed guess.
 
-      # C3-032 follow-up: the durable login-code lockout's table is
+      # The durable login-code lockout's table is
       # written by an UNAUTHENTICATED endpoint under an ATTACKER-CHOSEN
       # key. POST /v1/auth/verify-code with a synthetic address inserts a
       # `login_code_lockouts` row that no successful sign-in can ever
@@ -817,15 +807,16 @@ groups:
             bound; it is either outpaced or failing.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_magic_link_token_table_growing
 
-      # ── Auth-reaper liveness (#368 M5) ─────────────────────────────────
+      # ── Auth-reaper liveness ──────────────────────────────────────────
       # The auth-table reapers (login_code_lockouts, magic_link_tokens,
-      # speculative-account orphans, ended sessions, finished webhook_deliveries) each report WHAT they did; none
-      # reported THAT they ran. A dead reaper freezes every rows gauge at a
-      # healthy-looking value, so login_code_lockout_table_growing
-      # (rows > 10000) can never see the bound being lost. The threshold is
-      # relative to each reaper's own configured cadence (3 × interval —
-      # an hourly reaper tickets after ~3 h of silence). A DISABLED reaper
-      # publishes no series and never alerts: absence is config, not death.
+      # speculative-account orphans, ended sessions, finished webhook_deliveries)
+      # each report WHAT they did; this reports THAT they ran. A dead reaper
+      # freezes every rows gauge at a healthy-looking value, so
+      # login_code_lockout_table_growing (rows > 10000) can never see the
+      # bound being lost. The threshold is relative to each reaper's own
+      # configured cadence (3 × interval — an hourly reaper tickets after
+      # ~3 h of silence). A DISABLED reaper publishes no series and never
+      # alerts: absence is config, not death.
       - alert: stellarindex_auth_reaper_stalled
         expr: |
           (time() - stellarindex_auth_reaper_last_sweep_unix)
@@ -879,7 +870,7 @@ groups:
             causes: lake reserve reads failing (ClickHouse down / part
             churn) or the served-tier prices_1m reads failing.
 
-      # #338: the headline `tvl_total` on /v1/protocols admits a
+      # The headline `tvl_total` on /v1/protocols admits a
       # per-protocol figure only when that figure's own claims hold, and
       # DROPS one that does not (naming it in the response's `excluded`).
       # The result is honest — narrower, never wrong — which is exactly
@@ -945,13 +936,13 @@ groups:
             stops draining. Check ClickHouse health and the
             ledger_entry_changes partition layout first.
 
-      # INV-0780: maintain_failing above only fires on ERROR outcomes, so a
-      # long lake-hole/cursor hold stayed silent — OfferChangesSince (see
+      # maintain_failing above only fires on ERROR outcomes, so a long
+      # lake-hole/cursor hold would stay silent — OfferChangesSince (see
       # sdex_offer_book_reader.go) returns cleanly with next==cursor while
-      # held below an unhealed hole, and that used to be counted as
-      # advance_ok. advance_held (internal/api/v1/sdex_orderbook.go) is the
-      # same staleness as advance_error, just never an error: the served
-      # book's as_of_ledger stops advancing with nothing here to page on.
+      # held below an unhealed hole. advance_held
+      # (internal/api/v1/sdex_orderbook.go) is the same staleness as
+      # advance_error, just never an error: the served book's as_of_ledger
+      # stops advancing with nothing else to page on.
       - alert: stellarindex_sdex_orderbook_advance_held
         expr: |
           sum(rate(stellarindex_sdex_orderbook_maintain_total{outcome="advance_held"}[15m])) > 0
