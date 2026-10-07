@@ -143,7 +143,7 @@ func TestRedisSignupIPThrottle_DefaultsApplied(t *testing.T) {
 }
 
 // TestRedisSignupIPThrottle_DwellTime_FailsOpenInsideWindow pins
-// the F-0049 / F-0149 inversion: Redis errors observed inside the
+// that Redis errors observed inside the
 // dwell-time window still propagate as wrapped Redis errors (so
 // the handler falls open), preserving the transient-blip UX.
 func TestRedisSignupIPThrottle_DwellTime_FailsOpenInsideWindow(t *testing.T) {
@@ -326,7 +326,7 @@ func TestRedisSignupIPThrottle_DwellTime_StaleFailureDoesNotFailClosed(t *testin
 }
 
 // TestRedisSignupIPThrottle_DwellTime_Disabled pins that a negative
-// DwellTime preserves the pre-F-0049 fail-open-always behaviour —
+// DwellTime preserves fail-open-always behaviour —
 // operators who explicitly opt out never see ErrThrottleUnavailable.
 func TestRedisSignupIPThrottle_DwellTime_Disabled(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -392,16 +392,16 @@ func TestRedisSignupIPThrottle_DwellTime_DefaultApplied(t *testing.T) {
 var _ = strconv.Itoa
 
 // TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap is
-// the IPv6-keying regression (audit-2026-07-23; same class the API
-// rate-limit middleware closed as SEC-15).
+// the IPv6-keying check (same class the API rate-limit middleware
+// guards against).
 //
 // Attack: bulk-mint accounts from a single delegated IPv6 /64 — the
 // standard residential / VPS allocation — sourcing every signup from a
-// different /128 inside it. Pre-fix the Redis key was the caller's exact
-// address, so each of the 2^64 addresses in that one allocation got its
-// own pristine 5/hour bucket and F-1232's whole purpose (stopping
-// bulk-mint of email→key_id pairs) cost the attacker nothing to defeat.
-// Post-fix the key is the /64: the entire allocation shares one budget.
+// different /128 inside it. Keying on the caller's exact address would
+// give each of the 2^64 addresses in that one allocation its own
+// pristine 5/hour bucket, so stopping bulk-mint of email→key_id pairs
+// would cost the attacker nothing to defeat. The key is the /64: the
+// entire allocation shares one budget.
 func TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()

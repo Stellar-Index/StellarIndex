@@ -52,8 +52,7 @@ type Config struct {
 // (signed-history anchor) checks can't: upstream retroactively
 // rewriting a previously-fetched ledger's bytes while keeping both
 // internal consistency and SDF's signature intact (see
-// internal/hashdb's package doc for the full "Trust model" rationale,
-// and ledger 63332650 for a corrupt upstream object of this kind).
+// internal/hashdb's package doc for the full "Trust model" rationale).
 //
 // Both the append side and the verify side share this ONE Enabled
 // flag deliberately: appending without ever verifying never detects

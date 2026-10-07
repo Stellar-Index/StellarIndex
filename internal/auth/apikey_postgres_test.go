@@ -108,14 +108,13 @@ func TestPostgresValidator_NoOverride_UsesPerKey(t *testing.T) {
 }
 
 // TestPostgresValidator_MonthlyQuotaOverride_IsCeiling pins
-// audit-2026-07 (MEDIUM): the account-level
+// that the account-level
 // monthly_request_quota_override is the operator's hard CEILING —
 // symmetric-opposite of the rate-limit override (a FLOOR). A per-key
 // quota above it is clamped down to it at enforcement time (min), so
-// even a key that was minted with an oversized per-key value before
-// the dashboard clamp shipped can never out-spend the account cap. A
-// per-key 0 still falls back to the override; both 0 stays 0
-// (unmetered), preserving the pre-existing default.
+// even a key minted with an oversized per-key value can never
+// out-spend the account cap. A per-key 0 still falls back to the
+// override; both 0 stays 0 (unmetered).
 func TestPostgresValidator_MonthlyQuotaOverride_IsCeiling(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -342,9 +341,8 @@ func TestPostgresValidator_CacheExpiry_FallsThroughToPostgres(t *testing.T) {
 // TestPostgresValidator_CacheRoundTripsPolicy — when a key has
 // IP/Referer allowlists and per-endpoint permissions set, the
 // cache-hit Subject MUST carry the same fields as the cache-
-// miss Subject. Without this F-1226 (codex audit-2026-05-12)
-// reopens — the KeyPolicy middleware silently bypasses
-// enforcement on cache hits.
+// miss Subject. Without this the KeyPolicy middleware silently
+// bypasses enforcement on cache hits.
 func TestPostgresValidator_CacheRoundTripsPolicy(t *testing.T) {
 	keys, accounts, rdb := newStubs()
 	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
@@ -465,8 +463,7 @@ func seedKey(s *stubKeyStore, plaintext string, accountID uuid.UUID, tier platfo
 
 // seedKeyWithPolicy is like seedKey but stamps IP/Referer/
 // permission policy fields so cache round-trip tests can verify
-// the cache-hit Subject carries them. F-1226 (codex audit-
-// 2026-05-12).
+// the cache-hit Subject carries them.
 func seedKeyWithPolicy(s *stubKeyStore, plaintext string, accountID uuid.UUID, tier platform.APIKeyTier, ipCIDRs, referers []string, perms platform.KeyPermissions) platform.APIKey {
 	sum := sha256.Sum256([]byte(plaintext))
 	rec := platform.APIKey{
@@ -641,18 +638,17 @@ func TestPostgresValidator_ScopesPopulateAndRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt is the API-03
-// regression (audit-2026-07-23).
+// TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt pins that a
+// cache hit carries EmailVerifiedAt.
 //
-// The failure it encodes: this validator's Redis cache shares its key
-// namespace with the legacy `/v1/signup` store (both use
-// cachekeys.APIKey(hash)), so a `signup-` key — the ONLY population
-// `middleware.RequireEmailVerified` gates — authenticates through the
-// cache path here. That path dropped EmailVerifiedAt, so a customer who
-// had clicked the verification link still presented as unverified and
-// the gate 403'd them on every request, permanently, with no way to
-// self-serve out of it. Asserts the corrected VALUE (the record's
-// timestamp), not merely that the field is set.
+// This validator's Redis cache shares its key namespace with the legacy
+// `/v1/signup` store (both use cachekeys.APIKey(hash)), so a `signup-`
+// key — the ONLY population `middleware.RequireEmailVerified` gates —
+// authenticates through the cache path here. If that path dropped
+// EmailVerifiedAt, a customer who had clicked the verification link
+// would present as unverified and the gate would 403 them on every
+// request, with no way to self-serve out of it. Asserts the VALUE (the
+// record's timestamp), not merely that the field is set.
 func TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt(t *testing.T) {
 	keys, accounts, rdb := newStubs()
 	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
@@ -822,12 +818,12 @@ func TestPostgresValidator_SubjectCarriesExpiry(t *testing.T) {
 	}
 }
 
-// TestPostgresValidator_CacheRowIsNotARedisBackendCredential pins GH-1319.
-// The read-through cache used to share `apikey:<hash>` with the Redis
+// TestPostgresValidator_CacheRowIsNotARedisBackendCredential pins that the
+// read-through cache must not share `apikey:<hash>` with the Redis
 // validator's canonical records, whose refresh-on-use slides ANY
 // TTL-bearing record to the 90-day idle window. After a postgres→redis
-// rollback every leftover 1-hour cache row therefore authenticated and
-// renewed itself as a 90-day credential nothing reconciles against
+// rollback every leftover 1-hour cache row would otherwise authenticate
+// and renew itself as a 90-day credential nothing reconciles against
 // Postgres. The cache row must be invisible to the Redis validator and
 // keep its own TTL.
 func TestPostgresValidator_CacheRowIsNotARedisBackendCredential(t *testing.T) {

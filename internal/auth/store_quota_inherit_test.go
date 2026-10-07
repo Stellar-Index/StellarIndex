@@ -87,7 +87,7 @@ func TestStoreCreate_UnsetQuotaStaysUncappedBesideLiveUnmeteredKey(t *testing.T)
 }
 
 // TestStoreCreate_UnsetQuotaIgnoresLapsedHigherCeiling — an expired key's
-// larger ceiling is not the plan the identifier holds now, so it cannot
+// larger ceiling is not the plan the identifier holds, so it cannot
 // lift the mint above the live credentials' ceiling.
 func TestStoreCreate_UnsetQuotaIgnoresLapsedHigherCeiling(t *testing.T) {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)

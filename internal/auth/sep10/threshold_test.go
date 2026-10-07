@@ -56,7 +56,7 @@ func wantAuthenticatedAs(t *testing.T, tok auth.Token, err error, account string
 }
 
 // A master key the holder rotated to weight 0 (control moved to a
-// cosigner) can no longer sign for the account on chain, so it must not
+// cosigner) cannot sign for the account on chain, so it must not
 // authenticate here either.
 func TestVerify_RotatedMasterKeyIsRejected(t *testing.T) {
 	client, cosigner := randomKP(t), randomKP(t)

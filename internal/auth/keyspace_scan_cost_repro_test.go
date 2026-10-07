@@ -71,17 +71,17 @@ func (c *commandCounter) snapshot() map[string]int {
 	return out
 }
 
-// TestKeyLookupsDoNotWalkTheKeyspace is the numeric reproduction of
-// findings F057 / K051, and the regression guard for their fix.
+// TestKeyLookupsDoNotWalkTheKeyspace is the numeric guard against
+// walking the keyspace.
 //
-// THE DEFECT. Four store methods answer "which record has this owner /
-// this KeyID" by SCANning `apikey:*` and issuing one GET per match:
-// ListKeysForIdentifier and RevokeKeyByID (list_keys.go),
+// THE HAZARD. Four store methods answer "which record has this owner /
+// this KeyID": ListKeysForIdentifier and RevokeKeyByID (list_keys.go),
 // UpdateRateLimit (store_update.go) and MarkEmailVerified
-// (store_mark_email_verified.go). Three sit on request paths any
+// (store_mark_email_verified.go). Done by SCANning `apikey:*` with one
+// GET per match, the cost is O(keyspace). Three sit on request paths any
 // anonymously-registered free key can drive — GET / POST / DELETE
-// /v1/account/keys — so the cost is O(every credential in the
-// deployment) per request against the single-threaded Redis that is
+// /v1/account/keys — so each request would cost O(every credential in
+// the deployment) against the single-threaded Redis that is
 // also the rate limiter, and open registration makes that keyspace
 // attacker-sized. SCAN additionally walks every OTHER key family in the
 // DB, because MATCH filters after the cursor step.
@@ -89,7 +89,7 @@ func (c *commandCounter) snapshot() map[string]int {
 // THE PROPERTY. Work must be proportional to the caller's OWN keys: no
 // SCAN at all, and a GET count bounded by the records the caller owns.
 //
-// THE FIX. Both issuance writers (Create, CreateWithSecret) write the
+// THE DESIGN. Both issuance writers (Create, CreateWithSecret) write the
 // record and its entries in the `apikey-index:v1` hash as one atomic
 // step, and the four lookups read that hash. Records that predate the
 // index are covered by a build the first reader runs — ONE walk per
@@ -97,9 +97,8 @@ func (c *commandCounter) snapshot() map[string]int {
 // fixture makes one of the caller's two keys such a legacy record, so
 // the numbers below also prove the build makes old keys reachable.
 //
-// Measured on the unfixed code with this same fixture: 302 / 106 / 106
-// / 139 GETs and one SCAN per call. The budget is unchanged from the
-// reproduction as first committed.
+// A SCAN-based implementation measures 302 / 106 / 106 / 139 GETs and
+// one SCAN per call on this fixture.
 func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
 	mr := miniredis.RunT(t)
 	counter := &commandCounter{counts: map[string]int{}}

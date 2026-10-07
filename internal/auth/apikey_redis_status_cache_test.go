@@ -13,13 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// auth-ks-1 (audit-2026-08-14) — the Redis validator's account-level
-// kill switch used to do an uncached per-request Postgres GetBySlug on
-// the hot auth path and, on ANY non-ErrNotFound error, return a bare
-// wrapped error that the middleware's default branch rendered as 401.
-// So a transient Postgres blip 401'd EVERY active customer with the
-// wrong "your credential is invalid" status. These tests pin the fix:
-// a short-TTL status cache lets a blip ride out on last-known-active,
+// The Redis validator's account-level kill switch must not do an
+// uncached per-request Postgres GetBySlug on the hot auth path: on ANY
+// non-ErrNotFound error the middleware's default branch would render a
+// 401, so a transient Postgres blip would 401 EVERY active customer
+// with the wrong "your credential is invalid" status. These tests pin
+// that a short-TTL status cache lets a blip ride out on last-known-active,
 // and the truly-unknown case returns the retryable
 // ErrAccountStatusUnavailable (503) rather than a 401.
 
@@ -39,11 +38,10 @@ func newStatusCacheValidator(t *testing.T, accounts AccountStatusReader, clock *
 }
 
 // TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive is the
-// core auth-ks-1 regression: an active customer seen moments ago must
-// keep authenticating through a transient Postgres blip instead of
-// being failed. Pre-fix the second Lookup returned an error (the
-// uncached GetBySlug propagated the transport failure); post-fix it
-// rides out on the cached last-known-active status.
+// core check: an active customer seen moments ago must keep
+// authenticating through a transient Postgres blip instead of being
+// failed. The second Lookup rides out on the cached last-known-active
+// status rather than propagating the transport failure.
 func TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	accounts := &stubAccountStatusReader{
@@ -61,7 +59,7 @@ func TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive(t *testing.T) {
 		t.Fatalf("warm Lookup: %v", err)
 	}
 
-	// Postgres now blips. Advance past the fresh TTL (30s) so the
+	// Postgres blips. Advance past the fresh TTL (30s) so the
 	// validator re-reads — and hits the error — rather than serving the
 	// still-fresh entry, isolating the ride-out branch.
 	accounts.err = errors.New("postgres unreachable: connection refused")
@@ -106,7 +104,7 @@ func TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable(t *testing.T) {
 
 // TestRedisAPIKey_AccountStatusRideOutBounded pins that the ride-out is
 // bounded: once a cached status ages past the staleness bound
-// (10×TTL = 5m) it is no longer trusted, so a still-degraded Postgres
+// (10×TTL = 5m) it is not trusted, so a still-degraded Postgres
 // yields the retryable ErrAccountStatusUnavailable rather than an
 // unbounded stale authentication.
 func TestRedisAPIKey_AccountStatusRideOutBounded(t *testing.T) {
@@ -133,7 +131,7 @@ func TestRedisAPIKey_AccountStatusRideOutBounded(t *testing.T) {
 }
 
 // TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow pins the
-// load-bounding half of the fix: within the fresh TTL the status is
+// load bound: within the fresh TTL the status is
 // served from cache (one Postgres read per account per window), and a
 // read past the window re-reads.
 func TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow(t *testing.T) {
@@ -166,14 +164,10 @@ func TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries is the
-// Q183/T150 regression: statusCache was write-only — every distinct
-// account slug ever seen stayed in the map for the life of the
-// process, even long after it passed the staleness bound and could
-// never be served from cache again. This pins that a write past the
-// staleness bound sweeps out entries that aged past it, bounding the
-// cache to the working set of recently-seen accounts instead of every
-// account ever queried.
+// TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries pins that
+// a write past the staleness bound sweeps out entries that aged past
+// it, bounding the cache to the working set of recently-seen accounts
+// instead of every account slug ever seen for the life of the process.
 func TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{}}
@@ -197,7 +191,7 @@ func TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries(t *testing.T) {
 	}
 
 	// Advance past the staleness bound (10x30s = 5m) and touch one more,
-	// distinct account. The write must sweep the now-unreadable stale
+	// distinct account. The write must sweep the unreadable stale
 	// entries rather than leaving them in the map forever.
 	clock = clock.Add(10 * time.Minute)
 	accounts.bySlug["acct-new"] = acctWithStatus("acct-new", platform.AccountActive)

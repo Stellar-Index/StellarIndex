@@ -20,10 +20,8 @@ import (
 // `auth_backend=postgres` keeps serving the pre-change rate-limit
 // budget from the validator's read-through cache for up to the
 // cache TTL (~1h) even though Postgres (the source of truth)
-// already reflects the new budget. That stale window is the X6
-// "API-key split-brain" audit finding class in miniature — the
-// cache and the store of record disagree until the TTL rolls the
-// row off.
+// already reflects the new budget: the cache and the store of record
+// disagree until the TTL rolls the row off.
 //
 // Unlike [PostgresAPIKeyValidator] this type carries NO platform
 // store handles — only the cache client. It satisfies the same

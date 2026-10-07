@@ -37,13 +37,11 @@ func (s *stubReader) ReserveBalanceTotal(_ context.Context, accounts []string, l
 	return new(big.Int).Set(s.balance), nil
 }
 
-// TestComputers_StampLedgerCloseTimeNotWallClock is the M4
-// determination test. The finding named the three Computers
-// (xlm/classic/sep41) as stamping ObservedAt with wall-clock write-time.
-// This proves the opposite: each Computer stamps ObservedAt with the
+// TestComputers_StampLedgerCloseTimeNotWallClock pins that each of the
+// three Computers (xlm/classic/sep41) stamps ObservedAt with the
 // close time its CALLER passes — a value deliberately chosen far from
-// "now" (2024-01-02, ~2.5y stale) — never time.Now(). So the defect is
-// NOT in the Computers; it is in whichever caller supplies that
+// "now" (~2.5y stale) — never time.Now(). Wall-clock
+// staleness therefore comes from whichever caller supplies that
 // argument. (The two production ledger-resolvers —
 // internal/ops/supply/supply.go::resolveSnapshotLedger and
 // cmd/stellarindex-aggregator/main.go::supplyAggregatorLedgers.LatestKnownLedger
@@ -165,7 +163,7 @@ func TestNewXLMComputer_AllowsNilReaderWithEmptyReserves(t *testing.T) {
 	if got.AssetKey != "XLM" {
 		t.Errorf("AssetKey = %q, want %q", got.AssetKey, "XLM")
 	}
-	// CS-010: with no reserve accounts configured, circulating == total,
+	// With no reserve accounts configured, circulating == total,
 	// so the basis must be the honest xlm_total_only — NOT
 	// xlm_sdf_reserve_exclusion, which would claim an exclusion happened.
 	if got.Basis != supply.BasisXLMTotalOnly {
@@ -222,10 +220,9 @@ func TestCompute_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCompute_ClampsCirculatingAtZero is the MNY-08 / CS-038 guard on
-// Algorithm 1. Classic (classic.go) and SEP-41 (sep41.go) both clamp
+// TestCompute_ClampsCirculatingAtZero guards Algorithm 1. Classic (classic.go) and SEP-41 (sep41.go) both clamp
 // circulating at zero when the exclusion set exceeds total; XLM — the
-// asset with the largest served market cap — did not, so a reserve
+// asset with the largest served market cap — must too, else a reserve
 // total above the hard cap (operator listing a non-SDF whale in
 // `reserve_accounts`, or a reader summing the wrong column) published
 // a NEGATIVE circulating supply, and a negative market cap with it.
@@ -271,7 +268,7 @@ func TestCompute_PropagatesReaderError(t *testing.T) {
 }
 
 // TestCompute_GuardsAgainstNilReaderReturn — defensive: a misbehaving
-// reader returning (nil, nil) used to nil-pointer the Sub call.
+// reader returning (nil, nil) must not nil-pointer the Sub call.
 // Verify the explicit guard surfaces a clear error.
 func TestCompute_GuardsAgainstNilReaderReturn(t *testing.T) {
 	// stubReader with both balance=nil AND err=nil triggers the
@@ -311,8 +308,8 @@ func TestCompute_DefensiveCopyOfReserveAccounts(t *testing.T) {
 }
 
 // freshnessReader is a reader that ALSO satisfies
-// [supply.ReserveBalanceFreshnessReader], used by the F-1236
-// (codex audit-2026-05-12) XLM freshness gate tests below.
+// [supply.ReserveBalanceFreshnessReader], used by the
+// XLM freshness gate tests below.
 type freshnessReader struct {
 	balance   *big.Int
 	minLedger uint32
@@ -333,9 +330,8 @@ func (f *freshnessReader) MinReserveAccountLedger(_ context.Context, _ []string,
 // TestCompute_FreshnessReaderPopulatesMinComponentLedger — when
 // the reader implements ReserveBalanceFreshnessReader, the
 // computed [supply.Supply] carries the per-component freshness
-// signal the Refresher's stale-component gate uses. F-1236
-// (codex audit-2026-05-12) — closes the third leg of the gate
-// after classic + SEP41 shipped in waves 17 + 18.
+// signal the Refresher's stale-component gate uses. This is the
+// XLM leg of the gate, alongside classic and SEP41.
 func TestCompute_FreshnessReaderPopulatesMinComponentLedger(t *testing.T) {
 	reader := &freshnessReader{balance: big.NewInt(1_000_000), minLedger: 49_999_000}
 	c, err := supply.NewXLMComputer([]string{"GA1", "GA2"}, reader)
@@ -379,7 +375,7 @@ func TestCompute_FreshnessReaderErrorIsNonFatal(t *testing.T) {
 
 // TestCompute_LegacyReader_NoFreshnessSignal — a reader that
 // does NOT implement ReserveBalanceFreshnessReader leaves
-// MinComponentLedger at 0, preserving the pre-F-1236 permissive
+// MinComponentLedger at 0, preserving the permissive
 // posture for deployments that haven't migrated.
 func TestCompute_LegacyReader_NoFreshnessSignal(t *testing.T) {
 	reader := &stubReader{balance: big.NewInt(1_000_000)}
@@ -397,7 +393,7 @@ func TestCompute_LegacyReader_NoFreshnessSignal(t *testing.T) {
 }
 
 // TestNewXLMComputerForNetwork_TestNetworksUseLedgerTotal — the
-// 2026-08-28 api.testnet defect: /v1/assets/native served the frozen
+// api.testnet defect: /v1/assets/native served the frozen
 // pubnet 50,001,806,812 XLM constant while the testnet ledger's
 // total_coins is 100 B. The computer must key its total off the
 // network passphrase: testnet + futurenet get the 100 B genesis

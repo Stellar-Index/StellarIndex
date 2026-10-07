@@ -48,10 +48,9 @@ func mirroredTTL(t *testing.T, rdb redis.Cmdable, plaintext string) time.Duratio
 }
 
 // TestCreateWithSecret_WritesBoundedIdleTTL proves the register mirror is
-// no longer written with TTL=0 (permanent). A permanent record in an
+// not written with TTL=0 (permanent). A permanent record in an
 // allkeys-lru pool that open, anonymous registration can create without
-// bound is the W1-flow-register-2 growth defect. RED on the pre-fix
-// Set(...,0): TTL reports -1 (no expiry).
+// bound would grow unboundedly. A TTL of -1 (no expiry) fails it.
 func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -78,9 +77,8 @@ func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
 // TestRedisValidator_RefreshesIdleTTLOnUse proves the read-path re-warm:
 // a successful Lookup slides the idle window forward. Without it a
 // register-mirrored key HARD-EXPIRES at mint+TTL even while actively
-// used — the exact "valid key -> permanent silent 401" the fix must not
-// re-introduce. RED on the pre-fix bare-GET Lookup: the TTL keeps
-// decaying because nothing re-warms it.
+// used — the "valid key -> permanent silent 401" failure. A bare-GET
+// Lookup fails it: the TTL keeps decaying because nothing re-warms it.
 func TestRedisValidator_RefreshesIdleTTLOnUse(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -107,10 +105,9 @@ func TestRedisValidator_RefreshesIdleTTLOnUse(t *testing.T) {
 }
 
 // TestRedisValidator_ActivelyUsedKeyDoesNotExpire is the end-to-end
-// regression the AUTH-3 rejection demanded: a key used continuously over
-// a span LONGER than one idle window must never 401. RED on the pre-fix
-// validator: the key expires mid-sequence and Lookup returns
-// ErrUnauthorized.
+// check that a key used continuously over a span LONGER than one idle
+// window never 401s. Without the re-warm the key expires mid-sequence
+// and Lookup returns ErrUnauthorized.
 func TestRedisValidator_ActivelyUsedKeyDoesNotExpire(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

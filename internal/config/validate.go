@@ -863,7 +863,7 @@ func parsePairString(s string) (canonical.Pair, error) {
 //
 // validate() already rejects unparseable entries at startup, so
 // this re-parse is infallible in practice; we still return an
-// error to keep the seam testable and to surface the regression
+// error to keep the seam testable and to surface the failure
 // loudly if validation is ever bypassed.
 func (a AggregateConfig) AggregatorPairs() ([]canonical.Pair, error) {
 	if len(a.Pairs) == 0 {
