@@ -709,7 +709,7 @@ Subcommands:
                           marker) and ledger_entry_changes: re-derives entry
                           ordinals without rewriting the other tables.
   ch-gate -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-project-to TIP]
-                          ADR-0034 §6 gates over a backfilled range:
+                          backfill acceptance gates over a backfilled range:
                           recompute the census + structural extract from
                           galexie, assert extract==census, then read the
                           range back from ClickHouse and assert STORED and
