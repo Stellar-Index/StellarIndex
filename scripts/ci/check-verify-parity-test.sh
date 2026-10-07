@@ -5,7 +5,7 @@
 # The gate's whole value is being non-vacuous: it must FAIL when CI runs a
 # scripts/ci gate that verify.sh doesn't mirror, and PASS when they agree —
 # in BOTH drift directions (CI gains a gate; verify loses one). It must also
-# not miscount the CID-03 restore step's `for f in scripts/ci/…` references
+# not miscount ci.yml's base-ref restore step's `for f in scripts/ci/…` references
 # (git-show arguments, not invocations) as invoked gates, and must refuse to
 # pass vacuously if it can't find any gate at all. Fixtures are
 # synthetic ci.yml / verify.sh pairs — no network, no gh, no repo state.
@@ -41,7 +41,7 @@ fail=0
 # A minimal but structurally-faithful two-job workflow. The second job exists
 # because gates in ANY job are in scope — reading one job is how two gates
 # added to `doc-checks` passed parity in 2026-09 without being looked at. The
-# `for f in scripts/ci/lint-restored.sh …` line reproduces the CID-03 restore
+# `for f in scripts/ci/lint-restored.sh …` line reproduces ci.yml's base-ref restore
 # step whose references must NOT be counted as invocations.
 write_ci() {
   # $1..$N = gate scripts to invoke as real steps inside import-checks.
@@ -133,7 +133,7 @@ write_verify "$TMP/verify-two.sh" scripts/ci/lint-a.sh scripts/ci/lint-b.sh
 run "$TMP/ci-grew.yml" "$TMP/verify-two.sh"
 expect 'CI adds a gate verify.sh lacks → FAIL' 1 'scripts/ci/lint-newthing.sh'
 
-# ── CID-03 restore-step references must NOT count as invocations ─────
+# ── base-ref restore-step references must NOT count as invocations ──
 # The for-loop lists lint-restored.sh / lint-alsorestored.sh with no ./ or
 # bash prefix; verify.sh does not run them and parity must still be OK.
 write_verify "$TMP/verify-ok2.sh" scripts/ci/lint-a.sh scripts/ci/lint-b.sh scripts/ci/lint-otherjob.sh
@@ -171,7 +171,7 @@ expect 'an explicitly exempt gate is not required in verify.sh' 0 'OK — all'
 run "$TMP/does-not-exist.yml" "$TMP/verify-ok.sh"
 expect 'missing ci.yml → FAIL' 1 'file not found'
 
-# ── RLT-377: a non-.sh gate (python3/go run, extensionless or `.py`) is
+# ── a non-.sh gate (python3/go run, extensionless or `.py`) is
 #    extracted too, not silently invisible to both sides ────────────────
 write_ci_nonsh() {
   # $1 = out. import-checks runs a shell gate plus a `python3 ./…py` gate

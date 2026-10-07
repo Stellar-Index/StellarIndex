@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Self-test for T471/RLT-376 (audit-2026-09-18): a docs-only or
+# Self-test: a docs-only or
 # internal/incidents/data/*.md-only change must NOT be excluded by
 # ci.yml's own `paths-ignore`, because doing so skips the entire
 # workflow — including the `doc-checks` job whose whole purpose is

@@ -20,7 +20,7 @@
 #   3. a missing/non-executable smoke script writes failures>0 rather
 #      than nothing — leaving the previous run's `failures 0` on disk
 #      would have node_exporter vouch for a check that can no longer
-#      run (the frozen-textfile trap of #319);
+#      run (the frozen-textfile trap);
 #   4. the write is atomic and world-readable: no .tmp survives, and the
 #      file is 0644 so the unprivileged node_exporter can read it (it
 #      skips unreadable files silently);

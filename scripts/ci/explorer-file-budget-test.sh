@@ -5,7 +5,7 @@
 # The gate had no floor: an empty $OUT (a build that emitted its HTML under
 # a different path) made `count` 0, and the ceiling check passed vacuously —
 # "OK (18500 files of headroom)" over a build that produced nothing.
-# explorer-seo-lint.sh hit the identical incident shape on 2026-08-04 and
+# explorer-seo-lint.sh hit the identical incident shape and
 # was fixed with a minimum-file-count floor; this pins the same floor here.
 #
 # Run: bash scripts/ci/explorer-file-budget-test.sh

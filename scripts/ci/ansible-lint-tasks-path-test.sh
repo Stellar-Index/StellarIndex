@@ -2,7 +2,7 @@
 # ansible-lint-tasks-path-test.sh — pins that ci.yml's ansible-lint step
 # actually scans configs/ansible/tasks/, not just roles/ and playbooks/.
 #
-# Q256 (audit-2026-09-18): the ansible-lint invocation in ci.yml was
+# The ansible-lint invocation in ci.yml was
 # `ansible-lint --profile moderate roles/ playbooks/`. configs/ansible/tasks/
 # (deploy-one-binary.yml, sync-migrations.yml — imported into
 # playbooks/deploy-binary.yml and roles/archival-node/tasks/

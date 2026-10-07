@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the fixtures are Go source; `$1` and backticks must stay literal
 # lint-unbounded-latest-row-test.sh — fixtures for the unbounded latest-row
-# gate (scripts/ci/lint-unbounded-latest-row.py, #594).
+# gate (scripts/ci/lint-unbounded-latest-row.py).
 #
 # Pinned: the SupplyCoverageStats shape that shipped is caught; a time or
 # ledger floor passes; a marker above the query or on the func doc passes,

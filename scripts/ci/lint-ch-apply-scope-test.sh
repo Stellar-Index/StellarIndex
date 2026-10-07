@@ -79,7 +79,7 @@ catches() {
   if [ "$got" -eq 0 ]; then
     echo "  FAIL $desc (exit 0, want non-zero)"; fail=$((fail + 1)); return
   fi
-  # Substring test in-shell, not `… | grep -q`: #475 — an early-exit pipe
+  # Substring test in-shell, not `… | grep -q`: an early-exit pipe
   # consumer under pipefail is a coin flip. The needle is quoted inside the
   # pattern, so its `*` and `?` are literal.
   case "$out" in

@@ -65,7 +65,7 @@ for f in "${ALL_CONSUMERS[@]}"; do
   if [[ ! -r "$f" ]]; then bad "missing consumer $f"; continue; fi
   # The non-comment lines, landed in a value: piping them into `grep -q`
   # lets it exit at the first hit and strands the upstream grep on a closed
-  # pipe, which pipefail reports as a failed check either way (#475).
+  # pipe, which pipefail reports as a failed check either way.
   uncommented="$(grep -vE '^\s*#' "$f")"
   if grep -qE '(^|[;[:space:]])(\.|source)[[:space:]]+/etc/default/(stellarindex|stellarindex-ops|galexie)([[:space:]]|;|$)' <<<"$uncommented"; then
     bad "$f sources a systemd EnvironmentFile with the shell parser (\`.\`/source) — a secret with \$ ; quotes or spaces is mangled or executed; read it verbatim"

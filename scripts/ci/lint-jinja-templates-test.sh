@@ -5,7 +5,7 @@
 # template bodies that must reach the code under test unexpanded. Pre-dates
 # this file's GIT_DIR guard; silenced when that guard pulled the file into
 # the changed-file lint's scope.
-# Self-test for lint-jinja-templates.sh: it must catch the r1 2026-08-29
+# Self-test for lint-jinja-templates.sh: it must catch the
 # class (bash array-length idiom read as a Jinja comment) and every other
 # unrenderable template, and must not flag templates ansible renders fine.
 set -uo pipefail

@@ -4,7 +4,7 @@
 # to production r1) install the SAME collection versions deploy.yml
 # actually applies.
 #
-# F146 (audit-2026-09-02): both jobs installed only the batteries-
+# Both jobs installed only the batteries-
 # included `ansible` pipx bundle, whose community.general/ansible.posix/
 # community.postgresql resolve to whatever pipx picked for that ansible
 # release (community.general 11.x-class under ansible 14.2.0). Neither

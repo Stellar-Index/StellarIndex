@@ -8,7 +8,7 @@
 # range, gap above it, malformed/misnamed partition, manifest change,
 # stalled publication) is pinned RED here, and the intact shape — a
 # synthetic 1003-partition listing identical in structure to the live
-# bucket on 2026-08-29 — is pinned GREEN. No network, no aws cli.
+# bucket — is pinned GREEN. No network, no aws cli.
 #
 # Run: bash scripts/ci/check-public-dataset-test.sh
 set -uo pipefail

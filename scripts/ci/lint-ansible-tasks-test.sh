@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # lint-ansible-tasks-test.sh — fixtures for lint-ansible-tasks.sh.
 #
-# Load-bearing cases (2026-08-28 audit, deploy-ansible-shell-1 +
-# deploy-ansible-secrets-9):
+# Load-bearing cases:
 #   - a shell task whose body sets pipefail without `executable: /bin/bash`
 #     is flagged (04-users.yml aborted every full role apply under dash);
 #     the same task WITH the executable, and a `copy: content:` script that

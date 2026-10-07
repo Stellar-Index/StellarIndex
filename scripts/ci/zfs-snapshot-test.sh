@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # zfs-snapshot-test.sh — fixture tests for scripts/ops/zfs-snapshot.sh
-# (rolling ZFS snapshots of data/clickhouse + data/postgres, 2026-08-29).
+# (rolling ZFS snapshots of data/clickhouse + data/postgres).
 #
 # `zfs` and `zpool` are STUBBED on PATH with a file-backed fake pool, so
 # this runs on any box (macOS included) and never touches a real pool.
