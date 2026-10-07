@@ -480,9 +480,8 @@ func seedBoundedLabelSeries() {
 	// `rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])`
 	// resolve to "no data" (gap, not zero) until the first
 	// triangulation succeeds — which makes `absent()` / `<= 0` checks
-	// ambiguous, so alerts whose underlying
-	// metric looked "missing from scrape output". That was a Prometheus
-	// client-library quirk, not a code bug: counters only register a
+	// ambiguous: the metric looks "missing from scrape output". That is a
+	// Prometheus client-library quirk, not a code bug: counters only register a
 	// series after the first .Inc on a given label combo.
 	//
 	// Only counters with a *bounded, well-known* label set are
@@ -2136,7 +2135,7 @@ var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 )
 
 // LedgerstreamLiveStartRetriesTotal — how many times the live tail has
-// re-attempted a start that failed before delivering a single ledger
+// re-attempted a start that failed before delivering a single ledger.
 // Emitted by internal/ledgerstream's retryLiveStart.
 //
 // What makes this distinct from every other ingest signal: it is the ONLY

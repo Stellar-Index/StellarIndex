@@ -132,10 +132,10 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 // (source, asset): the operator override if there is one, else the
 // source's declared default.
 //
-// A source that never declared a resolution yields +Inf, which
-// reproduces the original per-source behaviour exactly: the old expression joined
-// against stellarindex_oracle_resolution_seconds, so a source with no
-// resolution series had no right-hand side and could not alert at all.
+// A source that never declared a resolution yields +Inf, so it cannot
+// alert — the same result as joining against
+// stellarindex_oracle_resolution_seconds, where a source with no
+// resolution series has no right-hand side.
 // +Inf keeps that silence while still emitting a series, so the gap is
 // visible on a dashboard instead of being an absent row nobody
 // notices. Every oracle source the dispatcher can enable declares one,
