@@ -5,10 +5,7 @@
 #   /bin/sh, which is dash on every host this role targets (Ubuntu noble).
 #   dash < 0.5.13 rejects `set -o pipefail` ("set: Illegal option -o
 #   pipefail", rc=2) BEFORE the first real statement, so the task fails and
-#   the play aborts on every host. The tree has hit this three times
-#   (deploy-binary.yml 2026-07-18, 10-observability.yml, and 04-users.yml
-#   added 2026-08-27 — the latter aborted every full archival-node apply at
-#   step 04, before postgres/galexie/services). Any shell task whose body
+#   the play aborts on every host. Any shell task whose body
 #   sets pipefail MUST declare `executable: /bin/bash`. Scripts shipped via
 #   `copy: content:` carry their own shebang and are not shell tasks, so
 #   they are out of scope.
@@ -52,7 +49,7 @@ if [ "${#yml_files[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# Grandfathered violations (shrink-only; CS-098 lint-baseline-growth.sh
+# Grandfathered violations (shrink-only; lint-baseline-growth.sh
 # watches scripts/ci/*.baseline). Format: `<rule>\t<path>` per line. A
 # baselined (rule, path) pair is reported but not counted; a baseline entry
 # with NO matching finding is STALE and fails the gate so the list can only

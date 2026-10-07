@@ -2,7 +2,7 @@
 # check-deploy-protection.sh — assert that a production deploy
 # environment actually requires a human approval AND admits only `main`.
 #
-# Why (deploy-approval-gate, audit-2026-07-23):
+# Why:
 #
 #   .github/workflows/deploy.yml declares `environment: <region>`, which
 #   LOOKS like a gate but enforces nothing on its own — an environment

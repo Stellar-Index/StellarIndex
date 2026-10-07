@@ -4,7 +4,7 @@
 # shell-fallback Function's target shell isn't actually in the static
 # export.
 #
-# T329 (audit-2026-09-18): every functions/**/[[path]].js that calls
+# Every functions/**/[[path]].js that calls
 # shellFallback(context, '<path>') serves out<path>index.html for any
 # slug outside the pre-rendered set (accounts, assets, contracts, issuers,
 # ledgers, lending, markets, transactions, sources, external/assets,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-deploy-relax.sh — decide whether a deploy-approval-gate
-# relaxation is currently in force (K079, ops-deploy).
+# relaxation is currently in force.
 #
 # DEPLOY_APPROVAL_RELAXED=true lets the gated workflows skip the
 # required-reviewers assertion (never the main-only branch policy)

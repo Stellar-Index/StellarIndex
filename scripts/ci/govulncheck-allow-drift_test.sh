@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # govulncheck-allow-drift_test.sh — pins the lib/pq version cited in
-# govulncheck-allow.txt's header comment to go.mod's actual pin (T520).
+# govulncheck-allow.txt's header comment to go.mod's actual pin.
 #
 # The allowlist's accepted-risk rationale names an exact lib/pq version and
 # calls it "the Postgres driver (ADR-0006)". Both claims can silently drift

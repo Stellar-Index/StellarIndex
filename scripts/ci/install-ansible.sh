@@ -2,11 +2,9 @@
 # install-ansible.sh — one installer for the two Ansible toolchain shapes
 # used across deploy.yml, ansible-drift.yml and ci.yml (GH-896).
 #
-# Before this script, ansible-core/ansible's version was an independent
-# inline string in each of three workflows — a bump was three separate
-# edits nothing checked for agreement, and the collection-pin regression
-# this issue was originally filed for (#896) came from exactly that kind
-# of drift. Both pins now live in configs/ansible/toolchain.txt; this
+# One pin, not an inline version string per workflow: separate copies
+# drift and break the collection pins. Both pins live in
+# configs/ansible/toolchain.txt; this
 # script is the only place that reads them.
 #
 # Usage: install-ansible.sh core|bundle

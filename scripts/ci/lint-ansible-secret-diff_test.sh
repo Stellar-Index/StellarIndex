@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# lint-ansible-secret-diff_test.sh — T492: the scan glob covered only
-# ROLES_DIR/*/tasks/*.yml, so a secret-rendering `ansible.builtin.template`
+# lint-ansible-secret-diff_test.sh — a scan glob of only
+# ROLES_DIR/*/tasks/*.yml would miss a secret-rendering `ansible.builtin.template`
 # task placed in a role's handlers/ (or a playbook, or the shared
-# configs/ansible/tasks/) was invisible to this lint. This plants one in a
+# configs/ansible/tasks/). This plants one in a
 # fake role's handlers/ file and asserts the lint catches it.
 #
 # Run: bash scripts/ci/lint-ansible-secret-diff_test.sh

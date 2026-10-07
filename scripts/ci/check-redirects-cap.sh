@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# check-redirects-cap.sh — Cloudflare Pages free-plan _redirects rule cap
-# (T335).
+# check-redirects-cap.sh — Cloudflare Pages free-plan _redirects rule cap.
 #
 # web/explorer/public/_redirects itself documents CF Pages' free-plan
-# ~100-rule limit (see its "fiat de-dup" and T247 comments) and asserts
+# ~100-rule limit (see its "fiat de-dup" comments) and asserts
 # it stays under that cap by hand-counting whenever a rule is added.
 # Nothing in CI checked it: `grep -rln _redirects .github/workflows/`
 # only matched an unrelated web/status comment. Past the cap, CF Pages

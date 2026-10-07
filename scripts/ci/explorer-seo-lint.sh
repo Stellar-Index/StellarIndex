@@ -37,7 +37,6 @@ echo "explorer-seo-lint: checked ${checked} indexable pages, ${fail} with missin
 # `fail` both stay 0 when the find yields nothing, so a build that emitted
 # its HTML under a different path (a Next output-dir change) deployed with
 # this gate reporting clean. It runs pre-upload in explorer-deploy.yml.
-# Cold audit 2026-08-04.
 [ "$checked" -gt 0 ] || {
   echo "::error::explorer-seo-lint found 0 indexable pages under $OUT — the export is empty, all-noindex, or the output path moved. Refusing to pass vacuously." >&2
   exit 1

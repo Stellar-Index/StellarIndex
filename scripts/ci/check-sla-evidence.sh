@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 # check-sla-evidence.sh — decision core for the weekly SLA-evidence run
-# (.github/workflows/k6-weekly.yml), issue #316.
+# (.github/workflows/k6-weekly.yml).
 #
 # k6-weekly.yml is the ONLY feed into the monthly proof-of-SLA report
-# (docs/operations/sla-proof-procedure.md). Until 2026-08-29 its scheduled
-# path emitted `::notice::` and exited 0 whenever the target secrets were
-# unset, so every scheduled run since the cron was restored concluded
-# `success` with `Install k6` / `Compile-check` / `Run scenario` all
-# `skipped` (runs 30733884244, 31292354359, 31922897932, 32614013429) —
-# and no `docs/operations/sla-proof-<YYYY-MM-DD>.md` has ever landed. A
-# green badge for an SLA regression alarm that has never measured anything
+# (docs/operations/sla-proof-procedure.md). A scheduled run that skips
+# every measuring step must not conclude `success`: a green badge for an
+# SLA regression alarm that has never measured anything
 # is worse than no badge: silence read as success.
 #
 # This script is the verdict the workflow branches on. It is deterministic

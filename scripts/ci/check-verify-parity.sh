@@ -6,8 +6,7 @@
 # a BUNDLE of scripts/ci/*.sh gates, and nothing forced verify.sh to mirror
 # it. A gate added to repo-gates but not to verify.sh is invisible drift:
 # `bash scripts/dev/verify.sh` goes green while the SAME commit reddens CI on
-# the new gate — the exact "verify.sh green ≠ CI green" class verify.sh's own
-# comments record biting twice (2026-07-06, 2026-07-25).
+# the new gate — the "verify.sh green ≠ CI green" class.
 #
 # This gate closes that hole DETERMINISTICALLY (no network, no gh): it
 # extracts every scripts/ci/*.sh invoked by the repo-gates job and fails
@@ -35,7 +34,7 @@ done
 
 # extract_invoked <file-or-block-on-stdin> — pull the scripts/ci/* paths
 # that are EXECUTED (prefixed by `./`, `bash `, `python3 ./` or `go run ./`),
-# not merely mentioned. RLT-377: a `.sh`-only extension requirement missed
+# not merely mentioned. A `.sh`-only extension requirement would miss
 # every non-shell gate ci.yml actually runs (`go run ./scripts/ci/lint-
 # golangci-config` has no extension at all; the `lint-*.py` gates have `.py`)
 # — those gates were invisible to this check in EITHER direction, so it could
@@ -50,8 +49,8 @@ extract_invoked() {
     | sed -E 's#^(\./|bash +|python3? +\./|go run +\./)##' | sort -u
 }
 
-# Every gate CI invokes, in ANY job. Reading one job is how two gates added
-# to `doc-checks` passed parity in 2026-09 without being looked at.
+# Every gate CI invokes, in ANY job; reading one job lets a gate added to
+# another job pass parity without being looked at.
 # Gates that cannot do useful work in a local pre-push run. Each is listed
 # with WHY, so an exemption is a visible decision rather than an accident of
 # which CI job a gate happened to land in. Anything not here must be in

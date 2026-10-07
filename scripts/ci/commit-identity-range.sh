@@ -4,7 +4,7 @@
 # self-attribution) check. Pulled out of the workflow so the range logic
 # can be pinned by a test instead of only living inline in YAML.
 #
-# RLT-374: the new-branch/tag fallback used
+# The new-branch/tag fallback used
 # `git rev-parse --abbrev-ref HEAD` to name the ref to exclude from
 # `--all`. Two independent bugs made it reachable-empty on the CI checkout
 # this fallback exists for:

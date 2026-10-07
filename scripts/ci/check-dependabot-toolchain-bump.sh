@@ -2,16 +2,14 @@
 # check-dependabot-toolchain-bump.sh — refuse a Dependabot PR that rides a
 # language-toolchain change in under a dependency-patch label.
 #
-# The incident this pins (#495):
-# the go-minor-patch Dependabot group raised `go 1.25.10` + `toolchain
-# go1.25.13` to `go 1.26.0` (toolchain directive dropped) alongside eight
-# ordinary module bumps in one grouped PR. Dependabot's semver parser
+# The go-minor-patch Dependabot group can raise the `go` directive a
+# minor version alongside ordinary module bumps. Dependabot's semver parser
 # reads 1.25 -> 1.26 as a "minor" bump because it treats the `go`
 # directive like any other module version, but for the Go toolchain a
 # minor version IS a language/runtime change — new vet rules, a new
-# `go` binary requirement, and (the concrete failure here) a
-# `govulncheck` built against go1.25 that cannot analyse a go1.26
-# module graph at all, so the vulnerability gate went dark with a
+# `go` binary requirement, and a `govulncheck` built against the old
+# toolchain that cannot analyse the new module graph, so the
+# vulnerability gate goes dark with a
 # message that looked like an unrelated tool failure, not a reviewable
 # decision. A human bumping the Go version chooses to and says so in
 # the PR; Dependabot's grouped-patch label hides that choice.

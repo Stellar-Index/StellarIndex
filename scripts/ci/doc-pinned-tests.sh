@@ -3,7 +3,7 @@
 #
 # A docs-only PR sets preflight go=false and skips the `test` job, yet Go
 # tests read markdown at test time (internal/ops/chops pins strings in the
-# runbooks). #2440 dropped two of those strings and went green. Putting
+# runbooks), so dropping a pinned string from a doc goes green. Putting
 # **/*.md in the `go` filter would make every docs PR pay for the full
 # matrix, so this selects only the packages whose *_test.go mention a
 # changed .md by repo path or basename.

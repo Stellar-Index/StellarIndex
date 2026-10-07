@@ -72,7 +72,7 @@ is_allowed() {
   # exact-line match against the allowed set (empty-array safe under set -u).
   # The list is landed before the match rather than piped into it: `grep -Fxq`
   # exits at its first hit, and pipefail would then report the SUCCESSFUL
-  # match as a failed lookup once printf outgrew the pipe buffer (#475).
+  # match as a failed lookup once printf outgrew the pipe buffer.
   grep -Fxq -- "$1" <<<"$(printf '%s\n' ${ALLOWED[@]+"${ALLOWED[@]}"})"
 }
 

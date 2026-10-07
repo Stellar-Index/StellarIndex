@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-no-wrangler-cache-tracked.sh — tripwire for T535: a Cloudflare
+# check-no-wrangler-cache-tracked.sh — tripwire: a Cloudflare
 # Pages `.wrangler/` build-cache directory (contains `account_id`,
 # `project_name`) was committed at docs/reference/api/.wrangler/cache/
 # pages.json in a public repo. .gitignore's `/.wrangler/` entry is

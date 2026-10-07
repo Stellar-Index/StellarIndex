@@ -3,7 +3,7 @@
 # explorer-file-budget.sh — fail the explorer build if the static export
 # approaches Cloudflare Pages' hard limit of 20,000 files per deployment.
 #
-# Why this exists (SEO plan R1, confirmed by Spike A 2026-06-24): Next static
+# Why this exists (SEO plan R1): Next static
 # export emits ~2 files per page (HTML + RSC .txt). Pre-rendering the curated
 # entity sets (richlist accounts, active contracts, …) pushes the file count
 # toward the cap; exceeding it makes the CF Pages deploy fail OPAQUELY. This
@@ -29,7 +29,7 @@ count=$(find "$OUT" -type f | wc -l | tr -d ' ')
 # Zero files is a BROKEN GATE, not a clean build: an empty $OUT (a build
 # that emitted its HTML under a different path) makes `count` 0 and the
 # ceiling check below passes vacuously, reporting "OK" over headroom that
-# was never measured. Mirrors explorer-seo-lint.sh's floor (2026-08-04).
+# was never measured. Mirrors explorer-seo-lint.sh's floor.
 if [ "$count" -eq 0 ]; then
   echo "::error::explorer-file-budget found 0 files under $OUT — the export is empty or the output path moved. Refusing to pass vacuously." >&2
   exit 1
