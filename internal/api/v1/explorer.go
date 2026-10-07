@@ -11,13 +11,11 @@ import (
 )
 
 // The network-explorer endpoint implementations (ADR-0038) live in
-// internal/api/v1/explorer (maintainability audit 2026-07-01, D1
-// finding M1-7). This file only wires that package's *Handler into
-// Server (see server.go's Handler construction + mountRoutes) and
-// keeps type aliases for every type explorer_*.go used to export
-// directly from package v1, so the existing (pre-extraction)
-// explorer_*_test.go files keep compiling completely unchanged —
-// they still write `v1.LedgersListView` etc.
+// internal/api/v1/explorer. This file only wires that package's
+// *Handler into Server (see server.go's Handler construction +
+// mountRoutes) and keeps type aliases for the explorer types package v1
+// exports, so the explorer_*_test.go files in this package compile
+// unchanged — they still write `v1.LedgersListView` etc.
 //
 // ExplorerReader is also the read seam behind a few v1 handlers
 // OUTSIDE the explorer package (asset SAC resolution in assets.go,

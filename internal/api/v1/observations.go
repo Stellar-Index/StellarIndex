@@ -88,20 +88,18 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// kraken / bitstamp XLM-USD, BTC-USD, ETH-USD), so `quote_asset`
 	// holds the literal string on every one of those rows: /v1/history
 	// serves them, and /v1/observations/stream — same computeObservations,
-	// no short-circuit — emits three venues for the very pair the #29
-	// fast-path here was answering with `[]`. That fast-path also
-	// out-lived its cost argument: migration 0037's
-	// trades_pair_source_ts_idx covers LatestTradePerSource's
-	// DISTINCT ON (source), so the lookup is O(num_sources), not the
-	// O(rows_in_pair) fan-out that was once measured.
+	// no short-circuit — emits three venues for that pair, so answering
+	// it with `[]` here would contradict both. Nor does cost call for a
+	// fast-path: migration 0037's trades_pair_source_ts_idx covers
+	// LatestTradePerSource's DISTINCT ON (source), so the lookup is
+	// O(num_sources), not an O(rows_in_pair) fan-out.
 
 	// 8s ceiling on the trades hypertable scan, the same pattern as
-	// /v1/pools and /v1/markets. The deliberate 2026-05-08 prod test
-	// (asset=native&quote=USDC-G…) hit a 10s curl timeout against
-	// the unguarded handler — the cold-cache "latest trade per
-	// source" scan over a high-traffic pair can run several seconds
-	// on first hit. The bound surfaces a structured 503 instead of
-	// holding the connection open until the upstream LB cuts it.
+	// /v1/pools and /v1/markets. Unguarded, a prod test
+	// (asset=native&quote=USDC-G…) hit a 10s curl timeout — the
+	// cold-cache "latest trade per source" scan over a high-traffic pair
+	// can run several seconds on first hit. The bound surfaces a
+	// structured 503 instead of holding the connection open until the upstream LB cuts it.
 	obsCtx, obsCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer obsCancel()
 	trades, ok := s.fetchObservationsOrWriteError(w, r, obsCtx, pair, source, aggregate, asset, quote)
@@ -131,7 +129,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// (informational). Stale and Frozen stay false on this surface
 	// per ADR-0018.
 	//
-	// FRESHNESS CONTRACT (W8.11): this is the RAW per-source surface, so
+	// FRESHNESS CONTRACT: this is the RAW per-source surface, so
 	// there is no single staleness verdict — flags.stale is always false
 	// here BY DESIGN, and the envelope's as_of is the response time (shared
 	// writeJSON), NOT the data's age. A source can be arbitrarily stale (a
@@ -150,7 +148,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// per-source trades — there is no aggregated value for the verdict to
 	// vouch for, and stamping a base-level verdict onto every venue's last
 	// trade would read as "each of these rows was cross-checked" when none
-	// was. Per CS-087 a false here means exactly what it says: this
+	// was. A false here means exactly what it says: this
 	// surface does not verify. Pinned by
 	// TestObservations_DivergenceCheckedStructurallyFalse; the stream twin
 	// (observationsStreamEvent) mirrors it. Documented on the Flags schema
@@ -165,8 +163,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// a DIRECT trade for it (ADR-0018 Surface 3 is raw-only by
 	// design). Set flags.triangulated=true when an empty result
 	// coexists with a triangulated/proxied price elsewhere — same
-	// signal /v1/price returns. R-011 in
-	// `docs/review-2026-05-10.md`.
+	// signal /v1/price returns.
 	if len(rows) == 0 && source == "" {
 		flags.Triangulated = s.observationsHaveTriangulatedPrice(obsCtx, pair)
 	}
@@ -179,8 +176,8 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 // timeout 503, cache-unavailable 503, generic internal 500). Returns
 // (trades, true) on success; (_, false) means a response was already
 // written and the caller must return. Extracted from handleObservations
-// to keep its gocognit complexity below the 20 ceiling after the
-// cache-unavailable branch was added for F-0090.
+// to keep its gocognit complexity below the 20 ceiling with the
+// cache-unavailable branch.
 func (s *Server) fetchObservationsOrWriteError(
 	w http.ResponseWriter, r *http.Request,
 	obsCtx context.Context,

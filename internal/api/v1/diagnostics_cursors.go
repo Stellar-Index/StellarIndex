@@ -39,7 +39,7 @@ type Cursor struct {
 // generous-but-not-excessive window for the live indexer
 // (production cursor updates every ~5s) and reliably excludes
 // completed backfill cursors that linger in the table for days
-// or weeks before manual cleanup. R-015 in the 2026-05-10 review.
+// or weeks before manual cleanup.
 const statusActiveMaxAge = 10 * time.Minute
 
 // cursorAbandonedAge is the boundary past which a cursor in a one-shot
@@ -54,11 +54,10 @@ const statusActiveMaxAge = 10 * time.Minute
 // position anything is still writing to — `ingestion_cursors` has no
 // retention policy, so those records accumulate forever.
 //
-// Measured on r1 (2026-09-03): 4,703 of 4,815 rows were past this
-// line, among them SDEX backfill shards last touched on 2026-05-06
-// and 2026-05-14 carrying a ~9.7M-second lag. All 4,815 were served,
-// in full, on every public request (~520 KB before compression),
-// with nothing on the wire to say which of them anything was still
+// Measured on r1, 4,703 of 4,815 rows were past this line, among them
+// SDEX backfill shards carrying a ~9.7M-second lag. Unfiltered, every
+// public request would carry all of them (~520 KB before compression),
+// with nothing on the wire to say which of them anything is still
 // working on.
 const cursorAbandonedAge = 7 * 24 * time.Hour
 
@@ -78,7 +77,7 @@ const (
 // thousands (projected-rebuild alone accounted for 4,523 of r1's
 // 4,815). Excluding the abandoned set is what makes the DEFAULT
 // response small; this cap is what stops any single response growing
-// without limit again, including `?include_abandoned=true`, which pages
+// without limit, including `?include_abandoned=true`, which pages
 // via `pagination.next`.
 const (
 	cursorsDefaultLimit = 500
@@ -169,7 +168,7 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 	q.includeAbandoned = r.URL.Query().Get("include_abandoned") == "true"
 
 	// status: "active" / "stale" / "abandoned" / "" — semantic
-	// convenience layer over max_age, R-015. Active = lag <= 10 min
+	// convenience layer over max_age. Active = lag <= 10 min
 	// (caps maxAge); stale = the complement, up to the abandoned
 	// boundary; abandoned = the dead set alone, which implies the
 	// opt-in so `?status=abandoned` needs no second parameter.
@@ -228,8 +227,8 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 // `abandoned`, see [cursorStateFor]), and the response DEFAULTS to the
 // non-abandoned set: `ingestion_cursors` accumulates one permanent row
 // per one-shot job shard, so without that default the public response
-// is dominated by months-old records of work nothing is doing (r1,
-// 2026-09-03: 4,703 of 4,815 rows). It is also capped — see
+// is dominated by months-old records of work nothing is doing
+// (measured on r1: 4,703 of 4,815 rows). It is also capped — see
 // `limit` — so no future job's shard fan-out can grow it without
 // bound. The live cursor namespaces are exempt from `abandoned` at any
 // age, so the default response can never go quiet on stuck ingest —
@@ -251,7 +250,7 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 //     which is what `reap-cursors` deletes.
 //
 //   - "" / omitted → live + stale.
-//     Invalid values return 400 invalid-status. R-015.
+//     Invalid values return 400 invalid-status.
 //
 //   - include_abandoned — "true" adds the abandoned rows back to any
 //     of the above. Reach for it when reconciling what a past
@@ -342,9 +341,9 @@ func pageCursors(rows []Cursor, offset, limit int) ([]Cursor, string) {
 }
 
 // writeCursorsListError maps a ListCursors error to the appropriate
-// Problem+JSON response. F-0094 closure: under cascade the
+// Problem+JSON response. Under cascade the
 // /v1/diagnostics/cursors endpoint is exactly the operator's
-// must-have view, but the generic 500 it used to emit didn't
+// must-have view, and a generic 500 would not
 // distinguish "postgres briefly stalled" (retry now) from "endpoint
 // permanently broken" (escalate). Mapping transient + timeout
 // shapes to 503 lets operators read the response without ambiguity.

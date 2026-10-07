@@ -20,19 +20,16 @@ import "context"
 // home_domain (e.g. via a stellar.toml ACCOUNTS array
 // listing the G-account). A wrong mapping is worse than a null.
 //
-// Long-term path: PR that wires `issuers` table writes from the
-// AccountEntry observer (see task #95-adjacent investigation).
-// Once that's in place, this map becomes redundant and can be
-// removed.
+// Once the AccountEntry observer writes the `issuers` table, this
+// map becomes redundant and can be removed.
 type knownIssuer struct {
 	HomeDomain string
 	OrgName    string
 }
 
 var knownIssuers = map[string]knownIssuer{
-	// Circle — USDC. On-chain home_domain moved centre.io →
-	// circle.com (2026-08-06 sweep); circle.com's stellar.toml
-	// lists this account.
+	// Circle — USDC. On-chain home_domain is circle.com, whose
+	// stellar.toml lists this account.
 	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {
 		HomeDomain: "circle.com",
 		OrgName:    "Circle",
@@ -57,15 +54,14 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "stellar.moneygram.com",
 		OrgName:    "MoneyGram International",
 	},
-	// AnchorUSD. On-chain home_domain is the stablecoin subdomain
-	// (2026-08-06 sweep).
+	// AnchorUSD. On-chain home_domain is the stablecoin subdomain.
 	"GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX": {
 		HomeDomain: "stablecoin.anchorusd.com",
 		OrgName:    "AnchorUSD",
 	},
-	// Round 2 (2026-05-08): issuers identified via the SAC wrapper
-	// rounds — every entry verified by cross-referencing the
-	// G-strkey against the issuer's stellar.toml ACCOUNTS list.
+	// Issuers identified via their SAC wrappers — every entry verified by
+	// cross-referencing the G-strkey against the issuer's stellar.toml
+	// ACCOUNTS list.
 	// Blend Capital — BLND governance token.
 	"GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY": {
 		HomeDomain: "blend.capital",
@@ -77,26 +73,23 @@ var knownIssuers = map[string]knownIssuer{
 		OrgName:    "Velo Labs",
 	},
 	// Phoenix DEX — PHO governance token. On-chain home_domain is
-	// the app subdomain (2026-08-06 sweep).
+	// the app subdomain.
 	"GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO": {
 		HomeDomain: "app.phoenix-hub.io",
 		OrgName:    "Phoenix",
 	},
-	// FxDAO — USDx issuer. The original entry here said
-	// "Mykobo — issues USDx, EURx, GBPx", which was wrong from day
-	// one: USDx is FxDAO's; the on-chain home_domain is
+	// FxDAO — USDx issuer, not Mykobo: the on-chain home_domain is
 	// assets.fxdao.io and that domain's stellar.toml ACCOUNTS list
-	// carries this G-strkey (verified 2026-08-06).
+	// carries this G-strkey.
 	"GAVH5ZWACAY2PHPUG4FL3LHHJIYIHOFPSIUGM2KHK25CJWXHAV6QKDMN": {
 		HomeDomain: "assets.fxdao.io",
 		OrgName:    "FxDAO",
 	},
 	// Ultra Capital (Ultra Stellar) — acquired apay.io's wrapped
-	// BTC/ETH issuers. Both accounts' on-chain home_domain is now
+	// BTC/ETH issuers. Both accounts' on-chain home_domain is
 	// ultracapital.xyz and its stellar.toml lists them as the
-	// tethered BTC/ETH issuers (verified 2026-08-06; the stale
-	// "apay.io" entries here were serving a dead anchor's identity
-	// AND SEP-1-verifying against the wrong domain).
+	// tethered BTC/ETH issuers; apay.io is a dead anchor's identity
+	// and the wrong domain to SEP-1-verify against.
 	"GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM": {
 		HomeDomain: "ultracapital.xyz",
 		OrgName:    "Ultra Capital",
@@ -110,15 +103,15 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "libre.cx",
 		OrgName:    "Libre",
 	},
-	// Circle EUR-pegged stablecoin (EURC). centre.io → circle.com,
-	// same move as the USDC issuer above (2026-08-06 sweep).
+	// Circle EUR-pegged stablecoin (EURC). On-chain home_domain is
+	// circle.com, as for the USDC issuer above.
 	"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": {
 		HomeDomain: "circle.com",
 		OrgName:    "Circle (EURC)",
 	},
-	// Round 5 (2026-05-08): legitimate issuers found via wider
-	// stellar.expert directory sweep. Each verified — directory
-	// has a `name` and either no `tags` or only neutral tags.
+	// Legitimate issuers found via a wider stellar.expert directory
+	// sweep. Each verified — directory has a `name` and either no
+	// `tags` or only neutral tags.
 	"GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF": {
 		HomeDomain: "ultracapital.xyz",
 		OrgName:    "UltraCapital (yUSDC)",
@@ -135,7 +128,7 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "zeam.money",
 		OrgName:    "Zeam.Money",
 	},
-	// On-chain home_domain is the sslx subdomain (2026-08-06 sweep).
+	// On-chain home_domain is the sslx subdomain.
 	"GBHFGY3ZNEJWLNO4LBUKLYOCEK4V7ENEBJGPRHHX7JU47GWHBREH37UR": {
 		HomeDomain: "sslx.sl8.online",
 		OrgName:    "sl8.online",
@@ -185,11 +178,9 @@ var knownIssuers = map[string]knownIssuer{
 // absence. Callers use on-chain-first AHEAD of the curated
 // knownIssuers map: the on-chain field is signed by the account's
 // own keys and follows anchor acquisitions/rebrands, while the map
-// is a hand-maintained snapshot that goes stale silently — the
-// 2026-08-06 sweep found 8 of 27 entries diverged from chain
-// (apay.io→ultracapital.xyz, centre.io→circle.com, a mis-attributed
-// FxDAO issuer, …), and the stale domain was also what SEP-1
-// verification resolved against.
+// is a hand-maintained snapshot that goes stale silently (one sweep
+// found 8 of 27 entries diverged from chain), and a stale domain is
+// also what SEP-1 verification would resolve against.
 func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain string, degraded bool) {
 	if s.Explorer == nil {
 		return "", false
@@ -215,7 +206,7 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain s
 // domain. On a degraded read the curated map is deliberately NOT
 // consulted: falling back to it would serve a stale hand-maintained
 // domain — and let SEP-1 verify against it — under the same 200 a
-// confirmed live read gets, indistinguishable from real data (GH-582).
+// confirmed live read gets, indistinguishable from real data.
 // The caller is expected to fold degraded into the response's stale
 // flag rather than silently accept a fallback value.
 func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (degraded bool) {

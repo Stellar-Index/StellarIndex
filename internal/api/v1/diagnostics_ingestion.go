@@ -64,8 +64,8 @@ type IngestionDiagnostics struct {
 	// distinct_ledger_count / (tip - genesis + 1), computed by the gap
 	// detector and persisted to source_coverage_snapshots, which the
 	// handler reads as a single cheap row (no trades scan, no cursor
-	// arithmetic). The cursor-derived path was removed in rc.93/94 —
-	// cursors are now an operational journal only. trade_count is
+	// arithmetic). Cursors are an operational journal only and do not
+	// feed coverage. trade_count is
 	// best-effort enrichment from the background trades-scan cache.
 	// SECONDARY to Backfill: `Backfill` shows what backfill *is
 	// doing*; `BackfillCoverage` shows what we've actually walked.
@@ -78,10 +78,10 @@ type IngestionDiagnostics struct {
 	// degraded reports whether one or more critical readers failed
 	// (or were not wired) during the snapshot build, so the response
 	// is missing fields its consumers expect. The handler propagates
-	// this to the envelope's Flags.Stale so the client can react —
-	// pre-fix the response served zero-valued struct fields with
-	// flags.stale:false, which is a lie when every counter is zero
-	// (F-0095). Unexported scratchpad, never on the wire as data.
+	// this to the envelope's Flags.Stale so the client can react:
+	// zero-valued struct fields under flags.stale:false would be a lie
+	// when every counter is zero. Unexported scratchpad, never on the
+	// wire as data.
 	//
 	// Fillers don't write this directly: the parallel-fillers pipeline
 	// uses an atomic.Bool sidecar and copies the resolved value here
@@ -139,18 +139,16 @@ type CompletenessReader interface {
 
 // BackfillCoverageRow is the per-source coverage projection.
 //
-// Post-ADR-0031 (Phase 2): DensityPct is the **data-derived**
-// signal — `distinct_ledger_count / (tip - genesis + 1)`, computed
-// by the gap detector in the aggregator binary and persisted to
+// Per ADR-0031, DensityPct is the **data-derived** signal —
+// `distinct_ledger_count / (tip - genesis + 1)`, computed by the gap
+// detector in the aggregator binary and persisted to
 // `source_coverage_snapshots`. The diagnostic handler reads the
 // snapshot row at request time (single cheap query, no
 // recomputation).
 //
-// The change from cursor-derived to data-derived collapses the
-// drift surface that caused F-0020 and the 2026-05-29 "all
-// decoders < 100%" incident: cursors said "fine," data said
-// "missing," and the API surfaced cursor numbers. Post-this-PR
-// the API surfaces data; cursors remain as operational journal.
+// Data-derived rather than cursor-derived because cursors can say
+// "fine" while the data says "missing". The API surfaces data;
+// cursors remain as operational journal.
 //
 // GenesisLedger is the source's earliest-possible-data ledger —
 // 2 for SDEX, the contract deploy ledger for Soroban contracts,
@@ -163,10 +161,7 @@ type CompletenessReader interface {
 // event from (taken from the source_coverage_snapshots row's
 // genesis/tip). For CEX/FX they're empty.
 //
-// CoveragePct (deprecated 2026-05-14) was the prior endpoint-span
-// metric. Removed in Phase 2; kept-zero only for transition.
-//
-// GapFreePct (NEW Phase 1) is `1 - max_gap / expected`. Goes to
+// GapFreePct is `1 - max_gap / expected`. Goes to
 // 1.0 when no contiguous gap above the per-target threshold
 // (ADR-0030 + MinGapSizeOverride). A sparse source running
 // cleanly hits 1.0 here even though its DensityPct is naturally
@@ -181,11 +176,10 @@ type BackfillCoverageRow struct {
 	// rows — `trades` for exchange/DEX/CEX sources, `oracle_updates`
 	// for oracle sources (migration 0035 / source_entry_counts).
 	// Read from a tiny ~20-row tally table, so it's exact and
-	// available EVEN during an all-time backfill — unlike the old
-	// `trade_count`, which came from the IO-contended trades scan
-	// and collapsed to a misleading 0 mid-backfill (and was
-	// structurally always-0 for oracle sources, which never write
-	// to `trades`). Renamed trade_count → entries 2026-05-15.
+	// available EVEN during an all-time backfill, when a scan of the
+	// IO-contended trades table would collapse to a misleading 0; a
+	// trades count would also be always-0 for oracle sources, which
+	// never write to `trades`.
 	Entries int64 `json:"entries"`
 	// CoveragePct is the customer-facing "are we walking this
 	// source completely?" signal — currently sourced from
@@ -194,13 +188,10 @@ type BackfillCoverageRow struct {
 	// sources (oracles updating hourly) still hit 1.0 here,
 	// because "100% covered" should mean "the indexer hasn't
 	// skipped any ledger", not "the contract emits constantly".
-	// See overlaySourceCoverageV2 for the wiring.
-	//
-	// Pre-2026-06-01 this field was zeroed (Phase 2 deprecation)
-	// and the UI fell back to DensityPct — which is the OPPOSITE
-	// signal (event-density-over-walked-window) and showed 0%
-	// for any source that legitimately emits sparsely. Reversed
-	// after user feedback.
+	// See overlaySourceCoverageV2 for the wiring. It is not
+	// DensityPct, the OPPOSITE signal (event density over the walked
+	// window), which reads 0% for any source that legitimately emits
+	// sparsely.
 	CoveragePct float64 `json:"coverage_pct,omitempty"`
 	// DensityPct is the honest "what fraction of ledgers have we
 	// processed" measurement based on the union of backfill cursor
@@ -213,10 +204,10 @@ type BackfillCoverageRow struct {
 	// ExpectedLedgers is the denominator of DensityPct. Seeded as
 	// tip - genesis + 1, then overwritten by overlaySourceCoverageV2
 	// with the snapshot's window size when a coverage snapshot exists
-	// — the gap detector scans a trailing window (2026-07-06 incident),
-	// so covered/expected are window-scoped to stay coherent with
-	// DensityPct. Exposed so the UI can render absolute "X / Y ledgers
-	// covered" rather than just a percentage.
+	// — the gap detector scans a trailing window, so covered/expected
+	// are window-scoped to stay coherent with DensityPct. Exposed so
+	// the UI can render absolute "X / Y ledgers covered" rather than
+	// just a percentage.
 	ExpectedLedgers int64 `json:"expected_ledgers,omitempty"`
 
 	// GapFreePct = `1 - max_gap_ledgers / expected_ledger` from the
@@ -261,13 +252,12 @@ type BackfillCoverageRow struct {
 	//
 	// A source is routinely `lake_complete: true, complete: false` — the
 	// archive is proven genesis-complete while the served tier is still
-	// reconciling. Serving only the `complete` axis (C6-046,
-	// audit-2026-07-23) made the status page render that state as a
-	// generic shortfall and gave a reader no way to tell "the data does
-	// not exist" from "the data exists and the projection is catching
-	// up". The two-axis verdict already reached /v1/coverage and
-	// /diagnostics; this puts it on the ingestion snapshot the status
-	// page actually reads.
+	// reconciling. Serving only the `complete` axis would make the
+	// status page render that state as a generic shortfall and give a
+	// reader no way to tell "the data does not exist" from "the data
+	// exists and the projection is catching up". /v1/coverage and
+	// /diagnostics carry the same two-axis verdict; this field puts it
+	// on the ingestion snapshot the status page actually reads.
 	CompletenessLakeComplete bool `json:"completeness_lake_complete,omitempty"`
 	// CompletenessComputedAt is when compute-completeness last ran.
 	CompletenessComputedAt *WireTime `json:"completeness_computed_at,omitempty"`
@@ -280,8 +270,8 @@ type BackfillCoverageRow struct {
 //     it's the genesis spec record — so no SDEX trade can ever
 //     live in it. The earliest ledger an SDEX trade can occupy is
 //     ledger 2. Setting this to 1 would lock DensityPct at
-//     99.99999...% no matter how complete the indexer is (verified
-//     via #51's gap-fill: 62,688,969 / 62,688,970 with the
+//     99.99999...% no matter how complete the indexer is (a full
+//     gap-fill measured 62,688,969 / 62,688,970 with the
 //     residual = ledger 1). The 100%-density mission needs 100%
 //     reachable; this is the minimum-honest denominator floor.
 //   - <first deploy>    : the EXACT ledger the source's first
@@ -293,7 +283,7 @@ type BackfillCoverageRow struct {
 //     unreachable (counts pre-existence ledgers) and a value after
 //     it silently hides genuine early-history gaps. Sourced from
 //     the per-source WASM-audit walk evidence
-//     (docs/operations/wasm-audits/, r1-walk-2026-05-01).
+//     (docs/operations/wasm-audits/).
 //   - 0 (default)      : not applicable (CEX/FX/aggregator/oracle —
 //     these sources don't have a Stellar-ledger genesis concept).
 //
@@ -305,8 +295,7 @@ var sourceGenesisLedger = map[string]int64{
 	"sdex": 2,
 	// Soroban contracts — exact first-deploy ledgers, MIN across
 	// every contract the source routes, from the per-source WASM
-	// audits (docs/operations/wasm-audits/<src>.md +
-	// evidence/r1-walk-2026-05-01/per-source-final/<src>.json).
+	// audits (docs/operations/wasm-audits/<src>.md).
 	"soroswap":        50_746_266, // factory first-deploy (soroswap.md:242)
 	"soroswap-router": 50_746_272, // router, +6 ledgers after factory (soroswap.md:236)
 	"aquarius":        52_728_375, // MIN across 313 pools + router
@@ -321,38 +310,35 @@ var sourceGenesisLedger = map[string]int64{
 	// mainnet rollout. Exact instantiation ledger L51,499,546 per
 	// comet.md:157 ("first instantiated by Blend's deploy") and
 	// blend.md:90 ("the factory's deploy ledger (L51,499,546)").
-	// (Was 51_499_545 — that was the walk-JSON from_ledger /
-	// ContractCode-upload boundary, off by one vs the actual
-	// ContractInstance create; corrected under #10 "exact, zero
-	// slack".)
+	// Not 51_499_545: that is the walk-JSON from_ledger /
+	// ContractCode-upload boundary, one before the ContractInstance
+	// create.
 	"comet":         51_499_546, // Blend backstop pool instantiation (comet.md:157)
 	"blend":         51_499_546, // Pool Factory V2 deploy, same ledger (blend.md:90)
 	"reflector-dex": 50_644_229, // v2 WASM deploy (reflector.md:186)
 	"reflector-cex": 50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
 	"reflector-fx":  56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
-	"band":          50_842_736, // single stable WASM since 2024-03-19 (band.md:198)
+	"band":          50_842_736, // single stable WASM since first deploy (band.md:198)
 	"redstone":      58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
 	// defindex: MIN across every contract the source routes, which
 	// includes the earliest of its four factories (CAVP2QLP…), not
 	// only the current CDKFHFJI… at 57,056,338.
 	"defindex": int64(defindex.GenesisLedger),
 
-	// cctp + rozo (1b9a594b4 / 46e0087e8) — exact deploy ledgers from the
-	// completed WASM-history walks (docs/operations/wasm-audits/
-	// {cctp,rozo}.md). Each audit records a single one-time deploy per
-	// contract with a UTC timestamp; the genesis is the MIN across the
-	// source's contracts, resolved to the exact ledger via the lake's
-	// ledgers table (first ledger at/after the deploy close_time).
+	// cctp + rozo — exact deploy ledgers from the completed WASM-history
+	// walks (docs/operations/wasm-audits/{cctp,rozo}.md). Each audit
+	// records a single one-time deploy per contract with a UTC timestamp;
+	// the genesis is the MIN across the source's contracts, resolved to
+	// the exact ledger via the lake's ledgers table (first ledger at/after
+	// the deploy close_time).
 	//
-	// cctp: 3 contracts deployed 2026-04-16, earliest at 15:43:48 UTC →
-	// L62,147,265 (TokenMessengerMinter + MessageTransmitter; the
-	// CctpForwarder followed ~3 min later).
+	// cctp: earliest of 3 contracts → L62,147,265 (TokenMessengerMinter +
+	// MessageTransmitter; the CctpForwarder followed ~3 min later).
 	"cctp": 62_147_265,
-	// rozo: earliest of its 3 payment contracts deployed 2026-01-18
-	// 16:40:31 UTC → L60,829,370 (two on 2026-01-18, one 2026-03-24).
-	// This predates the contract-storage capture window, so density
-	// reading a gap below ~62M is the HONEST "pre-capture history not
-	// backfilled" signal, not a decoder fault.
+	// rozo: earliest of its 3 payment contracts → L60,829,370. That
+	// ledger is older than the contract-storage capture window, so
+	// density reading a gap below ~62M is the HONEST "pre-capture
+	// history not backfilled" signal, not a decoder fault.
 	"rozo": 60_829_370,
 }
 
@@ -500,7 +486,7 @@ type SourceHealthRow struct {
 // so 15s smooths the load from a refreshing status page without
 // hiding live degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
-	// 4d6e7ac4f: serve from the background-refreshed snapshot when present —
+	// Serve from the background-refreshed snapshot when present —
 	// sub-millisecond instead of the 200-500ms inline build. Falls back
 	// to inline-build when the refresher hasn't fired yet (process just
 	// booted), or has died and gone stale, so first-request-after-restart
@@ -512,23 +498,16 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Per-handler ceiling. Each filler uses its own sub-context
-	// (5-10s each) so one slow reader doesn't starve the others.
-	// Pre-2026-05-14 the parent ctx was 6s and the fillers were
-	// sequential with no per-call timeout — when one reader exceeded
-	// its share, every subsequent filler aborted with `context
-	// deadline exceeded` and the response showed 0% coverage on every
-	// source. Caught live on r1 12:45 UTC. The 30s this asked for
-	// afterwards was unreachable — the request deadline capped it at
-	// 15s — so it now names the real ceiling.
+	// (5-10s each) so one slow reader doesn't starve the others: with
+	// sequential fillers and no per-call timeout, one reader exceeding
+	// its share would abort every later filler with `context deadline
+	// exceeded` and the response would show 0% coverage on every source.
 	//
-	// That re-cap NARROWS real behaviour, not just a dead number: an
-	// inline build taking between maxHandlerBudget and the request
-	// deadline used to finish and now hits this ceiling, returning the
-	// same degraded 0%-coverage shape the 2026-05-14 fix was about. It
-	// is at least disclosed — ingestionFlags sets flags.stale on a
-	// soft-failed filler — and the window is only reachable on a cold
-	// process, since the background refresher's snapshot short-circuits
-	// above and the inline build is a 200-500ms path.
+	// An inline build that outruns maxHandlerBudget returns that same
+	// degraded shape. It is disclosed — ingestionFlags sets flags.stale
+	// on a soft-failed filler — and only reachable on a cold process,
+	// since the background refresher's snapshot short-circuits above and
+	// the inline build is a 200-500ms path.
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
@@ -540,11 +519,11 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 // ingestionFlags maps a built IngestionDiagnostics onto the wire
 // Flags. flags.stale fires when any critical filler soft-failed OR
 // when LatestLedger == 0 — both signal "we're serving zero-valued
-// fields that look fresh." Pre-fix (F-0095) the handler always wrote
-// Flags{}, so an all-zeros response under the F-0039 cascade looked
-// indistinguishable from "the network has zero ledgers and zero
-// trades." Mirrors the principle of /v1/network/stats returning a
-// real error instead of zero-valued success on storage failure.
+// fields that look fresh." Without it an all-zeros response from a
+// failing reader cascade would be indistinguishable from "the network
+// has zero ledgers and zero trades." Mirrors the principle of
+// /v1/network/stats returning a real error instead of zero-valued
+// success on storage failure.
 func ingestionFlags(snap IngestionDiagnostics) Flags {
 	stale := snap.degraded || snap.Ledger.LatestLedger == 0
 	return Flags{Stale: stale, Degraded: snap.degraded}
@@ -610,14 +589,13 @@ func (s *Server) StartIngestionSnapshotRefresh(ctx context.Context) {
 		defer cancel()
 		out := s.buildIngestionSnapshot(buildCtx)
 		// Preserve last-known-good when the new build is degraded AND
-		// effectively empty (LatestLedger == 0). Stomping a fresh
-		// snapshot with an all-zeros one is how F-0095 stayed
-		// invisible: every counter showed 0 with flags.stale:false
-		// even though /v1/network/stats (same reader, no cache layer)
-		// was returning real numbers in the same probe window. The
-		// handler will still mark flags.stale:true for the preserved
-		// snapshot via ingestionFlags so the response is honest about
-		// being a fallback, not a fresh read.
+		// effectively empty (LatestLedger == 0). Stomping a good
+		// snapshot with an all-zeros one hides the failure: every
+		// counter shows 0 while /v1/network/stats (same reader, no
+		// cache layer) returns real numbers. The handler will still mark
+		// flags.stale:true for the preserved snapshot via ingestionFlags
+		// so the response is honest about being a fallback, not a fresh
+		// read.
 		if out.degraded && out.Ledger.LatestLedger == 0 {
 			if prev := s.ingestionSnapshot.Load(); prev != nil && prev.snap.Ledger.LatestLedger > 0 {
 				// Mark the preserved snapshot degraded so the wire
@@ -673,13 +651,13 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	// call timeout so a slow reader can't block the others. The
 	// in-memory cached/projected sections (BackfillCoverage) run
 	// inline since they don't touch the DB.
-	// The background-refreshed trades-scan snapshot is now ONLY a
+	// The background-refreshed trades-scan snapshot is ONLY a
 	// best-effort enrichment source (per-source trade_count + the
 	// off-chain CEX/FX row presence). The authoritative coverage/
 	// density is DATA-DERIVED (ADR-0031): overlaySourceCoverageV2
 	// reads source_coverage_snapshots after the parallel fillers run.
 	// Fetching the cache here (cheap RLock) keeps the read off the
-	// request critical path; an empty/stale cache no longer blanks the
+	// request critical path, and an empty/stale cache cannot blank the
 	// whole snapshot when the trades scan is too IO-contended to
 	// finish.
 	var cacheRows []timescale.BackfillCoverage
@@ -746,8 +724,7 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	// matching row. If the snapshot table is empty (first 30 min
 	// post-deploy) the fields remain zero and the status page
 	// renders "Pending" — explicit signal that the detector hasn't
-	// run yet, not a misleading 100% (which is what the
-	// removed cursor-derived path used to claim).
+	// run yet, not a misleading 100%.
 	s.overlaySourceCoverageV2(ctx, &out.BackfillCoverage)
 	s.overlayCompleteness(ctx, &out.BackfillCoverage)
 	if len(out.BackfillCoverage) > 0 {
@@ -773,8 +750,8 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 // the stalest read in this source's aggregation".
 //
 // expected_ledgers is overwritten from the snapshot too: since the
-// gap detector scans a trailing window (2026-07-06 IO-saturation
-// incident), covered_ledgers is the distinct count WITHIN that
+// gap detector scans a trailing window (a full-span scan saturates
+// IO), covered_ledgers is the distinct count WITHIN that
 // window and the snapshot's expected_ledgers is the window size —
 // not tip-genesis+1. Replacing the whole-span value seeded by
 // buildBackfillCoverage keeps the covered/expected pair coherent
@@ -854,13 +831,9 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		// detector is exactly that signal: 1.0 means no contiguous
 		// gap above the per-target threshold (ADR-0030). Render it
 		// AS coverage_pct so customers see "100% covered" for healthy
-		// sources regardless of natural sparsity.
-		//
-		// Reversed in r1 incident 2026-06-01 — pre-this-fix the
-		// status page rendered density_pct as the headline, which
-		// shows 0% for sparse but healthy sources (oracles, light
-		// DEXes, bridge events). User feedback was unambiguous: the
-		// metric was wrong.
+		// sources regardless of natural sparsity; density_pct as the
+		// headline shows 0% for sparse but healthy sources (oracles,
+		// light DEXes, bridge events).
 		(*rows)[i].CoveragePct = gapFree
 	}
 }
@@ -940,7 +913,7 @@ func sourceFromTargetSource(targetSource string) string {
 // the section at zero-valued defaults rather than erroring the
 // whole response — but signals the shared `degraded` atomic.Bool so
 // the response is marked flags.stale:true rather than passing the
-// zero defaults off as a fresh successful read (F-0095). The atomic
+// zero defaults off as a fresh successful read. The atomic
 // is a separate sidecar from out.degraded because the parallel
 // fillers would otherwise race on the shared field; the parent
 // goroutine hoists the resolved value onto out after wg.Wait().
@@ -1047,8 +1020,7 @@ func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDia
 		// production this means the fxHistory adapter is missing its
 		// SourceEntryCounts delegate, which silently zeroes the
 		// `entries` column for every source. Warn so this class of
-		// wiring regression is visible instead of invisible — it
-		// shipped unnoticed in rc.55.
+		// wiring regression is visible instead of invisible.
 		s.logger.Warn("diagnostics/ingestion: entry_counts reader unavailable — entries will read 0 for all sources")
 		return
 	}
@@ -1063,13 +1035,13 @@ func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDia
 
 // buildBackfillCoverage produces the per-source coverage rows.
 //
-// Post-ADR-0031: returns the row skeleton (source name, genesis,
+// Per ADR-0031 it returns the row skeleton (source name, genesis,
 // entry count, expected ledgers); DensityPct / CoveredLedgers /
 // GapFreePct / EarliestLedger / LatestLedger / CoverageSnapshotAt
 // are filled in by `overlaySourceCoverageV2` reading from
 // source_coverage_snapshots after the parallel fillers complete.
 //
-// Single source of truth: data state. Cursors no longer enter the
+// Single source of truth: data state. Cursors do not enter the
 // coverage projection — they remain as operational journal,
 // surfaced by /v1/diagnostics/cursors but not interpreted here.
 //
@@ -1265,8 +1237,8 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// (Prometheus) — runs FIRST and under its own short deadline. The
 	// trades aggregation below is slow + IO-contended under backfill
 	// load and can consume the entire sources-filler budget; running
-	// it first left this query no deadline so every source read 0
-	// (observed on r1 2026-06-04). Soft-fail to empty.
+	// it first would leave this query no deadline, so every source
+	// would read 0. Soft-fail to empty.
 	entries24h := map[string]int64{}
 	if s.StatusBackend != nil {
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)

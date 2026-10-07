@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Per-leg exclusion reasons on the DEX TVL drill-down (#338). A reserve
+// Per-leg exclusion reasons on the DEX TVL drill-down. A reserve
 // leg that carries one of these contributed EXACTLY 0 to its pool and
 // marked the pool unpriced; the reason says which rule in
 // docs/methodology/dex-tvl.md did it. The set is closed and each value

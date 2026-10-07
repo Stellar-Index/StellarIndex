@@ -70,16 +70,15 @@ const (
 // is empty) reports stale=true, since unknown freshness is not fresh. Only an
 // unwired reader reports stale=false — the deployment has no lake to judge.
 //
-// STALE-SERVE (RLT-095, 2026-09-19), the same posture as nativeLPListing
-// (#332 F4). The refresh used to run under lakeWMMu on the caller's own
-// context, so a slow lake made every concurrent request on every lake-backed
-// route — pools_reserves, asset_supply ×3, liquidity_pools ×2, lending, plus
-// the three explorer account-state sites — queue on a non-context-aware mutex
-// behind one ClickHouse round-trip and burn its own deadline for a freshness
-// annotation. Now an existing entry is ALWAYS returned immediately and a
-// lapsed one merely kicks ONE detached read; only a process that has never
-// read a watermark waits, and then only for the shorter of its own deadline
-// and lakeWatermarkColdWait.
+// STALE-SERVE, the same posture as nativeLPListing. A refresh under lakeWMMu
+// on the caller's own context would make every concurrent request on every
+// lake-backed route — pools_reserves, asset_supply ×3, liquidity_pools ×2,
+// lending, plus the three explorer account-state sites — queue on a
+// non-context-aware mutex behind one ClickHouse round-trip and burn its own
+// deadline for a freshness annotation. So an existing entry is ALWAYS
+// returned immediately and a lapsed one merely kicks ONE detached read;
+// only a process that has never read a watermark waits, and then only for
+// the shorter of its own deadline and lakeWatermarkColdWait.
 func (s *Server) lakeWatermark(ctx context.Context) (ledger uint32, stale bool, ok bool) {
 	if s.LakeWatermark == nil {
 		return 0, false, false

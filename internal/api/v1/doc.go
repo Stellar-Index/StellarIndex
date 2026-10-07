@@ -15,7 +15,7 @@
 //
 //	{
 //	  "data":       {...},
-//	  "as_of":      "2026-04-22T14:30:15.842Z",
+//	  "as_of":      "<RFC 3339 timestamp>",
 //	  "sources":    ["soroswap", "aquarius"],
 //	  "flags":      {...},
 //	  "pagination": {"next": "..."}   // optional
@@ -36,8 +36,7 @@
 // design (ADR-0018 makes the consistency contract a property of the
 // URL, not of a query parameter), so a live pair that moves 0.1 %/min
 // routinely shows a ~0.1–0.2 % spread between them. That spread is the
-// windows differing, not an aggregation bug — B10-F1 (audit-2026-07)
-// measured ~0.16 % and resolved to "document the semantics":
+// windows differing, not an aggregation bug:
 //
 //	/v1/price          Last CLOSED 1m VWAP bucket (ADR-0015). Cross-region
 //	                   byte-identical for the same (pair, window, from_ts);

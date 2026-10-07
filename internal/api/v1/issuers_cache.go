@@ -10,14 +10,14 @@ import (
 )
 
 // CachedIssuersReader wraps an [IssuersReader] with a per-process
-// TTL cache + single-flight refetch. F-0011 audit (2026-05-26)
-// measured `/v1/issuers` at p95 ~404ms — over the 200ms SLO. The
+// TTL cache + single-flight refetch. Uncached, `/v1/issuers`
+// measured p95 ~404ms — over the 200ms SLO. The
 // underlying SQL is a 5-table-equivalent aggregate:
 //
 //	SELECT ... FROM issuers i JOIN classic_assets c USING(g_strkey)
 //	 GROUP BY i.g_strkey ... ORDER BY total_obs DESC LIMIT $1
 //
-// EXPLAIN ANALYZE on r1 (2026-05-26) showed two seq scans
+// EXPLAIN ANALYZE on r1 showed two seq scans
 // (issuers ~58k rows + classic_assets ~190k rows) feeding a
 // HashAggregate over 57k groups and a top-N heapsort. No single
 // index helps because the GROUP BY + sum(observation_count)
@@ -41,9 +41,9 @@ import (
 //
 // Single-flight: concurrent callers during a refetch share one
 // upstream call. Same write-on-success / delete-on-error /
-// waiter-err-pointer pattern as CachedMarketsReader (the proven
-// race-clean shape; markets had a panic-on-error-waiter bug
-// before that pattern).
+// waiter-err-pointer pattern as CachedMarketsReader: a waiter holds its
+// own pointer to the entry, so it reads the leader's error even after
+// the leader removed that entry from the map.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration
@@ -63,8 +63,7 @@ type issuersCacheEntry struct {
 	// joined the flight on — so even if the leader removes the
 	// entry from the map (we don't TTL-cache errors), waiters can
 	// still read entry.err here and return it instead of nil-
-	// derefing the missing entry. Mirrors CachedMarketsReader's
-	// fix.
+	// derefing the missing entry. Same as CachedMarketsReader.
 	err error
 }
 
@@ -93,11 +92,10 @@ func (c *CachedIssuersReader) GetIssuer(ctx context.Context, gStrkey string) (ti
 // `classic_assets_issuer_idx`, bounded by timescale.issuerAssetsHardCap
 // (500 rows).
 //
-// It used to be bounded by nothing but the per-issuer asset count, which
-// this comment called "typically <20". That was true of a registry fed
-// only by trades. Migration 0158 admits every classic asset with a
-// trustline, and minting many codes and airdropping trustlines is a spam
-// pattern, so the store now applies an explicit cap.
+// The per-issuer asset count alone is not a bound: migration 0158 admits
+// every classic asset with a trustline, and minting many codes and
+// airdropping trustlines is a spam pattern, so the store applies an
+// explicit cap.
 func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey string) ([]timescale.IssuerAsset, error) {
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }

@@ -21,33 +21,21 @@ import (
 // Why this one method: `LatestTradePerSource` is a
 // `DISTINCT ON (source) … WHERE base=$1 AND quote=$2
 // ORDER BY source, ts DESC` over the `trades` hypertable with no
-// time bound. NOTE (re-measured on r1 2026-08-03): this comment used
-// to claim TimescaleDB "cannot do chunk exclusion and probes every
-// chunk — multiple seconds". That is FALSE — migration 0037's
-// `trades_pair_source_ts_idx` exists and the plan is a Merge Append
-// of per-chunk SkipScans, measured at 49 ms (native/fiat:USD),
-// 289 ms (heaviest pair) and 47 ms to prove a novel pair empty. The
-// cache still earns its place by keeping the status page's poll off
-// the database, but do not size risk decisions on the old number —
-// it was off by roughly 1000x. The handler caps
-// it at 8s and returns 503 on overrun (#29).
-//
-// This paragraph used to end by calling
-// `(base_asset, quote_asset, source, ts DESC)` the
-// "documented-but-missing" real fix. That sentence was left in place
-// when the correction above was appended, so it contradicted the
-// sentence three lines before it and sent readers chasing an index
-// that already exists. Verified on r1 2026-09-09:
+// time bound. It is not a slow query: migration 0037's
 // `trades_pair_source_ts_idx ON trades (base_asset, quote_asset,
-// source, ts DESC, ledger DESC)`. There is no missing index.
+// source, ts DESC, ledger DESC)` makes the plan a Merge Append of
+// per-chunk SkipScans, measured on r1 at 49 ms (native/fiat:USD),
+// 289 ms (heaviest pair) and 47 ms to prove a novel pair empty. The
+// cache earns its place by keeping the status page's poll off the
+// database. The handler caps it at 8s and returns 503 on overrun.
 //
 // The status page polls one fixed key (`native|fiat:USD|`) every
 // ~2 min, so SWR gives a ~100% hit rate after warm-up with zero
 // correctness loss (the exact query result — including a legitimate
 // empty slice — is cached).
 //
-// SWR shape mirrors the proven ba0374697/a5573b499 pattern
-// (asset_catalogue_cache.go / markets_cache.go) with one deliberate change:
+// SWR shape mirrors the pattern in
+// asset_catalogue_cache.go / markets_cache.go with one deliberate change:
 // the cold fill runs in a **detached** goroutine on its own budget,
 // not the request ctx. The handler's hard 8s ceiling would
 // otherwise fail every cold call before it could populate the cache
@@ -78,12 +66,12 @@ type CachedHistoryReader struct {
 //
 // The key is `base|quote|source`, and both asset components accept any
 // CRC-valid strkey — a key space an anonymous caller can walk for free.
-// Successful fills were never evicted (only failures deleted their
-// entry, and an empty result for a nonexistent pair is a SUCCESS), so
-// one IP at the 6000/min anon budget minted ~6000 permanent entries a
-// minute — roughly 1.7 GB/day of unreclaimable memory on a host that
-// also runs Postgres, ClickHouse, MinIO and galexie's captive core,
-// with no metric on the map size (cold audit 2026-08-03).
+// Without a cap, successful fills are never evicted (only failures
+// delete their entry, and an empty result for a nonexistent pair is a
+// SUCCESS), so one IP at the 6000/min anon budget could mint ~6000
+// permanent entries a minute — roughly 1.7 GB/day of unreclaimable
+// memory on a host that also runs Postgres, ClickHouse, MinIO and
+// galexie's captive core.
 //
 // The cap + oldest-first eviction mirrors accountStateCache's
 // established shape (internal/storage/clickhouse/account_state_cache.go).
@@ -123,7 +111,7 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // historyRefreshBudget bounds a detached cold-fill or
 // stale-while-revalidate background refresh — independent of any
 // request ctx (the whole point: outlive the handler's 8s ceiling).
-// Matches coins/markets refresh budgets (the proven ba0374697 pattern).
+// Matches coins/markets refresh budgets.
 const historyRefreshBudget = 30 * time.Second
 
 // TradesInRangeAfterFromSource forwards to the upstream when it supports the
