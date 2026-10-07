@@ -562,10 +562,10 @@ groups:
             customers are denied service until the counter answers
             without error for the same dwell time.
 
-      # GH-1277: the write side of the usage meter had no observability
-      # at all — a failed Increment/IncrementDetailBy logged at Debug
-      # and was otherwise invisible. stellarindex_usage_units_dropped_total
-      # now counts every dropped request unit by counter (billable|detail);
+      # Without this alert the write side of the usage meter has no
+      # observability — a failed Increment/IncrementDetailBy logs at Debug
+      # and is otherwise invisible. stellarindex_usage_units_dropped_total
+      # counts every dropped request unit by counter (billable|detail);
       # this is its consumer, the write-side twin of
       # stellarindex_monthly_quota_fail_open above: that alert fires when
       # the READ of the counter fails and the quota is bypassed; this one
@@ -597,10 +597,10 @@ groups:
             are mutually exclusive per request. Check Redis health and the
             usage-counter key namespace first.
 
-      # GH-627: UsageTracker/TouchUsage post-response bookkeeping runs on
+      # UsageTracker/TouchUsage post-response bookkeeping runs on
       # the shared middleware.AfterResponse worker pool, off the request
-      # goroutine, so a wedged store can no longer add client-visible
-      # latency. A saturated pool now drops the task instead — silent
+      # goroutine, so a wedged store cannot add client-visible
+      # latency. A saturated pool drops the task instead — silent
       # unless watched.
       - alert: stellarindex_after_response_tasks_dropping
         expr: sum(rate(stellarindex_after_response_tasks_dropped_total[5m])) > 0
@@ -758,7 +758,7 @@ groups:
             by remote_ip to tell a handful of capped sources from a
             distributed guess.
 
-      # C3-032 follow-up: the durable login-code lockout's table is
+      # The durable login-code lockout's table is
       # written by an UNAUTHENTICATED endpoint under an ATTACKER-CHOSEN
       # key. POST /v1/auth/verify-code with a synthetic address inserts a
       # `login_code_lockouts` row that no successful sign-in can ever
