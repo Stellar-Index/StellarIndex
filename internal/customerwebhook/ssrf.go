@@ -18,7 +18,7 @@ import (
 // address in a non-public range — closing the DNS-rebinding gap
 // that registration-time validation cannot cover, since the DNS
 // answer can change between when the URL was saved and when the
-// callback fires. F-1245 (codex audit-2026-05-12).
+// callback fires.
 //
 // The check mirrors the registration-time logic in
 // `internal/api/v1/dashboardwebhooks/handlers.go::isInternalIP`.

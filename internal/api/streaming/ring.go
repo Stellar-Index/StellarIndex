@@ -48,7 +48,7 @@ func (r *ring) push(ev Event) {
 
 // oldestID returns the ID of the oldest event still held, or "" if the
 // ring is empty. The floor a client's replay can be trusted against —
-// anything strictly older was evicted and is gone (Refs #1035).
+// anything strictly older was evicted and is gone.
 func (r *ring) oldestID() string {
 	if len(r.events) == 0 {
 		return ""
@@ -77,7 +77,7 @@ func (r *ring) hasEvicted() bool { return r.evicted }
 // gap in ID values is indistinguishable from a quiet period with no
 // publishes), which is why [Hub.Subscribe] compares lastEventID
 // against [ring.oldestID] itself and emits an [EventTypeStreamGap]
-// marker when it detects the loss (Refs #1035).
+// marker when it detects the loss.
 func (r *ring) snapshotAfter(lastEventID string) []Event {
 	if lastEventID == "" {
 		return nil

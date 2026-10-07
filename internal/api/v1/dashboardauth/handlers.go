@@ -36,7 +36,7 @@ import (
 // speculative Account rows before the email-unique-index Users
 // insert decides a winner.
 //
-// F-1255 (codex audit-2026-05-12): without this seam, two valid
+// Without this seam, two valid
 // magic links for the same just-verified email racing through
 // the callback both pass `GetUserByEmail → ErrNotFound`, both
 // `Accounts.Create` succeed (slug uniqueness gets resolved with
@@ -57,14 +57,13 @@ import (
 // "", …) means another caller holds it — the caller should poll
 // `Users.GetUserByEmail` briefly to find the winner's user.
 // Errors propagate; treat them as "lock not acquired, fall
-// through to the legacy path".
+// through to the unlocked path".
 //
-// The `token` is a per-acquire fencing token (F-C, audit
-// -2026-08-14): `Release` must delete the lock ONLY if it still
-// carries this caller's token, so a holder that overran its TTL
-// (a slow Account.Create + Users.CreateUser) cannot delete a
-// successor's freshly-acquired lock. `Release` with an empty
-// token is a no-op (nothing was held).
+// The `token` is a per-acquire fencing token: `Release` must delete
+// the lock ONLY if it still carries this caller's token, so a holder
+// that overran its TTL (a slow Account.Create + Users.CreateUser)
+// cannot delete a successor's freshly-acquired lock. `Release` with an
+// empty token is a no-op (nothing was held).
 type EmailLocker interface {
 	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
 	Release(ctx context.Context, emailHash, token string) error
@@ -77,8 +76,7 @@ type EmailLocker interface {
 // REQUEST volume and is sized for browsing, orders of magnitude above any
 // sane email rate: a single IP under that ceiling can still bomb one victim
 // inbox or spray many addresses, and each accepted request fires an
-// outbound email. nil
-// disables the check (legacy behaviour). audit-2026-06-14 A12.
+// outbound email. nil disables the check.
 type LoginThrottle interface {
 	// Allow reports whether a magic-link send for (ip, email) is within
 	// quota. On false the handler MUST skip the email yet still return the
@@ -103,11 +101,11 @@ type Config struct {
 	Now       func() time.Time
 	// EmailLocker (optional) serialises first-login provisioning
 	// per email. nil = no locking; the handler falls through to
-	// the legacy Suspend-on-conflict recovery path. F-1255.
+	// the Suspend-on-conflict recovery path.
 	EmailLocker EmailLocker
 	// LoginThrottle (optional) caps magic-link sends per IP + per
 	// target email. nil = no throttle (only the global anon
-	// rate-limit applies). audit-2026-06-14 A12.
+	// rate-limit applies).
 	LoginThrottle LoginThrottle
 	// Audit (optional) is the durable audit_log sink for the staff
 	// customer look-up, passkey add/remove, and passkey sign-ins
@@ -121,7 +119,7 @@ type Config struct {
 	Passkeys platform.WebAuthnCredentialStore
 	// PasskeyCeremonyGuard (optional) makes each WebAuthn ceremony
 	// challenge single-use, so a captured finish-ceremony request
-	// cannot be replayed into a second session (audit-2026-08-13).
+	// cannot be replayed into a second session.
 	// Production wires the Redis-SETNX adapter so the spent-set is
 	// shared across API instances; nil defaults to the in-process
 	// guard installed by validate() below — never nil at runtime, so
@@ -154,8 +152,8 @@ type Config struct {
 	// = host-only. Credential cookies never carry a Domain.
 	SessionHintDomain string
 	// AccountEraser (optional) backs DELETE /v1/dashboard/account and
-	// AccountExporter (optional) GET /v1/dashboard/account/export (GH
-	// #809); nil leaves the route unmounted.
+	// AccountExporter (optional) GET /v1/dashboard/account/export; nil
+	// leaves the route unmounted.
 	AccountEraser   AccountEraser
 	AccountExporter AccountExporter
 
@@ -227,7 +225,7 @@ func (c *Config) validate() error {
 	// Replay protection for passkey ceremonies is never optional —
 	// only its blast radius is. Redis-less deployments get the
 	// in-process spent-set (single-instance accounting), the same
-	// posture the NTF-08 login-throttle fallback takes. Must come
+	// posture the login-throttle fallback takes. Must come
 	// after the Now default: the guard expires records on that clock.
 	if c.PasskeyCeremonyGuard == nil {
 		c.PasskeyCeremonyGuard = newInProcessPasskeyCeremonyGuard(c.Now)
@@ -309,14 +307,13 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 // SEP-10 Auth middleware admits them without a credential under
 // every auth_mode. The session-gated routes are NOT public.
 //
-// The three POSTs are wrapped in [middleware.RequireSameSiteWrite]
-// (C3-031 / C3-057). They are state-changing and browser-driven:
-// login MINTS a token (and the intent cookie that binds it), and
-// verify-code MINTS a session — so a cross-site page that can
-// drive either is a login-CSRF primitive even though neither
-// consumes a session cookie. `GET /v1/auth/callback` is a
+// The three POSTs are wrapped in [middleware.RequireSameSiteWrite].
+// They are state-changing and browser-driven: login MINTS a token (and
+// the intent cookie that binds it), and verify-code MINTS a session —
+// so a cross-site page that can drive either is a login-CSRF primitive
+// even though neither consumes a session cookie. The GET callback is a
 // top-level navigation from an email client and carries no usable
-// Origin; it is bound instead by [LoginIntentCookieName] (C3-030).
+// Origin; it is bound instead by [LoginIntentCookieName].
 func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
@@ -327,7 +324,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
 	//
 	// POST, not GET, and read-only regardless: the look-up term is a customer
-	// EMAIL ADDRESS, which must not travel in a URL (PRV F2, #346 — see
+	// EMAIL ADDRESS, which must not travel in a URL (see
 	// [adminLookupRequest]). It carries the same same-site write gate as the
 	// other session-cookie POSTs here, which costs nothing and keeps a
 	// cross-site page from driving a staff session's PII reads.
@@ -340,7 +337,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	// is the unauthenticated entry point, like /v1/auth/login. Every
 	// state-changing route keeps the same-site write gate the other
 	// auth POSTs carry — finish-login MINTS a session, so it is a
-	// login-CSRF primitive exactly as verify-code is (C3-031/C3-057).
+	// login-CSRF primitive exactly as verify-code is.
 	if h.cfg.Passkeys != nil {
 		requireSession := RequireSession()
 		public.Handle(mux, "POST /v1/auth/passkey/begin-login",
@@ -361,7 +358,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyDelete))))
 	}
 
-	// Account erasure and export (GH #809), session-only: an API key can
+	// Account erasure and export, session-only: an API key can
 	// neither destroy nor download the account it belongs to.
 	if h.cfg.AccountEraser != nil {
 		idem := middleware.Idempotency(h.cfg.accountIdempotency, SessionAccountSubject)
@@ -380,16 +377,16 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 // negligible while tolerating a fat-fingered user.
 const maxCodeAttempts = 5
 
-// Durable per-EMAIL code-failure policy (C3-032, audit-2026-07-23).
+// Durable per-EMAIL code-failure policy.
 //
 // maxCodeAttempts alone is a per-MINT cap: a new /v1/auth/login hands
-// the guesser a fresh 5. The only thing bounding re-mints was
-// [auth.RedisLoginThrottle] (5 sends/hour/target-email), which lives in
-// Redis with an in-process fallback — a FLUSHALL, a fail-over or a
-// restart clears it, and it is a fixed window that resets hourly
-// regardless. Standing budget: ~25 guesses/hour/email, indefinitely
-// ≈ 0.22 probability of hitting a code over a year of patient grinding
-// on one targeted address.
+// the guesser a fresh 5. Without this policy the only thing bounding
+// re-mints is [auth.RedisLoginThrottle] (5 sends/hour/target-email),
+// which lives in Redis with an in-process fallback — a FLUSHALL, a
+// fail-over or a restart clears it, and it is a fixed window that
+// resets hourly regardless. Standing budget: ~25 guesses/hour/email,
+// indefinitely ≈ 0.22 probability of hitting a code over a year of
+// patient grinding on one targeted address.
 //
 // These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year — two orders
 // of magnitude down, and only because each guess is compared against ONE
@@ -426,10 +423,10 @@ type loginResponse struct {
 
 // refuseLoginWithoutMail answers 503 — and reports true — when the
 // deployment's mail transport holds no provider credential
-// ([notify.IsUnconfigured]), so no sign-in email can be delivered
-// (RLT-321). The sibling signup flow already guarded this state
-// (signupVerifyEmailerOrNil → `email_verification_sent: false`);
-// login did not, and answered 200 "sent" for mail that never left.
+// ([notify.IsUnconfigured]), so no sign-in email can be delivered. The
+// sibling signup flow guards the same state (signupVerifyEmailerOrNil →
+// `email_verification_sent: false`); without this, login would answer
+// 200 "sent" for mail that never left.
 //
 // It runs BEFORE the throttle and BEFORE any side effect, on purpose:
 //
@@ -468,9 +465,9 @@ func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 // the link, the callback handler creates the account.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at
-	// its cap, so the read succeeds on a silently truncated body and
-	// this branch was unreachable — an oversize body surfaced as
-	// "malformed JSON". audit-2026-08-13.
+	// its cap, so the read would succeed on a silently truncated body and
+	// this branch would be unreachable — an oversize body would surface
+	// as "malformed JSON".
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "request body too large", "/v1/auth/login")
@@ -495,7 +492,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bind the link to THIS browser (C3-030 login CSRF): the token itself
+	// Bind the link to THIS browser (login CSRF): the token itself
 	// carries a MAC of this browser's login-intent id. See
 	// [LoginIntentCookieName].
 	browser := h.setLoginIntentCookie(w, r)
@@ -552,7 +549,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := h.cfg.Sender.Send(sendCtx, msg); errors.Is(err, notify.ErrSuppressed) {
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSuppressed).Inc()
 	} else if err != nil {
-		// Instrument the mail outage (task #33 / W8 recon 9c): the send
+		// Instrument the mail outage: the send
 		// failure is otherwise swallowed here (200 either way, see below),
 		// so without this counter a Resend outage that silently kills login
 		// is invisible until users complain.
@@ -572,8 +569,8 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 }
 
-// loginThrottled applies the magic-link abuse throttle (audit-2026-06-14
-// A12). Over quota → skip the send but write the SAME generic 200 the send
+// loginThrottled applies the magic-link abuse throttle (per IP and per
+// target email). Over quota → skip the send but write the SAME generic 200 the send
 // path does and report true, so neither an attacker nor the victim's inbox
 // learns a throttle fired. Throttle error → fall open. The global anon
 // rate-limit is NOT what bounds sends then (it is far above any email cap);
@@ -626,22 +623,21 @@ func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
 // is a *site*-level control, so Lax is sent on those credentialed same-site
 // requests while blocking genuine cross-*site* (e.g. evil.com) requests.
 //
-// CS-124: this previously returned SameSite=None (unnecessary — None is only
-// needed for a different registrable domain), which let any site auto-submit a
-// credentialed POST to the cookie-authed /v1/dashboard/* mutation handlers
-// (CSRF — e.g. creating a webhook that exfiltrates the victim's payloads). Lax
-// closes that with no impact on the legitimate same-site flow. If the dashboard
-// is ever served from a truly different site, add a CSRF token — do NOT revert
-// to None.
+// Not None: None is only needed for a different registrable domain, and it
+// would let any site auto-submit a credentialed POST to the cookie-authed
+// /v1/dashboard/* mutation handlers (CSRF — e.g. creating a webhook that
+// exfiltrates the victim's payloads). Lax closes that with no impact on the
+// legitimate same-site flow. If the dashboard is ever served from a truly
+// different site, add a CSRF token — do NOT switch to None.
 //
-// C3-031 / C3-057 (audit-2026-07-23) closed the residual Lax leaves open:
-// SameSite is a *site*-level control, so a sibling origin under the same
-// registrable domain still counts as same-site and Lax still permits a
-// top-level cross-site GET. Every state-changing dashboard + auth route is
-// now additionally gated by [middleware.RequireSameSiteWrite] (Origin /
-// Referer allow-list), and the magic-link callback — a GET, and therefore
-// beyond any Origin check — is gated by [LoginIntentCookieName] (C3-030).
-// This cookie's SameSite mode is defence in depth, no longer the only line.
+// Lax still leaves a residual gap: SameSite is a *site*-level control, so a
+// sibling origin under the same registrable domain still counts as
+// same-site and Lax still permits a top-level cross-site GET. Every
+// state-changing dashboard + auth route is therefore additionally gated by
+// [middleware.RequireSameSiteWrite] (Origin / Referer allow-list), and the
+// magic-link callback — a GET, and therefore beyond any Origin check — is
+// gated by [LoginIntentCookieName]. This cookie's SameSite mode is defence
+// in depth, not the only line.
 func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
@@ -667,7 +663,7 @@ func credentialCookie(name, value string) *http.Cookie {
 //
 // The link must be opened in the browser that requested it: the
 // login-intent cookie is checked BEFORE the token is consumed
-// (C3-030 — see [LoginIntentCookieName] for the login-CSRF this
+// (see [LoginIntentCookieName] for the login-CSRF this
 // closes). Checking first, not after, means a user who merely
 // opened their own link on a second device doesn't burn the token
 // — they can still click it on the device that asked for it.
@@ -758,7 +754,7 @@ type verifyCodeResponse struct {
 // Non-matching includes CORRECT-BUT-STALE. A code whose token has
 // expired, been consumed, burned [maxCodeAttempts], or been superseded
 // by a newer sign-in email is not a candidate, so while ANY code is live
-// submitting it registers a durable per-email failure (C3-032) exactly as
+// submitting it registers a durable per-email failure exactly as
 // a wrong guess does; with no live code nothing is compared and nothing
 // is charged. That is deliberate — the
 // server cannot distinguish "the owner pasted yesterday's code" from
@@ -786,7 +782,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// C3-032: durable per-email lockout, checked BEFORE any candidate is
+	// Durable per-email lockout, checked BEFORE any candidate is
 	// compared so a locked address burns no code space. Same generic 400
 	// as every other failure — a distinguishable "you are locked out"
 	// would be an enumeration oracle, and the anti-enumeration contract
@@ -849,7 +845,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 }
 
 // loginCodeLocked reports whether the durable per-email failure counter
-// currently bars the code path (C3-032).
+// currently bars the code path.
 //
 // Fails OPEN on a store error, loudly. Fail-closed was considered and
 // rejected: the realistic way this query fails while the rest of the
@@ -866,7 +862,7 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 		// The control is now OFF for this request and the HTTP response
 		// is indistinguishable from the healthy path, so the counter is
 		// the only evidence it happened. A fail-open control without one
-		// is the defect class this audit wave keeps finding.
+		// fails silently.
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpStatusCheck).Inc()
 		h.cfg.Logger.Error("login code lockout status unavailable; allowing the attempt",
 			"err", err, "email", maskEmail(email))
@@ -942,7 +938,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	// C3-032: a successful sign-in through EITHER door (code or magic
+	// A successful sign-in through EITHER door (code or magic
 	// link) retires the durable failure counter. Possession of a live
 	// token proves the address's owner is present, and without this a
 	// legitimate user's typos would accumulate across months until they
@@ -982,7 +978,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	// The cookie carries a high-entropy random token; the row stores
 	// only sha256(token). A leak of the sessions table is therefore not
 	// directly replayable — the same hashed-at-rest posture as api_keys
-	// and magic_link_tokens (W1-auth-passkey-2). We hold the plaintext
+	// and magic_link_tokens. We hold the plaintext
 	// just long enough to set the cookie, then drop it.
 	token, tokenHash, err := h.cfg.Generator.NewSessionToken()
 	if err != nil {
@@ -1108,16 +1104,15 @@ func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
 // just-verified email. Single-org v1: every new email gets
 // its own account with the user as owner.
 //
-// F-1255 (codex audit-2026-05-12): concurrent /v1/auth/callback
-// callbacks for the same just-verified email can race — both pass
-// the GetUserByEmail check, both create an account, only the
-// first user-insert wins on `users_email_idx`. The full fix is
-// the optional per-email EmailLocker (Redis SETNX): the loser
-// short-circuits before Account.Create, polls briefly for the
+// Concurrent /v1/auth/callback callbacks for the same just-verified
+// email can race — both pass the GetUserByEmail check, both create an
+// account, only the first user-insert wins on `users_email_idx`. The
+// full fix is the optional per-email EmailLocker (Redis SETNX): the
+// loser short-circuits before Account.Create, polls briefly for the
 // winner's user, and never inserts a speculative-account row.
 //
 // When no EmailLocker is configured (tests, Redis-less dev) the
-// legacy Suspend-on-conflict path stays as defence-in-depth:
+// Suspend-on-conflict path stays as defence-in-depth:
 // catch ErrConflict on CreateUser, mark the speculative-account
 // row Suspended with reason `signup-race:` so the operator
 // reaper has an unambiguous signal, then reload the winner.
@@ -1154,9 +1149,8 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
 			}
-			// F-1255 follow-up (codex audit-2026-05-12): mark the
-			// speculative-account row as Suspended with a reason
-			// the operator reaper can match. Without this the
+			// Mark the speculative-account row as Suspended with a
+			// reason the operator reaper can match. Without this the
 			// orphan accumulates as a never-recovered Active row;
 			// the reaper has to fuzz-match against "accounts with
 			// no users" to find them. With this, the reaper just
@@ -1211,7 +1205,7 @@ func (h *Handlers) createSignupAccount(ctx context.Context, email string) (platf
 //	                            Caller returns the winner directly.
 //	(_, false, release, nil)  — either no locker is configured, the
 //	                            lock acquire failed (treat as "fall
-//	                            through to legacy path"), or we won
+//	                            through to unlocked path"), or we won
 //	                            the lock. `release` is non-nil only
 //	                            when we hold the lock; caller must
 //	                            defer it.
@@ -1327,11 +1321,10 @@ func looksLikeCode(s string) bool {
 }
 
 func clientIP(r *http.Request) net.IP {
-	// F-1224 (codex audit-2026-05-12): use the trusted-proxy-
-	// resolved IP from `middleware.RemoteIP` rather than parsing
-	// r.RemoteAddr directly. Behind Caddy / Cloudflare, the
-	// socket peer is the local proxy; the real client IP is in
-	// X-Forwarded-For, and the middleware decides whether to
+	// Use the trusted-proxy-resolved IP from `middleware.RemoteIP`
+	// rather than parsing r.RemoteAddr directly. Behind Caddy /
+	// Cloudflare, the socket peer is the local proxy; the real client
+	// IP is in X-Forwarded-For, and the middleware decides whether to
 	// honour it based on the `trusted_proxy_cidrs` config.
 	//
 	// Falls back to the socket peer when middleware.RemoteIP
@@ -1351,13 +1344,12 @@ func clientIP(r *http.Request) net.IP {
 
 // safeText sanitises a client-supplied string before it reaches a
 // Postgres text column: strips control characters (a client-supplied
-// CR/LF could inject arbitrary lines into the plaintext login email,
-// CS-071) and truncates by RUNES rather than bytes, so truncation can
-// never cut a multi-byte codepoint in half and hand Postgres invalid
-// UTF-8, which Postgres refuses. Byte-slicing did exactly that here;
-// passkeyDisplayName (passkey.go) fixed the identical bug earlier and
-// documents why — this is the same fix, generalised to every
-// client-string-to-Postgres-text site in the package.
+// CR/LF could inject arbitrary lines into the plaintext login email)
+// and truncates by RUNES rather than bytes, so truncation can never cut
+// a multi-byte codepoint in half and hand Postgres invalid UTF-8, which
+// Postgres refuses. passkeyDisplayName (passkey.go) documents the same
+// rule; this applies it to every client-string-to-Postgres-text site in
+// the package.
 func safeText(s string, maxRunes int) string {
 	s = strings.Map(func(rr rune) rune {
 		if rr == '\t' {
@@ -1451,7 +1443,7 @@ func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/auth", status, detail, instance)
 }
 
-// maskEmail redacts a customer email for logging (audit PRV1): keep the first
+// maskEmail redacts a customer email for logging: keep the first
 // local-part character + the full domain, hide the rest —
 // "alice@example.com" -> "a***@example.com". Enough to correlate a log line to
 // a domain / support ticket without persisting the full PII in application logs.

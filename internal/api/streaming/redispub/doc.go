@@ -6,9 +6,8 @@
 // The aggregator and API binaries are separate processes. The
 // orchestrator's [orchestrator.StreamPublisher] interface declares
 // the producer seam; this package's [Publisher] is the Redis-backed
-// implementation, and the matching [Subscriber] (PR 2) listens on
-// the same Redis channel and republishes each event on the local
-// Hub.
+// implementation, and the matching [Subscriber] listens on the same
+// Redis channel and republishes each event on the local Hub.
 //
 //	aggregator binary          Redis             API binary
 //	  ┌────────────────┐      ┌─────┐         ┌─────────────┐
