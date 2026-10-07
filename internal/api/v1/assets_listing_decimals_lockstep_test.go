@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GH-1009: /v1/assets never resolved a Soroban row's decimals() on the
+// Without this, /v1/assets would never resolve a Soroban row's decimals() on the
 // LISTING page — only the confirmed nonstandard_decimals_assets projection,
 // which lags a freshly-observed or not-yet-DEX-traded token. A listing row
 // kept the default 7 while the SAME asset's detail page read the lake

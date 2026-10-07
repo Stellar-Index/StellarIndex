@@ -69,7 +69,7 @@ func (b *blockingSep1Reader) AllSep1Images(ctx context.Context) ([]timescale.Sep
 //
 // The assertion needs no timing heuristic. The reader is held open for the
 // whole test, so if cachedSep1Images returns at all, it returned without
-// waiting for the scan. Against the pre-fix code this test does not fail
+// waiting for the scan. Against a blocking implementation this test does not fail
 // on a threshold — it deadlocks until the outer timeout.
 func TestCachedSep1Images_RequestNeverBlocksOnRefresh(t *testing.T) {
 	t.Parallel()

@@ -263,7 +263,7 @@ func (r *deadlineCapturingTipHistoryReader) TradesInRange(ctx context.Context, _
 	return []canonical.Trade{r.trade}, nil
 }
 
-// TestPriceTipStream_TickIsBoundedByATimeout is the REL-01 regression:
+// TestPriceTipStream_TickIsBoundedByATimeout is the tick-timeout regression:
 // the per-tick computeTip call in the tip-stream producer must run
 // under its OWN bounded deadline, not the raw per-connection context
 // (which RequestTimeout deliberately leaves undeadlined on `/stream`
@@ -414,7 +414,7 @@ func tipStreamDivergenceCases() []tipStreamDivergenceCase {
 			wantWarning: true,
 		},
 		{
-			// GH-1045: crypto:XLM's verdict is a check on a different
+			// crypto:XLM's verdict is a check on a different
 			// venue population than the one the stream was asked for.
 			name:     "verdict only under a sibling spelling",
 			verdicts: map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: true, checked: true}},

@@ -1,12 +1,12 @@
 package v1_test
 
-// GET /v1/rwa/assets — the funnel (#352).
+// GET /v1/rwa/assets — the funnel.
 //
 // The surface used to narrow a population of tens of thousands of SEP-1
 // attestations down to single digits and publish a refusal tally of
 // three, with no way to tell a network that holds six real-world assets
 // from a pipeline discarding everything else in silence. Measured on
-// production 2026-09-10: 6 assets served, 3 refusals reported, against
+// production: 6 assets served, 3 refusals reported, against
 // 44,376 issuer accounts with a home_domain and 14,635 with a fetched
 // SEP-1 payload.
 //
@@ -329,7 +329,7 @@ func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) 
 // The gap between the issuers publishing a domain and the issuers
 // holding a payload was published entirely as
 // `sep1_attestation_never_fetched`, actor `operator` — a backlog
-// somebody here could clear. Measured on production 2026-09-12 the gap
+// somebody here could clear. Measured on production the gap
 // was 40,838 issuers and exactly ONE of them had never been attempted:
 // an overnight drain had already reached the other 40,837, and their
 // domains served nothing storable (quantumstellar.vercel.app,

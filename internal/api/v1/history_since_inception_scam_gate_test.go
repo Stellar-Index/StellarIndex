@@ -13,11 +13,11 @@ import (
 )
 
 // /v1/chart withheld a directory-scam-flagged issuer's price SERIES
-// (#366) while /v1/history/since-inception served the identical
+// while /v1/history/since-inception served the identical
 // trajectory at 200 — the same pair, the same CAGG VWAP chain (the
 // handler's own comment says so), differing only in the read closure.
 // Gating one and not the other bought nothing: `?timeframe=all` and
-// since-inception answer the same question (audit-2026-09-02 T012).
+// since-inception answer the same question.
 //
 // scam.go promises the RAW surfaces stay visible — /v1/history's trade
 // rows, /v1/observations, /v1/ohlc — and that promise is kept. The

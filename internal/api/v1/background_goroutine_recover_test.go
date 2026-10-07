@@ -52,7 +52,7 @@ const apiGoroutineFloor = 40
 // walk can see any of them. At the time this was written 37 of the 45 sites
 // in this tree recovered nothing at all, so a nil map, a bad type assertion
 // or an index into an empty slice from a degraded read took the entire API
-// down along with every healthy request in flight (#368 M1 residual).
+// down along with every healthy request in flight.
 //
 // Why an AST guard rather than a behavioural test: the failure mode that
 // bites is the NEXT refresher someone adds without the defer. A behavioural

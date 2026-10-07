@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// The thin-market substance gate's wire contract (2026-08-04 valuation
+// The thin-market substance gate's wire contract (valuation
 // incident): a withheld pair 404s with the DISTINCT
 // ".../errors/price-withheld" problem type — never the generic
 // price-not-found, and never a fallback-served price.
@@ -133,11 +133,11 @@ func TestPriceTip_GateAllows_Serves(t *testing.T) {
 	}
 }
 
-// TestPriceTip_Withheld_ScamIssuerReasonInDetail (T683) — a scam-issuer
+// TestPriceTip_Withheld_ScamIssuerReasonInDetail — a scam-issuer
 // withhold and a substance-gate withhold both 404 with the same problem
-// TYPE, but the DETAIL text must name the gate that actually fired: pre-fix
-// writePriceWithheldProblem hard-coded the substance gate's wording for
-// every withheld cause, so a directory-flagged issuer's response claimed
+// TYPE, but the DETAIL text must name the gate that actually fired: otherwise
+// writePriceWithheldProblem would hard-code the substance gate's wording for
+// every withheld cause, so a directory-flagged issuer's response would claim
 // "trailing market activity is below the serve floor" — a reason that
 // never fired. Driven through the real *pricingguard.ScamGate, following
 // the /v1/vwap and /v1/price/tip quote-leg suites, so the pair-aware

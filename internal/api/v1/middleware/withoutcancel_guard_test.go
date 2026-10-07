@@ -12,14 +12,14 @@ import (
 )
 
 // withoutCancelAllowlist is every (file, line-content) pair permitted to
-// call context.WithoutCancel in this package. GH-627: TouchUsage and
-// UsageTracker used to detach their post-response bookkeeping from the
+// call context.WithoutCancel in this package. TouchUsage and
+// UsageTracker must not detach their post-response bookkeeping from the
 // request's cancellation with context.WithoutCancel(r.Context()) plus a
 // flat timeout, run INLINE on the request goroutine before the response
 // was ever flushed — so a wedged Redis added up to 10 s to a request
 // entirely outside api.request_timeout. The fix ([AfterResponse]) hands
 // that work to a separate goroutine under context.Background() instead,
-// so neither file needs WithoutCancel at all any more.
+// so neither file needs WithoutCancel at all.
 //
 // throttleContext (ratelimit.go) is a DIFFERENT, legitimate use: a
 // PRE-handler seam that detaches RateLimit's/MonthlyQuota's dwell-clock
@@ -29,7 +29,7 @@ import (
 // This allowlist may only SHRINK. Add a new context.WithoutCancel call
 // under this package and this test fails — that is the point: the next
 // "just detach it and bound it separately" post-response shortcut is
-// exactly the shape of the defect GH-627 fixed.
+// exactly the shape of the inline-detach defect.
 var withoutCancelAllowlist = map[string]bool{
 	"ratelimit.go:\treturn context.WithDeadline(context.WithoutCancel(r.Context()), deadline)": true,
 }

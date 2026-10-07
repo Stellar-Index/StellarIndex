@@ -16,7 +16,7 @@ import (
 
 // A continuation cursor's pinned watermark is client-supplied: it must be
 // re-validated against the live archive boundary before it partitions the
-// ClickHouse/Postgres merge (GH-622).
+// ClickHouse/Postgres merge.
 
 // callMovementsStatus runs AccountMovements with rawCursor and returns the
 // HTTP status plus the captured view (zero when a problem was written).

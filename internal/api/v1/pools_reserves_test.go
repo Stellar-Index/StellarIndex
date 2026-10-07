@@ -112,10 +112,10 @@ func TestPoolReserves_Listing(t *testing.T) {
 }
 
 // A TokenDisplays outage must degrade to MISSING mid prices, never to
-// mid prices computed from the default-7 decimals stamp: before the fix,
-// one transient CH error silently mis-scaled every non-7dp pair's mid
-// price by 10^(d-7) while asserting decimals=7 on the wire (cold audit
-// 2026-08-03). Reserves and depth are base-unit exact — still served.
+// mid prices computed from the default-7 decimals stamp: otherwise
+// one transient CH error would silently mis-scale every non-7dp pair's mid
+// price by 10^(d-7) while asserting decimals=7 on the wire.
+// Reserves and depth are base-unit exact — still served.
 func TestPoolReserves_DisplaysFailureOmitsMidPrices(t *testing.T) {
 	pairA := mkCStrkey(t, 1)
 	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
@@ -294,7 +294,7 @@ func TestPoolReserves_EmptySideOmitsDepth(t *testing.T) {
 	}
 }
 
-// TestPoolReserves_ColdVerdictDeadlineIs503 pins the route-sweep 2026-07-29
+// TestPoolReserves_ColdVerdictDeadlineIs503 pins the
 // contract: a reserve read that blows its budget (in production, only the
 // COLD archived-pair TTL-verdict snapshot — see clickhouse.ttlLivenessCache)
 // is a truthful retryable 503 `pool-reserves-timeout`, not a 500.

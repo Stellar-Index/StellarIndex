@@ -20,7 +20,7 @@ func getChangeSummaryStatus(t *testing.T, srv *v1.Server, entityType, entityID s
 
 // /v1/changes published current_value, the window values and the 30-day
 // ATH/ATL for a market /v1/price withholds: no scam gate and no substance
-// gate stood between change_summary_5m and the wire (GH-757). Every value
+// gate stood between change_summary_5m and the wire. Every value
 // on the row is an aggregated price claim for that market.
 func TestHandleChangeSummary_WithholdsWhatPriceWithholds(t *testing.T) {
 	flagged := chartFlaggedBase(t).String()

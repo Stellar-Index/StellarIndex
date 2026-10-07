@@ -16,7 +16,7 @@ import (
 
 // TestKeyPolicy_AnonymousBypasses pins that anonymous traffic
 // (no Subject or TierAnonymous) skips every check — the policy
-// surfaces are per-key only. F-1226 (codex audit-2026-05-12).
+// surfaces are per-key only.
 func TestKeyPolicy_AnonymousBypasses(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -208,7 +208,7 @@ func TestKeyPolicy_Permissions(t *testing.T) {
 // are bound by their OWN permission gate — a default operator key keeps full
 // access, but a deliberately-narrowed one is confined.
 //
-// Pre-fix (the defect this replaces): checkKeyPolicy short-circuited with an
+// Defect guarded against: checkKeyPolicy short-circuiting with an
 // unconditional `return "", nil` for every TierOperator subject BEFORE the
 // scope + permission gates ran, so an operator key explicitly narrowed at
 // mint silently bypassed its own restrictions. The prior test here asserted

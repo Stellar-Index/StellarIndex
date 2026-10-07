@@ -60,9 +60,9 @@ func registerStyleFixture(
 // findings F056 / K050 / Q145 at the handler seam.
 //
 // Under the default auth_backend=redis, `apikey:<hash>` IS the
-// credential. The stores used to carry a key-cache invalidator whenever
-// Redis was configured, so an override-only PATCH — a quota RAISE —
-// DELeted every /v1/register key the account held, permanently.
+// credential. Stores that carry a key-cache invalidator whenever
+// Redis was configured would, on an override-only PATCH — a quota RAISE —
+// DELete every /v1/register key the account held, permanently.
 func TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -113,7 +113,7 @@ func TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential(t *testing.
 // direction: the fix must not turn the eviction off where it is
 // correct. Under auth_backend=postgres the same key is a rebuildable
 // read-through cache entry, and leaving it in place serves the stale
-// resolved budget for the validator TTL (F-A, audit-2026-08-14).
+// resolved budget for the validator TTL.
 func TestNewAPIKeyBudgetStores_PostgresBackendStillEvicts(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

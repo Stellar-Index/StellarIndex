@@ -233,8 +233,8 @@ func TestChart_InvalidTimeframe400(t *testing.T) {
 }
 
 // TestChart_TWAP_ServesTimeWeightedSeries — price_type=twap now serves
-// a series from the twap_1h / twap_1d CAGGs (migration 0081, BACKLOG
-// #37) instead of the old 400. The default 24h timeframe's 15m grain
+// a series from the twap_1h / twap_1d CAGGs (migration 0081)
+// instead of a 400. The default 24h timeframe's 15m grain
 // snaps onto the 1h TWAP CAGG, and the response reports the grain
 // actually served + price_type=twap.
 func TestChart_TWAP_ServesTimeWeightedSeries(t *testing.T) {
@@ -666,8 +666,8 @@ func TestChart_NativeReadsCryptoXLMAlias(t *testing.T) {
 	}
 }
 
-// TestChart_StablecoinFallback_CryptoBacker exercises the BACKLOG #37
-// broadening: the chart's fiat-proxy fallback now also reaches the
+// TestChart_StablecoinFallback_CryptoBacker exercises the
+// broadened fiat-proxy fallback: it also reaches the
 // abstract stablecoin backers (crypto:USDT/USDC/…) crossed with the
 // XLM base aliases — so a native/fiat:USD chart whose only USD depth is
 // the CEX-sourced crypto:XLM/crypto:USDT series (binance) is found even
@@ -710,13 +710,13 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 	if reader.calls[0] != "native/fiat:USD" {
 		t.Errorf("first call = %q, want native/fiat:USD (literal)", reader.calls[0])
 	}
-	// This used to assert the backer was the LAST call, which only held
-	// because the walk stopped at the first source pair holding any
+	// This does not assert the backer was the LAST call, which would hold only
+	// if the walk stopped at the first source pair holding any
 	// bucket at all. That short-circuit is the defect
-	// [Server.chartBucketMerge] removes — the walk now reads every source
+	// [Server.chartBucketMerge] removes — the walk reads every source
 	// so a later one can fill a bucket an earlier one left empty — so the
 	// last call is simply the last enumerated pair and says nothing. What
-	// the test was actually pinning is that the backer is READ and that
+	// the test pins is that the backer is READ and that
 	// the served values are ITS values, and both are asserted directly.
 	read := false
 	for _, c := range reader.calls {
@@ -1046,7 +1046,7 @@ func TestChart_MarketCap_QuoteMustBeUSD_400(t *testing.T) {
 	}
 }
 
-// F-0091 closure (2026-05-28): /v1/chart accepts `base=` as alias
+// /v1/chart accepts `base=` as alias
 // for `asset=` so URLs from /v1/twap don't 400 on first try.
 func TestChart_BaseParamAcceptedAsAssetAlias(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})

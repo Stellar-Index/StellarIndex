@@ -102,7 +102,7 @@ func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 
 // TestFiatSupplyWholeUnits_ExactBeyondFloat64 (MNY) — the catalogue
 // carries circulating supply as an EXACT decimal string. Parsing it to
-// float64 (the pre-fix path) truncates any value past a float's 53-bit
+// float64 (a float path) truncates any value past a float's 53-bit
 // mantissa (~9.007e15). fiatSupplyWholeUnits keeps it exact so the
 // served market cap doesn't silently drop integer digits.
 func TestFiatSupplyWholeUnits_ExactBeyondFloat64(t *testing.T) {
@@ -118,7 +118,7 @@ func TestFiatSupplyWholeUnits_ExactBeyondFloat64(t *testing.T) {
 		t.Errorf("exact supply = %s, want %s (big.Rat must not truncate)", got.RatString(), supplyStr)
 	}
 
-	// Demonstrate the pre-fix float64 path genuinely loses the low digit.
+	// Demonstrate the float64 path genuinely loses the low digit.
 	f, _ := strconv.ParseFloat(supplyStr, 64)
 	if strconv.FormatFloat(f, 'f', -1, 64) == supplyStr {
 		t.Fatalf("test premise broken: float64 unexpectedly represented %s exactly", supplyStr)

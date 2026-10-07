@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The side door into the withholding decision (RLT-350).
+// The side door into the withholding decision.
 //
 // /v1/price's reader gate (cmd/stellarindex-api's priceWithheld
 // chokepoint) only fires on the arms of LatestPrice that HAVE a value:
@@ -126,7 +126,7 @@ func TestPriceFallbackWithholdsScamFlaggedBase(t *testing.T) {
 // TestPriceFallbackWithholdsScamFlaggedQuote is the other orientation.
 // The withholding decision is a property of the MARKET, so the price of
 // XLM IN a flagged issuer's asset is the flagged market's price
-// inverted (F002/F019). The chain must ask the PAIR question.
+// inverted. The chain must ask the PAIR question.
 func TestPriceFallbackWithholdsScamFlaggedQuote(t *testing.T) {
 	quote := fallbackFlaggedBase(t)
 	gate := &fallbackScamGate{withheld: map[string]bool{quote.String(): true}}
@@ -210,7 +210,7 @@ func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 //
 //   - /v1/price — the reader misses (ErrPriceNotFound) and the handler
 //     runs priceFallback, whose layer 1 is the cache; ?window=N is
-//     rejected outright (GH-762 — the retired surface never reaches
+//     rejected outright (the retired surface never reaches
 //     the cache at all, so it has no gate of its own to test here);
 //   - /v1/price/tip — its own cache branch, gated at the top of
 //     computeTip (already correct; here so a regression there fails

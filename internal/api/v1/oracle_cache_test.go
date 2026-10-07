@@ -140,7 +140,7 @@ func TestCachedOracleReader_TTLZeroBypassesCache(t *testing.T) {
 
 func TestCachedOracleReader_SingleFlightUnderConcurrentMiss(t *testing.T) {
 	// 10 concurrent callers during a slow cold-miss should produce
-	// exactly 1 upstream call. Mirrors the F-0011 single-flight
+	// exactly 1 upstream call. Mirrors the single-flight
 	// guarantee — the cache MUST collapse stampede.
 	up := &fakeOracleUpstream{updatesDelay: 80 * time.Millisecond}
 	c := NewCachedOracleReader(up, 5*time.Second)
@@ -239,7 +239,7 @@ func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
 }
 
 // TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter is the
-// regression proof for RLT-439: the caller that happens to trigger a
+// regression proof that the caller that happens to trigger a
 // cold fill is not privileged. If THAT caller's own context is
 // cancelled mid-flight (client disconnect, its own deadline), every
 // OTHER caller single-flighted onto the same key must still get the
@@ -284,7 +284,7 @@ func TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter(t *testing.T) 
 }
 
 // TestCachedOracleReader_StreamsAreCached — LatestOracleStreams was the one
-// pass-through on the wrapper (#332 F5): every /v1/oracle/streams hit re-ran
+// pass-through on the wrapper: every /v1/oracle/streams hit re-ran
 // the oracle_updates scan and rebuilt ~34 KB, 0.43–0.46 s WARM on production.
 // It now rides the same TTL + single-flight as its siblings: N calls inside
 // the window cost ONE upstream scan, and the window is honoured (a call past

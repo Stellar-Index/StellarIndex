@@ -22,7 +22,7 @@ import (
 // quotes the peg's SAC wrapper, so a market whose only USD depth is
 // such a pool is stored as `<X>/<USDC SAC>` and the peg expansion —
 // which emits classic spellings only — never names it. Measured on r1
-// 2026-09-05 over 365 days of `prices_1d`: 43 assets have USD depth
+// over 365 days of `prices_1d`: 43 assets have USD depth
 // under the USDC SAC and under NO spelling either surface reads,
 // carrying 260,833 prints and $14.63M; the largest single one carries
 // $6.38M across a full year. Each served `intervals: []` and a `404`.
@@ -259,7 +259,7 @@ func TestFiatSeries_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 		name             string
 		bookSrc, poolSrc string
 	}{
-		// The book is coarser than the pool: admitting the pool used to
+		// The book is coarser than the pool: admitting the pool would
 		// lift the BOOK's bucket by 10 in any window reaching both.
 		{"7dp book, 8dp pool", "sdex", "some-unregistered-amm"},
 		// And the mirror — the pool is coarser, so its own bucket used
@@ -397,7 +397,7 @@ func newMixedScaleParityServer(t *testing.T) *v1.Server {
 	return v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
 }
 
-// TestFiatPointMatchesSeries_AcrossVenueScales holds the C1-024 parity
+// TestFiatPointMatchesSeries_AcrossVenueScales holds the point-vs-series parity
 // invariant where it can actually fail: three constituents at two
 // smallest-unit scales. Point and series must agree on the price and on
 // both volumes, which is only true if each lifts the 7dp leg by the same
@@ -444,7 +444,7 @@ func TestFiatPointMatchesSeries_AcrossVenueScales(t *testing.T) {
 // "read the held-back set when the established set answered nothing"
 // and "fill the buckets the established set did not answer" are one rule
 // stated at each path's own grain — and the two surfaces stay on one
-// population where they previously served a series and a 404.
+// population , rather than one serving a series and the other a 404.
 func TestFiatPointMatchesSeries_OnAPoolOnlyVenue(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -565,7 +565,7 @@ func pointTotals(t *testing.T, ts *testServer, base, win string) (n int64, vBase
 	return int64(env.Data.TradeCount), mustRat(t, env.Data.BaseVolume), mustRat(t, env.Data.QuoteVolume)
 }
 
-// TestFiatPointMatchesSeries_OverAMultiBucketWindow is the C1-024
+// TestFiatPointMatchesSeries_OverAMultiBucketWindow is the point-vs-series
 // invariant on a window of more than one bucket — where a first attempt
 // at rows 1.14/1.15 broke it.
 //

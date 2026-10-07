@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// GH-819: /v1/oracle/prices walks the declared USD pegs when the literal
+// /v1/oracle/prices walks the declared USD pegs when the literal
 // asset/fiat:USD series is empty. A peg leg the withholding gate refused
 // was skipped like a miss, so a withheld asset answered 200 [] — "no
 // data" — where every sibling surface answers the price-withheld 404.

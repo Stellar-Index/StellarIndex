@@ -45,7 +45,7 @@ func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStor
 
 // newAdminTestServerWithPlatformKeys additionally wires a Postgres
 // [platform.APIKeyStore] behind APIKeyBudgets.Platform plus the account
-// store that proves a row's owner — needed for the GH-978
+// store that proves a row's owner — needed for the
 // revoke-both-stores regressions, where the shared credential has a
 // durable management row alongside its Redis record.
 func newAdminTestServerWithPlatformKeys(
@@ -144,7 +144,7 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_RateLimitDefaultsToCaller pins GH-1147: an admin
+// TestAdminKeysCreate_RateLimitDefaultsToCaller pins that an admin
 // mint request that omits rate_limit_per_min must inherit the CALLER's
 // own ceiling, not the deployment/tier default (0), which can exceed
 // it. ClampToMinter's own-ceiling check only fires for
@@ -182,7 +182,7 @@ func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 	}
 }
 
-// TestAdminKeysCreate_RequiresReason pins C3-107 (audit-2026-07-23).
+// TestAdminKeysCreate_RequiresReason pins the reason requirement.
 // Minting a privileged credential is at least as consequential as
 // setting a per-account override or killing a key, both of which hard-400
 // without an X-Reason header. The mint was the one admin write that
@@ -341,7 +341,7 @@ func assertPlatformKeyLive(t *testing.T, keys *fakeRegisterKeyStore, keyID strin
 	}
 }
 
-// TestAdminKeysRevoke_RevokesPostgresManagementRowToo is the GH-978
+// TestAdminKeysRevoke_RevokesPostgresManagementRowToo is the
 // regression: DELETE /v1/admin/keys/{kid} must revoke the credential
 // in BOTH stores a /v1/register-minted key lives in, not just Redis —
 // otherwise the api_keys row keeps revoked_at NULL, stays listed and

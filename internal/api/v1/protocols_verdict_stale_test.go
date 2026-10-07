@@ -39,7 +39,7 @@ func envelopeStale(t *testing.T, url string) bool {
 	return env.Flags.Stale
 }
 
-// TestProtocols_StaleWhenRepublishedVerdictIsOld pins #1296: /v1/protocols
+// TestProtocols_StaleWhenRepublishedVerdictIsOld pins that /v1/protocols
 // and /v1/protocols/{name} republish the completeness_snapshots rows
 // /v1/coverage gates, so a verdict 30h old must raise flags.stale on all
 // three — not only on /v1/coverage.
@@ -71,7 +71,7 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 	}
 }
 
-// TestCompletenessVerdictReadsGoThroughGate is the class guard for #1296:
+// TestCompletenessVerdictReadsGoThroughGate is the class guard for that rule:
 // outside diagnostics (which republishes computed_at per row, so each
 // claim carries its own age), the only production read of the verdict
 // rows is completenessVerdicts, which returns them with their stale gate.

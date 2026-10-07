@@ -16,8 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
-// TestPriceBatch_MetersOneUsageUnitPerID pins GH-1275: the monthly meter
-// counted HTTP requests, so a 1000-id POST /v1/price/batch cost one unit
+// TestPriceBatch_MetersOneUsageUnitPerID pins that the monthly meter
+// must not count HTTP requests, or a 1000-id POST /v1/price/batch cost one unit
 // of a quota sold in price lookups. Each batch must advance BOTH the
 // billable total MonthlyQuota reads and the per-endpoint detail counter
 // by its de-duplicated id count, and a single-price call stays at one.
@@ -59,7 +59,7 @@ func TestPriceBatch_MetersOneUsageUnitPerID(t *testing.T) {
 		t.Fatalf("GET batch status = %d, want 200", get.StatusCode)
 	}
 	// UsageTracker's counter writes run on the shared after-response pool,
-	// not inline (GH-627), so a read right after the requests return must
+	// not inline, so a read right after the requests return must
 	// wait for them to land first.
 	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
 		t.Fatal("after-response pool did not drain in time")

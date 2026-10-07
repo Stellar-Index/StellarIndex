@@ -15,7 +15,7 @@ import (
 // dialRefused is the exact error shape a hard-down ClickHouse produces when
 // the driver tries to open a connection: a *net.OpError whose Op is "dial"
 // and whose Timeout() is FALSE (a refused connection answers instantly — it
-// does not time out). This is the value #371 F4 says was classified
+// does not time out). This is a value that must not be classified
 // non-retryable and rendered as `errors/internal` 500.
 func dialRefused() error {
 	return &net.OpError{
@@ -27,15 +27,15 @@ func dialRefused() error {
 	}
 }
 
-// TestRetryableColdMiss_LakeUnreachable pins #371 F4: a TRANSPORT-layer
+// TestRetryableColdMiss_LakeUnreachable pins that a TRANSPORT-layer
 // failure below the query layer (dial refused, socket reset mid-query,
 // broken pipe, host stopped resolving) is a dependency outage, not a bug in
 // this process, and must classify retryable — the same class as the
 // saturation sentinels and the driver i/o timeouts already matched.
 //
-// Red without the fix: pre-fix retryableColdMiss's last arm was
-// `errors.As(err, &ne) && ne.Timeout()`, and every value below has
-// Timeout()==false, so all seven sub-cases returned false.
+// Red without the fix: if retryableColdMiss's last arm were
+// `errors.As(err, &ne) && ne.Timeout()`, every value below has
+// Timeout()==false, so all seven sub-cases would return false.
 func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	ctx := context.Background()
 
@@ -74,16 +74,16 @@ func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	}
 }
 
-// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of #371
-// F4: with ClickHouse hard-down, GET /v1/accounts/{g} must answer 503 with a
+// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above
+// case: with ClickHouse hard-down, GET /v1/accounts/{g} must answer 503 with a
 // Retry-After and a detail that says the DEPENDENCY is unreachable — not the
-// 500 "Internal error" it served pre-fix, and not the read-budget "timed out"
+// 500 "Internal error" a misclassified error would serve, and not the read-budget "timed out"
 // prose either (a refused dial answered in microseconds; sending an operator
 // to look for a slow query that never ran is the same class of lie the
 // saturation split already exists to prevent).
 //
-// Red without the fix: pre-fix the handler's retryableColdMiss returned false
-// for a refused dial, so it fell through to WriteProblem(…, 500) and this
+// Red without the fix: if the handler's retryableColdMiss returned false
+// for a refused dial, it would fall through to WriteProblem(…, 500) and this
 // test fails on `status = 500, want 503`.
 func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	var rec problemRecord

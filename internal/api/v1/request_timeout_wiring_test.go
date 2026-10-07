@@ -45,7 +45,7 @@ func mkNativeUSDTrade() canonical.Trade {
 }
 
 // TestRequestTimeout_BoundsReachDBSeam proves the durable chokepoint fix
-// end-to-end (C3-1/C3-2/P1, audit-2026-07-16): a request through the real
+// end-to-end: a request through the real
 // Server chain delivers a BOUNDED context to the trades read. With
 // RequestTimeout set below the per-handler 8s wrap, the middleware's
 // deadline is what the read observes — proving the middleware is wired,
@@ -80,7 +80,7 @@ func TestRequestTimeout_BoundsReachDBSeam(t *testing.T) {
 // or not defaultRequestTimeout was ever installed — replacing
 // durationOr(opts.RequestTimeout, defaultRequestTimeout) with
 // opts.RequestTimeout left this test green with the middleware never
-// wired, #1213). With no competing handler-level deadline, the only
+// wired). With no competing handler-level deadline, the only
 // possible source of the bound observed here is the middleware.
 func TestRequestTimeout_DefaultAlwaysOn(t *testing.T) {
 	reader := &deadlineCapturingHistoryReader{trade: mkNativeUSDTrade()}

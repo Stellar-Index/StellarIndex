@@ -103,7 +103,7 @@ func (s *fakeStore) DeletePriceAlert(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// ClaimPriceAlertFire mirrors the store's conditional UPDATE (#368 M10):
+// ClaimPriceAlertFire mirrors the store's conditional UPDATE:
 // it stamps only while the snapshot's rule is unchanged and the alert's own
 // cooldown has elapsed, and reports whether it claimed. Unused by the
 // dashboard handlers — this fake satisfies the whole
@@ -254,7 +254,7 @@ func TestHandleCreate_OmittedCooldown_DefaultsNonZero(t *testing.T) {
 	}
 }
 
-// TestCooldownBelowFloor_Rejected400 pins GH-810: an explicit cooldown
+// TestCooldownBelowFloor_Rejected400 pins that an explicit cooldown
 // below platform.MinAlertCooldownSeconds (0 included, formerly the
 // "re-fire every tick" opt-in) is a 400 on create and PATCH — it made the
 // level-triggered evaluator enqueue every subscribed webhook each tick.
@@ -547,7 +547,7 @@ func TestHandleDelete(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// TestHandleList_ServesTheEnforcedAlertCeiling pins GH-1073: the alert cap
+// TestHandleList_ServesTheEnforcedAlertCeiling pins that the alert cap
 // counts every alert, paused ones included, and was visible only as a
 // 409. The list now carries the cap create enforces.
 func TestHandleList_ServesTheEnforcedAlertCeiling(t *testing.T) {

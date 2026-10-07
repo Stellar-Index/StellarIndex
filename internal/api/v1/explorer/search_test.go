@@ -10,7 +10,7 @@ const (
 	searchTestMuxedG    = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 )
 
-// GH-984: /v1/search must route account and contract hits to the canonical
+// /v1/search must route account and contract hits to the canonical
 // detail endpoints mounted in server.go (/v1/accounts/{g_strkey},
 // /v1/contracts/{contract_id}), not the stale /v1/issuers/{g} and
 // /v1/contracts/{c}/transfers hrefs, and must not claim a build-in-progress

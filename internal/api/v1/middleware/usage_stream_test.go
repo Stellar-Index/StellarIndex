@@ -20,7 +20,7 @@ import (
 func streamUsageTotal(t *testing.T, counter *usage.Counter, subject auth.Subject) int64 {
 	t.Helper()
 	// The stream-open counter write runs on the shared after-response
-	// pool, not inline (GH-627), so a read right after the headers commit
+	// pool, not inline, so a read right after the headers commit
 	// must wait for it to land first.
 	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
 		t.Fatal("after-response pool did not drain in time")
@@ -88,7 +88,7 @@ func runOpenStream(t *testing.T, counter *usage.Counter, subject auth.Subject, s
 	return release, wait
 }
 
-// TestUsageTracker_StreamCountedAtOpen pins GH-1279: an SSE stream is
+// TestUsageTracker_StreamCountedAtOpen pins that an SSE stream is
 // exempt from RequestTimeout, so it can stay open across a day boundary or
 // be killed by a deploy without ever returning. Counting it only at close
 // billed it on the wrong day or not at all. It must be counted once, when
@@ -156,7 +156,7 @@ func TestUsageTracker_StreamRefusedAtOpenNotBilled(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_StreamTickCountBounded pins the rest of GH-1279:
+// TestUsageTracker_StreamTickCountBounded pins the bound on the per-tick count:
 // counting an SSE stream once at open (TestUsageTracker_StreamCountedAtOpen)
 // still lets it buy unbounded duration for that one unit. A stream held
 // open for a known duration must accrue additional billable units for
@@ -333,8 +333,8 @@ func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 // never sets it) and billed it as OK — eating quota on a request this
 // same defer had just classed as non-billable. A 1µs meter interval
 // plus many trials makes the (otherwise sub-microsecond) window
-// observable: pre-fix this leaked on 113 of 3000 trials in
-// development, post-fix 0.
+// observable: without the guard this leaks on about 113 of 3000 trials
+// in development.
 func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(time.Microsecond))
 

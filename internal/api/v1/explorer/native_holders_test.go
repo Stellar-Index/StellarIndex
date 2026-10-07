@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the native-XLM holders fix (2026-07-31):
+// These tests pin the native-XLM holders behaviour:
 // /v1/assets/native/holders served {"holder_count":0,"holders":[]} instantly
 // and BY CONSTRUCTION, because the holders read was trustline-shaped and
 // native has no trustlines — every account holds XLM in its AccountEntry
@@ -35,7 +35,7 @@ func TestIsNativeHoldersAsset(t *testing.T) {
 	}{
 		{"native", true},
 		{"crypto:XLM", true},
-		// ParseAsset's case-insensitive shorthand for native (F-0024).
+		// ParseAsset's case-insensitive shorthand for native.
 		{"XLM", true},
 		{"xlm", true},
 		// The SAC wrapper is the one XLM alias-family member deliberately
@@ -137,11 +137,11 @@ func TestAssetHolders_AliasFormsShareTheNativeBoard(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_HorizonSpellingNormalized (audit 2026-07-31): ParseAsset
+// TestAssetHolders_HorizonSpellingNormalized: ParseAsset
 // admits the Horizon "CODE:ISSUER" spelling, but the lake stores canonical
-// "CODE-ISSUER". Before the fix the RAW request string was used as both the
-// cache key and the query asset — the colon spelling ran a scan that matched
-// nothing and cached an authoritative-looking EMPTY board under a duplicate
+// "CODE-ISSUER". If the RAW request string were used as both the
+// cache key and the query asset, the colon spelling would run a scan that matched
+// nothing and cache an authoritative-looking EMPTY board under a duplicate
 // key. Both spellings must normalize to one canonical key: one reader scan,
 // one shared cache entry, canonical echo on the wire.
 func TestAssetHolders_HorizonSpellingNormalized(t *testing.T) {

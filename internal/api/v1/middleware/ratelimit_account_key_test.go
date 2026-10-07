@@ -11,9 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// GH-1288 / GH-1147: the per-minute limit keyed on KeyID, so every key an
-// account held got its own full bucket — a 25-key account ran at 25x its
-// ceiling, and an operator's 100k/min comp became 2.5M/min. The monthly
+// Keying the per-minute limit on KeyID gives every key an
+// account held its own full bucket — a 25-key account runs at 25x its
+// ceiling, and an operator's 100k/min comp becomes 2.5M/min. The monthly
 // quota already counted per account; the rate limit must share that
 // identity, so minting or rotating keys cannot multiply the ceiling.
 func TestRateLimitBySubject_KeysOnOneAccountShareOneBucket(t *testing.T) {

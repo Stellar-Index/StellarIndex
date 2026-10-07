@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestNoDanglingPR1015Reference guards RSWP-066: PR #1015 never existed in
+// TestNoDanglingPR1015Reference guards that "PR #1015" is not cited: PR #1015 never existed in
 // this repo, and issue #1015 now names an unrelated supply-write-path
 // finding, so a comment citing "PR #1015" / "(#1015)" for the chart
 // stablecoin-proxy fallback sends a reader to the wrong place instead of a

@@ -13,7 +13,7 @@ import (
 )
 
 // afterResponseWorkers / afterResponseQueueSize size the shared pool
-// [AfterResponse] hands post-response bookkeeping to (GH-627): usage
+// [AfterResponse] hands post-response bookkeeping to: usage
 // metering and TouchUsage's last-seen update. Generous enough that a
 // healthy Redis/Postgres never saturates it under ordinary request
 // volume; a sustained saturation is a signal in its own right (see
@@ -98,8 +98,8 @@ func (p *afterResponsePoolT) submit(task func()) bool {
 // AfterResponse flushes w — so the client sees the already-written
 // response immediately instead of waiting for bookkeeping the client has
 // no interest in — then hands fn to the shared bounded worker pool
-// instead of running it inline on the request goroutine (GH-627: TouchUsage
-// and UsageTracker used to run synchronously post-handler under
+// instead of running it inline on the request goroutine (otherwise TouchUsage
+// and UsageTracker would run synchronously post-handler under
 // context.WithoutCancel(r.Context()) + a 5 s bound each, so a wedged
 // Redis added up to 10 s to a request net/http had already buffered but
 // never flushed, entirely outside api.request_timeout).
@@ -126,8 +126,7 @@ func AfterResponse(w http.ResponseWriter, fn func()) {
 // the response writer. Used by [AfterResponse] on the ordinary path, and
 // directly by callers whose response is NOT yet known-complete — a
 // panicking handler, where the outer Recoverer still has to write the
-// 500 and a premature Flush here would lock the status in at 200 first
-// (GH-627).
+// 500 and a premature Flush here would lock the status in at 200 first.
 func submitAfterResponseTask(fn func()) {
 	if !afterResponsePool.submit(fn) {
 		obs.AfterResponseTasksDroppedTotal.Inc()

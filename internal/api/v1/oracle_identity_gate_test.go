@@ -15,12 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// Identity fixtures for the /v1/oracle/latest ticker gate (#336).
+// Identity fixtures for the /v1/oracle/latest ticker gate.
 //
 // circleUSDCAssetID is the verified catalogue's own USDC issuance
 // (internal/currency/data/seed.yaml). impersonatorUSDCAssetID wears the
 // same CODE over AQUA's issuer — an asset that does not exist on
-// Stellar, and the exact id the 2026-09-02 verifier used to pull
+// Stellar, and the exact id that would pull
 // Circle's four oracle rows out of the un-gated helper.
 const (
 	circleUSDCAssetID       = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -123,7 +123,7 @@ func contains(t *testing.T, keys []string, want string) bool {
 	return false
 }
 
-// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker is the #336
+// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker is the identity-gate
 // regression. Before the identity gate, oracleAssetCandidates appended
 // `crypto:<CODE>` for ANY classic asset, so a USDC-coded token issued by
 // AQUA's issuer was served Circle's oracle prices — attacker-authored
@@ -169,8 +169,8 @@ func TestOracleLatest_VerifiedIssuerKeepsItsTicker(t *testing.T) {
 // TestOracleLatest_ReferenceOnlyTickerIsNeverGranted covers the second
 // impersonation shape: USDT is a `reference_only` catalogue entry with no
 // Stellar issuance at all, so EVERY classic `USDT-G…` is by construction
-// an impersonator (currency.indexTickerOnlyEntry). The pre-fix helper
-// translated all of them.
+// an impersonator (currency.indexTickerOnlyEntry). An ungated helper would
+// translate all of them.
 func TestOracleLatest_ReferenceOnlyTickerIsNeverGranted(t *testing.T) {
 	reader, srv := oracleGateFixture(t)
 	ts := httpTestServer(t, srv)
@@ -222,7 +222,7 @@ func TestOracleLatest_VerifiedSACInheritsItsClassicIdentity(t *testing.T) {
 // TestOracleLatest_NoCatalogueFailsClosed pins the nil-catalogue
 // direction. A deployment with no verified catalogue has no basis on
 // which to grant a global ticker, so it grants none — the opposite of
-// the pre-fix helper, which granted one to everybody.
+// an ungated helper, which would grant one to everybody.
 func TestOracleLatest_NoCatalogueFailsClosed(t *testing.T) {
 	reader := &keyedOracleReader{rows: map[string][]canonical.OracleUpdate{}}
 	srv := v1.New(v1.Options{Oracle: reader, NetworkPassphrase: canonical.PubnetPassphrase})

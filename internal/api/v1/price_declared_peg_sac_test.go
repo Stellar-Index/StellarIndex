@@ -33,7 +33,7 @@ import (
 // route, its spelling order, and the reads it must never make.
 
 // pegSelfPairs are the two orientations of the one pair the SAC twin
-// used to build on the sibling walk: itself against its own classic form.
+// would build on the sibling walk: itself against its own classic form.
 // Neither is a market, and neither may ever be read.
 var pegSelfPairs = []string{
 	pegAliasUSDCSAC + "/" + pegAliasUSDCClassic,
@@ -330,7 +330,7 @@ func TestPrice_DeclaredPegSACTwinWithNoObservationServesTheDeclaration(t *testin
 }
 
 // TestPrice_DeclaredPegSACTwinNeverProbesItsOwnClassicForm pins what the
-// sibling walk used to do with the SAC twin: with one declared peg, the
+// the sibling walk would do with the SAC twin: with one declared peg, the
 // only pair it could build was USDC-SAC / USDC-GA5Z… — one asset on both
 // sides, no rows by construction, and a slot of the handler's deadline
 // spent on it. That pair is never read under either orientation.
@@ -701,7 +701,7 @@ func TestPrice_DeclaredPegXLMCrossWithheldClassicBookNeverReachesTheSACBook(t *t
 // that does not say which gate fired is treated the same way (fail
 // closed): only a flagged-issuer refusal keeps the declaration.
 //
-// RED on the pre-fix route, which collapsed every refusal into ok=false
+// RED on a route that collapses every refusal into ok=false
 // and published the declaration: 200 {"price":"1.000000000000",
 // "price_type":"peg"} on /v1/price for both spellings and on
 // /v1/oracle/x_last_price.
@@ -743,7 +743,7 @@ func TestPrice_DeclaredPegXLMCrossSubstanceRefusalWithholds(t *testing.T) {
 // pivot comes back withheld. A cross missing a refused leg is not "no
 // market" either, so the declaration must not answer over it.
 //
-// RED on the pre-fix route, which returned a bare false for any pivot
+// RED on a route that returns a bare false for any pivot
 // error: 200 {"price":"1.000000000000","price_type":"peg"}.
 func TestPrice_DeclaredPegXLMCrossPivotRefusalWithholds(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
@@ -1093,7 +1093,7 @@ func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegR
 //     asset and not as a spelling.
 //
 // So the peg route widening the walk is what carries a flagged issuer's
-// price to a spelling the gate could not previously see, and the gate
+// price to a spelling the gate could not see, and the gate
 // resolving its base is what closes it. Neither half is sufficient alone,
 // and neither was exercised against the other.
 //

@@ -10,7 +10,7 @@ import (
 )
 
 // A rebuild in which one arm's READ FAILED must not become the served
-// set, and must not clear the failure stamp (RLT-096).
+// set, and must not clear the failure stamp.
 //
 // The shape the defect had: the cache decision asked only whether
 // EITHER arm had answered, so a failed classic scan beside a healthy

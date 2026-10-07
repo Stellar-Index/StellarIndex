@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestAnomalies_WindowDaysOutOfRangeRejects pins CA2-A01-correct-6:
-// an out-of-range or unparseable ?window_days= used to silently fall
+// TestAnomalies_WindowDaysOutOfRangeRejects pins that
+// an out-of-range or unparseable ?window_days= must not silently fall
 // back to the default (30) instead of clamping to [1, 365] as the doc
 // comment claimed, or rejecting like the sibling ?days=/?limit= params
 // do. A client asking for a one-year window got one month back with no

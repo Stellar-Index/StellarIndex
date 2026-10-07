@@ -162,7 +162,7 @@ func (r *stubStaleNetworkStatsReader) GetNetworkStatsAt(_ context.Context) (time
 // flags.stale=true and an as_of equal to the served value's real
 // observation time — NOT stale:false / as_of=now, which would assert
 // freshness over data a failing refresh has let age. Mirrors the
-// /v1/markets honest-staleness contract (#160).
+// /v1/markets honest-staleness contract.
 func TestNetworkStats_HonestStaleAsOf(t *testing.T) {
 	observed := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
 	reader := &stubStaleNetworkStatsReader{

@@ -131,8 +131,8 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 			Title:   inc.Title,
 			Updated: updated.UTC().Format(time.RFC3339),
 			Link: []atomLink{
-				// Per-incident detail page. Was previously the
-				// homepage with an `#<slug>` anchor, but the home
+				// Per-incident detail page, not the
+				// homepage with an `#<slug>` anchor: the home
 				// page doesn't render an `id` per incident, so feed
 				// readers landed on `https://status.stellarindex.io/`
 				// with no scroll target. Use the canonical

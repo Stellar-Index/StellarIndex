@@ -98,8 +98,8 @@ func TestMethodology_BaselineShape(t *testing.T) {
 }
 
 // TestMethodology_SourcesCarryOnChain pins that /v1/methodology's
-// per-source rows carry `on_chain`, matching /v1/sources (#609,
-// #610). A consumer reading class=exchange off /v1/methodology
+// per-source rows carry `on_chain`, matching /v1/sources.
+// A consumer reading class=exchange off /v1/methodology
 // cannot otherwise tell a dispatcher-path Stellar venue (sdex,
 // soroswap) from an off-chain reference feed (binance, coinbase).
 func TestMethodology_SourcesCarryOnChain(t *testing.T) {

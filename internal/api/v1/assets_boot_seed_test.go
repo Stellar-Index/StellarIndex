@@ -9,8 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestAssetList_BootSeededPageIsLabelledStale is the honesty half of
-// #459.
+// TestAssetList_BootSeededPageIsLabelledStale is the honesty half of the boot seed.
 //
 // A boot-seeded page-set is real data, but it was observed by a
 // PREVIOUS process and is stale by construction. Serving it is the

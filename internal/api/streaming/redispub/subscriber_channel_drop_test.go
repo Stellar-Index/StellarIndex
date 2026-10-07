@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestChannelDropCounter_CountsGoRedisChannelFull reproduces GH-753's
+// TestChannelDropCounter_CountsGoRedisChannelFull reproduces the
 // silent-drop path directly against go-redis's own PubSub.Channel: a
 // stalled reader plus a small buffer/timeout makes go-redis drop a
 // message and log it, and the drop must show up as

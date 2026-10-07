@@ -69,8 +69,8 @@ func postBatch(t *testing.T, url string, ids []string) *http.Response {
 	return mustPostJSON(t, url+"/v1/price/batch", string(body))
 }
 
-// TestPriceBatch_ChargesOneTokenPerID is the F035 / F046 regression.
-// One rate-limit token used to buy a whole batch: a 40-id GET left 99
+// TestPriceBatch_ChargesOneTokenPerID is the rate-limit regression.
+// One rate-limit token must not buy a whole batch: a 40-id GET left 99
 // of 100 tokens, so the per-minute ceiling bounded HTTP requests while
 // the work behind them was the caller's to choose. A batch must cost
 // its id count.

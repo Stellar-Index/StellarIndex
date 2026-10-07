@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// TestAccountUsage_BillableSameMeaningOnBothShapes pins GH-1278 at the
+// TestAccountUsage_BillableSameMeaningOnBothShapes pins that the
 // handler: `billable` carries the rollup's quota-counted units, and a
 // legacy row — the rollup-gap backfill inside a per-endpoint response
 // and the whole-response fallback alike — reports its billable total

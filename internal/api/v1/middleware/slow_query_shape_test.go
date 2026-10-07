@@ -9,7 +9,7 @@ import (
 
 // The whole value of this field is that it is diagnosable without being
 // identifying. Both halves are load-bearing and both are tested here: a
-// version that leaked values would be a privacy defect (#346 is open on
+// version that leaked values would be a privacy defect (the leak class is
 // exactly that — customer emails reaching edge logs via query strings),
 // and a version that redacted everything would leave us back where we
 // started, unable to tell which /v1/assets request took 9.7 seconds.

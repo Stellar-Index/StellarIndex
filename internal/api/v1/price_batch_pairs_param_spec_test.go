@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestPriceBatchSpecDocumentsPairsAlias closes T550: handlePriceBatch
-// (price.go, "F-0073 closure") accepts `pairs=` as an alias for
+// TestPriceBatchSpecDocumentsPairsAlias pins that handlePriceBatch
+// (price.go) accepts `pairs=` as an alias for
 // `asset_ids=` on GET /v1/price/batch, but the spec's parameters block
 // documented only `asset_ids`. A client reading the spec — or a
 // generator deriving a client from it — never learns `pairs` exists,

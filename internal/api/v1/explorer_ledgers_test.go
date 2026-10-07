@@ -316,7 +316,7 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _, _ []string, 
 // AccountsByWealthCached mirrors the uncached stub: warm-and-fresh whenever
 // the stub isn't configured to fail, so existing expectations are
 // unchanged. An error case reports cold, which is how the real cache
-// signals "nothing ever computed" (site-audit S3).
+// signals "nothing ever computed".
 func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _, _ []string, _ int) (clickhouse.AccountWealthSnapshot, bool) {
 	if s.err != nil {
 		return clickhouse.AccountWealthSnapshot{}, false
@@ -566,7 +566,7 @@ func TestExplorer_LedgerTransactions(t *testing.T) {
 
 // TestExplorer_LedgerTransactions_Truncated pins the T172 fix: when a
 // ledger's header reports more transactions than the page-size cap
-// returned, the response must say so — the caller previously had no way
+// returned, the response must say so — the caller would otherwise have no way
 // to distinguish a genuinely short ledger from a silently truncated one.
 func TestExplorer_LedgerTransactions_Truncated(t *testing.T) {
 	reader := &stubExplorerReader{
@@ -731,7 +731,7 @@ func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
 // The contract-activity cursor must carry the tx_hash discriminator: the
 // legacy 3-part (ledger, op_index, event_index) tuple is not unique
 // (single-op txs all tie at 0.0) and paging on it permanently skipped tied
-// rows (cold audit 2026-08-03). A 4-part cursor round-trips; the legacy
+// rows. A 4-part cursor round-trips; the legacy
 // 3-part form is rejected as invalid rather than silently mis-paged.
 func TestExplorer_ContractDetail_CursorRequiresTxHash(t *testing.T) {
 	const cid = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"

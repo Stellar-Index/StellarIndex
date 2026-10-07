@@ -365,7 +365,7 @@ const (
 	validTestTxHash   = "88526317d98b1eb5a8040123456789abcdef0123456789abcdef0123456789ab"
 )
 
-// TestExplorerReads_BoundedByReadTimeout is the C3-1 regression guard: for every
+// TestExplorerReads_BoundedByReadTimeout is the regression guard: for every
 // lake-backed handler, assert the reader is invoked with a context whose
 // deadline is set and sits within (0, explorerReadTimeout]. Against the un-fixed
 // code (raw r.Context(), no deadline) hasDL is false and the test fails.
@@ -423,7 +423,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 			// upstream/middleware deadline). Every read is request-scoped at
 			// explorerReadTimeout except AssetHolders, whose cold-path scan
 			// runs DETACHED on its own assetHoldersRefreshTimeout budget
-			// (stale-while-revalidate, route-sweep 2026-07-29) — still
+			// (stale-while-revalidate) — still
 			// bounded, still cancellation-observing, just not
 			// request-scoped.
 			wantBudget := explorerReadTimeout
@@ -439,19 +439,19 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// just not request-scoped.
 				wantBudget = opsDirRefreshTimeout
 			case "ContractDetail":
-				// First page is SWR'd (route-sweep 2026-07-30): the cold
+				// First page is SWR'd: the cold
 				// compute runs DETACHED on the shared contract-detail
 				// budget — still bounded, just not request-scoped.
 				wantBudget = contractDetailRefreshTimeout
 			case "NetworkThroughput":
-				// Snapshot-served (§2.6b, 2026-08-13): the year-window
+				// Snapshot-served (§2.6b): the year-window
 				// scan runs DETACHED on its own refresh budget so it
 				// survives the request that kicked it — still bounded,
 				// just not request-scoped.
 				wantBudget = networkThroughputRefreshTimeout
 			case "AccountPositions":
-				// SWR'd on the shared contract-detail cache (#332 F1,
-				// 2026-09-02): the six-fold fan-out runs DETACHED on
+				// SWR'd on the shared contract-detail cache:
+				// the six-fold fan-out runs DETACHED on
 				// that budget — still bounded, still
 				// cancellation-observing, just not request-scoped. The
 				// REQUEST-side bound is unchanged (the cold wait is

@@ -12,10 +12,10 @@ import (
 )
 
 // TestExplorer_AccountPositions_PartialReadFailureIsDisclosed is the
-// C3-045 regression.
+// partial-read regression.
 //
 // Each of the six per-protocol folds logs and returns an empty slice on
-// a read error, so before the fix a response where three of six reads
+// a read error, so without the coverage field a response where three of six reads
 // failed was byte-for-byte identical on the wire to "this account holds
 // no positions" — the caller could not tell a missing lending position
 // from a repaid one. The static `note` is about valuation semantics and
@@ -49,7 +49,7 @@ func TestExplorer_AccountPositions_PartialReadFailureIsDisclosed(t *testing.T) {
 	}
 	// Decoded as raw JSON rather than into AccountPositionsView so the
 	// assertion is about the WIRE, and so this case still compiles —
-	// and fails — against the pre-fix struct that had no such field.
+	// and fails — against a struct that has no such field.
 	var body struct {
 		Data map[string]any `json:"data"`
 	}

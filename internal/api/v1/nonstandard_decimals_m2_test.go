@@ -72,7 +72,7 @@ func TestPriceAt_NonstandardDecimals_Normalizes(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
-	// RAW 41.32 × K(=100) = 4132; pre-fix this served the raw "41.32".
+	// RAW 41.32 × K(=100) = 4132; serving the raw "41.32" would be wrong.
 	if !strings.Contains(body, `"price":"4132.0000000000"`) {
 		t.Errorf("/v1/price/at not normalized (want 4132.0000000000): %s", body)
 	}

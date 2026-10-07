@@ -18,11 +18,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Decimals LOCKSTEP on GET /v1/assets/{id} (C1-050). The response depends on
+// Decimals LOCKSTEP on GET /v1/assets/{id}. The response depends on
 // TWO decimals resolvers: the lake's on-chain decimals() (TokenDecimals →
 // detail.Decimals, the supply divisor) and the `nonstandard_decimals_assets`
 // projection (NonstandardDecimals, which the USD price is normalised
-// through). Pre-fix the cap was computed regardless of whether they agreed.
+// through). Without the check the cap would be computed regardless of whether they agreed.
 //
 // Fixture throughout: flaggedAsset with 1000 tokens circulating / 2000 max
 // (both at 9 dp), raw asset/fiat:USD ratio 41.32. With both resolvers at 9
@@ -71,8 +71,8 @@ func lockstepGet(t *testing.T, srv *v1.Server) string {
 	return body
 }
 
-// GH-1059: the asset_detail site is request-driven (any contract id a
-// client asks for), so the counter no longer carries the contract id as a
+// The asset_detail site is request-driven (any contract id a
+// client asks for), so the counter does not carry the contract id as a
 // label — only the bounded guard_reconcile site does.
 func assetDetailMismatchVal() float64 {
 	return testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", ""))
@@ -152,8 +152,8 @@ func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.
 
 // The lake read FAILS (timeout / ClickHouse down) while the projection
 // carries 9. The price was normalised with 9, so the supply must be scaled
-// by 9 too: 1000 × 4132 = 4,132,000.00. Pre-fix decimals stayed at the
-// default 7 and the cap came out 413,200,000.00 — a hundred times the
+// by 9 too: 1000 × 4132 = 4,132,000.00. Without the fix decimals would stay at the
+// default 7 and the cap would come out 413,200,000.00 — a hundred times the
 // truth — on every lake blip.
 func TestAssetsF2_DecimalsLockstep_LakeUnavailableUsesProjection(t *testing.T) {
 	before := assetDetailMismatchVal()

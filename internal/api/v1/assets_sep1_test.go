@@ -89,9 +89,9 @@ func TestAssetGet_Sep1OverlayVerified(t *testing.T) {
 	if env.Data.AnchorAsset == nil || *env.Data.AnchorAsset != "USD" {
 		t.Errorf("anchor_asset not overlaid: %+v", env.Data.AnchorAsset)
 	}
-	// F-1321: `decimals` is the on-chain unit scale (7 for classic) and
+	// `decimals` is the on-chain unit scale (7 for classic) and
 	// must NOT be overwritten by the issuer's display_decimals — doing so
-	// inflated market-cap math by 10^5×. The rounding hint rides
+	// would inflate market-cap math by 10^5×. The rounding hint rides
 	// display_decimals instead.
 	if env.Data.Decimals != 7 {
 		t.Errorf("decimals = %d, want 7 (on-chain scale, NOT display_decimals)", env.Data.Decimals)
@@ -202,7 +202,7 @@ func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
 	domain := "circle.com"
 	// A GENERIC Soroban token — deliberately NOT the XLM SAC
 	// (CAS3J7GY…), which the /v1/assets handler normalizes to native as
-	// an XLM alias (so it would no longer exercise the Soroban path).
+	// an XLM alias (so it would not exercise the Soroban path).
 	sorobanContract := "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP"
 	reader := &stubAssetReader{
 		byID: map[string]v1.AssetDetail{

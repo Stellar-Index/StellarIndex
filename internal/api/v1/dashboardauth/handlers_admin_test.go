@@ -19,11 +19,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// C3-056 (audit-2026-07-23).
+// The audit contract.
 //
 // `POST /v1/account/admin/lookup` hands a staff member another customer's
-// billing email, tier, status and EVERY user's email + last-login. Pre-fix
-// the only record that the access happened was one `Logger.Info` line,
+// billing email, tier, status and EVERY user's email + last-login. Without an audit record
+// the only record that the access happened would be one `Logger.Info` line,
 // while every sibling admin surface (account override, key mint/revoke,
 // status notice) wrote a durable platform.AuditEntry.
 //
@@ -136,7 +136,7 @@ func newAdminLookupFixture(t *testing.T, sink *fakeAuditSink) *adminLookupFixtur
 // lookup drives the handler as `sc` looking up the given dimension. `term` is
 // written in the familiar "email=…" / "slug=…" shorthand, but it is marshalled
 // into the request BODY and the URL is left bare — the look-up term is
-// customer PII and must never appear in a URL (PRV F2, #346). Nothing here
+// customer PII and must never appear in a URL. Nothing here
 // may put it back in the query string.
 func (f *adminLookupFixture) lookup(sc SessionContext, term string) *httptest.ResponseRecorder {
 	f.t.Helper()
@@ -230,7 +230,7 @@ func TestAdminLookup_WritesDurableAuditRow(t *testing.T) {
 		t.Errorf("metadata.query_kind = %v, want email", meta["query_kind"])
 	}
 	// The slug is the customer's email local part: target_id already
-	// names the account, and audit rows outlive an erasure (#809).
+	// names the account, and audit rows outlive an erasure.
 	if _, ok := meta["account_slug"]; ok {
 		t.Errorf("metadata carries account_slug %v", meta["account_slug"])
 	}
@@ -399,23 +399,23 @@ func TestAdminLookup_NilAuditSinkStillServes(t *testing.T) {
 	}
 }
 
-// PRV F2 (#346) — the look-up term must not be reachable via the URL.
+// The look-up term must not be reachable via the URL.
 //
-// The pre-fix handler read `r.URL.Query()`, so a staff member's browser
+// Reading `r.URL.Query()` means a staff member's browser
 // history, the edge proxy, every intermediate CDN and the Referer header on
-// the next navigation each recorded a real customer's email address verbatim.
+// the next navigation each record a real customer's email address verbatim.
 // The 7843f129 Caddy filter masks that in OUR access log only; it cannot
 // reach a browser's history or a third party's log. The address therefore has
 // to stop travelling in the URL at all.
 //
-// This pins the corrected behaviour from both sides, which is what makes it
-// non-vacuous: the query string must NOT resolve an account (it is no longer
+// This pins the behaviour from both sides, which is what makes it
+// non-vacuous: the query string must NOT resolve an account (it is not
 // an input channel), and the body MUST resolve the same one.
 func TestAdminLookup_QueryStringIsNotAnInputChannel(t *testing.T) {
 	f := newAdminLookupFixture(t, &fakeAuditSink{})
 
-	// The email in the URL and nowhere else. Pre-fix this returned 200 plus
-	// the customer's account; it must now be refused outright.
+	// The email in the URL and nowhere else. A handler reading the query would return 200 plus
+	// the customer's account; it must be refused outright.
 	rec := f.post(f.staffSC, "/v1/account/admin/lookup?email=ceo@acme.example", []byte(`{}`))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("query-string email: status = %d, want 400 — the query string must not resolve an account; body = %s",
@@ -465,7 +465,7 @@ func TestAdminLookup_MountedAsPostOnly(t *testing.T) {
 	}
 }
 
-// RLT-209: rate_limit_per_min_override / monthly_request_quota_override are
+// rate_limit_per_min_override / monthly_request_quota_override are
 // `required` in the OpenAPI AdminAccountView schema, and 0 is their
 // meaningful "inherit tier default" value — not an absent one. An
 // `omitempty` json tag drops the key entirely when the value is 0, which
@@ -498,7 +498,7 @@ func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
 	}
 }
 
-// TestAdminAccountView_EffectiveLimits — GH-1074: the staff cockpit
+// TestAdminAccountView_EffectiveLimits — the staff cockpit
 // fetched rate_limit_per_min_override / monthly_request_quota_override
 // but had no way to see what they actually RESOLVE to without doing the
 // tier-ceiling math by hand. adminAccountView must report what auth

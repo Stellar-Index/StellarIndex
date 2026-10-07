@@ -115,8 +115,8 @@ func TestHandlerBudgets_StayInsideTheRequestTimeout(t *testing.T) {
 	}
 }
 
-// TestPriceAtAndPriceChangesHaveRequestBudgets pins RLT-455 directly
-// against the two files it named, rather than relying on the general
+// TestPriceAtAndPriceChangesHaveRequestBudgets pins the price-at and price-changes budgets directly
+// against their two files, rather than relying on the general
 // walker above (which only validates budgets that EXIST and is
 // structurally blind to a handler with none at all). price_at.go's
 // alias walk and price_changes.go's up-to-five sequential PriceAt
@@ -144,7 +144,7 @@ func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
 	}
 }
 
-// TestRWAHistoryBudgetsStayInsideTheRequestTimeout pins RLT-043 directly
+// TestRWAHistoryBudgetsStayInsideTheRequestTimeout pins the RWA history budgets directly
 // against rwaHistoryBudget and rwaPremiumHistoryBudget, rather than
 // relying on the general walker above. Neither is spelled as a literal
 // context.WithTimeout(r.Context(), …): cachedRWAValueHistory and

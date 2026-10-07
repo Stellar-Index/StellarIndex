@@ -11,7 +11,7 @@ import (
 )
 
 // TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins the reconciliation
-// contract the per-pool drill-down (#338) rests on: each valued leg is
+// contract the per-pool drill-down rests on: each valued leg is
 // published to the cent, and every figure above it is the EXACT sum of
 // the published figures beneath. Two legs worth $0.004 each are
 // therefore two published "0.00" legs, a "0.00" pool and a "0.00"

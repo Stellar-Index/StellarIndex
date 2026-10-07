@@ -28,8 +28,8 @@ func (b *blockingReadyCheck) Name() string   { return "blocking" }
 func (b *blockingReadyCheck) Critical() bool { return false }
 
 // TestHandleReadyz_ConcurrentCallerAbandonsViaContext is the regression
-// test for GH-587(a): handleReadyz used to hold readyzMu across the
-// whole check round (computeReadyz), so a second caller queued
+// test that handleReadyz does not hold readyzMu across the
+// whole check round (computeReadyz), so a second caller would queue
 // synchronously on the mutex with no way to honour its own request
 // context. On an unauthenticated, rate-limit-exempt route, that meant
 // every concurrent probe blocked for up to the round's full budget
@@ -92,7 +92,7 @@ func (b *blockingLakeCheck) Name() string   { return "clickhouse" }
 func (b *blockingLakeCheck) Critical() bool { return false }
 
 // TestHandleLivezLake_ConcurrentCallerAbandonsViaContext mirrors
-// TestHandleReadyz_ConcurrentCallerAbandonsViaContext for GH-587(a)'s
+// TestHandleReadyz_ConcurrentCallerAbandonsViaContext for the
 // second endpoint: /v1/livez/lake's 1s TTL against a 5s ping budget was
 // exactly the head-of-line-blocking gap the finding named — every
 // probe blocked on livezLakeMu across the ping, up to 5s, on the route

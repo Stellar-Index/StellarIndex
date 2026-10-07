@@ -259,7 +259,7 @@ type coverageEnvelope struct {
 }
 
 // xlmCoverageFloor is the live floor of crypto:XLM / fiat:USD on the
-// daily aggregate, measured on r1 2026-09-03. The fixtures below are
+// daily aggregate, measured on r1. The fixtures below are
 // built around it so the windows under test are the real ones: 2016 is
 // genuinely below it, and the pair's daily candles genuinely have a
 // multi-year hole ABOVE it.
@@ -295,12 +295,12 @@ func ohlcCoverageGetPair(t *testing.T, ts *testServer, pairQS, from, to string) 
 
 // TestOHLCSeries_BelowCoverageFloorIsFlagged is the defect itself.
 //
-// Pre-fix, GET /v1/ohlc?base=crypto:XLM&quote=fiat:USD&interval=1d
-// &from=2016-01-01&to=2016-03-01 answered `{"intervals":[]}` with
+// Without the floor flag, GET /v1/ohlc?base=crypto:XLM&quote=fiat:USD&interval=1d
+// &from=2016-01-01&to=2016-03-01 answers `{"intervals":[]}` with
 // `flags.stale:false` and nothing else — byte-identical to the answer
 // for a window the pair traded through quietly. The pair's daily
 // candles begin 2018-07-01; 2016 is two and a half years below that
-// floor, and the response said so nowhere.
+// floor, and the response would say so nowhere.
 func TestOHLCSeries_BelowCoverageFloorIsFlagged(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := ohlcCoverageServer(t, probe)
@@ -1323,8 +1323,8 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 //
 // A populated answer carries no coverage annotation at all — the floor
 // exists to explain an empty one — so the probe must not run here. The
-// annotation that used to be pinned SILENT on an empty answer is the
-// thing this replaces: the surface no longer has to describe a market it
+// annotation that would otherwise sit SILENT on an empty answer is the
+// thing this replaces: the surface need not describe a market it
 // cannot serve, because it serves it.
 func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
