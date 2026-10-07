@@ -179,8 +179,9 @@ func captureEligible(ce xdr.ContractEvent) bool {
 // internal/sources/sdex.extractClaimAtoms exactly (same op types,
 // same success gating) for atom SELECTION, and delegates the per-atom
 // "is this a real trade" test to [sdexclaim.IsRealTrade], which is the
-// same predicate sdex.decodeClaimAtom enforces — so the census equals the decoder's trade output by
-// construction, not by three files agreeing to stay in step. It does not
+// same predicate sdex.decodeClaimAtom enforces — so the census equals
+// the decoder's trade output by construction, not by three files
+// agreeing to stay in step. It does not
 // equal the trade-row count; see [Census].
 // Returns the count rather than the slice to avoid allocation in the
 // hot per-ledger census walk.

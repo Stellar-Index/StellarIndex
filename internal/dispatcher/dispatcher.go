@@ -1135,7 +1135,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 //     touches the fee-source account, so dropping it publishes the
 //     pre-refund balance as final.
 //
-// The three phases, in emission order:
+// The phases, in emission order:
 //
 //	phase 1  every tx's FeeChanges             processFeeSeqNum charges ALL
 //	                                           fees before applying ANY tx
@@ -1347,8 +1347,8 @@ type evictedKeysSource interface {
 }
 
 // entryChangeTxHash is the hex tx hash used to stamp entry-change contexts.
-// Kept separate from the ProcessLedger-local encoding so the two-phase walk
-// computes it identically in both phases.
+// Kept separate from the ProcessLedger-local encoding so the walk computes
+// it identically in every phase.
 func entryChangeTxHash(tx *ingest.LedgerTransaction) string {
 	return hex.EncodeToString(tx.Result.TransactionHash[:])
 }
@@ -2098,7 +2098,7 @@ func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nol
 		} else if top != nil {
 			// No auth array — the op didn't need user auth for any
 			// downstream call (rare for token-moving paths but allowed
-			// by the protocol). The top-level call alone.
+			// by the protocol). Only the top-level call is recorded.
 			calls = append(calls, top)
 		}
 
