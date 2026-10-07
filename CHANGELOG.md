@@ -136,9 +136,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Performance
 
 - **explorer:** account/recent readers are windowed to keep read-in-order (#2191).
-(PR #1042)
-(PR #1254)
-(PR #1230)
-(#1108)
-(PR #1231)
-supersedes dependabot #1371/#1372

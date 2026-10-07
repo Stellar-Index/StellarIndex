@@ -132,9 +132,3 @@ our existing Cloudflare CDN is one vendor; Vercel is two. Reliability
 difference is invisible at our traffic volume — the showcase is a
 thin shell over `api.stellarindex.io`, which is the actual reliability
 question.
-
-```sh
-pnpm lint               # next lint
-```
-
-MDX via `@next/mdx`; account at `/account/*`.

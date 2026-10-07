@@ -605,11 +605,3 @@ sudo -u postgres psql stellarindex -c 'SELECT source, events_24h FROM protocol_e
 
 - [dex-nonstandard-decimals](../runbooks/dex.md#dex-nonstandard-decimals) (`docs/operations/runbooks/dex.md#dex-nonstandard-decimals`): full decimals-guard procedure.
 - [redis-write-blocked-disk-full](cache.md#stellarindex_redis_writes_blocked): shared with the storage family.
-sudo /usr/local/sbin/run-heavy-job.sh zz -- \
-  stellarindex-ops supply snapshot -asset native
-
-Run `make zz-inline-target` first.
-There is no `make zz-absent-target`.
-```sh
-make zz-fenced-target
-```

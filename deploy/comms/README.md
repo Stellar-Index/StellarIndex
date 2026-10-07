@@ -58,5 +58,3 @@ name.
   — calls `rollback-update.md`.
 - [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)
   — incident escalation; calls `incident-update.md`.
-- [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)
-  — calls `maintenance-window.md`.

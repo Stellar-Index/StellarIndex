@@ -3534,7 +3534,7 @@ paths:
                             items:
                               type: object
                               properties:
-                                asset: { type: string, description: Reserve underlying token, C-strkey. }
+                                asset:           { type: string, description: Reserve underlying token (C-strkey). }
                                 decimals:        { type: integer }
                                 supplied:        { type: string, description: "Total supplied, underlying token base units." }
                                 borrowed:        { type: string, description: "Total borrowed, underlying token base units." }
@@ -8822,7 +8822,7 @@ paths:
         "503":
           description: Account store not configured.
 
-  /account/admin/lookup-zzfixture:
+  /account/admin/lookup:
     post:
       operationId: adminLookupCustomer
       tags: [admin]

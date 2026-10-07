@@ -317,9 +317,3 @@ Availability claim: the proposal's 99.99 % is not the published commitment (99.9
 #### Verification protocol
 
 If a reviewer disputes a ✅ cell, re-run its method: source read, SEP/CAP spec read, on-chain query (record contract + WASM hash), or a Go test with a fixture (canonical: KALIEN i128 regression, `internal/canonical/amount_test.go`). An external doc is weaker evidence; use it only where it is primary.
-(#1271)
-R-013 → #1265
-(PRs #1261, #1262, #1263, #1268, #1270)
-Deferred #1347 — go-stellar-sdk v0.5->v0.6
-#1353
-#1369
