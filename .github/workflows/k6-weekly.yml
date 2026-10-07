@@ -1,186 +1,78 @@
 name: k6-weekly
 
-# Weekly canonical mixed-realistic run — the regression alarm for the
-# Freighter SLA p95 ≤ 200 ms claim (Task #74 Wave 4; the artefact it
-# generates is the input to Task #77's monthly proof-of-SLA report,
-# docs/operations/sla-proof-procedure.md).
+# Canonical mixed-realistic load run: the load-at-volume evidence for the
+# Freighter SLA p95 <= 200 ms claim. Its report feeds the proof-of-SLA
+# procedure (docs/operations/sla-proof-procedure.md).
 #
-# Schedule: Sundays 02:00 UTC. Off-peak for the target's traffic so a
-# legitimate latency regression isn't masked by routine load.
+# There is no schedule. The weekly proof is rendered from the SLA probe's
+# own series by .github/workflows/sla-proof-weekly.yml, which needs no load
+# target. A scheduled control that cannot run is not a control: it is a red
+# badge that teaches people to ignore red badges. The probe measures served
+# latency at concurrency 1 from inside the box; the scenarios here measure
+# client-observed latency under synthetic concurrency across the edge. When
+# a production-shaped target exists, this workflow closes that gap.
 #
-# 2026-08-29 (#316) — this workflow was a permanently-green no-op. With
-# the target secrets unset the scheduled path printed `::notice::` and
-# exited 0, so every scheduled run since the cron was restored concluded
-# `success` with `Install k6`, `Compile-check all scenarios` and `Run
-# scenario` all `skipped` (runs 30733884244, 31292354359, 31922897932,
-# 32614013429) — and no docs/operations/sla-proof-<YYYY-MM-DD>.md has
-# ever landed. Three structural changes:
+# Two jobs, INDEPENDENT (no `needs:`) so neither can silence the other:
 #
-#   1. The scenario compile-check is its own job with NO secret and NO
-#      target dependency, and it also runs on `pull_request`. It used to
-#      sit behind the secrets gate, so `make test-load-check` ran exactly
-#      once ever — 2026-07-30 run 30542038490 — where it FAILED: `k6
-#      archive` does not pass system env vars into __ENV (unlike `k6
-#      run`), so scenarios/lib/env.js threw "K6_TARGET is required" even
-#      with the secrets present. Fixed in the Makefile target, which now
-#      seeds placeholder __ENV values explicitly.
-#   2. The scenarios themselves had to be MADE to compile before the gate
-#      could be made mandatory. 04-batch.js and 06-mixed-realistic.js used
-#      object spread (`{ ...headers }`) from the day they were written
-#      (dc145698, 2026-05-01); the pinned k6 0.50.0 transpiles with babel,
-#      which parses array spread but not object spread, so `k6 archive`
-#      died with "Unexpected token" — and 06-mixed-realistic.js is the
-#      DEFAULT scenario this schedule runs. Both are now Object.assign
-#      merges, verified against a real k6 v0.50.0: all 9 scenarios archive
-#      clean, and the mixed scenario executes end-to-end. The version pin
-#      is deliberately unchanged: 0.50.0 is the binary that captured the
-#      historical AC2 evidence (p95 54.4 ms), so the measuring instrument
-#      stays comparable.
-#   3. A scheduled run that cannot produce evidence no longer reports
-#      success. scripts/ci/check-sla-evidence.sh is the decision core;
-#      a non-zero verdict opens/updates a tracking issue (the
-#      reconciliation-health.yml pattern) and fails the run. Silence and
-#      success are no longer the same signal. The two jobs are INDEPENDENT
-#      (no `needs:`) so that neither can silence the other.
+#   1. Scenario compile-check: no secret, no target, runs on every
+#      `pull_request` touching test/load/**. `k6 archive` does not pass
+#      system env vars into __ENV (unlike `k6 run`), so the Makefile target
+#      seeds placeholder __ENV values explicitly. The pinned k6 0.50.0
+#      transpiles with babel, which parses array spread but not object
+#      spread: scenarios merge with Object.assign, never `{ ...x }`. The pin
+#      stays because 0.50.0 captured the historical AC2 evidence
+#      (p95 54.4 ms), so the measuring instrument stays comparable.
+#   2. Load run (`workflow_dispatch`):
+#      - exports summary.json with p(99) requested explicitly (k6's default
+#        trend stats stop at p(95), which would leave the p99 <= 500 ms half
+#        of ADR-0009 reading "n/a" while looking complete), and renders the
+#        headline numbers into $GITHUB_STEP_SUMMARY;
+#      - uploads only $REPORT_DIR, and only when the scenario ran.
+#        test/load/reports/ is never empty (it keeps dated historical
+#        exports), so an unscoped upload publishes stale evidence for a run
+#        that measured nothing;
+#      - renders the export into docs/operations/sla-proof-<YYYY-MM-DD>.md
+#        with scripts/ci/render-sla-proof.sh, which REFUSES (rc 2, writing
+#        nothing) when a headline metric or provenance field is absent, and
+#        commits it through the contents API with the job token (every
+#        checkout stays `persist-credentials: false`). Failing to retain a
+#        measurement the run took reddens the run;
+#      - does not abort on a non-zero k6 exit. k6 exits 99 on a BREACHED
+#        threshold, the most important report to retain; the exit code is
+#        an output and the final step reddens the run on it;
+#      - recomputes the scripts/ci/check-sla-evidence.sh verdict AFTER the
+#        report lands, so a first healthy run does not report the absence of
+#        the file it just wrote. A non-zero verdict opens/updates a tracking
+#        issue (the reconciliation-health.yml pattern) and fails the run.
 #
-# 2026-09-03 (#378) — #316 made a run that measures NOTHING go red. It did
-# not make a run that DOES measure land anything, and it left a live
-# false-evidence surface. Three further changes, none of which presume an
-# answer to the staging-target question below:
-#
-#   1. The upload step was `if: always()` over the bare test/load/reports/,
-#      which is never empty — .gitignore deliberately keeps dated dirs, so
-#      it holds README.md + 2026-06-13/00-acceptance.json. Every weekly run
-#      therefore published `k6-summary-<run_id>` containing an eleven-week-
-#      old export reading "passes": 30600, "fails": 0, p(95) 54.4 ms, all
-#      thresholds green — for a run whose `Run scenario` step was SKIPPED
-#      (run 33299745709). Now scoped to $REPORT_DIR and gated on the
-#      scenario actually having run.
-#   2. There was no --summary-export and no handleSummary anywhere, so even
-#      WITH a target the only output was console text in a log that ages
-#      out. The run now exports summary.json and renders the headline
-#      numbers into $GITHUB_STEP_SUMMARY (the public-dataset-check.yml
-#      convention). That is the INPUT an operator promotes to
-#      docs/operations/sla-proof-<YYYY-MM-DD>.md, which stays the durable
-#      artefact check-sla-evidence.sh leg 2 measures.
-#   3. --summary-trend-stats now requests p(99) explicitly. k6 exports
-#      avg,min,med,max,p(90),p(95) by default, so the evidence would have
-#      read "n/a" for the p99 <= 500 ms half of ADR-0009 while looking
-#      complete — exactly what the real 2026-06-13 export does.
-#
-# 2026-09-09 (#378, second pass) — the run still had no way to leave
-# anything DURABLE behind. `summary.json` and the step summary are both
-# ephemeral (a log rotates, an artifact expires at 90 days), and the only
-# thing scripts/ci/check-sla-evidence.sh has ever counted as evidence is a
-# committed docs/operations/sla-proof-<YYYY-MM-DD>.md. The sole
-# implementation of that promotion was a paragraph in
-# sla-proof-procedure.md instructing an operator to mint Grafana snapshots
-# from grafana.staging.stellarindex.io — a host that does not exist — and
-# to run promql over `k6_*` series that only exist when the (unset)
-# remote-write secret is set. So the durable half of the feed had no
-# implementation at all, on any branch, which is why the freshness leg has
-# been red since it was written. Four changes:
-#
-#   1. scripts/ci/render-sla-proof.sh renders the export into the dated
-#      report, with a provenance block naming the target, the run window,
-#      the method, the scenario, the commit and the k6 version, plus the
-#      sha256 of the export it was rendered from. It REFUSES (rc 2, writing
-#      nothing) when a headline metric or a provenance field is absent, so
-#      an unlabelled number cannot be published as a proof.
-#   2. The run commits that report through the contents API with the job
-#      token — no credentialed checkout, every checkout here stays
-#      `persist-credentials: false`. Failing to retain a measurement the
-#      run actually took is itself a failure and reddens the run.
-#   3. `Run scenario` no longer aborts the job on a non-zero k6 exit. k6
-#      exits 99 on a BREACHED threshold, which is a real measurement and
-#      the single most important report to retain; aborting there meant the
-#      one run that mattered most left nothing behind. The exit code is an
-#      output and the final step reddens the run on it.
-#   4. The verdict that drives the tracking issue and the exit status is
-#      recomputed AFTER the report lands. Taken before, a first healthy run
-#      would report rc 2 for the absence of the file it had just written,
-#      and the feed would need two weeks to call itself healthy once.
-#
-# Also: --out experimental-prometheus-rw is now conditional. k6 defaults
+# --out experimental-prometheus-rw is conditional: k6 defaults
 # K6_PROMETHEUS_RW_SERVER_URL to the runner's own localhost, so passing it
-# with the secret unset silently discarded the run.
+# with the secret unset silently discards the run.
 #
-# Deliberately NOT done: pointing the run at r1. r1 is the single
-# production host, test/load/scenarios/lib/env.js refuses production
-# targets by design, and mixed-realistic is a 300 rps / 10 min soak.
-# Restoring the feed means provisioning a production-shaped target, not
-# load-testing production.
+# Never point the run at r1. r1 is the single production host,
+# test/load/scenarios/lib/env.js refuses production targets by design, and
+# mixed-realistic is a 300 rps / 10 min soak.
 #
-# 2026-09-15 — THE SCHEDULE IS RETIRED; THE CAPABILITY IS NOT. The two
-# ways out named above were "provision a production-shaped target, or
-# retire this workflow", and a third was taken instead: the weekly proof
-# is now rendered from the SLA probe's own series by
-# .github/workflows/sla-proof-weekly.yml, which needs an ssh path to the
-# probe host and no load target at all. So the `schedule:` trigger is
-# gone from this file. A scheduled control that cannot run is not a
-# control — it is a red badge that teaches people to ignore red badges,
-# which is what four months of green no-ops followed by weeks of red runs
-# actually cost.
-#
-# Everything that still works is still here, and nothing about the k6
-# capability was weakened:
-#
-#   - The scenario compile-check keeps its own job with no secret and no
-#     target dependency, and keeps running on every `pull_request`
-#     touching test/load/**. It was never blocked on the target and is
-#     the gate that caught the object-spread bug; retiring the schedule
-#     must not cost it, and does not.
-#   - The load run keeps its `workflow_dispatch` path, its scenario
-#     input, its summary export with p(99), its conditional remote-write
-#     sink, its renderer and its publish step. Mint K6_TARGET_STAGING
-#     against a production-shaped target and `gh workflow run
-#     k6-weekly.yml` produces the same dated proof report it always
-#     would have. Nothing needs rebuilding first.
-#
-# What the probe aggregate does NOT replace is load at volume. It
-# measures served latency at concurrency 1 from inside the box; the
-# scenarios below measure client-observed latency under synthetic
-# concurrency across the edge. The rendered probe report says so in its
-# own "does not prove" section and points back here. When a target
-# exists, this workflow is the one that closes that gap.
-#
-# History of the target secret, so nobody re-derives it: the org
-# migration ate the original secrets (the workflow "had failed SILENTLY"
-# — docs/operations/v1-launch-plan.md, 2026-07-30 ~14:40Z), the load key
-# was re-minted, and K6_TARGET_STAGING was then deliberately deleted
-# again "so the weekly cron keeps its designed skip-until-staging
-# behavior" — i.e. the green no-op was a conscious park, not an
-# accident. #316 is about the park being INVISIBLE: parked and healthy
-# looked identical from the outside. The park is now visible (a
-# tracking issue + a red run) instead of silent. Two ways out, both
-# legitimate: provision a production-shaped target, or retire this
-# workflow.
-#
-# Secrets (repo settings → Secrets) — K6_TARGET_STAGING is UNSET, which
-# is exactly what the tracking issue reports. Note before minting it:
-# K6_TARGET_STAGING is recorded VERBATIM in the proof report this workflow
-# commits to a public repo. That is deliberate — a proof that will not say
-# what it measured proves nothing — so pick a host that is fine to
-# publish. The credential is never recorded; it travels only in
-# STELLARINDEX_LOAD_API_KEY, and the renderer refuses a target URL
-# carrying userinfo.
+# Secrets (repo settings → Secrets). K6_TARGET_STAGING is deliberately
+# UNSET until a production-shaped target exists. Before minting it: it is
+# recorded VERBATIM in the proof report this workflow commits to a public
+# repo (a proof that will not say what it measured proves nothing), so pick
+# a host that is fine to publish. The credential is never recorded; it
+# travels only in STELLARINDEX_LOAD_API_KEY, and the renderer refuses a
+# target URL carrying userinfo.
 #   - K6_TARGET_STAGING         — e.g. https://api.staging.stellarindex.io/v1
 #   - STELLARINDEX_LOAD_API_KEY — load-test API key (vault-minted)
 #   - K6_PROMETHEUS_RW_SERVER_URL — remote-write sink for the run's metrics
-#   - ALERTMANAGER_URL_STAGING  — used by the spike scenario only; the
-#                                 weekly runs mixed-realistic, so it
-#                                 matters on the manual-dispatch path
+#   - ALERTMANAGER_URL_STAGING  — used by the spike scenario only
 #
-# Manual dispatch supports running any single scenario via the `scenario`
-# input — useful for re-running a regression investigation without
-# waiting for next Sunday.
+# Manual dispatch runs any single scenario via the `scenario` input.
 
 on:
   # NO `schedule:`. The Sunday 02:00 UTC slot moved to
   # .github/workflows/sla-proof-weekly.yml, which renders the weekly proof
   # from the SLA probe and needs no load target. Re-adding a cron here
-  # without first minting K6_TARGET_STAGING recreates the red-forever
-  # scheduled control this retirement removes — and would put two
+  # without first minting K6_TARGET_STAGING makes a red-forever
+  # scheduled control — and would put two
   # workflows in the same week both trying to publish
   # docs/operations/sla-proof-<same-date>.md.
   workflow_dispatch:
@@ -191,8 +83,7 @@ on:
         default: '06-mixed-realistic.js'
   # Scenario syntax is gated on any PR that can break it. This path needs
   # no secrets and no target, so it is the one leg of this workflow that
-  # can run continuously — previously a scenario syntax error could sit
-  # undetected indefinitely.
+  # can run continuously.
   pull_request:
     paths:
       - 'test/load/**'
@@ -219,7 +110,7 @@ jobs:
           k6-version: '0.50.0'
 
       - name: Compile-check all scenarios
-        # No `if:` — this is the whole point of #316. The compile gate must
+        # No `if:`. The compile gate must
         # not be conditional on secrets that do not exist.
         run: make test-load-check
 
@@ -228,11 +119,10 @@ jobs:
     # Deliberately NO `needs: scenario-compile`. The two jobs answer
     # different questions and must not gate each other: `needs:` would let
     # a scenario syntax error SKIP the evidence verdict, the sla-evidence
-    # tracking issue and the ::error:: — i.e. exactly the mechanism #316
-    # exists to guarantee would silently not run, and the operator would be
-    # pointed at a babel parse error instead of at the missing target.
-    # Both jobs run in parallel on the schedule; either one going red is a
-    # real, separately-actionable signal.
+    # tracking issue and the ::error:: — the mechanism that makes a run
+    # with no evidence visible — and the operator would be pointed at a
+    # babel parse error instead of at the missing target. Either job going
+    # red is a real, separately-actionable signal.
     #
     # A PR gets the compile gate only: there is nothing to load-test from a
     # pull request, and the secrets aren't available to one anyway.
@@ -264,9 +154,9 @@ jobs:
       # Run-scoped, gitignored output dir. Deliberately NOT the bare
       # test/load/reports/ — that directory permanently holds checked-in
       # historical evidence (README.md + 2026-06-13/00-acceptance.json, kept
-      # by .gitignore's `!/test/load/reports/2026-*/`), and uploading it
-      # wholesale published an eleven-week-old all-green k6 summary under
-      # this run's name. See the "Upload" step below.
+      # by .gitignore's `!/test/load/reports/2026-*/`); uploading it
+      # wholesale would publish an old all-green k6 summary under this
+      # run's name. See the "Upload" step below.
       REPORT_DIR: test/load/reports/run-${{ github.run_id }}
 
     steps:
@@ -371,7 +261,7 @@ jobs:
 
           ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           # Captured then sliced, never `k6 version | head -1`: an
-          # early-exiting pipe consumer under pipefail is the #475 bug class
+          # early-exiting pipe consumer under pipefail is a SIGPIPE failure
           # (scripts/ci/lint-shell-sigpipe.sh).
           k6_version="$(k6 version)"
           k6_version="${k6_version%%$'\n'*}"
@@ -386,16 +276,12 @@ jobs:
 
       - name: Render the durable SLA proof report
         id: proof
-        # THE STEP THIS WORKFLOW WAS MISSING (#378). Everything before it
+        # The only durable output of the run. Everything before it
         # is ephemeral: a job log rotates, a run summary rotates, an
         # artifact expires at 90 days. `scripts/ci/render-sla-proof.sh`
         # turns the export into docs/operations/sla-proof-<YYYY-MM-DD>.md,
         # which the next step commits — and a committed file is the only
-        # thing scripts/ci/check-sla-evidence.sh has ever counted as
-        # evidence. Until now the only implementation of that promotion was
-        # a paragraph in sla-proof-procedure.md telling an operator to visit
-        # a Grafana host that does not exist, which is why no dated proof
-        # report has ever landed on any branch.
+        # thing scripts/ci/check-sla-evidence.sh counts as evidence.
         #
         # The renderer is deterministic and offline, and is unit-tested by
         # scripts/ci/render-sla-proof-test.sh on every PR. It REFUSES
@@ -473,8 +359,7 @@ jobs:
         # push-to-main trigger ignores docs/** anyway, so this costs no CI.
         #
         # A failure here is a real failure: the run measured something and
-        # then failed to retain it, which is the #378 defect in a different
-        # spelling. It is NOT swallowed.
+        # then failed to retain it. It is NOT swallowed.
         if: always() && steps.proof.outputs.proof_path != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -552,13 +437,10 @@ jobs:
 
       - name: Upload the k6 summary export
         # Scoped to $REPORT_DIR, and only when the scenario actually ran.
-        # The previous form (`if: always()`, `path: test/load/reports/`)
-        # uploaded the CHECKED-IN historical fixture on every run: run
-        # 33299745709 had `Run scenario: skipped` yet published
-        # `k6-summary-33299745709` (1,691 B) containing the 2026-06-13
-        # export — "passes": 30600, "fails": 0, p(95) 54.4 ms, all green.
-        # An artifact named after a run that measured nothing, asserting a
-        # pass, is worse than no artifact.
+        # An unscoped `if: always()` upload of test/load/reports/ would
+        # publish the CHECKED-IN historical export (all green) under the
+        # name of a run that measured nothing. An artifact asserting a pass
+        # for such a run is worse than no artifact.
         # if-no-files-found: error — if the scenario ran and produced no
         # summary, that is a failure to make evidence, not a nothing.
         if: always() && steps.gate.outputs.target_ready == 'true'
@@ -625,24 +507,24 @@ jobs:
 
       - name: Fail the run when no SLA evidence was produced
         # Four independent ways this run can fail to leave evidence behind,
-        # each of which used to be survivable:
+        # each of which reddens the run:
         #
         #   verdict_rc != 0  no target, or no dated proof inside the window
-        #                    even after this run (#316's defect).
+        #                    even after this run.
         #   k6_rc    != 0    the scenario breached a threshold, died, or was
         #                    skipped entirely (a skipped step leaves the
         #                    output empty, which is correctly != '0').
         #   proof_rc == 2    the renderer REFUSED the export — no headline
         #                    metric, or no provenance. Evidence that cannot
-        #                    be labelled is not evidence (#378).
+        #                    be labelled is not evidence.
         #   publish failed   the run measured something and then failed to
         #                    retain it; the step's own failure already
         #                    reddens the job, and it is named here so the
         #                    ::error:: says which limb broke.
         #
-        # The defect this replaces (#316): the scheduled run exited 0 with
-        # every real step skipped, so a badge asserting "the SLA alarm ran"
-        # was green for months while nothing measured anything.
+        # Without this step a run with every real step skipped exits 0, and a
+        # badge asserting "the SLA alarm ran" stays green while nothing
+        # measures anything.
         if: >-
           always() && steps.verdict.outcome == 'success' &&
           (steps.verdict.outputs.verdict_rc != '0' ||
