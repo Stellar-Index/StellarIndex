@@ -134,10 +134,9 @@ func priceRenderScale(r *big.Rat, digits int) int {
 //
 // Two modes share this route:
 //
-//  1. Single-bar (default — back-compat): no `interval` query
-//     param. Returns one [OHLCBar] for the window [from, to)
-//     computed from raw trades via [aggregate.ComputeOHLC]. This is
-//     the original /v1/ohlc semantics.
+//  1. Single-bar (default): no `interval` query param. Returns one
+//     [OHLCBar] for the window [from, to) computed from raw trades
+//     via [aggregate.ComputeOHLC].
 //  2. Multi-bar series (CG/CMC parity): `interval` is one
 //     of 1m / 5m / 15m / 30m / 1h / 4h / 1d / 1w. Returns
 //     [OHLCSeriesResponse.Intervals] — up to `limit` (default 100,
@@ -203,13 +202,10 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pull all trades in window (capped at the handler's ceiling —
-	// if the window has more trades than that, the bar will under-
-	// count. Aggregator-persisted CAGGs will replace this raw-scan
-	// path once they're live.)
-	// Per-request DB ceiling: the single-bar path scans raw `trades`
-	// on every query (the multi-bar series path
-	// above reads CAGGs and sets its own timeout in handleOHLCSeries).
+	// The single-bar path scans raw `trades` on every query, capped at
+	// maxTradesForOHLC; a window with more trades than that yields a
+	// partial bar with Truncated set. The multi-bar series path above
+	// reads CAGGs and sets its own timeout in handleOHLCSeries.
 	// 8s matches the sibling raw-scan endpoints and fires before the
 	// blanket request-timeout middleware.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)

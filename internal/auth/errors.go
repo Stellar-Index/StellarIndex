@@ -8,7 +8,8 @@ import "errors"
 //	ErrForbidden          → 403 (caller's creds are valid but lack scope)
 //	ErrTokenExpired       → 401 with WWW-Authenticate hint
 //	ErrTokenMalformed     → 400 (the token isn't even decodable)
-//	ErrNotImplemented     → 404 sep10-unavailable (validator stub; not configured)
+//	ErrNotImplemented     → 503 auth-not-configured (auth middleware);
+//	                        404 sep10-unavailable (/v1/auth/sep10/* handlers)
 //
 // Code outside this package should compare via [errors.Is], not
 // string match — wrappers add context but preserve sentinels.
@@ -32,16 +33,16 @@ var (
 	// at all (bad base64, missing dots, etc.). 400 Bad Request.
 	ErrTokenMalformed = errors.New("auth: token malformed")
 
-	// ErrNotImplemented — returned by the Noop validator fallbacks
-	// ([NoopAPIKeyValidator], [NoopSEP10Validator]) when an
-	// auth-mode is configured but no real validator is wired (e.g.
-	// auth_mode=apikey selected but Redis unavailable, or
-	// auth_mode=sep10 selected without the SEP-10 signing seed).
-	// The middleware translates it to 503 Service Unavailable —
-	// fail-loud, never silently authorise or silently reject. Stays
-	// in this package as long as the Noop fallbacks do (i.e.
-	// indefinitely; they are the deliberate "no validator wired"
-	// disabled state, not a stub awaiting replacement).
+	// ErrNotImplemented — no real validator is wired. Returned by
+	// [NoopAPIKeyValidator] (an API-key mode whose Redis or Postgres
+	// backend is unavailable), by [NoopSEP10Validator] (SEP-10 not
+	// configured and auth_mode is not sep10; under sep10 that fails
+	// startup instead), and by the auth middleware when the mode's
+	// validator is nil. The auth middleware answers 503
+	// auth-not-configured; the /v1/auth/sep10/* challenge and token
+	// handlers answer 404 sep10-unavailable. Never silently authorise
+	// or silently reject. The Noop validators are the deliberate "no
+	// validator wired" state, not stubs awaiting replacement.
 	ErrNotImplemented = errors.New("auth: validator not implemented in this build")
 
 	// ErrSignupRateLimited — returned by the per-IP signup throttle

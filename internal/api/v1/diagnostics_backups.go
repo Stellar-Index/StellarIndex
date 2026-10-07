@@ -151,9 +151,9 @@ type BackupClickHouse struct {
 	// SchemaSnapshotOffsiteLastTS is the last successful offsite push
 	// of that snapshot; nil on a host that acknowledged local-only.
 	SchemaSnapshotOffsiteLastTS *WireTime `json:"schema_snapshot_offsite_last_ts"`
-	// ZFSSnapshotLatestTS is reserved: no ZFS snapshot schedule
-	// exists for the lake pool today (ADR-0043 §2 rejects a data
-	// copy), so there is no producer and this is always nil.
+	// ZFSSnapshotLatestTS is reserved and always nil: zfs-snapshot.sh
+	// publishes `stellarindex_zfs_snapshot_latest_unix` for the lake
+	// dataset, but this handler does not read it.
 	ZFSSnapshotLatestTS *WireTime `json:"zfs_snapshot_latest_ts"`
 	// ReplicaLagSeconds is reserved: the lake is single-node today,
 	// so there is no replica and this is always nil.
