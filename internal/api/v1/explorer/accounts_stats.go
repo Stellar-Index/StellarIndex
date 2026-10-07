@@ -8,7 +8,7 @@ import (
 )
 
 // AccountsStatsView is the wire response for GET /v1/accounts/stats —
-// the /accounts hub's analytics strip (operator request 2026-08-08).
+// the /accounts hub's analytics strip.
 // Stroops-denominated values are STRINGS (ADR-0003); counts are JSON
 // numbers (all far below 2^53).
 type AccountsStatsView struct {

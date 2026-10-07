@@ -25,8 +25,8 @@ type ContractEventView struct {
 	Topic0     string `json:"topic_0,omitempty"`
 	// Topics are human-readable renderings of topics[1:] (topic_0 is
 	// the symbol above); Data renders the event payload. Display
-	// format — lossy by design (S-016: rows read 'transfer' fifty
-	// times with no amounts or parties).
+	// format — lossy by design; without these renderings a contract's
+	// rows read 'transfer' fifty times with no amounts or parties.
 	Topics []string `json:"topics,omitempty"`
 	Data   string   `json:"data,omitempty"`
 }
@@ -40,9 +40,8 @@ type ContractEventView struct {
 type ContractDetailView struct {
 	ContractID string `json:"contract_id"`
 	// Protocol names the registry protocol this contract belongs to
-	// (blend, soroswap, …) when attribution is known (Pass-B CON-3:
-	// a Blend pool page couldn't say it was Blend while the server
-	// held the map).
+	// (blend, soroswap, …) when attribution is known, so a Blend pool
+	// page can say it is Blend — the server holds the map.
 	Protocol   string              `json:"protocol,omitempty"`
 	Events     []ContractEventView `json:"events"`
 	NextCursor string              `json:"next_cursor,omitempty"`
@@ -125,7 +124,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	// First page (no cursor): served through the shared contract-detail
 	// SWR cache, computed once at the max page size and sliced — a busy
 	// contract's scan cannot fit the request deadline, and dying with the
-	// request left the cache permanently cold (route-sweep 2026-07-30).
+	// request would leave the cache permanently cold.
 	// Cursor pages stay inline: they are unique per cursor (caching them
 	// would just churn the bounded cache) and their PK range is narrower.
 	var (
@@ -299,7 +298,7 @@ func (h *Handler) contractTTL(ctx context.Context, liveUntil uint32) *ContractTT
 // ("63000000.<64-hex>.0.2"), mirroring parseMovementCursor. The tx_hash
 // segment is required: the 3-part (ledger, op_index, event_index) tuple is
 // not unique (single-op txs all tie at 0.0), and paging on it permanently
-// skipped tied rows at page boundaries (cold audit 2026-08-03). Old 3-part
+// skips tied rows at page boundaries. Old 3-part
 // cursors are rejected as invalid — they are short-lived client echoes, and
 // resuming them exactly is impossible without the tx discriminator anyway.
 func (h *Handler) parseContractEventsCursor(w http.ResponseWriter, r *http.Request) (clickhouse.ContractEventsCursor, bool) {

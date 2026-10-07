@@ -14,12 +14,12 @@ import (
 // per-contract detail reads: recent events (the /v1/contracts/{id} first
 // page), interactions, and code-history.
 //
-// Why (route-sweep 2026-07-30): all three ran INLINE on the request's 8s
-// budget over lake scans whose cost is set by the contract's activity, so a
-// busy contract (the sweep's Phoenix SAC among them) timed out on EVERY
-// request — and because the scan died WITH the request, no retry could ever
-// land warm. That is exactly the failure shape assetHoldersCached fixed for
-// the holders board; this is the same mechanism generalised over a
+// Why: run INLINE on the request's 8s budget, all three are lake scans
+// whose cost is set by the contract's activity, so a busy contract (a
+// Phoenix SAC among them) timed out on EVERY request — and because the
+// scan died WITH the request, no retry could ever land warm. That is the
+// failure shape assetHoldersCached handles for the holders board; this is
+// the same mechanism generalised over a
 // (kind, contract, params) string key holding an `any` payload, so three
 // differently-typed reads share one bounded cache + flight table instead of
 // three copies of it.
@@ -76,12 +76,12 @@ func (c *contractDetailCache) tableLocked(key string) map[string]contractDetailE
 	return c.entries
 }
 
-// contractCodeHistoryTTL is the "ch:" key class's freshness window
-// (inventory #3 / sub-second goal 2026-08-08). A contract's executable
+// contractCodeHistoryTTL is the "ch:" key class's freshness window.
+// A contract's executable
 // timeline is append-only and changes on the order of MONTHS (an
 // in-place upgrade), while its backing read is the heaviest per-request
 // scan in the explorer (the key_xdr probe over ledger_entry_changes,
-// 8s class) — recomputing it every 5 minutes per visited contract was
+// 8s class) — recomputing it every 5 minutes per visited contract would be
 // pure background burn. 24h keeps at most one recompute per contract
 // per day; a brand-new upgrade appears within a day, which matches the
 // page's actual freshness need.
@@ -93,8 +93,8 @@ const contractCodeHistoryTTL = 24 * time.Hour
 // below, and the tests that seed an entry.
 const positionsCacheKey = "pos:"
 
-// accountPositionsTTL is the "pos:" key class's freshness window (#332 F1,
-// 2026-09-02). Deliberately SHORTER than contractDetailTTL: a DeFi
+// accountPositionsTTL is the "pos:" key class's freshness window.
+// Deliberately SHORTER than contractDetailTTL: a DeFi
 // positions list is a statement about what an address holds RIGHT NOW, and
 // a user who just deposited should not be told for five minutes that they
 // have not. One minute still collapses a page's repeat loads and every
@@ -146,7 +146,7 @@ func (c *contractDetailCache) put(key string, v any) {
 // evictOneLocked drops one entry to make room for a new key. It prefers
 // the oldest entry that has ALREADY EXPIRED under its own key-class TTL,
 // falling back to the map's global-oldest cachedAt only when nothing has
-// expired yet (CA2-A03-harden-3).
+// expired yet.
 //
 // Pure global-oldest eviction starves the "ch:" (code-history) class: its
 // 24h TTL means an entry's cachedAt is only ever touched once a day, so
@@ -184,20 +184,19 @@ func evictOneLocked(entries map[string]contractDetailEntry) {
 // detachedClassForKey maps a cache key to its refresh-gate CLASS, using
 // the key's kind prefix ("ev:", "ix:", "ch:", "act:", "inst:").
 //
-// Every caller of contractDetailCached previously shared the single
-// class "contract_detail", capped at half the global limit. The
-// per-class cap exists to stop one class starving the OTHERS — but with
-// four panels behind one class it made a contract page starve ITSELF: a
-// page fires detail + interactions + code-history concurrently, so on a
-// cold contract three-to-four refreshes contend for two class slots and
-// the losers 503. Measured 2026-08-13: 20 of 20 cold random contract
-// pages served at least one failed panel, and it was NOT crawl
+// The per-class cap exists to stop one class starving the OTHERS — but
+// one class "contract_detail" (capped at half the global limit) shared by
+// all four panels makes a contract page starve ITSELF: a page fires
+// detail + interactions + code-history concurrently, so on a cold
+// contract three-to-four refreshes contend for two class slots and the
+// losers 503. Measured with that one shared class: 20 of 20 cold random
+// contract pages served at least one failed panel, and it was NOT crawl
 // pressure — the same rate held with seconds of think time between
 // pages.
 //
 // Keying the class per panel restores the cap's actual intent: one
-// panel's burst still cannot monopolise the gate, but a single page's
-// own fan-out no longer competes with itself for one panel's budget.
+// panel's burst still cannot monopolise the gate, and a single page's
+// own fan-out does not compete with itself for one panel's budget.
 func detachedClassForKey(key string) string {
 	prefix, _, ok := strings.Cut(key, ":")
 	if !ok || prefix == "" {

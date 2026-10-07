@@ -56,7 +56,7 @@ type AccountWealthRow struct {
 	USDValue string `json:"usd_value,omitempty"`
 	// Locked marks a provably unspendable burn address (master weight
 	// 0, all thresholds 0, no signers) — the balance is real but no
-	// key can ever move it (ACC-1: the SDF burn account).
+	// key can ever move it (the SDF burn account).
 	Locked bool `json:"locked,omitempty"`
 }
 
@@ -88,18 +88,14 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	assets, prices := h.wealthRankingInputs(ctx)
 	// Served from a background-refreshed cache; the underlying FINAL scan
 	// over 43.6M current-state rows needs 11-20s and can never fit this
-	// handler's deadline. Before this, the scan ran inline and timed out on
-	// EVERY request — 8.1s of waiting followed by a 500, 100% of the time
-	// (site-audit S3/S30).
+	// handler's deadline. Run inline, it timed out on EVERY request — 8.1s
+	// of waiting followed by a 500, 100% of the time.
 	snap, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
 	if !warm {
-		// Honest degraded state instead of a 500. The previous copy blamed
-		// "the current-state projection is still backfilling, or pricing is
-		// offline" — neither was ever true; the query simply timed out.
-		// Reached ONLY when no ranking has EVER been computed this process
-		// (cold start before the first refresh lands) — an expired snapshot
-		// is served with flags.stale below, never 503'd (route-sweep
-		// 2026-07-29).
+		// Honest degraded state instead of a 500: the ranking has not been
+		// computed yet. Reached ONLY when no ranking has EVER been computed
+		// this process (cold start before the first refresh lands) — an
+		// expired snapshot is served with flags.stale below, never 503'd.
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/warming-up",
 			"Ranking not ready", http.StatusServiceUnavailable,
 			"the account wealth ranking is being computed; retry shortly")
@@ -109,14 +105,13 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// background refresher is failing/behind) — the data is real, the flag +
 	// the envelope's as_of (stamped from the snapshot) say how old.
 	snapshotStale := time.Since(snap.AsOf) > clickhouse.AccountsWealthCacheTTL
-	// Locked-burn detection (Pass-B ACC-1): the SDF burn address ranked
-	// as the richest account — $11.3B of provably unspendable XLM
-	// presented as wealth. Badge, don't hide: the balance is real, the
-	// spendability isn't.
+	// Locked-burn detection: the SDF burn address ranks as the richest
+	// account — $11.3B of provably unspendable XLM presented as wealth.
+	// Badge, don't hide: the balance is real, the spendability isn't.
 	// The locked-burn flag is resolved by the background refresh and cached
 	// on each row (a.Locked), NOT re-queried here — AccountsUnspendable is a
 	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
-	// ranking itself was cached (site-audit S3).
+	// ranking itself was cached.
 	// as_of_ledger is the snapshot's own vintage; the serve-time watermark
 	// read contributes only the lake-wedged `stale` signal.
 	_, stale, _ := h.LakeWatermark(ctx)
@@ -153,17 +148,15 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 // usdPriceMap walks every verified asset and resolves each price with a
 // SEQUENTIAL LookupUSDPrice call. On production that loop measured ~8s on
 // the request path — it, not the wealth scan, was what kept /v1/accounts at
-// 8.1s even once the ranking itself was cached (site-audit S3 follow-up:
-// the first fix removed the 500s but the latency survived, because there
-// were two slow things stacked, not one).
+// 8.1s even once the ranking itself was cached: two slow things were
+// stacked, not one.
 //
 // TTL is set ABOVE the prewarm cadence (5 min) on purpose: PrewarmAccounts-
 // Wealth calls usdPriceMap every 5 minutes, so a 10-minute TTL means the
 // entry is always refreshed before it expires and real requests never pay
-// the walk. A 60s TTL (the first cut) expired 4 minutes out of every 5, so
+// the walk. A 60s TTL expired 4 minutes out of every 5, so in production
 // most requests still ate the ~8s cold walk even though the wealth ranking
-// itself was warmly cached — the residual attempt-1 latency in the S3
-// production verification. 10 minutes stale is fine: this feeds a ranking
+// itself was warmly cached. 10 minutes stale is fine: this feeds a ranking
 // cached for 15 minutes, so the price set cannot change what the page shows.
 const usdPriceMapTTL = 10 * time.Minute
 
@@ -336,7 +329,7 @@ type AccountStateView struct {
 	// IT WAS SCANNED (its cache vintage), not a serve-time read and not
 	// the account's last-modified ledger — the state can be up to
 	// AccountStateCacheTTL old, so a serve-time watermark could name a
-	// ledger the cached rows never saw (GH-621). Omitted when the
+	// ledger the cached rows never saw. Omitted when the
 	// watermark was unreadable at fill time.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// Directory is the curated third-party label for this address
@@ -408,11 +401,10 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	}
 	// Checksum-valid strkey (canonical.IsAccountID via parseAccountStrkey),
 	// matching every sibling account endpoint (AccountTransactions,
-	// AccountOperations, AccountMovements, AccountPositions). The former
-	// looksLikeStellarAccount check only validated shape (length + base32
-	// alphabet), so a well-formed-but-corrupted-checksum G-strkey sailed
-	// through to the lake read, which then 500'd + error-logged on every
-	// such request instead of 400ing up front (API-01 / API-03).
+	// AccountOperations, AccountMovements, AccountPositions). A shape-only
+	// check (length + base32 alphabet) would send a corrupted-checksum
+	// G-strkey through to the lake read, which then 500s + error-logs on
+	// every such request instead of 400ing up front.
 	g, ok := h.parseAccountStrkey(w, r)
 	if !ok {
 		return
@@ -428,8 +420,8 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		}
 		if retryableColdMiss(ctx, err) {
 			// Either the read blew explorerReadTimeout or the shared
-			// detached-refresh gate was saturated (clickhouse.ErrRefreshSaturated,
-			// recon-R3) — both transient/retryable, so 503, not the 500 a real
+			// detached-refresh gate was saturated (clickhouse.ErrRefreshSaturated)
+			// — both transient/retryable, so 503, not the 500 a real
 			// bug gets. Mirrors the sibling SWR handlers (AssetHolders,
 			// ContractDetail, ContractsList) which map the same class here.
 			h.Logger.Warn("explorer AccountState deadline/saturation", "account", g, "err", err)
@@ -447,7 +439,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	// before its scan — clickhouse.AccountState.AsOfLedger), not a
 	// serve-time watermark read: the state can be up to AccountStateCacheTTL
 	// old, and a fresh watermark here would torn-read a ledger the cache's
-	// rows never saw (GH-621). The serve-time watermark still feeds
+	// rows never saw. The serve-time watermark still feeds
 	// flags.stale, which is about lake health, not the cache's vintage.
 	_, stale, _ := h.LakeWatermark(ctx)
 	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: st.AsOfLedger}
@@ -461,8 +453,8 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		fillAccountStateView(&out, st)
 	}
 	// snapStale: the served state came from an expired cache entry while a
-	// detached refresh runs (whale-account stale-serve, route-sweep
-	// 2026-07-30) — surfaced on the same flags.stale the watermark uses.
+	// detached refresh runs (whale-account stale-serve) —
+	// surfaced on the same flags.stale the watermark uses.
 	h.writeJSONAt(w, out, stale || snapStale, out.DirectoryUnavailable, time.Time{})
 }
 
@@ -551,8 +543,8 @@ func isNativeHoldersAsset(a canonical.Asset) bool {
 // (ledger_entry_changes): trustline balances for issued assets; for native
 // XLM (and its crypto:XLM alias) the AccountEntry balance ranking, with
 // holder_count = the exact number of funded accounts — native has no
-// trustlines, so the trustline read served {"holder_count":0} for it by
-// construction (fixed 2026-07-31). The response's `asset` echoes the
+// trustlines, so a trustline read would serve {"holder_count":0} for it by
+// construction. The response's `asset` echoes the
 // canonical board key ("native" for any XLM alias form).
 func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
@@ -565,7 +557,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 			"Invalid asset", http.StatusBadRequest, "asset_id path segment is required")
 		return
 	}
-	// Validate up front (P2/C3-9, audit-2026-07-16): a malformed asset_id
+	// Validate up front: a malformed asset_id
 	// otherwise reaches ClickHouse as-is and drives TWO
 	// ledger_entries_current FINAL scans before any 400. ParseAsset is the
 	// same validator the sibling /v1/pools?asset= (markets.go) enforces —
@@ -599,11 +591,11 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Cached + single-flighted (C3-002, audit-2026-07-23): this is an
+	// Cached + single-flighted: this is an
 	// unauthenticated route over two ledger_entries_current FINAL scans on
 	// the shared 8-connection explorer pool, so a single client looping it
 	// could hold every connection and stall every other lake-backed
-	// endpoint. Snapshot-served since route-sweep 2026-07-29: a stale
+	// endpoint. Snapshot-served: a stale
 	// board is 200 + flags.stale + its real as_of while the detached
 	// rescan runs; only a never-computed asset can time out here (and its
 	// detached scan keeps running, so a retry lands warm). See hot_reads.go.
@@ -636,8 +628,8 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 // meets the cold state.
 //
 // The ranking is a FINAL scan over 43.6M current-state rows (~23 s) and
-// cannot run on a request deadline — before site-audit S3 it was attempted
-// inline and 500'd on 100% of requests. Calling the cached reader here is
+// cannot run on a request deadline — attempted inline, it 500'd on 100%
+// of requests. Calling the cached reader here is
 // enough: on a miss it kicks off the detached background refresh and
 // returns immediately, so this is cheap to call on a timer. The cache
 // stores ONE ranking (the top accountsWealthMaxLimit) that every request
