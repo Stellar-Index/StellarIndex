@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-sla-evidence-test.sh — fixture tests for the SLA-evidence decision
 # core (scripts/ci/check-sla-evidence.sh) plus the k6-weekly wiring it
-# depends on. Issue #316.
+# depends on.
 #
 # The defect: k6-weekly.yml's scheduled path exited 0 with a `::notice::`
 # whenever the target secrets were unset, so four months of scheduled runs
@@ -217,7 +217,7 @@ unset SLA_PROBE_PROM_URL K6_TARGET STELLARINDEX_LOAD_API_KEY
 # ── Wiring: the verdict is worthless if the workflow ignores it ─────────
 # The defect lived in the YAML, not only in the decision logic, so pin the
 # properties that make the feed honest. The block is FAIL-CLOSED: a
-# verifier proved on 2026-08-29 that replacing k6-weekly.yml with
+# verifier proved that replacing k6-weekly.yml with
 # unparseable YAML made all the assertions vanish while the suite still
 # printed "11 passed, 0 failed" and exited 0 — a gate that does not run
 # reports clean by printing nothing. run_wiring therefore captures the
@@ -302,7 +302,7 @@ check("test-load-check seeds __ENV for `k6 archive`",
 # The verdict must not be reachable-only-if-the-scenarios-compile: a
 # `needs:` from the evidence job onto the compile job means a babel syntax
 # error SKIPS the verdict, the tracking issue and the ::error:: — the very
-# mechanism #316 exists to guarantee runs.
+# mechanism this gate exists to guarantee runs.
 gate_jobs = [
     jname for jname, job in jobs.items()
     if any("scripts/ci/check-sla-evidence.sh" in (s.get("run") or "")
@@ -334,8 +334,8 @@ check("the non-zero-verdict steps survive a failing k6 run (always())",
 # silently swallows the following lines and `bash -n` reports a syntax error
 # a dozen lines away from the real cause.
 #
-# -- Evidence must actually be PRODUCED, not merely attempted (#378) -----
-# #316 made a run that measures nothing go red. It did not make a run that
+# -- Evidence must actually be PRODUCED, not merely attempted -----
+# The gate makes a run that measures nothing go red. It did not make a run that
 # DOES measure land anything: there was no --summary-export and no
 # handleSummary, so the only output was console text in a log that ages
 # out, and the upload step published the checked-in historical fixture
@@ -358,7 +358,7 @@ check("the k6 run exports a machine-readable summary",
 # ADR-0009 promises p95 <= 200 ms AND p99 <= 500 ms. The default k6
 # exported trend stats are avg,min,med,max,p(90),p(95) -- p(99) is NOT
 # among them, so a naive export lands evidence that reads "n/a" for half
-# the SLA while looking complete. Confirmed against the real 2026-06-13
+# the SLA while looking complete. Confirmed against a real
 # export, which has no p(99) key for exactly this reason.
 check("the summary export includes p(99), the second headline SLA number",
       bool(k6_runs) and all("p(99)" in r for r in k6_runs),
@@ -423,12 +423,12 @@ check("no scenario uses object spread (the pinned k6's babel cannot parse it)",
       "%s — rewrite as Object.assign({}, a, {...}); `k6 archive` dies with "
       "\"Unexpected token\" and the weekly run cannot execute" % offenders)
 
-# -- The DURABLE half: a run must leave something behind (#378) ---------
+# -- The DURABLE half: a run must leave something behind ---------
 # Everything above proves the run measures and reports. None of it proves
 # the run RETAINS anything. summary.json lives in a 90-day artifact and
 # the step summary lives in a job page; the only artefact
 # check-sla-evidence.sh has ever counted is a committed
-# docs/operations/sla-proof-<YYYY-MM-DD>.md, and until #378 the sole
+# docs/operations/sla-proof-<YYYY-MM-DD>.md, and once the sole
 # implementation of that promotion was a paragraph of manual procedure
 # pointing at a Grafana host that does not exist. Six assertions pin the
 # machinery that closes the loop.
@@ -573,7 +573,7 @@ if [ "$WIRING_SEEN" -ne "$WIRING_EXPECTED" ]; then
 fi
 
 # Fail-closed proof for the block above, on a fixture that cannot parse.
-# This is the exact vacuity a verifier demonstrated on 2026-08-29.
+# This is the exact vacuity a verifier demonstrated.
 printf 'on: [pull_request\njobs: : :\n  - not yaml\n' > "$TMP/unparseable.yml"
 run_wiring "$TMP/unparseable.yml" "Makefile" "test/load/scenarios"
 if [ "$WIRING_RC" -ne 0 ] || [ "$WIRING_SEEN" -ne "$WIRING_EXPECTED" ]; then
@@ -592,7 +592,7 @@ fi
 # The block above is about k6-weekly.yml, which is now dispatch-only: its
 # scenarios and its load run are a retained capability waiting on a target
 # that does not exist. The workflow that actually runs every Sunday is
-# sla-proof-weekly.yml, and every property #316 and #378 fought for has to
+# sla-proof-weekly.yml, and every property this gate pins has to
 # hold there now or it holds nowhere. Same fail-closed shape as above.
 EVIDENCE_EXPECTED=16
 

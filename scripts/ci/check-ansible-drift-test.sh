@@ -5,7 +5,7 @@
 # turns the weekly `--check --diff` against live r1 into a verdict. Its
 # predecessor was a single `[ "$CHANGED" -gt 13 ]`, so up to thirteen
 # unnamed changed tasks — real hand-drift on production included —
-# passed as "codified = live" (OBS-drift, audit-2026-07-23).
+# passed as "codified = live".
 #
 # The load-bearing case is `unknown drift under the OLD allowance`
 # below: it runs the pre-fix rule and the current gate against the SAME
@@ -191,7 +191,7 @@ run "$(
 )" "$BASELINE_3"
 expect 'a changed handler is not exempt from the allowance' 1 'Restart stellarindex-smoke timer'
 
-# ── comment-only diffs (r1, 2026-09-16: postgresql.conf differed from the
+# ── comment-only diffs (r1: postgresql.conf differed from the
 # template in an incident note and a rewritten comment block; the effective
 # config was identical, and the restart handler followed) ──
 comment_only_pg="$(
@@ -238,7 +238,7 @@ run "$(
 )" "$BASELINE_3"
 expect 'a line that disappears behind a comment change is drift' 1 'Template postgresql.conf'
 
-# ── the comment token is chosen per file (#519) ──
+# ── the comment token is chosen per file ──
 # The first classifier stripped from the first `#`, `--` or `//` whatever
 # the file, so a changed URL host (everything after `//`) or a changed
 # long flag (everything after `--`) compared equal on both sides and the
@@ -301,7 +301,7 @@ run "$(
 )" "$BASELINE_3"
 expect 'a # comment change in a .yml is comment-only' 0 'comment text only'
 
-# ── RLT-200: leading-whitespace strip and multiset compare ──
+# ── leading-whitespace strip and multiset compare ──
 # Two unrelated lines that merely swap order (no comment involved at
 # all) must stay drift: a per-line-count compare cannot tell a genuine
 # reorder from a no-op, because both sides contain the same lines.
@@ -345,10 +345,10 @@ run "$(
    # indented comment'
 expect 'comment-only baseline yields no allowance' 1 'Sync migrations from repo to r1'
 
-# ── 7. An ABORTED preview is not a verdict (#496) ────────────────────
+# ── 7. An ABORTED preview is not a verdict ────────────────────
 # A task that errors under `--check` is fatal, so ansible stops the play
-# and every task after it is never evaluated. Both the 2026-08-10 and
-# 2026-08-24 scheduled runs died this way on `Could not find the
+# and every task after it is never evaluated. Two scheduled
+# runs died this way on `Could not find the
 # requested service <unit>` — a unit the role installs that was new in
 # the repo and not yet on r1. The recap they left behind describes a
 # PREFIX of the role; reading its changed count as a result is the
@@ -374,7 +374,7 @@ run "$(
 )" "$BASELINE_3"
 expect 'an abort is not cleared by a fully-enumerated changed set' 1 'ABORTED'
 
-# ── 8. The report names files, not just a count (#496) ───────────────
+# ── 8. The report names files, not just a count ───────────────
 # "r1 has unapplied changes" is unactionable; "these tasks would change,
 # and here is what they touch" is a 20-minute fix. The job summary is
 # where a person actually lands, so the drifted tasks must be there.

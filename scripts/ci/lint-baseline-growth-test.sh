@@ -3,20 +3,20 @@
 # tripwire.
 #
 # lint-baseline-growth.sh is the gate that stops a commit from growing a
-# lint baseline in the same change that introduces the violation it hides
-# (CS-098). Its verdict has to be a function of the inputs and nothing
-# else — so its behaviour is pinned here rather than assumed:
+# lint baseline in the same change that introduces the violation it hides.
+# Its verdict has to be a function of the inputs and nothing else — so
+# its behaviour is pinned here rather than assumed:
 #
 #   - undeclared growth fails;
 #   - growth declared with a `Baseline-Growth: <file> — <reason>` trailer
 #     that NAMES the grown file passes;
 #   - a trailer with no reason after the colon does not count;
 #   - a trailer that names a DIFFERENT watched file does NOT excuse growth
-#     in an un-named one (CID-1 per-file scoping — audit 2026-08-14);
+#     in an un-named one (per-file scoping);
 #   - on direct-push, an undeclared growth cannot HEAL by being pushed
 #     over: a BASE_SHA sitting on the failed growth tip is re-derived back
 #     to the last clean/declared base and the growth is still caught
-#     (CID-1 anti-heal — audit 2026-08-14);
+#     (anti-heal);
 #   - no BASE_SHA (or a BASE_SHA outside this history) skips, rather
 #     than failing a first push;
 #   - and the verdict does not depend on how BIG the commit range is.
@@ -74,7 +74,7 @@ mkrepo() {
     printf '# fingerprints\ncafe0000cafe0000cafe0000cafe0000cafe0000:x_test.go:generic-api-key:1\n' \
       > .gitleaksignore
     printf '[allowlist]\npaths = [\n  %s,\n]\n' "'''^docs/archive/'''" > .gitleaks.toml
-    # Seed the five surfaces added for Q233/T467, mirroring their real
+    # Seed the five surfaces, mirroring their real
     # shape closely enough to exercise the growth detectors.
     printf '# accepted-risk vulns\nGO-2026-0001  # reviewed, localhost-only\n' \
       > scripts/ci/govulncheck-allow.txt
@@ -162,7 +162,7 @@ grow_toml() {
 }
 
 # grow_both <commit-message> — grow .gitleaksignore AND .gitleaks.toml in
-# ONE commit (the CID-1 blanket-approval attack: two allowlists widened,
+# ONE commit (the blanket-approval attack: two allowlists widened,
 # one benign trailer).
 grow_both() {
   (
@@ -189,7 +189,7 @@ comment_toml() {
 }
 
 # grow_govulncheck <commit-message> — add an accepted-risk vuln id
-# (Q233: scripts/ci/govulncheck-allow.txt is a .txt, missed by the
+# (scripts/ci/govulncheck-allow.txt is a .txt, missed by the
 # *.baseline glob).
 grow_govulncheck() {
   (
@@ -203,7 +203,7 @@ grow_govulncheck() {
 }
 
 # grow_orphans <commit-message> — declare a new orphan systemd unit
-# (Q233: deploy/systemd/ORPHANS silences lint-deploy-systemd-authority.sh).
+# (deploy/systemd/ORPHANS silences lint-deploy-systemd-authority.sh).
 grow_orphans() {
   (
     cd "$TMP/repo" || exit 1
@@ -215,7 +215,7 @@ grow_orphans() {
 }
 
 # grow_ansible_lint <commit-message> — widen the ansible-lint skip_list
-# (T467: configs/ansible/.ansible-lint, auto-discovered rather than named
+# (configs/ansible/.ansible-lint, auto-discovered rather than named
 # in any CI yaml).
 grow_ansible_lint() {
   (
@@ -228,7 +228,7 @@ grow_ansible_lint() {
 }
 
 # grow_golangci_exclusion <commit-message> — add a new path/linter
-# exemption to .golangci.yml's exclusions.rules block (Q233).
+# exemption to .golangci.yml's exclusions.rules block.
 grow_golangci_exclusion() {
   (
     cd "$TMP/repo" || exit 1
@@ -272,7 +272,7 @@ migration_append() {
 }
 
 # migration_mutate <commit-message> — rewrite the hash recorded for an
-# EXISTING basename (Q233: the shipped-migration-edit-hiding shape).
+# EXISTING basename (the shipped-migration-edit-hiding shape).
 migration_mutate() {
   (
     cd "$TMP/repo" || exit 1
@@ -384,18 +384,18 @@ comment_toml "docs: clarify an allowlist rationale"
 runGate
 expect "gitleaks.toml comment-only edit passes" 0 "no undeclared"
 
-# --- 10. CID-1 PER-FILE SCOPING -------------------------------------
+# --- 10. PER-FILE SCOPING --------------------------------------------
 # Grow TWO allowlists in one commit but declare only ONE of them. The
 # named file is excused; the un-named one must still fail. The pre-fix
 # gate cleared the fail flag for ALL files on the first trailer match, so
-# this passed (both allowlists silently widened). Proven-red for CID-1.
+# this passed (both allowlists silently widened). Proven red.
 mkrepo 0
 grow_both "$(printf 'chore: widen two allowlists\n\nBaseline-Growth: .gitleaksignore — reviewed public fixture')"
 runGate
 expect "per-file: named .gitleaksignore is excused, .gitleaks.toml still fails" 1 "UNDECLARED GROWTH: .gitleaks.toml"
 expect_missing "per-file: the declared .gitleaksignore is NOT reported" "UNDECLARED GROWTH: .gitleaksignore"
 
-# --- 11. CID-1 DIRECT-PUSH SELF-HEAL --------------------------------
+# --- 11. DIRECT-PUSH SELF-HEAL ---------------------------------------
 # Undeclared growth commit G lands (its own run reds); an innocuous commit
 # is pushed on top; the healing push carries BASE_SHA=G (event.before=the
 # failed tip). The pre-fix gate diffed G...HEAD, saw no growth in its own
@@ -418,25 +418,25 @@ unrelated "chore: follow-up"
 runGate "$GROW_SHA"
 expect "declared tip is a clean base — no re-flag on follow-up" 0 "no undeclared"
 
-# --- 13. Q233/T467: govulncheck-allow.txt growth is caught -----------
+# --- 13. govulncheck-allow.txt growth is caught -----------
 mkrepo 0
 grow_govulncheck "chore: accept a new vuln"
 runGate
 expect "govulncheck-allow.txt growth fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/govulncheck-allow.txt"
 
-# --- 14. Q233: deploy/systemd/ORPHANS growth is caught ----------------
+# --- 14. deploy/systemd/ORPHANS growth is caught ----------------
 mkrepo 0
 grow_orphans "chore: declare an orphan unit"
 runGate
 expect "ORPHANS growth fails undeclared" 1 "UNDECLARED GROWTH: deploy/systemd/ORPHANS"
 
-# --- 15. T467: configs/ansible/.ansible-lint skip_list growth is caught
+# --- 15. configs/ansible/.ansible-lint skip_list growth is caught
 mkrepo 0
 grow_ansible_lint "chore: grandfather another ansible-lint rule"
 runGate
 expect "ansible-lint skip_list growth fails undeclared" 1 "UNDECLARED GROWTH: configs/ansible/.ansible-lint"
 
-# --- 16. Q233: .golangci.yml exclusions.rules growth is caught --------
+# --- 16. .golangci.yml exclusions.rules growth is caught --------
 mkrepo 0
 grow_golangci_exclusion "chore: exempt another path from lint"
 runGate
@@ -448,7 +448,7 @@ golangci_unrelated "chore: tweak output formatting"
 runGate
 expect ".golangci.yml edit outside exclusions passes" 0 "no undeclared"
 
-# --- 18. Q233: migration-immutability.sha256 — a normal append (new
+# --- 18. migration-immutability.sha256 — a normal append (new
 # migration checksum) must NOT be flagged; append-only is the documented,
 # always-allowed case.
 mkrepo 0
@@ -456,7 +456,7 @@ migration_append "feat: add migration 0002"
 runGate
 expect "new migration checksum append passes" 0 "no undeclared"
 
-# --- 19. Q233: migration-immutability.sha256 — a MUTATED hash on an
+# --- 19. migration-immutability.sha256 — a MUTATED hash on an
 # EXISTING basename (the shipped-migration-edit-hiding shape) is caught.
 mkrepo 0
 migration_mutate "fix: quietly rehash an existing migration"

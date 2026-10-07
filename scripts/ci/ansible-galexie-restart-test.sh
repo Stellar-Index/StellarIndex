@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ansible-galexie-restart-test.sh — pins the archival-node role's restart
-# wiring (2026-08-28 audit, deploy-ansible-handlers-7 + -drift-3).
+# wiring.
 #
 # Structural (grep over the real task files):
 #   1. None of the five galexie-input render tasks in 07-galexie.yml
@@ -16,7 +16,7 @@
 #   3. Only inputs the running galexie has loaded at start (captive cfg,
 #      galexie.toml, /etc/default/galexie, the unit) are in the effective-
 #      inputs list; the append wrapper / oneshot scripts / apt key are not
-#      and never notify the restart (2026-08-29 r1 incident: a wrapper-only
+#      and never notify the restart (seen on r1: a wrapper-only
 #      change restarted a healthy galexie); galexie_restart_ack defaults off.
 #
 # Behavioural (a real `ansible-playbook -c local` run of
@@ -27,7 +27,7 @@
 #   6. code edit, galexie active, no ack → play FAILS (fail-closed);
 #   7. code edit, active, galexie_restart_ack=true → handler fired;
 #   8. --check --diff shows RUNNING HANDLER [Restart galexie] for a real
-#      edit (the 2026-08-29 dry-run showed nothing);
+#      edit (a dry-run showed nothing);
 #   9. shebang edit counts; 10. input absent on disk → handler fired.
 #
 # Needs ansible-playbook (the ci.yml ansible-check job installs it).
@@ -63,7 +63,7 @@ task_block() {
 # value is landed rather than piped on, because `grep -v … | grep -q …` lets
 # the matcher exit at its first hit and leaves the upstream grep writing into
 # a closed pipe; pipefail then reports the assertion as failed however the
-# match went (#475).
+# match went.
 uncommented() { grep -v '^\s*#' <<<"$1"; }
 
 G="$ROLE_TASKS/07-galexie.yml"
@@ -97,7 +97,7 @@ for h in "Restart stellarindex-indexer" "Restart stellarindex-aggregator" "Resta
 done
 
 # ── 3. only loaded-at-start inputs may decide a restart ───────────────────
-# 2026-08-29 r1 incident: galexie-append.sh sat in the effective-inputs
+# Seen on r1: galexie-append.sh sat in the effective-inputs
 # list, so a wrapper-only change (exec'd once per service start — the
 # running process never reads it) restarted a healthy galexie.
 blk="$(task_block "$G" "- name: Galexie inputs whose effective content decides a restart")"
@@ -140,6 +140,7 @@ if [ ! -f "$CHK" ]; then
 else
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   mkdir -p "$TMP/bin"
+  # shellcheck disable=SC2016 # $(cat) must expand inside the fake systemctl
   printf '#!/bin/sh\ncat "%s/is-active"; [ "$(cat %s/is-active)" = active ]\n' "$TMP" "$TMP" > "$TMP/bin/systemctl"
   chmod +x "$TMP/bin/systemctl"
   if ! command -v sha256sum >/dev/null; then  # macOS dev box: coreutils absent
@@ -191,7 +192,7 @@ YML
   run_case "code edit, galexie active, no ack" active refused
   # 7. same, acknowledged → restart fires
   run_case "code edit, galexie active, ack" active fired -e galexie_restart_ack=true
-  # 8. check mode surfaces the handler (the 2026-08-29 dry-run showed none)
+  # 8. check mode surfaces the handler (a dry-run once showed none)
   run_case "code edit, galexie active, --check" active previewed --check --diff
   # 9. shebang edit counts (bash vs sh)
   printf '#!/bin/sh\nkey = 1\n' > "$TMP/a.cfg"; printf '#!/bin/bash\nkey = 1\n' > "$TMP/want-a.cfg"

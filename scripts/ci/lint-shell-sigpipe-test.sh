@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # lint-shell-sigpipe-test.sh — fixture tests for the pipe-into-head gate
-# (scripts/ci/lint-shell-sigpipe.sh, #475).
+# (scripts/ci/lint-shell-sigpipe.sh).
 #
 # The gate exists because the failure it prevents is INVISIBLE in review and
 # INTERMITTENT in production: `sort | head -n N` under pipefail only breaks
 # once the producer outsizes the 64 KiB pipe buffer, so it passes every test
 # on small input and then exits 2 on a third of real runs (r1's
-# galexie-archive-fill, three failures, the last 2026-09-02 18:19:35 UTC).
+# galexie-archive-fill, three failures).
 # A gate that stops tripping would restore exactly that, so its behaviour is
 # pinned here rather than assumed:
 #
@@ -24,7 +24,7 @@
 #   - a root with no pipefail scripts FAILS rather than passing vacuously;
 #   - a gate script under scripts/ci is caught (the root that was missing).
 #
-# And, since 2026-09-10, the same for shell embedded in GitHub workflow YAML,
+# And the same for shell embedded in GitHub workflow YAML,
 # which was the OTHER place the class could hide: a `run:` block is not a .sh
 # file, so the v0.69.0 deploy died on `ls dist/migrations/ | sort | head -n 10`
 # while this gate scanned 173 scripts and reported OK. Pinned here:
@@ -155,7 +155,7 @@ check "continuation line starting with a pipe into head is caught" 1 "$TMP/col0p
 # The OTHER legal continuation: the pipe opens at end of the producer's
 # line and the consumer starts clean on the next, with no leading `|` for
 # the one-line regex to see — ch-schema-snapshot.sh:229 was exactly this
-# shape and scanned clean before the joiner (#560).
+# shape and scanned clean before the joiner.
 mk trailingpipe offender.sh $'set -euo pipefail\nmc ls bucket/ |\n  head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "trailing-pipe continuation (producer | / consumer on the next line) is caught" 1 "$TMP/trailingpipe"
 
@@ -220,7 +220,7 @@ check "marker anywhere in the comment block above passes" 0 "$TMP/okblock"
 
 # shellcheck disable=SC2016  # fixture text: the backticks are markdown, not a substitution
 mk quoted doc.sh 'set -euo pipefail
-# Never write `mc ls bucket/ | sort | head -n 4` here — see #475.
+# Never write `mc ls bucket/ | sort | head -n 4` here — that is the bug class above.
 mc ls bucket/ | sort > /tmp/all.txt'
 check "a comment quoting the bad shape is not an instance" 0 "$TMP/quoted"
 

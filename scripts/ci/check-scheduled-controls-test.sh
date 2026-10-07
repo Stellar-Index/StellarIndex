@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # check-scheduled-controls-test.sh — fixture tests for the dead-control
-# detector (scripts/ci/check-scheduled-controls.sh, #496).
+# detector (scripts/ci/check-scheduled-controls.sh).
 #
 # The defect this pins: the repo's existing liveness watchdog reads the
 # LATEST run of a workflow regardless of trigger, so ansible-drift.yml —
 # 0 green out of 8 scheduled runs across seven weeks — read HEALTHY,
 # because the newest run in its history was a green manual dispatch.
-# Measured on 2026-09-07:
+# Measured:
 #
 #     CI_WORKFLOW_FILE=ansible-drift.yml FAIL_RUNS=2 FAIL_HOURS=216 \
 #       scripts/ci/check-main-ci-health.sh   → exit 0, "not faulting yet"
@@ -15,19 +15,19 @@
 # only SCHEDULED runs count, and the threshold is derived from the
 # workflow's own cron cadence rather than one flat number.
 #
-# And the defect found on top of that (2026-09-10, #502): "no passing
+# And the defect found on top of that: "no passing
 # scheduled run past N" is two states, not one. A control that has
 # STOPPED BEING SCHEDULED needs its schedule re-armed, because nobody is
 # checking. A control that is still being scheduled and is RED needs
 # somebody to read what it found, because it is checking and the answer
-# is being ignored (#496). The sweep called both DEAD, so it told an
+# is being ignored. The sweep called both DEAD, so it told an
 # operator to restart ansible-drift.yml — which had never stopped. Both
 # still exit 1; what the split fixes is which remedy each is filed
 # under. Every case below that flags a control asserts its CLASS, and
 # the two directions are pinned against each other with fixtures that
 # differ only in the age of the newest scheduled run.
 #
-# And the third state on top of those two (2026-09-10, #502): a control
+# And the third state on top of those two: a control
 # that REPORTS BY FAILING. ansible-drift.yml's failing step is named
 # "Drift verdict (fails on drift, and NAMES the tasks)" — its red runs
 # are the report, so FAIL's "this control is broken or ignored" is the
@@ -190,12 +190,12 @@ expect_absent() {
 # A control that STOPPED BEING SCHEDULED and a control that is SCHEDULED
 # AND RED both produce "no passing scheduled run past N", and they need
 # opposite remedies: re-arm the cron, or go read what the control found.
-# Until 2026-09-10 the sweep called both DEAD. Everything below pins the
+# The sweep used to call both DEAD. Everything below pins the
 # distinction in both directions.
 
 # ansible-drift's real shape: weekly cron, registered 53 days ago, every
 # scheduled run failed and the newest of them was TODAY. This is the case
-# that named the defect (#502): the sweep reported "a control has stopped
+# that named the defect: the sweep reported "a control has stopped
 # reporting" about a control whose failing step is named "Drift verdict
 # (fails on drift, and NAMES the tasks)" and which had fired every Monday
 # for eight weeks, naming two drifted tasks each time. It had not stopped
@@ -274,7 +274,7 @@ expect '…and stderr names the read-the-verdict remedy' 1 'STILL BEING SCHEDULE
 # FAIL says "this control is broken or it is being ignored". For a
 # workflow whose failing step IS its report — ansible-drift.yml's is
 # named "Drift verdict (fails on drift, and NAMES the tasks)" — that is
-# a mislabel of the same shape as #502 one level down: it sends the
+# a mislabel of the same shape one level down: it sends the
 # reader to the plumbing when the finding is what needs reading. The
 # workflow declares the fact in its own file; this section pins what the
 # declaration does, and much more importantly what it CANNOT do.
@@ -528,7 +528,7 @@ history weekly.yml active 60
 run_check
 expect 'no scheduled run ever, 60d old → DEAD' 1 'the cron has not fired'
 
-# #1097: an undateable newest-run timestamp. days_since() returns -1 for
+# An undateable newest-run timestamp. days_since() returns -1 for
 # a created_at it can't parse; before the fix, `-1 -ge $n_days` is
 # always false, so this compared as FRESHER than a real run and fell
 # through to "live" silently.
@@ -561,7 +561,7 @@ expect 'the detector does not report itself' 0 'skip  ci-health.yml'
 expect '…and says why' 0 'self-reference'
 expect '…and its peer is still assessed' 0 'live  weekly.yml'
 
-# #1097: the self-exclusion hole. When ci-health.yml is the ONLY
+# The self-exclusion hole. When ci-health.yml is the ONLY
 # schedule:-bearing workflow left in the directory, excluding it drops
 # assessed to 0 — before the fix, the guard was
 # `[ assessed -eq 0 ] && [ requested -gt excluded ]`, which is false
@@ -628,7 +628,7 @@ history weekly.yml active 60 success:1
 run_check
 # A partial sweep still REPORTS everything it managed to assess — that part
 # was right and is kept. What changed: it must not also return success.
-# Measured live 2026-09-07 before this was tightened: two workflows fell into
+# Measured live before this was tightened: two workflows fell into
 # the unreadable bucket on a secondary-rate-limit blip, one of them the only
 # genuinely dead control, and the sweep printed "every scheduled control has
 # passed" and exited 0. A gate that cannot read a control has not checked it,
@@ -738,7 +738,7 @@ fi
 
 # ── …and names the right remedy for each ────────────────────────────
 # The issue title is the only part of the report most readers ever see.
-# One title for both classes is how #502 came to headline "a control has
+# One title for both classes is how the sweep came to headline "a control has
 # stopped reporting" over a control that was reporting every week.
 # Three titles, because the sweep fails in three ways: a control that
 # stopped, a control that is red, and a sweep that could not read a
@@ -804,7 +804,7 @@ EOF
 # Anti-vacuity: a marker regex that stops matching, or a tree with the
 # marker removed out from under this test, must fail — not report a
 # clean sweep over zero markers. The repo carries at least one today
-# (ansible-drift.yml, #502).
+# (ansible-drift.yml).
 asserts=$((asserts + 1))
 if [ "$marker_n" -lt 1 ]; then
   echo "FAIL: found 0 reports-by-failing marker(s) in .github/workflows — the marker regex or the tree moved; this is not a clean result" >&2
@@ -820,7 +820,7 @@ else
 fi
 
 # ── declares_step is anchored under steps:, not any name: line ──────
-# RLT-030: an unanchored scan matches a job's own `name:`, the
+# An unanchored scan matches a job's own `name:`, the
 # workflow's top-level `name:`, and a `with:` input called `name:`
 # (e.g. upload-artifact) — any of which would let a marker claim a step
 # that does not exist. Pinned directly against a fixture built to

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # data-freshness-test.sh — fixture tests for the ClickHouse leg of the
 # data-freshness watchdog the archival-node role installs as
-# /usr/local/sbin/data-freshness.sh (runbook Wave L, #319).
+# /usr/local/sbin/data-freshness.sh (runbook Wave L).
 #
 # The script is configs/ansible/roles/archival-node/files/data-freshness.sh.
 # It runs under `set -euo pipefail`, builds the whole node_exporter textfile
@@ -174,7 +174,7 @@ fi
 # together. They drifted: the SQL said 48h while
 # `aggregate.composite_reference.fx_max_age_hours` said 76h, so
 # `stellarindex_data_source_stale{source="massive"}` fired EVERY weekend
-# against a healthy feed (#370). `massive` publishes a business-day
+# against a healthy feed. `massive` publishes a business-day
 # snapshot and FX markets close — Fri 00:00 → Mon 00:00 is 72h, so 48h
 # could not survive a normal weekend.
 #
@@ -221,7 +221,7 @@ fi
 # differs from timescale-jobs-probe.sh on purpose: that probe refuses to
 # publish, because an unpublished file ages into its own last-run alert;
 # this one has no last-run gauge, so an unpublished file is re-served
-# frozen and green forever (Wave L / #319). It therefore PUBLISHES and
+# frozen and green forever (Wave L). It therefore PUBLISHES and
 # withholds only the offending lines, counts them in a metric, names them
 # on stderr and exits non-zero.
 #
@@ -293,7 +293,7 @@ publish() {
 
 # ─── 7a. the happy path is byte-identical ────────────────────────────
 #
-# Mirrors what this producer actually emits on r1 (measured 2026-09-10):
+# Mirrors what this producer actually emits on r1 (measured):
 # the label keys in use are domain/source/view, no label value contains a
 # quote or a backslash, every value is a whole number, and three families
 # are bare names with no labels at all. Comment headers and a blank line
@@ -333,7 +333,7 @@ fi
 # ─── 7b. malformed values are withheld, the rest survives ────────────
 #
 # Four shapes, all of which the SQL above can produce and none of which
-# the shell can see: a psql command tag as the value (r1 2026-09-10), a
+# the shell can see: a psql command tag as the value (seen on r1), a
 # NULL rendering as an empty value field, a server error string that
 # reached stdout, and a bare command tag on a line of its own.
 echo "data-freshness-test: publication guard — malformed values are withheld"
@@ -418,7 +418,7 @@ fi
 # whole script before the atomic `mv`, so node_exporter went on re-serving
 # the PREVIOUS data_freshness.prom untouched and every gauge froze at its
 # last value, including the ones the other six queries would have updated
-# fine (F081).
+# fine.
 echo "data-freshness-test: a single psql query failure does not abort the tick"
 
 QSRC="$WORK/queries.sh"
@@ -478,7 +478,7 @@ fi
 # ─── 9. sep1 freshness measures a successful fetch, not an attempt ───
 #
 # Every failed SEP-1 attempt stamps sep1_resolved_at, so an age over it
-# stayed green while the refresh failed every domain (GH #840). Only a
+# stayed green while the refresh failed every domain. Only a
 # success stamps sep1_payload_fetched_at. Behaviour is executed against
 # Postgres in test/integration/sep1_identity_history_test.go.
 SEP1_ROW="$(grep -E "^[[:space:]]*SELECT 'sep1'," "$SRC")"

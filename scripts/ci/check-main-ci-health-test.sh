@@ -5,7 +5,7 @@
 # The script is generic over CI_WORKFLOW_FILE: ci-health.yml points it
 # at `ci.yml` (every push), reconciliation-health.yml points it at
 # `ansible-drift.yml` (weekly) with looser thresholds
-# (reconciliation-and-monitoring-liveness, audit-2026-07-23). Both
+# (reconciliation and monitoring liveness). Both
 # consumers share this one decision core, so a regression here breaks
 # BOTH watchdogs silently — the script had no test coverage before this
 # file. Pins the fail-open/fail-red boundary with CI_HEALTH_FIXTURE
@@ -58,7 +58,7 @@ expect 'latest run green → healthy' 0 'HEALTHY'
 run '{"workflow_runs":[{"conclusion":"cancelled","created_at":"'"$(now_iso 1)"'","html_url":"u","head_sha":"aaaaaaa"}]}'
 expect 'only a cancelled run (no health signal) → nothing to assess' 0 'nothing to assess'
 
-# ── UNKNOWN shape (K017): zero runs AT ALL, not merely zero with a
+# ── UNKNOWN shape: zero runs AT ALL, not merely zero with a
 #    health signal, must NOT read as healthy — it is the same 200-with-
 #    empty-array response a misconfigured CI_WORKFLOW_FILE/
 #    CI_HEALTH_BRANCH produces, so "probed nothing" cannot pass silently
@@ -88,7 +88,7 @@ expect 'two consecutive red runs meets FAIL_RUNS=2 → RED' 1 'RED —'
 run '{"workflow_runs":[{"conclusion":"failure","created_at":"'"$(now_iso 300)"'","html_url":"u","head_sha":"aaaaaaa"}]}' 5 216
 expect 'one old-enough red run meets FAIL_HOURS=216 → RED' 1 'RED —'
 
-# Mirrors the real ansible-drift.yml shape observed 2026-07-25: two
+# Mirrors the real ansible-drift.yml shape as observed: two
 # scheduled runs eight days apart, BOTH failure, no green run anywhere
 # in the fetched window — reconciliation-health's actual thresholds
 # (FAIL_RUNS=2 FAIL_HOURS=216) must classify this RED.
@@ -120,8 +120,8 @@ run "$(runs_json "$(cancelled 150)" "$(one success 1 s1)" "$(one failure 30 f1)"
 expect 'green run behind a full page of cancelled runs → healthy' 0 'HEALTHY'
 expect 'report counts the dropped cancelled runs' 0 '150 dropped as cancelled'
 
-# ── Stale listing: on 2026-09-30 and 2026-10-01 the filtered run listing
-#    answered with nothing newer than 2026-09-04 while main was building
+# ── Stale listing: the filtered run listing once
+#    answered with nothing a month newer while main was building
 #    green, and the walk read it as "red for 666h". The unfiltered listing
 #    (fixture key latest_runs) is the reference a listing is held to. ──
 
