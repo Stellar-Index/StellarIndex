@@ -3,8 +3,8 @@ package main
 // change_24h_pct divides a current USD price by the bucket 24h before
 // it. The current leg is decimals-normalised in internal/api/v1
 // (lookupUSDPrice, and the batch row); the anchor comes from
-// storeChange24hReader here, and used to come back RAW. For a confirmed
-// 9-decimals token that put the two legs of one percentage a factor of
+// storeChange24hReader here, and must not come back RAW. For a confirmed
+// 9-decimals token a raw anchor puts the two legs of one percentage a factor of
 // 100 apart, so a flat market served about +9900%.
 //
 // storeChange24hReader.s is a concrete *timescale.Store with an

@@ -30,7 +30,7 @@ type fakeClassicStore struct {
 
 	wantErrSum bool
 	// wantErrMinLedger makes MinClassicComponentLedger fail, exercising
-	// the fail-permissive freshness-gate path (F-1236 / W6-sweep-1).
+	// the fail-permissive freshness-gate path.
 	wantErrMinLedger bool
 	// minLedger is returned by MinClassicComponentLedger when
 	// wantErrMinLedger is false; defaults to 0 (gate-skip).
@@ -137,7 +137,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStorageClassicSupplyReader_SACObservedFalsePropagates — RLT-248:
+// TestStorageClassicSupplyReader_SACObservedFalsePropagates:
 // a zero SAC sum with no backing observation (SumSACBalancesAtOrBefore's
 // COALESCE-to-zero) must come through as SACObserved=false, not get
 // conflated with a genuine zero reading.
@@ -160,7 +160,7 @@ func TestStorageClassicSupplyReader_SACObservedFalsePropagates(t *testing.T) {
 	}
 }
 
-// TestStorageClassicSupplyReader_MinLedgerPropagates pins F-1236 on the
+// TestStorageClassicSupplyReader_MinLedgerPropagates pins the
 // success path: a non-zero MinClassicComponentLedger from storage must
 // reach ClassicSupplyComponents.MinComponentLedger unchanged. Every other
 // test in this file leaves minLedger at its zero value (gate-skip), so
@@ -203,9 +203,9 @@ func TestStorageClassicSupplyReader_PropagatesSumError(t *testing.T) {
 }
 
 // TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive
-// pins W6-sweep-1: a MinClassicComponentLedger query error is
+// pins that a MinClassicComponentLedger query error is
 // fail-permissive (MinComponentLedger=0, snapshot still returned) but
-// must no longer be silent — the reader emits a WARN so the operator
+// not silent — the reader emits a WARN so the operator
 // sees the stale-component gate drop to permissive.
 func TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive(t *testing.T) {
 	store := &fakeClassicStore{
@@ -231,7 +231,7 @@ func TestStorageClassicSupplyReader_MinLedgerErrorWarnsAndStaysPermissive(t *tes
 	if got.Trustline.Int64() != 1000 {
 		t.Errorf("Trustline=%s want 1000 (snapshot still correct)", got.Trustline)
 	}
-	// The failure is now observable.
+	// The failure is observable.
 	logged := buf.String()
 	if !strings.Contains(logged, "level=WARN") {
 		t.Errorf("expected a WARN log line, got: %q", logged)

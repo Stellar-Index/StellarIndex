@@ -17,7 +17,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests are the sibling proof of audit-2026-07-16 C2-4c: three current-
+// These tests are the sibling proof of the intra-ledger tie-break: three current-
 // state readers that fold ledger_entry_changes / ledger_entries_current to the
 // latest entry per key with a SINGLE-COLUMN ledger_seq tie-break, which resolves
 // same-ledger multi-change keys to an ARBITRARY row (a stale mid-ledger value,

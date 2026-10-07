@@ -53,7 +53,7 @@ func newTestRig(t *testing.T) (*Handlers, *fakeKeyStore, dashboardauth.SessionCo
 			Slug: "example",
 			// Default test account uses Starter tier (1000/min ceiling)
 			// so legacy tests that supply RateLimitPerMin: 1000 don't
-			// silently get clamped to the free-tier cap. F-1212 tier-
+			// silently get clamped to the free-tier cap. Tier-
 			// clamp regressions get their own test below.
 			Tier:   platform.TierStarter,
 			Status: platform.AccountActive,
@@ -133,8 +133,8 @@ func TestHandleCreate_RejectsMissingName(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_TierClampsRateLimit pins F-1212 (codex
-// audit-2026-05-12): a free account requesting a 100_000/min
+// TestHandleCreate_TierClampsRateLimit pins
+// the tier clamp: a free account requesting a 100_000/min
 // budget gets clamped to the free-tier ceiling (1000/min under the
 // free-platform model), while a partner account keeps the 100_000
 // ceiling. Legacy tier strings must clamp at their CANONICAL rung
@@ -185,7 +185,7 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_ClampsMonthlyQuota pins audit-2026-07 (MEDIUM):
+// TestHandleCreate_ClampsMonthlyQuota pins the quota clamp:
 // the customer-supplied monthly_quota is clamped at mint to the
 // account's hard ceiling (the operator's account-level override when
 // set, else the tier default), so a metered customer can only LOWER
@@ -241,7 +241,7 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 
 // TestDefaultMintedKey_MatchesAccountEffectiveLimits locks the
 // account-level "effective" limits served on /v1/account/me and the
-// staff views (GH-1074) to what auth enforces on a key minted here with
+// staff views to what auth enforces on a key minted here with
 // the request's limits unset: mint through the real handler, resolve
 // the persisted key through the same platform cascade auth's Validate
 // calls, and require both to equal the account view and the expected
@@ -476,7 +476,7 @@ func TestHandleList_ServesEnforcedMonthlyQuota(t *testing.T) {
 	}
 }
 
-// TestHandleList_BoundsRevokedHistory pins GH-766: a create/revoke loop grows
+// TestHandleList_BoundsRevokedHistory pins that a create/revoke loop grows
 // revoked rows without bound, so the list returns every active key but only
 // the listRevokedLimit most recent revoked ones, and says it truncated.
 func TestHandleList_BoundsRevokedHistory(t *testing.T) {
@@ -811,7 +811,7 @@ func TestHandleCreate_Scopes(t *testing.T) {
 // not passed through to surface as an opaque 500 from a constraint
 // violation deep in the store.
 //
-// A cold audit (2026-08-04) proved all four reached Postgres. The
+// All four would reach Postgres without the check. The
 // operator cost is real: a 500 here is indistinguishable from the
 // genuine 500 that api_keys migration drift produces, so the first
 // conclusion it prompts is "key creation is broken" rather than "the
@@ -1021,7 +1021,7 @@ func TestParseCreateRequest_LengthLimitsCountCodePoints(t *testing.T) {
 	}
 }
 
-// TestHandleList_ServesTheEnforcedKeyCeiling pins GH-1073: the dashboard
+// TestHandleList_ServesTheEnforcedKeyCeiling pins that the dashboard
 // could only learn the key cap from the 409, and that 409 called expired
 // keys "active". The list now carries the cap create enforces (the
 // KeyQuotas override, not the default ladder), and the 409 names what

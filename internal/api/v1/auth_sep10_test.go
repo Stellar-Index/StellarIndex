@@ -290,7 +290,7 @@ func TestSEP10Token_VerificationFailed_401(t *testing.T) {
 //
 // Four separate branches produce this answer — no validator wired on
 // either route, and ErrNotImplemented surfacing from Challenge or
-// Verify — and they used to carry two different strings. The terser
+// Verify — and they must not carry two different strings. The terser
 // one said only "this deployment has no SEP-10 validator wired",
 // which is the error code restated in prose: a caller reading it
 // learns nothing they can act on, and cannot tell a permanent
@@ -379,7 +379,7 @@ func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 			details[tc.name] = prob.Detail
 
 			// Why it refuses. The Noop is installed for ANY validator
-			// construction failure (#1322), so the body must not assert
+			// construction failure, so the body must not assert
 			// one cause it never checked, and must name every
 			// prerequisite plus where the real error is logged.
 			if strings.Contains(prob.Detail, "no server signing seed is configured") {

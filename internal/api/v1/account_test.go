@@ -185,7 +185,7 @@ func TestAccountMe_Authenticated(t *testing.T) {
 	}
 }
 
-// TestAccountMe_SessionEffectiveLimits — GH-1074: a session caller's
+// TestAccountMe_SessionEffectiveLimits — a session caller's
 // /v1/account/me serves what auth enforces on a default-minted key,
 // derived from the account through platform's cascade — for a partner
 // comped to 5,000/min that is 5,000, never the 100,000 tier ceiling.
@@ -339,7 +339,7 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 // that omits the scopes field must NOT mint a full-access (empty
 // scope) key — the child inherits the caller's own scopes instead, so
 // the narrowed key cannot mint an unrestricted sibling and escape its
-// confinement. Pre-fix the handler passed empty scopes straight to
+// confinement. Without inheritance the handler would pass empty scopes straight to
 // Create, minting a full-access key.
 func TestAccountKeysCreate_ScopedCallerEmptyRequestInherits(t *testing.T) {
 	store := &fakeAccountStore{
@@ -399,7 +399,7 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 	if store.calls != 0 {
 		t.Errorf("Create called %d times, want 0 (escalation must be rejected before mint)", store.calls)
 	}
-	// GH-1146: the self-service mint funnels through the same
+	// The self-service mint funnels through the same
 	// clampMintToCaller chokepoint as the operator path, and must be
 	// countable there too.
 	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")), before+1; got != want {
@@ -766,7 +766,7 @@ func getUsageRows(t *testing.T, ts *httptest.Server) []v1.UsageRow {
 // throttled populated, keyed by the same subject derivation the
 // tracker middleware writes under — the OWNER ACCOUNT (id:<Identifier>),
 // not the credential, so the endpoint covers every key the account holds
-// and survives a key rotation (RLT-404).
+// and survives a key rotation.
 func TestAccountUsage_RollupRows(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 120, Errors: 3, Throttled: 0},

@@ -35,7 +35,7 @@ func (p *paginatingAssetsReader) ListAssetsExt(_ context.Context, opts timescale
 	return rows, nil
 }
 
-// TestAssetList_AssetsPaginationEmitsCursor pins F-1326: when the assetsReader
+// TestAssetList_AssetsPaginationEmitsCursor pins the case when the assetsReader
 // catalogue holds more than `limit` rows, /v1/assets MUST emit a next
 // cursor. The previous handler passed `limit` (not limit+1) to the
 // store, so the overfetch sentinel never appeared and the listing was
@@ -64,9 +64,9 @@ func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
 	}
 }
 
-// TestAssetList_RejectsMalformedCursor is the AGT-06 regression:
-// ValidateAssetsCursor existed but was never called, so a malformed
-// cursor silently fell through to the keyset predicate's degenerate
+// TestAssetList_RejectsMalformedCursor guards cursor validation:
+// if ValidateAssetsCursor is never called, a malformed
+// cursor silently falls through to the keyset predicate's degenerate
 // (0, "") case — which matches no rows and looks exactly like a quiet
 // end-of-pagination (empty page, 200 OK) instead of the 400 client
 // error it should be.
@@ -80,9 +80,9 @@ func TestAssetList_RejectsMalformedCursor(t *testing.T) {
 	}
 }
 
-// TestAssetListUnified_RejectsMalformedClassicCursor is the AGT-06
+// TestAssetListUnified_RejectsMalformedClassicCursor guards cursor validation
 // regression for the unified (asset_class=all) listing's classic
-// phase, which shares the same never-validated cursor path via
+// phase, which shares the same cursor path via
 // fetchClassicUnifiedRows.
 func TestAssetListUnified_RejectsMalformedClassicCursor(t *testing.T) {
 	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})

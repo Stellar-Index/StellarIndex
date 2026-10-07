@@ -18,8 +18,8 @@ import (
 // asset_price_snapshot stores the true-scale price for a confirmed
 // non-7-decimals token. The listing's market cap is that price times a
 // smallest-unit supply divided by 10^decimals, so the divisor has to be
-// the token's real decimals — against the RAW ratio the column used to
-// hold, the standard 7 was right only by cancellation. Neither half
+// the token's real decimals — against a RAW ratio column, the standard 7 would
+// be right only by cancellation. Neither half
 // shows the defect alone: the writer's test reads a correct price, and a
 // cap test fed a hand-written price proves nothing about what the writer
 // stores. This runs the real refresh, the real listing SQL, the real

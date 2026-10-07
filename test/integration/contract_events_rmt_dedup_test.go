@@ -11,10 +11,9 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseContractEventsRMTDedup is the live-ClickHouse proof for audit
-// W4-storage-1: ContractEventsRecent (Go-side adjacent-row dedup since
-// 2026-08-06 — the SQL LIMIT 1 BY disabled reverse read-in-order and cost
-// 100× on busy contracts) and EventsByTx (FINAL) must serve each contract
+// TestClickHouseContractEventsRMTDedup is the live-ClickHouse proof that
+// ContractEventsRecent (Go-side adjacent-row dedup — a SQL LIMIT 1 BY disables
+// reverse read-in-order and costs 100× on busy contracts) and EventsByTx (FINAL) must serve each contract
 // event EXACTLY ONCE even while
 // stellar.contract_events — a ReplacingMergeTree — holds an un-merged duplicate
 // part (the legitimate post-heal / ch-rebuild / partial-flush-retry state).

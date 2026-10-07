@@ -21,8 +21,8 @@ import (
 // An optional `flight` joins the probe to a rendezvous shared with
 // its siblings, so a test can count how many checkers the readyz
 // handler holds in flight at once (TestReadyz_ProbesRunInParallel).
-// `critical` defaults to true (the legacy behaviour); F-1275 (wave
-// 110) regression tests set it to false to exercise the
+// `critical` defaults to true (the legacy behaviour); regression
+// tests set it to false to exercise the
 // degraded-but-serving path.
 type stubCheck struct {
 	name     string
@@ -176,7 +176,7 @@ func TestReadyz_AllChecksPass(t *testing.T) {
 
 // TestReadyz_CriticalFailureReturns503 — a failing critical
 // check (Postgres) returns 503 with status="unready" + stale
-// flag. F-1275 (wave 110) sharpened the contract: only critical
+// flag. Only critical
 // failures take a backend out of HAProxy's pool.
 func TestReadyz_CriticalFailureReturns503(t *testing.T) {
 	ts := newTestServer(t,
@@ -203,12 +203,12 @@ func TestReadyz_CriticalFailureReturns503(t *testing.T) {
 }
 
 // TestReadyz_NonCriticalFailureReturns200Degraded pins the
-// F-1275 (wave 110) contract: a Redis-only failure produces a
+// contract: a Redis-only failure produces a
 // 200 with status="degraded" so HAProxy keeps the backend in
 // service while the response body tells operators what's down.
-// Pre-wave-110 this case 503'd and HAProxy drained every
+// A 503 here would make HAProxy drain every
 // healthy API backend during a Redis outage even though
-// Timescale fallback kept the customer surface serving.
+// Timescale fallback keeps the customer surface serving.
 func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	ts := newTestServer(t,
 		&stubCheck{name: "postgres", critical: true},
@@ -543,7 +543,7 @@ var ioReadAll = func(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 // indexable content lives on the companion subdomains). Without
 // this handler Cloudflare's auto-managed robots.txt is served on
 // GET but the API origin returns 404 on HEAD; the inconsistency
-// surfaced the missing handler in the 2026-05-09 audit.
+// makes a missing handler visible.
 func TestRobotsTxt(t *testing.T) {
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/robots.txt")

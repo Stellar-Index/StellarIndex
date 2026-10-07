@@ -13,7 +13,7 @@ import (
 )
 
 // TestLedgerEntriesCurrent_SameLedgerLastChangeWins is the end-to-end proof of
-// audit-2026-07-16 C2-4c against real ClickHouse: when one storage key is
+// the intra-ledger tie-break against real ClickHouse: when one storage key is
 // changed twice within the SAME ledger (here update-then-remove), the
 // current-state projection stellar.ledger_entries_current must FINAL-resolve to
 // the LAST change (the removal), never resurrect the before-image.

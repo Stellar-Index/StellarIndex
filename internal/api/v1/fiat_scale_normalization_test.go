@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// CS-040 money-path: the fiat-combine point path (Server.fiatCombinedTrades)
+// Money path: the fiat-combine point path (Server.fiatCombinedTrades)
 // merges every usdPeggedConstituent into ONE slice fed to aggregate.VWAP —
 // and those constituents span source scales. On-chain DEX legs
 // (native/USDC-classic) stamp amounts at 7 decimals; CEX legs
@@ -33,7 +33,7 @@ import (
 //	native/<USDC-classic>   source=sdex    (7dp)  10^10 base / 10^9  quote → 0.10
 //	crypto:XLM/crypto:USDT  source=binance (8dp)  10^11 base / 1.2·10^10 quote → 0.12
 //
-// True equal-volume mean = 0.11. Pre-fix VWAP = (10^9 + 1.2·10^10) /
+// True equal-volume mean = 0.11. Unnormalised VWAP = (10^9 + 1.2·10^10) /
 // (10^10 + 10^11) = 13/110 ≈ 0.1181818… — the 10×-over-weighted-CEX value
 // (the wire renders it 0.1181818181, ratToDecimal truncating at 10 digits).
 
@@ -71,7 +71,7 @@ func scaleNormPow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
-// TestFiatVWAPMixedScaleNormalized is the CS-040 regression. It goes through
+// TestFiatVWAPMixedScaleNormalized is the regression test. It goes through
 // the real /v1/vwap handler over a mixed-scale constituent set and asserts the
 // corrected, real-volume-weighted price.
 //
@@ -128,7 +128,7 @@ func TestFiatVWAPMixedScaleNormalized(t *testing.T) {
 			env.Data.Price, scaleNormWantVWAP, scaleNormPreFixVWAP)
 	}
 	// Volume is now reported at the common 8dp scale (both legs 1000 XLM →
-	// 2000 XLM total). Pre-fix this summed cross-scale integers
+	// 2000 XLM total). Unnormalised, this would sum cross-scale integers
 	// (10^10 + 10^11 = 1.1·10^11), a physically meaningless quantity.
 	if env.Data.BaseVolume != scaleNormWantBaseVolume {
 		t.Errorf("vwap base_volume = %q, want %q (2000 XLM at the common 8dp scale)",
@@ -421,7 +421,7 @@ func TestPriceTipMixedScaleNormalized(t *testing.T) {
 const (
 	scaleNormWantSeriesVBase  = "200000000000" // 2000 XLM at the common 8dp scale
 	scaleNormWantSeriesVQuote = "22000000000"  // 220 USD at the same scale
-	// Pre-fix: 10^10 + 10^11, the sdex leg counted at a tenth of its real
+	// Unnormalised: 10^10 + 10^11, the sdex leg counted at a tenth of its real
 	// volume because its 7dp integers were added to 8dp ones unchanged.
 	scaleNormPreFixSeriesVBase = "110000000000"
 )
@@ -474,7 +474,7 @@ func fetchMixedScaleSeriesBar(t *testing.T, base string) v1.OHLCSeriesBar {
 	return env.Data.Intervals[0]
 }
 
-// TestFiatSeriesMixedScaleNormalized is the CS-040 regression on the series
+// TestFiatSeriesMixedScaleNormalized is the regression test on the series
 // arm. It goes through the real /v1/ohlc?interval= handler over a
 // constituent set that genuinely spans two scales and asserts the corrected
 // bar, value by value.
@@ -532,15 +532,15 @@ func TestFiatSeriesMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestFiatMixedScalePointMatchesSeries is the C1-024 invariant under the
+// TestFiatMixedScalePointMatchesSeries is the point-vs-series invariant under the
 // condition that makes it bite. TestFiatVWAPPointMatchesSeries pins point
 // against series too, but every trade in its fixture is stamped `sdex`, so
 // both sides are single-scale and the invariant holds whether or not the
 // series lifts anything. Give the two constituents different scales and the
-// un-fixed series answers 0.1181818181 on 110000000000 base while the point
-// path — which has normalised since CS-040 — answers 0.11 on 200000000000:
+// un-normalised series answers 0.1181818181 on 110000000000 base while the point
+// path — which normalises — answers 0.11 on 200000000000:
 // two surfaces, one question, two populations, which is the exact defect
-// C1-024 exists to forbid.
+// the parity test exists to forbid.
 func TestFiatMixedScalePointMatchesSeries(t *testing.T) {
 	ts := httpTestServer(t, mixedScaleFiatServer(t))
 	bar := fetchMixedScaleSeriesBar(t, ts.URL)

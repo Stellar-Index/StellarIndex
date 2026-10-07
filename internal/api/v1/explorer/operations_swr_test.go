@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These pin the #444 / #332 F2 serving contract for the GET /v1/operations
+// These pin the serving contract for the GET /v1/operations
 // DIRECTORY first page. Measured cause: `opsDirTTL` was 3s and the cache was
 // fill-on-miss, so at r1's real arrival rate nearly every hit missed and paid
 // the (then unbounded) 1.8s lake read on the request deadline — 6h p95
@@ -129,7 +129,7 @@ func TestOperationsDirectory_WarmHitDoesNotReadTheLake(t *testing.T) {
 
 // THE regression: an entry past opsDirTTL must be SERVED — immediately, with
 // flags.stale and its real as_of — while exactly one DETACHED rebuild runs.
-// Pre-fix the expired entry read as a miss and the visitor waited on the lake
+// Otherwise the expired entry reads as a miss and the visitor waits on the lake
 // read on the request deadline.
 func TestOperationsDirectory_StaleEntryIsServedWhileOneDetachedRefreshRuns(t *testing.T) {
 	h, reader, captured := newOpsDirHandler()
@@ -252,8 +252,8 @@ func TestOperationsDirectory_CursorPageBypassesTheCache(t *testing.T) {
 
 // K053: two DIFFERENT accepted `?limit=` values on the first page must share
 // ONE warm cache entry, not mint an independent lake read (and cache slot)
-// per limit. Pre-fix, opsDirCache keyed strictly by the requested limit, so
-// a caller sweeping ?limit=50..200 bought a fresh lake read for every value.
+// per limit. If opsDirCache keyed strictly by the requested limit, so
+// a caller sweeping ?limit=50..200 would buy a fresh lake read for every value.
 func TestOperationsDirectory_DifferentLimitsShareOneCacheEntry(t *testing.T) {
 	h, reader, captured := newOpsDirHandler()
 	limit := 50
@@ -309,7 +309,7 @@ func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
 }
 
 // F062: a NEVER-COMPUTED cache (cold path) must single-flight, exactly like
-// the stale-entry path already does. Pre-fix, operationsDirectory's cold
+// the stale-entry path already does. If operationsDirectory's cold
 // branch fell through to an inline `buildOperationsDirectory` call bound to
 // EACH request's own context — so a burst of concurrent first-page
 // requests arriving before the cache ever filled (a caller sweeping

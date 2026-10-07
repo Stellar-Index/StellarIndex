@@ -14,19 +14,19 @@ import (
 )
 
 // TestCreatorsRollup_BoundaryIsTheNetworks is the test nets' empty-`created`
-// cohort proof (2026-09-17), run through the real cycle on a real
+// cohort proof, run through the real cycle on a real
 // ClickHouse. A creation on a post-P23-only chain is recorded ONE way: a
 // CAP-67 `transfer` movement paired with a CreateAccount operation. The
 // cycle's post-P23 arm reads exactly that pair — but only for ledgers at or
-// above its boundary, and pre-fix the boundary was pubnet's constant baked
-// into the SQL. Every test-net ledger sits below 58,762,517, so the classic
-// arm owned all of them and looked for `create_account` movements that chain
-// never writes: zero account_creator_edges rows, zero `created` cohorts,
-// however full the archive.
+// above its boundary, which must be the network's, not pubnet's constant baked
+// into the SQL. Every test-net ledger sits below 58,762,517, so with the pubnet
+// constant the classic arm owns all of them and looks for `create_account`
+// movements that chain never writes: zero account_creator_edges rows, zero
+// `created` cohorts, however full the archive.
 //
 // Fixture: one CreateAccount operation and its funding transfer at a low
 // ledger. The same fixture is rolled up twice — at the pubnet boundary
-// (the pre-fix behaviour on a test net: no edge) and at the chain's start
+// (the wrong boundary on a test net: no edge) and at the chain's start
 // (the network's boundary: one edge) — so the test pins the substitution,
 // not merely that the SQL runs.
 func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {

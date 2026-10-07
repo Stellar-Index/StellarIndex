@@ -24,7 +24,7 @@ type chartGranularityFitCase struct {
 // Both halves are asserted at once because either alone is a
 // half-check: an echo test that never exercises a fitting pair would
 // pass on a handler that coarsened everything, and a fitting-pair test
-// alone is the pre-fix behaviour.
+// alone would pass on that behaviour.
 //
 // `granularity` on the wire is the signal, and it is asserted TOGETHER
 // with the grain the reader was called at: a response that echoed

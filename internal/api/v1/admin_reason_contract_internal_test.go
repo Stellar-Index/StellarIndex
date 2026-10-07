@@ -3,7 +3,7 @@
 
 package v1
 
-// Pins requireReason (Q151, audit-2026-09-02): the X-Reason contract
+// Pins requireReason: the X-Reason contract
 // shared by every unconditional operator-tier write — POST/DELETE
 // /v1/admin/keys, PATCH /v1/admin/accounts/{id}, and the status-notice
 // create/resolve routes — must be a single chokepoint, not five

@@ -139,8 +139,7 @@ func TestSourceEntryCounts_AtomicIdempotentBump(t *testing.T) {
 // hypertable (soroswap_router_swaps / defindex_flows). This test proves
 // SeedSourceEntryCounts folds those tables in and SET-resets the two
 // sources authoritatively — so the drift a replay introduces is CORRECTED
-// (previously the doc warned operators must NOT seed-reset them because
-// there was "no table to recompute from").
+// (the seed recomputes both from their tables, so operators may seed-reset them).
 func TestSourceEntryCounts_LogOnlySourcesReconcile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -599,7 +598,7 @@ func TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile(t *testing.T) {
 }
 
 // TestSourceEntryCounts_UnfoldedSinksReconcile is the reconciliation
-// invariant for the sinks the seed used to leave out: aquarius (whose
+// invariant for the sinks the seed must fold: aquarius (whose
 // non-swap streams were dropped in favour of its trades count),
 // blend_emitter, sorocredit and upshift (absent outright). Each source
 // gets one idempotent row plus a replay over-count via the sink's

@@ -15,21 +15,13 @@
     "audited": "2026-05-26",
     "doc": "docs/operations/wasm-audits/cctp.md"
   },
-  "0293730a1d9bdb23ad2b2d7f6d7ff86dc5fbe620efb29187f8210dc1d5b90bef": {
+  "0287f4ad7350935b83d94e046c0bcabc960b233dbce1531008c021b71d406a1d": {
     "sources": [
-      "phoenix"
+      "blend"
     ],
-    "role": "pool",
+    "role": "factory",
     "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "087b17c27a124b1f75db0e5d68f5220e20d8987b555ac87a87db9a0247c52fde": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
+    "doc": "docs/operations/wasm-audits/blend.md"
   },
   "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4": {
     "sources": [
@@ -38,14 +30,6 @@
     "role": "deJTRSY-wrapper",
     "audited": "2026-10-06",
     "doc": "docs/operations/wasm-audits/spectra.md"
-  },
-  "0f68389835616ab3b47ffb15117550b02ac124520fb566e4ca0be1cf7ed8df9a": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988": {
     "sources": [
@@ -79,14 +63,6 @@
     "audited": "2026-10-06",
     "doc": "docs/operations/wasm-audits/spectra.md"
   },
-  "14ed2bb1a025c22bcc730ffc9da3f5aa9f7c653f4be402812c32f249e20dee01": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "167ab414a226427de34c19947ef9c5cf38c6c0ed91ecf9392f7cef3278ff506c": {
     "sources": [
       "phoenix"
@@ -119,14 +95,6 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "1b7e286025799fc53d34f01c2c68409f5ede06c53d4bf652a9d361defd3a132b": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0": {
     "sources": [
       "spectra"
@@ -134,30 +102,6 @@
     "role": "order-engine",
     "audited": "2026-10-06",
     "doc": "docs/operations/wasm-audits/spectra.md"
-  },
-  "24f1456544ebc25a598792c4f64113711ff78ad6d9bda95e057ed2ade7c23800": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "27635b9a4439ac911b2a9b431627ad2e2545faded01da27e405003050ec91887": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "28301f816a8e9047d7f82ef713f0f0b96b5a6ec66ec992bc24fd74d1a1acd1e1": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "2bbb91c58cb8432fd40446e80188a25e7c07dc2edc853e885d65cafbbbf19581": {
     "sources": [
@@ -190,14 +134,6 @@
     "role": "pt",
     "audited": "2026-10-06",
     "doc": "docs/operations/wasm-audits/spectra.md"
-  },
-  "3cda0d78dfcd8f3b7aab36a8002e887146e17ae982e9553a3f55b4ce61ec17ae": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "41ae735d2312f50975f5b7c70c3f71c2a0785113014dc24e474c3f3688e6224f": {
     "sources": [
@@ -248,14 +184,6 @@
     "audited": "2026-05-19",
     "doc": "docs/operations/wasm-audits/soroswap-router.md"
   },
-  "4d919ea5895c7220c1a69c75c95624e5a4dda435526aa85615efebca4dbd3941": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "4f080d249700b9a30ca2e1bb828ecb29e47357cd36b122c7744593cef30b7a08": {
     "sources": [
       "aquarius"
@@ -280,14 +208,6 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "57ba0367fd7f5edd8e01a3a1c432a441d49440fdb229fb3dd835528dfc7a41fd": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "5db738b05d9148128a240b0e2c1cb935c2805192bf98a579421aacda364c8dae": {
     "sources": [
       "soroswap"
@@ -310,22 +230,6 @@
     ],
     "role": "multihop",
     "audited": "2026-09-30",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "649715de2b14df3c34a560d9ffb01deeefe029404cd3e9ab184ba22702cbed79": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "67338d2e0e987936a5b718a3fabf40dec74c9334cd9982528503d486510d90be": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "67ba2a36d61df77053d628f4f6bea50d300caa972fe0d9c539ace9636369f484": {
@@ -384,22 +288,6 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "7a2f0c363060e0f3698bd784cef165f92a7f9c6e20fc3c3d7b389cd9c7ef36f0": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "7bab31002358c3fe3a842991187369462bd679b1a2dd84d89e61a836e987d926": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "7cecf23b7c8cd6f7768d272f89fd59bf71a8eff0eed07f251c5f47d9570ed435": {
     "sources": [
       "aquarius"
@@ -407,14 +295,6 @@
     "role": "pool",
     "audited": "2026-04-30",
     "doc": "docs/operations/wasm-audits/aquarius.md"
-  },
-  "7e834fa193deacd7fdd28104a58c8a2684b6b6a4e8d2485d37195569d8810888": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "84a88013828d4c4f4e4f5d0fa2f686050d69889384a044eab3ec4b1169f810ea": {
     "sources": [
@@ -424,14 +304,6 @@
     "audited": "2026-07-07",
     "doc": "docs/operations/wasm-audits/sorocredit.md"
   },
-  "86ecec909211dd3f31b351c9dc95be9a75136f1ed524fc9edac9c2368edb6288": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "8875f0c770fb26d3053648856732a649936aed5db246845fa209f9032001b208": {
     "sources": [
       "aquarius"
@@ -439,14 +311,6 @@
     "role": "pool",
     "audited": "2026-04-29",
     "doc": "docs/operations/wasm-audits/aquarius.md"
-  },
-  "8a22bf38966e86ee9c8a4f8b475624e8470ec09458639e2b3888c8af2e5cebb3": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36": {
     "sources": [
@@ -464,44 +328,12 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "916315045be9861c47b22a8b2502ea266e75659d54fdbd0303ba1b9091c9632f": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "94cb92e72554da28c77aa57590ee1f53437fe732c4ffffae87c8ba03adb52cbf": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "95e79483a62a1a1aebe8b6d190f793d044cc289e1233d84d800217903af90b30": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "96c6a73863de6e331d8103898f421bb7af719b87bbd4ac14d5a16f6b2662546b": {
     "sources": [
       "phoenix"
     ],
     "role": "factory",
     "audited": "2026-09-30",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "98205bc5f857bc5576f2904d5312c7f1438053e95e92be37ca5d13941817d1d0": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "99bd0ddc506ee13fc4f433f0627092034dc38f4773ec16930a1823a1174431d4": {
@@ -511,30 +343,6 @@
     "role": "message-transmitter",
     "audited": "2026-05-26",
     "doc": "docs/operations/wasm-audits/cctp.md"
-  },
-  "9e398ab7ca651b4277df9ed390f4e012465c21447bad21ed6a0e9c6b975fd532": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "9eacbd2d0fdd197bae3959e474b71d22a1664bbc7ebdf600f0d824d591ac42bd": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "9f10e0527cd180e53ab3da55484eca00c004333309fbff81b5ba8a52d8909f26": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "9f94c577ea24c2f71cbb0c964c9c9d321e02448d1fe946020afb18974b1c2602": {
     "sources": [
@@ -552,14 +360,6 @@
     "audited": "2026-04-30",
     "doc": "docs/operations/wasm-audits/aquarius.md"
   },
-  "a27578aaeb9c1d1686b42d48c211436e977d7bf4f57dafca00c03af58984eee1": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e": {
     "sources": [
       "blend"
@@ -576,36 +376,12 @@
     "audited": "2026-05-26",
     "doc": "docs/operations/wasm-audits/cctp.md"
   },
-  "a757fd97e5a67f586c5aadf6ba8d17a9d3df872ccae093e564c2b3de143c05f3": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "a81ccd988cf9b52493e048309b1ff8b0d01cdcd6bece8cf173ef69dee42114fd": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "ac63334c62a48aa3ea5c2187e423ebe89bcf285848e25251aa839667323083c8": {
     "sources": [
       "phoenix"
     ],
     "role": "pool",
     "audited": "2026-09-30",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "ac838c1d86551e39c5e87b497138ab23cbf8fb585bc7bb9acad24f1f151efdc3": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "ae0da5a84b15805c5c7931ac567a8d1b34be3f26b483993d9ff80cb2c3de9852": {
@@ -631,14 +407,6 @@
     "role": "adapter (emits no events)",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/redstone.md"
-  },
-  "b4e621fbdc990177ef071c439100bc382c58d08e9d9710f82fbb993698e17931": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "b54ba37b7bb7dd69a7759caa9eec70e9e13615ba3b009fc23c4626ae9dffa27f": {
     "sources": [
@@ -672,14 +440,6 @@
     "audited": "2026-10-05",
     "doc": "docs/operations/wasm-audits/blend.md"
   },
-  "c16ef042a253caffaf15f6887a39573b7fa6bd272f7109917aae2a643b982171": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
   "c1f4502a757e25c611f5a159bc1ab0eef64085adac6c68123dca66e87faffbc2": {
     "sources": [
       "blend"
@@ -694,22 +454,6 @@
     ],
     "role": "factory",
     "audited": "2026-09-30",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "c8c2c8c441c0e4c42ebb278a8d421c24f2a9898991fbdbd2720a121bf43bc57e": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "d3926a274eccc3713232625984f0a5177dba0267f58f40a9972371ba4bc97980": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "stake",
-    "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "d54d01e0d09005bd7d5267ce9e913a8c52163bfeb82252545351b76e86b41561": {
@@ -754,7 +498,31 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "e235ace43d2eaea9a57d5717d6888e32d6bdd0fbf224ea4c83a602e94d3d8f6e": {
+  "e5563daf8d18b2136500df971529af61cc68288fbc3af3465a1ac78052d31209": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "retired-stub",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "f1077e0b77da5e62d596e13aeae4160104cad99e7ef7f3183a6c9b6ec9e747cd": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-04-29",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool-map",
+    "audited": "2026-09-30",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "0293730a1d9bdb23ad2b2d7f6d7ff86dc5fbe620efb29187f8210dc1d5b90bef": {
     "sources": [
       "phoenix"
     ],
@@ -762,12 +530,268 @@
     "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "e5563daf8d18b2136500df971529af61cc68288fbc3af3465a1ac78052d31209": {
+  "087b17c27a124b1f75db0e5d68f5220e20d8987b555ac87a87db9a0247c52fde": {
     "sources": [
       "phoenix"
     ],
-    "role": "retired-stub",
-    "audited": "2026-09-30",
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "0f68389835616ab3b47ffb15117550b02ac124520fb566e4ca0be1cf7ed8df9a": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "14ed2bb1a025c22bcc730ffc9da3f5aa9f7c653f4be402812c32f249e20dee01": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "1b7e286025799fc53d34f01c2c68409f5ede06c53d4bf652a9d361defd3a132b": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "24f1456544ebc25a598792c4f64113711ff78ad6d9bda95e057ed2ade7c23800": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "27635b9a4439ac911b2a9b431627ad2e2545faded01da27e405003050ec91887": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "28301f816a8e9047d7f82ef713f0f0b96b5a6ec66ec992bc24fd74d1a1acd1e1": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "3cda0d78dfcd8f3b7aab36a8002e887146e17ae982e9553a3f55b4ce61ec17ae": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "4d919ea5895c7220c1a69c75c95624e5a4dda435526aa85615efebca4dbd3941": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "57ba0367fd7f5edd8e01a3a1c432a441d49440fdb229fb3dd835528dfc7a41fd": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "649715de2b14df3c34a560d9ffb01deeefe029404cd3e9ab184ba22702cbed79": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "67338d2e0e987936a5b718a3fabf40dec74c9334cd9982528503d486510d90be": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "7a2f0c363060e0f3698bd784cef165f92a7f9c6e20fc3c3d7b389cd9c7ef36f0": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "7bab31002358c3fe3a842991187369462bd679b1a2dd84d89e61a836e987d926": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "7e834fa193deacd7fdd28104a58c8a2684b6b6a4e8d2485d37195569d8810888": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "86ecec909211dd3f31b351c9dc95be9a75136f1ed524fc9edac9c2368edb6288": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "8a22bf38966e86ee9c8a4f8b475624e8470ec09458639e2b3888c8af2e5cebb3": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "916315045be9861c47b22a8b2502ea266e75659d54fdbd0303ba1b9091c9632f": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "94cb92e72554da28c77aa57590ee1f53437fe732c4ffffae87c8ba03adb52cbf": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "95e79483a62a1a1aebe8b6d190f793d044cc289e1233d84d800217903af90b30": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "98205bc5f857bc5576f2904d5312c7f1438053e95e92be37ca5d13941817d1d0": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "9e398ab7ca651b4277df9ed390f4e012465c21447bad21ed6a0e9c6b975fd532": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "9eacbd2d0fdd197bae3959e474b71d22a1664bbc7ebdf600f0d824d591ac42bd": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "9f10e0527cd180e53ab3da55484eca00c004333309fbff81b5ba8a52d8909f26": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "a27578aaeb9c1d1686b42d48c211436e977d7bf4f57dafca00c03af58984eee1": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "a757fd97e5a67f586c5aadf6ba8d17a9d3df872ccae093e564c2b3de143c05f3": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "a81ccd988cf9b52493e048309b1ff8b0d01cdcd6bece8cf173ef69dee42114fd": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "ac838c1d86551e39c5e87b497138ab23cbf8fb585bc7bb9acad24f1f151efdc3": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "b4e621fbdc990177ef071c439100bc382c58d08e9d9710f82fbb993698e17931": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "c16ef042a253caffaf15f6887a39573b7fa6bd272f7109917aae2a643b982171": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "c8c2c8c441c0e4c42ebb278a8d421c24f2a9898991fbdbd2720a121bf43bc57e": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "d3926a274eccc3713232625984f0a5177dba0267f58f40a9972371ba4bc97980": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "stake",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "e235ace43d2eaea9a57d5717d6888e32d6bdd0fbf224ea4c83a602e94d3d8f6e": {
+    "sources": [
+      "phoenix"
+    ],
+    "role": "pool",
+    "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "e5ba3bbf58dbe9323807fc9cc5dfe41c8c9039047e498f78bb5b0aced10d8e58": {
@@ -794,14 +818,6 @@
     "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
-  "f1077e0b77da5e62d596e13aeae4160104cad99e7ef7f3183a6c9b6ec9e747cd": {
-    "sources": [
-      "aquarius"
-    ],
-    "role": "pool",
-    "audited": "2026-04-29",
-    "doc": "docs/operations/wasm-audits/aquarius.md"
-  },
   "f4705e206f6713be2b84845882c33c6fd96090f47fa0ffb870c9696afdb1b5bb": {
     "sources": [
       "phoenix"
@@ -816,14 +832,6 @@
     ],
     "role": "stake",
     "audited": "2026-10-07",
-    "doc": "docs/operations/wasm-audits/phoenix.md"
-  },
-  "f74d87d72381b4a5c787eb8b16a2b861aed6c3146583703ceb003d5befe9d338": {
-    "sources": [
-      "phoenix"
-    ],
-    "role": "pool-map",
-    "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
   "fc1bbe9ca0b9b4c5b4fcb0b5d5f0b443320eb7f9efa406ee875bf2f820a8671c": {

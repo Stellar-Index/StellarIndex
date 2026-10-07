@@ -36,7 +36,7 @@ func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	// The cap67 archive's watermark: the CH arm's ceiling. Post-P23, as the
 	// derive only ever records one there; a sub-floor value covers no
-	// post-P23 ledger and leaves the ceiling at the P23 boundary (GH-622).
+	// post-P23 ledger and leaves the ceiling at the P23 boundary.
 	wm := base + 5_000
 	when := time.Unix(1_700_000_000, 0).UTC()
 

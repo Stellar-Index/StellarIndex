@@ -12,7 +12,7 @@ import (
 )
 
 // stubCursorsReader is declared in diagnostics_cursors_test.go;
-// reused here for the F-0095 fix's degraded-on-cursors-error path.
+// reused here for the degraded-on-cursors-error path.
 
 // decodeIngestionEnvelope reads the envelope produced by
 // /v1/diagnostics/ingestion. Data is left as json.RawMessage because
@@ -32,15 +32,15 @@ type ingestionEnvelope struct {
 }
 
 // TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors pins the
-// F-0095 fix: when the underlying GetNetworkStats reader errors
-// (e.g. the F-0039 Redis cascade caused a Postgres timeout
+// stale-on-error path: when the underlying GetNetworkStats reader errors
+// (e.g. a Redis cascade caused a Postgres timeout
 // downstream), the snapshot's ledger fields stay at zero — and the
 // response MUST flip flags.stale:true rather than serve fresh-
-// looking zeros. Pre-fix this returned flags.stale:false with every
+// looking zeros. A naive handler would return flags.stale:false with every
 // counter at 0; peer endpoints like /v1/network/stats either
 // returned the same error as 500 problem+json or, under partial
 // availability, served real data — the contradiction was the
-// audit's "different storage path" symptom.
+// "different storage path" symptom.
 func TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors(t *testing.T) {
 	reader := &stubNetworkStatsReader{err: errors.New("storage broke")}
 	srv := v1.New(v1.Options{NetworkStats: reader})
@@ -129,7 +129,7 @@ func TestDiagnosticsIngestion_FreshWhenReadersOK(t *testing.T) {
 // TestDiagnosticsIngestion_StaleWhenCursorsErrors pins the second
 // critical filler: a Postgres-level error on ListCursors flips
 // flags.stale:true even when network stats came through OK. Under
-// the F-0039 cascade a partial outage could surface this exact
+// a Redis cascade a partial outage could surface this exact
 // shape: ledger fields populated, backfill section empty.
 func TestDiagnosticsIngestion_StaleWhenCursorsErrors(t *testing.T) {
 	vol := "100.00"

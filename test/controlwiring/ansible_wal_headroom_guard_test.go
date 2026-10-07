@@ -15,9 +15,9 @@ import (
 // ─── RWC-529 / GH #529: the WAL-headroom guard must measure pg_wal ──
 //
 // The archival-node role refuses a max_wal_size that does not fit the
-// filesystem pg_wal is ACTUALLY on — the substitution that took r1 down
-// on 2026-09-16 (the reasoning said "2.7TB free", which was true of the
-// DATA directory and false of pg_wal, a symlink onto the 49GB root).
+// filesystem pg_wal is ACTUALLY on. A free-space figure read from the DATA
+// directory ("2.7TB free") is false of pg_wal when that is a symlink onto the
+// 49GB root, and the substitution takes the host down.
 //
 // The probe resolves the symlink, then walks up to the nearest EXISTING
 // ancestor so df still names the right volume on a fresh host. The
@@ -167,7 +167,7 @@ func walStubTree(t *testing.T, shape string) string {
 			t.Fatalf("symlink %s: %v", wal, err)
 		}
 	case "dangling":
-		// The 2026-09-16 shape before the volume exists: pg_wal names a
+		// A dangling symlink: pg_wal names a
 		// mount that has not been applied.
 		if err := os.Symlink(filepath.Join(root, "unmounted-volume", "pg_wal"), wal); err != nil {
 			t.Fatalf("symlink %s: %v", wal, err)

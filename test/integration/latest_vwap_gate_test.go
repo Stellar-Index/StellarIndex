@@ -14,9 +14,9 @@ import (
 )
 
 // TestLatestClosedVWAP1m_RecentExistenceGate exercises the recent-existence
-// gate added for the 2026-07-06 empty-alias latency incident. The
+// gate for the empty-alias latency case. The
 // /v1/price handler reads native/fiat:USD as an alias on every XLM query,
-// and that synthetic pair has ZERO rows; before the gate, each such read
+// and that synthetic pair has ZERO rows; without the gate, each such read
 // ran a max() over ~400 days of prices_1m chunks to conclude "no rows"
 // (minutes cold), timing out before the fast crypto:XLM/fiat:USD alias was
 // tried. The gate makes the empty/quiet case an O(recent-chunks) probe

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Regression suite for wave-D RD-05: `api.status_services` was
+// Regression suite: `api.status_services` was
 // validated case-insensitively and consumed case-sensitively.
 //
 // config/validate.go lower-cases each entry before checking it against
@@ -22,7 +22,7 @@ import (
 // explorer's status page stayed amber, and an operator debugging it
 // found a config value that passed validation and matched the
 // documented vocabulary — which is precisely the symptom the list was
-// added (#328) to remove.
+// added to remove.
 
 // TestStatusServicesOrNormalisesCase pins the boundary transform. It
 // must match the one config validation applies, or a value can pass

@@ -11,7 +11,7 @@ import (
 )
 
 // TestDivergence_ServesReferenceObservationTime — /v1/divergence carries
-// each reference's own time beside the comparison time (GH-823), and a row
+// each reference's own time beside the comparison time, and a row
 // recorded before it was stored says null rather than borrowing observed_at.
 func TestDivergence_ServesReferenceObservationTime(t *testing.T) {
 	comparedAt := time.Date(2026, 7, 3, 22, 37, 8, 0, time.UTC)

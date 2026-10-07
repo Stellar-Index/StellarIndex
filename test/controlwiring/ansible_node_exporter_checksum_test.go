@@ -10,7 +10,7 @@ import (
 // ─── Q259: a supply-chain checksum var must guard a real download ──
 //
 // node_exporter installs via the Debian `prometheus-node-exporter` package
-// (archival-node/tasks/10-observability.yml, #33 cutover 2026-05-20),
+// (archival-node/tasks/10-observability.yml),
 // unpinned, so the distro can ship CVE fixes. No task reads a
 // node_exporter_version or node_exporter_release_sha256 var. Despite that,
 // all four test-net inventories declared the identical literal

@@ -148,7 +148,7 @@ func (priceChangesWithheldStub) PriceAt(
 	return "", time.Time{}, 0, ErrPriceWithheld
 }
 
-// TestHandlePriceChanges_WithheldDistinctFromNotFound pins RLT-454:
+// TestHandlePriceChanges_WithheldDistinctFromNotFound pins that
 // when every orientation of the current-price anchor is withheld
 // (rather than simply absent), the 404 must carry the distinct
 // errors/price-withheld type — same contract /v1/price and

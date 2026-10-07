@@ -10,7 +10,7 @@ import (
 
 // ─── Q250: ansible must never guess which region it is talking to ──
 //
-// configs/ansible/ansible.cfg used to set `inventory = ./inventory` — the
+// configs/ansible/ansible.cfg must not set `inventory = ./inventory` — the
 // whole DIRECTORY. Ansible merges a directory inventory, and every region
 // file declares the same `archival_nodes` group, so ONE forgotten `-i`
 // pointed playbooks/deploy-binary.yml (`hosts: all`) and archival-node.yml /

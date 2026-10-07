@@ -25,7 +25,7 @@ import (
 //  2. DIFFERENTIAL: a correctly-stamped row is untouched — value AND
 //     derive_generation — so a re-run is a no-op (idempotent);
 //  3. the dry-run count is the write's exact preview;
-//  4. INV-3: a row at a HIGHER generation is never clawed back, and every
+//  4. a row at a HIGHER generation is never clawed back, and every
 //     rewritten row carries the run's generation;
 //  5. NULL rows are left alone unless FillNull;
 //  6. after the repair the verifier's own acceptance (ExactTierDelta == 0)
@@ -55,8 +55,8 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// USDC/XLM — the dollar leg is the BASE: tier 2b, the exact class the
-	// 2026-07-30 sweep found dirty on every one of its 66 days.
+	// USDC/XLM — the dollar leg is the BASE: tier 2b, the exact class a sweep
+	// found dirty on every day it covered.
 	pair, err := c.NewPair(usdc, c.NativeAsset())
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Errorf("second run restamped %d row(s), %v; want 0", n, err)
 	}
 
-	// 4b. INV-3 guard: a newer generation is never clawed back.
+	// 4b. generation guard: a newer generation is never clawed back.
 	if _, err := store.DB().ExecContext(ctx,
 		`UPDATE trades SET usd_volume = 999, derive_generation = $2 WHERE source = 'sdex' AND ledger = $1`, ledgers[0], gen+10); err != nil {
 		t.Fatal(err)

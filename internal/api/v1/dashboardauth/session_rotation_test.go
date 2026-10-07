@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestMintSession_RevokesTheSessionItReplaces pins #1322: logging in again
+// TestMintSession_RevokesTheSessionItReplaces pins that logging in again
 // is the victim's instinctive remedy for a stolen cookie, so the session the
 // browser presents at login must be revoked, not left alive beside the new
 // one. Both login paths (magic link / code and passkey) go through

@@ -15,7 +15,7 @@ import (
 // BEGIN/COMMIT and re-enables compression in a SEPARATE implicit transaction
 // after it, so a failure there leaves compression off with version 30 dirty;
 // the only recovery, `force 30`, records it applied and nothing after it
-// restored compression until 0168.
+// restores compression except the later repair migration.
 func TestAssetSupplyHistoryCompressionRestored(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

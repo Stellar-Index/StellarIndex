@@ -23,9 +23,9 @@ import (
 // its subject can regress, with every gate green.
 //
 // That is how scripts/ops/fx-history-backfill/generation_test.go — the
-// proven-red regression for an INV-3 money invariant (operator fx_quotes
+// proven-red regression for a money invariant (operator fx_quotes
 // corrections must be stamped with a positive derive generation, or the next
-// gen-0 worker refresh silently reverts them) — sat wired into zero build,
+// gen-0 worker refresh silently reverts them) — can sit wired into zero build,
 // test, or CI paths. F-1334 (cmd/stellarindex-ops) and W6-tst-1
 // (internal/ops/archive) were the same defect found one package at a time;
 // this test closes the class: it walks the tree for integration-gated test
@@ -153,7 +153,7 @@ func TestEveryIntegrationTaggedTestIsInIntTestPkgs(t *testing.T) {
 
 	// Non-vacuity: a walk or a constraint parser that finds nothing would
 	// pass this test over an empty set. These two are known members — the
-	// main suite, and the INV-3 test this guard was written for.
+	// main suite, and the money-invariant test this guard was written for.
 	for _, want := range []string{"test/integration", "scripts/ops/fx-history-backfill"} {
 		if _, ok := dirs[want]; !ok {
 			t.Fatalf("walk found no integration-gated test in %s — the detector is broken "+

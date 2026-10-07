@@ -77,13 +77,13 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	}
 }
 
-// TestSLORoutesMatchTheCacheBand pins #820: the SLO burn-rate rules' route
+// TestSLORoutesMatchTheCacheBand pins that the SLO burn-rate rules' route
 // set (sloHandlers above, mirrored in slo.yml's `route=~` regex) must be a
 // subset of middleware.SLOPriceRoutes, the single source of truth
 // cachecontrol.go's short-cache-band switch and its own probe-TTL test
 // share. A route that pages on the p95 latency SLO but isn't in
 // SLOPriceRoutes would silently sit outside the cache band the SLO's
-// freshness assumption depends on — exactly the drift #820 found between
+// freshness assumption depends on — exactly the drift possible between
 // this file, slo.yml and the probe-TTL test's hand-typed list.
 func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 	inBand := make(map[string]bool, len(middleware.SLOPriceRoutes))

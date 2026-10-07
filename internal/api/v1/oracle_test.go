@@ -270,7 +270,7 @@ func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 // publishes USDC under the global `crypto:USDC` ticker rather
 // than per-issuer.
 //
-// The asset id here is Circle's real Stellar issuance, and since #336
+// The asset id here is Circle's real Stellar issuance, and because of the identity gate
 // that is load-bearing rather than incidental: the expansion is gated
 // on the verified-currency catalogue, so the catalogue is now part of
 // the fixture. The ASSERTION is unchanged — a verified issuer still
@@ -378,7 +378,7 @@ func TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily(t *testing.T) {
 	}
 }
 
-// ─── /v1/oracle/streams handler tests (F-1226, audit-2026-05-12) ───
+// ─── /v1/oracle/streams handler tests ───
 
 // TestOracleStreams_EmptyArrayWhenReaderNil pins the degradation
 // posture: nil OracleReader returns a 200 with `data: []`, not a
@@ -507,7 +507,7 @@ func TestOracleStreams_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_PriceOnchain pins INV-2590's wire contract: price_raw
+// TestOracleLatest_PriceOnchain pins the wire contract: price_raw
 // stays the integer form of price, and an inverted feed's publisher
 // integer rides alongside as price_onchain; a non-inverted row omits it.
 func TestOracleLatest_PriceOnchain(t *testing.T) {

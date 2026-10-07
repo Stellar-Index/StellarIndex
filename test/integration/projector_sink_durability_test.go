@@ -25,7 +25,7 @@ import (
 )
 
 // TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor is the
-// proven-red test for audit-2026-07-16 C2-1 / D1 — the projector advancing
+// proven-red test for the projector advancing
 // its cursor past a silently-swallowed SINK write failure, which permanently
 // drops the row for the sole-writer sep41 domain.
 //

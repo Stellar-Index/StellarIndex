@@ -16,8 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the stale-while-revalidate contract added in route-sweep
-// 2026-07-29 for the three lake-priced explorer reads (contracts directory,
+// These tests pin the stale-while-revalidate contract
+// for the three lake-priced explorer reads (contracts directory,
 // asset holders, op-type stats): a stale entry is SERVED (degraded=true,
 // with its real as_of) while exactly one detached refresh runs; a cold key
 // waits for the detached compute bounded by the request deadline only; a
@@ -130,7 +130,7 @@ func TestAssetHoldersCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_AsOfLedgerIsSnapshotVintage pins #621 on the holders
+// TestAssetHolders_AsOfLedgerIsSnapshotVintage pins the snapshot-vintage as_of_ledger on the holders
 // board: the refresh stamps the watermark it read before its scan, and the
 // handler serves THAT, not a later serve-time watermark read.
 func TestAssetHolders_AsOfLedgerIsSnapshotVintage(t *testing.T) {
@@ -218,7 +218,7 @@ func TestPrewarmContractsDirectory_WarmsDefaultRung(t *testing.T) {
 }
 
 // TestPrewarmOpTypeStats_FillsColdCacheThenNoops pins the boot-warmth
-// contract (task #13, 2026-07-31): the op-type panel is built by the
+// contract: the op-type panel is built by the
 // prewarm loop BEFORE any request, so a cold first /v1/operations load
 // never renders without it; a fresh panel makes prewarm a no-op, and a
 // reader-less/cancelled handler is safe.
@@ -296,7 +296,7 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 	}
 }
 
-// ── shared detached-refresh gate (audit 2026-07-31) ───────────────────
+// ── shared detached-refresh gate ───────────────────
 
 // TestDetachedRefreshGate_SaturationSkipsNotQueues pins the global bound
 // across cache keys: per-key single-flight alone let attacker-chosen key
@@ -357,7 +357,7 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	}
 }
 
-// ── contract-detail SWR cache (route-sweep 2026-07-30) ────────────────
+// ── contract-detail SWR cache ────────────────
 
 func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {
 	h, _ := newSWRHandler()
@@ -434,7 +434,7 @@ func TestContractDetailCached_ColdFailurePropagates(t *testing.T) {
 // fans out to several panels at once, and they must not compete for a
 // single refresh-gate class. When they did, the per-class cap (half the
 // global limit) refused the losers and 20 of 20 cold random contract
-// pages served at least one 503 panel (2026-08-13).
+// pages served at least one 503 panel.
 func TestDetachedClassForKey_PanelsDoNotShareOneBudget(t *testing.T) {
 	// The four kinds a contract page + account activity actually use.
 	keys := map[string]string{

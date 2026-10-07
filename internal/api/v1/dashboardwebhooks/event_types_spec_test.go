@@ -14,7 +14,7 @@ import (
 // e.g. incident.* and price.*) equal to platform.WebhookEventTypes(). The
 // spec is what the explorer's generated types and customers read, so a
 // type missing there is as unsubscribable as one missing from
-// validateEvents (GH-1348). Single-family enums — a payload's own `event`
+// validateEvents. Single-family enums — a payload's own `event`
 // field — are subsets by design and are not checked.
 func TestSpecEventTypeEnumsMatchPlatform(t *testing.T) {
 	spec, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")

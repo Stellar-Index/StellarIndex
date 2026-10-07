@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite for wave-D MSP-02 / EXR-04: /v1/vwap and /v1/twap
+// Regression suite for /v1/vwap and /v1/twap
 // served a directory-scam-flagged issuer's aggregated price at 200,
 // while /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40 oracle
 // and the asset headline all withheld it.
@@ -21,12 +21,12 @@ import (
 // The gap was DOCUMENTED AS FIXED. pricingguard/scam.go's package doc
 // claimed the gate sat "at the price-reader seam so every reader-backed
 // surface (/v1/price, /v1/price/batch, /v1/twap, /v1/vwap, …) is
-// covered by ONE gate", and PR #182's merged body repeated it verbatim.
+// covered by ONE gate", and a merged PR body repeated it verbatim.
 // Neither endpoint goes through the price reader at all — both compute
 // from raw trades via their own fetch — so the claim was never true and
 // no test contradicted it.
 //
-// Reproduced live before the fix against a flagged issuer:
+// Reproduced live without the gate against a flagged issuer:
 // /v1/price → 404 price-withheld, /v1/price/tip → 404 price-withheld,
 // but /v1/vwap → 200 with a price and /v1/twap → 200 with a price.
 

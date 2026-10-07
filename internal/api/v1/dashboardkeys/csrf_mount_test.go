@@ -29,7 +29,7 @@ const crossSiteProblemType = "https://api.stellarindex.io/errors/cross-site-requ
 // routePattern matches a ServeMux pattern literal: "METHOD /v1/...".
 var routePattern = regexp.MustCompile(`^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE) (/v1/\S*)$`)
 
-// TestMount_EveryDashboardWriteIsSameSiteGuarded is GH-804's mount-level
+// TestMount_EveryDashboardWriteIsSameSiteGuarded is the mount-level
 // net: every state-changing route registered by any dashboard* package
 // must answer a cross-site Origin with the CSRF problem, never reach its
 // handler. Routes are enumerated from the packages' source, not listed
@@ -240,7 +240,7 @@ func routeLiterals(t *testing.T, dir string) []string {
 	return out
 }
 
-// TestMount_CrossSiteWriteBlockedBeforeHandler is the C3-031 / C3-057
+// TestMount_CrossSiteWriteBlockedBeforeHandler is the
 // regression at the mount point rather than the middleware unit: a
 // cross-site page must not be able to mint or revoke a logged-in
 // customer's API keys with their session cookie.

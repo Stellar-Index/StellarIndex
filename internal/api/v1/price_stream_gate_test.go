@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Regression suite for Q162 / RLT-299: /v1/price/stream fanned out, in
+// Regression suite: /v1/price/stream must not fan out, in
 // real time, the aggregated prices /v1/price answers 404
 // `errors/price-withheld` for.
 //
@@ -28,7 +28,7 @@ import (
 // publishes a closed bucket for every pair it computes a VWAP for, the
 // bridge sanitises the envelope but asks no gate, and the handler
 // subscribed the caller to the topic straight from the query string.
-// So a dust market's attacker-authored VWAP (the 2026-08-04 valuation
+// So a dust market's attacker-authored VWAP (the valuation
 // incident class) and a directory-scam-flagged issuer's price were both
 // obtainable live from the surface that shares /v1/price's consistency
 // contract — while /v1/price, /v1/price/tip, /v1/price/tip/stream,
@@ -164,7 +164,7 @@ func TestPriceStream_SubstanceWithheld_RefusesConnect(t *testing.T) {
 
 // TestPriceStream_ScamFlaggedIssuer_RefusesConnect — the scam gate is
 // the SECOND gate, and a hand-written call site that consults one and
-// forgets the other is the MSP-07 drift shape. With the substance gate
+// forgets the other is the drift shape. With the substance gate
 // disabled (nil, as an operator diagnosing a coverage complaint would
 // leave it), a directory-scam-flagged issuer must still be refused.
 func TestPriceStream_ScamFlaggedIssuer_RefusesConnect(t *testing.T) {

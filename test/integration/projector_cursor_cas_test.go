@@ -18,13 +18,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Findings F159 / K013 (audit 2026-09-02): the projector's cycle is a
-// read-modify-write up to PerSourceTimeout long, and its commit was a
-// never-regress UPSERT of a position derived from the cycle-start read. A
-// projector-replay RewindCursor landing inside that gap wrote a LOWER
-// value, so the in-flight cycle's forward write passed the guard and put
-// the cursor back at tip — the replay printed success and re-projected
-// nothing.
+// The projector's cycle is a read-modify-write up to PerSourceTimeout long,
+// and its commit is a never-regress UPSERT of a position derived from the
+// cycle-start read. A projector-replay RewindCursor landing inside that gap
+// writes a LOWER value, so the in-flight cycle's forward write would pass the
+// guard and put the cursor back at tip — the replay would print success and
+// re-project nothing.
 //
 // RED on the unfixed behaviour: make AdvanceCursorFrom delegate to
 // UpsertCursor (the old commit) and all three tests below fail.

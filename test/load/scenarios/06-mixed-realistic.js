@@ -1,6 +1,6 @@
 // Scenario 06 — mixed-realistic proof scenario.
 //
-// THIS IS THE FREIGHTER SLA PROOF (Task #77). All other scenarios
+// THIS IS THE FREIGHTER SLA PROOF. All other scenarios
 // stress one endpoint shape; this one runs the weighted blend
 // from the design note §Traffic shape so the resulting p95 / p99
 // / error-rate numbers reflect what a real production day looks

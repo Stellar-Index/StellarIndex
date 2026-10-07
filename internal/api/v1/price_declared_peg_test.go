@@ -73,10 +73,10 @@ func getPegEnvelope(t *testing.T, url string) pegEnvelope {
 // stablecoin-proxy peg arm broke: the operator's 1:1 declaration is a
 // CONSTANT, and a constant must never pre-empt an observation.
 //
-// The peg arm used to answer the moment it recognised the requested
+// The peg arm must not answer the moment it recognises the requested
 // asset as a declared peg, so /v1/price?asset=USDC-GA5Z…&quote=fiat:USD
-// published 1.000000000000 while the market was somewhere else — the
-// live shape (2026-09-03) was /v1/price serving the flat peg in the same
+// would publish 1.000000000000 while the market was somewhere else — the
+// failure shape is /v1/price serving the flat peg in the same
 // minute /v1/assets served 1.0008594347 for the same asset. Under a real
 // depeg the surface would have gone on publishing $1 rather than the
 // break, which is the one moment the number matters.
@@ -155,7 +155,7 @@ func TestPrice_DeclaredPegServesTheObservedXLMCross(t *testing.T) {
 
 // TestPrice_DeclaredPegWithNoObservationServesTheDeclaration pins the
 // fallback that remains when NO market prices the peg at all: the flat $1
-// still serves (F-1232) rather than a 404, it is labelled a declaration,
+// still serves rather than a 404, it is labelled a declaration,
 // and it carries the declaration's adoption stamp — not the clock.
 func TestPrice_DeclaredPegWithNoObservationServesTheDeclaration(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
@@ -339,10 +339,10 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 // binary runs with, since the operator declaration carries no timestamp
 // of its own: the server's construction time.
 //
-// observed_at used to be time.Now() on every request, so the constant
-// was indistinguishable on the wire from an observation taken this
+// observed_at must not be time.Now() on every request, or the constant
+// would be indistinguishable on the wire from an observation taken this
 // instant — live, two consecutive GETs came back 123ms apart, each
-// carrying an observed_at equal to its own envelope as_of. It now
+// carrying an observed_at equal to its own envelope as_of. It
 // predates the first request ever made (the server existed before the
 // request did), does not advance between requests, and does not claim
 // to have been observed after the response was built.
@@ -366,7 +366,7 @@ func TestPrice_DeclaredPegIsNotStampedAsAFreshObservation(t *testing.T) {
 	second := getPegEnvelope(t, ts.URL+"/v1/price?asset="+usdcClassicID+"&quote=fiat:USD")
 
 	// The declaration itself is unchanged — this surface still answers
-	// $1 for a peg no market prices (F-1232).
+	// $1 for a peg no market prices.
 	if first.Data.Price != "1.000000000000" {
 		t.Errorf("price = %q, want 1.000000000000", first.Data.Price)
 	}

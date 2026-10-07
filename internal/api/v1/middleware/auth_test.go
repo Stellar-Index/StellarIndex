@@ -326,7 +326,7 @@ func TestAuth_ModeSEP10_RejectsXAPIKey(t *testing.T) {
 // fix at the HTTP boundary: when the validator reports the account-
 // status kill-switch read is degraded (auth.ErrAccountStatusUnavailable),
 // the middleware answers 503 + Retry-After, NOT the 401 the default
-// branch used to emit — so a transient Postgres blip reads as a
+// branch would emit — so a transient Postgres blip reads as a
 // retryable "auth layer degraded" rather than "your credential is
 // invalid" (which drives clients to rotate keys during a server-side
 // outage).
@@ -376,9 +376,9 @@ func TestAuth_AccountStatusUnavailableIs503Retryable(t *testing.T) {
 }
 
 // TestAuth_ErrorBodyIsProblemJSON pins the wire shape every auth
-// failure path now emits — application/problem+json per
-// docs/reference/api-design.md §11. Pre-2026-05-02 these paths
-// emitted text/plain bodies, which broke the "every 4xx/5xx is
+// failure path emits — application/problem+json per
+// docs/reference/api-design.md §11. Emitting
+// text/plain bodies on these paths would break the "every 4xx/5xx is
 // problem+json" client contract.
 func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 	cases := []struct {
@@ -461,7 +461,7 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestAuth_InfraPathsBypassCredentials pins the SEC-01 fix: operational
+// TestAuth_InfraPathsBypassCredentials pins that operational
 // plumbing must answer WITHOUT credentials whatever auth_mode is set to.
 //
 // Auth() wraps the whole mux and every infra route is registered on that same
@@ -530,7 +530,7 @@ func TestAuth_InfraPathsBypassCredentials(t *testing.T) {
 	}
 }
 
-// TestAuth_PublicRouteIsCredentialOptional pins #1314: a route mounted via
+// TestAuth_PublicRouteIsCredentialOptional pins that a route mounted via
 // PublicRoutes.Handle answers an uncredentialed caller under the
 // credential-required modes, still verifies a presented credential, and the
 // exemption does not widen to another method or a neighbouring path.
@@ -581,7 +581,7 @@ func TestAuth_PublicRouteIsCredentialOptional(t *testing.T) {
 	}
 }
 
-// TestAuth_BearerSchemeIsCaseInsensitive pins #1322: RFC 7235 §2.1 makes
+// TestAuth_BearerSchemeIsCaseInsensitive pins that RFC 7235 §2.1 makes
 // the auth-scheme token case-insensitive, so `bearer <key>` must
 // authenticate exactly like `Bearer <key>` under apikey and sep10.
 func TestAuth_BearerSchemeIsCaseInsensitive(t *testing.T) {

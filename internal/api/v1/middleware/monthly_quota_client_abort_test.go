@@ -17,12 +17,11 @@ import (
 )
 
 // The monthly-quota gate mirrors ratelimit.Bucket's dwell clock
-// (REL-06) and inherited its blind spot with it: the month-to-date read
+// and inherited its blind spot with it: the month-to-date read
 // ran on the REQUEST's context, and the gate cannot tell a
 // caller-cancelled read from a counter outage. Its clock is
 // process-wide — one instance for the whole binary — so a client that
-// connects and immediately RSTs PRE-ARMS `redisErrorSince` for everyone
-// (REL-06 F059, reverification-2026-09-18).
+// connects and immediately RSTs PRE-ARMS `redisErrorSince` for everyone.
 //
 // What that buys an attacker is precisely the invariant this gate
 // documents: "a single blip must fail OPEN so a transient Redis hiccup
@@ -72,7 +71,7 @@ func TestMonthlyQuota_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	attacker := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K-abort", MonthlyQuota: 1_000_000}
 
 	// An abort flood: nothing but cancelled requests, spanning more than
-	// the dwell window. Pre-fix this arms the process-wide clock and
+	// the dwell window. Otherwise this arms the process-wide clock and
 	// keeps it armed.
 	runAbortedWithSubject(t, mw, attacker)
 	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)

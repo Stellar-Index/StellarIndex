@@ -259,12 +259,10 @@ func TestGenerateID_PropagatesError(t *testing.T) {
 	}
 }
 
-// Regression (2026-06-12): a freshly minted operator key must be USABLE —
-// store.Create marks PermissionsAll and the Redis validator must carry the
-// permission posture onto the Subject. Pre-fix, Create left the closed
-// posture (PermissionsAll=false) AND Lookup dropped the fields entirely,
-// so every mint-key'd key 403'd on all endpoints ("this key has no
-// permission entries"; 210k/210k k6 requests failed).
+// A freshly minted operator key must be USABLE — store.Create marks
+// PermissionsAll and the Redis validator must carry the permission
+// posture onto the Subject. Otherwise every mint-key'd key 403s on all
+// endpoints ("this key has no permission entries").
 func TestRedisStore_CreateThenLookup_isFullAccess(t *testing.T) {
 	store, mr, now := newTestStore(t)
 	_, plaintext, err := store.Create(context.Background(), CreateAPIKeyRequest{
@@ -290,12 +288,10 @@ func TestRedisStore_CreateThenLookup_isFullAccess(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt — api-security-2
-// (audit 2026-08-28): the self-service rotation path passes the parent's
-// verification stamp; the store must persist it so the validator's
-// Subject carries it and RequireEmailVerified lets the child through.
-// Proven red on origin/main: CreateAPIKeyRequest had no EmailVerifiedAt
-// and the looked-up Subject's stamp was zero.
+// TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt — the
+// self-service rotation path passes the parent's verification stamp; the
+// store must persist it so the validator's Subject carries it and
+// RequireEmailVerified lets the child through.
 func TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt(t *testing.T) {
 	store, mr, now := newTestStore(t)
 	verifiedAt := now.Add(-48 * time.Hour)

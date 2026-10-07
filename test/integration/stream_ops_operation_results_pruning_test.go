@@ -22,9 +22,9 @@ import (
 // for "CreatingSet" or "Join" cannot tell apart, because three different query
 // shapes satisfy one each:
 //
-//	IN-subquery   (F111/T385, the defect): operation_results IS pruned, but the
+//	IN-subquery   (the defect): operation_results IS pruned, but the
 //	              window's whole successful-tx set is materialised first —
-//	              CreatingSetsTransform, the 10 GiB blowout of 2026-07-11.
+//	              CreatingSetsTransform, a 10 GiB memory blowout.
 //	derived-outer (the rejected first fix): no set-build, but the outer ledger
 //	              window is hoisted into a derived table, so ClickHouse cannot
 //	              propagate it through o.ledger_seq = r.ledger_seq and
@@ -62,11 +62,10 @@ const (
 
 // ── the shapes this test exists to rule out ─────────────────────────────────
 
-// inSubqueryOpsSQL is the successful-tx filter EXACTLY as sdexOpsQuery and
-// classicOpsQuery carried it before this fix (F111 / T385) — an IN-subquery,
-// whose CreatingSet step materialises the whole window's tx-hash set before
-// the join runs. The third sibling, contractCallOpsQuery, was moved off this
-// shape after the 2026-07-11 blowout; these two were not.
+// inSubqueryOpsSQL is the IN-subquery successful-tx filter that sdexOpsQuery
+// and classicOpsQuery must not use: its CreatingSet step materialises the
+// whole window's tx-hash set before the join runs. The sibling
+// contractCallOpsQuery is likewise off this shape.
 func inSubqueryOpsSQL(opTypes string, from, to uint32) string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,

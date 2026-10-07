@@ -8,7 +8,7 @@ import (
 
 // TestNoDanglingIssueReferences guards against re-introducing the
 // "#1082, #1099-#1105" citation into the clientAborted/timeout doc
-// comments (RSWP-083). It was never a live tracking chain — the repo's
+// comments. It was never a live tracking chain — the repo's
 // issue/PR count was #803 when the comments were written — and the
 // numbers it now collides with belong to unrelated findings, so the
 // citation misleads rather than informs. Sites drop the parenthetical
@@ -33,7 +33,7 @@ func TestNoDanglingIssueReferences(t *testing.T) {
 }
 
 // TestNoStaleIssueNumber1099 guards against re-introducing "#1099" into
-// chart/observations/sources' cold-path timeout-guard comments (RSWP-077).
+// chart/observations/sources' cold-path timeout-guard comments.
 // #1099 no longer dangles — it now resolves to an unrelated
 // supply-canonicalization issue — so citing it here points a reader at
 // the wrong thing instead of the 8s-ceiling precedent it once meant.

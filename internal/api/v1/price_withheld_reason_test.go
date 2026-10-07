@@ -19,7 +19,7 @@ import (
 // A scam-gate withhold and a substance-gate withhold share one problem
 // type, but only the substance wording may call the market thin or send
 // the client to the raw trades: for a flagged issuer those trades are
-// the market the platform refused to price (#732).
+// the market the platform refused to price.
 
 var scamWithheldForbidden = []string{
 	"too thin",

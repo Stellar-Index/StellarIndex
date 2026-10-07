@@ -39,8 +39,7 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 	// from USDC's issuer above. We need the strkey to round-trip
 	// through canonical.NewClassicAsset's CRC check, so a
 	// hand-crafted "USDC-issuer with last char tweaked" string
-	// (which used to work when validation was format-only) no
-	// longer round-trips.
+	// (which a format-only validator would accept) is rejected.
 	fake, err := c.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
 	if err != nil {
 		t.Fatal(err)

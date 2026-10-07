@@ -11,7 +11,7 @@ import (
 
 // panicOnceOracle panics on its first LatestOracleStreams call and
 // answers normally afterward, so a test can drive the exact failure
-// GH-587 describes: a read that blows up mid-fill.
+// a read that blows up mid-fill.
 type panicOnceOracle struct {
 	calls   int
 	streams []canonical.OracleUpdate
@@ -33,7 +33,7 @@ func (o *panicOnceOracle) LatestOracleStreams(context.Context) ([]canonical.Orac
 	return o.streams, nil
 }
 
-// TestCachedRWAReferences_PanicDoesNotWedgeTheFlight pins GH-587: a panic
+// TestCachedRWAReferences_PanicDoesNotWedgeTheFlight pins that a panic
 // out of the oracle read must not leave rwaRefFlight latched on a channel
 // nobody closes. The outer recover simulates net/http's own per-request
 // panic recovery, which is what actually catches the panic in production

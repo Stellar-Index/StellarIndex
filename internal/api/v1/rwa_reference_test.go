@@ -1,7 +1,7 @@
 package v1_test
 
 // GET /v1/rwa/assets — the oracle NAV reference and the premium or
-// discount to it (#352).
+// discount to it.
 //
 // The gap between an instrument's independent valuation and what the
 // Stellar market pays for the token is the figure a holder of a

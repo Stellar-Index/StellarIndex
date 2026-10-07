@@ -29,7 +29,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// fan-out doesn't multiply against the API
 		{"/v1/status", "public, max-age=10, s-maxage=15"},
 
-		// Closed-ledger detail is immutable → modest public band (#332 F3);
+		// Closed-ledger detail is immutable → modest public band;
 		// the list + throughput move fast → status-like short band. The
 		// account surface stays private (guards that the new regexps do
 		// not over-match).
@@ -40,11 +40,11 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/tx/notahash", "private, no-store"},
 		{"/v1/ledgers", "public, max-age=10, s-maxage=15"},
 		{"/v1/network/throughput", "public, max-age=10, s-maxage=15"},
-		// #1070: was the 300s catalogue band, 10x its own 30s SWR cache
+		// Not the 300s catalogue band, 10x its own 30s SWR cache
 		// lifetime. Joins its /v1/network/throughput sibling instead.
 		{"/v1/network/stats", "public, max-age=10, s-maxage=15"},
 		// The operations directory is /v1/ledgers' sibling listing and
-		// joins the same band (#332 F2). It had no case at all and shipped
+		// joins the same band. Without a case it would ship
 		// `private, no-store` from the default.
 		{"/v1/operations", "public, max-age=10, s-maxage=15"},
 		{"/v1/contracts", "public, max-age=10, s-maxage=15"},
@@ -70,8 +70,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/price/stream", "no-store"},
 		{"/v1/ledger/stream", "private, no-store"},
 
-		// Closed-bucket price surfaces — 5s shared cache (#344). The
-		// 150s SLA-probe freshness target leaves no room for the old
+		// Closed-bucket price surfaces — 5s shared cache. The
+		// 150s SLA-probe freshness target leaves no room for
 		// s-maxage=60: it can serve a bucket a full bucket behind
 		// origin (age <= 210s) and a stale frozen/confidence for two
 		// aggregator ticks. max-age stays 30s — a client's own copy is
@@ -81,7 +81,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Multi-horizon change strip tracks the current-price band
 		// (anchor moves on every bucket close).
 		{"/v1/price/changes", "public, max-age=30, s-maxage=5"},
-		// Scam-gated price surfaces (#820 follow-up) — same band as
+		// Scam-gated price surfaces — same band as
 		// /v1/price: a shared cache entry must not outlive a
 		// scam-withhold flip.
 		{"/v1/price/at", "public, max-age=30, s-maxage=5"},
@@ -106,7 +106,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/history/since-inception", "public, max-age=60, s-maxage=300"},
 		// /v1/price/at, /v1/vwap and /v1/twap are scam-gated price
-		// surfaces (#820) and take the short band; see
+		// surfaces and take the short band; see
 		// TestPolicyForPath_PinsDirectives' shortBandPolicy cases below.
 		{"/v1/ohlc", "public, max-age=60, s-maxage=300"},
 		{"/v1/markets", "public, max-age=60, s-maxage=300"},
@@ -114,7 +114,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/sources", "public, max-age=60, s-maxage=300"},
 		// NB /v1/oracle/latest, /v1/oracle/lastprice, /v1/oracle/prices and
 		// /v1/oracle/x_last_price are NOT here — they left the catalogue
-		// band in #344/RLT-438; see
+		// band; see
 		// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand and
 		// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand.
 
@@ -133,7 +133,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/incidents", "public, max-age=60, s-maxage=300"},
 		{"/v1/pools", "public, max-age=60, s-maxage=300"},
 
-		// #1070: was the 300s catalogue band despite its own comment
+		// Not the 300s catalogue band, despite its own comment
 		// arguing for a 60s edge cache to match the 1-min attribution
 		// sweeper.
 		{"/v1/aggregators", "public, max-age=30, s-maxage=60"},
@@ -157,7 +157,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// data keyed on the query-string address list).
 		{"/v1/directory", "public, max-age=60, s-maxage=300"},
 
-		// Account-creator league table (#351) — a rollup snapshot of
+		// Account-creator league table — a rollup snapshot of
 		// network-wide aggregate reference data, so it takes the public
 		// catalogue band while the per-account surface around it stays
 		// private. Exact path only: anything deeper must fall through to
@@ -298,7 +298,7 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/markets", "public, max-age=60"},
 		{"/v1/pairs", "public, max-age=60"},
 		{"/v1/sources", "public, max-age=60"},
-		// #1070: /v1/aggregators moved to the 30s/60s short band.
+		// /v1/aggregators is on the 30s/60s short band.
 		{"/v1/aggregators", "public, max-age=30"},
 		{"/v1/network/stats", "public, max-age=10"},
 		{"/v1/oracle/lastprice", "public, max-age=30"},
@@ -337,7 +337,7 @@ func TestCacheControlWithCDN_FalseDropsSMaxAge(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand pins the #344
+// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand pins the
 // separation explicitly, because it is the kind of thing a later edit
 // "tidies" back together. /v1/oracle/latest is a LATEST-OBSERVATION-per-
 // source surface: no closed-bucket contract, no staleness flag on the
@@ -359,7 +359,7 @@ func TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand pins RLT-438:
+// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand pins that
 // /v1/oracle/lastprice and /v1/oracle/x_last_price are, like
 // /v1/oracle/latest, "last observed price" surfaces with no closed-bucket
 // contract, and /v1/oracle/prices is itself closed-bucket (it excludes the
@@ -410,7 +410,7 @@ func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OperationsSharesTheLedgerListBand pins #332 F2's
+// TestPolicyForPath_OperationsSharesTheLedgerListBand pins the
 // adjudication and the reason for it, because "operations" reads like a
 // catalogue and a later tidy-up would file it next to /v1/markets.
 //
@@ -422,7 +422,7 @@ func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 // It must NOT take the 300s catalogue band. explorer.opsDirCache serves stale
 // on expiry and only refreshes ON a request, so at a low arrival rate an
 // entry's age is bounded by the inter-arrival gap, not by its 10s TTL
-// (measured on r1 2026-09-03: `as_of` 93.2s behind after a quiet window). A
+// (measured on r1: `as_of` 93.2s behind after a quiet window). A
 // 300s shared cache would compound that real staleness rather than absorb a
 // burst.
 func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {

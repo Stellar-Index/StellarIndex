@@ -13,7 +13,7 @@ import (
 )
 
 // TestDecompressTradesChunk_DoesNotConvoyTheDatabase is the DB-backed
-// reproduction of the 2026-09-10 r1 incident, on the deployed pair
+// reproduction of an r1 incident, on the deployed pair
 // (TimescaleDB 2.26.4 / PG 15), and the proof that the fix removes it.
 //
 // WHAT HAPPENED. A deploy restarted stellarindex-aggregator at 00:12:23

@@ -78,7 +78,7 @@ func TestStatus_NoBackend_DegradedSurface(t *testing.T) {
 	if st.Region.Name != "r1" {
 		t.Errorf("Region.Name = %q, want r1", st.Region.Name)
 	}
-	// F-0055: the in-process surface (api=ok + indexer/aggregator
+	// The in-process surface (api=ok + indexer/aggregator
 	// unknown) is partial visibility. The mixed-state branch of
 	// the overall rollup returns "degraded" — silently reporting
 	// "ok" while two of three services are unknown is the exact
@@ -263,7 +263,7 @@ func TestStatus_WithBackend_StaleHeartbeatDown(t *testing.T) {
 	var st StatusResponse
 	json.Unmarshal(body, &st)
 
-	// Per F-0055 rollup precedence (worst wins): any service in
+	// Per rollup precedence (worst wins): any service in
 	// "down" makes overall=down. A stale heartbeat is a definite
 	// negative signal, not "degraded" partial visibility.
 	if st.Overall != "down" {
@@ -326,7 +326,7 @@ func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
 }
 
 // TestStatus_BackendErrorDegradesOverall pins the regression
-// from r1 2026-05-10: when Prometheus is dead, every backend
+// from r1: when Prometheus is dead, every backend
 // query (Heartbeats, Latency, Freshness, Incidents) errors out;
 // /v1/status was returning Overall="ok" because the rollup logic
 // only flagged "degraded" inside the success branches. With the
@@ -691,7 +691,7 @@ func TestPrometheusStatusBackend_IncidentsDedupesByAlertname(t *testing.T) {
 }
 
 // TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity pins
-// RLT-077: the `severity` alert label is operator-controlled (any
+// The `severity` alert label is operator-controlled (any
 // alertname can set it to anything) and is published verbatim on the
 // public /v1/status JSON. A value outside the three documented
 // severities (page/ticket/informational) must be normalized before it
@@ -728,7 +728,7 @@ func TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity(t *testing.T
 	}
 }
 
-// TestStatus_OverallRollup_F0055 pins the F-0055 fix: the
+// TestStatus_OverallRollup_F0055 pins that the
 // customer-facing `overall` field is computed from the worst-case
 // per-service state plus the two cross-cutting canaries
 // (backend-error, page-firing). Each table row exercises one
@@ -854,9 +854,9 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 // branch (distinct from "down" and from "ok") is pinned.
 func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 	// All three services unknown, no canary trips → overall=unknown.
-	// This is the pure F-0055 evidence-from-prod state: every signal
-	// is unknown + zero LastSeen. Previously rolled to "ok"; now
-	// rolls to "unknown".
+	// This is the pure evidence-from-prod state: every signal
+	// is unknown + zero LastSeen. Must roll to "unknown",
+	// not "ok".
 	services := []StatusService{
 		{Name: "api", Status: "unknown"},
 		{Name: "indexer", Status: "unknown"},
@@ -886,11 +886,11 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 	}
 }
 
-// TestRollupOverallLatencyBreach is the site-audit S31 regression guard:
+// TestRollupOverallLatencyBreach is a regression guard:
 // a green roll-up must be impossible while the latency SLO the same
 // response advertises is breached.
 //
-// Production on 2026-07-22 served overall="ok" — headline "All systems
+// Production once served overall="ok" — headline "All systems
 // operational · Every service is reporting healthy" — alongside p95 840ms
 // against a 200ms target and p99 2096ms against 500ms, both drawn in red
 // directly beneath that banner. The roll-up judged only service liveness.
@@ -944,7 +944,7 @@ func TestStatusLatencyBreached(t *testing.T) {
 // leave `overall` at "ok" (and flags.stale false) however many are firing.
 //
 // The guard is here because /v1/status serves those counts in the SAME
-// body as the verdict: r1 on 2026-09-08 read overall "ok" beside 30 ticket
+// body as the verdict: r1 once read overall "ok" beside 30 ticket
 // + 1 informational alerts, which reads as a contradiction even though it
 // is the rule working. The status banner now names that backlog in words,
 // which is a presentation change only. Folding tickets into the roll-up

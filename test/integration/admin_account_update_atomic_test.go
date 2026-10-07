@@ -16,12 +16,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// Q148 (audit-2026-09-18) — PATCH /v1/admin/accounts/{id} previously
-// did Get -> mutate in memory -> Update with no lock and no version
+// PATCH /v1/admin/accounts/{id} must not do Get -> mutate in memory ->
+// Update with no lock and no version
 // check. Update rewrites every mutable column (not a diff), so two
 // concurrent PATCHes on the SAME account race: whichever commits
 // second silently discards the first's change. Status is the operator
-// kill switch (C3-010) — a lost SUSPEND under this race is a live
+// kill switch — a lost SUSPEND under this race is a live
 // hole.
 //
 // This proves AccountStore.UpdateAtomic serialises the race: one

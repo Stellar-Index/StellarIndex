@@ -317,7 +317,7 @@ func TestAdminAccountGet_Happy(t *testing.T) {
 	if env.Data.Slug != "acme" || env.Data.RateLimitPerMinOverride != 9000 {
 		t.Errorf("view = %+v", env.Data)
 	}
-	// GH-1074: the operator surface must resolve the override the same
+	// The operator surface must resolve the override the same
 	// way platform.Account's cascade does (free-tier ceiling 1000,
 	// raised to the 9000 override), not merely echo it back raw.
 	if env.Data.EffectiveRateLimitPerMin != 9000 {
@@ -328,7 +328,7 @@ func TestAdminAccountGet_Happy(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_CloseRevokesKeys pins GH-809: closing an account
+// TestAdminAccountOverrides_CloseRevokesKeys pins that closing an account
 // revokes every live key (and evicts it from the auth cache) instead of
 // leaving closure as a status string the credentials outlive.
 func TestAdminAccountOverrides_CloseRevokesKeys(t *testing.T) {
@@ -365,7 +365,7 @@ func TestAdminAccountOverrides_CloseRevokesKeys(t *testing.T) {
 	}
 }
 
-// TestAdminAccountOverrides_ClosedIsTerminal pins GH-809: a closed account
+// TestAdminAccountOverrides_ClosedIsTerminal pins that a closed account
 // cannot be moved back to active or suspended, so no status edit resurrects
 // the passkeys, sessions and webhooks closure left in place.
 func TestAdminAccountOverrides_ClosedIsTerminal(t *testing.T) {
@@ -416,7 +416,7 @@ func (f *fakeAccountSessionRevoker) RevokeAllUserSessions(_ context.Context, use
 	return nil
 }
 
-// TestAdminAccountOverrides_CloseRevokesSessions pins GH-809: closing an
+// TestAdminAccountOverrides_CloseRevokesSessions pins that closing an
 // account revokes every member's dashboard sessions and records the outcome
 // in the audit row; a suspension leaves sessions to the status gate.
 func TestAdminAccountOverrides_CloseRevokesSessions(t *testing.T) {

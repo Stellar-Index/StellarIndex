@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// GH-1067: a wedged lake (LakeWatermark reporting stale) must be reflected
+// A wedged lake (LakeWatermark reporting stale) must be reflected
 // in flags.stale for every explorer handler, not just the handful that
 // already consulted it (account_state.go, contracts.go, operations.go,
 // movements.go). Before this fix LedgersList (and its siblings sharing the

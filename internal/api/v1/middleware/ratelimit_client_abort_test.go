@@ -21,8 +21,7 @@ import (
 // unbroken-success streak needed to disarm can never accumulate, so the
 // bucket answers ErrThrottleUnavailable and the middleware fails CLOSED
 // with 503 for EVERY caller sharing it (the whole anonymous tier, or the
-// whole authenticated tier) while Redis is perfectly healthy
-// (REL-06 F059, reverification-2026-09-18).
+// whole authenticated tier) while Redis is perfectly healthy.
 //
 // Redis is HEALTHY in both tests below. Every 503 they could produce is
 // manufactured entirely by aborted requests.
@@ -43,7 +42,7 @@ func TestRateLimitBySubject_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())
 
-	// First abort: arms the dwell clock pre-fix.
+	// First abort: arms the dwell clock if the request context leaks into the limiter.
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, abortedRequest(t))
 	if got := w.Header().Get("X-RateLimit-Remaining"); got != "99" {
@@ -105,7 +104,7 @@ func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 // Blast-radius guard: detaching from the client's cancellation must not
 // detach from the BACKEND's failure. A genuinely broken Redis still has
 // to arm the dwell clock and fail closed past the window — that
-// inversion (F-0050 / F-0150) is the reason the clock exists.
+// inversion is the reason the clock exists.
 func TestRateLimitBySubject_RealRedisOutageStillFailsClosed(t *testing.T) {
 	rdb, mr := newRLRedis(t)
 	clock := newManualClock()

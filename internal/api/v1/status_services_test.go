@@ -38,7 +38,7 @@ func statusByName(st StatusResponse) map[string]string {
 	return got
 }
 
-// #328: the lean test-net deployments run NO aggregator (ansible
+// The lean test-net deployments run NO aggregator (ansible
 // inventory `run_aggregator: false`) — its absence is a deliberate
 // deployment shape, not an outage. The handler nevertheless hardcoded
 // {"indexer","aggregator"} as the services to report, so the aggregator
@@ -121,7 +121,7 @@ func TestStatus_UndeclaredServicesDefaultToPubnetPair(t *testing.T) {
 	}
 }
 
-// #328: the deployment TIER was the string literal "production" at the
+// The deployment TIER was the string literal "production" at the
 // Options construction site, so api.testnet.stellarindex.io answered
 // /v1/status with `"deployment":"production"` and the explorer tagged a
 // test net PRODUCTION. It is an operator fact, so it comes from config.

@@ -17,7 +17,7 @@ import (
 //
 // The arm exists because the curated account directory names NONE of
 // the contract addresses this repository holds verified bindings for.
-// Measured 2026-09-15: the directory names 387 contract addresses, the
+// Measured on a live deployment: the directory names 387 contract addresses, the
 // listing directory names 17 on Stellar, and four are in both — so a
 // bound address was not refused by any requirement, it was never
 // enumerated at all.
@@ -116,7 +116,7 @@ func rwaListingServer(
 			byIssuer:            map[string][]timescale.AssetRow{},
 		},
 		// Named by NOBODY in the curated directory — the live state for
-		// every bound address on 2026-09-15.
+		// every bound address.
 		RWAContracts:          &stubRWAContractReader{accounts: 18000},
 		RWAListings:           listings,
 		ContractCatalogue:     &stubContractCatalogue{rows: rows},
@@ -456,7 +456,7 @@ func TestRWAListing_UnwiredIsNotMeasured(t *testing.T) {
 
 // TestRWAListing_BasisDoesNotInheritTheOracleWording is the prose guard.
 //
-// The published basis string previously said the figure rests on an
+// The published basis string must not say the figure rests on an
 // oracle's valuation of the instrument plus the issuer's declaration
 // that one token is one unit. A listing price is neither of those
 // things, and a total that quietly inherited that sentence would be

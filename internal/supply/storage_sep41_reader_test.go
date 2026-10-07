@@ -110,7 +110,7 @@ func TestStorageSEP41SupplyReader_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStorageSEP41SupplyReader_MinLedgerPropagates pins F-1236 on the
+// TestStorageSEP41SupplyReader_MinLedgerPropagates pins the
 // success path: a non-zero MinSEP41ComponentLedger from storage must reach
 // SEP41SupplyComponents.MinComponentLedger unchanged. Every other test in
 // this file leaves minLedger at its zero value (gate-skip), so none of
@@ -138,7 +138,7 @@ func TestStorageSEP41SupplyReader_MinLedgerPropagates(t *testing.T) {
 // TestStorageSEP41SupplyReader_GenesisSeededPropagates — the reader threads
 // the store's genesis-baseline-seeded flag onto the components so the computer
 // can route a negative total to `missing_baseline` vs `compute_error`
-// (migration 0088, incident 2026-07-06).
+// (migration 0088).
 func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
 	asset := mustSorobanAsset(t, tContract)
 	for _, seeded := range []bool{false, true} {
@@ -259,14 +259,12 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 	if snap.TotalSupply.Int64() != 1_000 {
 		t.Errorf("TotalSupply=%s want 1000", snap.TotalSupply)
 	}
-	// C1-041 (audit-2026-07-23): this assertion used to expect
-	// BasisAdminExclusion, i.e. it pinned the defect. The reader
-	// hardcodes AdminBalance=0 and Policy{} carries no locked-set, so
-	// circulating == total and NOTHING was excluded — stamping
-	// "admin_exclusion" told every consumer the issuer's own holdings
-	// had been netted out of circulating supply when they had not.
+	// The reader hardcodes AdminBalance=0 and Policy{} carries no
+	// locked-set, so circulating == total and NOTHING was excluded —
+	// stamping "admin_exclusion" would tell every consumer the issuer's
+	// own holdings had been netted out of circulating supply.
 	// BasisSEP41TotalOnly is the honest reading, mirroring
-	// BasisXLMTotalOnly (CS-010).
+	// BasisXLMTotalOnly.
 	if snap.Basis != BasisSEP41TotalOnly {
 		t.Errorf("Basis=%s want %s", snap.Basis, BasisSEP41TotalOnly)
 	}

@@ -1,9 +1,9 @@
 package v1_test
 
-// #355 — the 7d sparkline column on /assets was blank for exactly the
+// The 7d sparkline column on /assets must not be blank for exactly the
 // eleven assets that matter (XLM, USDC, PYUSD, EURC, AQUA, yXLM, SHX,
 // VELO, BLND, PHO, yUSDC) while the unverified long tail below charted
-// fine, and `?include=sparkline7d` was a silent no-op on the plain
+// fine, and `?include=sparkline7d` must not be a silent no-op on the plain
 // listing. Those eleven are precisely the catalogue-projected rows,
 // whose wire asset_id is the catalogue SLUG ("xlm", "aqua") — the batch
 // series reader was asked for a series under an id that can never match
@@ -13,7 +13,7 @@ package v1_test
 // The mirror-image defect these tests also pin: a row whose price we
 // deliberately WITHHOLD (scam-flagged issuer, thin-market substance
 // gate) must not publish the same number as a picture. Measured on r1
-// 2026-08-29: the flagged JFKBANK2/RIO rows served price_usd null with
+// the flagged JFKBANK2/RIO rows served price_usd null with
 // a full 7-point chart, and their details served 24 hourly + 7 daily
 // priced points.
 
@@ -152,7 +152,7 @@ func pricedPoints(pts []v1.AssetPricePoint) []string {
 	return out
 }
 
-// TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin — #355's
+// TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin — the
 // core: a catalogue row's series must be read under its Stellar twin's
 // asset_id (the id its price and its change_7d_pct already come from),
 // never under the catalogue slug the row carries on the wire.

@@ -31,7 +31,7 @@ func TestIssuerAuthFlagsProvenanceRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Real r1 residue issuers (2026-09-03). mergedA was merged away at
+	// Real r1 residue issuers. mergedA was merged away at
 	// 54,564,588 declaring `stellarbrunch.com`; mergedB at 56,082,413 with
 	// flags 0xA declaring `xcrypto.exchange`; live is unresolved on r1 but
 	// has a current AccountEntry at 64,228,661.

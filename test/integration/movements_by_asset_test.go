@@ -15,7 +15,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseMovementsByAsset pins INV-2140's table: the MV copies live
+// TestClickHouseMovementsByAsset pins the movements_by_asset table: the MV copies live
 // account_movements rows, both participants of one movement survive FINAL,
 // an Int128 amount above 2^64 stays exact, and the operator catch-up
 // statement (partition-bounded INSERT..SELECT) is idempotent over MV rows and skips superseded source rows (FINAL).

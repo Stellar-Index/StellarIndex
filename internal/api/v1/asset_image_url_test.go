@@ -2,10 +2,10 @@ package v1
 
 import "testing"
 
-// TestIsSafeImageURL pins C1-031 (audit-2026-07-23). `image` comes
+// TestIsSafeImageURL pins the image URL gate. `image` comes
 // verbatim from an issuer-controlled stellar.toml [[CURRENCIES]] entry.
-// The pre-fix gate was a bare `http://` / `https://` prefix check, which
-// let attribute-breakout characters through while the docstring promised
+// A bare `http://` / `https://` prefix check would
+// let attribute-breakout characters through while the docstring promises
 // a consumer rendering `<img src={data.image}>` "must be safe … this
 // makes it so".
 func TestIsSafeImageURL(t *testing.T) {
@@ -28,7 +28,7 @@ func TestIsSafeImageURL(t *testing.T) {
 		{"protocol_relative", "//example.com/icon.png", false},
 		{"empty", "", false},
 
-		// Attribute breakout — the C1-031 half. Each of these closes the
+		// Attribute breakout — the attribute-injection half. Each of these closes the
 		// src attribute (or opens a tag) inside a naive non-escaping
 		// template.
 		{"double_quote", `https://example.com/a.png" onerror="alert(1)`, false},

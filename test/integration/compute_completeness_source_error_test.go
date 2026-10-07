@@ -20,10 +20,10 @@ import (
 //
 // soroswap is the FIRST catalogue source. A trigger makes its verdict write
 // fail, standing in for any per-source error (an RPC seed gap, a lake
-// deadline, a served-floor read). The loop used to return at that first
-// error, so no later source got a verdict: /v1/coverage kept serving every
-// source's prior verdict while the run looked like one failed source. Now
-// every other source is evaluated and published, soroswap publishes nothing,
+// deadline, a served-floor read). The loop must not return at that first
+// error, or no later source gets a verdict and /v1/coverage keeps serving every
+// source's prior verdict while the run looks like one failed source. Every
+// other source is evaluated and published, soroswap publishes nothing,
 // and the run still fails. -skip-recognition only because an empty lake is
 // (rightly) refused as a vacuous recognition scan before the loop is reached.
 func TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest(t *testing.T) {

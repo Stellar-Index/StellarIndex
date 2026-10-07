@@ -28,7 +28,7 @@ var loginEntryPoints = []string{
 	"POST /v1/auth/verify-code",
 }
 
-// TestMount_LoginEntryPointsArePublic pins #1314 for the dashboard half:
+// TestMount_LoginEntryPointsArePublic pins the dashboard half:
 // under auth_mode=apikey or sep10 the Auth middleware wraps the whole mux,
 // so a login route mounted without the public mark 401s the very caller it
 // exists to log in. Session-gated routes must NOT be marked public.

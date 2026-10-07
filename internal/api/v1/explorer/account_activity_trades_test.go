@@ -21,7 +21,7 @@ type stubTradesReader struct {
 	rows  []timescale.AccountTradeRow
 	err   error
 	calls atomic.Int32
-	// gotCtxDeadline records whether the handler bounded the read (C3-1).
+	// gotCtxDeadline records whether the handler bounded the read.
 	gotCtxDeadline atomic.Bool
 	gotLimit       atomic.Int32
 }
@@ -299,7 +299,7 @@ func TestAccountActivity_ComposesSegments(t *testing.T) {
 }
 
 // TestAccountActivity_SegmentsReadConcurrently — the four segment reads hit
-// independent stores; run serially, a cold compute cost their sum (INV-0675).
+// independent stores; run serially, a cold compute cost their sum.
 func TestAccountActivity_SegmentsReadConcurrently(t *testing.T) {
 	rv := &rendezvous{n: 4, all: make(chan struct{})}
 	reader := &rendezvousOpCountReader{capReader: &capReader{probe: &deadlineProbe{}}, rv: rv}
@@ -318,7 +318,7 @@ func TestAccountActivity_SegmentsReadConcurrently(t *testing.T) {
 	}
 }
 
-// TestAccountActivity_SegmentFailureIsDisclosed — the C3-045 posture: a
+// TestAccountActivity_SegmentFailureIsDisclosed — the disclosure posture: a
 // failed segment must be ABSENT and NAMED, never silently zero.
 func TestAccountActivity_SegmentFailureIsDisclosed(t *testing.T) {
 	reader := &opCountReader{

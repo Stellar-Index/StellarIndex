@@ -80,7 +80,7 @@ func premMarket(assetID string, n int, vwap string) timescale.MarketDay {
 }
 
 // premThinMarket is a day with real trades whose activity is below the
-// floor — the shape the 2026-08-04 valuation incident had, which the
+// floor — the shape a past valuation incident had, which the
 // serving substance gate exists to withhold.
 func premThinMarket(assetID string, n int, vwap string) timescale.MarketDay {
 	return timescale.MarketDay{

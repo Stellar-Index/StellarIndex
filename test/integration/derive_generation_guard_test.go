@@ -15,8 +15,8 @@ import (
 )
 
 // TestDeriveGenerationGuard_CorrectiveReDerive is the proven-red test for
-// the INV-3 re-derive trap (audit-2026-07-16 M1 / migration 0109). Before
-// the fix the served-tier writers used `ON CONFLICT (...) DO NOTHING` with
+// the money re-derive trap (migration 0109). Without
+// the guard the served-tier writers use `ON CONFLICT (...) DO NOTHING` with
 // the derived value OUTSIDE the conflict key, so a corrected re-derive of
 // a wrong money value silently no-op'd — the ONLY way to fix it was a
 // destructive DELETE + full re-backfill.

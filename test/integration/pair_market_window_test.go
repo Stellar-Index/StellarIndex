@@ -13,7 +13,7 @@ import (
 
 // TestPairMarket_BothDirectionsAndWindowBoundaries pins the SERVED values
 // of the /v1/pairs single-pair summary against real TimescaleDB, across
-// the three boundaries the 2026-09-03 query rewrite moved:
+// the three boundaries the single-pair query bounds:
 //
 //   - both stored orientations (the SDEX decoder records XLM/USDC and
 //     USDC/XLM as separate rows) fold into ONE row for the requested
@@ -26,8 +26,8 @@ import (
 //
 // Honesty note on what this test is and is not. It is NOT the redness
 // proof for the rewrite: the old and new queries are value-identical by
-// construction (verified set-identical over 40 sampled live pairs on r1,
-// 2026-09-03), because the defect was the PLAN, not the answer. The
+// construction (set-identical over 40 sampled live pairs on r1),
+// because the defect was the PLAN, not the answer. The
 // redness proof is TestPairMarketQueryShape in internal/storage/timescale,
 // which fails on the pre-fix query text. This test exists because the
 // rewrite split one 14-day aggregate into four independently-bounded

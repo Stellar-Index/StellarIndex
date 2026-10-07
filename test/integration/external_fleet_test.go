@@ -157,7 +157,7 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 		for e := range events {
 			switch ev := e.(type) {
 			case external.TradeEvent:
-				// FAIL on insert error (audit-2026-06-14 A20): the CEX/FX fleet
+				// FAIL on insert error: the CEX/FX fleet
 				// is exercised end-to-end only here, so a swallowed insert (e.g.
 				// a NUMERIC-scale/schema drift) would otherwise pass silently.
 				// t.Errorf (not Fatal) is goroutine-safe.

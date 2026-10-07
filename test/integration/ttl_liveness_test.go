@@ -20,7 +20,7 @@ import (
 // ttl_live_until_mv materialized view (applied from tier1_schema.sql by the
 // harness) into the slim stellar.ttl_live_until projection, and
 // ClassifyTTLLiveness resolves verdicts from THAT table — the
-// ledger_entries_current scan path no longer exists.
+// ledger_entries_current scan path is not consulted.
 
 // ttlAsOf is the reference ledger for verdicts. Fixture ledgers sit far above
 // any other test's ranges to keep the shared container's keys disjoint.

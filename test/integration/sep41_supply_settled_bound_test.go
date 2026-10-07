@@ -29,7 +29,7 @@ import (
 // exact call the projector makes" would send a reader to a call the projector
 // no longer has.
 //
-// AdvanceSEP41SupplyRollup folds no further than this watermark (F118),
+// AdvanceSEP41SupplyRollup folds no further than this watermark,
 // so a rollup test that wants "everything below the tip has settled"
 // must say so explicitly.
 func settleSEP41Cursor(t *testing.T, ctx context.Context, store *timescale.Store, ledger uint32) { //nolint:revive // t-first matches the file's other helpers (startTimescale).
@@ -41,12 +41,12 @@ func settleSEP41Cursor(t *testing.T, ctx context.Context, store *timescale.Store
 
 // sep41SettledTestCursorLedger is far above every ledger the rollup tests
 // use, so seeding it leaves `< max(ledger)` as the binding half of the
-// F118 settled bound and those tests keep pinning the tip-deferral guard,
+// settled bound and those tests keep pinning the tip-deferral guard,
 // not the durability guard.
 const sep41SettledTestCursorLedger = 200_000_000
 
-// TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor pins F118 (audit
-// 2026-09-02): AdvanceSEP41SupplyRollup must not fold past the ledger the
+// TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor pins that
+// AdvanceSEP41SupplyRollup must not fold past the ledger the
 // projector is still holding for retry, or the retried row lands
 // permanently between the two halves of the served read and the token's
 // supply is silently under-counted.

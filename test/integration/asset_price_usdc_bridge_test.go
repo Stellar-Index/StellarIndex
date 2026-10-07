@@ -19,12 +19,12 @@ import (
 //   - ZUSC: quoted only in the USDC SAC (CCW67T…) → direct USD price
 //   - ZSAC: quoted only in the XLM SAC (CAS3J7…)  → vwap × xlm_usd
 //
-// None has a fiat:USD or plain-'native' pair, so before the fix every
-// one of them priced NULL: the direct_usd* CTEs accepted only
+// None has a fiat:USD or plain-'native' pair, so without the XLM bridge every
+// one of them prices NULL: the direct_usd* CTEs accept only
 // quote_asset = 'fiat:USD' and the asset_vs_xlm* CTEs only 'native'.
-// Regression guard for the 2026-08-24 operator report (473/500
-// /v1/assets rows priceless — AUDD with $344k 24h volume, EURC, the
-// *allow variants, and the Soroban-venue majority quoted in SAC ids).
+// Regression guard: priceless /v1/assets rows (AUDD with $344k 24h volume,
+// EURC, the *allow variants, and the Soroban-venue majority quoted in SAC
+// ids).
 func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

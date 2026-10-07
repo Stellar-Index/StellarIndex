@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// TestHistoryTimeoutComment_NoDanglingIssueCitation pins RSWP-080: the 8s
+// TestHistoryTimeoutComment_NoDanglingIssueCitation: the 8s
 // ceiling comment above tradesInRangeAfterWithAliases must not cite a bare
-// issue number. Bare numbers rot — #1102 once 404'd and now silently
-// resolves to an unrelated, already-fixed asset-key collision issue, which
+// issue number. Bare numbers rot — a bare number can 404 or silently
+// resolve to an unrelated issue, which
 // is worse than a 404 because a reader following it lands on the wrong
 // history with no signal anything is off. The comment must
 // describe the pattern in prose instead.

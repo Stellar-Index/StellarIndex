@@ -14,7 +14,7 @@ import (
 
 // escalationHistoryStub returns no trades for windows narrower than
 // the trade's age, simulating a pair that last traded ~20s ago — the
-// quiet-second case that used to fall through to the closed bucket.
+// quiet-second case that must not fall through to the closed bucket.
 type escalationHistoryStub struct {
 	HistoryReader // nil — only TradesInRange is exercised
 	tradeAge      time.Duration
@@ -35,7 +35,7 @@ func (h *escalationHistoryStub) TradesInRange(_ context.Context, pair canonical.
 	}}, nil
 }
 
-// TestComputeTip_EscalatesBeforeClosedBucket pins board #42: an empty
+// TestComputeTip_EscalatesBeforeClosedBucket pins that an empty
 // default (5s) window widens ONCE to the 30s SLA bound and serves a
 // fresh rolling VWAP instead of falling through to the closed-bucket
 // store price (which live-sampled at ~90s staleness).

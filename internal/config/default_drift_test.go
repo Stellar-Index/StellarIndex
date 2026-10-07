@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// TestDefault_MatchesStructTags is the backstop for F-1327: the `default:`
+// TestDefault_MatchesStructTags is the backstop for default-tag drift: the `default:`
 // struct tags are documentation-only (they feed the generated config
 // reference via schema.go) — the REAL runtime defaults come from
 // Default(). When the two drift, operators read one value in the docs and
@@ -16,7 +16,7 @@ import (
 // documented `true` (Phase-3 parallel, the safe value) while Default()
 // left it the zero-value `false` (Phase-4 sole-writer) — enabling the
 // projector "per the docs" would have silently dropped the entire SEP-41
-// domain (F-1316).
+// domain.
 //
 // This test walks every leaf field that carries a `default:` tag and
 // asserts Default() produces exactly that value. Keep Default() and the

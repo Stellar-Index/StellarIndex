@@ -9,22 +9,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// C1-041 (audit-2026-07-23). Algorithm 3 stamped
-// `basis:"admin_exclusion"` on every default-path snapshot, including
-// the ones where nothing at all was excluded — the production reader
+// Algorithm 3 must not stamp `basis:"admin_exclusion"` on a snapshot
+// where nothing was excluded — the production reader
 // (StorageSEP41SupplyReader) hardcodes AdminBalance=0 because v1
 // doesn't track `set_admin`, and with no per-asset locked-set
 // configured circulating == total. A consumer reading
 // `admin_exclusion` believes the issuer's own holdings were netted
-// out of circulating supply (and therefore out of market cap); they
-// were not.
+// out of circulating supply (and therefore out of market cap).
 //
-// BasisXLMTotalOnly is the exact precedent (CS-010): Algorithm 1
+// BasisXLMTotalOnly is the precedent: Algorithm 1
 // reports `xlm_total_only`, not `xlm_sdf_reserve_exclusion`, when the
 // reserve-account list is empty.
 //
-// This table pins the full basis matrix so neither direction can
-// regress: a real exclusion must still read `admin_exclusion`, and a
+// This table pins the full basis matrix in both directions: a real exclusion must still read `admin_exclusion`, and a
 // no-op exclusion must read `sep41_total_only`.
 func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
@@ -44,7 +41,7 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 		wantCirculating int64
 	}{
 		{
-			// THE C1-041 CASE — the production default path.
+			// The production default path.
 			name:            "nothing_excluded_is_total_only",
 			admin:           0,
 			wantBasis:       supply.BasisSEP41TotalOnly,
@@ -61,7 +58,7 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 		{
 			// Operator-configured locked-set: the documented way to
 			// exclude an admin today. Already BasisOverride; must not
-			// be re-labelled by the new branch.
+			// be re-labelled.
 			name:            "configured_locked_set_is_override",
 			admin:           0,
 			lockedAccounts:  400,

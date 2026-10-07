@@ -13,14 +13,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// C3-010 (audit-2026-07-23) — the account-level kill switch on the
-// DEFAULT auth backend.
+// The account-level kill switch on the DEFAULT auth backend.
 //
-// The Postgres validator has always rejected a key whose account is not
-// active, and the dashboard session middleware denies suspended/closed
-// accounts. This validator never read account status at all — so on
+// The Postgres validator rejects a key whose account is not active, and
+// the dashboard session middleware denies suspended/closed accounts.
+// This validator must read account status too — otherwise on
 // `auth_backend=redis` (the default, and what r1 runs) suspending an
-// account did not stop its keys from authenticating, not even via a
+// account would not stop its keys from authenticating, not even via a
 // manual `UPDATE accounts SET status='suspended'`.
 
 // stubAccountStatusReader is a canned [AccountStatusReader].
@@ -56,7 +55,7 @@ func acctWithStatus(slug string, st platform.AccountStatus) platform.Account {
 	return platform.Account{ID: uuid.New(), Slug: slug, Name: slug, Tier: platform.TierPro, Status: st}
 }
 
-// TestRedisAPIKey_SuspendedAccountRejected is the core regression: a
+// TestRedisAPIKey_SuspendedAccountRejected is the core check: a
 // live, unrevoked, unexpired key belonging to a SUSPENDED account must
 // not authenticate.
 func TestRedisAPIKey_SuspendedAccountRejected(t *testing.T) {

@@ -81,11 +81,11 @@ var costReaders = []costReader{
 // TestSeriesReadsUnknownPairCostIsBounded MEASURES the database work an
 // anonymous caller buys by asking /v1/history/since-inception (or
 // /v1/chart with no window) for a well-formed pair that has never
-// traded — audit-2026-09-02 K008, the "no literal lower bound" leg.
+// traded (the "no literal lower bound" case).
 //
 // These reads have no lower time bound — that is what "since inception"
 // means — so TimescaleDB cannot exclude a single chunk and every chunk
-// of the CAGG appears in the plan. What K008 asks is whether that is a
+// of the CAGG appears in the plan. The question is whether that is a
 // DB-burn lever. It is one only if the per-chunk work scales with the
 // chunk's CONTENTS. This test pins that it does not: under the UNION ALL
 // of single-direction branches each chunk is answered by an index probe
@@ -194,8 +194,8 @@ func TestSeriesReadsUnknownPairCostIsBounded(t *testing.T) {
 
 // assertRetiredORFormWalks is the instrument check for the
 // rows-removed-by-filter detector, run on the known-bad case before any
-// PASS is believed: the pre-split `(A AND B) OR (B AND A)` disjunction
-// these readers carried until audit-2026-09-02 F169. Under the generic
+// PASS is believed: the retired `(A AND B) OR (B AND A)` disjunction
+// form of these readers. Under the generic
 // plan a prepared statement settles into, it must show the walk this
 // test exists to rule out — every row of the CAGG fetched and discarded
 // — and [assertProbeCost]'s own bounds must reject it. The custom-plan

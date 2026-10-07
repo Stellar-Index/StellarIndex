@@ -691,7 +691,7 @@ func ExampleClient_ChangeSummary() {
 	}
 	fmt.Printf("%s: $%s, 24h=%s 7d=%s (%s, %s)\n",
 		got.Data.EntityID,
-		got.Data.CurrentValue, // money is a string end to end (INV-2)
+		got.Data.CurrentValue, // money is a string end to end
 		pct(got.Data.H24DeltaPct),
 		pct(got.Data.D7DeltaPct),
 		got.Data.StreakDirection,

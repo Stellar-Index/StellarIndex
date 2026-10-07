@@ -13,7 +13,7 @@ import (
 )
 
 // TestPolicyForPath_PublicRoutesOffTheDefault pins the public GET routes
-// that used to reach the conservative default with nobody having chosen
+// that would otherwise reach the conservative default with nobody having chosen
 // it. Each assertion is the band its data supports; the live-state trio
 // stays private, no-store but through an explicit arm (the registry test
 // below is what proves the arm exists).
@@ -82,8 +82,8 @@ var defaultPolicyAllowlist = map[string]string{
 // TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated walks the GET
 // patterns the v1 server and its sub-packages register and fails on any
 // that reaches the default arm without an allowlist entry, and on any
-// allowlist entry that no longer does. A new public route therefore cannot
-// silently inherit `private, no-store` again.
+// allowlist entry that does not. A new public route therefore cannot
+// silently inherit `private, no-store`.
 func TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated(t *testing.T) {
 	patterns := registeredGETPatterns(t)
 	if len(patterns) < 50 {

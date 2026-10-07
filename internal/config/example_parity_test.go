@@ -11,16 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestExampleTOMLDocumentsSchemaFields is a regression guard for
-// RLT-104: configs/example.toml is hand-maintained beside
-// internal/config/config.go's struct tags and had drifted — whole
+// TestExampleTOMLDocumentsSchemaFields guards
+// configs/example.toml, which is hand-maintained beside
+// internal/config/config.go's struct tags and can drift — whole
 // config surfaces (anomaly, api.sep10, api.dashboard, metadata,
 // price_alerts, signup_reaper, oracle.band/redstone/soroswap, and a
-// scatter of individual knobs) were undocumented, so an operator
-// reading the example file had no way to discover them.
+// scatter of individual knobs) would otherwise be undocumented, so an operator
+// reading the example file could not discover them.
 //
-// This pins the specific fields RLT-104 found missing so the drift
-// cannot silently return. It is a targeted census, not a full
+// This pins specific fields so the drift
+// cannot silently occur. It is a targeted census, not a full
 // schema walk (config.Describe() also emits container/map-key rows
 // that have no single literal key to search for).
 func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
@@ -35,7 +35,7 @@ func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
 	}
 	text := string(body)
 
-	// Leaf key names RLT-104 found entirely absent from
+	// Leaf key names that must appear in
 	// configs/example.toml (active or commented) — a superset also
 	// serves as the marker that the surrounding section/table exists.
 	leaves := []string{
@@ -59,8 +59,7 @@ func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
 		"substance_min_buckets", "substance_min_span_minutes",
 		"substance_min_volume_usd", "substance_window_hours",
 	}
-	// Section headers that RLT-104 found had no [section] stanza at
-	// all — a leaf-name-only search can false-pass these (e.g.
+	// Section headers that need a [section] stanza: a leaf-name-only search can false-pass these (e.g.
 	// "enabled" is common to every section) so the header itself is
 	// the load-bearing marker.
 	sections := []string{

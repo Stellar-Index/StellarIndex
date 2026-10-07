@@ -234,7 +234,7 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	// A held tick (next == cursor, no error — the reader's early return
 	// below an unhealed lake hole) must NOT count as advance_ok: that
 	// would mask a stuck cursor behind a healthy-looking advance rate,
-	// exactly the gap INV-0780 closes. cursor is 0 post-Load here
+	// exactly the gap that check closes. cursor is 0 post-Load here
 	// (reader.cursor is unset); nextCursor defaults to the same 0.
 	if err := c.Advance(context.Background()); err != nil {
 		t.Fatalf("held Advance: %v", err)
@@ -264,7 +264,7 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBookCache_ZombieQuarantineAndVerify pins the 2026-07-31
+// TestSDEXOrderBookCache_ZombieQuarantineAndVerify pins the
 // crossed-book fix: a loaded offer whose version carries
 // intra_ledger_seq == 0 (the version-tie-ambiguous class — its
 // same-ledger `removed` sibling may have lost the ReplacingMergeTree
@@ -468,7 +468,7 @@ func TestSDEXOrderBookCache_VerifyObservesMetrics(t *testing.T) {
 	}
 }
 
-// TestHandleSDEXOrderbook_StaleWhenAdvanceStalled (GH-987): a wedged
+// TestHandleSDEXOrderbook_StaleWhenAdvanceStalled: a wedged
 // Advance leaves c.updated frozen (see Advance's early return on a
 // read error) while the book keeps serving. The handler must surface
 // that age as flags.stale rather than the unconditional false a fresh

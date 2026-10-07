@@ -54,7 +54,7 @@ func newReplayValidatorWithRedis(t *testing.T) (*sep10.Validator, *keypair.Full,
 	return v, server, mr
 }
 
-// TestVerify_ReplayGuard_RejectsSecondRedemption pins the F-1224
+// TestVerify_ReplayGuard_RejectsSecondRedemption pins the
 // baseline the malleability test below builds on: the *same* signed XDR,
 // submitted twice, only mints one JWT.
 func TestVerify_ReplayGuard_RejectsSecondRedemption(t *testing.T) {
@@ -76,8 +76,8 @@ func TestVerify_ReplayGuard_RejectsSecondRedemption(t *testing.T) {
 	}
 }
 
-// TestVerify_ReplayGuard_EvictedMarkerFailsClosed is the Q184
-// regression. R1's Redis runs `maxmemory-policy allkeys-lru`, which can
+// TestVerify_ReplayGuard_EvictedMarkerFailsClosed pins eviction
+// handling. R1's Redis runs `maxmemory-policy allkeys-lru`, which can
 // evict ANY key before its TTL. With a bare SETNX spent-marker, an
 // evicted marker re-opens the slot: a captured signed XDR replayed after
 // the eviction finds it free and mints a second JWT. The guard must
@@ -150,11 +150,11 @@ func reorderSignatures(t *testing.T, signedXDR string) string {
 	return out
 }
 
-// TestVerify_ReplayGuard_RejectsReEncodedChallenge is the CON-05
-// regression, expressed as the attack.
+// TestVerify_ReplayGuard_RejectsReEncodedChallenge is the
+// re-encoding attack.
 //
-// Attack: an attacker who captures ONE signed challenge XDR (the F-1224
-// threat model — e.g. an XSS exfil from a client wallet) redeems it,
+// Attack: an attacker who captures ONE signed challenge XDR (e.g. an XSS
+// exfil from a client wallet) redeems it,
 // then re-submits the SAME transaction under a different SPELLING. Two
 // independent re-spellings are verified here, both confirmed against
 // this SDK to sail through ReadChallengeTx + VerifyChallengeTxSigners
@@ -165,12 +165,10 @@ func reorderSignatures(t *testing.T, signedXDR string) string {
 //   - inserting a newline into the base64 (Go's decoder, which the SDK's
 //     XDR unmarshal uses, skips "\r"/"\n").
 //
-// Pre-fix the dedupe key was SHA-256 of the submitted STRING, so every
-// re-spelling claimed a fresh unused slot and the replay guard could be
-// walked past for the whole challenge window, minting a JWT per
-// submission — precisely the stolen-XDR JWT stream F-1224 exists to stop.
-// Post-fix the key is the parsed transaction's canonical hash, which no
-// re-encoding changes.
+// A dedupe key of SHA-256 of the submitted STRING would let every
+// re-spelling claim a fresh unused slot, minting a JWT per submission for
+// the whole challenge window. The key is the parsed transaction's
+// canonical hash, which no re-encoding changes.
 func TestVerify_ReplayGuard_RejectsReEncodedChallenge(t *testing.T) {
 	v, _ := newReplayValidator(t)
 	client, _ := keypair.Random()

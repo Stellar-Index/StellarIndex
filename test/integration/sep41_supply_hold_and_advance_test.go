@@ -50,9 +50,9 @@ func commitSEP41ProjectorCursor(t *testing.T, ctx context.Context, store *timesc
 	}
 }
 
-// TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold pins audit-2026-09-02
-// F109 — the sibling of F118 stated from the guard's own claim rather than from
-// the undercount it produced.
+// TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold pins the sibling
+// of the settled-bound test, stated from the guard's own claim rather than
+// from the undercount it produces.
 //
 // The claim under test: the fold's `< max(ledger)` guard alone does NOT mean
 // "everything below is settled". The projector does not abort a cycle on a

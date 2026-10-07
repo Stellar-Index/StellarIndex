@@ -15,7 +15,7 @@ import (
 // the session cookie must carry a high-entropy random token whose
 // sha256 (NOT the raw value, and NOT the row's primary key) is what the
 // sessions table stores and what the auth path looks up by. This pins
-// the security property three ways, each of which fails on the pre-fix
+// the security property three ways, each of which fails on a naive
 // code (cookie == sess.ID.String(); resolveSession GetSession(uuid)):
 //
 //	(1) the freshly-minted cookie resolves to its user (round trip);

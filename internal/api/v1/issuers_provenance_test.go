@@ -1,8 +1,8 @@
 package v1_test
 
-// Auth-flag provenance on /v1/issuers/{g_strkey} (#374).
+// Auth-flag provenance on /v1/issuers/{g_strkey}.
 //
-// ~10.2k of ~59.2k known issuers (r1, 2026-09-02) have merged their account
+// ~10.2k of ~59.2k known issuers (r1) have merged their account
 // away. Their auth flags ARE recoverable from the last state before removal,
 // but a recovered value is a HISTORICAL RECORD, not the issuer's current
 // authorisation policy — so the wire has to say which it is, and the read

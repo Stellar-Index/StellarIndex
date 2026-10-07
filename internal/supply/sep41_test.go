@@ -146,8 +146,7 @@ func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 // Σburn > Σmint over the Soroban-era-only window (its mints predate
 // Soroban). This is a range-scoped-baseline-missing condition, not
 // corruption — surface the benign sentinel so the refresher reports
-// `missing_baseline` (needs a seed) rather than paging (incident
-// 2026-07-06 / migration 0088).
+// `missing_baseline` (needs a seed) rather than paging (migration 0088).
 func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -176,7 +175,7 @@ func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 // TestSEP41_Compute_GenesisBaselineMakesTotalPositive — once the pre-Soroban
 // baseline IS folded into the totals (the reader returns lifetime mint/burn/
 // clawback), the same SAC-wrapper computes a POSITIVE total and the guard does
-// not trip. This is the fixed steady state for the 9 watched SAC-wrappers.
+// not trip. This is the steady state for the 9 watched SAC-wrappers.
 func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -230,7 +229,7 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 	}{
 		{
 			// (a) seeded, and the pre-Soroban baseline dominates the Soroban-era
-			// burn → positive lifetime total, guard not tripped. The fixed
+			// burn → positive lifetime total, guard not tripped. The
 			// steady state for the 9 watched SAC-wrappers post-seed.
 			name:      "a_seeded_genesis_dominates_negative_soroban",
 			mint:      bigInt(2_400_000_000_002), // 2 Soroban-era + 2.4e12 pre-Soroban

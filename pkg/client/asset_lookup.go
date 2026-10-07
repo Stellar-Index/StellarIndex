@@ -13,13 +13,11 @@ import (
 // server-side dispatch note on GET /v1/assets/{asset_id} in
 // openapi/stellar-index.v1.yaml.
 //
-// Before this type existed, [Client.Asset] unconditionally decoded
-// into [AssetDetail]. encoding/json silently drops unrecognised
+// Decoding unconditionally into [AssetDetail] is wrong: encoding/json silently drops unrecognised
 // keys and leaves untouched struct fields at their zero value, so a
 // catalogue-slug request (server shape: [GlobalAssetView]) decoded
 // "successfully" into an [AssetDetail] with every required field
-// (AssetID, Type, Code, Decimals, Sep1Status) zero-valued — a live,
-// undetected bug (2026-07-09 ADR-0042 follow-through recon). Callers
+// (AssetID, Type, Code, Decimals, Sep1Status) zero-valued. Callers
 // MUST check [AssetLookup.Kind] (or use the StellarAsset/Catalogue
 // accessors, which return ok=false instead of a lie) rather than
 // assume the payload shape.

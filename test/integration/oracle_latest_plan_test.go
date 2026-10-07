@@ -31,7 +31,7 @@ const oracleLatestReferenceSQL = `
 // TestLatestOracleUpdatesForAssets_NoFullSort pins the /v1/oracle/latest
 // read to a plan that does not sort every matching row. The DISTINCT ON
 // form sorted all of an asset's history (318,908 rows, a 63 MB external
-// merge, 541 ms warm on r1 2026-09-28) to emit 7; the served shape
+// merge, 541 ms warm on r1) to emit 7; the served shape
 // aggregates max(ts) per (source, asset, quote) — answered from the
 // compressed batches' metadata — and fetches one row per stream.
 func TestLatestOracleUpdatesForAssets_NoFullSort(t *testing.T) {

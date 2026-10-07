@@ -443,3 +443,27 @@ ledger 51,499,492: the V1 contract is in the decoder's contract set and its
 WASM is active from there on, whether or not V1 emits. Adding the hash needs a
 Phase-3 review of the V1 WASM bytes against every V1 event shape `decode.go`
 reads, recorded here in the same PR.
+
+## V1 pool-factory WASM `0287f4ad` (2026-10-07)
+
+Hash `0287f4ad7350935b83d94e046c0bcabc960b233dbce1531008c021b71d406a1d`
+runs `MainnetPoolFactoryV1` (`CCZD6ESM…`) for its whole life from ledger
+51,499,491 (`stellar.contract_instance_changes`, never upgraded). One other
+instance, `CAGJKRMN…`, ran it from 51,498,926; it is outside the decoder's
+contract set and has emitted no events.
+
+- **Bytes.** The 2,904-byte WASM (`stellar.ledger_entry_changes`,
+  `contract_code`, ledger 51,498,921) exports `initialize`, `deploy` and
+  `is_pool`; its spec names `PoolFactoryDataKey`, `PoolInitMeta`,
+  `pool_hash`, `backstop`, `blnd_id`. The only event it can publish is
+  `deploy`.
+- **Lake census.** `stellar.contract_events` for `CCZD6ESM…` holds 17
+  events, ledgers 51,499,915–55,857,910: all `deploy`, one topic, successful
+  calls, every body an `ScVal::Address` (`AAAAEg…`).
+- **Decoder.** `decodeDeploy` reads exactly that shape (one `Symbol` topic,
+  `Address` body). `TestGolden_DeployV1Factory` pins the first event: ledger
+  51,499,915 deploys `CDVQVKOY…`, the first V1 pool.
+
+No V1-specific decoding is needed, so the hash is in
+`internal/wasmaudit/audited_wasm.json` and `blend` replays from 51,499,491
+pass the gate.

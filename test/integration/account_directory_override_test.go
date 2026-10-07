@@ -174,8 +174,8 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	}
 
 	// 3. The daily sync runs again with the SAME upstream snapshot,
-	//    still carrying `unsafe`. This is where the correction used to
-	//    die.
+	//    still carrying `unsafe`. This is where a correction would be
+	//    lost.
 	mustReplaceDirectory(t, ctx, store, dirUpstreamSource, upstream)
 
 	got := mustDirectoryEntry(t, ctx, store, flagged)

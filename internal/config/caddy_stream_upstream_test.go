@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// ─── The stream proxy and the API upstream's health (GH #886) ───────
+// ─── The stream proxy and the API upstream's health ───────────────────
 //
 // The /v1/*/stream routes are proxied by their own `reverse_proxy @sse`
 // handler (it needs `flush_interval -1`), separate from the catch-all

@@ -15,7 +15,7 @@ import (
 
 // TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery is the
 // acceptance test for the BLND/EURC/KALE/PHO supply_cross_check_divergence
-// residual (incident 2026-07-06 "PHO/BLND VERDICT", ROADMAP #14). It
+// residual ("PHO/BLND VERDICT" incident). It
 // can't run against live r1 data from here, so it reproduces the
 // documented divergence SHAPE with synthetic rows through the REAL
 // Algorithm-2 pipeline (StorageClassicSupplyReader.ClassicSupplyAt →
@@ -99,7 +99,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			classicAmount: 200_000_000_000_000, // representative pre-fix Alg-2 reading — well under sacTotal
 			poolHolder:    "CPOOL_PHO_PHOENIX_1",
 			poolAmount:    "1900000000000000", // recovers the dormant pool balance; classic+pool > sacTotal
-			sacTotal:      "1999999993050277", // PHO lifetime SAC supply, verified 2026-07-06 (exact real figure)
+			sacTotal:      "1999999993050277", // PHO lifetime SAC supply (exact real figure)
 		},
 		{
 			name:          "BLND",
@@ -109,7 +109,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			classicAmount: 1_100_000_000_000_000, // representative pre-fix reading — under sacTotal by ~12%, matching the incident's ~12.4%-under BLND finding
 			poolHolder:    "CPOOL_BLND_BACKSTOP_1",
 			poolAmount:    "200000000000000",
-			sacTotal:      "1236670485295609", // BLND lifetime SAC supply, verified 2026-07-06 (exact real figure)
+			sacTotal:      "1236670485295609", // BLND lifetime SAC supply (exact real figure)
 		},
 		{
 			name:          "EURC",

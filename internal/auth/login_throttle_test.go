@@ -120,21 +120,21 @@ func TestLoginThrottle_AllowsUpToCapThenDenies(t *testing.T) {
 	}
 }
 
-// TestLoginThrottle_EmailBombIsCappedDuringRedisOutage is the SEC-15 /
-// REL-06 regression, expressed as the attack.
+// TestLoginThrottle_EmailBombIsCappedDuringRedisOutage is the attack
+// regression for a Redis outage.
 //
 // Attack: knock Redis over (or simply wait for a fail-over — an attacker
 // does not need to cause the outage, only to notice it) and then POST
-// /v1/auth/login for one victim's address in a loop. Pre-fix every call
-// returned (false, <redis error>), the handler's fail-open branch fired
-// on the non-nil error, and a magic-link email went out EVERY time: the
-// per-target-email cap this type exists to enforce was absent for the
-// whole outage. The blast radius is the victim's inbox plus the
-// deployment's sender reputation and email quota, both of which outlive
-// the outage.
+// /v1/auth/login for one victim's address in a loop. If each call
+// returned (false, <redis error>), the handler's fail-open branch would
+// fire on the non-nil error and a magic-link email would go out EVERY
+// time: the per-target-email cap this type exists to enforce would be
+// absent for the whole outage. The blast radius is the victim's inbox
+// plus the deployment's sender reputation and email quota, both of which
+// outlive the outage.
 //
-// Post-fix the in-process fallback keeps counting, so the send stops at
-// the same cap. The assertion is on the exact contract the handler
+// The in-process fallback keeps counting, so the send stops at the same
+// cap. The assertion is on the exact contract the handler
 // reads: (false, nil) — a definitive DENY. (false, err) would NOT do,
 // because the handler inspects the error first and would send anyway.
 func TestLoginThrottle_EmailBombIsCappedDuringRedisOutage(t *testing.T) {
@@ -220,15 +220,14 @@ func TestLoginThrottle_RedisBlipStillSendsWithinCap(t *testing.T) {
 }
 
 // TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap is the
-// IPv6-keying regression (audit-2026-07-23; the same class the API
-// middleware fixed as SEC-15).
+// IPv6-keying check (the same class the API middleware guards against).
 //
 // Attack: an attacker with ANY delegated IPv6 /64 — the standard
 // residential/VPS allocation — sources each request from a different
-// /128 inside it. Pre-fix the throttle keyed on the full address, so
-// every request landed on a pristine bucket and the per-IP magic-link
-// cap cost nothing to bypass: 2^64 free buckets. Post-fix the key is the
-// /64, so the whole allocation shares one budget.
+// /128 inside it. Keying on the full address would put every request in
+// a pristine bucket and the per-IP magic-link cap would cost nothing to
+// bypass: 2^64 free buckets. The key is the /64, so the whole allocation
+// shares one budget.
 func TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
 	tt, _ := newLoginThrottle(t, auth.LoginThrottleOptions{
 		MaxPerIP:    2,

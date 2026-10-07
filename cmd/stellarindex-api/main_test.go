@@ -36,8 +36,8 @@ import (
 // typed-nil v1.UsageReader rather than wrapping the nil counter
 // in a non-nil adapter. The /v1/account/usage handler treats
 // `usageReader == nil` as "no backend wired" and short-circuits
-// to `[]`; the buggy pre-fix shape was a non-nil adapter that
-// nil-deref'd on `Read`. F-1258 (codex audit-2026-05-12).
+// to `[]`; a non-nil adapter would
+// nil-deref on `Read`.
 func TestUsageReaderOrNil_RedisAbsent(t *testing.T) {
 	if r := wiring.UsageReaderOrNil(nil); r != nil {
 		t.Errorf("wiring.UsageReaderOrNil(nil) = %v (non-nil), want nil — handler short-circuits on nil; non-nil wrapper would deref the inner nil counter on Read", r)
@@ -66,7 +66,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestDivergenceServiceHasNoReferences guards GH-1004(b): the API
+// TestDivergenceServiceHasNoReferences guards that the API
 // binary must never construct divergence.References — it only calls
 // Service.LookupCached (reading the aggregator's Redis cache), never
 // RefreshPair, so a reference list here is inert at best and
@@ -206,16 +206,16 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 	})
 }
 
-// TestResolveSEP10Validator_WiringByConfiguration pins the F-1224 SEP-10
-// wiring reconciliation. The pre-fix two-phase dance (build with a nil Redis
+// TestResolveSEP10Validator_WiringByConfiguration pins the SEP-10
+// wiring. A two-phase dance (build with a nil Redis
 // client at phase 1, "rebuild" behind an `if !isNoop` guard that was never
-// true at phase 2) meant a CONFIGURED SEP-10 deployment NEVER got the guarded
-// (replay-protected) validator — it either refused to boot (auth_mode=sep10)
-// or silently 404'd every SEP-10 endpoint (Noop), and the rebuild's failure
-// branch was a latent fail-open. This asserts the corrected wiring:
+// true at phase 2) would mean a CONFIGURED SEP-10 deployment NEVER got the guarded
+// (replay-protected) validator — it would either refuse to boot
+// (auth_mode=sep10) or silently 404 every SEP-10 endpoint (Noop), and the
+// rebuild's failure branch would be a latent fail-open. This asserts:
 //
 //   - configured (seed+jwt env) + Redis      → *sep10.Validator (GUARDED),
-//     in every auth_mode. (Pre-fix: Noop — this case is the red one.)
+//     in every auth_mode. (Noop here would be the red case.)
 //   - configured + NO Redis + auth_mode=sep10 → hard error (ErrReplayGuardUnavailable);
 //     never a guard-free validator.
 //   - configured + NO Redis + other mode      → Noop (404), binary still boots.
@@ -335,9 +335,8 @@ func TestLakeAccountSignersUnboundFailsClosed(t *testing.T) {
 
 // TestWarnUnsafeBind covers the C3-18 IPv6 parse fix: a public
 // all-interfaces bind must trigger the unsafe-bind warning whether it's
-// written as IPv4 (0.0.0.0), IPv6 ([::]), or port-only (:3000). The
-// pre-fix strings.Cut(":") split "[::]:3000" into host "[" and silently
-// shipped a public IPv6 bind with no warning.
+// written as IPv4 (0.0.0.0), IPv6 ([::]), or port-only (:3000). strings.Cut(":") would split "[::]:3000" into host "[" and silently
+// ship a public IPv6 bind with no warning.
 func TestWarnUnsafeBind(t *testing.T) {
 	// warnLogged runs warnUnsafeBind against a captured logger and
 	// reports whether the SECURITY warning fired.
@@ -382,7 +381,7 @@ func TestWarnUnsafeBind(t *testing.T) {
 }
 
 // TestWarnCollapsedAnonThrottle pins the boot warning for the
-// anonymous-throttle collapse (REL-availability, audit-2026-08-03):
+// anonymous-throttle collapse:
 // with trusted_proxy_cidrs empty behind a reverse proxy every
 // anonymous caller keys on the proxy's single address, collapsing the
 // whole anon tier into ONE shared bucket (an availability self-DoS).
@@ -468,16 +467,16 @@ func (f *fakeSubscriberRunner) callCount() int {
 	return f.calls
 }
 
-// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures —
-// REL-supervision (audit-2026-07-23). redispub.Subscriber.Run's doc
+// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures.
+// redispub.Subscriber.Run's doc
 // says an unexpected stream-end error lets "the caller decide
-// whether to retry"; prior to this fix the caller (main.go) never
-// did — a single Run failure logged and the goroutine exited for
+// whether to retry"; if the caller (main.go) never
+// does, a single Run failure logs and the goroutine exits for
 // good, leaving /v1/price/stream's closed-bucket feed permanently
 // silent for the rest of the process. This asserts the supervised
 // loop actually restarts past MULTIPLE consecutive failures (not
-// just tolerates one) and reaches a long-lived run. Against the
-// pre-fix single-shot call site this times out: calls never exceeds
+// just tolerates one) and reaches a long-lived run. Against a
+// single-shot call site this times out: calls never exceeds
 // 1.
 func TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures(t *testing.T) {
 	fake := &fakeSubscriberRunner{
@@ -521,11 +520,10 @@ func TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures(t *testing.T) {
 	}
 }
 
-// TestInProcessLoginThrottle_EnforcesPerEmailCap — NTF-08
-// (audit-2026-07-23). A single victim inbox must be capped even
+// TestInProcessLoginThrottle_EnforcesPerEmailCap. A single victim inbox must be capped even
 // when every send comes from a DIFFERENT IP (the inbox-bomb
-// dimension a per-IP-only cap can't catch). Asserts the corrected
-// value: the (max+1)th send to the same email is denied.
+// dimension a per-IP-only cap can't catch). Asserts the
+// (max+1)th send to the same email is denied.
 func TestInProcessLoginThrottle_EnforcesPerEmailCap(t *testing.T) {
 	th := newInProcessLoginThrottle()
 	ctx := context.Background()
@@ -584,14 +582,12 @@ func TestInProcessLoginThrottle_EnforcesPerIPCap(t *testing.T) {
 }
 
 // TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget —
-// CA2-A30-correct-4. Pre-fix, Allow spent the per-email budget
-// unconditionally, even on a call already denied by an exhausted
-// per-IP bucket. An attacker who repeatedly hits their own exhausted
+// Allow must not spend the per-email budget on a call already denied by an
+// exhausted per-IP bucket. An attacker who repeatedly hits their own exhausted
 // IP against a victim address could drain that victim's per-email
 // budget for free, denying the victim's own legitimate send from a
-// different IP for the rest of the window. Asserts the corrected
-// value: once the calling IP's bucket is exhausted, further calls
-// must not touch a distinct email's per-email budget at all.
+// different IP for the rest of the window. Asserts that once the calling
+// IP's bucket is exhausted, further calls must not touch a distinct email's per-email budget at all.
 func TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget(t *testing.T) {
 	th := newInProcessLoginThrottle()
 	ctx := context.Background()
@@ -635,11 +631,11 @@ func TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget(t *testing.T)
 	}
 }
 
-// TestInProcessLoginThrottle_MasksIPv6ToSlash64 — F010. Pre-fix, the
-// in-process fallback keyed the per-IP bucket on the raw address, so a
-// caller with one routable IPv6 /64 allocation could mint a fresh /128 —
+// TestInProcessLoginThrottle_MasksIPv6ToSlash64. Keying the
+// in-process fallback's per-IP bucket on the raw address would let a
+// caller with one routable IPv6 /64 allocation mint a fresh /128 —
 // and therefore a fresh, empty throttle bucket — on every request,
-// bypassing the cap entirely. Asserts the corrected value: two /128s
+// bypassing the cap entirely. Asserts two /128s
 // inside the same /64 share one budget.
 func TestInProcessLoginThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	th := newInProcessLoginThrottle()
@@ -720,8 +716,7 @@ func TestInProcessSignupIPThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	}
 }
 
-// TestInProcessSignupIPThrottle_EnforcesPerIPCap — NTF-08
-// (audit-2026-07-23). Asserts the corrected value: the (max+1)th
+// TestInProcessSignupIPThrottle_EnforcesPerIPCap. Asserts the (max+1)th
 // signup from one IP within the window is denied with
 // auth.ErrSignupRateLimited (what signupIPThrottleOK translates into
 // a 429), while a distinct IP is unaffected.
@@ -745,10 +740,9 @@ func TestInProcessSignupIPThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 }
 
-// TestRecoverBackgroundWorker_CountsThePanic pins #368 M4's completion.
-// This helper used to log and nothing else, so a dead background worker
-// left one line in the journal and moved no metric — invisible to
-// alerting, which is the only reason to notice at all. It must move the
+// TestRecoverBackgroundWorker_CountsThePanic pins that the helper
+// counts the panic. Logging alone leaves a dead background worker as one
+// journal line with no metric — invisible to alerting. It must move the
 // same counter the indexer's workers move, because one page rule reads
 // it for every binary.
 func TestRecoverBackgroundWorker_CountsThePanic(t *testing.T) {

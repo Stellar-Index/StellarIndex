@@ -42,11 +42,11 @@ func tvlNotDerivedDetail(t *testing.T, c *DEXTVLCache, name string) (int, string
 	return rec.Code, p.Detail
 }
 
-// TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished is the #675
+// TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished is the
 // regression. A protocol whose FIRST reserve read fails has no previous
-// figure to carry, so it used to vanish: absent from the snapshot, never
-// reached reconcileDEXTVLTotal's loop, so tvl_total dropped it with no
-// excluded entry and lower_bound=false, and its drill-down 404 blamed
+// figure to carry, so it would vanish: absent from the snapshot, never
+// reached reconcileDEXTVLTotal's loop, so tvl_total would drop it with no
+// excluded entry and lower_bound=false, and its drill-down 404 would blame
 // "not wired on this deployment" for a derivation that IS wired.
 func TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished(t *testing.T) {
 	src := tvlTestSources()
@@ -75,7 +75,7 @@ func TestDEXTVLCache_FirstCycleReadFailureIsNamedNotVanished(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits pins the #675
+// TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits pins the
 // doc-truth half: aquarius carries most of the headline, and its token
 // identities are positional recovery over a table with no transaction
 // order. The Basis every consumer reads must say so.
@@ -96,9 +96,9 @@ func TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits(t *testing.T) {
 }
 
 // TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero is the
-// CA2-A03-correct-1 regression. A configured pool set whose reader
+// regression. A configured pool set whose reader
 // returns no pools at all (a network where the curated mainnet ids are
-// not in the lake, an empty registry) used to publish tvl_usd "0.00"
+// not in the lake, an empty registry) would publish tvl_usd "0.00"
 // with pools_total 0 as a fresh, exact figure admitted to the headline
 // with lower_bound=false — the "zero TVL" the reader contract forbids.
 func TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero(t *testing.T) {

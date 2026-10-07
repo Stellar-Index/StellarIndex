@@ -93,10 +93,11 @@ func loginThroughProductionWiring(t *testing.T, logs *bytes.Buffer) (*httptest.R
 	return w, tokens, sender
 }
 
-// TestLogin_EmptyResendKey_IsACountedFailureNeverSent pins RLT-321 through the
-// production wiring + the production login handler.
+// TestLogin_EmptyResendKey_IsACountedFailureNeverSent pins, through the
+// production wiring + the production login handler, the empty-Resend-key
+// guard.
 //
-// Before the fix an empty/unset Resend key wired a NoopSender whose Send
+// Without the guard an empty/unset Resend key wired a NoopSender whose Send
 // returns nil: the handler answered 200 {"status":"sent"}, bumped
 // notify_sends_total{result="sent"}, minted a live magic-link row nobody could
 // ever receive, and the failure-ratio alert (failed/total > 0.5) read 0 while

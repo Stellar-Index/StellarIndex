@@ -78,7 +78,7 @@ func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestNewHandlers_ValidatesCallerConfigInPlace is the RLT-179
+// TestNewHandlers_ValidatesCallerConfigInPlace is the login-config
 // regression for the by-value-Config/validate-on-a-copy pattern:
 // main.go builds ONE Config (authCfg), hands it to NewHandlers to
 // build the handlers, then hands the SAME variable's address to
@@ -127,7 +127,7 @@ func TestNewHandlers_ValidatesCallerConfigInPlace(t *testing.T) {
 }
 
 // TestAsyncTouchSessionGoroutineRecovers is a guard-coverage test for
-// AGT-12: the fire-and-forget `go func(){...}()` inside resolveSession
+// the fire-and-forget `go func(){...}()` inside resolveSession
 // that writes TouchSession MUST register a recover(). An unrecovered
 // panic in that goroutine terminates the WHOLE API process — nothing
 // upstream wraps a bare `go func(){}()` spawned from inside a request
@@ -211,7 +211,7 @@ func bodyRegistersRecover(body ast.Node) bool {
 	return found
 }
 
-// TestTouchTracker_EvictsAgedEntries is the REL-05 regression:
+// TestTouchTracker_EvictsAgedEntries guards that
 // touchTracker.last must not grow without bound. Without an
 // eviction sweep, every distinct session ID ever seen stays in the
 // map for the process lifetime — one permanent entry per session.
