@@ -26,10 +26,10 @@ import (
 )
 
 // validateFollowFlags checks the -follow/-to/-parallel combination shared by
-// wasm-history and extract-wasm-from-galexie (GH-1190): -follow is the
-// explicit opt-in for an unbounded live tail, so it can't be combined with
-// an explicit -to, and a bounded parallel split has no meaning without a
-// fixed upper bound. Pure — unit-testable without a live archive.
+// wasm-history and extract-wasm-from-galexie: -follow is the explicit opt-in
+// for an unbounded live tail, so it can't be combined with an explicit -to,
+// and a bounded parallel split has no meaning without a fixed upper bound.
+// Pure — unit-testable without a live archive.
 func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) error {
 	if follow && to != 0 {
 		return fmt.Errorf("%s: -follow tails indefinitely and is incompatible with an explicit -to", toolName)
@@ -45,7 +45,7 @@ func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) e
 // same primitive verify-archive's -workers>1 tip resolution and
 // trim-galexie-archive's hot-tip lookup already use, applied here so
 // wasm-history's -to=0 default means "the tip, once" rather than
-// ledgerstream.Stream's "tail forever" (GH-1190). Unlike verify-archive's
+// ledgerstream.Stream's "tail forever". Unlike verify-archive's
 // resolution, this one has no serial-walk fallback to demote to: a
 // bounded-output walker with no upper bound would just hang, so a
 // resolution failure (e.g. no bucket ListObjectsV2) is returned to the
@@ -164,12 +164,11 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// GH-1190: -to 0 used to fall straight through to ledgerstream.Stream,
-	// which reads to==0 as "tail live, unbounded" — a walker whose entire
-	// output is one JSON document emitted at completion (see below) then
-	// never emits it. -follow is the explicit opt-in for that; otherwise
-	// resolve -to to a real tip once, up front, same as verify-archive's
-	// -workers>1 tip resolution.
+	// ledgerstream.Stream reads to==0 as "tail live, unbounded", and a
+	// walker whose entire output is one JSON document emitted at
+	// completion (see below) would then never emit it. -follow is the
+	// explicit opt-in for that; otherwise resolve -to to a real tip once,
+	// up front, same as verify-archive's -workers>1 tip resolution.
 	resolvedTo := uint32(*to)
 	if *to == 0 && !*follow {
 		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
@@ -494,7 +493,7 @@ func wasmHistoryMergeJSONL(args []string) error {
 // highest observed transition. Without this, a worker that died
 // mid-flight (the exact scenario this recovery tool exists for)
 // would have its last range published as extending all the way to
-// -to, an artefact nobody verified (CA2-A20-correct-3).
+// -to, an artefact nobody verified.
 func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]transitionRecord) (uint32, error) {
 	totalLines := 0
 	closeAt := to
@@ -530,7 +529,7 @@ func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]
 // transition lines successfully decoded. Reads line-by-line (not a
 // streaming json.Decoder) so a single malformed line can be skipped and
 // parsing RESYNCS at the next line, rather than treating "cannot parse
-// here" as "this file ends here" (GH-1199): a malformed/truncated LAST
+// here" as "this file ends here": a malformed/truncated LAST
 // line is tolerated (a crashed walk may leave a half-written final
 // line — "recover what we have" beats "fail outright"), but a malformed
 // line anywhere else is a hard error, because this file is opened
@@ -726,9 +725,9 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	// LAST LEDGER OBSERVED, not the requested bound: mergeWasmHistories
 	// closes every open WASM range at it, so it becomes the ToLedger
 	// the tool publishes as observed coverage. Seeding it from b.To
-	// here (RLT-282) meant a walk that stopped early — a hole inside
+	// here would let a walk that stopped early — a hole inside
 	// TolerateTrailingMissing's 65,536-ledger window, or SIGINT through
-	// the shared signal context — still claimed the whole requested
+	// the shared signal context — still claim the whole requested
 	// chunk. A worker that delivers nothing leaves it 0 and contributes
 	// no state, so no range can be closed at a ledger nobody saw.
 	workerScanned := uint64(0)
@@ -788,10 +787,9 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 			fmt.Fprintf(os.Stderr, "wasm-history: w%d write extent watermark: %v\n", workerIdx, werr)
 		}
 	}
-	// Add the un-counted residue. F-1239 (codex audit-2026-05-12):
-	// `-progress-every 0` means "disable progress output"; the
-	// previous unconditional `workerScanned % progressEvery`
-	// panicked on divide-by-zero AFTER the expensive ledger walk
+	// Add the un-counted residue. `-progress-every 0` means "disable
+	// progress output"; an unconditional `workerScanned % progressEvery`
+	// would panic on divide-by-zero AFTER the expensive ledger walk
 	// had finished. Either branch: progressEvery == 0 → add the
 	// full workerScanned (nothing was counted in-loop); otherwise
 	// add the residue.
@@ -816,18 +814,16 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 // same primitive wasm-history-merge-jsonl's crash-recovery path
 // uses) collapses hash-unchanged worker boundaries correctly.
 //
-// The previous implementation only stitched a worker's LAST range
-// into the PRECEDING worker's range when the next worker's first
-// transition landed exactly on the chunk boundary — true only when
-// the version changed on the very first ledger of a chunk. Any
-// worker chunk with no instance write at all (the contract's hash
-// simply continued unchanged) contributed nothing, leaving a
-// silent hole in the reported timeline (CA2-A20-harden-4).
+// Stitching only at an exact chunk boundary is not enough: a worker's
+// first transition lands on that boundary only when the version
+// changed on the very first ledger of its chunk. A worker chunk with
+// no instance write at all (the contract's hash simply continued
+// unchanged) would contribute nothing, leaving a silent hole in the
+// reported timeline.
 //
 // The final range's close point is the LAST worker's upperEnd — the
 // true last ledger observed by the whole walk — not the operator's
-// requested -to, matching the RLT-282 fix already applied to each
-// worker's own open range.
+// requested -to, matching how each worker closes its own open range.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,
@@ -1314,14 +1310,13 @@ func recordWasmTransition(
 //
 // The writer is buffered (4 KiB default) and flushed every
 // transition (transitions are rare relative to ledgers, so the
-// flush overhead is negligible). The file is O_TRUNC'd on open
-// (GH-1199): -checkpoint-dir is a stable, operator-chosen directory
+// flush overhead is negligible). The file is O_TRUNC'd on open:
+// -checkpoint-dir is a stable, operator-chosen directory
 // reused across INDEPENDENT wasm-history invocations, and each
-// invocation is a fresh walk, not a resume of a prior run's — leaving
-// the old O_APPEND meant a second run's lines landed after a first
-// run's partial/crashed tail, and wasm-history-merge-jsonl's
-// last-line-only tolerance then silently dropped everything the
-// second run wrote.
+// invocation is a fresh walk, not a resume of a prior run's. With
+// O_APPEND a second run's lines would land after a first run's
+// partial/crashed tail, and wasm-history-merge-jsonl's last-line-only
+// tolerance would then silently drop everything the second run wrote.
 type transitionLog struct {
 	f     *os.File
 	enc   *json.Encoder
@@ -1372,7 +1367,7 @@ func (t *transitionLog) append(contract sdkxdr.Hash, wasmHash string, seq uint32
 // worker got: a worker that crashed without seeing another
 // transition after ledger X would leave the merge tool no way to
 // distinguish "scanned through -to, hash never changed again" from
-// "crashed at X, everything after is unknown" (CA2-A20-correct-3).
+// "crashed at X, everything after is unknown".
 func (t *transitionLog) setExtent(seq uint32) error {
 	return t.enc.Encode(transitionRecord{AtLedger: seq, Watermark: true})
 }

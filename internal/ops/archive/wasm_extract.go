@@ -152,11 +152,11 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// GH-1190: -to 0 used to fall straight through to ledgerstream.Stream
-	// (unbounded live tail), so an absent hash's "MISSING ... exit
-	// non-zero" path was unreachable — the walk never ended. -follow is
-	// the explicit opt-in for that; otherwise resolve -to to a real tip
-	// once, up front (same helper wasm-history uses).
+	// Passed straight to ledgerstream.Stream, -to 0 is an unbounded live
+	// tail, so an absent hash's "MISSING ... exit non-zero" path would be
+	// unreachable — the walk would never end. -follow is the explicit
+	// opt-in for that; otherwise resolve -to to a real tip once, up
+	// front (same helper wasm-history uses).
 	resolvedTo := uint32(*to)
 	if *to == 0 && !*follow {
 		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
@@ -215,9 +215,8 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 					return nil
 				},
 			)
-			// F-1239 (codex audit-2026-05-12): `-progress-every 0`
-			// must mean "disable progress" without panicking on
-			// the residue add post-walk.
+			// `-progress-every 0` must mean "disable progress"
+			// without panicking on the residue add post-walk.
 			if *progressEvery == 0 {
 				totalScanned.add(workerScanned)
 			} else {
@@ -230,8 +229,8 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	}
 	wg.Wait()
 	close(errCh)
-	// First non-cancel worker error wins; printed AND returned (GH-1189) —
-	// dropping it after printing let a stream failure (wrong bucket, MinIO
+	// First non-cancel worker error wins; printed AND returned — dropping
+	// it after printing would let a stream failure (wrong bucket, MinIO
 	// down) exit 0 with "N hash(es) not found — try a wider range" instead
 	// of reporting the walk itself never completed.
 	var workerErr error
@@ -329,16 +328,14 @@ func maybeWriteWasmCode(
 ) {
 	// Match every change type that carries a [LedgerEntry] body
 	// (everything except LEDGER_ENTRY_REMOVED, which carries a
-	// LedgerKey instead). Earlier versions of this function only
-	// looked at Created + Restored, but the wasm-history walker
-	// finds ContractInstance updates under Updated too — and
-	// audit experience (2026-05-01 r1 walk) showed extract-wasm
-	// returning MISSING for every hash in the same archive the
-	// wasm-history walker reads cleanly. State is the pre-image
-	// of an Updated change in V2/V3 LCMs; if a ContractCode entry
-	// already exists at the target hash and is being TTL-extended
-	// or otherwise touched, the bytes are still in the State /
-	// Updated entry body.
+	// LedgerKey instead). Created + Restored alone are not enough: the
+	// wasm-history walker finds ContractInstance updates under Updated
+	// too, and an r1 walk matching only those two returned MISSING for
+	// every hash in the same archive the wasm-history walker reads
+	// cleanly. State is the pre-image of an Updated change in V2/V3
+	// LCMs; if a ContractCode entry already exists at the target hash
+	// and is being TTL-extended or otherwise touched, the bytes are
+	// still in the State / Updated entry body.
 	var entry *sdkxdr.LedgerEntry
 	switch change.Type {
 	case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -375,9 +372,9 @@ func maybeWriteWasmCode(
 	// worker matching the same hash later (e.g. a Restored entry at a
 	// later ledger) doesn't race the write, but don't record it as FOUND
 	// yet: found is the walk's completion receipt (drives -early-exit, the
-	// wrote N/N summary, and the missing-hash exit code), and GH-1189 was
-	// exactly this receipt being issued before the write it attests to had
-	// happened. An empty value marks "claimed, write in flight".
+	// wrote N/N summary, and the missing-hash exit code), so it must not
+	// be issued before the write it attests to has happened. An empty
+	// value marks "claimed, write in flight".
 	found[cc.Hash] = ""
 	foundMu.Unlock()
 

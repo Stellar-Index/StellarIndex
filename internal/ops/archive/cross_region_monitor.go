@@ -80,9 +80,8 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 		return err
 	}
 	if len(regions) < 2 {
-		// F-1234 (audit-2026-05-12): pre-R2/R3-bringup posture has
-		// only R1 deployed. Refusing to start trains operators to
-		// disable the monitor; instead log + exit cleanly so a
+		// Before R2/R3 bring-up only R1 is deployed. Refusing to start
+		// trains operators to disable the monitor; instead log + exit cleanly so a
 		// systemd unit wrapper can stay disabled until R2/R3 land
 		// and a healthy `systemctl status` reports the reason.
 		_, _ = fmt.Fprintf(os.Stdout,
@@ -170,13 +169,13 @@ func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 // crossRegionHealth is the /healthz verdict, split out from the handler so
 // the staleness + reachability rules are unit-testable without a listener.
 //
-// C4-007: the previous verdict was `lastRunUnix != 0` — "the loop has run
-// at least once". That is a LATCH, not a health check: the first sweep set
-// it and nothing ever cleared it, so a monitor whose tick goroutine had
-// died, or whose every region had been unreachable for a week, still
-// answered 200 forever. This is a sidecar whose entire job is to notice
-// cross-region divergence; a frozen-healthy /healthz means the thing
-// watching for silent breakage is itself silently broken.
+// A `lastRunUnix != 0` verdict — "the loop has run at least once" — would
+// be a LATCH, not a health check: the first sweep sets it and nothing
+// clears it, so a monitor whose tick goroutine had died, or whose every
+// region had been unreachable for a week, would answer 200 forever.
+// This is a sidecar whose entire job is to notice cross-region divergence;
+// a frozen-healthy /healthz means the thing watching for silent breakage is
+// itself silently broken.
 //
 // Two independent liveness facts, both recency-bounded:
 //
@@ -188,7 +187,7 @@ func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 //     even though the loop is still turning.
 //
 // "Reached" deliberately reuses allFailed()'s existing every-region-failed
-// notion rather than the OBS-07 not-compared signal: a PARTIAL region
+// notion rather than analyseRegionResults' not-compared signal: a PARTIAL region
 // failure keeps /healthz green and is reported through
 // stellarindex_cross_region_fetch_errors_total, exactly as runOneTick's
 // outcome labelling already draws that line.
@@ -264,10 +263,9 @@ func runOneTick(
 			// triage. The second return (compared) is intentionally
 			// unused here — this monitor's "error" outcome is
 			// deliberately scoped to allFailed() (see comment below);
-			// widening it to the OBS-07 not-compared signal used by
-			// `cross-region-check`'s exit code is a separate,
-			// unaudited change to this metrics path and out of scope
-			// for this fix.
+			// widening it to the not-compared signal used by
+			// `cross-region-check`'s exit code is a separate change
+			// to this metrics path.
 			divergence, compared := analyseRegionResults(metric, pair, bucketFrom, bucketTo, results, io.Discard)
 
 			outcome := tickOutcome(divergence, compared, allFailed(results))
@@ -397,14 +395,14 @@ func (m crossRegionMetric) String() string { return string(m) }
 
 // tickOutcome labels one (pair, metric) sweep.
 //
-// "inconclusive" is the case that used to be mislabelled "ok":
+// "inconclusive" is the case that must not read as "ok":
 // analyseRegionResults returns compared=false when fewer than two
-// regions responded, and documents that such a sample "proves NOTHING"
-// (OBS-07). runOneTick discarded that return, so in a two-region fleet
-// ONE region being down emitted the same time series as a genuine
-// agreement — divergences flat, last_reached fresh, /healthz 200, and
-// zero comparisons actually performed. The one-shot sibling treats the
-// same state as a hard failure and exits 1 (cold audit 2026-08-04).
+// regions responded, and documents that such a sample "proves NOTHING".
+// Labelled "ok", ONE region down in a two-region fleet would emit the
+// same time series as a genuine agreement — divergences flat,
+// last_reached fresh, /healthz 200, and zero comparisons actually
+// performed. The one-shot sibling treats the same state as a hard
+// failure and exits 1.
 func tickOutcome(divergence, compared, allFailed bool) string {
 	switch {
 	case allFailed:

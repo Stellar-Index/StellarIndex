@@ -14,8 +14,7 @@ import (
 )
 
 // archiveCompleteness dispatches the `archive-completeness <mode>`
-// subcommand per ADR-0017. Modes: check (PR A), fix (PR B),
-// verify (PR C — this PR).
+// subcommand per ADR-0017. Modes: check, fix, verify.
 func archiveCompleteness(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("archive-completeness: subcommand required (check / fix / verify)")
@@ -133,11 +132,9 @@ func archiveCompletenessVerify(args []string) error {
 	write := opts.gate.Banner()
 
 	startedAt := time.Now()
-	// #1191: the fix phase fetches over HTTP and writes/renames/chowns
-	// into -archive-root with no write gate and on context.Background(),
-	// discarding the parent's cancellation — a signal-aware ctx here lets
-	// a mid-fill SIGTERM/SIGINT stop the fetch loop cleanly instead of
-	// running to completion regardless.
+	// The fix phase fetches over HTTP and writes/renames/chowns into
+	// -archive-root; a signal-aware ctx here lets a mid-fill SIGTERM/SIGINT
+	// stop the fetch loop cleanly instead of running to completion regardless.
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
@@ -173,14 +170,13 @@ func archiveCompletenessVerify(args []string) error {
 	// Populate metrics. LastSuccessTimestamp is set ONLY when the
 	// post-fix state is clean AND non-vacuous — alert rules rely on
 	// this gauge going stale when something's wrong, and a range that
-	// contained no checkpoint position at all (DAT-11) verified
-	// nothing, so it must not stamp success either.
+	// contained no checkpoint position at all verified nothing, so it
+	// must not stamp success either.
 	//
 	// Leaving it zero here does NOT drop the series: WriteTextfileAtomic
 	// re-reads the previous textfile and carries the last clean run's
 	// timestamp (and the repair counters) forward, so the staleness
-	// alert keeps evaluating while the failure persists. That direction
-	// of the blind spot was C4-038/039/054.
+	// alert keeps evaluating while the failure persists.
 	snapshot.PopulateFromReport(report)
 	snapshot.PopulateFromFillResult(fillRes)
 	snapshot.RunDurationSeconds = time.Since(startedAt).Seconds()
@@ -244,9 +240,9 @@ func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []ui
 		// Nothing to fix.
 		return archivecompleteness.FillResult{}, nil
 	case !write:
-		// #1191: this is the mode the systemd timer fires, unattended,
+		// This is the mode the systemd timer fires, unattended,
 		// with no preview and no confirmation — a stale -archive-root
-		// default or a mis-templated mount got checkpoints fetched and
+		// default or a mis-templated mount would get checkpoints fetched and
 		// chowned into the wrong tree with nobody looking. Fail-closed
 		// DRY RUN by default; the shipped systemd units pass -write.
 		fmt.Fprintf(os.Stderr,
@@ -309,9 +305,8 @@ func archiveCompletenessFix(args []string) error {
 	}
 	write := gate.Banner()
 
-	// #1191: signal-aware ctx so a mid-fill SIGTERM/SIGINT stops the
-	// fetch loop instead of the discarded context.Background() running
-	// it to completion regardless.
+	// A signal-aware ctx lets a mid-fill SIGTERM/SIGINT stop the fetch
+	// loop instead of letting it run to completion regardless.
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
@@ -326,7 +321,7 @@ func archiveCompletenessFix(args []string) error {
 	report.SetCrossAnchor(*archiveRoot, res)
 
 	if report.Vacuous() {
-		// DAT-11: [from, to] contained no checkpoint position at all —
+		// [from, to] contained no checkpoint position at all —
 		// nothing to fix because nothing was checked. Do not report
 		// this as "already complete".
 		if err := writeReport(report, *outputFile); err != nil {
@@ -342,9 +337,9 @@ func archiveCompletenessFix(args []string) error {
 		return writeReport(report, *outputFile)
 	}
 	if !write {
-		// #1191: HTTP-fetches and os.Create/os.Rename/os.Chown into
+		// The fill HTTP-fetches and runs os.Create/os.Rename/os.Chown into
 		// -archive-root with no preview and no confirmation — a stale
-		// -archive-root default or a mis-templated mount got checkpoints
+		// -archive-root default or a mis-templated mount would get checkpoints
 		// written into the wrong tree with nobody looking. Fail-closed
 		// DRY RUN by default.
 		fmt.Fprintf(os.Stderr,
@@ -417,8 +412,8 @@ func writeReport(report *archivecompleteness.Report, outputFile string) error {
 }
 
 // archiveCompletenessCheck implements the read-only `check` mode.
-// Walks the cross-anchor archive (PR A; the primary archive scan
-// lands in PR B), emits a JSON [archivecompleteness.Report].
+// Walks the cross-anchor archive only (the Primary section stays
+// nil) and emits a JSON [archivecompleteness.Report].
 //
 // Exit semantics:
 //   - 0: every section clean (no missing files in scope)
@@ -453,14 +448,13 @@ func archiveCompletenessCheck(args []string) error {
 	}
 	report.SetCrossAnchor(*archiveRoot, res)
 
-	// PR A scope: cross-anchor only. Primary section stays nil; PR B
-	// will populate it.
+	// Cross-anchor only; the Primary section stays nil.
 
 	if err := writeReport(report, *outputFile); err != nil {
 		return err
 	}
 
-	// DAT-11: a range with no checkpoint position at all verified
+	// A range with no checkpoint position at all verified
 	// nothing — must not read as a clean pass.
 	if report.Vacuous() {
 		fmt.Fprintf(os.Stderr,

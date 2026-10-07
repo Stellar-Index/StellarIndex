@@ -88,9 +88,8 @@ type ChunkProgress struct {
 	// the walk end short of an absent tail, and all zeros for a chunk
 	// that verified no ledgers; it does not identify its own ledger.
 	//
-	// It is written and never read. The comment it replaces said it
-	// was "used for the cross-run chain-continuity proof", which was
-	// not true of any code path (RLT-265): one terminal hash cannot
+	// It is written and never read, and is not evidence for the
+	// cross-run chain-continuity proof: one terminal hash cannot
 	// prove a boundary, which needs the RIGHT chunk's FirstPrevHash
 	// as well. Stitch carries both terms and is what the proof
 	// actually reads. Kept because an operator reading the state file
@@ -100,10 +99,9 @@ type ChunkProgress struct {
 	// Stitch is the chunk's boundary evidence, captured when Done
 	// flips true. A resumed run skips this chunk's walk, so these
 	// are the only terms from which the two boundaries the chunk
-	// participates in can still be checked (RLT-265). Nil for a
-	// chunk recorded by a binary that predates it — planResumedWalk
-	// refuses to skip such a chunk, so the boundary is re-derived by
-	// re-walking rather than assumed.
+	// participates in can still be checked. Nil for a chunk recorded
+	// without it: planResumedWalk refuses to skip such a chunk, so the
+	// boundary is re-derived by re-walking rather than assumed.
 	Stitch *ChunkStitch `json:"stitch,omitempty"`
 }
 
@@ -203,13 +201,13 @@ func resolveIncrementalFrom(st VerifyArchiveState, tier string, explicitFrom uin
 // incrementalStateTiers maps the operator's -tier flag onto the state
 // -file tier key(s) whose high-water marks bound an incremental run.
 //
-// DAT-09: `-tier all` runs the chain AND checkpoint passes and records
+// `-tier all` runs the chain AND checkpoint passes and records
 // its outcome under BOTH the "chain" and "checkpoint" keys — it never
 // writes a key literally named "all". Reading incremental state under
-// the raw flag value therefore always missed, so every nightly
-// `-tier all -from-last-verified` run silently restarted from genesis
-// (and, bounded by -max-runtime, never reached the trailing edge it
-// was scheduled to verify).
+// the raw flag value would therefore always miss, so every nightly
+// `-tier all -from-last-verified` run would silently restart from
+// genesis (and, bounded by -max-runtime, never reach the trailing edge
+// it was scheduled to verify).
 func incrementalStateTiers(tier string) []string {
 	if tier == "all" {
 		return []string{"chain", "checkpoint"}
@@ -261,14 +259,14 @@ func incrementalFromWatermark(lastVerified, explicitFrom, safetyOverlap uint32) 
 	var candidate uint32
 	switch {
 	case safetyOverlap == 0:
-		// Strict cross-run boundary mode (REL-05). Resume at the ledger
+		// Strict cross-run boundary mode. Resume at the ledger
 		// AFTER the last verified one, so the first chunk's
 		// FirstPrevHash — the hash of effectiveFrom-1 — IS the saved
 		// LastVerifiedHash the resume-from-hash check compares against.
 		// Starting AT last-verified re-walks one ledger (an overlap of
-		// 1, not 0) and made that check compare the hash AT
+		// 1, not 0) and would make that check compare the hash AT
 		// last-verified against the hash of last-verified-1, so
-		// `-safety-overlap 0` failed every run with a bogus
+		// `-safety-overlap 0` would fail every run with a bogus
 		// "resume-from-hash boundary mismatch".
 		candidate = lastVerified + 1
 	case lastVerified <= safetyOverlap:
@@ -386,8 +384,7 @@ func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.
 // markChunkDoneStitch is markChunkDone plus the chunk's boundary
 // evidence — the form the walk uses. Without the evidence a resumed
 // run cannot check the boundaries either side of the chunk it skips,
-// and stitchChunks silently compares non-adjacent chunks instead
-// (RLT-265).
+// and stitchChunks would silently compare non-adjacent chunks instead.
 func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkResult, now time.Time, doCheckpoint bool) VerifyArchiveState {
 	out := markChunkDone(st, tier, idx, res.LastHash, now)
 	ts, ok := out.Tiers[tier]
@@ -543,9 +540,9 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 // proofs: a real stitch break at a chunk boundary leaves exactly this
 // state.
 //
-// Treating that as a no-op success (RLT-281) returned (0, "", nil)
-// from a walk that verified ZERO ledgers, which the caller's textfile
-// defer writes out as a clean run — advancing
+// Treating that as a no-op success would return (0, "", nil) from a
+// walk that verified ZERO ledgers, which the caller's textfile defer
+// would write out as a clean run — advancing
 // stellarindex_verify_archive_last_success_unix and holding the
 // stellarindex_verify_archive_run_stale page green for a run that
 // anchored nothing, while clearing the InProgress record that was the
@@ -555,12 +552,12 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 // checkpoint OK/missed tallies are not persisted at all), so the
 // conservative reading is the only defensible one: re-walk.
 //
-// Second narrowing (RLT-265): a chunk may only be skipped when the
+// Second narrowing: a chunk may only be skipped when the
 // prior run persisted its boundary evidence. A skipped chunk supplies
 // no live chunkResult, so without that record the boundaries either
 // side of it cannot be checked at all — and stitchChunks, handed only
-// the chunks that ran, compares non-adjacent ones instead. A chunk
-// recorded before the evidence existed is re-walked, which is
+// the chunks that ran, would compare non-adjacent ones instead. A
+// chunk recorded without that evidence is re-walked, which is
 // self-healing: the next run records it and resume works again.
 func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, doCheckpoint bool) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
@@ -584,8 +581,8 @@ func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, worker
 		// This run wants the checkpoint tier, but the run that
 		// produced this Done marker didn't check checkpoints for
 		// this chunk — its persisted Checkpoints* counts are "never
-		// counted", not "zero misses" (RLT-... checkpoint tally
-		// loss). Skipping it would silently drop its contribution.
+		// counted", not "zero misses". Skipping it would silently
+		// drop its contribution.
 		if doCheckpoint && !prior[i].Stitch.CheckpointChecked {
 			unstitchable++
 		}
@@ -614,11 +611,11 @@ func priorChunkProgress(st VerifyArchiveState, tier string) []ChunkProgress {
 // and the prior run's persisted boundary evidence for every chunk it
 // skipped.
 //
-// This is what makes the cross-chunk chain proof survive a resume
-// (RLT-265). stitchChunks was handed `results` — only the chunks that
-// RAN — so on a resumed walk it compared chunks that are not adjacent
-// in ledger space: a boundary next to a skipped chunk was either never
-// checked (skipped chunk at an end of the run set) or reported as a
+// This is what makes the cross-chunk chain proof survive a resume.
+// Handed only `results` — the chunks that RAN — stitchChunks would
+// compare chunks that are not adjacent in ledger space on a resumed
+// walk: a boundary next to a skipped chunk would either never be
+// checked (skipped chunk at an end of the run set) or be reported as a
 // spurious gap (skipped chunk in the middle). Neither is a proof.
 //
 // liveIdxs[i] is the original plan index of liveResults[i], as returned

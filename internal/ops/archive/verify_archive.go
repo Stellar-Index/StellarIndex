@@ -187,7 +187,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		// span it is a hole in the archive, above it the mirror's fill
 		// job simply has not got there yet. Without the span the two
 		// are indistinguishable and the run reports the fill lag as
-		// missing data (F144).
+		// missing data.
 		mirrorCoverage = readArchiveMirrorCoverage(*archiveRoot)
 		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s (mirror coverage %s)\n",
 			*archiveRoot, mirrorCoverage)
@@ -197,24 +197,23 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		}
 	}
 
-	// systemd Type=notify integration: signal READY=1 once at start
-	// (so the unit transitions from "activating" to "active") and
-	// then ping WATCHDOG=1 every 30s for the rest of the process's
-	// life. The matching unit sets WatchdogSec=1h, so the walk has
-	// up to an hour of true silence before systemd intervenes —
-	// orders of magnitude more headroom than the wall-clock-bound
-	// TimeoutStartSec the unit used before, and tied to liveness
-	// rather than guessed duration. SdNotify is a no-op when
-	// $NOTIFY_SOCKET isn't set (manual `stellarindex-ops verify-
-	// archive` invocations from a shell), so this is safe outside
-	// systemd too.
+	// systemd Type=notify integration: signal READY=1 once at start (so
+	// the unit transitions from "activating" to "active") and then ping
+	// WATCHDOG=1 every 30s for the rest of the process's life. The
+	// matching unit sets WatchdogSec=1h, so the walk has up to an hour
+	// of true silence before systemd intervenes — orders of magnitude
+	// more headroom than the wall-clock-bound TimeoutStartSec would
+	// give, and tied to liveness rather than guessed duration. SdNotify
+	// is a no-op when $NOTIFY_SOCKET isn't set (manual
+	// `stellarindex-ops verify-archive` invocations from a shell), so
+	// this is safe outside systemd too.
 	//
-	// OBS-07: the ping is GATED on observed walk progress. An
-	// unconditional 30s ticker feeds the watchdog for as long as the
-	// process is alive, which detects a crash (no process, no pings)
-	// but is blind to exactly the failure the unit says WatchdogSec is
-	// there for — "binary hung / dead-locked". A wedged chunk walker
-	// (say a stuck object read) kept the pings flowing forever. See
+	// The ping is GATED on observed walk progress. An unconditional 30s
+	// ticker feeds the watchdog for as long as the process is alive,
+	// which detects a crash (no process, no pings) but is blind to
+	// exactly the failure the unit says WatchdogSec is there for —
+	// "binary hung / dead-locked". A wedged chunk walker (say a stuck
+	// object read) would keep the pings flowing forever. See
 	// verifyArchiveProgress.
 	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
 		fmt.Fprintf(os.Stderr, "verify-archive: warn: sd_notify READY failed: %v\n", err)
@@ -257,7 +256,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 			// advances the last-success gauge; a failed one carries the
 			// prior value forward, so the staleness page measures when
 			// verification last SUCCEEDED rather than when the timer
-			// last fired (wave-D ALERT-10).
+			// last fired.
 			if werr := writeVerifyArchiveTextfile(
 				*textfileOutput, *tier, collectVerifyArchiveMismatches(),
 				retErr == nil, time.Now(),
@@ -298,22 +297,21 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		//     FirstPrevHash (= hash of effectiveFrom-1) against the
 		//     supplied expected hash. The state file's last_verified_hash
 		//     is the hash AT last-verified, not at last-verified -
-		//     safety-overlap - 1. Those are different ledgers; the
-		//     check tripped on 2026-05-29 ("resume-from-hash boundary
-		//     mismatch at ledger 62637780").
+		//     safety-overlap - 1. Those are different ledgers, so the
+		//     check would always report a bogus boundary mismatch.
 		//   - When safety-overlap > 0, the overlap re-walk already
 		//     validates chain continuity by stitching chunks; the
 		//     explicit resume-hash check is redundant + wrong. Skip
 		//     it.
 		//   - When safety-overlap == 0 (operator opted into a strict
 		//     cross-run boundary check), continue to use the saved
-		//     hash — that's the original strict-mode contract.
+		//     hash — that's the strict-mode contract.
 		if effectiveResumeHash == "" && *safetyOverlap == 0 {
 			effectiveResumeHash = resolveIncrementalResumeHash(priorState, *tier)
 		}
 		// High-water reported from the BOUNDING tier, not the raw -tier
 		// key: `-tier all` records under "chain"+"checkpoint" and has no
-		// "all" entry to read (DAT-09).
+		// "all" entry to read.
 		priorHighWater := uint32(0)
 		if bound, ok := incrementalBoundTier(priorState, incrementalStateTiers(*tier)); ok {
 			priorHighWater = bound.LastVerifiedLedger
@@ -348,13 +346,12 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		//
 		// Always write on no-error: updateTierState clears the
 		// InProgress section, which every clean end-to-end run needs
-		// regardless of whether the high-water advanced. Since
-		// RLT-281 a clean walk always verified at least one ledger
-		// (the all-Done resume re-walks rather than returning a
-		// zero-ledger success, and `verified == 0` is an error), so
-		// highestLedger == 0 here is defensive only. Re-read first so
-		// the per-chunk Done updates the walker wrote during the run
-		// aren't clobbered.
+		// regardless of whether the high-water advanced. A clean walk
+		// always verifies at least one ledger (the all-Done resume
+		// re-walks rather than returning a zero-ledger success, and
+		// `verified == 0` is an error), so highestLedger == 0 here is
+		// defensive only. Re-read first so the per-chunk Done updates the
+		// walker wrote during the run aren't clobbered.
 		if *stateFile != "" {
 			latestState, rerr := readVerifyArchiveState(*stateFile)
 			if rerr != nil {
@@ -434,10 +431,9 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// the tip. newBoundedLedgerStreamConfig opts into
 	// TolerateTrailingMissing so the SDK's "is missing" error within
 	// ~65k ledgers of -to is tolerated; the chain up to the
-	// last-delivered ledger is what we'd report anyway. The
-	// 2026-05-25 incident (project_62_diagnosis_2026_05_25) was
-	// exactly this: bootstrap walked 62.64M ledgers clean, then
-	// failed on the trailing-edge missing file.
+	// last-delivered ledger is what we'd report anyway. Without the
+	// tolerance, a bootstrap that walked 62.64M ledgers clean failed
+	// on the trailing-edge missing file.
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, workers)
 
 	// maxRuntime == 0 → no cap (uncancellable parent). Operators
@@ -459,14 +455,14 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// asked for. `opsutil.SplitRange(from, 0, n)` hits the `to <= from` guard
 	// and silently returns ONE chunk — `-workers N` is then dead code,
 	// and what should be an N-way parallel walk degrades to a serial
-	// one. Bit me on a manual `-from 2 -to 0 -workers 6` bootstrap run
-	// that crawled for 22h instead of ~4h. The systemd timer's
-	// `-from-last-verified` incremental mode hit the same shape on
-	// every fresh-state bootstrap.
+	// one: a manual `-from 2 -to 0 -workers 6` bootstrap run that hit
+	// it crawled for 22h instead of ~4h. The systemd timer's
+	// `-from-last-verified` incremental mode would hit the same shape
+	// on every fresh-state bootstrap.
 	//
 	// Resolution: build a one-shot DataStore from the same DataStore
 	// config the walkers will use, query FindLatestLedgerSequence,
-	// adopt that as the upper bound for splitRange. Closed
+	// adopt that as the upper bound for opsutil.SplitRange. Closed
 	// immediately — the parallel walkers each construct their own.
 	// Skipped when workers ≤ 1 (single-chunk serial walk is what
 	// `to=0` is FOR; resolving tip there would defeat the live-tail
@@ -477,10 +473,9 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// permission. Setups with least-privilege MinIO IAM (r1's
 	// `stellarindex_reader` grants GetObject only) deny it. Rather
 	// than crash the whole walk, log a clear message and demote to
-	// single-chunk serial (UnboundedRange — works without List, the
-	// pre-this-fix behaviour). An operator who genuinely wants the
-	// parallel speedup grants `s3:ListBucket` to the reader and the
-	// next walk picks it up automatically.
+	// single-chunk serial (UnboundedRange, which works without List).
+	// An operator who genuinely wants the parallel speedup grants
+	// `s3:ListBucket` to the reader and the next walk picks it up.
 	if to == 0 && workers > 1 {
 		// First: if there's a prior in-progress run whose plan we can
 		// reuse, adopt its pinned tip and skip live-tip resolution.
@@ -542,7 +537,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	}
 	if len(filteredChunks) == 0 {
 		// planResumedWalk never returns an empty plan — an all-Done
-		// prior run is re-walked, not certified (RLT-281). Defensive:
+		// prior run is re-walked, not certified. Defensive:
 		// a zero-chunk walk verifies zero ledgers, and a zero-ledger
 		// run that exits nil advances last_success_unix for a run
 		// that anchored nothing.
@@ -564,7 +559,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	var stateMu sync.Mutex
 
 	// Arm the systemd watchdog's progress gate for the duration of the
-	// walk — see verifyArchiveProgress (OBS-07).
+	// walk — see verifyArchiveProgress.
 	verifyArchiveProgress.WalkActive.Store(true)
 	defer verifyArchiveProgress.WalkActive.Store(false)
 
@@ -614,17 +609,16 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// (chunks may have aborted mid-flight; boundary check would be
 	// noisy on partial results). Runs whenever a walk happened at
 	// all (doChain or doCheckpoint) — gap detection is intrinsic to
-	// the LCM stream, not specific to the "chain" tier (GH-694): a
-	// checkpoint-only run (Tier B, the nightly) is the one this
-	// mattered for, since it previously had no gap detection.
+	// the LCM stream, not specific to the "chain" tier: a
+	// checkpoint-only run (Tier B, the nightly) gets gap detection too.
 	//
 	// The stitch runs over the FULL plan, not over the chunks this run
 	// happened to walk: a resumed run supplies the skipped chunks'
-	// boundary terms from the evidence the prior run persisted
-	// (RLT-265). Handing stitchChunks only the live results made it
+	// boundary terms from the evidence the prior run persisted.
+	// Handing stitchChunks only the live results would make it
 	// compare chunks that are not adjacent in ledger space, which
-	// either missed the boundary beside a skipped chunk entirely or
-	// reported it as a gap that does not exist.
+	// would either miss the boundary beside a skipped chunk entirely
+	// or report it as a gap that does not exist.
 	var stitchErr error
 	planResults := results
 	if walkErr == nil {
@@ -672,7 +666,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		// missed = absent from INSIDE the mirror's coverage span (a
 		// hole in the cross-anchor archive). unmirrored = beyond that
 		// span, i.e. the walk reached a checkpoint the mirror's fill
-		// job has not delivered yet — a lag, not a hole (F144).
+		// job has not delivered yet — a lag, not a hole.
 		note := "unmirrored = beyond the mirror's coverage, not a failure"
 		if failOnMissed {
 			note = "fail-on-missed: any in-coverage miss = hard failure"
@@ -714,13 +708,14 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	return highestLedger, highestHashHex, nil
 }
 
-// checkpointAnchorReached is DAT-09 restated under the coverage
-// taxonomy: a checkpoint-tier run that encountered checkpoints but
-// MATCHED none anchored nothing, and must not be certified — whether
-// the files were absent from inside the mirror's span (holes) or
-// beyond it (not yet mirrored). Splitting a trailing-edge absence out
-// of checkpointsMissed would otherwise let a walk that ran entirely
-// above the mirror's high-water report "0 missed" and exit 0.
+// checkpointAnchorReached restates checkpointAnchorDecision's
+// all-missed rule under the coverage taxonomy: a checkpoint-tier run
+// that encountered checkpoints but MATCHED none anchored nothing, and
+// must not be certified — whether the files were absent from inside
+// the mirror's span (holes) or beyond it (not yet mirrored).
+// Splitting a trailing-edge absence out of checkpointsMissed would
+// otherwise let a walk that ran entirely above the mirror's
+// high-water report "0 missed" and exit 0.
 //
 // It cannot fire on the deployed tier-B shape: the checkpoint tier's
 // high-water is clamped to the mirror's high-water
@@ -741,17 +736,16 @@ func checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirr
 // where that flag doesn't apply. Pure — unit-testable without a live
 // archive walk.
 //
-// DAT-09: checkpointsOK == 0 && checkpointsMissed > 0 (every
-// checkpoint anchor missed — the run verified NOTHING against the
-// cross-anchor archive) is fatal REGARDLESS of failOnMissed. This is
-// distinct from a PARTIAL miss (some matched, some missed), which
-// fails unless the operator opted out with -fail-on-missed=false. An
-// all-missed range was never actually anchored, so it must not be
-// certified complete or advance the checkpoint tier's
-// LastVerifiedLedger — the caller skips the state-persist on any
-// non-nil error returned here.
+// checkpointsOK == 0 && checkpointsMissed > 0 (every checkpoint anchor
+// missed — the run verified NOTHING against the cross-anchor archive)
+// is fatal REGARDLESS of failOnMissed. This is distinct from a PARTIAL
+// miss (some matched, some missed), which fails unless the operator
+// opted out with -fail-on-missed=false. An all-missed range was never
+// actually anchored, so it must not be certified complete or advance
+// the checkpoint tier's LastVerifiedLedger — the caller skips the
+// state-persist on any non-nil error returned here.
 //
-// Since F144, checkpointsMissed counts only checkpoints absent from
+// checkpointsMissed counts only checkpoints absent from
 // INSIDE the mirror's coverage span — a hole in the cross-anchor
 // archive. A checkpoint the walk reached before the mirror's fill job
 // did is counted as unmirrored and never arrives here, which is what
@@ -847,10 +841,10 @@ func (g *watchdogGate) shouldPing() bool {
 // peerTipStalenessWindow bounds how far a peer's published tip may
 // trail the freshest responding peer before it is treated as an
 // abandoned/stale archive rather than a live one lagging by normal
-// upload latency. ~24h at ~5s/ledger close (GH-725): without this, a
+// upload latency. ~24h at ~5s/ledger close: without this, a
 // single peer that stopped publishing months ago but still serves a
-// frozen .well-known file silently became the "lowest peer archive
-// tip" and every run since sampled only genesis-adjacent history.
+// frozen .well-known file would silently become the "lowest peer
+// archive tip" and every run would sample only genesis-adjacent history.
 const peerTipStalenessWindow = 17280
 
 // peerArchiveTip resolves how far the peer archives have actually
@@ -862,7 +856,7 @@ const peerTipStalenessWindow = 17280
 // sampling it would diff a missing file against a present one and read
 // as a phantom divergence. A peer trailing the freshest tip by more
 // than the staleness window is excluded from that computation and
-// logged — it no longer gets to silently cap the whole run's verified
+// logged — it does not get to silently cap the whole run's verified
 // window. ok=false when no peer answered at all — the caller refuses
 // to guess a range rather than inventing one.
 func peerArchiveTip(client *http.Client, peers []string) (uint32, bool) {
@@ -902,8 +896,8 @@ func peerArchiveTip(client *http.Client, peers []string) (uint32, bool) {
 // peerCheckpointQuorum is the minimum number of responding peers
 // required before agreement among them is reported as network
 // consensus: a strict majority of the configured peer set. Two
-// survivors of seven configured peers no longer count as "N peers
-// agree" (GH-725) — five unreachable peers means the sample is
+// survivors of seven configured peers do not count as "N peers
+// agree" — five unreachable peers means the sample is
 // inconclusive, not verified.
 func peerCheckpointQuorum(numPeers int) int {
 	return numPeers/2 + 1
@@ -914,11 +908,11 @@ func peerCheckpointQuorum(numPeers int) int {
 // holds none.
 //
 // The arithmetic runs through uint64 on purpose: the naive unsigned
-// form underflowed for sub-checkpoint inputs — `(to/64*64)-1` wrapped
-// to ~4.29e9 for any to < 64, which then passed the `lastCP < firstCP`
-// guard and sent the sampler chasing checkpoints past the end of the
-// chain. It also picked the checkpoint BELOW `to` when `to` was itself
-// a checkpoint; the ceiling form here includes it.
+// form would underflow for sub-checkpoint inputs — `(to/64*64)-1` wraps
+// to ~4.29e9 for any to < 64, which then passes the `lastCP < firstCP`
+// guard and sends the sampler chasing checkpoints past the end of the
+// chain, and picks the checkpoint BELOW `to` when `to` is itself a
+// checkpoint; the ceiling form here includes it.
 func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
 	noneErr := fmt.Errorf("range [%d,%d] contains no checkpoint ledgers (checkpoints are at seq mod 64 == 63)", from, to)
 	if to < 63 || from > to {
@@ -985,10 +979,10 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRo
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Resolve an unbounded -to against the peers themselves (OBS-07).
-	// This used to fabricate `lastCP = firstCP + 640` — with the
-	// default -from 2 that sampled checkpoints 63..703, i.e. ten
-	// GENESIS-era slots, then printed "peer cross-check OK". The whole
+	// Resolve an unbounded -to against the peers themselves.
+	// Fabricating `lastCP = firstCP + 640` instead would, with the
+	// default -from 2, sample checkpoints 63..703, i.e. ten
+	// GENESIS-era slots, then print "peer cross-check OK". The whole
 	// point of Tier D is consensus agreement on what we hold NOW, so a
 	// run that never looks above ledger 703 certifies nothing while
 	// reading as a pass.
@@ -1019,7 +1013,7 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRo
 	var self peerSelfTally
 
 	// A majority of the configured peers must respond before "all
-	// responders agree" is reported as network consensus (GH-725): two
+	// responders agree" is reported as network consensus: two
 	// survivors of seven unreachable peers is one operator's opinion,
 	// not "N peers agree". peerCheckpointQuorum names the same floor
 	// verifyArchivePeers enforces below.
@@ -1231,10 +1225,9 @@ func parseHistoryCheckpoint(body []byte, src string) (historyCheckpoint, error) 
 	}
 	// A 200 response that isn't a real checkpoint (an error envelope,
 	// `null`, or a not-yet-uploaded object behind a CDN that 200s on a
-	// miss) decodes to the historyCheckpoint zero value. Reject it here
-	// — the single parse chokepoint every peer and local read goes
-	// through — rather than letting two zero checkpoints compare equal
-	// downstream (GH-725).
+	// miss) decodes to the historyCheckpoint zero value. Reject it here, at
+	// the single parse chokepoint every peer and local read goes
+	// through, so two zero checkpoints never compare equal downstream.
 	if cp.CurrentLedger == 0 {
 		return historyCheckpoint{}, fmt.Errorf("%s: decoded to CurrentLedger=0 (not a real checkpoint)", src)
 	}
@@ -1269,14 +1262,13 @@ func checkpointsEqual(a, b historyCheckpoint) bool {
 // `network_head` ("for every checkpoint seq <= network_head the file
 // exists") while the mirror is filled by its own periodic job, so in
 // steady state the newest checkpoints the LCM walk reaches have no
-// mirror file yet and never did. Measured on r1 2026-09-19: the mirror
+// mirror file yet and never did. Measured on r1: the mirror
 // holds 1,007,807 of the 1,007,807 checkpoint files between ledger 63
 // and its high-water 64,499,647 — not one hole — while the fill job
 // lands at 02:2x UTC and the tier-B walk runs at 04:38 UTC, so the walk
 // asks about the ~23 checkpoints closed in between. Counting those as
 // "missing from the archive" is the walk over-asking, not a
-// completeness breach, and it is the whole of the `missed=23` the unit
-// has been logging.
+// completeness breach; it accounted for all of the unit's `missed=23`.
 //
 // The distinction is the same one the LCM side already draws with
 // TolerateTrailingMissing for the galexie bucket's trailing edge (see
@@ -1285,8 +1277,8 @@ func checkpointsEqual(a, b historyCheckpoint) bool {
 //
 // Known == false means the mirror could not be read at all (missing
 // root, no ledger/ tree, unreadable). Every absence then counts as a
-// genuine miss — the pre-existing behaviour — so a broken -archive-root
-// can never be mistaken for "everything is outside coverage".
+// genuine miss, so a broken -archive-root can never be mistaken for
+// "everything is outside coverage".
 type archiveMirrorCoverage struct {
 	Floor     uint32 // lowest checkpoint ledger the mirror holds
 	HighWater uint32 // highest checkpoint ledger the mirror holds
@@ -1295,7 +1287,7 @@ type archiveMirrorCoverage struct {
 
 // outsideCoverage reports whether checkpoint seq lies ahead of the
 // mirror's fill job, i.e. whether its absence is the trailing-edge
-// coverage boundary F144 tolerates rather than a hole. Unknown
+// coverage boundary the checkpoint tier tolerates rather than a hole. Unknown
 // coverage answers false: no tolerance is extended to a mirror we
 // could not measure.
 //
@@ -1303,7 +1295,7 @@ type archiveMirrorCoverage struct {
 // mirror fills upward from genesis, so it can never legitimately lag
 // below its own Floor — a seq below Floor means the mirror lost or
 // never restored that range, which is a genuine hole (ADR-0017
-// contract 3), not a fill lag. Treating it as coverage let a
+// contract 3), not a fill lag. Treating it as coverage would let a
 // partially-restored mirror's leading gap sail through
 // -fail-on-missed and get baked into the checkpoint high-water.
 func (c archiveMirrorCoverage) outsideCoverage(seq uint32) bool {
@@ -1417,7 +1409,7 @@ func applyCheckpointTierState(st VerifyArchiveState, highestLedger uint32, cov a
 // The LCM walk runs to the galexie bucket's tip, which is ahead of the
 // cross-anchor mirror; certifying the tip would record the unanchored
 // trailing span as cross-anchor-verified, and -from-last-verified would
-// then start the next run above it. Measured on r1 2026-09-19 the run
+// then start the next run above it. Measured on r1, an unclamped run
 // advanced the checkpoint tier to 64,501,171 with the mirror holding
 // nothing above 64,499,647 — 23 checkpoints certified by a check that
 // never ran against them. Clamping to the mirror's high-water leaves
