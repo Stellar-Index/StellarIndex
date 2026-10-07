@@ -2,13 +2,11 @@
 # config-assertions.sh — asserts that the load-bearing hand-applied /
 # ansible-codified guard configs are actually LIVE on this host.
 #
-# Born from the 2026-07-03 finding that the 2026-06-11 incident's
-# rsyslog suppression rules were codified in ansible but NEVER applied
-# to r1 (the postmortem recorded codified-as-applied), and the reverse
-# audit that found live-only fixes ansible would erase. Ansible does
-# not auto-run against r1, so neither direction is self-healing —
-# this check makes a gap in EITHER direction visible within an hour
-# instead of at the next incident.
+# Ansible does not auto-run against r1, so a fix codified in ansible can
+# be absent from the host (codified is not applied), and a live-only fix
+# is one ansible run from being erased. Neither direction is
+# self-healing — this check makes a gap in EITHER direction visible
+# within an hour instead of at the next incident.
 #
 # Emits node_exporter textfile gauges:
 #   stellarindex_config_assertion_ok{assertion="..."} 0|1
@@ -18,7 +16,7 @@
 # CONTENT that matters (grep), not just file existence — a truncated
 # or reverted file should fail.
 set -u
-# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
@@ -50,7 +48,7 @@ assert_cmd() { # assert_cmd <assertion> <command...>
 # zfs_data_pool_type="" and no pool at all — asserting ZFS integrity
 # there reports FAIL forever for a layer that is absent by design, which
 # trains the operator to ignore a page that exists to catch a pool one
-# reboot from gone (2026-07-03).
+# reboot from gone.
 #
 # `skip` emits an EXPLICIT _skipped series rather than omitting the
 # assertion silently, so "deliberately not applicable on this host" stays
@@ -91,7 +89,7 @@ is_pubnet() { [[ "$(stellar_network)" != "testnet" && "$(stellar_network)" != "f
   echo "# TYPE stellarindex_config_assertion_skipped gauge"
 } > "$TMP"
 
-# ── 2026-06-11 root-fill loop guards ─────────────────────────────────
+# ── root-fill loop guards ────────────────────────────────────────────
 assert_grep rsyslog_ch_suppress /etc/rsyslog.d/10-suppress-noisy-units.conf \
   'programname == "clickhouse-server" then stop'
 assert_grep rsyslog_loki_suppress /etc/rsyslog.d/10-suppress-noisy-units.conf \
@@ -103,17 +101,17 @@ assert_grep ch_logs_on_zfs /etc/clickhouse-server/config.d/zzz-logpath.xml \
 assert_grep syslog_maxsize /etc/logrotate.d/rsyslog \
   'maxsize'
 
-# ── ZFS integrity (2026-07-03: an ansible apply downgrade-broke the
-# userspace and deleted the dkms module — pool one reboot from gone) ──
+# ── ZFS integrity (an ansible apply that breaks the userspace or
+# deletes the dkms module leaves the pool one reboot from gone) ──
 if have_zfs; then
   assert_cmd zfs_userspace_works zpool status data
   # Requires the unit to NOT set ProtectKernelModules (see the comment in
   # deploy/systemd/config-assertions.service): that flag makes
   # /lib/modules inaccessible, and every formulation of this check — ls,
-  # modinfo, dkms status — reads that tree, so the assertion reported FAIL
-  # on every service run while passing by hand. Checking the module is
-  # merely LOADED would not substitute: a deleted module stays resident
-  # until reboot, which is exactly the 2026-07-03 trap.
+  # modinfo, dkms status — reads that tree, so with it set the assertion
+  # reports FAIL on every service run while passing by hand. Checking the
+  # module is merely LOADED would not substitute: a deleted module stays
+  # resident until reboot, which is exactly the trap this guards.
   # shellcheck disable=SC2016  # $(uname -r) must expand in the INNER sh, not here
   assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
   assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
@@ -126,7 +124,7 @@ fi
 # ── public edge stays open (a firewall re-render must keep Caddy) ────
 assert_cmd nft_https_open sh -c 'nft list ruleset | grep -qE "dport \{? ?(80, 443|443)"'
 
-# ── 2026-06-16 incident-sweep fixes ──────────────────────────────────
+# ── incident-sweep guards ────────────────────────────────────────────
 assert_grep redis_maxmemory /etc/redis/redis.conf '^maxmemory [0-9]'
 
 # ── CS-010 supply config (erased if ansible renders without its vars) ─
@@ -141,8 +139,8 @@ else
   skip supply_reserve_accounts_nonempty
 fi
 
-# ── MinIO galexie-writer credential drift (BACKLOG #66, 2026-07-03
-# rotation follow-up: docs/operations/credential-rotation.md) ────────
+# ── MinIO galexie-writer credential drift (rotation follow-up:
+# docs/operations/credential-rotation.md) ─────────────────────────────
 # There's no way to read a MinIO/S3 secret back and diff it against
 # the vault — servers only ever accept/reject a signed request, they
 # never expose a stored secret for comparison. So instead of an
@@ -153,14 +151,14 @@ fi
 # every upload. A rotation that updated one side (the vault or the
 # live MinIO user) but not the other fails this within the hour
 # instead of surfacing as galexie's SignatureDoesNotMatch / upload
-# stall (feedback_minio_cred_drift). Never prints the secret: mc
+# stall. Never prints the secret: mc
 # reads it from the MC_HOST_* env var directly, nothing is written
 # to a config file on disk or echoed, and assert_cmd itself already
 # redirects all output to /dev/null.
 # bash -c, not sh -c: the body uses [[ ]], which dash rejects with
-# "[[: not found" (exit 127) — so this assertion reported FAIL on every
-# run regardless of the creds' actual validity. Same bashism-under-dash
-# class as the deploy backup-freshness gate (7609dce4).
+# "[[: not found" (exit 127) — under sh this assertion would report
+# FAIL on every run regardless of the creds' actual validity. Same
+# bashism-under-dash class as the deploy backup-freshness gate.
 # shellcheck disable=SC2016  # the body is a script for the INNER bash; expanding it here would resolve every variable in the caller
 assert_cmd galexie_writer_creds_valid bash -c '
   export HOME=/root
@@ -176,23 +174,24 @@ assert_cmd galexie_writer_creds_valid bash -c '
   /usr/local/bin/mc ls cfgassert/galexie-live >/dev/null 2>&1
 '
 
-# ── Compression-policy backfill status (DAT-03, audit-2026-07-23) ────
+# ── Compression-policy backfill status ───────────────────────────────
 # scripts/ops/add-missing-compression-policies.sql is a deliberate
 # NON-migration operator script (must run AFTER the Phase D backfill —
-# see its own header for why) that shipped with no execution tracking:
-# nothing noticed if an operator forgot to run it, or if a table was
-# added to its eligible-tables list without a matching policy actually
-# landing. The want-list MUST track that script's list exactly: migration
-# 0152 (#358) dropped aggregator_exposures / classic_asset_stats_5m /
-# tvl_observations as never-wired scaffolds, and a dropped table has no
-# policy job, so leaving it here would fail this assertion on r1 forever
-# for a table that is gone on purpose. Tables the script excludes for a
-# near-unique segment-by are excluded here too, or this pages for them.
+# see its own header for why) with no execution tracking of its own:
+# without this check nothing notices if an operator forgot to run it, or
+# if a table is added to its eligible-tables list without a matching
+# policy actually landing. The want-list MUST track that script's list
+# exactly: migration 0152 dropped aggregator_exposures /
+# classic_asset_stats_5m / tvl_observations as never-wired scaffolds, and
+# a dropped table has no policy job, so leaving it here would fail this
+# assertion on r1 forever for a table that is gone on purpose. Tables the
+# script excludes for a near-unique segment-by are excluded here too, or
+# this pages for them.
 # Reuses the SAME stellarindex_config_assertion_ok gauge +
 # the existing stellarindex_config_assertion_failed alert every other
 # assertion here uses — no new alert rule needed. Expected to page
 # (severity: ticket, not page) until the operator runs that script
-# post-Phase-D; that visibility IS the fix — today the gap is silent.
+# post-Phase-D; that visibility IS the point — otherwise the gap is silent.
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 compression_policies_applied() {
   [[ -r /etc/stellarindex/postgres-password.txt ]] || return 1
@@ -225,13 +224,13 @@ else
   skip compression_policies_applied
 fi
 
-# ── Postgres background-worker headroom (T615, timescale-job-failures-
+# ── Postgres background-worker headroom (timescale-job-failures-
 # climbing runbook) ────────────────────────────────────────────────────
 # max_worker_processes is postmaster-level (see postgresql.conf.j2's own
 # comment): an ansible apply that renders the file to 32 does nothing to
 # the RUNNING server until Postgres restarts, so grepping the file alone
 # would report "fixed" while the scheduler is still starved at the old
-# value — exactly the 2026-07 incident shape. Check both: the file
+# value. Check both: the file
 # (codified) and a live SHOW (in effect right now), same
 # codified-vs-applied pairing as supply_reserve_accounts above.
 # Paths are overridable (like TEXTFILE_DIR above) so this pair is
@@ -334,13 +333,13 @@ pg_idle_in_transaction_timeout_live() {
 }
 assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_live
 
-# ── tx_hash_index parity probe (explorer 404 authority, 2026-08-01) ──
+# ── tx_hash_index parity probe (explorer 404 authority) ──────────────
 # GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
-# AUTHORITATIVE not-found (the bloom-scan fallback for index misses was
-# retired in the 2026-07-30 account-filter class audit, once the 10.2B
-# ch-txindex-backfill verified genesis→tip parity — a one-time check).
+# AUTHORITATIVE not-found (there is no bloom-scan fallback for index
+# misses; the 10.2B-row ch-txindex-backfill verified genesis→tip parity
+# once — a one-time check).
 # The index is maintained by a materialized view over
-# stellar.transactions, and NOTHING re-detects future divergence: a
+# stellar.transactions, and NOTHING else re-detects future divergence: a
 # tx_hash_index_mv DROP/recreate window, or any load path that inserts
 # into stellar.transactions without firing MVs (ATTACH-PARTITION-style
 # loads), silently turns real transactions into 404s.
@@ -387,20 +386,20 @@ tx_hash_index_parity() {
 }
 assert_cmd tx_hash_index_parity tx_hash_index_parity
 
-# ── ClickHouse ops-batch identity, both halves live (2026-08-28 r1) ──
+# ── ClickHouse ops-batch identity, both halves live ──────────────────
 # The low-priority `ops_batch` profile only protects the aggregator /
 # indexer from a heavy stellarindex-ops job when BOTH the CH-side user
 # (users.d/ops-batch.xml, --tags clickhouse-ops-batch-profile) and the
 # env pair the jobs authenticate with (/etc/default/stellarindex-ops,
 # --tags minio) are in place. Applying one tag without the other is
 # either a silent no-op (user, no env: every job still runs as
-# `default` at serving priority — the incident) or a hard break (env,
+# `default` at serving priority) or a hard break (env,
 # no user: the next job fails auth). Skipped, not failed, while the
 # profile is not provisioned on this host (the flag defaults false).
 # Third leg: the pair must NEVER reach the service env — the
 # ansible-templated stellarindex-{indexer,aggregator,api} units source
 # /etc/default/stellarindex, and the same package seam would demote the
-# live sink + supply refresher to lowest priority (the inverse fix).
+# live sink + supply refresher to lowest priority (the inverse fault).
 if [[ -f /etc/clickhouse-server/users.d/ops-batch.xml ]]; then
   assert_grep ch_ops_batch_env_pair /etc/default/stellarindex-ops \
     '^STELLARINDEX_CLICKHOUSE_OPS_USER=.+'
@@ -477,17 +476,16 @@ else
   skip archive_trimmer_uses_distinct_identity
 fi
 
-# ── MinIO Prometheus bearer token (INV-0981/INV-1144) ────────────────
-# /etc/prometheus/minio.token backed the 2026-07-03 incident (root
-# rotated, the token file kept the pre-rotation signature, and
-# minio_exporter_down paged) and had no ansible task producing it until
-# 16-prometheus-exporters.yml's Group D. That task only mints the file
-# when it is ABSENT (a svcacct secret is shown once, so it can never
-# safely overwrite one), so r1's 2026-07-03 hand-provisioned file
-# (root:prometheus 0640, predates this task) stays as-is rather than
-# converging to the fresh-bootstrap target (prometheus:prometheus
-# 0400) — both keep the secret out of "other", which is the property
-# that actually matters. Never read the content here — stat-only.
+# ── MinIO Prometheus bearer token ────────────────────────────────────
+# /etc/prometheus/minio.token goes stale on a MinIO root rotation (the
+# file keeps the pre-rotation signature and minio_exporter_down pages);
+# 16-prometheus-exporters.yml's Group D produces it. That task only
+# mints the file when it is ABSENT (a svcacct secret is shown once, so it
+# can never safely overwrite one), so a hand-provisioned file (r1's is
+# root:prometheus 0640) stays as-is rather than converging to the
+# fresh-bootstrap target (prometheus:prometheus 0400) — both keep the
+# secret out of "other", which is the property that actually matters.
+# Never read the content here — stat-only.
 if [[ -x /usr/local/bin/minio ]]; then
   # shellcheck disable=SC2016  # the body is a script for the INNER bash
   assert_cmd minio_prometheus_token_present bash -c '
