@@ -567,8 +567,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	)
 	// Hard 8s ceiling — DistinctPairsExt + SourceMarkets scan the
 	// trades hypertable's 24h window and can take 10s+ on a
-	// cold-cache path even with the cache wrapper. Companion to
-	// the same fix shipped on /v1/pools; without it the
+	// cold-cache path even with the cache wrapper. The same ceiling
+	// applies on /v1/pools; without it the
 	// user sees a hung request that eventually times out at the
 	// ingress (observed 6.9s for /v1/markets?limit=5 on prod
 	// when limit=5 missed the prewarm-25-only set).
@@ -712,7 +712,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// data's ACTUAL observation time — never now() over rows a failing
 	// refresh has let age past the TTL. A fresh serve stamps its recent
 	// observed-at (stale=false); an uncached/live read leaves observedAt
-	// zero and writeEnvelope defaults as_of to now (W8 reconciliation).
+	// zero and writeEnvelope defaults as_of to now.
 	env := Envelope{
 		Data:  rows,
 		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed},

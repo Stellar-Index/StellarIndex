@@ -34,8 +34,8 @@ import (
 // correctness loss (the exact query result — including a legitimate
 // empty slice — is cached).
 //
-// SWR shape mirrors the proven ba0374697/a5573b499 pattern
-// (asset_catalogue_cache.go / markets_cache.go) with one deliberate change:
+// SWR shape mirrors the pattern in
+// asset_catalogue_cache.go / markets_cache.go with one deliberate change:
 // the cold fill runs in a **detached** goroutine on its own budget,
 // not the request ctx. The handler's hard 8s ceiling would
 // otherwise fail every cold call before it could populate the cache
@@ -111,7 +111,7 @@ func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHi
 // historyRefreshBudget bounds a detached cold-fill or
 // stale-while-revalidate background refresh — independent of any
 // request ctx (the whole point: outlive the handler's 8s ceiling).
-// Matches coins/markets refresh budgets (the proven ba0374697 pattern).
+// Matches coins/markets refresh budgets.
 const historyRefreshBudget = 30 * time.Second
 
 // TradesInRangeAfterFromSource forwards to the upstream when it supports the

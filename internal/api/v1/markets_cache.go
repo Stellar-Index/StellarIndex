@@ -255,7 +255,7 @@ func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescal
 // stale value) so a generous budget is free; it just has to exceed
 // the worst-case AllPools / DistinctPairs scan (~seconds, contended)
 // so the refresh completes and the cache moves forward. Mirrors
-// assetsRefreshBudget (the proven ba0374697 pattern).
+// assetsRefreshBudget.
 const marketsRefreshBudget = 30 * time.Second
 
 // fetchPairs is the shared TTL + single-flight + stale-while-
@@ -267,7 +267,7 @@ const marketsRefreshBudget = 30 * time.Second
 // rows IMMEDIATELY and a single background refresh runs off the
 // request path — the AllPools/DistinctPairs scan never lands on a
 // user request even though it cannot be made cheap (no per-source
-// pre-aggregate exists; a5573b499).
+// pre-aggregate exists).
 //
 // Return values: the served rows + next cursor, plus observedAt (the
 // timestamp the served rows were fetched from upstream — e.at) and stale
@@ -428,7 +428,7 @@ func (c *CachedMarketsReader) settlePairs(op, key string, entry *marketsCacheEnt
 }
 
 // fetchPools mirrors fetchPairs (SWR included) for AllPools' return
-// type. This is the a5573b499 fix: the ~8s per-source pools scan cannot
+// type. The ~8s per-source pools scan cannot
 // be made cheap (no complete per-(source,base,quote) pre-aggregate
 // exists — prices_* collapse source, price_source_contributions is
 // curated/sparse), so SWR moves it off the request path entirely

@@ -41,9 +41,8 @@ const (
 	// connection is long-lived by design), so without a per-tick bound a
 	// slow ListCursors call could hold this producer's goroutine — and
 	// its DB connection — open indefinitely, once per open connection.
-	// Mirrors
-	// observationsScanTimeout's 8s ceiling on the observations-stream
-	// producer.
+	// Mirrors observationsScanTimeout's 8s ceiling on the
+	// observations-stream producer.
 	ledgerStreamTickTimeout = 8 * time.Second
 
 	// ledgerStreamTipTTL is how long one cursors read serves every open

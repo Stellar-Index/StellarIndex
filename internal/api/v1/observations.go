@@ -129,7 +129,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// (informational). Stale and Frozen stay false on this surface
 	// per ADR-0018.
 	//
-	// FRESHNESS CONTRACT (W8.11): this is the RAW per-source surface, so
+	// FRESHNESS CONTRACT: this is the RAW per-source surface, so
 	// there is no single staleness verdict — flags.stale is always false
 	// here BY DESIGN, and the envelope's as_of is the response time (shared
 	// writeJSON), NOT the data's age. A source can be arbitrarily stale (a

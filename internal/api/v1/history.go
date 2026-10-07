@@ -574,7 +574,7 @@ func decodeHistoryCursor(s string) (historyCursor, error) {
 	case "":
 		// An empty source would weaken the full-PK cursor comparison
 		// into a partial one, reintroducing the same-ledger page-skip
-		// bug the full-PK cursor was designed to fix. Reject rather
+		// the full-PK cursor exists to prevent. Reject rather
 		// than silently serve wrong-looking pages. The past-group form
 		// above is the ONLY way to an empty bind, and it pairs the
 		// empty source with a STEPPED op_index, so its comparison is

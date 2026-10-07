@@ -41,9 +41,8 @@ import (
 //
 // Single-flight: concurrent callers during a refetch share one
 // upstream call. Same write-on-success / delete-on-error /
-// waiter-err-pointer pattern as CachedMarketsReader (the proven
-// race-clean shape; markets had a panic-on-error-waiter bug
-// before that pattern).
+// waiter-err-pointer pattern as CachedMarketsReader, so a waiter
+// never dereferences an entry the leader already removed.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration
@@ -63,8 +62,7 @@ type issuersCacheEntry struct {
 	// joined the flight on — so even if the leader removes the
 	// entry from the map (we don't TTL-cache errors), waiters can
 	// still read entry.err here and return it instead of nil-
-	// derefing the missing entry. Mirrors CachedMarketsReader's
-	// fix.
+	// derefing the missing entry. Same as CachedMarketsReader.
 	err error
 }
 

@@ -64,8 +64,8 @@ type IngestionDiagnostics struct {
 	// distinct_ledger_count / (tip - genesis + 1), computed by the gap
 	// detector and persisted to source_coverage_snapshots, which the
 	// handler reads as a single cheap row (no trades scan, no cursor
-	// arithmetic). The cursor-derived path was removed in rc.93/94 —
-	// cursors are now an operational journal only. trade_count is
+	// arithmetic). Cursors are an operational journal only and do not
+	// feed coverage. trade_count is
 	// best-effort enrichment from the background trades-scan cache.
 	// SECONDARY to Backfill: `Backfill` shows what backfill *is
 	// doing*; `BackfillCoverage` shows what we've actually walked.
@@ -486,7 +486,7 @@ type SourceHealthRow struct {
 // so 15s smooths the load from a refreshing status page without
 // hiding live degradation.
 func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Request) {
-	// 4d6e7ac4f: serve from the background-refreshed snapshot when present —
+	// Serve from the background-refreshed snapshot when present —
 	// sub-millisecond instead of the 200-500ms inline build. Falls back
 	// to inline-build when the refresher hasn't fired yet (process just
 	// booted), or has died and gone stale, so first-request-after-restart
@@ -1020,8 +1020,7 @@ func (s *Server) fillIngestionEntryCounts(ctx context.Context, out *IngestionDia
 		// production this means the fxHistory adapter is missing its
 		// SourceEntryCounts delegate, which silently zeroes the
 		// `entries` column for every source. Warn so this class of
-		// wiring regression is visible instead of invisible — it
-		// shipped unnoticed in rc.55.
+		// wiring regression is visible instead of invisible.
 		s.logger.Warn("diagnostics/ingestion: entry_counts reader unavailable — entries will read 0 for all sources")
 		return
 	}
