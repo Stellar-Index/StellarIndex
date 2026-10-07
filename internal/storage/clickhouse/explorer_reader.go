@@ -1300,9 +1300,9 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 	}
 	// Only the newest bucket — the one holding the tip — can be incomplete;
 	// every earlier bucket is a whole UTC day because the window is
-	// day-aligned to the tip's day. Data-derived (rows are day ASC), replacing
-	// the old wall-clock comparison that made two regions disagree on the
-	// Partial flag near a UTC day boundary.
+	// day-aligned to the tip's day. Data-derived (rows are day ASC), so any two
+	// replicas holding the same tip ledger agree on the Partial flag near a UTC
+	// day boundary, where a wall-clock comparison would not.
 	if len(out) > 0 {
 		out[len(out)-1].Partial = true
 	}
