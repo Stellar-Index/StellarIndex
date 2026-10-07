@@ -10,13 +10,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 )
 
-// R-003 (audit-2026-07-23, COR-14) parity guard.
+// ADR-0019 combiner parity guard.
 //
 // [Compute] combines the six factors as a NORMALISED weighted
 // geometric mean — `prod(factor_i ^ weight_i) ^ (1 / sum(weights))`.
 // ADR-0019's formula block writes the product WITHOUT the `^ (1 /
-// sum(weights))` exponent, and this package's doc.go used to repeat
-// that truncated form, so the two documents described a combiner the
+// sum(weights))` exponent, and a doc repeating
+// that truncated form would describe a combiner the
 // aggregator has never shipped — and, worse, one on which the
 // documented freeze threshold (`confidence < 0.10`) means something
 // materially different: as a bare product, ANY single-source window
@@ -60,7 +60,7 @@ func readSquashed(t *testing.T, path string) string {
 // TestADR0019PinsTheNormalisedCombiner — ADR-0019 must state the
 // normalisation exponent over the sum of ALL SEVEN weights (the six
 // original plus w_tri — score.go's totalWeight always includes
-// triWeight, 0 when triangulation is unchecked, #1217). The original
+// triWeight, 0 when triangulation is unchecked). The original
 // (immutable) formula block and the six-term 2026-07-24 correction
 // stay as written; a later amendment blockquote carries the seven-term
 // correction, per the docs/adr/README.md "supersede/amend, don't
@@ -69,7 +69,7 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 	adr := readSquashed(t, adr0019DetailPath)
 
 	// The normalising exponent, applied over the sum of all seven
-	// per-factor weights (w_tri included — #1217).
+	// per-factor weights (w_tri included).
 	wantExponent := regexp.MustCompile(
 		`\^ \(1 / \(w_z \+ w_src \+ w_div \+ w_liq \+ w_xoracle \+ w_tri \+ w_qual\)\)`)
 	if !wantExponent.MatchString(adr) {
@@ -100,7 +100,7 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 // a seventh factor (triangulation agreement) exists that the ADR
 // predates. Both are carried by the 2026-07-25 amendment; this guard
 // fails if the amendment is dropped or the constants drift away from
-// it, which is the same class of silent doc/code divergence R-003 was.
+// it, which is the same class of silent doc/code divergence this guard exists for.
 func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 	adr := readSquashed(t, adr0019DetailPath)
 

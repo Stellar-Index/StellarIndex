@@ -26,7 +26,7 @@ func ratFromDecimal(t *testing.T, s string) *big.Rat {
 	return r
 }
 
-// TestFormatRatFixed_TinyPositiveNeverReparsesToZero is R-1: a strictly-
+// TestFormatRatFixed_TinyPositiveNeverReparsesToZero: a strictly-
 // positive rational below 10^-decimals must NOT render to a string that
 // reparses to zero. Before the magnitude-relative render, formatRatFixed
 // truncated any 0<r<1e-12 to "0.000000000000", which big.Rat.SetString
@@ -52,7 +52,7 @@ func TestFormatRatFixed_TinyPositiveNeverReparsesToZero(t *testing.T) {
 	}
 
 	// Regression-safety half: a NORMAL-magnitude price must render
-	// byte-identically to the pre-fix 12-decimal truncation, so the fix
+	// byte-identically to a 12-decimal truncation, so the render
 	// only extends precision for values that would otherwise vanish.
 	unchanged := map[string]string{
 		"0.4968":  "0.496800000000",
@@ -115,7 +115,7 @@ func absInt(n int) int {
 	return n
 }
 
-// TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow is the R-1 belt-and-
+// TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow is the render's belt-and-
 // suspenders: a single leg whose cached VWAP parses to a non-positive
 // price must be dropped from the graph, NOT abort BuildEdges and nil the
 // ENTIRE window (which turned one micro-valued pair into a window-wide
@@ -165,7 +165,7 @@ func TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow(t *testing.T) {
 }
 
 // metaFailCache wraps a Cache and forces Set on the composite_meta key to
-// fail, so the R-2 test can prove the value is NOT overwritten when its
+// fail, so the meta-atomicity test can prove the value is NOT overwritten when its
 // quality flags cannot be persisted.
 type metaFailCache struct {
 	Cache
@@ -197,7 +197,7 @@ func (c metaFailCache) TxPipelined(ctx context.Context, fn func(redis.Pipeliner)
 	})
 }
 
-// TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta is R-2: a
+// TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta: a
 // diverged composite's quality flags are load-bearing. If the composite-
 // meta write fails, publishComposite must REFUSE to overwrite the served
 // direct price — otherwise a self-disagreeing (diverged) composite is

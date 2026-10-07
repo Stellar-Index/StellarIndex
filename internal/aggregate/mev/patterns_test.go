@@ -120,7 +120,7 @@ func TestDetectSandwiches_OrientationIndependent(t *testing.T) {
 // A bracket whose front and back legs are in the SAME direction cannot
 // be a sandwich (you don't front-run and back-run the same way) — it is
 // dropped, not published. This is the ~196/200 impossible-candidate
-// class the positional-only detector used to name accounts on.
+// class a positional-only detector names accounts on.
 func TestDetectSandwiches_SameDirectionDropped(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
@@ -403,7 +403,7 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 		t.Errorf("accounts = %v", c.Accounts)
 	}
 	// Symmetric parties: naming the alphabetically-first one as the
-	// principal accused an arbitrary side (#1251).
+	// principal accused an arbitrary side.
 	if c.Taker != "" {
 		t.Errorf("round trip names %q as taker; it has two parties and no principal", c.Taker)
 	}
@@ -414,7 +414,7 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 }
 
 // A round trip's identity is a bucket one scan can see whole, not the UTC
-// day (#1248). Keyed on the day, the evening's round trip collided with the
+// day. Keyed on the day, the evening's round trip collided with the
 // morning's stored row and its evidence was dropped.
 func TestDetectWashTrades_RoundTripKeyedOnBucketNotDay(t *testing.T) {
 	x, y := washAccount(t, 2), washAccount(t, 3)

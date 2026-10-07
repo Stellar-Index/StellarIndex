@@ -21,7 +21,7 @@ func sizedTrade(source string, base int64, num, den int64, ts time.Time) canonic
 	}
 }
 
-// dustOverBlockWindow is the RLT-277 worked example: one venue, one
+// dustOverBlockWindow is the dust-over-block worked example: one venue, one
 // 5 m window, sigma 4 — 3 honest prints of 1,000,000 XLM at 0.100
 // ($300k) and 4 wash prints of 30,000 XLM at 0.114 ($13.7k), all
 // inside one 1 m bucket. The count median is the wash level.
@@ -46,7 +46,7 @@ func baseSum(trades []canonical.Trade) *big.Int {
 }
 
 // A count majority of dust prints must not delete a volume majority
-// and become the published window: the survivors used to be the 4 wash
+// and become the published window: a count-only filter keeps the 4 wash
 // prints alone, a served VWAP of 0.114 (+12.3 %) under the WarnPct.
 func TestFilterOutliersLocal_DustCountMajorityCannotOverrideVolumeMajority(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)

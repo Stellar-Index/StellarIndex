@@ -39,7 +39,7 @@ func TestMinuteNotionalFloor(t *testing.T) {
 
 // Two accounts cycling 0.01 USDC every minute for the whole 30-day window
 // ($864 of flow) buy one baseline point per ~$6.94, not one per print, so
-// the pair stays deep under the bootstrap gate (#1108).
+// the pair stays deep under the bootstrap gate.
 func TestRefresher_PennySelfTradesEveryMinuteStayCapped(t *testing.T) {
 	pair := mustPair(t, "native", "fiat:USD")
 	now := time.Now().UTC()

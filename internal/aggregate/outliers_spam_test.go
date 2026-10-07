@@ -96,7 +96,7 @@ func TestFilterOutliersLocal_MixedVenueSpamBurstIsDropped(t *testing.T) {
 	}
 }
 
-// tokenFarmSeries is the 2026-08-14 SDEX token-farm signature on a
+// tokenFarmSeries is the observed SDEX token-farm signature on a
 // SINGLE configured pair: an honest print every 2 minutes for 24 h at
 // 0.1337 (720 prints), plus a 2 h wave of dust-sized self-trades at
 // 4 prints/min (480 prints) whose CONSECUTIVE prices gap by 25–37 %
@@ -147,7 +147,7 @@ func tokenFarmSeries(t0 time.Time) ([]canonical.Trade, int) {
 
 func TestFilterOutliersLocal_TokenFarmWaveTrimShareMatchesLegacy(t *testing.T) {
 	// The design required the trim-fraction alert to be PROVEN on the
-	// 2026-08-14 shape before the counter-based storm gate could be
+	// token-farm shape before the counter-based storm gate could be
 	// retired. This test is the source of the numbers in
 	// deploy/monitoring/rule-tests/aggregator_test.yml (trim_fraction
 	// case "the 2026-08-14 token-farm fixture fires"): the

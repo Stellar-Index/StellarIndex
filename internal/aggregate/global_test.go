@@ -310,7 +310,7 @@ func TestRejectAggregatorOutliers(t *testing.T) {
 		// A pathological 3-way split (1, 1000, 1000000 — a 1000x low
 		// print and a 1000x high print either side of the median) still
 		// yields a non-empty survivor set (the median centre is always
-		// a survivor), AND — GH-1211 — the survivor set must actually
+		// a survivor), AND the survivor set must actually
 		// exclude both divergent prints, not just be non-empty: a
 		// downward-blind band would let the 1000x-low print "a" survive
 		// alongside the median while only trimming the high side, which
@@ -416,12 +416,12 @@ func (r *aliasAwareReader) LookupTriangulated(_ context.Context, _, _ canonical.
 	return "", time.Time{}, false, nil
 }
 
-// TestComputeGlobalPrice_VWAPTierLoopsAliases pins F-1340 (G14-04):
+// TestComputeGlobalPrice_VWAPTierLoopsAliases pins alias looping:
 // the global view must find the XLM VWAP regardless of which
 // canonical form (`native` vs `crypto:XLM`) the configured pair set
-// publishes under. Pre-fix, tryVWAPTier queried only the literal
-// base; if the caller passed `native` but the VWAP lived under
-// `crypto:XLM`, the tier missed and the view degraded to
+// publishes under. A tryVWAPTier querying only the literal base
+// would miss when the caller passes `native` but the VWAP lives under
+// `crypto:XLM`, and the view would degrade to
 // aggregator_avg.
 func TestComputeGlobalPrice_VWAPTierLoopsAliases(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
@@ -494,9 +494,9 @@ func (r *aliasTierReader) LookupTriangulated(_ context.Context, base, _ canonica
 // TestComputeGlobalPrice_AggregatorTierLoopsAliases pins C4-014: the
 // aggregator tier must find the headline price when the base's
 // aggregator coverage lives under an alias form (here crypto:XLM) and
-// the caller queries native. Pre-fix, tryAggregatorTier queried only
-// the literal base, so a `native` query missed the crypto:XLM
-// aggregator average and degraded to triangulated / ErrNoPrice.
+// the caller queries native. A tryAggregatorTier querying only
+// the literal base makes a `native` query miss the crypto:XLM
+// aggregator average and degrade to triangulated / ErrNoPrice.
 func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -533,8 +533,8 @@ func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
 
 // TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast pins
 // C4-014 for tier 3: the triangulated tier must reach the SAC form,
-// and only as the LAST resort. Pre-fix, LookupTriangulated was called
-// once with the literal base, so a `native` query never saw a bridge
+// and only as the LAST resort. Calling LookupTriangulated
+// once with the literal base means a `native` query never sees a bridge
 // path published under the SAC form.
 func TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
@@ -568,8 +568,7 @@ func TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast(t *testing.T) {
 }
 
 // TestAssetAliases pins that this package's wrapper is a pure
-// delegation to [canonical.AssetAliases] (F-1340; C4-012/C4-013
-// audit-2026-07-23). The alias TABLE itself is tested once, in
+// delegation to [canonical.AssetAliases] . The alias TABLE itself is tested once, in
 // canonical — the whole point of the hoist is that there is no second
 // copy here to drift. What this asserts is the property tryVWAPTier
 // depends on: the literal comes first and the SAC form comes LAST, so

@@ -142,8 +142,7 @@ func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 // fetch beyond the direct pair."
 //
 // The result is sorted, so it is the SAME list on every call and in
-// every process. It used to be returned in Go map-iteration order, with
-// a docstring promising nothing — but the orchestrator turns this list
+// every process. Go map-iteration order would not do: the orchestrator turns this list
 // into its fetch plan ([ExpandTargetPairWithClassicPegs]) and appends
 // each source's batch to one merged window in that order, and the
 // published-VWAP outlier filter ([FilterOutliersLocal]) references a

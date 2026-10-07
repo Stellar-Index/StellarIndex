@@ -34,7 +34,7 @@ func refreshWith(t *testing.T, src fixedSource, now time.Time) (*recordingSink, 
 	return sink, w.refreshOne(context.Background(), Entity{Type: "coin", ID: "native"}, now.Add(-time.Hour), now)
 }
 
-// TestRefreshOne_ExcludesTheOpenBucket is the GH-757 worker half: a point
+// TestRefreshOne_ExcludesTheOpenBucket is the open-bucket worker half: a point
 // whose bucket ends after the worker's clock is the minute still filling.
 // Admitted, its fat-finger 1000 became current_value and the ATH — which
 // the upsert then ratchets with GREATEST for good.
@@ -85,7 +85,7 @@ func TestRefreshOne_RefusesAnUnpricedNewestPoint(t *testing.T) {
 }
 
 // TestRefresh_ReportsFailuresOncePerPassAtWarn: a per-entity Debug line hid
-// a quarter of the working set failing every pass on r1 (INV-0866).
+// a quarter of the working set failing every pass on r1.
 func TestRefresh_ReportsFailuresOncePerPassAtWarn(t *testing.T) {
 	now := time.Date(2026, 9, 23, 12, 0, 30, 0, time.UTC)
 	var buf bytes.Buffer

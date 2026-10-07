@@ -38,7 +38,7 @@ const (
 	// usable VWAP at or above which the guard applies its FULL band
 	// (tight ratio ∪ MAD). Below it there is no stable MAD, so the guard
 	// falls back to the wider thin-history band ([guardThinRatioBound])
-	// rather than failing fully open — finding M11(b). Only a TRULY
+	// rather than failing fully open. Only a TRULY
 	// empty baseline (zero usable buckets) fails open, because then
 	// there is no centre to judge a candidate against at all.
 	guardMinSamples = 5
@@ -48,9 +48,9 @@ var (
 	// guardRatioBound: on a tight/flat history a candidate is accepted
 	// only if it lies within [centre/R, centre*R] of the robust centre.
 	//
-	// R = 3 (finding M11(a); was 10). The previous 10× admitted the
+	// R = 3. A 10× bound would admit the
 	// entire 3×–9× manipulation band a served-price sanity guard exists
-	// to stop; 3× catches a 5× pump (the finding's proof) and every
+	// to stop; 3× catches a 5× pump  and every
 	// larger deviation. A swing beyond 3× in a single 1-minute bucket is
 	// not credible as organic price discovery on a pair whose recent
 	// history is tight, and when a genuine >3× move does occur we serve
@@ -69,8 +69,8 @@ var (
 
 	// guardThinRatioBound is the WIDER but FINITE ratio band applied
 	// when the baseline is thin (1..guardMinSamples-1 usable buckets):
-	// [centre/10, centre*10]. Finding M11(b): a short history used to
-	// fail fully open, admitting any manipulation. A scarce baseline is
+	// [centre/10, centre*10]. Failing fully open on a short history
+	// would admit any manipulation. A scarce baseline is
 	// widened (we only catch order-of-magnitude, decimal-shift
 	// fat-fingers) rather than tightened, so a real price off a thin
 	// history is never over-filtered — but a 10×/100× print is still
@@ -161,7 +161,7 @@ func ServedBaselineValidated(trailing []*big.Rat) bool {
 //     tight ratio band [centre/R, centre*R] ([guardRatioBound]) and the
 //     MAD band [centre²/(centre + K·1.4826·MAD), centre + K·1.4826·MAD]
 //     ([guardMADFactor]) — ratio-symmetric, so its lower edge mirrors
-//     its upper edge instead of running off below zero (MNY-22). A
+//     its upper edge instead of running off below zero. A
 //     volatile pair earns the wider band from its own spread.
 //   - 1..guardMinSamples-1 usable values (thin history, M11(b)): the
 //     WIDER but finite ratio-only band [centre/thinR, centre*thinR]
@@ -232,6 +232,6 @@ func withinBand(v, lo, hi *big.Rat) bool {
 }
 
 // medianRat and madRat (the exact median / MAD primitives) live in
-// robust.go — shared with the published-VWAP outlier filter (M5) and
-// the global aggregator-tier filter (M8) so all three guards use one
+// robust.go — shared with the published-VWAP outlier filter and
+// the global aggregator-tier filter so all three guards use one
 // exact-rational definition of robust centre and spread.

@@ -56,7 +56,7 @@ import (
 // time.Now(), NOT time.Now().UTC() — see [Orchestrator.recordComposite]): the
 // staleness checks below read it only through time.Since, which is immune to
 // a backward wall-clock (NTP/VM) step so long as the monotonic reading
-// survives (M1).
+// survives.
 //
 // Mirrors [Orchestrator.prevVWAPs]: bounded by len(Triangulations) ×
 // len(Windows), read and written only from within a single Tick (which
@@ -118,7 +118,7 @@ func (o *Orchestrator) recordComposite(
 		// [triangulationDivergencePct]) compare this only via time.Since, so it
 		// must RETAIN the monotonic clock reading. .UTC() strips it, dropping
 		// those comparisons to wall-clock arithmetic where a backward NTP/VM
-		// step could latch a stale composite as fresh (M1).
+		// step could latch a stale composite as fresh.
 		at:                 time.Now(),
 		corroborationCount: corroborationCount,
 		combinedConfidence: combinedConfidence,
@@ -186,7 +186,7 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 // cross-oracle input it sits beside is refreshed every 5 minutes
 // (DivergenceMinInterval).
 //
-// Freeze interaction (MNY-22): a leg frozen this tick makes the chain
+// Freeze interaction: a leg frozen this tick makes the chain
 // refuse to publish, so no sample is recorded and the composite ages
 // out into "unchecked" within two ticks. A frozen leg's last-known-good
 // value therefore cannot reach the confidence score any more than it

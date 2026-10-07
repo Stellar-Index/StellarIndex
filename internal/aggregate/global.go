@@ -11,7 +11,7 @@ import (
 )
 
 // PriceAuthority labels what produced a global-view price. Surfaces
-// verbatim on `/v1/assets/{slug}.price_authority` (R-018 Phase 1.4).
+// verbatim on `/v1/assets/{slug}.price_authority`.
 // The first three are the tiers of [ComputeGlobalPrice]; consumers
 // downgrade trust on the second and third vs the first. The rest label
 // prices served outside that ladder and are never `vwap_native`.
@@ -410,8 +410,8 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // plain-mean headline that this filter exists to protect. The
 // ratio-symmetric band [centre²/(centre + K·scale), centre + K·scale] is
 // identical above the centre; below it the new edge is never lower than
-// the old one (1/(1+r) ≥ 1−r), so nothing that used to be rejected is
-// newly accepted — the downward side is strictly tightened, and a
+// the old one (1/(1+r) ≥ 1−r), so nothing the additive band rejects is
+// accepted — the downward side is strictly tightened, and a
 // source sitting between the old and new lower edge is now dropped.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]

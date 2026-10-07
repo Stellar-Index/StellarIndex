@@ -115,7 +115,7 @@ const (
 // STRICTLY ABOVE before it may publish as a leg-substitution reroute or
 // COUNT toward the corroboration count (see corroboratingRouteCount /
 // [CombineRoutes]). min_route_confidence ships at 0 so SERVING stays
-// permissive; these two gates are the trust checks it leaves open (M2, R3).
+// permissive; these two gates are the trust checks it leaves open.
 //
 // It is the bootstrap cap, and the comparison is strict, because the cap is
 // what every edge the scorer could not vouch for carries: an unscored edge
@@ -187,7 +187,7 @@ type Quote struct {
 //
 // A market quoted in BOTH orientations (XLM/USD and USD/XLM) is deduped by
 // its UNDIRECTED key so it contributes ONE canonical quote (both directions
-// derived from it), never two double-counted directed edges (M3). A
+// derived from it), never two double-counted directed edges. A
 // non-finite quote confidence (NaN/±Inf) is clamped to 0 so it can never
 // win — or empty — the served highest-confidence tier (L5).
 func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
@@ -218,7 +218,7 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 		// Dedup by UNDIRECTED market key: XLM/USD and USD/XLM are the same
 		// physical market quoted opposite ways. Without this each seeds its
 		// own directed edges and the market is double-counted as two routes,
-		// inflating pathCount and the serving/omit population (M3). First
+		// inflating pathCount and the serving/omit population. First
 		// quote seen for a market derives both directions; a later reverse-
 		// oriented duplicate is skipped.
 		mkey := undirectedEdgeKey(q.Pair.Base, q.Pair.Quote)
@@ -485,7 +485,7 @@ type scoredRoute struct {
 //     (survivors after outlier omission over ALL gated routes, not just the
 //     top tier). This is the serving multiplicity historically carried on
 //     the composite meta — NOT the number that produced the served value
-//     (GH-1022: the two sets can be disjoint, e.g. a thin divergent
+//     (the two sets can be disjoint, e.g. a thin divergent
 //     majority survives median-relative omission while the served price
 //     came from a single top-confidence outlier route) — and NOT the
 //     corroboration count. It stays 1 for a single-route target (the
@@ -537,7 +537,7 @@ func CombineRoutes(
 
 	gated, lowConf := gateByConfidence(scored, minConfidence)
 
-	// SERVING ANCHOR (H1): the served composite is anchored to the
+	// SERVING ANCHOR: the served composite is anchored to the
 	// highest-confidence tier of the GATED routes, chosen BEFORE any
 	// price-median outlier omission. This is the invariant a lower-confidence
 	// route must not defeat — at n≥3 a thin divergent MAJORITY would
@@ -545,7 +545,7 @@ func CombineRoutes(
 	// and evict it, letting the majority set the served price. Only the
 	// most-trusted route(s) set the value (see [highestConfidencePrice]); its
 	// confidence is the confidence we report. servedRouteCount is that tier's
-	// size (GH-1022): the route count that actually produced composite, kept
+	// size: the route count that actually produced composite, kept
 	// separate from pathCount below because the two sets can be disjoint.
 	composite, servedRouteCount = highestConfidencePrice(gated)
 	combinedConfidence = maxConfidence(gated)
@@ -674,7 +674,7 @@ func maxConfidence(scored []scoredRoute) float64 {
 // prices of only the routes whose weakest-link confidence equals the maximum
 // (the top-confidence TIER). It is called on the GATED route set BEFORE outlier
 // omission, so a lower-confidence route can never evict the top tier as a
-// price-median outlier and take over the served value (H1). This is what makes
+// price-median outlier and take over the served value. This is what makes
 // an added low-confidence route safe to serve alongside a trusted one — a route
 // through a thin, unguarded bridge market (e.g. XLM→BTC→GBP, where the XLM/BTC
 // leg escapes the USD-volume floor) CORROBORATES and can trip the divergence
@@ -703,7 +703,7 @@ func maxConfidence(scored []scoredRoute) float64 {
 // routes is non-empty.
 // It also returns the size of the top tier AFTER its own outlier omission —
 // the route count that actually produced the returned price, reported by
-// CombineRoutes as servedRouteCount (GH-1022: distinct from pathCount, the
+// CombineRoutes as servedRouteCount (distinct from pathCount, the
 // post-omission survivor count of the full gated set, which can be a
 // disjoint route population).
 func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
@@ -770,7 +770,7 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 //     single-path baseline.
 //   - a route whose weakest-link confidence does not clear
 //     [RouteTrustFloor] may NOT count toward corroboration at all,
-//     regardless of how tightly it agrees or how edge-disjoint it is (M2). A
+//     regardless of how tightly it agrees or how edge-disjoint it is. A
 //     thin, dust-confidence route is not an independent confirmation just
 //     because min_route_confidence ships at 0 for serving — so it is excluded
 //     from every corroborating pair.
@@ -791,7 +791,7 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 		return n
 	}
 
-	// A route too thin to trust must not corroborate (M2): only routes whose
+	// A route too thin to trust must not corroborate: only routes whose
 	// weakest-link confidence clears the floor may be part of a corroborating
 	// pair, so a thin route that merely agrees + is edge-disjoint counts for
 	// nothing.

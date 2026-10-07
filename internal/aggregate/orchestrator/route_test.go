@@ -40,7 +40,7 @@ func readCompositeMeta(t *testing.T, cache Cache, target canonical.Pair, window 
 }
 
 // TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze pins
-// ADR-0019 amendment 2026-07-25 §2 (GH-919): a composite is corroboration,
+// ADR-0019 amendment §2: a composite is corroboration,
 // not a second venue, so a thin single-DIRECT-source target that trips the
 // Phase-2 3-signal freeze (confidence < 0.45 AND z > 5 AND
 // source_count <= 1) STILL freezes when the graph router has corroborated
@@ -164,7 +164,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 	if !strings.Contains(two.reason, " sources=1") {
 		t.Errorf("freeze reason = %q; want sources=1 (the venue count, not the route count)", two.reason)
 	}
-	// GH-1023: the route count is recorded beside the venue count, never in it.
+	// The route count is recorded beside the venue count, never in it.
 	if !strings.Contains(two.reason, " route_corroboration=2") {
 		t.Errorf("freeze reason = %q; want route_corroboration=2 beside sources=1", two.reason)
 	}
@@ -206,7 +206,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 // a target reachable ONLY through a low-confidence (thin, single-source)
 // edge is flagged low_confidence and does NOT overwrite the served price
 // with the dust-derived cross. A dust edge can't launder itself into a
-// confident valuation through a hub (INV-11).
+// confident valuation through a hub.
 func TestRouterTarget_DustEdgeIsLowConfidenceNotPublished(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -412,8 +412,8 @@ func TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress(t *testing.T) {
 
 // TestRouterFreeze_SharedBottleneckDoesNotSuppress is R2: two agreeing
 // routes that both funnel through one shared edge are NOT independent, so
-// they must NOT suppress the freeze. Before the fix pathCount=2 fed the
-// freeze; the independent corroboration count is now 1.
+// they must NOT suppress the freeze. pathCount=2 must not feed the
+// freeze; the independent corroboration count is 1.
 func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -438,7 +438,7 @@ func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 		eurGBP: "0.800000000000",
 	})
 	// 0, not 1: the crypto legs here are cache-only, so each route's weakest
-	// link sits at the bootstrap cap and cannot corroborate at all (GH-1026).
+	// link sits at the bootstrap cap and cannot corroborate at all.
 	// The shared-edge collapse itself is pinned in the router package
 	// (TestRouter_CorroborationSharedBottleneck).
 	if corroboration != 0 {
@@ -538,7 +538,7 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 	})
 
 	// ── at the bootstrap cap: a cache-only substitute must NOT publish ──
-	// GH-1026: the cached XLM/USD leg enters at the bootstrap cap, which every
+	// The cached XLM/USD leg enters at the bootstrap cap, which every
 	// unscored edge also carries; the reroute floor is strictly above it, so
 	// the direct price keeps serving and the substitution is flagged.
 	t.Run("at_bootstrap_cap_direct_serves", func(t *testing.T) {
@@ -596,7 +596,7 @@ func TestRecordComposite_RetainsMonotonicClock(t *testing.T) {
 }
 
 // TestRouteTarget_RerouteAboveBootstrapCapPublishes keeps the positive side
-// of the GH-1026 floor covered: a leg-substitution reroute whose weakest leg
+// of the reroute floor covered: a leg-substitution reroute whose weakest leg
 // scores strictly above the bootstrap cap still publishes over the direct
 // price, flagged Rerouted.
 func TestRouteTarget_RerouteAboveBootstrapCapPublishes(t *testing.T) {
@@ -629,14 +629,14 @@ func TestRouteTarget_RerouteAboveBootstrapCapPublishes(t *testing.T) {
 	if !ok || !meta.Rerouted || meta.LowConfidence {
 		t.Errorf("composite_meta = %+v (ok %v), want rerouted and not low_confidence", meta, ok)
 	}
-	// GH-1023: the corroboration count is persisted, not only path_count.
+	// The corroboration count is persisted, not only path_count.
 	if meta.CorroborationCount != 1 || meta.PathCount != 1 {
 		t.Errorf("composite_meta (corroboration_count, path_count) = (%d, %d), want (1, 1)",
 			meta.CorroborationCount, meta.PathCount)
 	}
 }
 
-// TestRouterTarget_CachedNonFXLegLimitsConfidence is L1: a chain leg resolved
+// TestRouterTarget_CachedNonFXLegLimitsConfidence: a chain leg resolved
 // from CACHE that is NOT an FX leg (crypto/fiat here) must enter the router at
 // the conservative cachedLegConfidence (0.5), so it can be the route's
 // limiting edge — not at the FX max of 1.0, which would let a stale cached

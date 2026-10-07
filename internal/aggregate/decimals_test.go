@@ -15,8 +15,8 @@ func (f fakeDecimalsLookup) Lookup(assetID string) (int, bool) {
 	return d, ok
 }
 
-// testContract is a real, valid on-chain C-strkey — the founding
-// CS-026/2026-07-08 decimals incident's contract id
+// testContract is a real, valid on-chain C-strkey — the contract
+// id from the decimals incident
 // (docs/operations/runbooks/dex.md), reused here
 // purely as a memorable, checksum-valid fixture.
 const testContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
@@ -145,7 +145,7 @@ func TestAdjustPrice_Golden18DecimalToken(t *testing.T) {
 }
 
 // TestAdjustPrice_Golden6DecimalQuoteToken covers the opposite direction
-// (a 6dp quote leg — one of the five confirmed offenders per the ROADMAP
+// (a 6dp quote leg — one of the five confirmed offenders
 // is exactly 6dp) — the base leg is standard, so the adjustment scales
 // DOWN.
 func TestAdjustPrice_Golden6DecimalQuoteToken(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 )
 
 // TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty is the
-// second half of MNY-22: a freeze must not be launderable through
+// second half of the frozen-leg guard: a freeze must not be launderable through
 // triangulation on the ticks AFTER the one that fired it either.
 //
 // The laundering guard read a set rebuilt at the top of every tick, and
@@ -30,7 +30,7 @@ import (
 // LKG as a fresh leg and published the product to a target that carries
 // no frozen flag.
 //
-// Tick 1 here is the existing MNY-22 scenario. Tick 2 is the hole.
+// Tick 1 here is the same-tick frozen-leg scenario. Tick 2 is the hole.
 func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) {
 	ctx := context.Background()
 	leg1 := xlmUsdtPair(t) // the pair that freezes

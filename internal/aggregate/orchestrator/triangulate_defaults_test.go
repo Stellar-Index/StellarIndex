@@ -63,7 +63,7 @@ func extractTriangulationStanza(t *testing.T) string {
 // composite-rate chains: the four thin default pairs, each priced
 // through the deep USD pivot plus an FX leg.
 //
-// Measured 2026-07-25 on the live index, share of minutes served from a
+// Measured on the live index, share of minutes served from a
 // SINGLE source: XLM/GBP 100%, XLM/EUR 87.5%, ETH/GBP 43.7%, BTC/GBP
 // 25.7% — against XLM/USD and BTC/USD at 0.0%. Those four are the
 // pairs a composite has something to add to.

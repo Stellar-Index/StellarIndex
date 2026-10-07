@@ -32,7 +32,7 @@ func inheritedDecision() anomaly.Decision {
 }
 
 // TestMark_NeverShortensALiveLifecycleTTL: the lifecycle wrote the marker
-// with `remaining hold + grace` (tens of minutes). Mark's flat TTL used to
+// with `remaining hold + grace` (tens of minutes). Mark's flat TTL must not
 // replace it, so on any tick the owning window did not re-mark — it
 // returns early on an empty or thin bucket — the marker of an ESCALATED
 // freeze was five minutes from lapsing.
@@ -113,7 +113,7 @@ func TestMarkHoldForWindow_NeverShortensASiblingsHold(t *testing.T) {
 
 // TestMark_PreservesALegacyMarkersLadder: a marker written before
 // per-window ladders existed keeps its one ladder in the pair-level State
-// field, which is what every window rehydrates from. Mark used to rewrite
+// field, which is what every window rehydrates from. Mark must not rewrite
 // that field to zero.
 func TestMark_PreservesALegacyMarkersLadder(t *testing.T) {
 	_, rdb := newRedis(t)

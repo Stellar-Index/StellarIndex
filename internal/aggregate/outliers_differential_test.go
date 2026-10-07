@@ -86,7 +86,7 @@ func TestFilterOutliersLocal_IdenticalToLegacyOnUnaffectedShapes(t *testing.T) {
 	assertIdentical(t, "fat-finger", fat)
 
 	// Zero-MAD: every print at one price (a pegged pair / one resting
-	// order), plus a 1 % print (kept by the MNY-22 floor) and a 3 %
+	// order), plus a 1 % print (kept by the zero-MAD floor) and a 3 %
 	// print (dropped).
 	zero := make([]canonical.Trade, 0, 300)
 	for i := 0; i < 300; i++ {

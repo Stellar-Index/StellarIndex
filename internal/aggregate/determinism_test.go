@@ -131,7 +131,7 @@ func TestNewLocalIndex_OrderIndependentOfInputOrder(t *testing.T) {
 	}
 }
 
-// TestNewLocalIndex_OrderNeutralToVenueName pins GH-1154: inside one
+// TestNewLocalIndex_OrderNeutralToVenueName pins venue-name neutrality: inside one
 // ledger close the index's order must not depend on what the venues are
 // called. The neighbourhood reference and the anchor chain are
 // positional, so a source-name tie-break handed the alphabetically-early

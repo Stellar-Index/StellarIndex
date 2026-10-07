@@ -59,8 +59,8 @@ func TestPhase2FreezeFires_BoundaryStrictness(t *testing.T) {
 	// this test is about the STRICTNESS of the comparison, not about
 	// whatever value the freeze is currently calibrated to, so a
 	// recalibration must not be able to silently invalidate it. (It
-	// nearly did — this read `Confidence: 0.10` when the threshold moved
-	// from 0.10 to 0.45 on 2026-07-25.)
+	// nearly did — it read `Confidence: 0.10` when the threshold moved
+	// from 0.10 to 0.45.)
 	if phase2FreezeFires(confidenceWithSourceCount{
 		Confidence: DefaultPhase2ConfidenceMaxFreeze, ZScore: 8.0, SourceCount: 1,
 	}, defaultThresh()) {
@@ -131,8 +131,7 @@ func TestPhase2FreezeFires_PartialOverrideMergesDefaults(t *testing.T) {
 	}
 }
 
-// TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous — R-003
-// (audit-2026-07-23, COR-14). The freeze is a THREE-signal AND, and
+// TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous: the freeze is a THREE-signal AND, and
 // the confidence signal only carries information because
 // confidence.Compute normalises the weighted geometric mean.
 //
@@ -197,7 +196,7 @@ func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 	}
 }
 
-// TestPhase2FreezeFires_CalibratedToADRZBand pins the 2026-07-25
+// TestPhase2FreezeFires_CalibratedToADRZBand pins the
 // operator decision: DefaultPhase2ConfidenceMaxFreeze = 0.45 exists so
 // the freeze actually fires in the neighbourhood of ADR-0019's stated
 // `z > 5`, across every population the aggregator serves.
@@ -216,13 +215,13 @@ func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 // a change that pushes the trigger back out to z ~= 15 — or pulls it in
 // to z ~= 2 — breaks the build. Both directions are real hazards: a
 // freeze that never fires serves manipulated prices, and one that fires
-// too readily serves stale LKG prices (its own money bug, MNY-22).
+// too readily serves stale LKG prices (its own money bug).
 //
 // The three populations are the ones that actually differ:
 //   - mature + measured liquidity: the 4 USD-quoted default pairs
 //   - sparse baseline: any newly-tracked pair (bootstrap-capped)
 //   - unmeasured liquidity: the 8 non-USD-quoted default pairs, which
-//     before COR-14 had confidence pinned to 0 and so froze at z > 0
+//     without the unmeasured sentinel have confidence pinned to 0 and so freeze at z > 0
 func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
 	base := func(z, ageDays, liquidity float64) float64 {
 		return confidence.Compute(confidence.Inputs{
@@ -271,7 +270,7 @@ func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
 	}
 }
 
-// TestReleaseCorroborated_DecidedInExactRatSpace pins RLT-263: a
+// TestReleaseCorroborated_DecidedInExactRatSpace pins exact-Rat release: a
 // resolved composite reference must gate mid-hold release on
 // [compositeReference.deviationRatio] (exact *big.Rat), not on the
 // divergencePct float64 mirror that composite_reference.go keeps only

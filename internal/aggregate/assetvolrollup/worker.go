@@ -83,7 +83,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // refresh runs one sum-and-upsert pass, recording the paired outcome
-// counter + latency histogram (the wave-88/89/90/91 worker convention).
+// counter + latency histogram (the worker convention).
 func (w *Worker) refresh(ctx context.Context) {
 	start := time.Now()
 	if err := w.refresher.RefreshAssetVolume24h(ctx); err != nil {

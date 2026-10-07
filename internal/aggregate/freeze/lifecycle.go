@@ -70,7 +70,7 @@ const (
 	//
 	// Why the durations must not be uniform. A freeze serves the
 	// last-known-good price for its whole duration, so a FALSE freeze
-	// is its own money bug (the MNY-22 class: a stale leg laundered
+	// is its own money bug (a stale leg laundered
 	// into a derived pair). The false-freeze rate is not uniform
 	// across the index — it concentrates entirely on thin books, where
 	// a single venue's own history is the only reference the 3-signal
@@ -119,10 +119,9 @@ const (
 // it encodes. It exists so a missed aggregator tick — or a restart —
 // cannot blink `flags.frozen` off mid-hold on the serving path.
 //
-// Deliberately [cachekeys.FreezeTTL]: that constant used to BE the
-// freeze duration, and after this file it means "how long a freeze
+// Deliberately [cachekeys.FreezeTTL]: that constant means "how long a freeze
 // survives aggregator silence", which is the only job a TTL was ever
-// suited for. A freeze's DURATION is now state, not an expiry.
+// suited for. A freeze's DURATION is state, not an expiry.
 var DefaultMarkerGrace = cachekeys.FreezeTTL
 
 // Policy is the operator-tunable shape of the ADR-0019 freeze
@@ -415,7 +414,7 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		// expiry instead would make a pair that recovered one bucket
 		// after an extension was granted wait out the full 30-minute
 		// extension serving a stale last-known-good price, which is
-		// the money bug (MNY-22 class) the freeze itself trades
+		// the money bug the freeze itself trades
 		// against; there is no security argument for it, because the
 		// streak is what proves recovery and the streak is not easier
 		// to satisfy at an expiry instant than between two.

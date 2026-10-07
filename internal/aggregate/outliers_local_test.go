@@ -30,7 +30,7 @@ func noisy(centre int64, i int) int64 {
 	return centre + int64((i*7919)%21-10)*(centre/10_000)
 }
 
-// thinStepSeries is the 2026-08-28 XLM/GBP incident replayed on a
+// thinStepSeries is the XLM/GBP drift shape replayed on a
 // THIN, SINGLE-SOURCE series: one Kraken print per minute for 5 h at
 // 0.1337, then a genuine +2% step to 0.1364 that the last `tailMin`
 // minutes hold (the cross XLM/USD × GBP/USD moved with it — every
@@ -60,7 +60,7 @@ func maxZ(z []*big.Rat) *big.Rat {
 }
 
 func TestFilterOutliersLocal_GenuineStepOnThinSingleSourceSeriesIsNotTrimmed(t *testing.T) {
-	// Regression for the 2026-08-28 drift artifact: a genuine +2%
+	// Regression for the XLM/GBP drift artifact: a genuine +2%
 	// step held by the newest 13% of a thin single-source window.
 	t0 := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 	trades, stepAt := thinStepSeries(t0, 300, 40)

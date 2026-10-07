@@ -94,7 +94,7 @@ func windowsFromReturns(returns []float64) baseline.MultiBaseline {
 	}
 }
 
-// TestFrogBoiling_SlowDriftReachesFreezeThreshold is the R-005
+// TestFrogBoiling_SlowDriftReachesFreezeThreshold is the slow-drift
 // regression guard.
 //
 // An attacker pushes a quiet asset 0.5%/day for 30 days (~15% total)
@@ -123,7 +123,7 @@ func TestFrogBoiling_SlowDriftReachesFreezeThreshold(t *testing.T) {
 	// The contract, asserted on the signal the orchestrator actually
 	// consumes. Stated first and without a validity guard in front of
 	// it so that a detector which reports NO drift signal at all —
-	// the pre-fix state — fails right here, on the number, rather
+	// a drift-blind detector — fails right here, on the number, rather
 	// than on a setup precondition.
 	got := confidenceScoringZ(mb, freshReturn)
 	if got < freezeThreshold {
@@ -271,15 +271,15 @@ func TestDriftZScore_GenuineRallyDoesNotFire(t *testing.T) {
 // so a good current bucket does not release it (that is what
 // TestMaxDriftZScore_PersistsLongAfterTheMoveEnds below measures).
 //
-// Until COR-14 there was a second, independent reason: the AND's
-// confidence leg was not even live for most pairs. approxUSDVolume
-// returned 0 for every non-USD-quoted pair, LiquidityFactor(0) is 0,
+// Without the unmeasured-liquidity sentinel there is a second,
+// independent reason: the AND's confidence leg is not live for most
+// pairs. approxUSDVolume returns 0 for every non-USD-quoted pair, LiquidityFactor(0) is 0,
 // and one zero factor drives the geometric mean to 0, so
-// `confidence < 0.10` was pinned true for 8 of the 12 pairs in
+// `confidence < 0.10` is pinned true for 8 of the 12 pairs in
 // defaultPairs() no matter what else was true, degenerating the AND to
-// `z > 5` alone. An unvaluable pair now passes the
+// `z > 5` alone. An unvaluable pair passes the
 // confidence.LiquidityUnmeasured sentinel and scores on the factors we
-// did measure, so that leg discriminates again — which removes the
+// did measure, so that leg discriminates — which removes the
 // second reason, not the first.
 func TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive(t *testing.T) {
 	// +25% in a week on a ~21%-annualized-volatility asset.

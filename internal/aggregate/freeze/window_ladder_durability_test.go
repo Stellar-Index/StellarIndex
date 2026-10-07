@@ -145,11 +145,11 @@ func freshState(now time.Time) freeze.State {
 // fires a fresh freeze of its own. Both mirror their ladder durably on
 // every tick. Redis is then lost and the aggregator restarts.
 //
-// Pre-fix the durable record was the LAST writer's: the 5m window's
+// A last-writer-wins durable record would be the 5m window's: the
 // ten-minute, zero-extension, un-escalated ladder. Every window
-// rehydrated that — so the escalated 1h freeze came back as an ordinary
-// one that auto-unfreezes (the dangerous direction), and the 24h window,
-// which was never frozen, came back frozen.
+// would rehydrate that — the escalated 1h freeze would come back as an
+// ordinary one that auto-unfreezes (the dangerous direction), and the 24h
+// window, never frozen, would come back frozen.
 func TestWriter_DurableLadderIsPerWindow(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()

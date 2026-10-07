@@ -188,7 +188,7 @@ type robustRef struct {
 // otherwise reject a sixth honest print 0.15% away. 0.25% is ~4× the
 // intra-regime dispersion of a liquid pair and still ~10× below the
 // fat-finger / wash prints the filter exists to remove. The window
-// reference keeps its exact MAD (and MNY-22 zero-floor), so on tight
+// reference keeps its exact MAD (and zero-MAD floor), so on tight
 // pairs a sub-1% print is still judged by the legacy band.
 var localScaleRelFloor = big.NewRat(1, 400)
 
@@ -226,7 +226,7 @@ func newLocalRef(prices []*big.Rat) *robustRef {
 }
 
 // score returns the ratio-symmetric deviation of p from centre
-// ([symmetricDev], MNY-22) divided by scale — the σ-equivalent distance
+// ([symmetricDev]) divided by scale — the σ-equivalent distance
 // a caller compares against sigma. A zero scale (only reachable for a
 // zero centre, where no relative floor exists) scores an exact match as
 // 0 and anything else as "no finite score" (ok=false); so does a

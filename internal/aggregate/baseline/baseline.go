@@ -44,7 +44,7 @@ const MinSamples = 2
 const MinDriftSamples = 60
 
 // MinMAD is the floor placed under the MAD before it is used as the
-// denominator of either z-statistic (COR-01). It is expressed in the
+// denominator of either z-statistic. It is expressed in the
 // same σ-equivalent RETURN units as [Baseline.MAD]: 1e-3 = 10 basis
 // points of per-bucket return.
 //
@@ -122,7 +122,7 @@ func FromReturns(returns []float64) (Baseline, error) {
 //
 //	z = |x - Median| / max(MAD, MinMAD)
 //
-// The denominator is floored at [MinMAD] (COR-01). A quiet or pegged
+// The denominator is floored at [MinMAD]. A quiet or pegged
 // window reports MAD at or near 0, and the unfloored ratio scored a
 // sub-basis-point wiggle as +Inf — see [MinMAD] for why that is a
 // false positive rather than a detection. x == Median still returns

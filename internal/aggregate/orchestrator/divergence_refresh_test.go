@@ -281,7 +281,7 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 }
 
 // TestRefreshDivergenceAll_DurationMetricRecorded pins the
-// wave-89 (2026-05-13) latency-histogram wiring: a successful
+// latency-histogram wiring: a successful
 // per-pair refresh advances
 // `stellarindex_divergence_refresh_duration_seconds{outcome="ok"}`.
 // Same shape as wave 92's customer-webhook test — guards against
@@ -315,7 +315,7 @@ func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 }
 
 // TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks asserts
-// the F-0030 follow-up gate: if cfg.DivergenceMinInterval is set,
+// the min-interval gate: if cfg.DivergenceMinInterval is set,
 // only the first call within a window of that duration actually
 // invokes the refresher. Subsequent calls within the same window
 // are skipped silently (no metric increment, no RefreshPair call,

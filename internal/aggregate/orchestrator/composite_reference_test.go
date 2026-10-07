@@ -18,7 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Composite-reference corroboration (2026-08-29) — the tests that pin
+// Composite-reference corroboration — the tests that pin
 // the product decision AND its safety envelope. Every scenario is the
 // production shape: crypto:XLM/fiat:GBP quoted by ONE venue, its chain
 // [crypto:XLM/fiat:USD, fiat:USD/fiat:GBP] with XLM/USD refreshed as a

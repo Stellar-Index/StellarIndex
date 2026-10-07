@@ -10,8 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestOrchestratorVWAPMaxAge_DerivesFromInterval pins #1294: VWAPMaxAge's
-// "10 missed ticks at the default cadence" relationship existed only in
+// TestOrchestratorVWAPMaxAge_DerivesFromInterval: VWAPMaxAge's
+// "10 missed ticks at the default cadence" relationship is code, not
 // a comment. An operator raising Config.Interval must get proportionally
 // MORE missed-tick grace, not the flat cachekeys.VWAPMaxAge regardless of
 // cadence — and a faster-than-default interval must not tighten the

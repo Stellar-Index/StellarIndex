@@ -59,7 +59,7 @@ func medianRat(vals []*big.Rat) *big.Rat {
 // Used for the SERVED cross-rate composite (see [highestConfidencePrice]) so
 // the published price is one a route ACTUALLY produced, not a blend of two
 // disagreeing co-equal routes — the bimodal/co-equal case where an averaging
-// median would serve an unproduced midpoint (H1). When the central values
+// median would serve an unproduced midpoint. When the central values
 // are equal (agreeing routes) it coincides with medianRat exactly, so the
 // only observable difference is precisely the disagreement case it exists to
 // fix. Empty input returns nil (defensive; callers guard non-empty — L5).
@@ -85,7 +85,7 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 }
 
 // zeroScaleRelFloor is the fraction of the centre used as the robust
-// scale when the measured MAD is 0 (MNY-22).
+// scale when the measured MAD is 0.
 //
 // MAD is 0 whenever a strict MAJORITY of vals sit at one exact price —
 // a routine shape for a bucket of trades filling against the same
@@ -161,8 +161,8 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 // — geometrically symmetric (lo·hi = centre²), always strictly
 // positive, and IDENTICAL to the old band above the centre. Below it
 // the new edge is never lower than the old one (1/(1+r) >= 1 − r), so
-// this only ever tightens the downward side: nothing a caller used to
-// reject is newly accepted. Exact *big.Rat throughout (ADR-0003) — the
+// this only ever tightens the downward side: nothing the additive band
+// rejects is accepted. Exact *big.Rat throughout (ADR-0003) — the
 // mirror is one multiply and one divide, so no logarithm (and no
 // float64) enters the value path.
 //

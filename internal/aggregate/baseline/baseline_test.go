@@ -151,10 +151,9 @@ func TestZScore_ZeroMADExactMatch(t *testing.T) {
 	}
 }
 
-// TestZScore_ZeroMADIsFlooredNotInfinite is the COR-01 regression, and
-// it deliberately REPLACES the former TestZScore_ZeroMADAnyDeviation,
-// which asserted that a 1e-5 deviation from a zero-spread baseline
-// scores +Inf. That expectation was the defect: a zero MAD is the
+// TestZScore_ZeroMADIsFlooredNotInfinite is the zero-MAD regression.
+// Expecting a 1e-5 deviation from a zero-spread baseline to score +Inf
+// is the defect: a zero MAD is the
 // NORMAL state of a pegged or quiet pair (a strict majority of bucket
 // returns are exactly 0), so "any deviation is infinitely anomalous"
 // pinned every such pair at z=+Inf on a rounding wiggle — zeroing its
@@ -166,7 +165,7 @@ func TestZScore_ZeroMADExactMatch(t *testing.T) {
 func TestZScore_ZeroMADIsFlooredNotInfinite(t *testing.T) {
 	b := baseline.Baseline{Median: 1.5, MAD: 0, N: 10}
 
-	// The exact observation the pre-fix test demanded +Inf for.
+	// The exact observation an unfloored MAD scores +Inf.
 	const wiggle = 1e-5
 	z := b.ZScore(1.5 + wiggle)
 	if want := wiggle / baseline.MinMAD; math.Abs(z-want) > 1e-12 {
@@ -183,7 +182,7 @@ func TestZScore_ZeroMADIsFlooredNotInfinite(t *testing.T) {
 	}
 }
 
-// TestZScore_PeggedWindowDoesNotSelfTrigger drives the same COR-01
+// TestZScore_PeggedWindowDoesNotSelfTrigger drives the same zero-MAD
 // regression through the real construction path (FromReturns), on the
 // shape that actually occurs in production: a USD peg whose 1-minute
 // VWAP reprints unchanged in most buckets.

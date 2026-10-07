@@ -48,7 +48,7 @@ const (
 	// evidence against this number — those pairs froze on (z>5 AND
 	// source_count<=1) with the confidence leg pinned permanently true,
 	// so the documented 3-signal AND was really a 2-signal one. With
-	// COR-14 fixed, confidence is a genuine third gate and this is
+	// the unmeasured-liquidity sentinel, confidence is a genuine third gate and this is
 	// strictly stricter than the configuration that false-fired.
 	DefaultPhase2ConfidenceMaxFreeze  = 0.45 // freeze when confidence < this
 	DefaultPhase2ZScoreMinFreeze      = 5.0  // freeze when z > this
@@ -499,7 +499,7 @@ func (o *Orchestrator) engageFreeze(
 
 	o.logFreezeTransition(pair, window, decision, out)
 
-	// MNY-22: this pair's LKG stays in cache for the rest of the tick;
+	// This pair's LKG stays in cache for the rest of the tick;
 	// record the refusal so triangulation can't republish it as a
 	// derived price.
 	o.markFrozenThisTick(pair, window)
