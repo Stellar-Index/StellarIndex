@@ -27,6 +27,13 @@ var fullTriggers = map[string]bool{
 	"scripts/ci/affected-go-pkgs/main.go": true,
 }
 
+// fullPrefixes hold files that tests across the tree read by relative path.
+var fullPrefixes = []string{"migrations/", "deploy/", "openapi/", "configs/", "test/"}
+
+// wiringPkg reads workflows, scripts, docs and the Makefile to check that
+// they agree, so any change outside a Go package runs it.
+const wiringPkg = "test/controlwiring"
+
 func main() {
 	files := flag.Bool("files", false, "print substantive changed files instead of packages")
 	flag.Parse()
@@ -79,10 +86,30 @@ func run(base string, filesMode bool) error {
 		}
 		// Non-Go files reach a package through go:embed or testdata, both of
 		// which live under the package directory.
+		inPkg := false
 		for d := dir; d != "."; d = path.Dir(d) {
 			if hasGoFiles(d) {
 				dirs[d] = true
+				inPkg = true
 			}
+		}
+		if inPkg || strings.HasSuffix(f, ".go") {
+			continue
+		}
+		// Outside every package: a test reads it by path, if at all.
+		for _, p := range fullPrefixes {
+			if strings.HasPrefix(f, p) {
+				fmt.Println("./...")
+				return nil
+			}
+		}
+		dirs[wiringPkg] = true
+		readers, err := gitLines("grep", "-lF", path.Base(f), "--", "*.go")
+		if err != nil && !isNoMatch(err) {
+			return err
+		}
+		for _, r := range readers {
+			dirs[path.Dir(r)] = true
 		}
 	}
 	if len(dirs) == 0 {
@@ -226,6 +253,12 @@ func hasGoFiles(dir string) bool {
 		}
 	}
 	return false
+}
+
+// isNoMatch reports git grep's "nothing found" exit status.
+func isNoMatch(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 1
 }
 
 func gitLines(args ...string) ([]string, error) {
