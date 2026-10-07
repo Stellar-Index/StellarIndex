@@ -1643,10 +1643,12 @@ const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 // (LatestAccountObservationAtOrBefore, trustline / claimable /
 // LP-reserve / SAC-balance / SEP-41) return whatever row they have
 // at-or-before the picked ledger, even when that row is much older.
-// Each computer therefore records its oldest component's ledger as
-// `supply.Supply.MinComponentLedger`, and the Refresher rejects a
-// snapshot whose components lag past the stale-component threshold
-// ([supply.WithStaleComponentLedgers]).
+// A computer that can tell records its oldest component's ledger as
+// `supply.Supply.MinComponentLedger` (zero passes the gate). The
+// Refresher rejects a snapshot whose components lag past the
+// stale-component threshold ([supply.WithStaleComponentLedgers]) and
+// moved since the last tick; a lagging snapshot that stayed frozen is
+// kept as dormant until the dormancy horizon, then rejected.
 type supplyAggregatorLedgers struct {
 	s          supplyCursorLister
 	closeTimes ledgerCloseTimeReader
@@ -2016,12 +2018,13 @@ func defaultPairs() []canonical.Pair {
 // Single-host coexistence: the indexer also reads obs.metrics_listen
 // (default "127.0.0.1:9464"). If the operator hasn't set this field
 // in their config file at all — config.ObsConfig.MetricsListenSet is
-// false — we shift to ":9465" automatically so a default single-host
+// false — we shift to "127.0.0.1:9465" automatically so a default single-host
 // deploy doesn't have one binary silently lose its metrics listener
 // to "address already in use." An operator who explicitly configures
 // obs.metrics_listen for the aggregator is honoured verbatim, even if
 // they pin it to the same address the indexer defaults to: the shift
-// keys on whether the field was set, not on its value.
+// applies only when the field was unset and still holds the indexer's
+// default.
 func startMetricsServer(cfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
 	if cfg.MetricsListen == "" {
 		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
