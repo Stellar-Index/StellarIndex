@@ -17,8 +17,7 @@ import (
 // side — the corrective path for rows that fail it.
 //
 // The population it exists for: trades stamped BEFORE the peg identity was
-// the insert path (the pre-2026-07-23 era — measured 2026-07-30 at 66 dirty
-// days, every violation `[base_pegged] sdex` USDC-base rows valued by the
+// the insert path (66 dirty days when measured, every violation `[base_pegged] sdex` USDC-base rows valued by the
 // resolver's VWAP instead of the $1 peg; ~+0.7% drift on dust groups). This
 // is the corrective UPDATE as a tool, with this discipline baked in:
 //
@@ -258,7 +257,7 @@ func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 // The transaction lifts the decompression cap
 // (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): the
 // historical span lives in COMPRESSED chunks, and the default 100k-tuple
-// cap aborts a single day's DML (measured 2026-07-30: one day needed
+// cap aborts a single day's DML (one measured day needed
 // 265k). It also pins a CUSTOM plan: the `ts` bounds are what let the
 // planner prune the statement to the chunks it covers, a GENERIC plan
 // cannot know them, and equal-shaped batches reuse one prepared statement

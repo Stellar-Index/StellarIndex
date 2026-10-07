@@ -127,7 +127,7 @@ func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, to
 // from; two hand-copied lists had drifted to seven and twelve entries.
 //
 // Membership and order come from `_timescaledb_catalog.continuous_agg`
-// (r1, 2026-09-03): exactly these twelve have `trades` as their root
+// (r1): exactly these twelve have `trades` as their root
 // hypertable (oracle_prices_* hang off oracle_updates, supply_1d off
 // asset_supply_history). Ten read `trades` directly and are mutually
 // independent; twap_1h / twap_1d are HIERARCHICAL — built on
@@ -218,8 +218,8 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 // [HistoryGranularity]. The backfill tool refreshes all of [TradesCAGGs]
 // after each chunk, of which this is the prices_* subset. It holds all seven, and
 // the name is literal for six of them: migration 0002 gave prices_1m
-// and prices_15m a 30-day retention and migration 0031 removed it on
-// 2026-05-14, alongside the 90-day one on raw `trades`.
+// and prices_15m a 30-day retention and migration 0031 removed it,
+// alongside the 90-day one on raw `trades`.
 //
 // prices_1m is the exception since migration 0156, which attaches a
 // 90-day retention policy to THAT VIEW ALONE. The policy ships
@@ -274,8 +274,7 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 // rows written: one minute bucket per (pair-direction, minute) that
 // traded, bounded above by the chunk's own trade count, against
 // ≤ 937 buckets per pair for the five coarse rungs over 30 days.
-// Measured on r1 2026-08-22: prices_1m accrued 14.5M
-// rows between 2026-07-16 and that date, ≈392k rows/day, so a
+// Measured on r1: prices_1m accrues ≈392k rows/day, so a
 // 30-day range materialises order-of-10M minute buckets. Those rows
 // are exactly what the surfaces listed above read.
 //
@@ -329,10 +328,8 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 // wait. The backfill tool calls this at the end of each chunk to make
 // CAGG materialisation atomic with the trade insert.
 //
-// The roll-forward policy is the WHOLE reason. This comment also
-// carried a second one — that raw trades are pruned before the policy
-// reaches them — which migration 0031 retired on 2026-05-14 when it
-// removed the 90-day retention. The rows stay; only the
+// The roll-forward policy is the WHOLE reason: raw trades are never
+// pruned (migration 0031). The rows stay; only the
 // materialisation is missing. That is why repairing an
 // already-backfilled range needs no re-decode and no archive read,
 // just a bounded refresh (docs/operations/backfill-procedure.md).
@@ -483,7 +480,7 @@ func isConcurrentRefreshErr(err error) bool {
 // always materialised, not because the finer ones are transient.
 // Nothing in prices_1h is pruned: migration 0031 removed the 90-day
 // retention on raw `trades` and the 30-day retention on prices_1m /
-// prices_15m on 2026-05-14. `trades`, prices_1h and this stat still
+// prices_15m. `trades`, prices_1h and this stat still
 // span the same history. prices_1m need not, on a deployment that has
 // armed migration 0156's 90-day policy on that one view — one more
 // reason this answer is about prices_1h alone. The comment this replaces described

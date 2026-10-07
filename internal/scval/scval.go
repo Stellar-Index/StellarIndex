@@ -455,13 +455,12 @@ func AsAmountFromU256(sv xdr.ScVal) (canonical.Amount, error) {
 // char is G so it's an account"; this is the path that catches a
 // malformed address before it reaches the database.
 //
-// CAP-67 / Protocol 23 (mainnet 2025-09-03) extended ScAddress
+// CAP-67 / Protocol 23 (mainnet September 2025) extended ScAddress
 // from the original two variants (Account, Contract) to five:
 // added Muxed Account, Claimable Balance, and Liquidity Pool. A
 // SEP-41 transfer event's `to` field can carry any of these —
-// the cascade-window drain dry-run on 2026-05-28 found that every
-// transfer event hitting a liquidity-pool destination tripped
-// `unknown ScAddress type 4` and was silently dropped.
+// a two-variant decoder fails a liquidity-pool destination with
+// `unknown ScAddress type 4` and silently drops the event.
 //
 // Strkey payload shapes are pinned by the SDK's strkey/decode_test.go
 // table:

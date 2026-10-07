@@ -39,9 +39,7 @@
 // closes that gap: it runs the same classify+report path over a much
 // longer (90d default) historical window once at process start, so a
 // historically-traded-but-now-dormant offender gets upserted into
-// nonstandard_decimals_assets without an operator hand-seeding the row
-// (the gap behind the 2026-07-09 CC2RB… incident — see the runbook's
-// changelog).
+// nonstandard_decimals_assets without an operator hand-seeding the row.
 package decimalsguard
 
 import (
@@ -82,10 +80,7 @@ const (
 // (source, asset) trade pairs. The periodic sweep's short Window (20m)
 // only catches a token that is STILL trading — a token that traded once
 // and went dormant before the guard ever ran (or before it traded again
-// inside a 20-minute window) is invisible to Sweep forever. That gap is
-// exactly what let token CC2RB… (decimals()=9, confirmed 2026-07-09) go
-// unseeded after the v0.10.0 deploy until an operator hand-inserted the
-// row per the runbook.
+// inside a 20-minute window) is invisible to Sweep forever.
 //
 // 90 days is a judgment call, not a derived constant: long enough to
 // catch a token that traded a handful of times and then went quiet,
@@ -366,13 +361,6 @@ func (g *Guard) Sweep(ctx context.Context) error {
 // confirmed, and upserted into nonstandard_decimals_assets at process
 // start, instead of staying invisible until it trades again or an
 // operator hand-seeds the row per the runbook.
-//
-// This closes the gap behind the 2026-07-09 production incident: token
-// CC2RB… traded starting 2026-06-22 but the guard (added later) only
-// enumerates the trailing 20 minutes on each tick, so a token that never
-// happened to trade again inside one of those windows after the guard
-// started was never picked up automatically — an operator had to hand-
-// insert the row.
 //
 // Bounded by design: RecentSorobanDEXTrades is a time-windowed,
 // index-sargable scan (base_asset/quote_asset lead the composite index,

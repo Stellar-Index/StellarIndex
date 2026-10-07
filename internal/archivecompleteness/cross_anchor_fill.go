@@ -23,8 +23,8 @@ import (
 // can be fetched. The full URL we GET is
 // `<URL>/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`.
 type Source struct {
-	// Name is a stable label used in metrics + logs (e.g.
-	// "sdf-core-live-001"). Stays in lockstep with the
+	// Name is a stable label used in metrics + logs (e.g. the
+	// archive host name). Stays in lockstep with the
 	// archive_completeness_repair_attempts_total metric label.
 	Name string
 

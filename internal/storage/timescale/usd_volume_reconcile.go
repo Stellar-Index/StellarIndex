@@ -242,8 +242,7 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 // day-group's Σusd_volume must land within an intraday-range tolerance
 // of Σbase/1e7 × day-VWAP.
 //
-// #372 F1 — this comment used to end "a day-granular rate cannot
-// false-alarm on normal intraday movement". It can. The anchor reads a
+// A day-granular rate CAN false-alarm on intraday movement. The anchor reads a
 // per-MINUTE prices_1m XLM/<peg> bucket and this reads a DAY bucket off
 // a different (CEX) series, so an honest day scores up to
 // max(intraday_hi/day_vwap, day_vwap/intraday_lo) — measured worst 1.2206

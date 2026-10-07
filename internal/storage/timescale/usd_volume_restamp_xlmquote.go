@@ -39,7 +39,7 @@ import (
 // [xlmQuoteTierFor] refuses any row whose BASE leg is also an XLM form,
 // so a `native / XLM-SAC` trade belongs to the xlm-base tier alone. That
 // matters beyond tidiness: two tiers claiming one row would each stamp it
-// at their own generation, and the INV-3 guard would then make the run
+// at their own generation, and the generation guard would then make the run
 // order decide the value. It also refuses a USD-pegged base leg, which is
 // tier 2b — `usd-volume-restamp -tier exact`'s, and EXACT.
 

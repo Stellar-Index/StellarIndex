@@ -17,7 +17,7 @@ import (
 const SafeUnixFutureWindow = 24 * time.Hour
 
 // safeUnixEpochFloorSeconds is the lower sanity bound for a decoded
-// raw timestamp: 1_000_000_000 s = 2001-09-09. Anything before it
+// raw timestamp: 1_000_000_000 s, in September 2001. Anything before it
 // (0 / sentinel / pre-epoch garbage) falls back to the ledger close —
 // every oracle/DeFi source we ingest launched well after 2001.
 const safeUnixEpochFloorSeconds = 1_000_000_000
@@ -25,10 +25,10 @@ const safeUnixEpochFloorSeconds = 1_000_000_000
 // SafeUnixSeconds converts a raw u64 UNIX-seconds timestamp (as
 // decoded from contract events / op args) to a UTC time, falling back
 // to closedAt when the value is outside the sane window
-// [2001-09-09, closedAt+SafeUnixFutureWindow].
+// [1e9 s, closedAt+SafeUnixFutureWindow].
 //
 // The bound check happens on the RAW u64, BEFORE the int64 cast:
-//   - too small (0 / pre-2001) → bogus old timestamp.
+//   - too small (0 / before 2001) → bogus old timestamp.
 //   - too large (> close+24h) → far-future sentinel; and crucially
 //     anything > math.MaxInt64 (~9.2e18) WRAPS NEGATIVE in an int64()
 //     cast and would stamp a far-PAST time that a cast-first

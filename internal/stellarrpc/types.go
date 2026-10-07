@@ -199,7 +199,7 @@ const (
 //
 // XDR fields are base64-encoded; callers decode via
 // github.com/stellar/go-stellar-sdk/xdr (the post-monorepo
-// SDK; stellar/go was archived 2025-12-16). The dependency
+// SDK; stellar/go is archived). The dependency
 // scope decision is ADR-0013; the structural guardrail that
 // keeps `xdr` out of decoder packages outside of internal/scval
 // lives in scripts/ci/lint-imports.sh rule B.

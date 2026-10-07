@@ -1072,7 +1072,7 @@ func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 //
 // A stellar.toml is published by the issuer, not by us, and a syntax
 // error in one table is not evidence about the others. WisdomTree's
-// file (stellar.wisdomtree.com, measured 2026-09-16) ends its ACCOUNTS
+// file (stellar.wisdomtree.com) ends its ACCOUNTS
 // array with an unterminated string on line 20. Every one of its
 // eighteen [[CURRENCIES]] tables is well-formed, thirteen of them
 // declare an RWA anchor class, and those thirteen carry 7,023,543

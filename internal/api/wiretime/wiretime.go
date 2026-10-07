@@ -20,10 +20,9 @@ import (
 // Postgres decode `timestamptz` into the PROCESS's local zone, so a
 // handler that passes a stored timestamp straight into a `time.Time`
 // json field emits the server's local offset — the same instant,
-// rendered differently. Production served
-// `2026-06-01T02:00:00+02:00` from /v1/price/at and
-// `2017-01-17T01:00:00+01:00` from /v1/history/since-inception. Note
-// the second offset: it moves with DST, so one series rendered two
+// rendered differently. Production served a `+02:00` offset from
+// /v1/price/at and a `+01:00` one from /v1/history/since-inception.
+// Note the second offset: it moves with DST, so one series rendered two
 // different offsets across the same grid.
 //
 // Every such string is schema-valid — `format: date-time` accepts an
