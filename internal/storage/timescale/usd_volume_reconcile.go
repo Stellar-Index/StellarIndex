@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ─── C4-055 / C4-066: the usd_volume VALUE reconcile ─────────────
+// ─── the usd_volume VALUE reconcile ─────────────
 //
 // The existing usd-volume alerts (configs/prometheus/rules.r1/
 // usd-volume-coverage.yml) are a COVERAGE check: they read the ratio of

@@ -11,7 +11,7 @@ import (
 
 // TestCopyMergeUpsertSQL_GenerationGuarded is the proven-red guard for
 // TV-1/TV-3: the bulk COPY+merge path used by ch_rebuild must carry the SAME
-// INV-3 generation-guarded corrective-upsert semantics as the per-row writers
+// generation-guarded corrective-upsert semantics as the per-row writers
 // (sep41_transfers.go InsertSEP41TransferBatch / sep41_supply_events.go
 // InsertSEP41SupplyEvent), NOT a generation-0 `ON CONFLICT DO NOTHING`.
 //

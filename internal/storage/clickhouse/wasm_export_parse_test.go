@@ -110,8 +110,8 @@ func uleb(v uint64) []byte {
 	}
 }
 
-// TestParseWasmExports_HugeCountDoesNotOOM is the regression proof for
-// W6-go-1: a section declaring a preposterous entry count in a tiny body must
+// TestParseWasmExports_HugeCountDoesNotOOM is the regression proof that
+// a section declaring a preposterous entry count in a tiny body must
 // fail cleanly (the read loop runs out of input) rather than attempt a
 // multi-GB prealloc from the attacker-influenced LEB128 count. safeCap bounds
 // make() by the reader's remaining bytes; reaching the assertion at all (no

@@ -19,7 +19,7 @@ import (
 // scripted driver. blend_auctions_test.go covers the two JSON helpers;
 // the seven methods that actually talk to Postgres — the three auction
 // writers behind the pipeline sink and the four readers behind
-// /v1/lending — had none, so the INV-3 generation guard, the i128
+// /v1/lending — had none, so the generation guard, the i128
 // precision of the bid/lot amounts and the read-side null handling were
 // all unpinned.
 
@@ -48,7 +48,7 @@ func blendBidLot(t *testing.T) []blend.AssetAmount {
 	}
 }
 
-// assertGenerationGuardedUpsert pins the INV-3 (migration 0110) shape
+// assertGenerationGuardedUpsert pins the generation-guard (migration 0110) shape
 // shared by all three writers: a corrected re-derive lands in place, and
 // a live gen-0 replay can never revert it. The pre-0110 `DO NOTHING` is
 // the re-derive trap this replaced, so its return is a failure.

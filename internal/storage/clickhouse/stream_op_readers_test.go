@@ -279,7 +279,7 @@ func TestContractCallOpsQuery_Shape(t *testing.T) {
 
 	requireSuccessfulTxRestriction(t, "contractCallOpsQuery", q)
 
-	// The memory bounds this query carries in its own right — the 2026-07-11
+	// The memory bounds this query carries in its own right — the
 	// incident was an IN-subquery CreatingSetsTransform blowing a 10 GiB
 	// budget on a dense 250k-ledger window.
 	for _, s := range []string{

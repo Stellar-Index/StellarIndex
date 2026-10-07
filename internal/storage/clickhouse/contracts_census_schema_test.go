@@ -72,7 +72,7 @@ func TestCensusDayFilterHasASkipIndex(t *testing.T) {
 // TestCensusStagingTableIsPerRunOnly pins that no DDL file declares a
 // shared stellar.contracts_census_daily_staging. RunCensusDay CREATEs a
 // crypto-random-suffixed private staging table per run and DROPs it (the
-// W1-chrollup-4 isolation), so a static twin is dead DDL that reads as a
+// private-staging isolation), so a static twin is dead DDL that reads as a
 // second writer path and shows up on every host as an empty orphan.
 func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)

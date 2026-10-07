@@ -21,7 +21,7 @@ func TestAccountStateCache(t *testing.T) {
 	}
 
 	// Expiry: a stale entry is STILL SERVED (ok=true) with fresh=false —
-	// staleness is the caller's judgment (route-sweep 2026-07-30: a hard
+	// staleness is the caller's judgment (a hard
 	// miss past the 30s TTL kept whale accounts on a near-permanent 503).
 	c.put("G2", AccountState{Exists: true, Balance: 7}, time.Now().Add(-2*AccountStateCacheTTL))
 	got, ok, fresh = c.get("G2")
