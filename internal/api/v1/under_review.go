@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
 )
@@ -31,6 +32,11 @@ func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 		if rec.status == http.StatusOK {
 			if marked, ok := markUnderReview(*list, r.PathValue("asset_id"), body); ok {
 				body = marked
+			} else if strings.HasPrefix(rec.header.Get("Content-Type"), "text/csv") {
+				// A CSV export has no envelope; its flags travel in a header.
+				if _, held := holds.Match(*list, subjectOf(r.PathValue("asset_id"), nil)); held {
+					rec.header.Add("X-StellarIndex-Flags", "under_review")
+				}
 			}
 		}
 		for k, v := range rec.header {

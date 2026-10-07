@@ -2,8 +2,10 @@ package explorer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -52,6 +54,7 @@ func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
+	asCSV := negotiateCSV(w, r)
 	limit, ok := h.ParseLimit(w, r, accountMovementsDefaultLimit, accountMovementsMaxLimit)
 	if !ok {
 		return
@@ -101,7 +104,59 @@ func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Ledger, last.TxHash, last.OpIndex, last.LegIndex)
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || markerFailed || lookupFailed, time.Time{})
+	stale, degraded := h.movementsStale(ctx, wm), wmFailed || markerFailed || lookupFailed
+	if asCSV {
+		h.writeAssetMovementsCSV(w, r, out, stale, degraded)
+		return
+	}
+	h.writeJSONAt(w, out, stale, degraded, time.Time{})
+}
+
+var assetMovementsCSVColumns = []string{
+	"asset", "ledger", "ledger_close_time", "tx_hash", "op_index", "leg_index",
+	"movement_kind", "from", "to", "amount", "decimals", "provenance", "attributes",
+}
+
+// writeAssetMovementsCSV writes the page with the JSON's exact cell text:
+// the amount string, the stored asset id, and attributes as a JSON object.
+func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request, v AssetMovementsView, stale, degraded bool) {
+	p := csvPage{
+		columns:    assetMovementsCSVColumns,
+		rows:       make([][]string, len(v.Movements)),
+		nextCursor: v.NextCursor,
+		headers:    map[string]string{"X-StellarIndex-Through-Ledger": strconv.FormatUint(uint64(v.ThroughLedger), 10)},
+	}
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{{"stale", stale}, {"degraded", degraded}, {"lower_bound", v.LowerBound}} {
+		if f.set {
+			p.flags = append(p.flags, f.name)
+		}
+	}
+	for i, m := range v.Movements {
+		decimals, attrs := "", ""
+		if m.Decimals != nil {
+			decimals = strconv.Itoa(*m.Decimals)
+		}
+		if len(m.Attributes) > 0 {
+			b, err := json.Marshal(m.Attributes)
+			if err != nil {
+				h.Logger.Error("explorer AssetMovements CSV attributes failed", "err", err, "asset", v.Asset)
+				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
+				return
+			}
+			attrs = string(b)
+		}
+		p.rows[i] = []string{
+			v.Asset, strconv.FormatUint(uint64(m.Ledger), 10), m.LedgerCloseTime, m.TxHash,
+			strconv.FormatUint(uint64(m.OpIndex), 10), strconv.FormatUint(uint64(m.LegIndex), 10),
+			m.MovementKind, m.From, m.To, m.Amount, decimals, m.Provenance, attrs,
+		}
+	}
+	if err := writeCSVPage(w, r, p); err != nil && !h.ClientAborted(r, err) {
+		h.Logger.Warn("explorer AssetMovements CSV write failed", "err", err, "asset", v.Asset)
+	}
 }
 
 // assetMovementsID folds the path asset to the one id the movement tables

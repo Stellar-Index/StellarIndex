@@ -559,6 +559,17 @@ export interface paths {
          *     `/accounts/{g_strkey}/movements` serves each account's full archive.
          *     Amounts are integer strings in the asset's smallest unit (ADR-0003),
          *     scaled by `decimals` when known.
+         *
+         *     CSV: send `Accept: text/csv` for the same page as CSV with a header
+         *     row (same `limit` cap and `cursor`). Cells carry the JSON's exact
+         *     text: `amount` is the full integer string, `asset` the stored id,
+         *     `attributes` a JSON object. A cell a spreadsheet would evaluate as a
+         *     formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
+         *     number) is prefixed with `'`. The next page is the `Link` header's
+         *     `rel="next"`; the true flags (`stale`, `degraded`, `lower_bound`,
+         *     `under_review`) are listed in `X-StellarIndex-Flags`. JSON stays the
+         *     default; both representations send `Vary: Accept`, and the CSV is
+         *     `Cache-Control: private, no-store`.
          */
         get: operations["getAssetMovements"];
         put?: never;
@@ -14540,9 +14551,20 @@ export interface operations {
             /** @description The asset's movement feed. */
             200: {
                 headers: {
+                    /** @description text/csv only: `</v1/assets/{asset_id}/movements?cursor=…>; rel="next"` when another page exists. */
+                    Link?: string;
+                    /** @description text/csv only: comma-separated true flags (`stale`, `degraded`, `lower_bound`, `under_review`); absent when none. */
+                    "X-StellarIndex-Flags"?: string;
+                    /** @description text/csv only: the JSON's `through_ledger`. */
+                    "X-StellarIndex-Through-Ledger"?: number;
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example asset,ledger,ledger_close_time,tx_hash,op_index,leg_index,movement_kind,from,to,amount,decimals,provenance,attributes
+                     *     USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN,64802900,2026-10-06T14:02:29Z,be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36,0,0,transfer,GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN,GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N,1000000000000,7,cap67_derived,
+                     */
+                    "text/csv": string;
                     /**
                      * @example {
                      *       "data": {

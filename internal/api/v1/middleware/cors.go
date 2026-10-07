@@ -100,6 +100,10 @@ var DefaultCORSExposedHeaders = []string{
 	"Idempotency-Replayed",
 	// The account export's file name (GET /v1/dashboard/account/export).
 	"Content-Disposition",
+	// A text/csv list page's next page and envelope fields.
+	"Link",
+	"X-StellarIndex-Flags",
+	"X-StellarIndex-Through-Ledger",
 }
 
 // CORS returns middleware that applies W3C CORS headers based on
