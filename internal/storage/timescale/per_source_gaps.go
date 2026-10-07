@@ -247,7 +247,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// of 138,629 ledgers (~8 days) tripped a 100K threshold while
 	// ADR-0033 completeness verified cctp complete=t / coverage 1.0 —
 	// i.e. pure sparsity, not loss. 200K (~14 days) sits above the
-	// observed natural envelope. Genesis is the CCTP/Rozo deploy ledger.
+	// observed natural envelope. Genesis is each bridge's first on-chain
+	// event (cctp.GenesisLedger / rozo.GenesisLedger).
 	//
 	// Ledger-gap coverage is a DIFFERENT axis from per-op event loss:
 	// the PK before migration 0112 collapsed a second same-op

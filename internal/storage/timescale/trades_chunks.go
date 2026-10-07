@@ -146,14 +146,14 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 
 // ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
-// THE MEASURED CASE (r1). A deploy restarted
-// stellarindex-aggregator; its cold-start VWAP alias-map aggregation
-// spilled to disk (wait_event = IO/BufFileRead) and held AccessShareLock
-// on `trades` for 18+ minutes. A `usd-volume-restamp -chunks` run was
-// mid-window and its decompress_chunk asked for AccessExclusiveLock on a
-// chunk of that hypertable. It could not have it, so it QUEUED — and a
-// pending exclusive request is not a private wait: PostgreSQL puts every
-// LATER request for that object behind it, however trivial and however
+// THE MEASURED CASE (r1). A deploy restarted stellarindex-aggregator;
+// its cold-start VWAP alias-map aggregation spilled to disk (wait_event
+// = IO/BufFileRead) and held AccessShareLock on `trades` for 18+
+// minutes. A `usd-volume-restamp -chunks` run was mid-window and its
+// decompress_chunk asked for AccessExclusiveLock on a chunk of that
+// hypertable. It could not have it, so it QUEUED — and a pending
+// exclusive request is not a private wait: PostgreSQL puts every LATER
+// request for that object behind it, however trivial and however
 // compatible with the lock actually held. The measured pile-up:
 //
 //	decompress_chunk (restamp)      blocked 1,984 s

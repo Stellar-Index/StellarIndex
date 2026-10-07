@@ -33,11 +33,10 @@ import (
 //     carries the CANONICAL 6-decimal amount the SAC leg was verified
 //     against. Inbound sums use mint_and_withdraw ONLY; summing both
 //     would count the same transfer 11× over. This is a real semantic
-//     rule about the protocol's event vocabulary, NOT twin dedup, so it
-//     holds under raw reads. Outbound deposit_for_burn is the same
-//     canonical scale (cctp TestDepositForBurnAmount_IsCanonicalSixDecimals):
-//     its amount equals the same-tx BurnMessage amount the 6-decimal
-//     destination mints.
+//     rule about the protocol's event vocabulary, NOT twin dedup, so it holds
+//     under raw reads. Outbound deposit_for_burn is the same canonical scale
+//     (cctp TestDepositForBurnAmount_IsCanonicalSixDecimals): its amount
+//     equals the same-tx BurnMessage amount the 6-decimal destination mints.
 //
 // Source-chain attribution (inbound): the same-op message_received row's
 // message_body carries the CCTP BurnMessage; hex chars 33..72 are the low

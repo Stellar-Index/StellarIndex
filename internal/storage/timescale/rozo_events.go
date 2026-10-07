@@ -87,14 +87,14 @@ func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 		return fmt.Errorf("timescale: InsertRozoEvent: Amount is empty (contract=%s tx=%s)", e.ContractID, e.TxHash)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a corrected
-	// re-derive of the payment `amount` (or destination / from / memo /
-	// token) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it. event_index ($13) is in the
-	// INSERT column list AND the ON CONFLICT target (migration 0112): two
-	// same-type events emitted by one op differ only in event_index, so it
-	// MUST be part of the conflict key or the second row collapses onto
-	// the first.
+	// Generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the payment `amount` (or destination /
+	// from / memo / token) lands in place when its generation is >= the
+	// stored one; a live gen-0 replay can never revert it. event_index
+	// ($13) is in the INSERT column list AND the ON CONFLICT target
+	// (migration 0112): two same-type events emitted by one op differ
+	// only in event_index, so it MUST be part of the conflict key or
+	// the second row collapses onto the first.
 	const q = `
         INSERT INTO rozo_events (
             contract_id, ledger, tx_hash, op_index, ts,

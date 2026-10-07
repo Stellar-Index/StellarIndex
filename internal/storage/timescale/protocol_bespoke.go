@@ -780,12 +780,12 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 // position-event series.
 //
 // COUNT-first (the bespoke_lending.go visual-suite rationale):
-// blend_positions rows mix many tokens at per-asset decimals with no USD
-// valuation at this layer, so a headline "Net supplied/borrowed" KPI —
-// token_amount summed ACROSS assets — or per-pool cross-asset sums with a
-// "Util %" ratio would be meaningless numbers with authoritative labels.
-// Amount sums survive only where scoped to a single asset (the per-asset
-// table).
+// blend_positions rows mix many tokens at per-asset decimals with no
+// USD valuation at this layer, so a headline "Net supplied/borrowed"
+// KPI — token_amount summed ACROSS assets — or per-pool cross-asset
+// sums with a "Util %" ratio would be meaningless numbers with
+// authoritative labels. Amount sums survive only where scoped to a
+// single asset (the per-asset table).
 func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	var users, flashLoans string
 	err := s.db.QueryRowContext(ctx, `

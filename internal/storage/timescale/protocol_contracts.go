@@ -140,9 +140,9 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 //
 // aquarius_liquidity (migration 0089) carries the emitting POOL contract_id AND
 // the pool's token identities, so aquarius has a per-pool roster source that
-// also renders a pair. Treating it as "pair-keyed, no per-contract column" would
-// read 0 contracts for the most active AMM (14.9k events/24h and 300+ pools when
-// measured).
+// also renders a pair. Treating it as "pair-keyed, no per-contract column"
+// would read 0 contracts for the most active AMM, which measured 14.9k
+// events/24h across 300+ pools.
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
