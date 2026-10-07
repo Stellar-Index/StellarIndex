@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
 )
 
@@ -127,6 +129,69 @@ func TestUnderReviewNativeHoldCoversPathSpellings(t *testing.T) {
 		}
 		if !marked(env) {
 			t.Errorf("path %q served without under_review", p)
+		}
+	}
+}
+
+// A CSV export has no envelope to mark, so a held asset's flag rides the
+// flags header and the body is served byte-for-byte.
+func TestUnderReviewMarksCSVExportHeader(t *testing.T) {
+	s := &Server{}
+	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
+	const body = "asset,amount\nnative,170141183460469231731687303715884105727\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/movements", s.underReview(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("X-StellarIndex-Flags", "lower_bound")
+		_, _ = w.Write([]byte(body))
+	}))
+	for asset, want := range map[string][]string{
+		"XLM": {"lower_bound", "under_review"},
+		"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {"lower_bound"},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/"+asset+"/movements", nil))
+		if got := rec.Header().Values("X-StellarIndex-Flags"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: X-StellarIndex-Flags = %q, want %q", asset, got, want)
+		}
+		if rec.Body.String() != body {
+			t.Errorf("%s: body altered: %q", asset, rec.Body.String())
+		}
+	}
+}
+
+// The buffered path must keep CORS's Vary: Origin beside the handler's
+// Vary: Accept, or a shared cache serves one origin's
+// Access-Control-Allow-Origin to another.
+func TestUnderReviewKeepsCORSVary(t *testing.T) {
+	s := &Server{}
+	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/movements", s.underReview(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Accept")
+		if r.Header.Get("Accept") == "text/csv" {
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			_, _ = w.Write([]byte("asset\nnative\n"))
+			return
+		}
+		writeJSON(w, map[string]any{"asset_id": "native"}, Flags{})
+	}))
+	const origin = "https://a.example"
+	srv := middleware.CORS(middleware.CORSOptions{AllowedOrigins: []string{origin}})(mux)
+	for _, accept := range []string{"text/csv", "application/json"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/movements", nil)
+		req.Header.Set("Accept", accept)
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if got := rec.Header().Values("Vary"); !reflect.DeepEqual(got, []string{"Origin", "Accept"}) {
+			t.Errorf("%s: Vary = %q, want [Origin Accept]", accept, got)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Errorf("%s: Access-Control-Allow-Origin = %q, want %q", accept, got, origin)
+		}
+		if got := rec.Header().Get("X-StellarIndex-Flags"); accept == "text/csv" && got != "under_review" {
+			t.Errorf("csv: X-StellarIndex-Flags = %q, want under_review", got)
 		}
 	}
 }

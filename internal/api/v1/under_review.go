@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
 )
@@ -25,16 +26,21 @@ func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 			h(w, r)
 			return
 		}
-		rec := &bufferedResponse{header: http.Header{}, status: http.StatusOK}
+		// The handler writes the live header map, so its Add/Set compose with
+		// what outer middleware already set (CORS's Vary: Origin) exactly as
+		// on the unbuffered path; only the body and status are held back.
+		rec := &bufferedResponse{header: w.Header(), status: http.StatusOK}
 		h(rec, r)
 		body := rec.body.Bytes()
 		if rec.status == http.StatusOK {
 			if marked, ok := markUnderReview(*list, r.PathValue("asset_id"), body); ok {
 				body = marked
+			} else if strings.HasPrefix(rec.header.Get("Content-Type"), "text/csv") {
+				// A CSV export has no envelope; its flags travel in a header.
+				if _, held := holds.Match(*list, subjectOf(r.PathValue("asset_id"), nil)); held {
+					rec.header.Add("X-StellarIndex-Flags", "under_review")
+				}
 			}
-		}
-		for k, v := range rec.header {
-			w.Header()[k] = v
 		}
 		w.Header().Del("Content-Length")
 		w.WriteHeader(rec.status)
