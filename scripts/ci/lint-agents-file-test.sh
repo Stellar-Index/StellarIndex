@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # lint-agents-file-test.sh — prove each assertion in lint-agents-file.sh
-# can actually FAIL. A gate nobody has seen red is not a gate; this repo
-# found 11 of 37 CI gates vacuous in an August audit, so every new one
-# ships with the mutation that breaks it.
+# can actually FAIL. A gate nobody has seen red is not a gate, so every
+# new one ships with the mutation that breaks it.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

@@ -34,9 +34,8 @@ git archive HEAD | tar -x -C "$OUT"
 
 echo "== dropping internal-only content =="
 # Audit working dirs: internal security evidence + r1 infra findings.
-# These live at docs/audit/<dated-dir>/ (NOT docs/audit-*); the old
-# glob matched the wrong layout and silently stripped nothing, so
-# every tracked finding dir shipped. Keep the generic tooling
+# These live at docs/audit/<dated-dir>/ (NOT docs/audit-*), so match that
+# layout or nothing is stripped. Keep the generic tooling
 # (recipe.md, repo-prep.md); drop the dated finding directories.
 rm -rf "$OUT"/docs/audit-* \
        "$OUT"/docs/audit/audit-* \

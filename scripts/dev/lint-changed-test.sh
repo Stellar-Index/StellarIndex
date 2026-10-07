@@ -146,9 +146,9 @@ expect_has "migration -> lint-migrations" "plan  lint-migrations:" "$out"
 expect_has "migration -> lint-migration-immutability" "plan  lint-migration-immutability:" "$out"
 expect_has "migration -> lint-migration-commands" "plan  lint-migration-commands:" "$out"
 expect_has "migration -> lint-migration-compat --staged in staged mode" "lint-migration-compat.sh --staged" "$out"
-# Alert rules. Before 2026-09-08 a rules-YAML diff selected NO monitoring
-# gate at all — a 16-file change touching 14 rule YAMLs planned exactly one
-# lint, for its two .md files (ENG-14). Each of these four pins one gate to
+# Alert rules. A rules-YAML diff must select the monitoring gates; a diff
+# touching many rule YAMLs plus two .md files must not plan only the .md
+# lint. Each of these four pins one gate to
 # the type; the two deferrals are asserted too, because "deferred with a
 # reason" and "never considered" look identical in a summary line.
 expect_has "rules yaml -> lint-rule-equivalence" "plan  lint-rule-equivalence:" "$out"
@@ -337,9 +337,8 @@ echo "lint-changed-test: a pipefail run: block piping into head"
 
 # The workflow half of the same gate, and the reason the dispatch row exists.
 # `sort | head -n 10` in a step that merely LISTED the staged migrations
-# killed the v0.69.0 deploy; the gate has covered `run:` blocks since
-# 2026-09-10, but no dispatch row sent .yml to it, so the pre-commit path
-# never saw one. Written on ONE source line so the `# sigpipe-ok:` marker can
+# killed the v0.69.0 deploy; the gate covers `run:` blocks, so a
+# dispatch row must send .yml to it or the pre-commit path never sees one. Written on ONE source line so the `# sigpipe-ok:` marker can
 # sit outside the quoted body, as for the .sh fixtures above.
 #
 # The path:line assertion is the discriminating one. lint-actions-pinning

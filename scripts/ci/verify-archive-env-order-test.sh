@@ -6,8 +6,8 @@
 # systemd evaluates Environment=/EnvironmentFile= directives in FILE
 # ORDER: whichever sets a key LAST wins. Both templates carry a comment
 # claiming "operators override via /etc/default/stellarindex-ops", but
-# the EnvironmentFile= used to be declared before the Environment=
-# defaults, so every VERIFY_ARCHIVE_* key in the operator's env file was
+# the EnvironmentFile= must be declared after the Environment=
+# defaults, else every VERIFY_ARCHIVE_* key in the operator's env file is
 # silently clobbered back to the template's hardcoded default on every
 # run.
 #

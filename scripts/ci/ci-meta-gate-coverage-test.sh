@@ -5,13 +5,12 @@
 # 1. The Tier D fork-detection cron test
 #    (scripts/ci/verify-archive-tier-d-test.sh) asserts on
 #    internal/ops/archive/verify_archive.go's flags, but its ci.yml step
-#    used to run only `if: needs.preflight.outputs.ansible == 'true'` —
-#    a Go-only diff that renames one of those flags set `ansible=false`
-#    and skipped the only test that reads it.
-# 2. ci-health.yml's main-CI-red tripwire watched `ci.yml` only
-#    (check-main-ci-health.sh's CI_WORKFLOW_FILE default), while
-#    api-audit.yml and commit-identity.yml also run on push to main
-#    with no tripwire of their own.
+#    must not run only `if: needs.preflight.outputs.ansible == 'true'` —
+#    a Go-only diff that renames one of those flags would set
+#    `ansible=false` and skip the only test that reads it.
+# 2. ci-health.yml's main-CI-red tripwire must watch more than `ci.yml`
+#    (check-main-ci-health.sh's CI_WORKFLOW_FILE default) because
+#    api-audit.yml and commit-identity.yml also run on push to main.
 #
 # Structural: parses the real workflow files, no network, no gh.
 #

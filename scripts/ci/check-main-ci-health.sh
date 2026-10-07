@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-main-ci-health.sh — main-CI-red tripwire (audit C4-16).
+# check-main-ci-health.sh — main-CI-red tripwire.
 #
 # The operator doesn't notice when `main` CI goes red for long periods
 # (chronically-red main is a standing pain). This script queries the

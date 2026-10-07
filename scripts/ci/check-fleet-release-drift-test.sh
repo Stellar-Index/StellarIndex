@@ -33,7 +33,7 @@
 # → v0.59.1 and each tag's migrations/ head as it is on origin (0150, 0153,
 # 0154, 0154). One repo spaces the tags a day apart so the grace boundary
 # is easy to read; the other carries the tags' REAL committer dates
-# (2026-09-03: v0.58.0 01:26:58Z, v0.59.0 06:37:00Z, v0.59.1 07:30:52Z).
+# (v0.58.0 01:26:58Z, v0.59.0 06:37:00Z, v0.59.1 07:30:52Z).
 # Every real release tag is lightweight, so that repo's tags are too; the
 # day-spaced repo mixes annotated and lightweight so both date paths run.
 #
@@ -110,7 +110,7 @@ tag_at "$REPO_REAL" v0.57.0 150 "$R570" light
 tag_at "$REPO_REAL" v0.58.0 153 "$R580" light
 tag_at "$REPO_REAL" v0.59.0 154 "$R590" light
 tag_at "$REPO_REAL" v0.59.1 154 "$R591" light
-# The scheduled run after that cascade: 2026-09-04 07:25:00Z.
+# The scheduled run after that cascade: 07:25:00Z the next day.
 SCHEDULED_RUN=1788506700
 
 # ── Fixture bodies: what /v1/version answers ──────────────────────────

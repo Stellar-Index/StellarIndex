@@ -280,10 +280,9 @@ def verdict(metric_name, expr):
     # Never re-derive PASS/FAIL from the raw value: k6 already evaluated
     # the threshold (strict "<", see test/load/scenarios/lib/thresholds.js)
     # and `declared` is that evaluation. A second, independent comparison
-    # here previously used "<=" and rounded display, so it could print
-    # PASS in this table for the exact run the "Thresholds declared by
-    # the scenario" table below (rendered straight from `declared`)
-    # printed BREACHED for — the report contradicting itself. Look up the
+    # here could print PASS in this table for a run the "Thresholds declared
+    # by the scenario" table below (rendered straight from `declared`)
+    # prints BREACHED for — the report contradicting itself. Look up the
     # same verdict k6 recorded instead of recomputing it.
     tripped = threshold_tripped.get((metric_name, expr))
     if tripped is None:

@@ -62,7 +62,7 @@ expect() {
   pass=$((pass + 1))
 }
 
-# The shape the r1 environment actually had when the audit ran
+# A real r1 environment shape
 # (gh api repos/Stellar-Index/StellarIndex/environments).
 run '{"name":"r1","protection_rules":[]}' r1
 expect 'no protection rules at all → fail closed' 1 'gate MISSING'

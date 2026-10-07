@@ -65,14 +65,14 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   # AUTHORITATIVE: named in the loop of a task that COPIES/TEMPLATES a
   # src under deploy/systemd — both facts about the SAME task.
   #
-  # This used to be two INDEPENDENT greps: "does `- <unit>` appear as a
-  # list item anywhere in tasks/" and "does the string
-  # `deploy/systemd/{{ item }}` appear anywhere in tasks/". The second is
-  # a repo-wide constant — one unrelated task in 15-log-discipline.yml
-  # satisfies it for every unit — so classification collapsed to the
-  # first, which matches ANY YAML list item. Adding a unit to an
-  # `ansible.builtin.systemd` ENABLE loop (installing nothing) was enough
-  # to pass as authoritative: precisely the "enable a unit you don't
+  # Two INDEPENDENT greps ("does `- <unit>` appear as a list item
+  # anywhere in tasks/" and "does the string `deploy/systemd/{{ item }}`
+  # appear anywhere in tasks/") would not do: the second is a repo-wide
+  # constant — one unrelated task in 15-log-discipline.yml satisfies it for
+  # every unit — so classification would collapse to the first, which
+  # matches ANY YAML list item. Adding a unit to an
+  # `ansible.builtin.systemd` ENABLE loop (installing nothing) would pass
+  # as authoritative: precisely the "enable a unit you don't
   # install" footgun this lint exists to name, and which the header
   # itself describes.
   #

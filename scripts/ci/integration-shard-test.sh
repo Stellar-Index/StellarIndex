@@ -144,10 +144,9 @@ one="$(shard 0 1)"
 if [[ "$one" == "$expected_sorted" ]]; then ok "1 shard == the full sorted listing"; else bad "1 shard != listing"; fi
 
 # ─── 6. EXTRA_PKGS is derived from the Makefile, and fails closed ───────
-# The shard-0-only package list used to be a hand-copied literal guarded by
-# a "keep in lockstep" comment; a package added to INT_TEST_PKGS then ran
-# under `make test-integration` and compiled under `make
-# test-integration-build`, but no shard executed it. It is now
+# The shard-0-only package list must not be a hand-copied literal: a package
+# added to INT_TEST_PKGS would run under `make test-integration` and compile
+# under `make test-integration-build`, but no shard would execute it. It is
 # read from `make print-int-test-pkgs` at run time — these fixtures pin
 # that it TRACKS the Makefile rather than merely matching it today.
 mkmakefile() { # mkmakefile FILE PKGS...

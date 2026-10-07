@@ -75,7 +75,7 @@ for a in "${ASSETS[@]}"; do
   # outage page) into a non-zero exit, and the `if !` also captures a
   # network / TLS / timeout failure. A failed fetch must NOT fall through to
   # an all-zero component sum that "reconciles" against nothing — that is
-  # exactly how an upstream outage used to read as a green pass (W5-ci-4).
+  # exactly how an upstream outage would read as a green pass.
   h=""
   if ! h=$(curl -sf --max-time 30 "${HORIZON}/assets?asset_code=${code}&asset_issuer=${issuer}"); then
     h=""

@@ -6,7 +6,7 @@
 # reconcile-supply-vs-horizon.sh runs under `set -euo pipefail`. The
 # Horizon fetch at the top of the loop uses `curl -sf`, so an HTTP >=400
 # from Horizon is a curl failure the script already handles explicitly
-# (INCONCLUSIVE(horizon)). The "ours" fetch used to use plain `curl -s`:
+# (INCONCLUSIVE(horizon)). The "ours" fetch must not use plain `curl -s`:
 # an HTTP 5xx from our own API is NOT a curl failure, the body is
 # non-JSON, `jq -r` fails to parse it, and pipefail propagates that
 # failure through the `ours=$(curl ... | jq ...)` assignment — which

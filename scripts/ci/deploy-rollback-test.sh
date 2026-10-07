@@ -5,12 +5,11 @@
 # deploy-one-binary.yml swaps each binary in binaries_csv in turn. When a
 # LATER binary fails its probe the rescue rolls the EARLIER ones back too
 # so the host lands on one consistent version set. That rollback
-# used to re-derive its restore state at rollback time: it `mv`'d every
-# recorded binary aside to .rolledback-<version> and then `mv`'d a
-# .prev-<tag> back with `ignore_errors: true`. A binary this run installed
-# for the FIRST time has no .prev-<tag> — the restore silently failed, the
-# install path was left EMPTY, and the play still reported that binary as
-# "rolled back". A rollback runs when something is already wrong; deleting
+# must not re-derive its restore state at rollback time by `mv`ing every
+# recorded binary aside to .rolledback-<version> and `mv`ing a .prev-<tag>
+# back with `ignore_errors: true`: a binary this run installed for the
+# FIRST time has no .prev-<tag>, so the restore would silently fail, leave
+# the install path EMPTY, and still report that binary as "rolled back". A rollback runs when something is already wrong; deleting
 # a healthy binary there turns a bad deploy into an outage (a new binary in
 # binaries_csv, or any host rebuilt from bare metal, reaches it).
 #

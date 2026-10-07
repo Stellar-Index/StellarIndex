@@ -8,7 +8,7 @@
 # connection-agnostic (the ProxyJump goal was right) but O(files): one
 # SFTP round-trip + remote checksum per file, no ControlPersist across
 # module invocations on the GH runner. 291 already-identical files took
-# > 16 minutes on r1 where the whole deploy used to take ~7 — and stale
+# > 16 minutes on r1, most of the deploy — and stale
 # files on the host were silently kept. The fix (tasks/sync-migrations.yml)
 # builds one deterministic tar.gz on the controller, ships it with
 # `unarchive`, and prunes extras from a controller-computed manifest.

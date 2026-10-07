@@ -31,8 +31,7 @@
 # money-invariant tests included. `go list -tags
 # integration -test -deps ./test/integration/... ./test/harness/...` shows
 # the suite transitively imports 40+ of the repo's ~53 top-level internal/
-# packages (internal/projector and internal/dispatcher among them — CA2-A38
-# — neither previously listed); enumerating each one by hand is exactly the
+# packages (internal/projector and internal/dispatcher among them); enumerating each one by hand is exactly the
 # pattern that produced that drift and will produce the next one the moment
 # a new internal/ package is added and imported. internal/** is therefore
 # matched as a whole, kept a strict superset of INT_TEST_PKGS, and

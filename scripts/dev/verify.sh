@@ -409,7 +409,7 @@ echo "=== Comment history citations self-test ===" && ./scripts/ci/lint-comments
 # on machines without a Prometheus install and catches the mis-indented-rule
 # class that otherwise only CI's promtool job flags (alerts at group level → "field expr not found in type RuleGroup").
 echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
-# YAML-aware runbook guard (audit C4-1): runbook_url must be an annotation,
+# YAML-aware runbook guard: runbook_url must be an annotation,
 # not a label, on every alert — else the Alertmanager Discord templates
 # render no runbook link. Fails if a runbook_url regresses back into labels.
 echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
@@ -483,11 +483,10 @@ else
     defer_check "Generated-artifact drift" "node or npx is not installed"
 fi
 
-# Config reference drift (T186). docs/reference/config/README.md is generated
-# from internal/config/config.go struct tags (`make docs-config`) but was
-# never in the diff list above, so a struct-tag removal/rename left the doc
-# describing a config block that no longer exists until a human noticed it
-# (it happened to the polygon-forex connector). Needs only `go run`, so —
+# Config reference drift. docs/reference/config/README.md is generated
+# from internal/config/config.go struct tags (`make docs-config`) and is not
+# in the diff list above, so a struct-tag removal/rename would leave the doc
+# describing a config block that no longer exists. Needs only `go run`, so —
 # unlike the block above — it runs unconditionally, no node/npx gate.
 echo "=== Generated config reference drift ==="
 go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md

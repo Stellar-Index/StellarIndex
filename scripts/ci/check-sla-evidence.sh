@@ -18,10 +18,10 @@
 # write the SAME artefact — docs/operations/sla-proof-<YYYY-MM-DD>.md with
 # the same filename shape — so the presence-and-freshness leg below reads
 # either one without a line of change, and none was made to it. What did
-# have to change is leg 1: it asked only "are the k6 secrets set", so a
-# feed producing evidence from the probe every Sunday would still have
-# been reported RED forever for the absence of a load target it no longer
-# needs. Leg 1 now asks which source the CALLER depends on.
+# have to change is leg 1: it must ask which source the CALLER depends on, not only
+# "are the k6 secrets set", or a feed producing evidence from the probe
+# every Sunday would be reported RED forever for the absence of a load
+# target it does not need.
 #
 # Env:
 #   SLA_EVIDENCE_SOURCE        which producer must be able to run:

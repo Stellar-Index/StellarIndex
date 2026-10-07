@@ -2,7 +2,7 @@
 """YAML-aware guard: every alert rule's runbook_url must live in
 `annotations`, not `labels`.
 
-WHY THIS EXISTS (audit 2026-07-16, C4-1/C4-15):
+WHY THIS EXISTS:
 Alertmanager keeps `.Labels` and `.Annotations` strictly separate. Both
 Discord fanout templates render the runbook line with
 `{{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}`.
@@ -39,14 +39,11 @@ from lint_doc_links import anchors_of, slug  # noqa: E402  (GitHub slug rules, s
 try:
     import yaml
 except ImportError:
-    # Fail-closed, not skip. This mirrors the fix already made in the
-    # sibling lint-rule-structure.py: a silent exit-0 here let every
-    # runbook_url regress into labels: whenever PyYAML happened to be
-    # absent — the exact vacuous pass this lint exists to prevent (C4-1:
-    # 266 of 270 alerts, no page ever showed a runbook link). This script
-    # is invoked standalone from lint-docs.sh in the doc-checks CI job,
-    # which does NOT run its sibling, so nothing else covered the gap.
-    # Cold audit 2026-08-04.
+    # Fail-closed, not skip, like the sibling lint-rule-structure.py: a
+    # silent exit-0 here would let every runbook_url regress into labels:
+    # whenever PyYAML is absent — the vacuous pass this lint exists to
+    # prevent. This script runs standalone from lint-docs.sh in the
+    # doc-checks CI job, which does NOT run its sibling.
     print(
         "lint-runbook-annotations: FAIL — PyYAML not available; cannot lint "
         "rule files (install pyyaml so this check runs; refusing to pass "
@@ -80,7 +77,7 @@ def resolve_local_runbook(value):
 # Zero rule files is a BROKEN GATE, not a clean tree: a moved or renamed
 # rule directory would otherwise report "every alert has a non-empty
 # annotations.runbook_url" over an empty set. Same fail-closed posture the
-# sibling lint-rule-structure.py already takes (cold audit 2026-08-04).
+# sibling lint-rule-structure.py already takes.
 _seen = 0
 for d in DIRS:
     if not os.path.isdir(d):

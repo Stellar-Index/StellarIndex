@@ -16,10 +16,9 @@
 # -----------------------
 # The distinction that makes this worth having: report-only applies to
 # the coverage JUDGEMENT, never to the gate's own liveness. A gate that
-# passes because it measured nothing is worse than no gate — this repo
-# found 11 of 37 CI gates vacuous in an August 2026 audit, and the
-# weekly SLA run published an eleven-week-old all-green artifact for
-# months. So the following are HARD failures regardless of
+# passes because it measured nothing is worse than no gate — vacuous CI
+# gates and a stale all-green weekly SLA artifact have both shipped here.
+# So the following are HARD failures regardless of
 # COVERAGE_ENFORCE:
 #
 #   - the profile is missing, empty, or has no `mode:` header

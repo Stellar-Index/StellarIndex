@@ -3,9 +3,9 @@
 # role's 14-stellarindex-services.yml templates /etc/stellarindex.toml with
 # owner: root, group: root, mode: "0644" (world-readable — intentional, the
 # on-disk config is supposed to carry everything except secrets). The
-# [divergence.chainlink] block in stellarindex.toml.j2 used to render
-# `rpc_url = "{{ vault_chainlink_rpc_url | default(...) }}"` directly, so the
-# keyed Alchemy endpoint (API key embedded in the URL path) landed in that
+# [divergence.chainlink] block in stellarindex.toml.j2 must not render
+# `rpc_url = "{{ vault_chainlink_rpc_url | default(...) }}"` directly, or the
+# keyed Alchemy endpoint (API key embedded in the URL path) lands in that
 # world-readable file. [external.chainlink]'s rpc_url correctly stays out of
 # the template and comes from CHAINLINK_RPC_URL in /etc/default/stellarindex
 # (mode 0640 root:stellarindex) instead — internal/config/load.go's

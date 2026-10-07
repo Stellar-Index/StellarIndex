@@ -7,7 +7,7 @@
 # is split on WHITESPACE into multiple vars. health_grace_seconds is a
 # `type: string` input (GitHub's `number` typing is UI/API-side only;
 # `gh workflow run -f` bypasses it), so `15 backup_freshness_skip=true`
-# used to sail through Validate and silently skip the backup-freshness
+# must be rejected by Validate, not silently skip the backup-freshness
 # gate. This extracts the shipped Validate step out of the workflow and
 # runs it, so the property under test is the real script, not a twin.
 # No network, no gh.

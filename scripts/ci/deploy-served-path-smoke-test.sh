@@ -6,9 +6,9 @@
 # /v1/healthz's body is a constant "ok", so a smoke that probes it cannot
 # fail while the process is up; /v1/readyz carries the Postgres and
 # schema-head checkers (503 on a critical failure, "degraded" on a
-# non-critical one). And every real read used to sit behind
-# `if [ "$REGION" = "r1" ]`, leaving testnet/futurenet with only the
-# tautology. Behavioural: extracts the step's real `run:` script and
+# non-critical one). And real reads must not sit behind
+# `if [ "$REGION" = "r1" ]`, which would leave testnet/futurenet with only
+# the tautology. Behavioural: extracts the step's real `run:` script and
 # executes it per region against stub curl/ssh on PATH — no network.
 #
 # Run: bash scripts/ci/deploy-served-path-smoke-test.sh

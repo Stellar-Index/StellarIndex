@@ -315,8 +315,8 @@ fi
 #      its own rationale is a gate somebody deletes.
 R="$(mk globprose)"
 cat > "$R/task.yml" <<'YAML'
-# This used to copy deploy/clickhouse/*.sql with with_fileglob and execute
-# every file it found. That directory is not a bootstrap manifest.
+# Prose only: this must not copy deploy/clickhouse/*.sql with with_fileglob
+# and execute every file it finds. That directory is not a bootstrap manifest.
 - name: Declare the fresh-host ClickHouse apply set
   ansible.builtin.set_fact:
     clickhouse_fresh_host_schema:

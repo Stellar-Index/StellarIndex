@@ -353,9 +353,8 @@ protected_intact
 res $? "protected snapshots intact through the now/--keep block" "destroyed=[$(destroyed_list)]"
 
 echo "zfs-snapshot-test: unreadable pool free space is FAIL-CLOSED"
-# Verifier finding on 69204ee: a zpool failure inside a command
-# substitution used to leave free="" (= 0 < floor) and the guard pruned
-# everything down to newest-per-dataset with rc=0. On unreadable free:
+# A zpool failure inside a command substitution must not leave free=""
+# (= 0 < floor), or the guard prunes everything down to newest-per-dataset with rc=0. On unreadable free:
 # NO destroy, NO snapshot, non-zero exit, error textfile.
 zpool_mode() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/bin/zpool"; chmod +x "$TMP/bin/zpool"; }
 for mode in 'exit 1' 'echo -' 'echo ""'; do
@@ -385,7 +384,7 @@ res $? "a successful run removes the error textfile"
 echo "zfs-snapshot-test: a failed property read leaves no textfile temp behind"
 # write_metrics writes to "$out.tmp.$$" and only then renames. A `die`
 # inside that brace group (this fake makes `zfs get usedbysnapshots` fail
-# for one dataset) used to exit past the mv, leaving one
+# for one dataset) must not exit past the mv and leave one
 # zfs_snapshot.prom.tmp.<pid> per run in the textfile directory forever.
 reset_pool $(( 5 * TIB ))
 rm -f "$TEXTFILE_DIR"/zfs_snapshot.prom.tmp.* 2>/dev/null

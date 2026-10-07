@@ -5,7 +5,7 @@
 # /etc/default/stellarindex, /etc/default/stellarindex-ops and
 # /etc/default/galexie are rendered UNQUOTED (systemd EnvironmentFile
 # syntax: the line is taken literally). The deploy migrate step, a root
-# cron and a dozen host scripts used to `set -a; . <file>` — which is the
+# cron and host scripts must not `set -a; . <file>` — that is the
 # SHELL parser: `$k9` expands to empty, `;abc` becomes a command run as
 # root, quotes vanish. The services (systemd) keep working while every
 # sourcing path silently gets a different secret. The repo already knew

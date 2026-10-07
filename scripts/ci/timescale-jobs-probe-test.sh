@@ -578,10 +578,10 @@ holds "…and the record after it survives intact" \
 refutes "…and the tag never reaches the file" grep -q 'SET' "$PROM"
 
 # 8. Every query carries a statement_timeout, out of band, and the
-#    timeouts together fit inside the unit's TimeoutStartSec. The in-band
-#    SET was removed (it printed a command tag) and its PGOPTIONS
-#    replacement was never written, so a stalled query ran until systemd
-#    killed the probe at 60 s with no textfile written that run.
+#    timeouts together fit inside the unit's TimeoutStartSec. An in-band
+#    SET prints a command tag, so the timeout goes via PGOPTIONS; without
+#    it a stalled query runs until systemd kills the probe at 60 s with no
+#    textfile written that run.
 export PSQL_ENV_LOG="$TMP/psql-env.log"
 : > "$PSQL_ENV_LOG"
 run "" ""

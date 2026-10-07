@@ -3,9 +3,9 @@
 #
 # ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────
 #
-# configs/ansible/roles/archival-node/tasks/08-clickhouse.yml used to copy
+# configs/ansible/roles/archival-node/tasks/08-clickhouse.yml must not copy
 # `deploy/clickhouse/*.sql` with with_fileglob and execute every file it
-# found, wherever clickhouse_apply_schema is true — which is BOTH
+# finds, wherever clickhouse_apply_schema is true — which is BOTH
 # configs/ansible/inventory/testnet.yml and .../futurenet.yml. But that
 # directory holds one founding DDL (tier1_schema.sql) and fifteen OPERATOR
 # artifacts for the EXISTING deployment (r1): per-feature DDL mirrors with

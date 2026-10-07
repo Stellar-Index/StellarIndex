@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # site-crawl-check.sh — the site-audit recurring guard.
 #
-# The July 2026 site audit found a CLASS of silent rot: pages 404ing
+# Guards a CLASS of silent rot: pages 404ing
 # from the site's own links, canonicals pointing at dead URLs,
 # placeholder text baked into HTML, doubled title suffixes, and a
 # curated sliver presented as the asset universe. Each check below
-# pins one of those incidents so the class stays closed.
+# pins one of those failure modes so the class stays closed.
 #
 # Runs read-only against production. Exit != 0 on any regression.
 set -euo pipefail

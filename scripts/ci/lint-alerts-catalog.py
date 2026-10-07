@@ -2,7 +2,7 @@
 """YAML-aware guard: the alerts catalogue's Severity column must equal the
 rule's own `labels.severity`.
 
-WHY THIS EXISTS (issue #362, 2026-09-02):
+WHY THIS EXISTS:
 `docs/operations/alerts-catalog.md` is what a responder reads to decide how
 urgently to react. Its Severity column read `P1`/`P2`/`P3` and the legend
 claimed those mapped to SEV-1/2/3 — but no rule has ever carried a `P*`
@@ -23,21 +23,15 @@ This check PARSES both rule trees and asserts, per alert:
     lint-rule-equivalence; a divergence here would make "the" severity
     ambiguous).
 
-THE INFORMATIONAL-DELIVERY REGISTER (issue #485, 2026-09-02):
-#362 made the Severity column honest, which surfaced the operational
-fact underneath it — `severity: informational` routed to `receiver:
-silent`, a receiver declared with NO `*_configs` block, so those alerts
-were accepted by Alertmanager and delivered to nobody. Twenty-one rules
-sat in that bucket when this register was written; eleven do today.
-
-That routing changed on 2026-09-08: `informational` now fans out to
-`receiver: chat-informational`, a low-traffic Discord channel kept
-separate from `alerts` so a routine notice cannot bury a ticket. The
-register's job is unchanged, but the question a row answers is now
-"does this belong in the quiet channel and nowhere louder?" rather than
-"is silence right?". (With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset
-the receiver degrades to the `silent` stub, so the original reading
-still holds on a host that has not configured it.)
+THE INFORMATIONAL-DELIVERY REGISTER:
+`severity: informational` fans out to `receiver: chat-informational`, a
+low-traffic Discord channel kept separate from `alerts` so a routine
+notice cannot bury a ticket. The question a register row answers is
+"does this belong in the quiet channel and nowhere louder?". With
+`DISCORD_WEBHOOK_URL_INFORMATIONAL` unset the receiver degrades to the
+`silent` stub, a receiver declared with NO `*_configs` block, so those
+alerts are accepted by Alertmanager and delivered to nobody; on such a
+host the question is "is silence right?".
 
 Whether a rule SHOULD be informational at all is a policy question this
 lint deliberately does not answer; what it does enforce is that landing
@@ -54,7 +48,7 @@ YAML block nobody re-read. So, additionally:
     per-severity "Rules" column and the register's headline split — match
     the parsed rules. The legend said `page | 48` the day after a 49th
     page rule landed: a stated number nothing checked is the same failure
-    shape as the P1/P2/P3 column #362 removed.
+    shape as a Severity column nothing ties to the routing key.
 A missing register section, or an empty one while informational rules
 exist, is a FAILURE — not a pass over an empty set.
 
@@ -95,7 +89,7 @@ VALID = ("page", "ticket", "informational")
 RUNBOOK_URL_ROOT = "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/"
 MD_LINK = re.compile(r"\]\(([^)\s]+)\)")
 
-# The delivery register (#485). Delimited by HTML comments rather than by a
+# The delivery register. Delimited by HTML comments rather than by a
 # heading so the row parser cannot be knocked off by an editorial re-title,
 # and so register rows are excluded from the main-table parse (they share the
 # `| \`stellarindex_x\` |` shape but have their own columns).
@@ -297,7 +291,7 @@ def main():
                 f"{CATALOG}: the Severity legend says {stated} `{severity}` rule(s); the "
                 f"rule trees define {actual}")
 
-    # ── The informational-delivery register (#485) ───────────────────────
+    # ── The informational-delivery register ───────────────────────
     informational = {n for n, sev in rules.items() if sev == "informational"}
 
     if not (saw_begin and saw_end):

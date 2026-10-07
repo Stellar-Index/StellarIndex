@@ -697,7 +697,7 @@ def pct(value, places=3):
 
 def pct_frac(frac, places=3):
     # frac is a 0..1 ratio, possibly absent (None) or non-finite (NaN from
-    # a zero denominator). `(frac or 0.0)` before this call used to turn
+    # a zero denominator). `(frac or 0.0)` before this call would turn
     # an unmeasured endpoint into a claimed 0 % breach rate, defeating
     # pct()'s own evaluable() gate — so the gate has to run BEFORE the
     # multiply, not after a masking `or`.

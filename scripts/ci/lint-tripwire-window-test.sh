@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-tripwire-window-test.sh — fixtures for the `for:` == event-window gate
-# (scripts/ci/lint-tripwire-window.py, audit Q261).
+# (scripts/ci/lint-tripwire-window.py).
 #
 # The gate's in-process `--self-test` covers the expression shapes. This
 # script covers what only a real invocation can: exit codes, directory

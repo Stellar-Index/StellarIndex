@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ansible-keepalived-healthcheck-test.sh — pins SL16: chk_haproxy used to be
+# ansible-keepalived-healthcheck-test.sh — pins that chk_haproxy is not
 # a bare `pgrep haproxy`, a pure process-existence check with no HTTP or
 # backend-pool reachability probe. A wedged-but-resident haproxy (accepting
 # no connections, or with every api_pool server DOWN) would still pass, so
 # this host would keep MASTER — and the VIP — while traffic blackholes.
-# The fix routes the vrrp_script through chk_haproxy.sh, which curls the
+# The vrrp_script routes through chk_haproxy.sh, which curls the
 # stats CSV and requires at least one UP server in api_pool.
 #
 # Structural only (grep over the real templates/tasks) — no hosts, no

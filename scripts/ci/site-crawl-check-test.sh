@@ -210,10 +210,10 @@ expect_pass "healthy site: ALL CHECKS PASSED"
 
 # --- pipefail regression: a sitemap family whose own <loc> has no /family/
 # sub-path (so the section-1 URL lookup legitimately matches nothing) must
-# still fall back to "$SITE/$family/", not abort the whole crawl. Before
-# `|| true` was added to that lookup, `grep -oE` returning 1 on "no match"
-# failed the assignment under `set -euo pipefail` and killed the script
-# before its own `[ -z "$URL" ]` fallback ever ran. ---
+# still fall back to "$SITE/$family/", not abort the whole crawl. Without
+# `|| true` on that lookup, `grep -oE` returning 1 on "no match"
+# fails the assignment under `set -euo pipefail` and kills the script
+# before its own `[ -z "$URL" ]` fallback runs. ---
 SITEMAP_BODY="<urlset><url><loc>$SITE/bare</loc></url></urlset>" run
 expect_pass "pipefail: a family with no matching sub-URL falls back, not aborts"
 
