@@ -166,9 +166,10 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 //
 // subjectKeyFn scopes the cache to the caller (account/session) so
 // two different callers who happen to pick the same literal key
-// string never collide; the method and path scope it to one route. A nil subjectKeyFn, an empty subject, or a
-// missing/blank header leaves the request to run normally — the
-// header is opt-in, matching its semantics elsewhere (Stripe et al.).
+// string never collide; the method and path scope it to one route. A
+// nil subjectKeyFn, an empty subject, or a missing/blank header leaves
+// the request to run normally — the header is opt-in, matching its
+// semantics elsewhere (Stripe et al.).
 //
 // A repeat that arrives while the first request is still running gets
 // a retryable 409 rather than a second run of the handler.

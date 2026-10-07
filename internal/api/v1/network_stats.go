@@ -51,12 +51,11 @@ type networkStatsStaleReader interface {
 //   - /v1/status.freshness.active_sources further narrows to
 //     enabled sources that have emitted an event in the last 7 days.
 //
-// The Registry holds 33 entries, 13 of them ClassExchange, so this
-// build reports total_sources=33 and exchange_sources=13 here; the two
+// So the counts here change only when the Registry does; the two
 // /v1/status counts depend on the region's config and traffic. The gap
-// between the two `total_sources` fields is by design (different metrics) — kept in
-// separate envelopes so the names don't collide in any single
-// response.
+// between the two `total_sources` fields is by design (different
+// metrics), kept in separate envelopes so the names don't collide in
+// any single response.
 type NetworkStats struct {
 	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64   `json:"markets_count_24h"`

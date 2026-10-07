@@ -12,10 +12,10 @@ import (
 //
 // This is the durable chokepoint for handlers that pass raw r.Context()
 // to expensive lake reads with no per-request timeout: without it a
-// handful of slow
-// unauthenticated requests could hold the shared 8-connection ClickHouse
-// pool open indefinitely (the server WriteTimeout does NOT cancel an
-// in-flight query). A request-scoped deadline lets those reads observe
+// handful of slow unauthenticated requests could hold every connection
+// of the API's small ClickHouse pools (16 for the explorer reader, 8 for
+// the supply reader) open indefinitely (the server WriteTimeout does NOT
+// cancel an in-flight query). A request-scoped deadline lets those reads observe
 // ctx cancellation and release their pool connection. Per-handler
 // context.WithTimeout wrappers (8s on the hot reads) still layer UNDER
 // this — they're tighter, so they fire first; this is the backstop for

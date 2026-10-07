@@ -120,7 +120,7 @@ func Auth(opts AuthOptions) Middleware {
 			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
-				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc
+				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // see takeFailedAuth's doc
 				return
 			}
 			r = r.WithContext(auth.WithSubject(r.Context(), subject))
@@ -136,7 +136,7 @@ func Auth(opts AuthOptions) Middleware {
 func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts AuthOptions, err error) {
 	rejected := isCredentialRejection(err)
 	if opts.FailedAuthLimiter != nil && rejected {
-		if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc
+		if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // see its doc
 			obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
 			writeAuthThrottleProblem(w, retryAfter)
 			return
