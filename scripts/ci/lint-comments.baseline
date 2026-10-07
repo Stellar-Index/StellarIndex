@@ -367,5 +367,3 @@ scripts/ci/lint-rule-equivalence/main.go	F-1222
 scripts/ops/circulation-fetch/main.go	2026-05-08
 scripts/ops/fx-history-backfill/main.go	2026-08-14
 scripts/ops/fx-history-backfill/main.go	INV-3
-test/harness/timescale.go	2026-06-15
-test/harness/timescale.go	2026-08-13

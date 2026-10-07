@@ -478,8 +478,26 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     if [ "${#timeout_dirs[@]}" -gt 0 ]; then
         add_step "lint-http-timeouts" "scoped to ${#timeout_dirs[@]} package dir(s)" "$ci_dir/lint-http-timeouts.sh" "${timeout_dirs[@]}"
     fi
-    add_step "go vet" "${#go_dirs[@]} package(s)" go vet "${go_dirs[@]}"
-    add_step "go build" "${#go_dirs[@]} package(s)" go build "${go_dirs[@]}"
+    # `./...` skips a package whose files build tags exclude (test/harness is
+    # integration-only), but go vet/build reject it when named. Without a
+    # module go list fails, and every dir is kept.
+    vet_dirs=()
+    if listed="$(go list -e -f '{{if or .GoFiles .TestGoFiles .XTestGoFiles}}{{.Dir}}{{end}}' "${go_dirs[@]}" 2>/dev/null)"; then
+        real_listed="$(while IFS= read -r l; do [ -n "$l" ] && (cd "$l" && pwd -P); done <<<"$listed")"
+        for d in "${go_dirs[@]}"; do
+            if grep -qxF "$(cd "$d" && pwd -P)" <<<"$real_listed"; then
+                vet_dirs+=("$d")
+            else
+                echo "lint-changed: skipping go vet/build on ${d} (build constraints exclude every file)"
+            fi
+        done
+    else
+        vet_dirs=("${go_dirs[@]}")
+    fi
+    if [ "${#vet_dirs[@]}" -gt 0 ]; then
+        add_step "go vet" "${#vet_dirs[@]} package(s)" go vet "${vet_dirs[@]}"
+        add_step "go build" "${#vet_dirs[@]} package(s)" go build "${vet_dirs[@]}"
+    fi
 fi
 
 # 7b. Prometheus alert rules. A 16-file diff touching 14 rule YAMLs used to
