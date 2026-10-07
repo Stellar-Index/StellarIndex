@@ -132,9 +132,9 @@ import (
 // process serving nothing — strictly worse than crashing. Same reasoning as
 // the SSE producers, which recover per-connection for exactly this reason.
 //
-// It delegates to [worker.Recover] rather than logging directly: it increments
-// stellarindex_worker_panics_total{worker} BEFORE logging, so a dead worker
-// is visible to alerting even if the log write fails.
+// It reports through [worker.Report] rather than logging directly, which
+// increments stellarindex_worker_panics_total{worker} BEFORE logging, so a
+// dead worker is visible to alerting even if the log write fails.
 func recoverBackgroundWorker(logger *slog.Logger, worker string) {
 	// Note: recover() only works one frame deep, so this cannot simply
 	// call worker.Recover — the deferred function IS this one.
@@ -307,7 +307,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// delivery) see context cancellation and unwind BEFORE the
 	// store/redis handles they query are closed. Registering cancel
 	// before those defers would close the pool first, while
-	// goroutines were still issuing queries against it. The HTTP server
+	// goroutines are still issuing queries against it. The HTTP server
 	// has its own bounded Shutdown() at the end of run(); cancel running
 	// last here doesn't change that path.
 	defer cancel()
@@ -880,7 +880,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	usdPegs := cfg.Trades.USDPeggedClassics(logger)
 	fiatPegs := parseFiatPeggedClassics(cfg.PricingGuard.FiatPeggedClassicAssets, logger)
 
-	// Load the verified-currency catalogue (R-018 Phase 1.1).
+	// Load the verified-currency catalogue.
 	// Failure here is fatal — the seed YAML is embedded; a parse
 	// error means a code change broke the build artifact, not an
 	// operator misconfiguration. Loaded BEFORE the prewarm goroutine
@@ -1312,7 +1312,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Prices:      priceReader,
 		// 2m SWR cache on LatestTradePerSource only (the
 		// /v1/observations primitive — an unbounded DISTINCT ON scan
-		// over the trades hypertable, ~8s → 503; c5a1a0e67). All other
+		// over the trades hypertable, ~8s → 503 uncached). All other
 		// HistoryReader methods pass through. Cold fill is detached
 		// so it outlives the handler's 8s ceiling and warms the
 		// cache for the status page's 2-min poll.
@@ -1961,7 +1961,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		serveErr <- nil
 	}()
 
-	// 01e91b683 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
+	// HTTP self-call prewarm. Hits /v1/assets/<id> for
 	// native + every verified currency on a 60s cadence so EVERY
 	// cache the handler touches — not just the 7 CachedAssetsReader
 	// SWR slots warmed by prewarmCaches — stays hot. Covers the F2
@@ -2055,7 +2055,7 @@ type authValidatorOptions struct {
 	// AccountStatus wires the account kill switch into the
 	// REDIS validator (the backend r1 actually runs). Nil when the
 	// dashboard bundle (and thus Postgres) is absent — the gate then
-	// simply stays off, matching the pre-fix behaviour, but a
+	// simply stays off, but a
 	// deployment with Postgres present MUST pass it or a suspended
 	// account keeps authenticating on the default backend.
 	AccountStatus auth.AccountStatusReader
@@ -2840,9 +2840,9 @@ type dexTVLValueGate struct {
 // interface holding a non-pointer struct is never == nil however empty
 // the struct is. Assigning `dexTVLValueGate{}` unconditionally makes
 // v1's documented "no gate wired"
-// degradation unreachable in the API binary, so /v1/protocols claimed a
+// degradation unreachable in the API binary, so /v1/protocols would claim a
 // substance screen that [pricing_guard] disable_substance_gate = true
-// had switched off.
+// has switched off.
 func buildDEXTVLValueGate(
 	substance *pricingguard.SubstanceGate,
 	scam *pricingguard.ScamGate,
@@ -2968,8 +2968,7 @@ var usdQuoteAsset = func() canonical.Asset {
 // adapter walks the pegs and re-runs the at-or-before lookup
 // against asset/<peg>. First non-error result wins. Without
 // this, /v1/assets/{id}.change_24h_pct silently stays null for
-// every on-chain asset (mirrors the same gap fixed in 6505934b5 for
-// the /v1/price handler).
+// every on-chain asset (the /v1/price handler has the same fallback).
 //
 // decimals is the confirmed non-7-decimals table. The bucket this
 // returns is a RAW prices_1m ratio, and both callers divide it into a
@@ -3668,11 +3667,10 @@ func prewarmLight(
 	// page (XLM is the explorer's default landing) and its
 	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
 	// whole-asset-universe CTE — sub-200ms when cached, ~3s cold.
-	// Pre-fix, prewarmLight only ran ListAssetsExt; native's
-	// GetNativeAssetRow cache key (added by the per-asset SWR
-	// pass) was never touched → every native page-load cold-filled
-	// it (bouncing 1-3s on rapid retries as each per-asset SWR entry
-	// fills incrementally). Drift-safe: this is the EXACT method
+	// prewarmLight alone runs only ListAssetsExt; without this, native's
+	// GetNativeAssetRow cache key is never touched and every native
+	// page-load cold-fills it (1-3s on rapid retries as each per-asset
+	// SWR entry fills incrementally). Drift-safe: this is the EXACT method
 	// the /v1/assets/native handler calls
 	// (asset_catalogue_extension.go GetNativeAssetRow path).
 	//
@@ -4157,7 +4155,7 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 // /v1/assets/{id} fires SEVEN SWR-cached reader calls per request
 // (full fan-out at internal/api/v1/asset_catalogue_extension.go):
 //
-//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 01e91b683 fix)
+//	GetAssetByAssetID         — the asset-catalogue row itself
 //	GetAssetTopMarkets(id, 5) — top 5 markets per asset
 //	GetAssetPriceHistory24h   — 24h sparkline
 //	GetAssetPriceHistory7d    — 7d sparkline
