@@ -58,7 +58,7 @@ CREATE TRIGGER fail_soroswap_verdict BEFORE INSERT OR UPDATE ON completeness_sna
 		t.Fatalf("install fault trigger: %v", err)
 	}
 
-	runErr := chops.Run([]string{"compute-completeness", "-config", cfgPath, "-ch", "-ch-addr", chAddr, "-to", "70000000", "-skip-recognition"})
+	runErr := chops.Run([]string{"compute-completeness", "-config", cfgPath, "-ch", "-ch-addr", chAddr, "-to", "70000000", "-skip-recognition", "-write"})
 	if runErr == nil || !strings.Contains(runErr.Error(), "soroswap") {
 		t.Fatalf("run err = %v, want a non-nil error naming soroswap (a failed source must fail the run)", runErr)
 	}

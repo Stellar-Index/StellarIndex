@@ -39,7 +39,7 @@ func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T)
 	run := func(args ...string) string {
 		t.Helper()
 		out, err := captureStdout(t, func() error {
-			return chops.Run(append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...))
+			return chops.Run(tradesCAGGRefreshCmd(cfgPath, args))
 		})
 		if err != nil {
 			t.Fatalf("trades-cagg-refresh %v: %v\n%s", args, err, out)
@@ -274,7 +274,7 @@ func tradesCAGGRefreshHarness(t *testing.T, ctx context.Context) (
 	run := func(args ...string) (string, error) {
 		t.Helper()
 		return captureStdout(t, func() error {
-			return chops.Run(append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...))
+			return chops.Run(tradesCAGGRefreshCmd(cfgPath, args))
 		})
 	}
 	mustRun := func(args ...string) string {
@@ -345,4 +345,14 @@ func matXmins(t *testing.T, ctx context.Context, db *sql.DB, view string) map[ti
 		t.Fatal(err)
 	}
 	return out
+}
+
+// tradesCAGGRefreshCmd adds -write to every refresh; -size is read-only and
+// refuses any other flag.
+func tradesCAGGRefreshCmd(cfgPath string, args []string) []string {
+	cmd := append([]string{"trades-cagg-refresh", "-config", cfgPath}, args...)
+	if len(args) == 1 && args[0] == "-size" {
+		return cmd
+	}
+	return append(cmd, "-write")
 }
