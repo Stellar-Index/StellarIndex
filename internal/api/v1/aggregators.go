@@ -50,13 +50,11 @@ type AggregatorRow struct {
 //
 //   - auto_discovered rows (currently: the migration 0103
 //     aggregator-exec seed) are evidence-observed, not vendor- or
-//     WASM-audit-verified, AND their routed-trade count only
-//     reflects trades whose router call carried call_path (recorded
-//     since migration 0101) — older activity through this exact
-//     wrapper is invisible until the
-//     queued r1 soroswap-router call-path re-derive lands, so
-//     routed_trades_24h=0 here means "not yet attributed", not
-//     "zero volume".
+//     WASM-audit-verified. Their routed-trade count is the trades the
+//     routed-via sweeper attributed to this wrapper through the router
+//     call's call_path; every router swap inside the trailing-24h
+//     window carries call_path, so a pre-call_path history gap cannot
+//     lower routed_trades_24h.
 //   - kind="router" rows generally (the note is skipped for the
 //     auto_discovered case above, which already covers it) fold
 //     together direct calls, calls wrapped by an UNregistered

@@ -1308,17 +1308,6 @@ func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 	return out
 }
 
-// readPriceWithAliases is the alias-aware wrapper around
-// reader.LatestPrice. It tries each (assetAlias, quote) pair in
-// order and returns the FIRST result that:
-//   - succeeds with err == nil, AND
-//   - is not stale (or if every alias is stale, the freshest one).
-//
-// A bare LatestPrice(native, fiat:USD) hits only the `native` key and
-// misses the `crypto:XLM` VWAP that CEX trades populate: measured
-// on prod, /v1/price?asset=native fell through to a 39h-stale
-// triangulated SDEX bucket while fresh CEX data sat in cache under the
-// alias key.
 // echoRequestedAsset restamps a snapshot's AssetID with the asset the
 // CLIENT asked for, discarding whichever alias the store happened to be
 // keyed under.
@@ -1332,7 +1321,7 @@ func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 // and without the restamp a caller asking for both `native` and
 // `crypto:XLM` gets two rows with an IDENTICAL asset_id (and differing
 // change_24h_pct, which is computed against the requested asset) — so
-// `native` vanishes from the resulting map entirely, as measured on prod.
+// `native` vanishes from the resulting map entirely.
 //
 // This is what [VWAP1mToSnapshot]'s godoc already says the contract is:
 // the asset id is "passed in rather than re-derived from the row so the
@@ -1345,6 +1334,14 @@ func echoRequestedAsset(snap PriceSnapshot, requested canonical.Asset) PriceSnap
 	return snap
 }
 
+// readPriceWithAliases is the alias-aware read of reader.LatestPrice,
+// coalesced through [Server.readPriceWithAliasesServed] and without the
+// served alias. It tries each [assetAliases] form of asset against quote
+// in order and returns the first fresh hit; when every hit is stale, the
+// first stale one with stale=true; when every alias errors, the first
+// withheld error, else the first error. The snapshot echoes the requested
+// asset id. A bare LatestPrice(native, fiat:USD) would read only the
+// `native` key and miss the `crypto:XLM` VWAP that CEX trades populate.
 func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	snap, srcs, stale, _, err := s.readPriceWithAliasesServed(ctx, reader, asset, quote)
 	return snap, srcs, stale, err

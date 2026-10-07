@@ -1908,8 +1908,8 @@ func (s *Server) middlewareStack() []stackEntry {
 	// per-endpoint `throttled` class. Inside MonthlyQuota, a quota
 	// denial — which returns without calling next — would be counted
 	// nowhere, and a capped customer's usage report would show zero
-	// traffic instead of a wall of throttling. The LEGACY per-day
-	// total (the MonthlyQuota input) still excludes 429s and 5xx other
+	// traffic instead of a wall of throttling. The per-day billable
+	// total (the MonthlyQuota input) excludes 429s and 5xx other
 	// than a timed-out read — see
 	// middleware.billableClass — so a counted quota-429
 	// cannot feed back into the quota it was denied by, and neither a

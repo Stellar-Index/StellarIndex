@@ -458,9 +458,9 @@ func run(cfgPath string, dryRun bool) error {
 		// post-mortems can verify against ground truth. See
 		// migrations/0019.
 		// The divergence half of the customer-webhook fan-out,
-		// edge-triggered. Reuses the same
-		// fanout instance the freeze sink wires above by re-
-		// constructing it here (the store ctor is cheap).
+		// edge-triggered. Builds its own Fanout over a new WebhookStore
+		// on the same Postgres handle; the freeze sink's fanout above is
+		// local to the freeze block.
 		// `OnWarningFired` fires only on `below-threshold → above-
 		// threshold` transitions so subscribers don't get
 		// per-tick re-spam while a divergence stays elevated.
@@ -1907,11 +1907,6 @@ func (a divergenceLedgerAdapter) LatestLedger() uint32 {
 	return c.LastLedger
 }
 
-// defaultPairs is the v1 aggregator coverage set. XLM/BTC/ETH across
-// USD/EUR/GBP gives the major-pair coverage without per-
-// operator tuning. Parallel to cmd/stellarindex-indexer's
-// defaultAggregatorPairs (kept per-binary so each can evolve
-// independently).
 // resolveUSDPeggedSorobanAssets derives the Soroban SAC-wrapper
 // contracts that inherit a USD peg transitively from
 // `[trades].usd_pegged_classic_assets` via `[supply].sac_wrappers`
@@ -1963,6 +1958,9 @@ func resolveUSDPeggedSorobanAssets(classicPegRaws []string, sacWrappers map[stri
 	return out
 }
 
+// defaultPairs is the built-in pair set used when [aggregate].pairs is
+// empty: XLM (as both crypto:XLM and native), BTC and ETH against fiat
+// USD, EUR and GBP.
 func defaultPairs() []canonical.Pair {
 	cryptos := []string{"XLM", "BTC", "ETH"}
 	fiats := []string{"USD", "EUR", "GBP"}
@@ -2005,8 +2003,6 @@ func defaultPairs() []canonical.Pair {
 	return out
 }
 
-// mkLogger builds the structured logger with the configured format /
-// level. Parallel to cmd/stellarindex-indexer.
 // startMetricsServer mounts a /metrics + /healthz listener at
 // cfg.MetricsListen and returns the *http.Server so the caller can
 // orchestrate graceful shutdown. Empty MetricsListen disables the
@@ -2081,6 +2077,8 @@ const (
 	aggregatorMetricsShiftedAddr      = "127.0.0.1:9465"
 )
 
+// mkLogger builds the structured logger with the configured format /
+// level. Parallel to cmd/stellarindex-indexer.
 func mkLogger(cfg config.ObsConfig) *slog.Logger {
 	return obs.NewLogger(cfg, "stellarindex-aggregator")
 }
