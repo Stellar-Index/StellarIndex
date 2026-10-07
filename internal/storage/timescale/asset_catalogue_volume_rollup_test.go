@@ -61,6 +61,32 @@ func TestRefreshAssetVolumeUpsert_shape(t *testing.T) {
 	}
 }
 
+// TestAssetVolumeUnpricedTrades_shape pins the lower-bound plumbing: the
+// refresh counts usd_volume IS NULL trades onto existing volume rows only
+// (LEFT JOIN from vol, so it never admits a contract to the Soroban spine),
+// on a bare ts window, and the listing emits the flag from that count.
+func TestAssetVolumeUnpricedTrades_shape(t *testing.T) {
+	for _, want := range []string{
+		"(asset_id, vol_usd, unpriced_trades, computed_at)",
+		"tr.usd_volume IS NULL",
+		"tr.ts >= now() - INTERVAL '24 hours'",
+		"FROM vol\n  LEFT JOIN unpriced",
+		"unpriced_trades = EXCLUDED.unpriced_trades",
+	} {
+		if !strings.Contains(refreshAssetVolumeUpsert, want) {
+			t.Errorf("upsert missing %q:\n%s", want, refreshAssetVolumeUpsert)
+		}
+	}
+	if !strings.Contains(listAssetsBaseSelect, "COALESCE(vol.unpriced_trades, 0) > 0  AS volume_lower_bound") {
+		t.Error("listing must emit volume_lower_bound from asset_volume_24h.unpriced_trades")
+	}
+	for name, q := range map[string]string{"slug": getAssetBySlugSQL, "native": getNativeAssetSQL} {
+		if !strings.Contains(q, "u.unpriced_trades > 0) AS volume_lower_bound") {
+			t.Errorf("%s query must emit volume_lower_bound", name)
+		}
+	}
+}
+
 // TestRefreshAssetVolumeUpsert_sargable asserts the window predicate is
 // a bare `bucket >= … AND bucket <= now() - 1 minute` comparison — no function
 // wrapped around the indexed `bucket` column (the class of bug the

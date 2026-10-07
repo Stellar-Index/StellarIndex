@@ -2025,41 +2025,29 @@ func (a *stringArray) Scan(src any) error {
 // "native", "USDC:GA5...", "soroban:CC..."); matches what the
 // trades hypertable stores in base_asset / quote_asset.
 //
-// # Scope caveat (launch-readiness L2.2)
-//
-// The CAGG sums `coalesce(usd_volume, 0)` per row. Per-trade
-// `usd_volume` is populated at insert time (see `tradeUSDVolume`
-// in trades.go) for:
-//   - off-chain CEX/FX sources with `fiat:USD` or
-//     USD-pegged-stablecoin quotes (uniform 10^8 external scale),
-//   - on-chain DEX sources whose quote asset is in the operator's
-//     `[trades].usd_pegged_classic_assets` allow-list or its SAC
-//     wrapper, transitive via `[supply.sac_wrappers]` (L2.2 phase 1).
-//
-// Deployments that haven't configured the trades allow-list see
-// on-chain trades contribute 0 to this sum (the pre-Phase-1
-// default). On-chain trades quoted in non-USD assets (XLM/AQUA,
-// XLM/BTC) still contribute 0; FX-anchor multiplication for
-// non-USD on-chain quotes is L2.2 phase 2 (post-launch). The
-// OpenAPI surface (`volume_24h_usd`) carries the same caveat.
-func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
+// The CAGG sums `coalesce(usd_volume, 0)` per row, and `usd_volume` is
+// the trade-time valuation `tradeUSDVolume` (trades.go) stamps at insert:
+// a USD or USD-pegged leg, or an XLM leg against the XLM/USD anchor. A
+// trade it could not value (no fresh anchor, token/token with no route)
+// adds 0, so lowerBound reports whether any alias form's
+// asset_volume_24h row counted such a trade.
+func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error) {
 	// Alias-complete membership: an asset's served volume is the sum
 	// across ALL its canonical forms (XLM's native / crypto:XLM / SAC
 	// split, plus any configured classic↔SAC wrapper), not just the one
 	// spelling the caller passed. Keying on a single form silently
 	// omitted the crypto:XLM (CEX) and SAC (Soroban) legs.
 	const q = `
-        SELECT COALESCE(sum(volume_usd), 0)::text
+        SELECT COALESCE(sum(volume_usd), 0)::text, ` + aliasVolumeLowerBoundSQL + `
           FROM prices_1m
          WHERE (base_asset = ANY($1) OR quote_asset = ANY($1))
            AND bucket >= now() - INTERVAL '24 hours'
            AND bucket <= now() - INTERVAL '1 minute'
     `
-	var out string
-	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetKey)).Scan(&out); err != nil {
-		return "", fmt.Errorf("timescale: Volume24hUSDForAsset(%s): %w", assetKey, err)
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetKey)).Scan(&usd, &lowerBound); err != nil {
+		return "", false, fmt.Errorf("timescale: Volume24hUSDForAsset(%s): %w", assetKey, err)
 	}
-	return out, nil
+	return usd, lowerBound, nil
 }
 
 // OHLCBar is one bucket of OHLC + volume + trade-count returned by

@@ -19970,30 +19970,16 @@ components:
             scope ("24h Trading Volume aggregate across indexed
             markets").
 
-            **Scope caveat (launch-readiness L2.2):** off-chain
-            CEX/FX trades populate `usd_volume` automatically when
-            the quote is `fiat:USD` or a USD-pegged stablecoin
-            (USDC / USDT / DAI / PYUSD / USDP).
-
-            On-chain DEX trades (Stellar SDEX, Soroswap, Aquarius,
-            Phoenix, Comet) populate `usd_volume` when their quote
-            asset is in the operator's
-            `[trades].usd_pegged_classic_assets` allow-list, or its
-            SAC contract is wired transitively via
-            `[supply.sac_wrappers]` (L2.2 phase 1). Deployments
-            that haven't configured the allow-list see on-chain
-            trades contribute 0 — comparisons with external
-            aggregators (CoinGecko, CMC) will read systematically
-            lower until the operator opts in.
-
-            On-chain trades quoted in non-USD assets (XLM/AQUA,
-            XLM/BTC, etc.) still contribute 0; the FX-anchor
-            multiplication for non-USD on-chain quotes is L2.2
-            phase 2, post-launch. The schema is forward-compatible:
-            phase 2 lands additively without a wire-shape change.
+            Each trade is valued in USD at trade time: a `fiat:USD`
+            or USD-pegged leg directly, an XLM leg through the
+            XLM/USD anchor of its own minute. A trade that cannot be
+            valued that way (no fresh anchor, a token/token pair with
+            no USD route) is excluded from the sum, never valued at
+            today's price, and the response then carries
+            `volume_lower_bound: true`.
         volume_lower_bound:
           type: boolean
-          description: "True when `volume_24h_usd` excludes trades that could not be valued at trade time: no trade-time `usd_volume`, and no XLM leg with an XLM/USD anchor within an hour of the trade. They are never valued at today's price, so the figure is a lower bound. Set only for Soroban (`C…`) assets; absent when nothing was excluded."
+          description: "True when `volume_24h_usd` excludes trades that could not be valued at trade time: no trade-time `usd_volume`, and, on a Soroban (`C…`) asset's detail, no XLM leg with an XLM/USD anchor within an hour of the trade. They are never valued at today's price, so the figure is a lower bound. Served on listing and detail rows for every asset type; absent when nothing was excluded."
         # ─── Coin-overlay listing fields (assets.go applyCoinExtensionFields
         # + projectCatalogueRow) — populated on listing/detail surfaces when
         # the CoinsReader is wired; null/absent otherwise. Documented

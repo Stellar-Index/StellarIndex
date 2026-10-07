@@ -112,7 +112,7 @@ func TestTrailing24hVolume_ExcludesInProgressMinute(t *testing.T) {
 	}
 
 	got := map[string]string{}
-	if got["Volume24hUSDForAsset"], err = store.Volume24hUSDForAsset(ctx, asset); err != nil {
+	if got["Volume24hUSDForAsset"], _, err = store.Volume24hUSDForAsset(ctx, asset); err != nil {
 		t.Fatal(err)
 	}
 	if got["SorobanVolume24hUSDForAsset"], _, err = store.SorobanVolume24hUSDForAsset(ctx, asset); err != nil {

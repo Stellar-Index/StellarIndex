@@ -99,6 +99,7 @@ func (r StoreAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 	if stats, err := r.S.LatestAssetStats(ctx, a.String()); err == nil {
 		if detail.VolumeUSD24h == nil && stats.Volume24hUSD != nil {
 			detail.VolumeUSD24h = stats.Volume24hUSD
+			detail.VolumeLowerBound = stats.VolumeLowerBound
 		}
 		if detail.CirculatingSupply == nil && stats.CirculatingSupply != nil {
 			detail.CirculatingSupply = stats.CirculatingSupply

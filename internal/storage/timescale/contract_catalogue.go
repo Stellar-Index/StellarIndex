@@ -77,7 +77,8 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 		       to_char(aps.change_24h_pct, 'FM999999990.00'),
 		       to_char(aps.change_7d_pct,  'FM999999990.00'),
 		       aps.source_count,
-		       avc.character
+		       avc.character,
+		       COALESCE(vol.unpriced_trades, 0) > 0
 		  FROM discovered_assets d
 		  LEFT JOIN asset_volume_24h       vol ON vol.asset_id = d.contract_id
 		  LEFT JOIN asset_price_snapshot   aps ON aps.asset_id = d.contract_id
@@ -97,7 +98,7 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 			&r.AssetID, &r.FirstSeenLedger, &r.LastSeenLedger, &r.ObservationCount,
 			&r.PriceUSD, &r.Volume24hUSD,
 			&r.Change1hPct, &r.Change24hPct, &r.Change7dPct,
-			&r.SourceCount, &r.VolumeCharacter,
+			&r.SourceCount, &r.VolumeCharacter, &r.VolumeLowerBound,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: scan contract catalogue row: %w", err)
 		}

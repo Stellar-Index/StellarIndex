@@ -22,6 +22,8 @@ var moneyColumnExceptions = map[string]bool{
 	"public.sdex_offer_events.price_d":   true,
 	"public.defindex_fees.fee_index":     true,
 	"public.sushiswap_v3_pools.fee_pips": true,
+
+	"public.asset_volume_24h.unpriced_trades": true, // trade count, not an amount
 }
 
 // TestMoneyColumnsAreNumeric is the runtime half of the ADR-0003 money

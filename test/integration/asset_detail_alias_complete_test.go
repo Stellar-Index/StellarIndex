@@ -119,7 +119,7 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 
 	// The reader under test must equal the alias-complete total (post-fix).
 	// Pre-fix it returns nativeOnly (< total) → this assertion fails RED.
-	got, err := store.Volume24hUSDForAsset(ctx, native.String())
+	got, _, err := store.Volume24hUSDForAsset(ctx, native.String())
 	if err != nil {
 		t.Fatalf("Volume24hUSDForAsset: %v", err)
 	}

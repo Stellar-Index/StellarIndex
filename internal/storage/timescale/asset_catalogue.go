@@ -30,6 +30,11 @@ func assetAliasArray(assetKey string) []string {
 	return canonical.AssetAliasStrings(a)
 }
 
+// aliasVolumeLowerBoundSQL is true when any alias form in $1 (an
+// [assetAliasArray]) has trades its served volume excludes as unpriced.
+const aliasVolumeLowerBoundSQL = `EXISTS (SELECT 1 FROM asset_volume_24h u
+		 WHERE u.asset_id = ANY($1) AND u.unpriced_trades > 0)`
+
 // assetAliasRows is [assetAliasArray] for a batch read: every requested id
 // expanded to its alias forms as parallel arrays (form, owning id, the
 // form's priority), so the SQL can stay alias-complete per id while the
@@ -74,6 +79,9 @@ type AssetRow struct {
 	// Trailing-24h USD-denominated trade volume. Nil when no
 	// trades hit `usd_volume`-eligible quotes in 24h.
 	Volume24hUSD *string
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
+	// usd_volume (asset_volume_24h.unpriced_trades > 0).
+	VolumeLowerBound bool
 	// Market cap in USD = price × circulating_supply when both
 	// are known. Nil when either component is missing.
 	MarketCapUSD *string
@@ -404,7 +412,7 @@ func scanAssetRow(scanner interface {
 		&firstLedger, &lastLedger, &r.ObservationCount,
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
 		&change1hPct, &change24hPct, &change7dPct, &sourceCount,
-		&volumeCharacter, &sortVolume24hUSD, &rankTier,
+		&volumeCharacter, &sortVolume24hUSD, &rankTier, &r.VolumeLowerBound,
 	); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
@@ -676,7 +684,7 @@ const listAssetsBaseSelect = `
 		  -- the old inline SUM (the rollup moved the compute, not the
 		  -- value). No asset-filter pushdown here: reading the rollup is
 		  -- cheap regardless of the caller's asset filter.
-		  SELECT asset_id, vol_usd
+		  SELECT asset_id, vol_usd, unpriced_trades
 		    FROM asset_volume_24h
 		)
 		SELECT
@@ -740,7 +748,8 @@ const listAssetsBaseSelect = `
 		    -- marker is substituted per-order at render time; it is emitted
 		    -- as a column so the keyset cursor can encode the same value
 		    -- the ORDER BY ranks on.
-		    ` + rankTierMarker + ` AS rank_tier
+		    ` + rankTierMarker + ` AS rank_tier,
+		    COALESCE(vol.unpriced_trades, 0) > 0  AS volume_lower_bound
 		  FROM catalogue_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  -- Headline price + 1h/24h/7d change + backing source count
@@ -802,32 +811,52 @@ func listAssetsBaseSelectSQL(order AssetsOrder) string {
 
 // refreshAssetVolumeUpsert recomputes the trailing-24h per-asset USD
 // volume (single-sided: the asset as base OR quote) and upserts one row
-// per asset into asset_volume_24h. This is the exact SUM the
-// per_asset_24h_vol CTE used to inline per request (minus the pushdown
-// markers, which don't apply to a full recompute), so the rollup value
-// is byte-identical to the old live figure — only NUMERIC, never float
-// (ADR-0003). computed_at is stamped to the transaction timestamp so
-// the sibling prune can drop assets whose volume lapsed this pass.
+// per asset into asset_volume_24h, NUMERIC, never float (ADR-0003).
+// computed_at is stamped to the transaction timestamp so the sibling
+// prune can drop assets whose volume lapsed this pass.
+//
+// prices_1m.volume_usd is sum(coalesce(usd_volume, 0)), so a trade with no
+// trade-time valuation adds 0; unpriced_trades counts those trades so the
+// readers can flag vol_usd as a lower bound. The count is LEFT JOINed onto
+// the volume rows and never creates one: the Soroban listing spine admits a
+// contract on an asset_volume_24h row. Its ts window is a superset of the
+// closed-bucket one (it also covers the open minute and the head of the
+// first bucket), so it can over-flag at the edges but never under-flag.
 const refreshAssetVolumeUpsert = `
-INSERT INTO asset_volume_24h AS t (asset_id, vol_usd, computed_at)
-SELECT asset_id, SUM(volume_usd) AS vol_usd, now()
-  FROM (
-    SELECT base_asset  AS asset_id, volume_usd
-      FROM prices_1m
-     WHERE bucket >= now() - INTERVAL '24 hours'
-       AND bucket <= now() - INTERVAL '1 minute'
-       AND volume_usd IS NOT NULL
-    UNION ALL
-    SELECT quote_asset AS asset_id, volume_usd
-      FROM prices_1m
-     WHERE bucket >= now() - INTERVAL '24 hours'
-       AND bucket <= now() - INTERVAL '1 minute'
-       AND volume_usd IS NOT NULL
-  ) t
- GROUP BY asset_id
+WITH vol AS (
+  SELECT asset_id, SUM(volume_usd) AS vol_usd
+    FROM (
+      SELECT base_asset  AS asset_id, volume_usd
+        FROM prices_1m
+       WHERE bucket >= now() - INTERVAL '24 hours'
+         AND bucket <= now() - INTERVAL '1 minute'
+         AND volume_usd IS NOT NULL
+      UNION ALL
+      SELECT quote_asset AS asset_id, volume_usd
+        FROM prices_1m
+       WHERE bucket >= now() - INTERVAL '24 hours'
+         AND bucket <= now() - INTERVAL '1 minute'
+         AND volume_usd IS NOT NULL
+    ) t
+   GROUP BY asset_id
+),
+unpriced AS (
+  SELECT leg.asset_id, count(*) AS n
+    FROM trades tr
+   CROSS JOIN LATERAL (VALUES (tr.base_asset), (tr.quote_asset)) AS leg(asset_id)
+   WHERE tr.ts >= now() - INTERVAL '24 hours'
+     AND tr.ts < now()
+     AND tr.usd_volume IS NULL
+   GROUP BY leg.asset_id
+)
+INSERT INTO asset_volume_24h AS t (asset_id, vol_usd, unpriced_trades, computed_at)
+SELECT vol.asset_id, vol.vol_usd, COALESCE(unpriced.n, 0), now()
+  FROM vol
+  LEFT JOIN unpriced ON unpriced.asset_id = vol.asset_id
 ON CONFLICT (asset_id) DO UPDATE
-   SET vol_usd     = EXCLUDED.vol_usd,
-       computed_at = EXCLUDED.computed_at`
+   SET vol_usd         = EXCLUDED.vol_usd,
+       unpriced_trades = EXCLUDED.unpriced_trades,
+       computed_at     = EXCLUDED.computed_at`
 
 // refreshAssetVolumePrune deletes assets that fell out of the
 // trailing-24h window (no prices_1m volume counted them this pass, so
@@ -1790,7 +1819,11 @@ var getAssetBySlugSQL = `
 		    -- lookup, not this projector.
 		    NULL::text                            AS volume_character,
 		    NULL::numeric                         AS sort_vol_usd,
-		    NULL::int                             AS rank_tier
+		    NULL::int                             AS rank_tier,
+		    -- Scoped to the one asset_id vol sums; mergeContractArmVolume
+		    -- reads each alias through here and ORs the flags.
+		    EXISTS (SELECT 1 FROM asset_volume_24h u
+		             WHERE u.asset_id = ca.asset_id AND u.unpriced_trades > 0) AS volume_lower_bound
 		  FROM chosen ca
 		  LEFT JOIN per_asset_24h_vol vol ON true` + priceArmJoins(xlmUSDLateralJoin("$2::text")) + `
 `
@@ -1934,7 +1967,9 @@ var getNativeAssetSQL = `
 		    NULL::int                              AS source_count,
 		    NULL::text                             AS volume_character,
 		    NULL::numeric                          AS sort_vol_usd,
-		    NULL::int                              AS rank_tier
+		    NULL::int                              AS rank_tier,
+		    EXISTS (SELECT 1 FROM asset_volume_24h u
+		             WHERE u.asset_id = 'native' AND u.unpriced_trades > 0) AS volume_lower_bound
 		  FROM ledger_bounds lb
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
@@ -1953,7 +1988,7 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow,
 	// forms (mirrors Volume24hUSDForAsset), so the /v1/assets/{id} volume
 	// figure includes the crypto:XLM (CEX) and SAC (Soroban) legs.
 	const q = `
-		SELECT COALESCE(SUM(volume_usd), 0)::text
+		SELECT COALESCE(SUM(volume_usd), 0)::text, ` + aliasVolumeLowerBoundSQL + `
 		  FROM (
 		    SELECT volume_usd FROM prices_1m
 		     WHERE base_asset = ANY($1)
@@ -1966,13 +2001,17 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow,
 		       AND bucket <= now() - INTERVAL '1 minute'
 		  ) t
 	`
-	var vol string
-	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&vol); err != nil {
+	var (
+		vol        string
+		lowerBound bool
+	)
+	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetID)).Scan(&vol, &lowerBound); err != nil {
 		return AssetRow{}, fmt.Errorf("timescale: LatestAssetStats: %w", err)
 	}
 	out := AssetRow{AssetID: assetID}
 	if vol != "" && vol != "0" {
 		out.Volume24hUSD = &vol
+		out.VolumeLowerBound = lowerBound
 	}
 	return out, nil
 }

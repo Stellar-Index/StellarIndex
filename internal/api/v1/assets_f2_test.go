@@ -43,19 +43,20 @@ func (s *stubSupplyLooker) DailyCirculatingSupply(_ context.Context, _ string, _
 // the trade-table representation (canonical.Asset.String()) rather
 // than the supply-table representation (supply.AssetKey()).
 type stubVolumeReader struct {
-	gotKey string
-	volume string
-	err    error
-	calls  int
+	gotKey     string
+	volume     string
+	lowerBound bool
+	err        error
+	calls      int
 }
 
-func (s *stubVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+func (s *stubVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {
 	s.calls++
 	s.gotKey = assetKey
 	if s.err != nil {
-		return "", s.err
+		return "", false, s.err
 	}
-	return s.volume, nil
+	return s.volume, s.lowerBound, nil
 }
 
 // TestF2_VolumeReaderReceivesTradeTableKey — the VolumeReader contract
@@ -112,12 +113,12 @@ type stubDualVolumeReader struct {
 	plainErr          error
 }
 
-func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {
 	s.plainKey = assetKey
 	if s.plainErr != nil {
-		return "", s.plainErr
+		return "", false, s.plainErr
 	}
-	return s.plain, nil
+	return s.plain, false, nil
 }
 
 func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, bool, error) {

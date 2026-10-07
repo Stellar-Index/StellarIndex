@@ -311,7 +311,7 @@ type AssetDetail struct {
 	// null means "volume reader not wired" or "lookup failed" —
 	// callers presenting the field should distinguish these.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
-	// VolumeLowerBound: VolumeUSD24h excludes trades not valued at trade time (Soroban assets only).
+	// VolumeLowerBound: VolumeUSD24h excludes trades not valued at trade time.
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
 
 	// Change24hPct is the trailing-24h price change as a signed
@@ -2594,6 +2594,7 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	}
 	if row.Volume24hUSD != nil {
 		d.VolumeUSD24h = row.Volume24hUSD
+		d.VolumeLowerBound = row.VolumeLowerBound
 	}
 	// §2 volume_character on the LISTING (was detail-only): the label from
 	// the asset_volume_character rollup, LEFT JOINed by canonical asset_id.
@@ -4974,6 +4975,7 @@ func canonicalAssetID(assetID string) string {
 // every other field stays the canonical form's own.
 func mergeAliasVolume(dst *AssetDetail, alias AssetDetail) {
 	dst.VolumeUSD24h = addDecimalStrings(dst.VolumeUSD24h, alias.VolumeUSD24h)
+	dst.VolumeLowerBound = dst.VolumeLowerBound || alias.VolumeLowerBound
 	if alias.TradeCount24h != nil {
 		sum := *alias.TradeCount24h
 		if dst.TradeCount24h != nil {
@@ -5257,6 +5259,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	}
 	if dst.VolumeUSD24h == nil {
 		dst.VolumeUSD24h = twin.VolumeUSD24h
+		dst.VolumeLowerBound = twin.VolumeLowerBound
 	}
 	if dst.CirculatingSupply == nil {
 		dst.CirculatingSupply = twin.CirculatingSupply
@@ -5267,10 +5270,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		// Stellar-issued entry because the curated seed states fiat
 		// M2 figures in whole units. Copying a 7-decimal stroop value
 		// onto a decimals=0 row made the pair self-inconsistent, and
-		// every consumer that scales by 10^decimals rendered it 10^7
-		// too large — measured live: XLM showed 342,797,138,733,487,872
-		// against the 34.3B its own market_cap/price implies (cold
-		// audit 2026-08-04).
+		// every consumer that scales by 10^decimals rendered it 10^7 too large.
 		dst.Decimals = twin.Decimals
 	}
 	if dst.MarketCapUSD == nil {

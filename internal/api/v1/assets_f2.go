@@ -80,15 +80,10 @@ var ErrChange24hUnavailable = errors.New("api: change_24h_pct comparison price u
 // WARN — the volume field stays null on any failure, the asset-
 // detail body still serves cleanly.
 //
-// Scope caveat: per launch-readiness L2.2 phase 1, on-chain DEX
-// trades populate `usd_volume` when their quote asset is in the
-// operator's `[trades].usd_pegged_classic_assets` allow-list (or
-// its SAC wrapper, transitive via `[supply.sac_wrappers]`). Other
-// on-chain trades — non-USD-pegged quotes, or USD-pegged classics
-// not in the allow-list — store NULL and contribute 0 to this
-// reader's sum. The OpenAPI surface carries the same caveat.
+// Trades with no trade-time `usd_volume` contribute 0 to the sum;
+// lowerBound reports that at least one was excluded.
 type VolumeReader interface {
-	Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error)
+	Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
 // SorobanVolumeReader is OPTIONALLY implemented by the wired
@@ -291,7 +286,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 			// Fall through to the plain reader below.
 		}
 	}
-	v, err := s.Volume.Volume24hUSDForAsset(ctx, assetKey)
+	v, lowerBound, err := s.Volume.Volume24hUSDForAsset(ctx, assetKey)
 	if err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
@@ -302,7 +297,7 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 	}
 	detail.VolumeUSD24h = &v
 	// The plain reader never values a Soroban asset's XLM-legged trades.
-	detail.VolumeLowerBound = asset.Type == canonical.AssetSoroban
+	detail.VolumeLowerBound = lowerBound || asset.Type == canonical.AssetSoroban
 	return false
 }
 

@@ -41,12 +41,18 @@ func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 	listing := sqlWithoutComments(listAssetsBaseSelect)
 	for _, banned := range []string{
 		"prices_1m", "prices_15m", "prices_1h", "prices_1d",
-		"trades", "DISTINCT ON",
+		"DISTINCT ON",
 	} {
 		if strings.Contains(listing, banned) {
 			t.Errorf("listing SELECT reads %q — the per-request price scan is back; "+
 				"a new column belongs on a rollup, not in this query", banned)
 		}
+	}
+	// Word-bounded so a rollup column such as asset_volume_24h.unpriced_trades
+	// is not mistaken for a read of the trades hypertable.
+	if regexp.MustCompile(`\btrades\b`).MatchString(listing) {
+		t.Errorf("listing SELECT reads \"trades\" — the per-request price scan is back; " +
+			"a new column belongs on a rollup, not in this query")
 	}
 
 	// Positive half: it must actually read the two rollups, or the
