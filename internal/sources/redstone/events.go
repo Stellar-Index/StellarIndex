@@ -150,10 +150,10 @@ var (
 	// config.rs), so the adapter's get_prices_from_payload errors
 	// before any event is emitted. Duplicates in args we're asked to
 	// decode therefore mean the args did NOT drive the emitting call —
-	// and, unrefused, they would be an attribution-steering lever: a
-	// duplicated feed would inflate the state-write subset's arity,
-	// forcing the payload fallback on attacker-shaped candidates. Refuse
-	// the whole event.
+	// and a duplicated feed counted twice would inflate the state-write
+	// subset's arity, forcing the payload fallback on attacker-shaped
+	// candidates. Refuse the whole event (subsetFromStateWrites also
+	// counts each written feed once).
 	ErrDuplicateFeedIDs = errors.New("redstone: duplicate feed_ids in op args")
 
 	// ErrUpdaterMismatch — the event body's `updater` field disagrees
