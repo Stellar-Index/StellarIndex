@@ -1737,8 +1737,7 @@ func (s *Server) chartVWAPReader(gran string) chartRead {
 // SAC-quoted Soroban pools (asset-SAC/XLM-SAC) and the pivot leg
 // reaches the CEX series stored under `crypto:XLM` AND the pool buckets
 // that CEX series does not hold: a pivot with a five-year hole in it
-// would punch that hole through into every series derived from it, which
-// is the defect this surface is being repaired for, one level down. The
+// would punch that hole through into every series derived from it. The
 // asset leg is read first so an asset with no XLM market at all — the
 // common miss — costs no pivot read. Only buckets present on BOTH legs
 // are emitted; a leg the reader truncated at its row cap yields the

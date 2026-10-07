@@ -118,9 +118,8 @@ const (
 	//
 	// The bound is load-bearing in BOTH directions and neither is
 	// hypothetical. Too loose and a dead observer keeps publishing a figure
-	// nobody is computing — the defect this replaces served USDC at
-	// 354,858,863.57 against 375,766,247.91 outstanding because the arm it
-	// read had no vintage bound at all. Too tight and a healthy asset is
+	// nobody is computing: an arm with no vintage bound served USDC at
+	// 354,858,863.57 against 375,766,247.91 outstanding. Too tight and a healthy asset is
 	// handed to an arm that read BLND +11.53% and PHO +156.79% high on the
 	// same day (see [classicSupplyReading]).
 	preciseSupplyMaxAge = 6 * time.Hour

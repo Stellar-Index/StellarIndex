@@ -1117,9 +1117,8 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// caller-chosen order without a different cursor.
 	//
 	// So say so, rather than accept the parameter and quietly ignore it.
-	// Silently ignoring is precisely the defect being fixed here: it
-	// gave the flagship home page a ranking that was not the ranking it
-	// advertised, and nothing about the 200 response revealed it.
+	// Silently ignoring it would give the home page a ranking that is not
+	// the ranking it advertises, with nothing in the 200 response to show it.
 	if orderBy.explicit && assetClass != "" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-order",
