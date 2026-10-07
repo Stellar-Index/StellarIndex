@@ -861,10 +861,8 @@ const drainTimeout = ShutdownDeadline - drainFinalPassBudget - drainReportMargin
 // per-event sink and gates its cursor on the result — a write that fails
 // transiently must NOT let the cursor advance past that ledger, or a
 // sole-writer (sep41) row is permanently lost. The dispatcher's
-// events-goroutine drain and the ops re-derive tools still call
-// HandleEvent for log-and-continue and DISCARD the error (their events
-// either double-write or ride the block-and-retry trade path), so every
-// caller compiles against the one signature.
+// events-goroutine drain reaches it through persistEventResilient, and
+// the ops re-derive tools act on the error as well.
 //
 // A trade the store permanently rejects is returned as a
 // *[TradeDroppedError], not nil: nil means the row landed, and
@@ -1211,7 +1209,7 @@ func eventSource(ev consumer.Event) string {
 // sole-writer domains) or were trade-shaped, but the path also carries
 // writes NOBODY else makes: band oracle_updates, external.UpdateEvent,
 // the supply observers' LedgerEntry observations, soroswap_router
-// swaps, defindex flows. On a Postgres infra fault those would be
+// swaps. On a Postgres infra fault those would be
 // dropped outright while the cursor advanced — a silent served-tier
 // gap with no lake-recoverable trade range to re-derive from.
 //
