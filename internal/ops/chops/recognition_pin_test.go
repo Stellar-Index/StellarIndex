@@ -48,8 +48,8 @@ func catalogueSource(t *testing.T, cat []reconSource, name string) reconSource {
 // Without declared contractIDs an unhandled
 // topic on a Rozo payment contract or on the Blend backstop fell into the
 // system-wide `unattributed` bucket and the source's own recognition_ok
-// was structurally unable to go false — the 2026-07-07 rozo blind spot's
-// class, with the alert that used to cover it removed by #465.
+// was structurally unable to go false — the rozo blind-spot
+// class, now that no alert covers it.
 //
 // Walks the real chain (catalogue → ownerOf → attributeRecognitionGaps →
 // sourceRecognitionOK) for EVERY contract each decoder claims, so a

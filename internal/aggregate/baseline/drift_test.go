@@ -359,10 +359,9 @@ func TestMaxDriftZScore_PersistsLongAfterTheMoveEnds(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_DetectedAtPartialWindowCoverage corrects a claim
-// this package previously made in a doc comment — that a drift
-// covering less than half the window is "diluted by the honest
-// majority". It is not: the median shifts in proportion to the
+// TestDriftZScore_DetectedAtPartialWindowCoverage pins that a drift
+// covering less than half the window is NOT "diluted by the honest
+// majority": the median shifts in proportion to the
 // covered fraction and sqrt(N)=208 amplifies what remains, so a
 // strong move is detected at roughly a fifth of the window.
 func TestDriftZScore_DetectedAtPartialWindowCoverage(t *testing.T) {

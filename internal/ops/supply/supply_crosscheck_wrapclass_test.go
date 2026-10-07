@@ -11,15 +11,13 @@ import (
 // has attested is fully wrapped, and the subset bound for everything
 // else.
 //
-// Before this, `supply audit -cross-check` ran the equality compare
-// unconditionally, which is a guaranteed failure for a partially
+// Running the equality compare unconditionally in
+// `supply audit -cross-check` is a guaranteed failure for a partially
 // wrapped pair — classic supply that never entered the SAC is exactly
 // the gap the subset bound exists to tolerate. Every configured r1 pair
-// is partial_wrap, so the runbook's own diagnostic command printed
-// "OVER TOLERANCE ✗ — investigate" and exited non-zero on healthy data,
-// while the runbook tells operators to chain `|| operator-escalate`
-// (cold audit 2026-08-03; BACKLOG #59 landed in the refresher but never
-// here).
+// is partial_wrap, so the runbook's own diagnostic command would print
+// "OVER TOLERANCE ✗ — investigate" and exit non-zero on healthy data,
+// while the runbook tells operators to chain `|| operator-escalate`.
 func TestCrossCheckWrapClass(t *testing.T) {
 	t.Parallel()
 

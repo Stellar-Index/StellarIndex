@@ -6,8 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// TestCapCheckpointAtLoss pins the resume-cursor cap: backfill used to
-// checkpoint lastFullyEnqueued even when a sink dropped or abandoned rows
+// TestCapCheckpointAtLoss pins the resume-cursor cap: backfill must not
+// checkpoint lastFullyEnqueued when a sink dropped or abandoned rows
 // (a SIGINT while the soroban-events sink applied back-pressure, or a
 // served-tier drain that timed out), so -resume restarted past them and
 // they never landed.

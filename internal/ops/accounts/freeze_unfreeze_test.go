@@ -358,8 +358,8 @@ func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 }
 
 // TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges — the command
-// overrides a safety control on a money surface, and its -reason used to go
-// to stderr only: no actor, no audit_log row. The row must land, name the
+// overrides a safety control on a money surface, so its -reason must not go
+// to stderr only (no actor, no audit_log row). The row must land, name the
 // actor and reason, and come before anything changes; with no row, nothing
 // may change.
 func TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges(t *testing.T) {

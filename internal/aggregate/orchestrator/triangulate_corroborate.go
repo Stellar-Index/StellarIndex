@@ -171,8 +171,8 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 // its last publish is older than [compositeMaxAgeTicks], or either
 // price is non-positive. Unchecked is the fail-closed answer here —
 // [confidence.Compute] drops the factor's weight entirely in that
-// case, so a pair with no usable composite scores exactly as it did
-// before this input existed.
+// case, so a pair with no usable composite scores as if this
+// input were absent.
 //
 // The composite is one tick old by construction. The chain pass runs
 // AFTER the per-pair refresh loop inside [Orchestrator.Tick] (it has

@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// TestChHoldersRollupWiresHeartbeat proves T391's remaining gap is closed:
-// the 30-minute timer's only prior signal was a systemd unit-failed state
-// on an outright crash, so a cycle that fell behind without erroring was
+// TestChHoldersRollupWiresHeartbeat proves the heartbeat gap is closed:
+// without it the 30-minute timer's only signal is a systemd unit-failed state
+// on an outright crash, so a cycle that falls behind without erroring is
 // invisible. -write against an unreachable ClickHouse address fails
 // (mirrors TestChHoldersRollupDryRunTouchesNoClickHouse), but the run must
 // still publish the shared ops_job textfile with last_exit_ok=0 — the same

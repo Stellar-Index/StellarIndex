@@ -40,7 +40,7 @@ import (
 // is documented as a dry harness with no Timescale dependency — so a
 // pool admitted only via protocol_contracts (not yet in the curated
 // set) looks falsely silent unless -seed-protocol-contracts unions it
-// in, mirroring production's gate (CA2-A28).
+// in, mirroring production's gate.
 var protocolContractsGatedSources = []string{
 	aquarius.SourceName,
 	phoenix.SourceName,

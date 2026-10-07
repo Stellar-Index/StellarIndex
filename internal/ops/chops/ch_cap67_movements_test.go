@@ -64,8 +64,8 @@ func cap67TransferEvent(t *testing.T, sep0011 string) events.Event {
 	}
 }
 
-// TestCap67MovementFromEvent_NativeClassic — the founding case
-// (inventory #1): a native-XLM CAP-67 transfer, emitted by the
+// TestCap67MovementFromEvent_NativeClassic — the founding case:
+// a native-XLM CAP-67 transfer, emitted by the
 // deliberately-unwatched native SAC, must decode into a movement with
 // asset "native" and cap67 provenance.
 func TestCap67MovementFromEvent_NativeClassic(t *testing.T) {

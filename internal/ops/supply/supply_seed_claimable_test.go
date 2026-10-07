@@ -17,7 +17,7 @@ const seedClaimableIssuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M6
 // assets would leave the rest under-reported in exactly the way this command
 // exists to fix.
 //
-// It also pins the dash/colon acceptance. The 2026-07-02 production bug that
+// It also pins the dash/colon acceptance. A production bug that
 // zeroed three supply components was a dash-form config string compared
 // against colon-form decoded keys, failing OPEN (observed nothing, reported
 // success). Routing -assets through supply.CanonicalizeWatchedClassic makes a
@@ -158,7 +158,7 @@ func TestClaimableSeedWriterRowShape(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterTombstone — GH #712: a tombstone seed is written as an
+// TestClaimableSeedWriterTombstone — a tombstone seed is written as an
 // is_removal row at the claim's ledger, counted as a retraction rather than a
 // balance, and resolves its served id.
 func TestClaimableSeedWriterTombstone(t *testing.T) {

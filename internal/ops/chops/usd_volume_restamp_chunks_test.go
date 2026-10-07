@@ -1448,9 +1448,9 @@ func TestChunkRestampPreflight_WatchdogFloorAddsToHeadroom(t *testing.T) {
 	}
 }
 
-// CA2-A17-harden-0: a run whose free space sits strictly between the old
-// max(floor, headroom) requirement and the correct floor+headroom sum used
-// to clear pre-flight and then be killed by the watchdog mid-chunk, because
+// A run whose free space sits strictly between a max(floor, headroom)
+// requirement and the correct floor+headroom sum must not
+// clear pre-flight and then be killed by the watchdog mid-chunk, because
 // the watchdog's own floor has no knowledge of the chunk's headroom math and
 // enforces it unconditionally. This free-space figure sits exactly in that
 // gap: it is below floor+headroom (must refuse) but above max(floor,

@@ -19,7 +19,7 @@ import (
 // r1ReserveAccounts is supply.sdf_reserve_accounts as deployed
 // (configs/ansible/roles/archival-node/defaults/main.yml,
 // stellarindex_sdf_reserve_accounts — 16 accounts transcribed from
-// stellar/dashboard common/lumens.js on 2026-07-02). The parser's
+// stellar/dashboard common/lumens.js). The parser's
 // definition of "the published set" is pinned to this list below: if
 // the two ever disagree on the fixture, either the transcription or
 // the parser is wrong, and the check must say which.
@@ -106,7 +106,7 @@ func TestDiffReserveList(t *testing.T) {
 }
 
 // TestParsePublishedReserveList_RealSource parses the REAL
-// common/lumens.js (as published 2026-09-18, testdata/) and pins the
+// common/lumens.js (as captured in testdata/) and pins the
 // published set to r1's deployed 16: the accounts table's 15 live rows
 // plus the network-upgrade reserve constant; not the commented-out
 // escrow, not the burn address.

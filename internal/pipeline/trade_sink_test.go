@@ -31,7 +31,7 @@ type fakeTradeStore struct {
 	batchCalls int
 	rowCalls   int
 	// healthy=false → every insert returns an infrastructure error
-	// (the 2026-07-06 signature). Flip to true to simulate recovery.
+	// (the outage signature). Flip to true to simulate recovery.
 	healthy atomic.Bool
 	// dataErr, when set, makes every insert return a permanent DATA
 	// fault (non-infra) regardless of healthy — the error-and-skip path.
@@ -54,11 +54,11 @@ var errInfra = errors.New("dial tcp 127.0.0.1:5432: connect: connection refused"
 
 // errData is a PERMANENT data fault as the driver actually reports one:
 // SQLSTATE 23502 (not_null_violation, integrity-constraint class 23).
-// It used to be a bare errors.New whose *text* imitated pq; that made
-// the fixture indistinguishable from an unclassifiable driver error,
-// which REL-08 (audit-2026-07-23) deliberately routes to block-and-retry
-// rather than to the drop path. Same fault the test always meant to
-// simulate, now typed so the classifier can positively recognise it.
+// A bare errors.New whose *text* imitated pq would be
+// indistinguishable from an unclassifiable driver error,
+// which the classifier deliberately routes to block-and-retry
+// rather than to the drop path. So the fault is typed, letting the
+// classifier positively recognise it.
 var errData = &pgconn.PgError{
 	Code:    "23502",
 	Message: `null value in column "quote_asset" violates not-null constraint`,
@@ -66,7 +66,7 @@ var errData = &pgconn.PgError{
 
 // errUnclassified is a driver error NEITHER predicate recognises — the
 // shape of a disk-full (53100), OOM (53200) or class-58 I/O fault
-// reaching the sink today. REL-08: these must block-and-retry, never
+// reaching the sink today: these must block-and-retry, never
 // drop.
 var errUnclassified = &pgconn.PgError{
 	Code:    "53100",
@@ -135,7 +135,7 @@ func counter(t *testing.T, vec *prometheus.CounterVec, labels ...string) float64
 }
 
 // TestFlushTradeBatch_InfraRetryThenSuccess is the load-bearing
-// property (2026-07-06 outage): an on-chain batch that hits an
+// property: an on-chain batch that hits an
 // infrastructure fault must BLOCK (retry with backpressure — the drain
 // goroutine is stalled, so the ledger cursor can't advance) and then
 // land every trade exactly once when Postgres recovers — never drop.
@@ -271,14 +271,14 @@ func TestFlushTradeBatch_ExternalInfraRoutesToBufferNoBlock(t *testing.T) {
 	}
 }
 
-// ─── REL-08 (audit-2026-07-23): infra-vs-data classification ────────
+// ─── infra-vs-data classification ────────
 //
-// The defect: the sink retried ONLY what timescale.IsInfraError
-// positively recognised and dropped everything else, so a Postgres
+// The hazard: retrying ONLY what timescale.IsInfraError
+// positively recognises and dropping everything else would treat a Postgres
 // infrastructure fault it does not enumerate (53100 disk_full, 53200
-// out_of_memory, class-58 I/O, XX000) was treated as a permanent data
-// fault — the trade was dropped while the enqueue-advanced cursor sailed
-// past its ledger. These tests pin the corrected, asymmetric policy: a
+// out_of_memory, class-58 I/O, XX000) as a permanent data
+// fault — the trade dropped while the enqueue-advanced cursor sails
+// past its ledger. These tests pin the asymmetric policy: a
 // DROP needs positive proof of permanence; everything else blocks and
 // retries.
 
@@ -343,7 +343,7 @@ func TestClassifyFault_StoragePredicatesAgree(t *testing.T) {
 	}
 }
 
-// TestRetryInfra_UnclassifiedFaultRetriesUntilItLands — the core REL-08
+// TestRetryInfra_UnclassifiedFaultRetriesUntilItLands — the core
 // property at the retry choke point: a fault nobody has positively
 // classified (disk-full here) must BLOCK and retry until it lands, not
 // return for the caller to drop.
@@ -383,7 +383,7 @@ func TestRetryInfra_PermanentDataFaultReturnsImmediately(t *testing.T) {
 // TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain — end-to-end at
 // the batch path: an on-chain batch hitting a disk-full fault must block
 // (cursor gating) and land every trade on recovery, with ZERO drops
-// counted. Before REL-08 this returned instantly and counted three
+// counted. Returning instantly would count three
 // dropped trades while the cursor kept moving.
 func TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain(t *testing.T) {
 	dropsBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
@@ -421,7 +421,7 @@ func TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain(t *testing.T) {
 }
 
 // TestFlushTradeBatch_ExternalUnclassifiedRoutesToBufferNoBlock — the
-// mirror-image invariant for the REL-08 fix: making unclassified faults
+// mirror-image invariant: making unclassified faults
 // blocking must NOT put external CEX/FX trades on the blocking path.
 // They have no cursor and are vendor-refillable (ADR-0041 acceptance
 // caveat), so they go to the bounded buffer and the drain keeps moving.
@@ -480,7 +480,7 @@ func (s *scriptedStore) WouldPopulateUSDVolume(_ context.Context, _ canonical.Tr
 	return false
 }
 
-// TestExternalRetryBuffer_InfraDuringIsolationRequeues — REL-08(b): when
+// TestExternalRetryBuffer_InfraDuringIsolationRequeues — when
 // the batch fails with a data fault the buffer isolates per-row, and if
 // Postgres goes away DURING that pass the un-landed rows must be
 // re-queued for the next tick, not counted as permanent drops. Before

@@ -43,8 +43,8 @@ func TestFilteringForwarder(t *testing.T) {
 			wantOut: "single line no newline\n",
 		},
 		{
-			// Regression: 2026-07-10 indexer seizure. A single line
-			// larger than the old bufio.Scanner 1 MiB cap made Scan()
+			// Regression: indexer seizure. A single line
+			// larger than the bufio.Scanner 1 MiB cap made Scan()
 			// return false, the drain goroutine exited, the stderr
 			// pipe lost its only reader, and every logger in the
 			// process blocked once the 64 KiB pipe filled. The drain
@@ -223,7 +223,7 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 }
 
 // TestCrashTracebackReachesRealStderr is the regression test for
-// CA2-A22-harden-0: a fatal, unrecovered panic freezes the world and
+// crash tracebacks: a fatal, unrecovered panic freezes the world and
 // writes its traceback straight to the OS fd 2 (now the filter's
 // pipe) via a raw syscall, so the forwarder goroutine never gets to
 // run and the traceback is lost. debug.SetCrashOutput routes the

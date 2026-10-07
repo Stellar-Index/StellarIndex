@@ -158,7 +158,7 @@ func captureOpsStderr(t *testing.T, fn func()) string {
 // counters for usage.RetentionDays ending today, so a day before that
 // window has expired and a day after today has not happened: folding
 // either prints "0 row(s)" and exits 0, which reads as "no traffic".
-// Both are refused however narrow the range (CA2-A26-harden-3).
+// Both are refused however narrow the range.
 func TestUsageRollupDays(t *testing.T) {
 	now := time.Date(2026, 7, 21, 15, 30, 0, 0, time.UTC)
 	cases := []struct {

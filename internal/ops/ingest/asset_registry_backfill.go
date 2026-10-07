@@ -106,7 +106,7 @@ type assetRegistryCounts struct {
 //	trade -> classic_assets -> issuers -> SEP-1 fetch -> RWA candidacy
 //
 // An asset that is HELD but never traded on the SDEX is invisible at every
-// step. Measured on the production lake before this job ran: 512,496 distinct
+// step. Measured on the production lake without this job: 512,496 distinct
 // classic assets had a trustline, 199,793 had a registry row — 312,703
 // absent, 61% of the population. Franklin Templeton's BENJI was the clearest
 // case: 12,498 trustlines, more than all eighteen impersonating BENJIs

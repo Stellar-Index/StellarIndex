@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestPersistEventsGodocMatchesConcurrencyModel guards T415: sink.go's
-// PersistEvents godoc once claimed, in the same comment block, both that
+// TestPersistEventsGodocMatchesConcurrencyModel guards sink.go's
+// PersistEvents godoc against claiming, in the same comment block, both that
 // "One goroutine drains; per-event work is sequential" and that
 // PersistEvents "launches [PersistWorkers] concurrent drain goroutines"
-// (PersistWorkers == 8). The single-goroutine language was stale --
-// confirm it stays gone rather than silently reappearing.
+// (PersistWorkers == 8). The single-goroutine language is stale --
+// confirm it stays gone.
 func TestPersistEventsGodocMatchesConcurrencyModel(t *testing.T) {
 	src, err := os.ReadFile("sink.go")
 	if err != nil {

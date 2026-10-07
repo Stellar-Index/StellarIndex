@@ -61,7 +61,7 @@ func readSquashed(t *testing.T, path string) string {
 // normalisation exponent over the sum of ALL SEVEN weights (the six
 // original plus w_tri — score.go's totalWeight always includes
 // triWeight, 0 when triangulation is unchecked). The original
-// (immutable) formula block and the six-term 2026-07-24 correction
+// (immutable) formula block and the six-term correction
 // stay as written; a later amendment blockquote carries the seven-term
 // correction, per the docs/adr/README.md "supersede/amend, don't
 // rewrite" rule.
@@ -98,7 +98,7 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 // a published `confidence`, and two of the shipped shapes no longer
 // match the original text: the liquidity ceiling moved $100K → $1M, and
 // a seventh factor (triangulation agreement) exists that the ADR
-// predates. Both are carried by the 2026-07-25 amendment; this guard
+// predates. Both are carried by an ADR amendment; this guard
 // fails if the amendment is dropped or the constants drift away from
 // it, which is the same class of silent doc/code divergence this guard exists for.
 func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
@@ -135,7 +135,7 @@ func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
 // TestADR0019PinsTheBootstrapDensityGate — the ADR's warmup rule says
 // "< 30 days of history", but the cap gates on bucket density at
 // [confidence.BootstrapDensityDays], re-engaging below
-// [confidence.BootstrapReengageDensityDays]. The 2026-09-28 amendment
+// [confidence.BootstrapReengageDensityDays]. An ADR amendment
 // records both; this fails if it is dropped or a constant moves away from it.
 func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
 	adr := readSquashed(t, adr0019DetailPath)

@@ -466,10 +466,10 @@ func verifyXLMBounds(
 		}
 		violations += n
 
-		// XLM-QUOTE BOUND (CA2-A17): the mirror population — DEX trades
-		// with XLM in the quote leg (-tier xlm-quote) — was structurally
-		// unjudged the same way tier-3b was before the XLM-base bound
-		// above: this command's own "acceptance" line reported 0
+		// XLM-QUOTE BOUND: the mirror population — DEX trades
+		// with XLM in the quote leg (-tier xlm-quote) — would be structurally
+		// unjudged without it, as with the XLM-base bound above: this
+		// command's own "acceptance" line would report 0
 		// violations for a tier it never looked at.
 		nq := checkXLMQuoteBound(groups, spec, rateRat, minRows, maxList)
 		if nq > 0 {

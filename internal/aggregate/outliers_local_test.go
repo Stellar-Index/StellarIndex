@@ -9,8 +9,8 @@ import (
 )
 
 // Fixture helpers for the time-local filter. Prices are quote/base
-// with base fixed at 10^7 so `quote` reads as price × 10^7 — the
-// 2026-08-28 XLM/GBP shape (0.1337 → 0.1364) is 1_337_000 → 1_364_000.
+// with base fixed at 10^7 so `quote` reads as price × 10^7 — an
+// XLM/GBP shape (0.1337 → 0.1364) is 1_337_000 → 1_364_000.
 const localFixtureBase = 10_000_000
 
 func localTrade(source string, quote int64, ts time.Time) canonical.Trade {

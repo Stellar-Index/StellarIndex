@@ -301,7 +301,7 @@ func TestChRebuildProjectedScript_LegacyDoneLineStillSkipsTheWindow(t *testing.T
 // The finding's second scenario. The re-derive dies after the DELETE; the
 // window is emptied. It must be recorded, never marked done, and the NEXT
 // run must rebuild exactly what was emptied before anything else — even a
-// narrowed run, which is how the hole used to get certified.
+// narrowed run, or the hole could be certified.
 func TestChRebuildProjectedScript_MidRunFailureIsRecordedAndRecoveredFirst(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

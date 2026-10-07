@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// ─── HO-361: ha-plan.md's `file:line` citations must resolve ────────
+// ─── ha-plan.md's `file:line` citations must resolve ────────
 //
 // docs/architecture/ha-plan.md backs several claims with a `path:line`
 // or `path:start-end` citation into ansible/shell source, so a reader

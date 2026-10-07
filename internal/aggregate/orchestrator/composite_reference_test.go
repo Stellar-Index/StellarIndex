@@ -760,9 +760,8 @@ func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window strin
 // it publishes are a PER-TICK verdict — so when the pair gains a second
 // venue and stops being evaluated, a lingering `verdict="corroborated"`
 // series claims a freeze decision consulted a reference that tick never
-// built, and keeps claiming it until the aggregator restarts. Nothing
-// deleted these series before this test (grep `Delete` in the package:
-// only recordVenueVWAPs had one).
+// built, and keeps claiming it until the aggregator restarts. Only
+// recordVenueVWAPs otherwise deletes series (grep `Delete` in the package).
 //
 // Note the label-value trap: emitCompositeReference labels the window
 // with windowLabel ("1m"), not window.String() ("1m0s"). A clear written

@@ -853,7 +853,7 @@ const outcomeFrozenLeg = "frozen_leg"
 // outcomeFrozenLegDirectServed is the [obs.AggregatorTriangulationsTotal]
 // label for "a leg of this chain was frozen this tick, the route around it
 // is unreachable, but the target published its own direct print this tick
-// anyway" (CA2-A21-correct-2). Unlike [outcomeFrozenLeg], no freeze is
+// anyway". Unlike [outcomeFrozenLeg], no freeze is
 // inherited: the direct value is fresh, not an LKG, so it serves unmarked
 // and its TTL is left alone.
 const outcomeFrozenLegDirectServed = "frozen_leg_direct_served"

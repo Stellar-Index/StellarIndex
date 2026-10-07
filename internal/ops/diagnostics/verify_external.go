@@ -289,8 +289,7 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 }
 
 // verifyDefaultFXPairs mirrors the indexer's defaultFXPairs; both
-// delegate to external.DefaultFXPairs so the two can't drift apart
-// (CA2-A26).
+// delegate to external.DefaultFXPairs so the two can't drift apart.
 func verifyDefaultFXPairs(base string) []canonical.Pair {
 	return external.DefaultFXPairs(base)
 }

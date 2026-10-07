@@ -284,7 +284,7 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 // latency-histogram wiring: a successful
 // per-pair refresh advances
 // `stellarindex_divergence_refresh_duration_seconds{outcome="ok"}`.
-// Same shape as wave 92's customer-webhook test — guards against
+// Guards against
 // a future refactor silently dropping the timing call.
 func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 	t.Parallel()

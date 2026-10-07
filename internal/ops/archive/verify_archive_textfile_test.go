@@ -186,15 +186,15 @@ func readFile(t *testing.T, path string) string {
 }
 
 // TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess is the
-// wave-D ALERT-10 regression.
+// regression test for the staleness signal.
 //
-// The staleness page read node_systemd_timer_last_trigger_seconds — when
+// node_systemd_timer_last_trigger_seconds records when
 // the TIMER last fired, independent of the triggered service's exit
-// status. A job that failed every single night kept that gauge perfectly
-// fresh, so the page for "the archive has not been verified in 36h" was
-// defeated by exactly the scenario it names.
+// status. A job that failed every single night would keep that gauge perfectly
+// fresh, defeating the page for "the archive has not been verified in 36h"
+// in exactly the scenario it names.
 //
-// The replacement signal only means something if a FAILED run cannot
+// The last-success signal only means something if a FAILED run cannot
 // advance it. That is what this pins.
 func TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
