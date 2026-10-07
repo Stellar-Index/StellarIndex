@@ -10,9 +10,8 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- contract_instance_changes — per-contract instance-executable timeline
--- index for the explorer's code-history + wasm reads (open-fixes
--- inventory #26 items 3 + wasm; route sweeps 2026-07-29 → 2026-08-09:
--- /v1/contracts/{id}/code-history was the LAST persistent 503 class).
+-- index for the explorer's code-history + wasm reads (without it,
+-- /v1/contracts/{id}/code-history is a persistent 503 class).
 --
 -- WHY: stellar.ledger_entry_changes is ORDER BY (ledger_seq, …), so the
 -- "instance entry for contract X" predicate (key_xdr IN (…)) is
@@ -23,7 +22,7 @@
 -- THE INDEX: one narrow row per captured instance-entry WRITE, keyed
 -- (contract, ledger, tx_hash, change_index), carrying just the decoded
 -- verdict: SAC or wasm + which hash. The wire layout makes the MV extraction a
--- pair of fixed-offset substrings (byte-verified 2026-08-09 against
+-- pair of fixed-offset substrings (byte-verified against
 -- go-stellar-sdk marshalling, all three shapes):
 --
 --   key_xdr   (48 bytes): [1-4]=LedgerKey type contract_data(6)
@@ -35,7 +34,7 @@
 --                         [61-64]=executable type (0=wasm 1=SAC)
 --                         [65-96]=wasm hash (wasm only)
 --
--- Instance-STORAGE writes rewrite the same key (audit-2026-07-23 C-F1),
+-- Instance-STORAGE writes rewrite the same key,
 -- so a busy contract contributes many rows — but each is ~90 bytes vs
 -- the multi-KB entry_xdr, and readers collapse to distinct executables.
 --

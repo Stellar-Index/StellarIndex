@@ -10,7 +10,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- contract_active_ledgers — per-(contract, ledger) activity index for the
--- explorer's contract detail read (site audit 2026-08-07/08).
+-- explorer's contract detail read.
 --
 -- WHY: stellar.contract_events is ORDER BY (ledger_seq, tx_hash, …). The
 -- "most recent N events for contract X" read relies on a reverse

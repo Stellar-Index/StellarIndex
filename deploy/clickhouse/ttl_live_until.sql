@@ -13,10 +13,10 @@
 -- MV-maintained from stellar.ledger_entry_changes (v0.21.4 headline fix).
 --
 -- Why this table exists: internal/storage/clickhouse/ttl_liveness.go's
--- ClassifyTTLLiveness used to resolve LIVE/ARCHIVED/UNKNOWN by scanning
+-- ClassifyTTLLiveness, without it, resolves LIVE/ARCHIVED/UNKNOWN by scanning
 -- `stellar.ledger_entries_current WHERE entry_type = 'ttl'` (586M rows) per
 -- 1,500-key batch, computing liveUntilLedgerSeq from the WIDE `entry_xdr`
--- column for EVERY ttl row per batch. Six production attempts (2026-07-29)
+-- column for EVERY ttl row per batch. Six production attempts
 -- failed across four mechanisms — IN-list over the 256 KiB parse cap, two
 -- aggregation OOMs against the client's 10 GiB pin, thread fan-out read
 -- amplification, and terminally an OOM of the query's own 8 GiB pin inside
@@ -34,7 +34,7 @@
 -- BOTH); a fresh deployment still needs the Step-2 backfill for any
 -- ledger_entry_changes history ingested before the MV existed.
 --
--- Extraction (production-validated 2026-07-28 ~07:55Z against the lake and by
+-- Extraction (production-validated against the lake and by
 -- the pre-v0.21.4 classifier's ttlLiveUntilExpr — ported faithfully):
 --   * A TTL LedgerKey is 36 bytes: type=00000009 (4) | sha256(LedgerKey) (32)
 --     → key_hash = bytes [5,32] of the decoded key_xdr (1-indexed substring).
@@ -43,8 +43,7 @@
 --     offset 41 (1-indexed). XDR integers are big-endian and
 --     reinterpretAsUInt32 is little-endian, hence the reverse().
 --   * version = (ledger_seq << 32) | intra_ledger_seq — the same composite
---     ReplacingMergeTree version as ledger_entries_current (audit-2026-07-16
---     C2-4c), so the latest same-ledger change wins deterministically.
+--     ReplacingMergeTree version as ledger_entries_current, so the latest same-ledger change wins deterministically.
 --
 -- Malformed-row guard (fail-open, same contract as the Go code): rows whose
 -- decoded key is not exactly 36 bytes or whose decoded entry is not exactly 48

@@ -9,7 +9,7 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- account_activity: per-account activity watermark (#31) — (account → the
+-- account_activity: per-account activity watermark — (account → the
 -- max ledger the account was EVER named in, across every role the
 -- account-history readers serve), MV-maintained from stellar.operations,
 -- stellar.transactions and stellar.operation_participants.
@@ -20,10 +20,10 @@
 -- LIMIT n` streams granules backwards FROM THE TIP until it accumulates the
 -- account's rows. For a long-idle account that walk covers every granule
 -- between the tip and the account's last activity: MEASURED ~4s live
--- (2026-08-24, r1) for a 46d-idle account
+-- (r1) for a 46d-idle account
 -- (GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4), worse under
 -- load — the scan that ate the 8s request budget (the tx-outcome starvation
--- SYMPTOM was separately fixed by PR #155's detached budget; this fixes the
+-- SYMPTOM is handled separately by a detached budget; this fixes the
 -- scan itself). With the watermark, the reader first does a point lookup here
 -- (primary-key read over ~53M single-column-keyed rows, ms) and adds
 -- `ledger_seq <= last_ledger` to each arm's resolve — partition + primary-key
@@ -116,7 +116,7 @@ GROUP BY account_id;
 -- leave a too-LOW bound for accounts active in it — deploy no reader until
 -- COMPLETE has printed.
 --
--- FAIL-CLOSED (F112): nothing watches this loop, and the invariant above is
+-- FAIL-CLOSED: nothing watches this loop, and the invariant above is
 -- only as good as its coverage, so every way the block can end WITHOUT
 -- having covered every window is made to end non-zero and WITHOUT the final
 -- COMPLETE line:
@@ -136,8 +136,8 @@ GROUP BY account_id;
 -- The whole loop is ONE parenthesised subshell with the COMPLETE line
 -- chained behind `&&`: an abort ends the subshell, never the operator's
 -- login shell, and no later line of the same paste can print success after
--- a failure (pasted into a nested shell, a bare `exit 1` used to kill the
--- inner shell and hand the rest of the paste — the success echo — to the
+-- a failure (pasted into a nested shell, a bare `exit 1` kills the
+-- inner shell and hands the rest of the paste — the success echo — to the
 -- outer one). Paste the block WHOLE. After an abort, fix the cause and
 -- re-run with the same TIP (every window is idempotent, see above); do not
 -- move on to Step 3 until COMPLETE has printed.
@@ -203,7 +203,7 @@ GROUP BY account_id;
 -- too (wm = 0): after a complete Step 2 every account has one. Too-high is
 -- fine; ANY too-low row is a data-hiding bug.
 --
--- Why per window (F112): the sample has to be drawn from the population a
+-- Why per window: the sample has to be drawn from the population a
 -- backfill gap can actually hurt, in EVERY window. Sampling recently
 -- active accounts tests only what the live MVs cover regardless of Step 2,
 -- and sampling the oldest accounts tests only the first window — either

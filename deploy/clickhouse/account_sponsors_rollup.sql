@@ -10,7 +10,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- account_sponsors rollup — the "who has sponsored other accounts"
--- league table behind GET /v1/accounts/sponsors (#351).
+-- league table behind GET /v1/accounts/sponsors.
 --
 -- SOURCE, AND WHY IT IS THE OPERATION STREAM AND NOT THE ENTRIES.
 -- Sponsorship is both a state and a set of operations. The STATE — who
@@ -29,13 +29,13 @@
 -- arrangement inside a failed transaction never took effect, so the
 -- fill joins each operation to its transaction on the full (ledger_seq,
 -- tx_index) identity and keeps it only where that transaction succeeded.
--- Measured on r1 2026-09-07, 2,426,813 of the archive's 22,413,991
+-- Measured on r1, 2,426,813 of the archive's 22,413,991
 -- sponsorship operations (10.8%) sit in failed transactions, rising to
 -- 61.6% of partition 39; ungated the board served 11,162,397
 -- sponsorships_started and 87,193 revocations_issued against true
 -- figures of 9,972,887 and 39,492, ranked 323 accounts whose every
 -- credited operation had failed, and placed 2,408 of the other 2,417 at
--- the wrong rank (#494).
+-- the wrong rank.
 --
 -- WHY THE TRANSACTION AND NOT AN APPLIED EFFECT. The sibling creator
 -- board gates by pairing its operation with a CAP-67 transfer movement,
@@ -43,7 +43,7 @@
 -- gate. Sponsorship has no such effect to pair with: under CAP-33 the
 -- is-sponsoring-future-reserves-for relationship lives only for the
 -- duration of the transaction and is written to no ledger entry.
--- Measured on r1 2026-09-07 over ledgers 63,000,000-63,010,000, 0 of
+-- Measured on r1 over ledgers 63,000,000-63,010,000, 0 of
 -- 4,745 Begin and End operations have any stellar.ledger_entry_changes
 -- row at their own (ledger_seq, tx_hash, op_index) — the 4,294 that DID
 -- apply included. Only Revoke leaves an entry change (2 of 2), and
@@ -60,7 +60,7 @@
 -- straight off the End operation's source_account, with no base64 or
 -- XDR work at all.
 --
--- Verified on r1 2026-09-05, two independent ways:
+-- Verified on r1, two independent ways:
 --   * 6/6 sampled Begin bodies unmarshalled with the Stellar SDK's XDR
 --     decoder yield a SponsoredId that equals the End operation's
 --     source_account in the same transaction.
@@ -109,7 +109,7 @@
 -- 24.74-billion-row, 2.18 TiB archive joined to a second one larger
 -- still, and everything it holds grows with the chain: its wall time,
 -- its dedupe state (one argMax per sponsorship operation in all of
--- history), and the join's build side. Measured on r1 2026-09-07 at
+-- history), and the join's build side. Measured on r1 at
 -- max_threads=2, one gated partition costs 18.9 s / 234.85 MiB
 -- (partition 40, 164,670 applied operations), 31.5 s / 1.00 GiB
 -- (partition 62, 1,013,943), 40.7 s / 1.28 GiB (partition 63, 1,033,738)
@@ -199,7 +199,7 @@ ORDER BY metric;
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats_staging
 AS stellar.account_sponsors_stats;
 
--- ── Sponsorship GRAPH edges (#351) ──────────────────────────────────
+-- ── Sponsorship GRAPH edges ──────────────────────────────────
 --
 -- The board above answers "who has sponsored the most". These two
 -- answer the graph question in both directions: whom has an account
@@ -220,7 +220,7 @@ AS stellar.account_sponsors_stats;
 -- sponsoringID inside each ledger entry, which is not projected.
 --
 -- ONE ROW PER DISTINCT (sponsor, sponsored) PAIR. Measured on r1
--- 2026-09-09 over the whole working table, 9,987,381 attributed End
+-- over the whole working table, 9,987,381 attributed End
 -- operations collapse to 4,088,814 distinct pairs — and that pair count
 -- equals the board's own distinct_sponsored_total exactly, while the
 -- event count equals its sponsorships_total exactly, so these tables are
@@ -237,7 +237,7 @@ AS stellar.account_sponsors_stats;
 -- and the by_sponsored twin is filled FROM the by-sponsor staging arm
 -- rather than by re-deriving the per-transaction attribution twice.
 --
--- COST. The aggregation measured 4.01 GiB / 28.1 s on r1 2026-09-09 at
+-- COST. The aggregation measured 4.01 GiB / 28.1 s on r1 at
 -- max_threads=2 over the 20,016,173-row working table — just BELOW this
 -- cycle's existing peak, the board join's 4.09 GiB, so the cycle's
 -- ceiling is unchanged by these steps.
