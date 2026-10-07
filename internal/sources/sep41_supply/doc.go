@@ -1,63 +1,17 @@
-// Package sep41_supply is the canonical SEP-41 supply-event
-// observer per ADR-0023. Plugs into the dispatcher's events-
-// based [dispatcher.Decoder] hook and emits one Event per
-// mint / burn / clawback event observed on a watched SEP-41
-// contract.
+// Package sep41_supply is the SEP-41 supply-event observer (ADR-0023): a
+// [dispatcher.Decoder] emitting one Event per mint, burn or clawback on a
+// contract in `[supply] watched_sep41_contracts`. Transfers do not change
+// supply (Algorithm 3: Σ mint − Σ(burn + clawback)) and are filtered at Match.
 //
-// Operator usage: populate `[supply] watched_sep41_contracts`
-// with the C-strkey of each SEP-41 contract you want
-// Algorithm 3 supply data for. Match fast-path is
-// (contract_id ∈ watched_set) AND (topic[0] symbol ∈
-// {mint, burn, clawback}).
+// Topic count does not identify the shape; the counterparty position does:
 //
-// # Why we ignore `transfer`
+//	legacy SAC   ["mint"|"clawback", admin, to|from]        counterparty @ topic[2]
+//	CAP-67       ["mint"|"burn"|"clawback", to|from, asset] counterparty @ topic[1]
+//	bare SEP-41  ["mint"|"burn", to|from]                   counterparty @ topic[1]
 //
-// Algorithm 3's running sum is `Σ mint − Σ(burn + clawback)`.
-// Transfers move ownership between holders without changing
-// total supply, so they're filtered at Match. The discovery
-// sniffer in `internal/canonical/discovery` records transfer
-// sightings (for the discovered_assets table); this observer
-// is supply-only.
-//
-// # Topic shapes
-//
-// Supply-affecting events arrive in three on-chain shapes that
-// differ in counterparty POSITION — the topic count alone does
-// not disambiguate them (lake-verified on r1):
-//
-//	legacy SAC    mint     ["mint", admin, to]                  (to @ topic[2])
-//	              clawback ["clawback", admin, from]            (from @ topic[2])
-//	CAP-67/Whisk  mint     ["mint", to, sep0011_asset]          (to @ topic[1])  ← dominant (≈99.96%)
-//	              clawback ["clawback", from, sep0011_asset]    (from @ topic[1]) ← dominant (100%)
-//	              burn     ["burn", from, sep0011_asset]         (from @ topic[1])
-//	bare SEP-41   mint     ["mint", to]                          (to @ topic[1])
-//	              burn     ["burn", from]                         (from @ topic[1])
-//
-// CAP-67 (Whisk) replaced the legacy admin-prefixed SAC form with the
-// SEP-41-spec form + a trailing sep0011_asset STRING — so the same
-// topic count (3) can carry the counterparty at a DIFFERENT index.
-// sep0011_asset is a String (ScvString), not an Address.
-//
-// Body (event.Value) carries the amount in stroops in ONE of two
-// shapes (SEP-41 is decimal-agnostic at the wire level; total /
-// circulating in `asset_supply_history` carry the wire stroop value
-// verbatim):
-//
-//	bare i128                              (the amount directly)
-//	CAP-67 map { amount: i128, to_muxed_id: String }
-//
-// The map form appears when the destination is a muxed account, or
-// when the issuer stamps a memo string into `to_muxed_id` (mainnet-
-// observed on watched tokens, e.g. "Auto recharge transaction"). The
-// amount then lives in the map's `amount` field — [decodeAmount]
-// type-tests and unwraps it; an i128-only decode would reject every
-// map body and drop the row.
-//
-// # Counterparty extraction
-//
-// Shape-aware (see [decodeCounterparty]): the counterparty is
-// topic[2] iff topic[2] is an Address (legacy admin-prefixed
-// form), else topic[1] (CAP-67 / bare-spec); burn is always
-// topic[1]. The observer stamps this on each row so operators
-// can audit which holders the supply came from / went to.
+// [decodeCounterparty] takes topic[2] iff it is an Address (sep0011_asset
+// is an ScvString), else topic[1]. The body is a bare i128 or a CAP-67 map
+// {amount, to_muxed_id} (muxed destinations, issuer memo strings);
+// [decodeAmount] type-tests both, since an i128-only decode drops every map
+// row. Amounts are wire stroops, stored verbatim.
 package sep41_supply

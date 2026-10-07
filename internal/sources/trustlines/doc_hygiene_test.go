@@ -19,7 +19,7 @@ func TestLPReserveObserverCitesItsTask(t *testing.T) {
 		if strings.Contains(text, "Task #65") {
 			t.Errorf("%s cites Task #65 for the LP-reserve observer; it shipped as Task #55", name)
 		}
-		if !strings.Contains(text, "liquidity_pools, Task #55") {
+		if name == "decode.go" && !strings.Contains(text, "liquidity_pools, Task #55") {
 			t.Errorf(`%s must credit the LP-reserve observer as "liquidity_pools, Task #55"`, name)
 		}
 	}

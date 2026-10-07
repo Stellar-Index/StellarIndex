@@ -1,49 +1,19 @@
-// Package claimable_balances is the canonical
-// ClaimableBalanceEntry observer per ADR-0022. Plugs into the
-// dispatcher's LedgerEntryChange hook (Task #54) and emits one
-// Observation per change touching a claimable balance whose
-// asset matches an operator-watched classic credit asset.
+// Package claimable_balances is the ClaimableBalanceEntry observer
+// (ADR-0022): a LedgerEntryChange decoder emitting one Observation per
+// change to a claimable balance whose asset is in `[supply]
+// watched_classic_assets`. Native balances belong to Algorithm 1 and are
+// not observed.
 //
-// Operator usage: the same `[supply] watched_classic_assets`
-// list used by the trustlines observer (Task #55) drives this one
-// too. Match fast-path is type discriminator
-// (LedgerEntryTypeClaimableBalance) + asset variant + asset_key
-// map lookup.
+// A Removed change's key carries only the BalanceId, so the observer
+// memoises claimable_id → asset_key, for the ledger walk, from the
+// LEDGER_ENTRY_STATE pre-image stellar-core emits immediately before each
+// removal; unattributable removals stay unmatched. Emitting removals is
+// required: the served total sums Trustline + Claimable + LPReserve +
+// SACWrapped ([supply.ClassicComputer.Compute]), so an unremoved balance
+// is counted forever and over-reports total and circulating supply.
 //
-// # Removed-variant handling (a claim)
-//
-// The XDR LedgerKey for claimable balances carries only the
-// BalanceId — not the asset. So a Removed change cannot be
-// asset-key-filtered from the change itself.
-//
-// The asset is nevertheless available in the substrate: stellar-core
-// emits the full pre-image as a LEDGER_ENTRY_STATE change
-// immediately before the LEDGER_ENTRY_REMOVED for the same entry
-// (LedgerTxn::getChanges; the SDK's
-// ingest.GetChangesFromLedgerEntryChanges pairs on exactly that
-// adjacency). The observer therefore consumes State changes for
-// watched assets, memoizes claimable_id → asset_key for the
-// duration of the ledger walk, and uses it to attribute the
-// removal. Removals it still cannot attribute (unwatched asset, or
-// no pre-image seen) stay unmatched.
-//
-// Emitting the removal is not optional bookkeeping: the served
-// total is Trustline + Claimable + LPReserve + SACWrapped
-// ([supply.ClassicComputer.Compute]), so a claimable balance that is
-// created and never removed is counted forever — total AND
-// circulating supply (and market cap / FDV downstream) drift upward
-// without bound. The pre-fix behaviour OVER-reported both; it was
-// not the conservative direction. (audit-2026-07-23 DAT-10)
-//
-// Removal is written as an absorbing state (is_removal=true,
-// balance 0) rather than a decrement, so re-ingesting a ledger
-// rewrites the identical row instead of double-subtracting, and a
-// create+claim inside one ledger collapses to the removal via the
-// writer's intra_ledger_seq-guarded upsert.
-//
-// # Why classic-only
-//
-// Native (XLM) claimable balances exist but contribute to
-// Algorithm 1, not Algorithm 2. The reader path for XLM doesn't
-// consume claimable_observations.
+// A removal is an absorbing state (is_removal=true, balance 0), not a
+// decrement, so re-ingesting a ledger rewrites the same row and a
+// create+claim in one ledger collapses to the removal via the writer's
+// intra_ledger_seq-guarded upsert.
 package claimable_balances

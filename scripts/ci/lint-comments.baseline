@@ -73,13 +73,9 @@ internal/sources/blend_emitter/events.go	2026-07-10
 internal/sources/blend_emitter/events.go	2026-07-10
 internal/sources/claimable_balances/dispatcher_adapter.go	2026-08-04
 internal/sources/claimable_balances/dispatcher_adapter.go	PR 3
-internal/sources/claimable_balances/doc.go	2026-07-23
 internal/sources/claimable_balances/events.go	2026-07-16
 internal/sources/classicmovements/decode.go	2026-07-12
 internal/sources/classicmovements/dispatcher_adapter.go	2026-07-13
-internal/sources/classicmovements/doc.go	2025-09-03
-internal/sources/classicmovements/doc.go	2026-07-10
-internal/sources/classicmovements/doc.go	2026-07-10
 internal/sources/classicmovements/events.go	2025-09-03
 internal/sources/external/binance/events.go	2026-04-24
 internal/sources/external/bitstamp/pairs.go	2026-05-05
@@ -105,10 +101,8 @@ internal/sources/external/tiingo/events.go	2026-09
 internal/sources/external/tiingo/events.go	2026-09-22
 internal/sources/liquidity_pools/dispatcher_adapter.go	2026-08-04
 internal/sources/liquidity_pools/dispatcher_adapter.go	PR 4
-internal/sources/liquidity_pools/doc.go	2026-07-23
 internal/sources/liquidity_pools/events.go	2026-07-16
 internal/sources/reflector/decode.go	2026-04-23
-internal/sources/sac_balances/doc.go	PR 5
 internal/sources/sac_balances/events.go	2026-07-16
 internal/sources/sdex/decode.go	2026-07-23
 internal/sources/sdex/decode.go	F-1233
@@ -116,7 +110,6 @@ internal/sources/sdex/dispatcher_adapter.go	2026-08-04
 internal/sources/sep41_transfers/dispatcher_adapter.go	F-0021
 internal/sources/sep41_transfers/dispatcher_adapter.go	F-1316
 internal/sources/sep41_transfers/dispatcher_adapter.go	F-1324
-internal/sources/sep41_transfers/doc.go	F-0021
 internal/sources/sorobanevents/dispatcher_adapter.go	2026-05-26
 internal/sources/sorobanevents/dispatcher_adapter.go	2026-07-23
 internal/sources/sorobanevents/dispatcher_adapter.go	2026-07-23
