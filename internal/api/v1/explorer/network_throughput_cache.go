@@ -14,13 +14,12 @@ import (
 // GET /v1/network/throughput — the /network page's daily
 // ledger/tx/op/event series and chain-economics panel.
 //
-// Why (§2.6b grounding incident, 2026-08-13): the read is a FINAL scan
-// over up to a YEAR of stellar.ledgers with three argMax columns, and it
-// ran INLINE on the 8-second explorerReadTimeout on every request. On a
-// cold or loaded box it missed that budget, the handler 503'd (or the
+// Why: the read is a FINAL scan over up to a YEAR of stellar.ledgers with
+// three argMax columns. Run INLINE on the 8-second explorerReadTimeout, it
+// missed that budget on a cold or loaded box, the handler 503'd (or the
 // page rendered the panel absent), and — because the scan died WITH the
-// request — no retry could ever land warm. Same failure shape the
-// holders board and the contracts directory already fixed here.
+// request — no retry could ever land warm. The holders board and the
+// contracts directory are cached here for the same failure shape.
 //
 // Two properties beyond the plain SWR shape:
 //
@@ -29,9 +28,9 @@ import (
 //     as the holders/contracts caches hold the maximum page and slice by
 //     `limit`. Daily buckets are independent aggregates, so the last N
 //     buckets of the 365-day series ARE the N-day series — no rounding,
-//     no ladder, no echo change. It also collapses the key space to 1:
-//     pre-fix an unauthenticated caller could walk ?window_days=1..365 and
-//     buy 365 distinct year-class scans (the C3-009 amplification shape).
+//     no ladder, no echo change. It also collapses the key space to 1, so
+//     an unauthenticated caller cannot walk ?window_days=1..365 to buy 365
+//     distinct year-class scans.
 //   - `partial` is READ from the cached bucket, not recomputed at serve
 //     time. ExplorerReader.NetworkThroughput derives it from the query's
 //     own max(close_time) — deterministic and data-derived, so a stale

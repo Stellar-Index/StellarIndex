@@ -11,7 +11,7 @@ import (
 
 // AccountGraphView is the wire response for GET
 // /v1/accounts/{g_strkey}/graph — one account's neighbourhood in the two
-// relationships #351 asks for, traversable in both directions.
+// relationships (creation and sponsorship), traversable in both directions.
 //
 // EVERY FIGURE HERE IS HISTORY, and the two relationships are kept apart
 // because they are not the same kind of fact:
@@ -152,7 +152,7 @@ const (
 	graphDefaultLimit = 50
 	// graphMaxLimit bounds ONE page, not the traversal. The outbound
 	// direction is genuinely unbounded — 785,543 distinct sponsored
-	// accounts for the busiest sponsor measured on r1 2026-09-09 — so a
+	// accounts for the busiest sponsor measured on r1 — so a
 	// caller that wants the whole set walks the cursor. Matched to the
 	// sibling league-table endpoints' cap.
 	graphMaxLimit = 500
@@ -204,7 +204,7 @@ func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (stri
 }
 
 // AccountGraph serves GET /v1/accounts/{g_strkey}/graph — who created
-// and sponsored this account, and whom it created and sponsored (#351).
+// and sponsored this account, and whom it created and sponsored.
 //
 // The default response is BOUNDED BY CONSTRUCTION: inbound edges are
 // capped, outbound is summarised, and the unbounded direction is served

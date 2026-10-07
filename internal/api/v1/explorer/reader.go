@@ -3,16 +3,15 @@
 // /v1/operations, /v1/network/throughput, /v1/tx/{hash}, /v1/search,
 // /v1/contracts*, /v1/accounts*, /v1/assets/{asset_id}/holders.
 //
-// Extracted from internal/api/v1 (maintainability audit 2026-07-01,
-// D1 finding M1-7: "internal/api/v1 is 76 flat non-test files; the
-// explorer_* cluster is the obvious next extraction"). The handlers
+// A package of its own so internal/api/v1 does not carry the explorer
+// cluster as flat files. The handlers
 // read the certified ClickHouse lake directly through ExplorerReader
 // and otherwise depend only on a handful of narrow, injected seams
 // (Handler below) — they do NOT hold a reference to v1.Server, so
 // this package does not import internal/api/v1 (that would cycle,
 // since v1.Server wires a *Handler into its route table). Package
 // v1 keeps type aliases for every exported type here so its existing
-// (pre-extraction) tests keep compiling unchanged — see explorer.go
+// tests keep compiling unchanged — see explorer.go
 // in internal/api/v1.
 package explorer
 
@@ -36,7 +35,7 @@ import (
 )
 
 // explorerReadTimeout is the per-request ceiling every explorer handler
-// wraps its ClickHouse lake reads in (C3-1, audit-2026-07-16). The
+// wraps its ClickHouse lake reads in. The
 // explorer endpoints read the shared explorer pool (MaxOpenConns:8);
 // without a bounded context a handful of slow unauthenticated requests
 // (e.g. AssetHolders' two ledger_entries_current FINAL scans) hold every
@@ -85,10 +84,9 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	}
 	// Driver-level network timeouts (`read tcp …: i/o timeout` from the
 	// ClickHouse conn under load) are the same transient capacity class:
-	// they arrive as net.Error, not context.DeadlineExceeded, and were
-	// falling through to 500 "Internal error" (site audit 2026-08-07 —
-	// /accounts/{g}/operations served exactly that during a refresh
-	// storm).
+	// they arrive as net.Error, not context.DeadlineExceeded, and would
+	// otherwise fall through to 500 "Internal error" (/accounts/{g}/operations
+	// served exactly that during a refresh storm).
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
 		return true
@@ -103,12 +101,12 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 // "the dependency is down, retry", the same class as the saturation
 // sentinels above.
 //
-// #371 F4: pre-fix retryableColdMiss matched only net.Error values whose
-// Timeout() is TRUE, and a hard-down lake does not time out — it answers
-// instantly with `dial tcp 127.0.0.1:9300: connect: connection refused`,
-// a *net.OpError whose Timeout() is false. That fell through to
+// Matching only net.Error values whose Timeout() is TRUE is not enough:
+// a hard-down lake does not time out — it answers instantly with
+// `dial tcp 127.0.0.1:9300: connect: connection refused`, a *net.OpError
+// whose Timeout() is false. Unmatched, that falls through to
 // `errors/internal` 500 on 20+ unauthenticated explorer routes, so a
-// ClickHouse outage was indistinguishable from a code bug in the logs,
+// ClickHouse outage is indistinguishable from a code bug in the logs,
 // in the 5xx SLA probe, and in every alert built on them.
 //
 // The rule ("any error from below the query layer is transient") is the
@@ -138,11 +136,10 @@ func lakeUnreachable(err error) bool {
 
 // writeReadTimeout writes the standard response for a lake read that blew
 // explorerReadTimeout: 503 + problem+json with an endpoint-specific
-// `…-timeout` type URL (audit-2026-07-23 C-F1). Pre-fix every explorer handler
-// mapped a deadline to `errors/internal` 500, which tells the caller "we broke"
-// when the truthful answer is "this exceeded our time budget, retry" — and made
-// a capacity problem indistinguishable from a bug in the logs and the 5xx SLA
-// probe. /v1/contracts/{id}/code-history served that 500 for EVERY contract.
+// `…-timeout` type URL. Mapping a deadline to `errors/internal` 500 would tell
+// the caller "we broke" when the truthful answer is "this exceeded our time
+// budget, retry" — and make a capacity problem indistinguishable from a bug
+// in the logs and the 5xx SLA probe.
 //
 // 503, not 504: this is the convention the rest of the API already uses for a
 // server-side read deadline (14 call sites in package v1 pair handlerTimedOut
@@ -159,10 +156,10 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 			" explorer read budget; retry shortly")
 }
 
-// writeRetryable is writeReadTimeout with an honest split by cause
-// (inventory #5, site audit 2026-08-07): a saturation reject is NOT a
+// writeRetryable is writeReadTimeout with an honest split by cause:
+// a saturation reject is NOT a
 // timeout — it's an instant "the shared refresh capacity is busy
-// warming other cold pages" answer, and labeling it "timed out" sent
+// warming other cold pages" answer, and labeling it "timed out" sends
 // every investigation down the wrong path (it reads as a slow query
 // when the query never ran). Same 503 + type URL contract either way;
 // only the detail tells the truth about which condition occurred.
@@ -175,14 +172,13 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 				"retry in a few seconds")
 		return
 	}
-	// Third cause, same 503: the lake itself is unreachable (#371 F4).
+	// Third cause, same 503: the lake itself is unreachable.
 	// Saying "timed out" here would be the same category of lie the
 	// saturation split above exists to prevent — a refused dial answers
 	// in microseconds, so an operator reading "didn't return within the
 	// 8s budget" goes looking for a slow query that never ran. The
 	// underlying error is logged here rather than at the call sites: they
-	// all log a fixed "deadline exceeded" line WITHOUT err (it used to be
-	// unreachable for this class, which fell through to their Error log),
+	// all log a fixed "deadline exceeded" line WITHOUT err,
 	// so without this the dial failure would leave no trace of its cause.
 	if lakeUnreachable(err) {
 		h.Logger.Warn("explorer lake unreachable", "err", err, "path", r.URL.Path)
@@ -266,8 +262,8 @@ type ExplorerReader interface {
 	// AccountStateCached serves account state from a bounded TTL cache;
 	// a cold miss waits on a DETACHED fill bounded by the caller's
 	// deadline, and an EXPIRED entry is served immediately with
-	// stale=true while one detached refresh runs (route-sweep
-	// 2026-07-30) — pair stale with flags.stale in the envelope.
+	// stale=true while one detached refresh runs —
+	// pair stale with flags.stale in the envelope.
 	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
@@ -276,10 +272,10 @@ type ExplorerReader interface {
 	// deadline. The snapshot's AsOf/AsOfLedger are the ranking's vintage — an
 	// entry past its TTL is STILL served (with them; the handler flags it degraded)
 	// rather than treated as a miss, so a window of failed refreshes
-	// degrades to old-but-real data, not to 503s (route-sweep 2026-07-29).
+	// degrades to old-but-real data, not to 503s.
 	// ok=false means "never computed yet" — render a warming state, do
-	// not fall back to AccountsByWealth on the request path (site-audit S3:
-	// that scan needs 11-20s against an 8s handler deadline, so it 500'd
+	// not fall back to AccountsByWealth on the request path (that scan
+	// needs 11-20s against an 8s handler deadline, so it 500'd
 	// 100% of the time). Basis ("usd" | "native_xlm") records which unit
 	// the cached ranking is in, so the handler labels the served numbers
 	// correctly — native XLM where no USD price map was available (the lean
@@ -298,7 +294,7 @@ type ExplorerReader interface {
 	// copy is verified through; 0 = only rows since its MV was created.
 	AssetMovementsBackfilledThru(ctx context.Context) (uint32, error)
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement
-	// derive (inventory #1) has completed through — 0 when the feed
+	// derive has completed through — 0 when the feed
 	// isn't provisioned. The movements handler floors its Postgres tail
 	// arm at watermark+1 and ceilings the ClickHouse arm at the
 	// watermark, keeping the merge gap-free and double-count-free at
@@ -312,14 +308,14 @@ type ExplorerReader interface {
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
 	// AccountCreators is the account-creator league table plus the
-	// ledger span the cycle that built it actually aggregated (#351).
+	// ledger span the cycle that built it actually aggregated.
 	// ok=false while the rollup hasn't completed a cycle, or when it
 	// carries a board with no span to qualify it.
 	// `account`, when non-empty, narrows the board to that one row,
 	// keyed, so a caller can read a rank the top-N page does not reach.
 	AccountCreators(ctx context.Context, limit int, account string) (clickhouse.AccountCreators, bool, error)
 	// AccountSponsors is the sponsor league table plus the ledger span
-	// the cycle that built it aggregated (#351). History only — it never
+	// the cycle that built it aggregated. History only — it never
 	// carries a live sponsored set. ok=false while the rollup hasn't
 	// completed a cycle, or when it carries a board with no span.
 	// `account` narrows it the same way AccountCreators does.
@@ -461,17 +457,15 @@ type Handler struct {
 	// with the lake rather than the request — GET /v1/assets/{id}/holders
 	// (two current-state FINAL scans) and the GET /v1/contracts directory
 	// (a multi-day GROUP BY over contract_events). Both zero values are
-	// ready to use; see hot_reads.go for the full rationale (C3-002 +
-	// C3-009, audit-2026-07-23).
+	// ready to use; see hot_reads.go for the full rationale.
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
 
 	// contractDetail is the shared bounded-TTL, single-flighted cache in
 	// front of the three per-contract detail reads (recent events /
-	// interactions / code-history) — route-sweep 2026-07-30: all three
-	// ran inline on the request deadline, so a busy contract timed out on
-	// every request and no retry could land warm. Zero value ready; see
-	// contract_detail_cache.go.
+	// interactions / code-history): inline on the request deadline, a busy
+	// contract's read would time out on every request and no retry could
+	// land warm. Zero value ready; see contract_detail_cache.go.
 	contractDetail contractDetailCache
 
 	// sacNames memoises proven SAC resolutions across requests (movements.go).
@@ -479,8 +473,8 @@ type Handler struct {
 
 	// throughput is the single-entry, single-flighted cache in front of
 	// GET /v1/network/throughput — a FINAL scan over up to a year of
-	// stellar.ledgers that ran inline on the 8s request budget and lost
-	// the /network panel whenever it missed it (§2.6b, 2026-08-13). Zero
+	// stellar.ledgers that, run inline on the 8s request budget, would
+	// lose the /network panel whenever it missed it. Zero
 	// value ready; see network_throughput_cache.go.
 	throughput networkThroughputCache
 
@@ -489,7 +483,7 @@ type Handler struct {
 	attribution contractAttributionCache
 
 	// refreshGate bounds this handler's DETACHED cache refreshes globally
-	// across keys AND cache kinds (audit 2026-07-31): per-key
+	// across keys AND cache kinds: per-key
 	// single-flight alone leaves the key space attacker-chosen on these
 	// unauthenticated routes, so fabricated-key churn could queue one
 	// unbounded lake scan per key on the shared 8-conn pool. Resolved

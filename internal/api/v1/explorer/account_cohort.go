@@ -559,8 +559,8 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 // lookup because ctx expired mid-request: LookupUSDPrice has no way to
 // tell a cancelled read apart from a genuine no-price (both are (_,
 // false)), so without this the priced/unpriced counts silently read as a
-// complete answer when the walk was actually cut short by the budget
-// (RLT-194). Read it only after every price call for the request has been
+// complete answer when the walk was actually cut short by the budget.
+// Read it only after every price call for the request has been
 // made — it is not safe to read from another goroutine mid-walk.
 func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}) (cohortPriceFn, *bool) {
 	cache := map[string]cohortPrice{}
@@ -596,7 +596,7 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 // id, a failed lookup, and a bad/non-positive rate are one flat set of
 // early returns instead of nested inside it. Sets *degraded when the
 // miss was caused by ctx expiry rather than a genuine no-price, per
-// cohortPricer's doc comment (RLT-194).
+// cohortPricer's doc comment.
 func (h *Handler) lookupCohortPrice(ctx context.Context, asset string, degraded *bool) (cohortPrice, bool) {
 	if ctx.Err() != nil {
 		*degraded = true
