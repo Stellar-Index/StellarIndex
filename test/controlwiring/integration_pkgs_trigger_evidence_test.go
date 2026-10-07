@@ -243,58 +243,53 @@ func integrationSuiteDeps(t *testing.T, root string) []string {
 	return dirs
 }
 
-// TestT424TriggerCoversTransitiveIntegrationDeps is the closure-derived
-// counterpart to TestT424TriggerCoversEveryIntTestPkg: it does not trust the
-// classifiers' own enumeration to be complete, it asks the Go tool what the
-// integration suite actually imports and requires every one of those
-// internal/ directories, plus go.mod itself, to fire all three classifiers.
+// TestT424TriggerCoversTransitiveIntegrationDeps: the local pre-push gate
+// still runs the suite for every internal/ directory it imports. CI's PR
+// classifiers are deliberately narrower; TestNarrowCITriggerHasFullRunBackstop
+// guards what covers the difference.
 func TestT424TriggerCoversTransitiveIntegrationDeps(t *testing.T) {
 	root := repoRoot(t)
-	dirs := integrationSuiteDeps(t, root)
-
-	ciGlobs := ciIntegrationFilterGlobs(t, root)
 	prepushGlobs := prepushIntegrationGlobs(t, root)
-	classRE := checkChangeClassIntegrationRE(t, root)
-
-	classifiers := []struct {
-		name  string
-		rule  string
-		fires func(path string) bool
-	}{
-		{
-			"ci.yml preflight `integration` filter",
-			strings.Join(ciGlobs, " "),
-			func(p string) bool { return globsFire(ciGlobs, p) },
-		},
-		{
-			"scripts/ci/check-change-class.sh class_integration",
-			classRE.String(),
-			classRE.MatchString,
-		},
-		{
-			"scripts/ci/prepush-integration-required.sh",
-			strings.Join(prepushGlobs, " "),
-			func(p string) bool { return globsFire(prepushGlobs, p) },
-		},
+	for _, dir := range append([]string{"go.mod"}, integrationSuiteDeps(t, root)...) {
+		probe := dir
+		if dir != "go.mod" {
+			probe = dir + "/probe.go"
+		}
+		if !globsFire(prepushGlobs, probe) {
+			t.Errorf("a change to %s does not trigger the integration suite in prepush-integration-required.sh (%s) — "+
+				"go list -deps -test -tags integration shows the suite imports it",
+				probe, strings.Join(prepushGlobs, " "))
+		}
 	}
+}
 
-	probes := append([]string{"go.mod"}, dirs...)
-	for _, c := range classifiers {
-		t.Run(c.name, func(t *testing.T) {
-			for _, dir := range probes {
-				probe := dir
-				if dir != "go.mod" {
-					probe = dir + "/probe.go"
-				}
-				if c.fires(probe) {
-					continue
-				}
-				t.Errorf("a change to %s does not trigger the integration suite (%s matches: %s) — "+
-					"go list -deps -test -tags integration shows the suite imports it, so it can "+
-					"change what the suite observes and no gate would run it",
-					probe, c.name, c.rule)
-			}
-		})
+// TestNarrowCITriggerHasFullRunBackstop: PR CI runs the integration shards
+// only for storage and schema paths, which is safe only while a scheduled and
+// a dispatchable full run exist and release.yml requires one on the tag.
+func TestNarrowCITriggerHasFullRunBackstop(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	var wf struct {
+		On map[string]any `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse ci.yml: %v", err)
+	}
+	if sched, ok := wf.On["schedule"].([]any); !ok || len(sched) == 0 {
+		t.Error("ci.yml has no `schedule` trigger: nothing runs the full suite the PR classifiers skip")
+	}
+	if _, ok := wf.On["workflow_dispatch"]; !ok {
+		t.Error("ci.yml has no `workflow_dispatch` trigger: release.yml cannot start a full run on a tag")
+	}
+	rel, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release.yml: %v", err)
+	}
+	if !strings.Contains(string(rel), "gh workflow run ci.yml") {
+		t.Error("release.yml no longer starts a full ci.yml run on the tag it releases")
 	}
 }
 

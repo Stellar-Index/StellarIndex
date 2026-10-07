@@ -82,7 +82,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
+  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
 }
 
 class_go() {

@@ -65,9 +65,7 @@ func TestLocalVerificationDocMatchesIntegrationChangeClass(t *testing.T) {
 	// probePaths()'s "one file directly inside the directory" shape.
 	dirs := []string{
 		"internal/storage",
-		"internal/pipeline",
-		"internal/sources",
-		"internal/api",
+		"internal/platform/postgresstore",
 		"internal/ops/archive",
 		"cmd/stellarindex-ops",
 		"migrations",

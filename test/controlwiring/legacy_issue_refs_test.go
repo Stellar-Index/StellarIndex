@@ -52,7 +52,8 @@ func legacyIssueRefHit(re *regexp.Regexp, line string) string {
 // both keep their original wording.
 func legacyIssueRefSkipped(rel string) bool {
 	return rel == "CHANGELOG.md" ||
-		strings.HasPrefix(rel, "migrations/") && strings.HasSuffix(rel, ".sql")
+		strings.HasPrefix(rel, "migrations/") && strings.HasSuffix(rel, ".sql") ||
+		strings.HasPrefix(rel, "docs/archive/") // gitignored, local-only
 }
 
 func TestNoLegacyIssueReferences(t *testing.T) {
