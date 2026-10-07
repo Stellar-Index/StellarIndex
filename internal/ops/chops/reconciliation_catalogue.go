@@ -123,10 +123,9 @@ type reconSource struct {
 
 	// needsOpArgs marks the one decoder class that consumes
 	// events.Event.OpArgs (redstone zips write_prices feed_ids from the op
-	// args — PR 166). The -ch projection reconcile trims the WIDE
-	// op_args_xdr column from the lake read for every other source; reading
-	// it across the sep41/CAP-67 firehose was one leg of the 2026-07-08
-	// compute-completeness OOMs.
+	// args). The -ch projection reconcile trims the WIDE op_args_xdr column
+	// from the lake read for every other source; reading it across the
+	// sep41/CAP-67 firehose drives compute-completeness out of memory.
 	needsOpArgs bool
 
 	// needsStateWriteKeys marks the decoder class that consumes
@@ -284,21 +283,17 @@ type gatedDecoder interface {
 // calls are re-derived from the lake by filtering body_xdr on the contract
 // bytes (stellar.operations has no contract_id column). PLUS, when
 // cfg.Supply.WatchedSEP41Contracts is configured, sep41_transfers +
-// sep41_supply (see [buildSEP41ReconSources]) — promoted into the default
-// catalogue as of the 2026-07-11 full-history truncate+re-derive
-// (`ch-rebuild -sep41 -write`, windows 50.0M→63.42M, rc=0), which purged
-// every pre-migration-0057 collapsed row. Before that re-derive, counting
-// them here would have produced false projection deltas: the historical
-// table rows predated the event_index PK discriminator (migration 0057),
-// so multiple same-op events sat COLLAPSED on disk, and a re-derive (which
-// counts each event) would have flagged every such historical ledger as
-// "missing rows". That risk is gone now that the affected history has been
-// rebuilt clean.
+// sep41_supply (see [buildSEP41ReconSources]). Counting them is sound only
+// because the full-history truncate+re-derive (`ch-rebuild -sep41 -write`,
+// windows 50.0M→63.42M) purged every row written before the event_index PK
+// discriminator (migration 0057): those rows collapsed multiple same-op
+// events on disk, and a re-derive (which counts each event) flags every
+// such ledger as "missing rows".
 //
-// Promoting them HERE — rather than each caller special-casing the append,
-// as compute-completeness alone used to — means verify-reconciliation and
-// ch-reproject see them too; ch_rebuild.go's -sep41 flag doc says exactly
-// this: "promote them into buildReconciliationCatalogue".
+// Promoting them HERE, rather than each caller special-casing the append,
+// means compute-completeness, verify-reconciliation and ch-reproject all
+// see them; ch_rebuild.go's -sep41 flag doc says exactly this: "promote
+// them into buildReconciliationCatalogue".
 //
 // Errors only when a configured watched contract fails to build its
 // decoder (a malformed C-strkey). An EMPTY watched set is NOT an error
@@ -319,7 +314,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		{
 			// Identity-gated (factories ∪ registered pairs), so the -ch
 			// re-derive opts into the gated prefilter like aquarius below.
-			// Without it a CS-095 re-floor at genesis streams every contract
+			// Without it a re-floor at genesis streams every contract
 			// event from genesis to tip, unfiltered, as the pass's FIRST
 			// source. factories/creationSym also let the preseed register
 			// pairs announced before a sub-range's lo.
@@ -331,11 +326,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"soroswap_skim_events", "", []string{"soroswap.skim"}},
 				// soroswap.liquidity → soroswap_liquidity (persistSoroswapLiquidity
 				// is a single INSERT: one decoder LiquidityEvent → one row).
-				// Lake-validated 2026-08-17: 54/54 full-history rows == distinct
-				// event identities, so the per-ledger count reconciles 1:1. Closes
-				// the "emitted (soroswap.liquidity), persisted, never reconciled"
-				// blind spot the density detector alone was covering — the exact
-				// omission the catalogue-completeness invariant now guards.
+				// Lake-validated: 54/54 full-history rows == distinct event
+				// identities, so the per-ledger count reconciles 1:1. Without it
+				// soroswap.liquidity is emitted and persisted but never reconciled,
+				// covered only by the density detector — the omission the
+				// catalogue-completeness invariant guards.
 				{"soroswap_liquidity", "", []string{"soroswap.liquidity"}},
 			},
 		},
@@ -350,8 +345,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			factories: []string{aquarius.MainnetRouter}, creationSym: aquarius.EventAddPool,
 			// -ch re-derive prefilter (identity-gated, factory-anchored):
 			// scope the lake read to the router ∪ its pools instead of the
-			// whole ~6B-event lake — the fix for the -pass 120-min-deadline
-			// timeout on aquarius's dirty-window [51M,tip] re-derive. Matches()
+			// whole ~6B-event lake, which otherwise runs aquarius's dirty-window
+			// [51M,tip] re-derive past the -pass 120-min deadline. Matches()
 			// gates purely on pool identity, so the prefilter is
 			// counts-identical. gatedPrefilter walks the router's add_pool
 			// events on THIS throwaway to capture in-window pools too.
@@ -361,11 +356,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// 1:1 protocol tables — each of these Go event types has a
 				// DISTINCT coarse EventKind() that lands in exactly ONE table,
 				// and each sink persist func is a single INSERT (one decoder
-				// event → one row). Lake-validated 2026-08-17 (rows == distinct
-				// event identity, i.e. no fan-out): rewards 777004/777004,
+				// event → one row). Lake-validated (rows == distinct event
+				// identity, i.e. no fan-out): rewards 777004/777004,
 				// protocol_fee 409/409, admin 12/12, kill 17/17. So the
-				// per-ledger count reconciles. Closes the aquarius blind spots
-				// the density detector alone was covering (~777k rewards rows).
+				// per-ledger count reconciles, rather than leaving these tables
+				// (~777k rewards rows) to the density detector alone.
 				{"aquarius_rewards_events", "", []string{"aquarius.rewards"}},
 				{"aquarius_admin", "", []string{"aquarius.admin"}},
 				{"aquarius_protocol_fee", "", []string{"aquarius.fee"}},
@@ -378,7 +373,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// nearly every ledger — lake-measured ~2.0 served rows per
 				// decoder event (aquarius_reserves 843705/421793,
 				// aquarius_liquidity 12043/6021 over 62.8M–63.2M).
-				// aquarius_reserves and aquarius_reserves_sync now carry
+				// aquarius_reserves and aquarius_reserves_sync carry
 				// distinct EventKind()s ("aquarius.reserves" /
 				// "aquarius.reserves_sync" — ReservesEvent.EventKind()
 				// branches on the runtime Kind field), so a kinds split CAN
@@ -395,25 +390,16 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{
-			// Mechanism-1 fix (2026-08-18 phoenix projection-completeness):
-			// the pre-upgrade pool WASM (ledgers ~51,019,036–53,134,167)
+			// The pre-upgrade pool WASM (ledgers ~51,019,036–53,134,167)
 			// emits swaps as 7 field-events (a RawSwap needs 8), so a group
 			// is flushed only when a LATER event ages it out of the
 			// correlation buffer (sweep-emit, dispatcher_adapter.go
 			// decodeSwapEvent). The emitted trade keeps its OWN first-field
-			// ledger, but the reconcile re-derive counts it at the later
-			// sweep-triggering event's ledger — expected[realLedger]=0 vs
-			// served=1: a per-ledger MISATTRIBUTION with the window total
-			// preserved (net count unchanged, just shifted; proven at the
-			// first mismatch ledger 51,573,544 = min phoenix trade ledger).
-			// Window-total (aggregate) netting absorbs the shift. CS-084
-			// caveat: aggregate also lets a genuine per-ledger drop net
-			// against a phantom elsewhere, so this opt-out is justified ONLY
-			// for the pre-upgrade sweep shift and does NOT substitute for the
-			// curated-set seed fix (phoenix.MainnetPools /
-			// MainnetStakeContracts, extended 2026-08-18) that makes the
-			// re-derive reproduce the liquidity/stake rows so THOSE targets
-			// reconcile by identity, not by netting.
+			// ledger, and the re-derive must count it there too (see the
+			// eventLedgerCarrier note below). The curated set
+			// (phoenix.MainnetPools / MainnetStakeContracts) is what makes
+			// the re-derive reproduce the liquidity/stake rows, so those
+			// targets reconcile by identity.
 			name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(),
 			// -ch re-derive prefilter (identity-gated): scope the lake read to
 			// the curated pool/stake set instead of the whole lake — latent
@@ -423,24 +409,19 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// events, so the prefilter is counts-identical. factories +
 			// creationSym are set so gatedPrefilter's walk actually runs: the
 			// factory's ("create","liquidity_pool") events ARE in the lake
-			// from ledger 51,572,026 (an earlier comment here claimed they
-			// predate it and that the walk was therefore a no-op — both were
-			// false), and since F048 the decoder admits the pools they
+			// from ledger 51,572,026, and the decoder admits the pools they
 			// announce, so a pool created after the curated seed was last
 			// hand-edited is picked up by the walk instead of being missed.
 			factories: []string{phoenix.MainnetFactory}, creationSym: phoenix.EventActionCreate,
 			newGatedDec: func() gatedDecoder { return phoenix.NewDecoder() },
-			// aggregateReconcile RETIRED (2026-08-21): the eventLedgerCarrier
-			// own-ledger attribution (completeness.countLedger) counts each
-			// sweep-rescued 7-field-era trade at its OWN first-field ledger —
-			// exactly where the served row lives — so the per-ledger shift the
-			// netting existed to absorb no longer occurs. Proven strict before
-			// retiring: per-ledger own-ledger expectation vs served over
-			// [51,573,544, 64,055,537] = ZERO mismatched ledgers, totals
-			// 246,725 == 246,725 (post trades-surgery, 2026-08-21). Phoenix now
-			// reconciles strict per-ledger over its FULL range, closing the
-			// CS-084 netting residual this source carried (a real drop can no
-			// longer net against a phantom elsewhere in the window).
+			// The eventLedgerCarrier own-ledger attribution
+			// (completeness.countLedger) counts each sweep-rescued
+			// 7-field-era trade at its OWN first-field ledger — exactly where
+			// the served row lives — so phoenix reconciles strictly per-ledger
+			// over its FULL range, with no window-total netting that would let
+			// a real drop net against a phantom elsewhere. Measured: per-ledger
+			// expectation vs served over [51,573,544, 64,055,537] = ZERO
+			// mismatched ledgers, totals 246,725 == 246,725.
 			targets: []reconTarget{
 				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 				{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
@@ -448,13 +429,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// 1:1 protocol tables — self-contained decoders (no correlation
 				// buffer), one event → one row (persistPhoenixInitialize /
 				// persistPhoenixAdmin are single INSERTs). Each has a distinct
-				// coarse EventKind() landing in exactly one table. Lake-validated
-				// 2026-08-17: phoenix_initialize 24/24 rows == events;
-				// phoenix_admin_events currently 0 rows (no mainnet admin rotation
-				// yet) — reconciles clean at expected==served==0 and counts 1:1 the
-				// first time one occurs, instead of the density detector's coarse
-				// window. Closes the phoenix_initialize / phoenix_admin_events blind
-				// spots.
+				// coarse EventKind() landing in exactly one table. Lake-validated:
+				// phoenix_initialize 24/24 rows == events; phoenix_admin_events
+				// had 0 rows (no mainnet admin rotation) — reconciles clean at
+				// expected==served==0 and counts 1:1 the first time one occurs,
+				// instead of the density detector's coarse window.
 				{"phoenix_initialize", "", []string{"phoenix.initialize"}},
 				{"phoenix_admin_events", "", []string{"phoenix.admin"}},
 			},
@@ -565,7 +544,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// recipients and the sink writes one blend_emitter_events row per
 				// recipient (recipient_index is a PK component), so a per-ledger
 				// event-count-vs-served-row-count reconcile false-flags every drop
-				// ledger — r1-measured 2026-08-18: ledger 51,499,914 = 13 rows / 1
+				// ledger — r1-measured: ledger 51,499,914 = 13 rows / 1
 				// event identity, ledger 57,467,292 = 3 / 1, Σ|Δ|=14, data CORRECT.
 				// It is the same fan-out class aquarius_reserves/liquidity are
 				// waived for. BUT — unlike those all-fan-out tables —
@@ -586,36 +565,35 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			waived: []waivedTable{{"blend_emitter_events", "event_kind = 'drop'", blendEmitterDropWaiver}},
 		},
 		{
-			// Lake-derived exact genesis (2026-07-30, mirrors
+			// Lake-derived exact genesis (mirrors
 			// internal/api/v1/protocols_registry.go): the
-			// MessageTransmitter's first on-chain event. The old
-			// 62_403_000 was the ingestion-config floor, ~256k ledgers
-			// late — it left 410 real served rows permanently BELOW the
-			// verify floor, structurally out of every verdict
-			// (density-genesis precision rule).
+			// MessageTransmitter's first on-chain event. The 62_403_000
+			// ingestion-config floor is ~256k ledgers late and would leave
+			// 410 real served rows permanently BELOW the verify floor,
+			// structurally out of every verdict (density-genesis precision
+			// rule).
 			name: "cctp", genesis: 62_146_641, dec: cctp.NewDecoder(),
-			// contractIDs pins recognition attribution (board #31):
-			// without it an unhandled cctp topic (mint_and_forward
-			// was one until 2026-07-02) fell into the system-wide
-			// recognition bucket instead of capping THIS source.
+			// contractIDs pins recognition attribution: without it an
+			// unhandled cctp topic falls into the system-wide recognition
+			// bucket instead of capping THIS source.
 			contractIDs: cctp.MainnetContracts(),
 			targets: []reconTarget{
 				{"cctp_events", "", []string{"cctp.event"}},
 			},
 		},
-		// Lake-derived exact genesis (2026-07-30, mirrors
-		// protocols_registry.go): first event across all four Rozo
-		// contracts; rozo_events is projected to exactly here. The old
-		// 62_403_000 ingestion-config floor sat ~1.57M ledgers late.
+		// Lake-derived exact genesis (mirrors protocols_registry.go):
+		// first event across all four Rozo contracts; rozo_events is
+		// projected to exactly here. The 62_403_000 ingestion-config floor
+		// sits ~1.57M ledgers late.
 		{
 			name: "rozo", genesis: 60_829_397, dec: rozo.NewDecoder(),
 			// contractIDs pins recognition attribution, exactly as cctp's
-			// does above (F071). rozo is not a gated-registry source, so
-			// the protocol_contracts fold (loadRegistryOwners) never names
-			// its contracts either: without this pin NOTHING put a Rozo
-			// contract in ownerOf, an unhandled topic on one fell into the
-			// system-wide bucket, and rozo's own recognition_ok could not
-			// go false — the 2026-07-07 blind spot's exact class. The
+			// does above. rozo is not a gated-registry source, so the
+			// protocol_contracts fold (loadRegistryOwners) never names its
+			// contracts either: without this pin NOTHING puts a Rozo
+			// contract in ownerOf, an unhandled topic on one falls into the
+			// system-wide bucket, and rozo's own recognition_ok cannot go
+			// false. The
 			// decoder gates Matches() on this same set (rozoContracts is
 			// built from MainnetPaymentContracts), so the pin is
 			// counts-identical as a re-derive prefilter. Copied so the
@@ -654,7 +632,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		},
 		{
 			name: blend_backstop.SourceName, genesis: blend_backstop.BackstopGenesisLedger, dec: blend_backstop.NewDecoder(),
-			// contractIDs pins recognition attribution (F071), same reason
+			// contractIDs pins recognition attribution, same reason
 			// as rozo above: the backstop is not a gated-registry source,
 			// so no other path names its contracts in ownerOf. Both
 			// deployments are pinned because the decoder claims both
@@ -685,19 +663,19 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// (DFeesEvent, second target below). Both flow layers land
 			// in defindex_flows
 			// (layer discriminator column). strategy.harvest MUST be listed:
-			// the decoder emits it (audit 2026-08-04 finding 4 — strategy
-			// yield realised into the vault, direction=harvest, admitted by
-			// migration 0138) and the sink persists it to defindex_flows, so
-			// omitting the kind here undercounts the EXPECTED side and
-			// false-flags every genuine-harvest ledger as a projection gap
-			// (the 974-mismatched-ledger verdict whose Σ|Δ| equalled the
-			// served harvest-row count exactly).
+			// the decoder emits it (strategy yield realised into the vault,
+			// direction=harvest, admitted by migration 0138) and the sink
+			// persists it to defindex_flows, so omitting the kind here
+			// undercounts the EXPECTED side and false-flags every
+			// genuine-harvest ledger as a projection gap (a
+			// 974-mismatched-ledger verdict whose Σ|Δ| equalled the served
+			// harvest-row count exactly).
 			{"defindex_flows", "", []string{
 				"defindex.strategy.deposit", "defindex.strategy.withdraw",
 				"defindex.strategy.harvest",
 				"defindex.vault.deposit", "defindex.vault.withdraw",
 			}},
-			// dfees (W5.2, 2026-08): vault-layer per-asset protocol-fee
+			// dfees: vault-layer per-asset protocol-fee
 			// distribution into its own table (migration 0146; fires in
 			// the same op as the vault flow, fans out per
 			// distributed_fees entry with fee_index a PK component). The
@@ -767,7 +745,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		cat = append(cat, reconSource{
 			name:    "redstone",
 			genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
-			needsOpArgs:         true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs, PR 166)
+			needsOpArgs:         true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs)
 			needsStateWriteKeys: true, // exact subset attribution from the op's written per-feed contract-data keys
 			targets:             []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
 		})
@@ -780,7 +758,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// verify range; the empty pre-first-call prefix reconciles to zero.
 	if a := cfg.Oracle.Band.StandardReferenceContract; a != "" {
 		cat = append(cat, reconSource{
-			// 50,842,736 is Band's first on-chain write, not 60,000,000 (#361/#363).
+			// 50,842,736 is Band's first on-chain write, not 60,000,000.
 			// It cannot be found the usual way: Band's Soroban contract emits ZERO
 			// events, so a contract_events probe returns 0 rows and reads as absence.
 			// The number comes from contract_instance_changes (min ledger 50,842,736,
@@ -804,8 +782,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		targets:      []reconTarget{{"soroswap_router_swaps", "", nil}},
 	})
 
-	// sep41 promotion (2026-07-11, post-full-history-re-derive) — see the
-	// doc comment above. Gated the same way buildSEP41ReconSources's own
+	// sep41 promotion — see the doc comment above. Gated the same way buildSEP41ReconSources's own
 	// EmptyWatchedSetErrors precondition expects: only attempt it when a
 	// watched set is actually configured, so a deployment that never opted
 	// into SEP-41 supply/transfer capture gets an empty (not an error)
@@ -827,11 +804,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 }
 
 // filterCatalogueByNetwork drops every catalogue source that does not
-// exist on network (#483): protocol decoders are anchored to PUBNET
+// exist on network: protocol decoders are anchored to PUBNET
 // contract identities (ADR-0035), so on testnet / futurenet they match
 // nothing and their pubnet genesis floors (soroswap 50,746,266) sit above
-// the network's tip — every such source read "incomplete" by construction
-// and the test-net verdict could never go green. Returns the surviving
+// the network's tip — every such source would read "incomplete" by
+// construction and the test-net verdict could never go green. Returns the surviving
 // catalogue (input order) and the dropped names (source-sorted) so the
 // caller can log them and delete their stale snapshots. On pubnet this is
 // the identity.
@@ -861,16 +838,16 @@ func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSo
 
 // warmCatalogueGates gives every contract-gated catalogue source the SAME
 // gate the live indexer runs with: the source's in-code curated set UNION
-// the children recorded in protocol_contracts (RLT-430).
+// the children recorded in protocol_contracts.
 //
 // buildReconciliationCatalogue takes only a config, so it can only build
 // each gated decoder bare — in-code seed and nothing else. The live
 // indexer's decoders are built from pipeline.GatedRegistryOptions, which
 // also warms them from protocol_contracts: the documented operator seam
-// for admitting a pool or vault without a redeploy. A contract admitted
-// through that seam was therefore decoded live and then invisible to every
-// re-derive: its served rows read as phantoms against an expected side that
-// could not produce them, and a truncate + `ch-rebuild -write` rebuilt the
+// for admitting a pool or vault without a redeploy. Without this warm, a
+// contract admitted through that seam is decoded live and then invisible to
+// every re-derive: its served rows read as phantoms against an expected side
+// that cannot produce them, and a truncate + `ch-rebuild -write` rebuilds the
 // table WITHOUT them. preseedFactoryChildren does not cover it — it walks
 // creation events, and the seam exists precisely for contracts that have
 // none (and it is a no-op for every source that declares no factories).
@@ -1004,7 +981,7 @@ func unionContractIDs(base, extra []string) []string {
 // soroban_events-specific (reconcile.go), a different data model entirely.
 // Named here so validateSourceFilter can tell an operator "known but not on
 // this axis" instead of the misleading "unknown source" a typo would also
-// produce (Q116).
+// produce.
 var entryDecoderSourceNames = map[string]bool{
 	accounts.SourceName:           true,
 	trustlines.SourceName:         true,
@@ -1042,9 +1019,8 @@ func validateSourceFilter(only string, cat []reconSource) error {
 //
 // Consumers: ch-rebuild's -sep41 flag (the re-derive; called directly,
 // unconditionally erroring on an empty watched set — see below) and
-// [buildReconciliationCatalogue] (promoted into the default catalogue as
-// of the 2026-07-11 full-history truncate+re-derive, gated on the watched
-// set being non-empty so an unconfigured deployment gets silence instead
+// [buildReconciliationCatalogue] (promoted into the default catalogue,
+// gated on the watched set being non-empty so an unconfigured deployment gets silence instead
 // of this function's error).
 //
 // Errors when the watched set is empty: called directly (ch-rebuild
@@ -1067,13 +1043,13 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// tables — so they need a whereFilter, exactly like `trades` needs
 	// `source = '...'`.
 	//
-	// Pre-fix both carried "" (whole-table ownership) while the EXPECTED
-	// side was gated on the watched set through `dec`/`contractIDs`. The
-	// two axes therefore measured different populations: any row written
-	// for a contract that is not in TODAY'S watched set — history from a
-	// contract since removed from `[supply] watched_sep41_contracts`, or
-	// from a wider set used during an earlier backfill — counted on the
-	// served side and could not counted on the expected side. That is a
+	// With "" (whole-table ownership) the two axes would measure different
+	// populations, since the EXPECTED side is gated on the watched set
+	// through `dec`/`contractIDs`: any row written for a contract that is
+	// not in TODAY'S watched set — history from a contract since removed
+	// from `[supply] watched_sep41_contracts`, or from a wider set used
+	// during an earlier backfill — counts on the served side and cannot
+	// count on the expected side. That is a
 	// PERMANENT surplus: it never closes, because the re-derive can never
 	// produce a row for a contract it is configured not to decode, and
 	// the served rows are real history nobody is going to delete.
@@ -1084,10 +1060,10 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	// topic0Syms mirrors the live projector's SQL prefilter for the same
 	// sources (projector/registry.go sep41TransferSyms / sep41SupplySyms) —
 	// the re-derive must stream the same population the live writer sees.
-	// Without it the sep41_supply re-derive streamed the watched contracts'
+	// Without it the sep41_supply re-derive streams the watched contracts'
 	// ENTIRE event firehose (KALE transfers dominate at ~99.95% of rows)
-	// and discarded non-supply events one-by-one in a single goroutine:
-	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
+	// and discards non-supply events one-by-one in a single goroutine:
+	// measured at ~35 of the full verify's ~37 minutes.
 	return []reconSource{
 		{
 			name: sep41transfers.SourceName, genesis: floor,

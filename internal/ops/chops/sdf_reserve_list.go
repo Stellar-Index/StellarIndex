@@ -16,7 +16,7 @@ import (
 )
 
 // SDF reserve-list drift — the LIST-level companion to the
-// xlm_circulating_supply VALUE cross-check (tail-triage C4-069).
+// xlm_circulating_supply VALUE cross-check.
 //
 // The value check reconciles our served circulating supply against
 // dashboard.stellar.org within 2% of circulating (~700M XLM). That
@@ -30,16 +30,15 @@ import (
 // This check closes that gap by diffing the configured account SET
 // against the set SDF publishes. What SDF publishes machine-readably
 // is NOT the dashboard API — every version of it (/api/lumens,
-// /api/v2/lumens, /api/v3/lumens, /api/v3/lumens/all; probed
-// 2026-09-18) returns program-level sums (`sdfMandate`,
+// /api/v2/lumens, /api/v3/lumens, /api/v3/lumens/all) returns program-level sums (`sdfMandate`,
 // `upgradeReserve`, `programs.*`) and never an account id. The list
 // itself lives in the source of that dashboard, stellar/dashboard
 // `common/lumens.js`: an `accounts` table plus the
 // `networkUpgradeReserveAccount` constant, which together are exactly
 // what `noncirculatingSupply()` subtracts (the fee pool aside) to
 // produce the `circulatingSupply` figure the value check reads. That
-// is the same source the configured list was transcribed from on
-// 2026-07-02 (see configs/ansible/roles/archival-node/defaults/main.yml),
+// is the same source the configured list was transcribed from
+// (see configs/ansible/roles/archival-node/defaults/main.yml),
 // so a diff against it is a diff against the operator's own citation.
 //
 // The `voidAccount` in the same file is the BURN address: it is

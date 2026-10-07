@@ -18,7 +18,7 @@ import (
 //
 // The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
 // compression policy, the run lock and the free-space guard. This file is
-// the other half: what the #372 XLM-base re-derive does INSIDE one chunk,
+// the other half: what the XLM-base re-derive does INSIDE one chunk,
 // and it is the same plan/apply pair the day walk uses
 // (usd_volume_restamp_xlmbase.go) — same functions, same generation
 // guard, same report — restricted to the chunk's slice of the window and

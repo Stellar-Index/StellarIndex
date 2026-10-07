@@ -78,7 +78,7 @@ func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, 
 
 // preseedResultMessage reports the outcome of a factory preseed walk,
 // including the zero case. A silent zero is indistinguishable from "this
-// source's window genuinely predates every deploy" (RLT-395): the walk
+// source's window genuinely predates every deploy": the walk
 // covers a non-empty, non-inverted window (preseedFactoryChildren already
 // returned early otherwise), so finding no creation events there is
 // suspicious enough to surface — an empty in-memory registry makes the

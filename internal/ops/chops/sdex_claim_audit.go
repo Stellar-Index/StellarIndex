@@ -49,12 +49,12 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	defer cancel()
 
 	// Seam-aware bucket choice, shared with ch-backfill and
-	// census-backfill rather than re-derived: the old local default
-	// (cfg.Storage.S3BucketLive unless -bucket) sent every historic
-	// audit at the TRIMMED live bucket, which is how this tool's
+	// census-backfill rather than re-derived: a local default
+	// (cfg.Storage.S3BucketLive unless -bucket) would send every historic
+	// audit at the TRIMMED live bucket, so this tool's
 	// headline "total claim atoms (= Hubble trade count)" could be
 	// computed over a fraction of the range and still read as a
-	// decoder gap (RLT-282).
+	// decoder gap.
 	streamBucket, err := opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))
 	if err != nil {
 		return err
@@ -140,8 +140,8 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	}
 
 	// Coverage last, so the operator still gets the full diagnosis, but
-	// non-zero so nothing downstream reads a partial audit as the answer
-	// (RLT-282). Every number above is a tally over the ledgers the walk
+	// non-zero so nothing downstream reads a partial audit as the answer.
+	// Every number above is a tally over the ledgers the walk
 	// delivered, and the tool's entire purpose is to be differenced
 	// against an EXTERNAL anchor's count for the same range — so a walk
 	// that covered less of the range than Hubble did turns straight into
@@ -306,13 +306,13 @@ func innerTradeCode(op sdkxdr.Operation, r sdkxdr.OperationResult) (int32, bool)
 // classifyDrop buckets a decoder error string into a stable reason category.
 func classifyDrop(reason string) string {
 	switch {
-	// The decoder's reason string was renamed from "non-positive amounts"
-	// to "both-zero no-op claim" when one-side-zero fills stopped being
-	// rejected at decode (099d6fcf). This classifier kept matching the old
-	// text, so the DOMINANT drop class fell through to "other" and the
-	// one-side-zero split below became unreachable — in the one tool whose
+	// The decoder reports this drop class as "both-zero no-op claim";
+	// decoders that also rejected one-side-zero fills spelled it
+	// "non-positive amounts". Matching only one spelling sends the
+	// DOMINANT drop class to "other" and makes the
+	// one-side-zero split below unreachable — in the one tool whose
 	// stated purpose is "an exact diagnosis of SDEX trade-count gaps
-	// against external anchors" (cold audit 2026-08-04).
+	// against external anchors".
 	//
 	// Both spellings are matched so the tool still classifies correctly
 	// when run against older decoder output.
@@ -322,11 +322,11 @@ func classifyDrop(reason string) string {
 		// no mismatch); one-side-zero claims ARE trades Hubble records but our
 		// OR-guard rejects — the exact off-by-one vs Hubble.
 		//
-		// NOTE: since 099d6fcf the DECODER no longer rejects one-side-zero
+		// NOTE: the current DECODER does not reject one-side-zero
 		// fills, so they never appear here — but they are still dropped, one
 		// layer down, by filterStorableTrades (the trades CHECK forbids a
-		// zero leg). The off-by-one vs Hubble therefore persists; it simply
-		// moved out of this tool's view. See the audit memory.
+		// zero leg). The off-by-one vs Hubble therefore persists, outside
+		// this tool's view.
 		if strings.Contains(reason, "sold=0 bought=0") {
 			return "non-positive: both-zero (Hubble also drops)"
 		}
