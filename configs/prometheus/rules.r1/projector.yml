@@ -1,19 +1,19 @@
 ---
 # R1 single-host overlay of projector alerts (ADR-0032). Same rules
 # as deploy/monitoring/rules/projector.yml — duplicated here for
-# the R1 single-host prometheus config per the wave-96 monitoring-
-# rules CI dual-validation pattern.
+# the R1 single-host prometheus config; the pair lint keeps both in
+# sync.
 
 groups:
   - name: stellarindex.projector
     interval: 30s
     rules:
 
-      # The `unless` arm (issue #325, 2026-08-29) excuses the ONE lag that
-      # is intended: an operator-initiated `stellarindex-ops
-      # projector-replay` rewind (the reflector-fx replay of 2026-08-29
-      # rewound 2,574,496 ledgers on purpose and ticketed for ~4h while
-      # masking any genuine lag on the same source). The flag is 1 only
+      # The `unless` arm excuses the ONE lag that is intended: an
+      # operator-initiated `stellarindex-ops projector-replay` rewind (a
+      # reflector-fx replay on r1 rewound 2,574,496 ledgers on purpose and,
+      # without this arm, ticketed for ~4h while masking any genuine lag on
+      # the same source). The flag is 1 only
       # while the cursor is inside the RECORDED window and below its
       # pre-rewind position, and the sibling replay_stalled rule below
       # fires if the replay stops advancing — so this is a discriminator,
@@ -41,8 +41,8 @@ groups:
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
       # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
-      # wave-96 monitoring-rules CI dual-validation pattern). The other half
-      # of the #325 replay pair: with the lag rule excused during a replay,
+      # pair lint keeps both in sync). The other half of the replay pair:
+      # with the lag rule excused during a replay,
       # THIS rule is what keeps the window covered — a stuck replay leaves
       # the served-row deficit it was started to repair wide open. "Not
       # climbing" is read off the lag gauge: a healthy replay's lag falls
@@ -103,10 +103,9 @@ groups:
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
       # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
-      # wave-96 monitoring-rules CI dual-validation pattern). COR-11/COR-01
-      # (audit-2026-07-23): the projector's poison-row escape hatch
-      # (quarantineCandidate) gives up on at most ONE un-processable row
-      # per cycle once its retry budget is exhausted, then advances the
+      # pair lint keeps both in sync). The projector's poison-row escape
+      # hatch (quarantineCandidate) gives up on at most ONE un-processable
+      # row per cycle once its retry budget is exhausted, then advances the
       # cursor past it. The raw event survives in the lake and is
       # re-driveable via `stellarindex-ops projector-replay`, but a
       # quarantine is otherwise SILENT data-completeness debt. Sensitive
@@ -150,15 +149,14 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
-      # RLT-131 (audit-2026-09-18). The SISTER of the quarantine rule above,
-      # and the gap that made this finding "high": the skip arm — a
+      # The SISTER of the quarantine rule above: the skip arm — a
       # POSITIVELY-identified permanent data fault, SQLSTATE class 22/23 or a
       # canonical value-shape rejection — sheds rows and advances the cursor
-      # past them exactly like a quarantine does, and had no rule of any kind.
-      # The only signal was an ERROR log. classifySinkFault returns
+      # past them exactly like a quarantine does, and without this rule its
+      # only signal is an ERROR log. classifySinkFault returns
       # dispositionSkip for ANY class 22/23 error, and those classes are not
       # always row-local: a migration adding a NOT NULL or a CHECK the live
-      # rows violate rejects EVERY row of the window. The projector now holds
+      # rows violate rejects EVERY row of the window. The projector holds
       # such a window for QuarantineAfterCyclesNoProgress (~1 h) and then
       # bleeds one row per cycle, which makes the stall visible — but the rows
       # that do leave still leave the served tier silently without this.
@@ -206,7 +204,7 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
-      # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
+      # ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
       # "any observed errors.Is(err, canonical.ErrI128Overflow) in
       # production fires a SEV-1. It indicates an int64 sneaking in
       # somewhere." That promise had no implementation — the sentinel is in
@@ -260,17 +258,16 @@ groups:
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
       # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
-      # wave-96 monitoring-rules CI dual-validation pattern). DATA-6 / NS-2
-      # (audit-2026-08-14): a projector decode soft-fail SKIPS the row and lets
-      # the cursor advance; a shipped decoder REGRESSION breaks a whole CLASS of
-      # valid events the same way (the projector runs the SAME decoders as
-      # ingest — the phoenix 5,161-orphaned-swap class), silently draining them
-      # from the served tier. The cycle is marked runs_total{outcome=
-      # "decode_degraded"} (no longer "ok") but the cursor still advances
-      # (holding would re-wedge a sole-writer source — COR-11), so this RATE
-      # alert is the defence. Sibling of stellarindex_ingestion_decode_error;
-      # threshold more sensitive (>0.1/s) so a class-wide regression on a quiet
-      # source still fires.
+      # pair lint keeps both in sync). A projector decode soft-fail SKIPS
+      # the row and lets the cursor advance; a shipped decoder REGRESSION
+      # breaks a whole CLASS of valid events the same way (the projector
+      # runs the SAME decoders as ingest — the phoenix 5,161-orphaned-swap
+      # class), silently draining them from the served tier. The cycle is
+      # marked runs_total{outcome="decode_degraded"} rather than "ok", but
+      # the cursor still advances (holding would re-wedge a sole-writer
+      # source), so this RATE alert is the defence. Sibling of
+      # stellarindex_ingestion_decode_error; threshold more sensitive
+      # (>0.1/s) so a class-wide regression on a quiet source still fires.
       - alert: stellarindex_projector_decode_error_rate_high
         expr: |
           sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome=~"decode_error|reconstruct_error"}[10m])) > 0.1
@@ -328,8 +325,7 @@ groups:
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
       # Mirror of the rule in deploy/monitoring/rules/projector.yml (the
-      # wave-96 monitoring-rules CI dual-validation pattern). PROJECTOR WEDGE
-      # (task #33 / W8 recon 9b): the adaptive window has shrunk to the
+      # pair lint keeps both in sync). PROJECTOR WEDGE: the adaptive window has shrunk to the
       # MinBatchLimit floor and STILL cannot advance for WedgeCycles+ consecutive
       # cycles — a floor-sized range stuck over PerSourceTimeout (a dense +
       # compressed chunk) retried identically forever. The gauge flips to 1 on a
