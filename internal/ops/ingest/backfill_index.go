@@ -173,9 +173,9 @@ func BackfillIndex(args []string) error {
 			return fmt.Errorf("storage: %w", err)
 		}
 		defer func() { _ = store.Close() }()
-		// Same re-derive stamp the chainlink backfill uses (INV-3 /
-		// migration 0109): a positive derive_generation lets a corrected
-		// re-run UPDATE in place and win over a live gen-0 value.
+		// Same re-derive stamp the chainlink backfill uses (migration
+		// 0109): a positive derive_generation lets a corrected re-run
+		// UPDATE in place and win over a live gen-0 value.
 		store.SetDeriveGeneration(time.Now().Unix())
 	}
 

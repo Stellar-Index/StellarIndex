@@ -6,10 +6,9 @@
 // attacker-authored. On a permissionless DEX anyone can mint a token,
 // seed a "market" with a handful of dust trades, and the raw prices_1m
 // serving paths will then publish the attacker's rate as our price —
-// with a consistent baseline, so guard.go accepts it (2026-08-04
-// valuation incident: a 21-minute-stale 1:1 seed rate valued a 5-XLM
-// trade at $8.56M; the served /v1/price for the pair was
-// attacker-authored in both directions).
+// with a consistent baseline, so guard.go accepts it. In one measured
+// case a 21-minute-stale 1:1 seed rate valued a 5-XLM trade at $8.56M
+// and made the pair's served /v1/price attacker-authored both ways.
 //
 // The substance gate closes that class by refusing to serve an
 // AGGREGATED price claim for an on-chain pair whose trailing market
@@ -82,9 +81,9 @@ var _ SubstanceStore = (*timescale.Store)(nil)
 type SubstancePolicy struct {
 	// MinVolumeUSD is the minimum trailing-window USD volume
 	// (exact-rational compare, ADR-0003). Default $1,000: two orders of
-	// magnitude above the measured $8.57 seed that priced the 2026-08-04
-	// incident pair, while low enough that genuinely-traded small classic
-	// assets clear it.
+	// magnitude above the measured $8.57 seed volume behind the $8.56M
+	// valuation described at the top of this file, while low enough that
+	// genuinely-traded small classic assets clear it.
 	MinVolumeUSD *big.Rat
 	// MinBuckets is the minimum number of distinct closed 1-minute
 	// buckets with at least one trade in the window. Default 20: a
@@ -543,10 +542,9 @@ func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset
 }
 
 // logTransition logs a pair's verdict on TRANSITIONS only — first
-// observation, or a flip. The steady state (hundreds of thin long-tail
-// pairs re-measured every TTL expiry) produced 6,000 WARNs/hour on r1
-// (2026-08-05); the metric is the volume signal, the log is the change
-// signal.
+// observation, or a flip. Logging the steady state (hundreds of thin
+// long-tail pairs re-measured every TTL expiry) produced 6,000 WARNs/hour on
+// r1; the metric is the volume signal, the log is the change signal.
 func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool, floor SubstanceFloor, hadPrior, priorAllowed bool) {
 	if g.logger == nil {
 		return
@@ -647,13 +645,13 @@ func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularit
 // [SubstanceGate.Allowed], for the reads that answer "what was the
 // price at ts" (/v1/price/at, and each /v1/price/changes horizon).
 //
-// Those reads used to ask [SubstanceGate.Allowed], and a trailing
-// window ending NOW decides nothing about a bucket that closed at ts
-// (finding T038). It was wrong in both directions. A market that was
-// deep and honest at ts but is dormant today had every historical
-// price withheld — a cost-basis read 404'd for data we hold and trust.
-// And a market that is thick today but was attacker-seeded dust at ts
-// PASSED, so the historical read served exactly the manipulated price
+// Asking [SubstanceGate.Allowed] would be wrong in both directions,
+// because a trailing window ending NOW decides nothing about a bucket
+// that closed at ts. A market that was deep and honest at ts but is
+// dormant today would have every historical price withheld — a
+// cost-basis read 404ing for data we hold and trust. And a market
+// that is thick today but was attacker-seeded dust at ts would PASS,
+// so the historical read would serve exactly the manipulated price
 // the gate exists to refuse. The safety property does not transfer
 // across time, so the window has to: substance is measured over
 // [policy.Window] ending at `at`, closed buckets only, alias union as

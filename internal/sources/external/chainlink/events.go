@@ -144,10 +144,10 @@ type Round struct {
 
 	// RoundID is the chainlink-internal round identifier — the FULL
 	// uint80 proxy round id, (phaseId<<64)|aggregatorRoundId, held as
-	// a *big.Int so it never truncates (F-1323/G10-01, and ADR-0003
-	// in spirit). Dedup is by (FeedAddress, RoundID) — repeated polls
-	// of an unchanged feed must not produce duplicate OracleUpdate
-	// rows. Never nil after decode; treat a nil RoundID as zero.
+	// a *big.Int so it never truncates (ADR-0003 in spirit). Dedup is
+	// by (FeedAddress, RoundID) — repeated polls of an unchanged feed
+	// must not produce duplicate OracleUpdate rows. Never nil after
+	// decode; treat a nil RoundID as zero.
 	RoundID *big.Int
 
 	// AnsweredInRound is the round that computed Answer, in the same
@@ -235,17 +235,15 @@ func newRoundCache() *roundCache {
 // wide value (not the low 64 bits) is what keeps emission alive
 // across a proxy phase upgrade: when Chainlink rotates the underlying
 // aggregator, aggregatorRoundId resets to ~1 but phaseId increments,
-// so the wide id still strictly increases. The old low-64-bit key saw
-// round=1 <= prev and silently wedged the feed until restart
-// (F-1323/G10-01).
+// so the wide id still strictly increases. A low-64-bit key would see
+// round=1 <= prev and silently wedge the feed until restart.
 //
-// nil roundID is treated as zero (defensive — decode never produces
-// a nil, but a future caller passing nil shouldn't panic here).
+// nil roundID is treated as zero (defensive — decode never produces a
+// nil, but a future caller passing nil shouldn't panic here).
 // Combines wouldEmit (poller.go) + commitEmit (poller.go): kept for
 // callers (and tests) that don't need the two steps split apart. The
 // production poll path uses the split form so a failure between the
-// check and the round actually being built can't strand the round
-// (RNC26).
+// check and the round actually being built can't strand the round.
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
 	if !c.wouldEmit(feedAddr, roundID) {
 		return false

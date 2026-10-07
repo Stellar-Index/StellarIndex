@@ -1,19 +1,19 @@
-// NOT WIRED -- dead code, no writer exists (AGT-06 / HLT-03,
-// audit-2026-07-23). UsageStore + UsageEvent/UsageRollup/UsageQuery
-// below are a fully-documented interface with ZERO implementations
-// and ZERO callers anywhere in the codebase — no async worker drains
-// a Redis stream into AppendEvent(Batch), nothing constructs a
-// UsageStore, and nothing reads UsageRollup. The api_usage_events
-// hypertable these types model (migrations/0027_platform_v1_schema.up.sql)
-// exists and is never written to; the api_usage_{5m,1h,1d} CAGGs that
-// migration names in a comment were never created.
+// NOT WIRED -- dead code, no writer exists. The UsageStore interface and
+// the UsageEvent/UsageRollup/UsageQuery types below are fully documented
+// but have ZERO implementations and ZERO callers anywhere in the
+// codebase: no async worker drains a Redis stream into AppendEvent(Batch),
+// nothing constructs a UsageStore, and nothing reads UsageRollup. The
+// api_usage_events hypertable these types model
+// (migrations/0027_platform_v1_schema.up.sql) exists and is never
+// written to; the api_usage_{5m,1h,1d} CAGGs that migration names in a
+// comment were never created.
 //
 // Per-request billing/usage accounting is live via a DIFFERENT,
 // unrelated package: internal/usage (Redis INCR counters, see
 // internal/usage/counter.go + rollup.go) — that is the real
 // mechanism backing GET /v1/account/usage and the daily rollup.
-// Don't confuse the two: this file predates internal/usage and was
-// superseded by it before ever being wired up.
+// Don't confuse the two: internal/usage is the wired mechanism, and
+// this interface has never been.
 //
 // Do not build new features on this interface without first writing
 // the missing worker (AppendEvent call site + a draining loop) —

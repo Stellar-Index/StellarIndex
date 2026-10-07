@@ -22,8 +22,7 @@ import (
 // those tokens with the real instrument's net asset value: an unrelated
 // token trading at $0.20 is published at an 81% discount to a security
 // it has nothing to do with. That is a false financial claim about a
-// real instrument, and it is the attacker-authored-pricing class of the
-// 2026-08 valuation incident in a new coordinate.
+// real instrument — attacker-authored pricing in a new coordinate.
 //
 // The binding is therefore explicit, on the exact pair, and checked in
 // code. Prose asserting that the issuer's declaration establishes the
@@ -55,10 +54,10 @@ import (
 //     entity. Requirement R3, likewise already checked. Where ADR-0028
 //     also attributes the feed to an entity, the two must AGREE — but
 //     note that ADR-0028 attributes only some feeds by entity (USDY,
-//     USST, XAUm, deJAAA, deJTRSY, added in the 2026-07-27 amendment)
-//     and lists CETES, USTRY, TESOURO, GILTS, KTB and SPXU by ticker
-//     alone. For a ticker-only feed this requirement cannot be met by
-//     matching attributions, and requirement 3 carries the binding.
+//     USST, XAUm, deJAAA, deJTRSY) and lists CETES, USTRY, TESOURO,
+//     GILTS, KTB and SPXU by ticker alone. For a ticker-only feed this
+//     requirement cannot be met by matching attributions, and
+//     requirement 3 carries the binding.
 //  3. Something ties the FEED to that issuer specifically, not merely to
 //     an instrument of that name. Price agreement between the token's
 //     Stellar market price and the feed is the strongest form and is
@@ -138,9 +137,8 @@ const ondoIssuer = "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"
 // fund (BENJI, FOCGX, gBENJI, grBENJI, sgBENJI); only BENJI is bound
 // here, because only BENJI is what the oracle prices.
 //
-// This account had no registry row at all until 2026-09-11: it holds
-// 12,498 trustlines and has never traded, and the registry was populated
-// from trades alone.
+// This account holds 12,498 trustlines and has never traded, so a
+// registry populated from trades alone never lists it.
 const franklinTempletonIssuer = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
 
 // instrumentBindings is the curated set.
@@ -150,12 +148,10 @@ const franklinTempletonIssuer = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJG
 // code-keyed join again with extra steps, so a code is bound only once
 // THIS issuer is observed to have issued it.
 //
-// GILTS and KTB were excluded on exactly that ground and are now
-// included, because the ground no longer holds: both are issued by this
-// account and carry holding evidence on chain (2026-09-11). They were
-// invisible before only because the asset registry was populated from
-// trades alone, and neither has ever traded — which is what a
-// held-to-maturity instrument looks like.
+// GILTS and KTB meet that ground: both are issued by this account and
+// carry holding evidence on chain. Neither has ever traded — which is
+// what a held-to-maturity instrument looks like — so a registry
+// populated from trades alone would not see them.
 // Evidence grade is stated per entry, because the file's own policy
 // above says the weaker form is marked as such and a grade recorded only
 // on the issuer constant does not travel with the row a reviewer reads.

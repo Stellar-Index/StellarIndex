@@ -21,12 +21,11 @@ import (
 // `--collector.textfile.directory=/var/lib/node_exporter/textfile_collector`).
 //
 // A long-running ops job defaults its heartbeat here rather than taking a
-// mandatory flag, because the failure this closes (C6-020) is precisely
-// that nobody remembers to add the flag: long backfills are the dominant
-// ops activity right now (Phase A recompress, movement backfills) and a
-// HUNG one was invisible in both rule trees. Defaulting means an operator
-// who types the same `ch-backfill` command they always typed gets the
-// heartbeat for free on r1, and gets nothing (silently) on a laptop where
+// mandatory flag, because the failure this closes is precisely that nobody
+// remembers to add the flag: long backfills are the dominant ops activity and
+// a HUNG one is otherwise invisible in both rule trees. Defaulting means an
+// operator who types the same `ch-backfill` command they always typed gets
+// the heartbeat for free on r1, and gets nothing (silently) on a laptop where
 // the directory does not exist — see [NewJobHeartbeat].
 const DefaultTextfileDir = "/var/lib/node_exporter/textfile_collector"
 
@@ -65,12 +64,12 @@ const jobHeartbeatLabel = "ops_job"
 // JobHeartbeat publishes liveness + progress for one long-running
 // stellarindex-ops job as node_exporter textfile gauges.
 //
-// The gap it closes (C6-020, audit-2026-07-23): NO backfill-progress
-// alert existed in either rule tree. A backfill that wedged — a stalled S3
-// read, a ClickHouse connection that never returns, an OOM-killed worker —
-// looked exactly like a backfill that was still working, for as long as
-// nobody happened to tail the journal. The two states are distinguished
-// here by publishing them SEPARATELY:
+// The gap it closes: without it NO backfill-progress alert exists in
+// either rule tree. A backfill that wedged — a stalled S3 read, a
+// ClickHouse connection that never returns, an OOM-killed worker — would
+// look exactly like a backfill still working, for as long as nobody
+// happened to tail the journal. The two states are distinguished here by
+// publishing them SEPARATELY:
 //
 //   - stellarindex_ops_job_running       1 while the process is alive
 //   - stellarindex_ops_job_heartbeat_unix rewritten every minute by a
@@ -242,9 +241,9 @@ func pidPath(path string, pid int) string {
 // pays for a directory scan at NewJobHeartbeat time; it only sweeps once it
 // is already enabled and already touching disk on its own schedule.
 //
-// T597/T601: contention-only sweeping left a loser's file behind forever
-// when it was never followed by another contention (a hard-killed run with
-// no successor). The tick/Stop callers close that gap: as long as the
+// Contention-only sweeping would leave a loser's file behind forever
+// when no further contention follows (a hard-killed run with no
+// successor). The tick/Stop callers close that gap: as long as the
 // primary for a given path is alive and progressing through its own
 // lifecycle, a dead sibling is reaped within one tick, and unconditionally
 // by the time the primary exits — not only on the next contention. A pid
@@ -345,7 +344,7 @@ func (h *JobHeartbeat) Start() {
 // Called from the ticker (so a dead sibling is reaped within one heartbeat
 // interval even absent a new contention) and from Stop (so it is reaped
 // unconditionally by the time a run ends, even a run shorter than one
-// tick) — see T597/T601 on [sweepStalePIDFiles].
+// tick) — see [sweepStalePIDFiles].
 func (h *JobHeartbeat) sweepIfPrimary() {
 	h.mu.Lock()
 	primary := h.lock != nil
@@ -386,7 +385,7 @@ func (h *JobHeartbeat) Progress(total, cursor uint64) {
 // completed rows/ledgers — is structurally zero for the whole of some
 // phases of a job that is perfectly healthy.
 //
-// The case that forced it (r1, 2026-09-09): `usd-volume-restamp -chunks`
+// The case that forced it, on r1: `usd-volume-restamp -chunks`
 // must decompress a Timescale chunk before it can restamp a single row
 // in it, and `trades` has an outlier chunk at 159.7 GB uncompressed whose
 // decompress runs about 1.5 hours. Progress counts restamped rows, so it
@@ -397,7 +396,7 @@ func (h *JobHeartbeat) Progress(total, cursor uint64) {
 // same blindness the alert exists to prevent, reached by a different
 // route.
 //
-// The fix is NOT to mute the alert for that phase: the phase is the
+// The answer is NOT to mute the alert for that phase: the phase is the
 // longest and most dangerous part of the run, and `running==1 ∧ fresh
 // heartbeat ∧ flat progress` is a state that genuinely happens there
 // (decompress_chunk needs a lock the ledgerstream replay can hold; a
@@ -452,7 +451,7 @@ func (h *JobHeartbeat) Stop(exitOK bool) {
 	h.write()
 	// Sweep before releasing the claim: this is the primary's last chance
 	// to reap dead siblings for this path without waiting on a future
-	// contention that may never come (T597/T601).
+	// contention that may never come.
 	h.sweepIfPrimary()
 
 	// Release the claim only after the terminal state is on disk, so a

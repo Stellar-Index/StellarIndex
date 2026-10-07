@@ -8,8 +8,7 @@ import (
 )
 
 // Tier is the capability bucket an account sits in. The platform is
-// free (operator decision 2026-08-10 — no payments), so the model is
-// exactly three levels:
+// free (no payments), so the model is exactly three levels:
 //
 //   - anon:    unauthenticated callers. Not an account tier at all —
 //     the per-IP baseline enforced by the rate-limit middleware
@@ -112,11 +111,10 @@ func (t Tier) StorageValue() string {
 // MaxRateLimitPerMin returns the per-tier ceiling for the customer-
 // supplied `rate_limit_per_min` field on dashboard-minted keys.
 //
-// Without this ceiling, the dashboard key-creation flow accepted any
-// positive value up to 100_000 regardless of the account's tier.
-// F-1212 (codex audit-2026-05-12).
+// Without this ceiling the dashboard key-creation flow would accept
+// any positive value up to 100_000 regardless of the account's tier.
 //
-// Ladder (free-platform model, 2026-08-11):
+// Ladder:
 //
 //   - anon:    60/min (the `[api].anon_rate_limit_per_min` default —
 //     documented here, enforced by the middleware)
@@ -136,12 +134,9 @@ func (t Tier) MaxRateLimitPerMin() int {
 }
 
 // MaxActiveKeys returns the per-tier ceiling on concurrently active
-// (non-revoked) API keys an account can hold. Replaces the flat
-// 25-key cap the dashboard shipped with ("tier-aware quotas can
-// replace this once billing is wired — Phase 2"). Deployments can
-// override per tier via the dashboard handler config
-// (dashboardkeys.Config.KeyQuotas); this method is the
-// config-absent default ladder.
+// (non-revoked) API keys an account can hold. Deployments can override per
+// tier via the dashboard handler config (dashboardkeys.Config.KeyQuotas);
+// this method is the config-absent default ladder.
 //
 // An unknown tier value is treated as free (defensive — a corrupt
 // row should not unlock elevated quotas), matching
@@ -163,13 +158,12 @@ func (t Tier) MaxActiveKeys() int {
 //
 // This is the CEILING the account-level operator override
 // ([Account.MonthlyRequestQuotaOverride]) falls back to when unset: the
-// dashboard clamps a customer-supplied per-key quota to
-// min(requested, override-if-set-else-this-ladder) so a metered
-// customer can only LOWER their cap, never raise it above the plan.
-// Without this ceiling the create handler honoured any int64 the POST
-// body carried — a customer on a metered plan could self-mint a key
-// with `monthly_quota: 9_000_000_000` and run effectively unmetered
-// (audit-2026-07 MEDIUM).
+// dashboard clamps a customer-supplied per-key quota to min(requested,
+// override-if-set-else-this-ladder) so a metered customer can only LOWER
+// their cap, never raise it above the plan. Without this ceiling the create
+// handler would honour any int64 the POST body carried — a customer on a
+// metered plan could self-mint a key with `monthly_quota: 9_000_000_000` and
+// run effectively unmetered.
 //
 // Symmetric-opposite of [Tier.MaxRateLimitPerMin]: rate limit is a
 // burst ceiling clamped at mint AND raised by the account override as

@@ -69,9 +69,9 @@ type Config struct {
 	KeyQuotas map[platform.Tier]int
 
 	// idempotency backs the optional Idempotency-Key header on
-	// HandleCreate (T284): a client that retries a mint after a
-	// timeout gets the original response replayed instead of minting
-	// a second key. Lazily initialized by validate().
+	// HandleCreate: a client that retries a mint after a timeout gets
+	// the original response replayed instead of minting a second key.
+	// Lazily initialized by validate().
 	idempotency *middleware.IdempotencyStore
 }
 
@@ -129,11 +129,10 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // handler still reads the SessionContext (planted by
 // dashboardauth.Middleware) for its account.
 //
-// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
-// (C3-031 / C3-057): these routes authenticate with the session
-// COOKIE, so a cross-site page could otherwise mint or revoke a
-// logged-in customer's API keys. Reads stay unwrapped — safe
-// methods change nothing.
+// Every mutation is wrapped in [middleware.RequireSameSiteWrite]:
+// these routes authenticate with the session COOKIE, so a cross-site
+// page could otherwise mint or revoke a logged-in customer's API
+// keys. Reads stay unwrapped — safe methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -164,8 +163,8 @@ type keyDTO struct {
 	RefererAllowlist       []string `json:"referer_allowlist,omitempty"`
 	// Pointer times so a zero value (no expiry / not revoked / never used)
 	// actually omits — `omitempty` does NOT omit a zero time.Time (it's a
-	// non-empty struct), which previously serialized "0001-01-01T00:00:00Z"
-	// and made a fresh key look revoked + "last used ~2025 years ago".
+	// non-empty struct), which would serialize "0001-01-01T00:00:00Z" and
+	// make a fresh key look revoked + "last used ~2025 years ago".
 	ExpiresAt     *wiretime.Time `json:"expires_at,omitempty"`
 	RevokedAt     *wiretime.Time `json:"revoked_at,omitempty"`
 	RevokedReason string         `json:"revoked_reason,omitempty"`
@@ -280,24 +279,22 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// F-1212 (codex audit-2026-05-12): clamp customer-supplied
-	// rate_limit_per_min to the account's tier ceiling. Free
-	// accounts get 60/min; paid tiers get their respective caps.
-	// Without this clamp the handler honoured any value up to
-	// 100_000, letting a Free account self-mint a key with 100×
-	// the Starter budget.
+	// Clamp customer-supplied rate_limit_per_min to the account's
+	// tier ceiling ([platform.Tier.MaxRateLimitPerMin]: free 1000/min,
+	// partner 100_000/min). Without this clamp the handler would honour
+	// any value up to 100_000, letting a free account self-mint a key
+	// with 100× its tier budget.
 	req.RateLimitPerMin = clampRateLimitToTier(req.RateLimitPerMin, sc.Account.Tier)
 
-	// audit-2026-07 (MEDIUM): clamp the customer-supplied
-	// monthly_quota to the account's hard ceiling so a metered
-	// customer can only LOWER their cap, never raise it above the
-	// plan. Without this clamp the handler persisted any int64 the
-	// POST body carried (e.g. 9_000_000_000), and the auth cascade
-	// let that per-key value win — an effectively-unmetered key on a
-	// metered plan. The ceiling is the operator's account-level
-	// override when set, else the tier default; see
-	// clampMonthlyQuotaToAccount. Mirrors clampRateLimitToTier but is
-	// a CEILING (only lowers), not a FLOOR.
+	// Clamp the customer-supplied monthly_quota to the account's hard
+	// ceiling so a metered customer can only LOWER their cap, never
+	// raise it above the plan. Without this clamp the handler would
+	// persist any int64 the POST body carried (e.g. 9_000_000_000), and
+	// the auth cascade would let that per-key value win — an
+	// effectively-unmetered key on a metered plan. The ceiling is the
+	// operator's account-level override when set, else the tier default
+	// (see clampMonthlyQuotaToAccount). It mirrors clampRateLimitToTier
+	// but is a CEILING (only lowers), not a FLOOR.
 	req.MonthlyQuota = clampMonthlyQuotaToAccount(req.MonthlyQuota, sc.Account)
 
 	maxKeys := h.maxKeysFor(sc.Account.Tier)
@@ -391,7 +388,7 @@ func (h *Handlers) persistKey(ctx context.Context, acct platform.Account, rec pl
 	if mirrored {
 		h.rollbackMirror(ctx, acct, rec.ID)
 	}
-	// F-1257 race-window loser: another concurrent create pushed this
+	// Race-window loser: another concurrent create pushed this
 	// account over its tier's key cap between the precheck and the
 	// INSERT. Surface the same 409 the precheck would have.
 	if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
@@ -483,7 +480,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return
 	}
-	// GH-1320: canManageKeys lets owner, admin AND member through, but
+	// canManageKeys lets owner, admin AND member through, but
 	// only owner/admin manage every key on the account — a member's
 	// grant is "own keys" (see the role docstring and canManageKeys).
 	// Without this, a member could revoke any other user's key,
@@ -577,8 +574,8 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	// Validate the fields that Postgres CHECK-constrains, so a bad
 	// request is rejected as a 400 naming the field rather than
 	// surfacing as an opaque 500 from a constraint violation deep in
-	// finalizeAPIKeyCreate. Cold audit 2026-08-04 proved all four reach
-	// the store today; the operator cost is real, because a 500 here is
+	// finalizeAPIKeyCreate. Without these checks all four would reach
+	// the store, and the operator cost is real: a 500 here is
 	// indistinguishable from the genuine 500 a migration-drift on
 	// api_keys produces, and the first thing it prompts is "key creation
 	// is broken" rather than "your request was malformed".
@@ -630,13 +627,11 @@ func normaliseScopes(raw []string) ([]string, string) {
 	return out, ""
 }
 
-// clampRateLimitToTier returns the lower of `requested` and the
-// account's per-tier ceiling. Free accounts that try to mint a key
-// with `rate_limit_per_min: 100000` get silently downgraded to the
-// free-tier cap (60/min) rather than rejected — this matches the
-// per-tier-default fallback pattern at line 365 and keeps the
-// dashboard UX simple (one field, one cap). F-1212 (codex
-// audit-2026-05-12).
+// clampRateLimitToTier returns the lower of `requested` and the account's
+// per-tier ceiling. A free account that tries to mint a key with
+// `rate_limit_per_min: 100000` is silently downgraded to the free-tier cap
+// (1000/min) rather than rejected — this matches the default fallback in
+// parseCreateRequest and keeps the dashboard UX simple (one field, one cap).
 //
 // Operator-issued or partner-issued keys aren't created through this
 // handler — they go through stellarindex-ops and are not subject to
@@ -684,26 +679,22 @@ func validateCIDROrIP(entry string) string {
 //     override is the mechanism for issuing a higher-cap key — set it on
 //     the account, mint with the quota unset, the key inherits it.
 //   - requested <= 0 with NO override: fall back to the tier ceiling.
-//
-// This used to pass 0 through in BOTH cases, on the stated rationale
-// that clamping "would silently START metering a key the customer left
-// unset". That rationale inverted the intent: apikey_postgres resolves
-// 0 → the account override → 0, and the monthly-quota middleware treats
-// <= 0 as pass-through, so a key minted with the natural body
-// ({"name": "..."}) was metered by NOTHING. The tier ladder therefore
-// bound only customers who volunteered a number — the honest ones — and
-// a Free key could run 60rpm ≈ 2.6M requests/month against an
-// advertised 100k ceiling. The sibling clampRateLimitToTier has no such
-// hole because parseCreateRequest gives rate_limit_per_min a positive
-// default, so its clamp always bites (cold audit 2026-08-04).
+//     Passing 0 through here too would meter the key by NOTHING:
+//     apikey_postgres resolves 0 → the account override → 0, and the
+//     monthly-quota middleware treats <= 0 as pass-through. The tier
+//     ladder would then bind only customers who volunteered a number,
+//     and a free key minted with the natural body ({"name": "..."})
+//     could run its per-minute budget around the clock with no monthly
+//     cap. The sibling clampRateLimitToTier has no such hole because
+//     parseCreateRequest gives rate_limit_per_min a positive default,
+//     so its clamp always bites.
 //   - requested > 0: clamp to min(requested, ceiling), where the
 //     ceiling is the operator's [platform.Account.MonthlyRequestQuotaOverride]
 //     when set (> 0), else the tier default [platform.Tier.MaxMonthlyQuota].
 //
-// This makes the operator's account-level cap a HARD ceiling the
-// customer can only lower — the CEILING analogue of the rate-limit
-// FLOOR (clampRateLimitToTier + the account rate-limit override at
-// auth time). audit-2026-07 (MEDIUM).
+// This makes the operator's account-level cap a HARD ceiling the customer can
+// only lower — the CEILING analogue of the rate-limit FLOOR
+// (clampRateLimitToTier + the account rate-limit override at auth time).
 func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
 	if requested <= 0 && acct.MonthlyRequestQuotaOverride > 0 {
 		// Inherit the operator's explicit override at auth time.

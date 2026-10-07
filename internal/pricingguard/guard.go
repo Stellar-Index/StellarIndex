@@ -101,26 +101,24 @@ type TrailingAtReader interface {
 // unaffected).
 //
 // It also returns the low-confidence signal a serving path needs for its
-// stale flag, and the substituted signal a serving path needs to withhold enrichment that
-// isn't ABOUT the served bucket. lowConfidence is true when the served
-// bucket had NO usable trailing baseline to validate against (a pair's
-// first-ever served minute, or its first after more than [BaselineMaxAge]
-// dormant): [aggregate.GuardServedVWAP] FAILS OPEN there,
-// so a single manipulated / fat-finger print would otherwise be served
-// with stale=false and no volume floor (adversarial-review W6-fresh-1).
-// The value is STILL served (never a blackout of a legitimate new pair) —
-// the caller surfaces it as stale / low-confidence instead of a confident
-// price.
+// stale flag, and the substituted signal a serving path needs to withhold
+// enrichment that isn't ABOUT the served bucket. lowConfidence is true when
+// the served bucket had NO usable trailing baseline to validate against (a
+// pair's first-ever served minute, or its first after more than
+// [BaselineMaxAge] dormant): [aggregate.GuardServedVWAP] FAILS OPEN there, so
+// a single manipulated / fat-finger print would otherwise be served with
+// stale=false and no volume floor. The value is STILL served (never a
+// blackout of a legitimate new pair) — the caller surfaces it as stale /
+// low-confidence instead of a confident price.
 //
 // It is only ever true on a SUCCESSFUL trailing fetch that returned no
 // usable baseline; a transient fetch error still fails open with
-// lowConfidence=false (unchanged posture — a DB blip must not flag every
-// price stale). On a validated bucket (populated OR thin baseline)
-// lowConfidence is false.
+// lowConfidence=false (a DB blip must not flag every price stale). On a
+// validated bucket (populated OR thin baseline) lowConfidence is false.
 //
 // substituted is true when the candidate was rejected as an outlier and
-// `served` is the older last-known-good bucket instead (RNC27). A caller
-// that staples enrichment looked up from a SEPARATE, independently-keyed
+// `served` is the older last-known-good bucket instead. A caller that
+// staples enrichment looked up from a SEPARATE, independently-keyed
 // cache (confidence score, composite-router flags — anything keyed by
 // (pair, window) rather than by the served bucket itself) must treat
 // substituted=true as "that enrichment answers for the CURRENT tick, not
@@ -168,13 +166,12 @@ func GuardServedVWAP1mConfidence(
 
 // GuardServedVWAP1mAt is [GuardServedVWAP1mConfidence] for the POINT-IN-TIME
 // serving path (/v1/price/at and, through it, every /v1/price/changes
-// horizon — MSP-01/MSP-02's reader seam). Those routes resolve an
-// instant through a CAGG ladder whose FIRST rung is the same raw
-// prices_1m bucket /v1/price serves, so they carried the identical
-// unfiltered fat-finger / manipulation vector on a path the guard had
-// never been wired into (finding F031). Callers apply it ONLY to a
-// prices_1m answer; coarser rungs are hour/day bars, a different
-// (diluted) exposure the trailing 1-minute baseline cannot judge.
+// horizon). Those routes resolve an instant through a CAGG ladder whose
+// FIRST rung is the same raw prices_1m bucket /v1/price serves, so without
+// this guard they would carry the identical unfiltered fat-finger /
+// manipulation vector. Callers apply it ONLY to a prices_1m answer; coarser
+// rungs are hour/day bars, a different (diluted) exposure the trailing
+// 1-minute baseline cannot judge.
 //
 // `ts` and `maxStaleness` are the caller's at-or-before contract, and
 // they are what make this distinct from [GuardServedVWAP1mConfidence]: a rejected
@@ -359,7 +356,7 @@ func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
 	if accept {
 		// An accept against an empty baseline is an unvalidated fail-open —
-		// serve the value, but flag it low-confidence (W6-fresh-1).
+		// serve the value, but flag it low-confidence.
 		return candidate, false, !aggregate.ServedBaselineValidated(trailing)
 	}
 	return trailingRows[lkgIdx], true, false

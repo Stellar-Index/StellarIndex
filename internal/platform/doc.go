@@ -1,8 +1,6 @@
 // Package platform models the customer + staff dashboard primitives.
 //
-// AGT-08 (audit-2026-07-23): this doc previously narrated the auth
-// flow, key management, and Postgres cutover as future per-week
-// work; all of it has since shipped. Current reality:
+// The auth flow, key management and Postgres key storage are live:
 //
 //   - The dashboard auth flow (magic-link + session cookies) is
 //     live — see internal/api/v1/dashboardauth, wired in

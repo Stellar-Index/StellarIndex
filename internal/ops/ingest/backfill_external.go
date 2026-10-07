@@ -175,7 +175,7 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 		return nil, fmt.Errorf("storage: %w", err)
 	}
 
-	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// Re-derive path (migration 0109): stamp a positive
 	// derive_generation so a corrected trade re-derive UPDATEs the stored
 	// row in place (usd_volume et al.) and wins over the live gen-0 value.
 	store.SetDeriveGeneration(time.Now().Unix())
