@@ -204,6 +204,94 @@ describe('LiveAssetPrice', () => {
     expect(screen.queryByText(/\$0\.17/)).not.toBeInTheDocument();
   });
 
+  it('a thin-market poll shows the price with a warning badge and the substance note', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          data: {
+            price: '0.0421',
+            substance: {
+              base: 'THIN-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+              quote: 'fiat:USD',
+              window_seconds: 86400,
+              measured_at: '2026-10-07T00:00:00Z',
+              volume_usd: '12.5',
+              buckets: 2,
+              valued_buckets: 2,
+              span_seconds: 600,
+              floor: {
+                min_volume_usd: '1000',
+                min_buckets: 6,
+                min_span_seconds: 3600,
+              },
+              failed: 'volume',
+            },
+          },
+          flags: { thin_market: true },
+        }),
+      }),
+    );
+    renderPrice(
+      <LiveAssetPrice
+        assetID="THIN-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+        initialPrice={null}
+        initialProvenance={null}
+      />,
+    );
+    expect(await screen.findByText(/\$0\.0421/)).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls[0]?.[0] as string).toContain(
+      'include_thin=true',
+    );
+    expect(
+      screen.getByText(/thin market · low confidence · in no total/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/1-min VWAP/i)).not.toBeInTheDocument();
+    const badge = screen.getByText('⚠');
+    expect(badge.getAttribute('title')).toMatch(
+      /traded \$12\.5.*floor \$1(\.0)?K.*2 active price buckets \(floor 6\)/,
+    );
+    expect(
+      screen.getByText(/Over the last 24 hours it traded/),
+    ).toBeInTheDocument();
+    // The tip stream for a thin pair is withheld; never open it.
+    expect(useTipStream).toHaveBeenLastCalledWith(null);
+  });
+
+  it('a thin-market poll does NOT displace a declared-peg price', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          data: { price: '0.42' },
+          flags: { thin_market: true },
+        }),
+      }),
+    );
+    renderPrice(
+      <LiveAssetPrice
+        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
+        initialPrice={0.655}
+        initialProvenance="declared_peg"
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/\$0\.655/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/pegged · declared 1:1 fiat peg/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.42/)).not.toBeInTheDocument();
+    expect(screen.queryByText('⚠')).not.toBeInTheDocument();
+  });
+
   it('a stale tip frame does NOT claim live (WB-04)', () => {
     useTipStream.mockReturnValue({
       data: { data: { price: '0.1745' }, as_of: '2026-08-08T00:00:00Z' },

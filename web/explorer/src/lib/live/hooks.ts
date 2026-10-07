@@ -9,9 +9,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
+import type { components } from '@/api/types';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 import { subscribeStream } from './streams';
+
+type SubstanceEvidence = components['schemas']['SubstanceEvidence'];
 
 export interface StreamFrame<T> {
   data: T;
@@ -155,7 +158,10 @@ export interface LiveTip {
  * divergence warning — a frozen tick isn't moving at all, which is the
  * stronger caveat. Null when nothing is worth flagging.
  */
-export function tipCaveat(data: LiveTip['data'], flags?: LiveTipFlags): string | null {
+export function tipCaveat(
+  data: LiveTip['data'],
+  flags?: LiveTipFlags,
+): string | null {
   if (flags?.frozen) return 'frozen — source has not updated';
   if (flags?.divergence_warning) return 'sources diverging';
   if (data.window_seconds != null) return `${data.window_seconds}s window`;
@@ -258,7 +264,9 @@ const followKeyRefCount = new Map<string, number>();
  * live throttling for every panel on the page. */
 export function resetLedgerFollowThrottleForTest(): void {
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('resetLedgerFollowThrottleForTest must not be called outside tests');
+    throw new Error(
+      'resetLedgerFollowThrottleForTest must not be called outside tests',
+    );
   }
   lastFollowRefetchByKey.clear();
   followKeyRefCount.clear();
@@ -399,12 +407,15 @@ export function usePricePoll({
   initialPrice = null,
   initialObservedAt = null,
   intervalMs = 60_000,
+  includeThin = false,
 }: {
   asset: string;
   quote?: string;
   initialPrice?: number | null;
   initialObservedAt?: string | null;
   intervalMs?: number;
+  /** Ask for a thin-market price instead of the withheld 404. */
+  includeThin?: boolean;
 }): {
   price: number | null;
   observedAt: string | null;
@@ -418,6 +429,9 @@ export function usePricePoll({
    * hardcode a liquidity-only caption over these (GH-772). */
   withheldTitle: string | null;
   withheldDetail: string | null;
+  /** The price comes from a market below the substance floor. */
+  thin: boolean;
+  substance: SubstanceEvidence | null;
   /** True after the first successful poll (including a withheld verdict). */
   polled: boolean;
 } {
@@ -429,6 +443,8 @@ export function usePricePoll({
     withheld: false,
     withheldTitle: null as string | null,
     withheldDetail: null as string | null,
+    thin: false,
+    substance: null as SubstanceEvidence | null,
     polled: false,
   });
   // Reset during render when the asset/quote pair changes (mirrors
@@ -447,6 +463,8 @@ export function usePricePoll({
       withheld: false,
       withheldTitle: null,
       withheldDetail: null,
+      thin: false,
+      substance: null,
       polled: false,
     });
   }
@@ -471,7 +489,7 @@ export function usePricePoll({
       inFlight = true;
       try {
         const r = await fetch(
-          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
+          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}${includeThin ? '&include_thin=true' : ''}`,
           { signal: timeoutSignal(undefined, controller.signal) },
         );
         if (cancelled) return;
@@ -488,6 +506,8 @@ export function usePricePoll({
               withheld: true,
               withheldTitle: body.title ?? null,
               withheldDetail: body.detail ?? null,
+              thin: false,
+              substance: null,
               polled: true,
             }));
           }
@@ -495,8 +515,16 @@ export function usePricePoll({
         }
         if (!r.ok) return;
         const body = (await r.json()) as {
-          data?: { price?: string; observed_at?: string };
-          flags?: { stale?: boolean; triangulated?: boolean };
+          data?: {
+            price?: string;
+            observed_at?: string;
+            substance?: SubstanceEvidence;
+          };
+          flags?: {
+            stale?: boolean;
+            triangulated?: boolean;
+            thin_market?: boolean;
+          };
         };
         const n = Number(body.data?.price);
         if (!Number.isFinite(n) || n <= 0) return;
@@ -509,6 +537,8 @@ export function usePricePoll({
           withheld: false,
           withheldTitle: null,
           withheldDetail: null,
+          thin: Boolean(body.flags?.thin_market),
+          substance: body.data?.substance ?? null,
           polled: true,
         });
       } catch {
@@ -531,7 +561,7 @@ export function usePricePoll({
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [asset, quote, intervalMs]);
+  }, [asset, quote, intervalMs, includeThin]);
 
   return state;
 }

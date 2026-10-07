@@ -103,7 +103,7 @@ describe('AssetsTable per-network columns', () => {
     expect(container.textContent).toContain('$0.412300');
     expect(container.textContent).toContain('$12B');
     expect(container.textContent).toContain('$4.5M');
-    expect(lastOptions).toEqual({ sparkline7d: true });
+    expect(lastOptions).toEqual({ sparkline7d: true, includeThin: true });
   });
 
   it.each(['testnet', 'futurenet'])(
@@ -123,7 +123,7 @@ describe('AssetsTable per-network columns', () => {
         expect(screen.getByText(label)).toBeInTheDocument();
       }
       expect(screen.getByText('XLM')).toBeInTheDocument();
-      expect(lastOptions).toEqual({ sparkline7d: false });
+      expect(lastOptions).toEqual({ sparkline7d: false, includeThin: false });
     },
   );
 });

@@ -618,7 +618,9 @@ export function useAssets(
   limit: number,
   cursor: string,
   q: string | undefined,
-  options?: { sparkline7d?: boolean },
+  // includeThin asks for thin-market prices, flagged `thin_market`; a
+  // caller that sets it must badge them (ThinMarketBadge).
+  options?: { sparkline7d?: boolean; includeThin?: boolean },
   // endpoint selects the listing surface. Defaults to the Stellar-only
   // `/v1/assets`; the external directory (`/external/assets`) passes
   // `/v1/external/assets` (fiat + reference-only coins, same wire shape).
@@ -637,6 +639,7 @@ export function useAssets(
       cursor,
       q ?? '',
       include ?? '',
+      options?.includeThin ? 'thin' : '',
     ],
     queryFn: async () => {
       const env = await apiGet<AssetsListEnvelope>(endpoint, {
@@ -645,6 +648,7 @@ export function useAssets(
         ...(cursor ? { cursor } : {}),
         ...(q ? { q } : {}),
         ...(include ? { include } : {}),
+        ...(options?.includeThin ? { include_thin: 'true' } : {}),
       });
       return {
         assets: env.data ?? [],
@@ -742,6 +746,8 @@ export function useCoins(
     sparkline?: boolean;
     sparkline7d?: boolean;
     ath?: boolean;
+    // See useAssets: a caller that sets it must badge thin rows.
+    includeThin?: boolean;
     // enabled=false skips the fetch entirely. Used by the global search
     // modal, which is mounted in the sidebar on EVERY page: without this it
     // fired a /v1/assets?limit=100 round-trip on every single page load, for
@@ -764,6 +770,7 @@ export function useCoins(
       q ?? '',
       orderBy ?? 'observation_count_desc',
       include ?? '',
+      options?.includeThin ? 'thin' : '',
     ],
     queryFn: async () => {
       const env = await apiGet<AssetsListEnvelope>('/v1/assets', {
@@ -773,6 +780,7 @@ export function useCoins(
         ...(q ? { q } : {}),
         ...(orderBy ? { order_by: orderBy } : {}),
         ...(include ? { include } : {}),
+        ...(options?.includeThin ? { include_thin: 'true' } : {}),
       });
       // Reshape /v1/assets envelope into the legacy CoinsPage so
       // existing consumers stay byte-for-byte compatible during the

@@ -21,6 +21,7 @@ import {
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { FreshnessMarker } from '@/components/primitives';
 import { ScamBadge } from '@/components/ScamBadge';
+import { ThinMarketBadge } from '@/components/ThinMarketBadge';
 import {
   Badge,
   Button,
@@ -89,6 +90,9 @@ function parseAssetClass(raw: string | null): AssetClassFilter {
  * VWAP price. Re-partitioning here applies the server's own rule to the
  * same rows with the gate's verdict in hand: the first dash moves to 34.
  *
+ * A thin-market price (`thin_market`) is shown but ranks with the unpriced
+ * rows: it is exactly the price the substance gate refuses to stand behind.
+ *
  * The partition keys on the price the response CARRIED, not on why a row
  * has none, so it holds for /external/assets too — that listing shares this
  * table, and its unpriced rows are reference coins the feed does not cover
@@ -104,7 +108,8 @@ function demoteUnpricedLast(rows: Coin[]): Coin[] {
   const priced: Coin[] = [];
   const unpriced: Coin[] = [];
   for (const row of rows) {
-    (parseDec(row.price_usd) != null ? priced : unpriced).push(row);
+    const stood = parseDec(row.price_usd) != null && !row.thin_market;
+    (stood ? priced : unpriced).push(row);
   }
   return unpriced.length === 0 ? priced : [...priced, ...unpriced];
 }
@@ -165,7 +170,7 @@ export function AssetsTable({
     limit,
     cursor,
     queryParam || undefined,
-    { sparkline7d: pricing },
+    { sparkline7d: pricing, includeThin: pricing && stellarListing },
     endpoint,
   );
 
@@ -451,7 +456,8 @@ export function AssetsTable({
         {pricing && stellarListing && (
           <>
             Rows with no price we can stand behind — no market deep enough to
-            clear the substance floor — rank below the priced ones.{' '}
+            clear the substance floor — rank below the priced ones. A thin
+            market&apos;s price is still shown, marked ⚠ low confidence.{' '}
           </>
         )}
         {pricing && !stellarListing && (
@@ -632,6 +638,7 @@ function AssetRow({
           {price != null ? (
             <span className="text-ink font-mono tabular-nums">
               ${formatPriceSmall(price)}
+              {coin.thin_market && <ThinMarketBadge className="ml-1" />}
               {/* Declared-peg provenance (price_basis=declared_peg): the
                 server filled this price from an operator-declared 1:1
                 fiat peg × the current FX rate because no market price
