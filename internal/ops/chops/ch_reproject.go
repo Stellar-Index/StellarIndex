@@ -17,7 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chReproject is the ADR-0034 Phase-4 validation: it re-derives a ledger
+// chReproject is the validation path (ADR-0034): it re-derives a ledger
 // range's protocol output from the ClickHouse Tier-1 lake using the EXISTING
 // decoders, and compares to the currently-served Postgres protocol tables —
 // i.e. "what would rebuilding Postgres from ClickHouse change?". For each
@@ -194,7 +194,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	fmt.Fprintf(os.Stderr, "ch-reproject: SDEX op pass done in %s\n", time.Since(sdexStart).Round(time.Second))
 
 	// ─── compare CH re-derive vs the served protocol tables, per target ──
-	fmt.Printf("\n=== ch-reproject: rebuild-from-ClickHouse vs served tables (ADR-0034 Phase 4) ===\n")
+	fmt.Printf("\n=== ch-reproject: rebuild-from-ClickHouse vs served tables ===\n")
 	fmt.Printf("range: %d..%d  (CH > served ⇒ lake recovers silently-dropped rows; CH < served ⇒ CH-side gap)\n\n", lo, hi)
 	fmt.Printf("%-34s %12s %12s  %s\n", "source/table", "CH-rederive", "served", "verdict")
 

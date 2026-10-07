@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ch-rebuild-projected.sh — ADR-0034 Phase-4 clean-slate rebuild of the
+# ch-rebuild-projected.sh — clean-slate rebuild of the
 # PROJECTED (soroban_events-derived) sources from the ClickHouse lake.
 #
 # Why clean-slate (not additive upsert): the live AMM/projected trades were
