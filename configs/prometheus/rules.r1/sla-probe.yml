@@ -4,7 +4,7 @@
 #
 # Scrape source: node_exporter's textfile_collector reads
 # `/var/lib/node_exporter/textfile_collector/sla_probe.prom`,
-# which the probe writes via -textfile-output (introduced in ffd5998bb).
+# which the probe writes via -textfile-output.
 # Metric names + labels defined in cmd/stellarindex-sla-probe/textfile.go.
 #
 # Alert family:
@@ -102,13 +102,12 @@ groups:
       # design. Everything else, /price/tip today and any endpoint that
       # grows an observed_at tomorrow, is held to the 30s pricing SLA.
       #
-      # The selector used to read `{endpoint!="price-tip"} > 180`, which
-      # handed the closed-bucket exemption to every endpoint that is not
-      # the tip. Latent rather than live, since nothing else emitted
-      # freshness — but the first endpoint to publish an observed_at
-      # (e.g. /oracle/latest) would have inherited a bound that only
-      # ADR-0015 justifies. Inverted to a positive matcher so the
-      # exemption is granted by name and the SLA is the fallback.
+      # The selector is a positive matcher on purpose: the negative form
+      # `{endpoint!="price-tip"} > 180` hands the closed-bucket exemption
+      # to every endpoint that is not the tip, so the first other endpoint
+      # to publish an observed_at (e.g. /oracle/latest) would inherit a
+      # bound that only ADR-0015 justifies. Matching by name grants the
+      # exemption explicitly and leaves the SLA as the fallback.
       - alert: stellarindex_sla_probe_freshness_breach
         expr: |
           stellarindex_sla_probe_freshness_sec{endpoint="price"} > 150
@@ -159,7 +158,7 @@ groups:
       # 15 min so 90 min = 6 missed passes. Either the timer isn't
       # running or every run since has failed. P2 page either way —
       # we lose the SLA-evidence trail when the probe is silent.
-      # OBS-2: a failing run drops last_pass_timestamp from the
+      # A failing run drops last_pass_timestamp from the
       # textfile (the probe only emits it on pass and rewrites the whole
       # file), so the every-run-failed case makes the series ABSENT, not
       # old — the `time() - last_pass_timestamp` branch then evaluates
