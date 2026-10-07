@@ -1118,8 +1118,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 // `/v1/price`'s confidence lookup. Matches the smallest window in
 // `orchestrator.DefaultWindows` (5m) — the freshest cached score.
 //
-// 5m is the right tradeoff while price reads scan raw buckets rather
-// than a closed-bucket CAGG: covered by the aggregator's default
+// 5m is the right tradeoff: covered by the aggregator's default
 // window set + hot enough that a stale score TTL's out before
 // being read.
 const confidenceLookupWindow = 5 * time.Minute
