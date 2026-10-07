@@ -21,9 +21,9 @@
 # never upgrades an already-installed pin, so r1 is untouched.
 - name: Add SDF apt key (captive-core for galexie)
   # Same vendored key as 06-stellar-core.yml (files/sdf.asc, sha256 48c38236…
-  # verified == apt.stellar.org 2026-09-02). This duplicate was the task that
-  # kept ansible-drift red after the first was fixed: get_url reports `changed`
-  # on every --check run because it cannot compare without downloading.
+  # verified == apt.stellar.org). Vendored rather than fetched: get_url
+  # reports `changed` on every --check run because it cannot compare
+  # without downloading, which keeps ansible-drift red.
   ansible.builtin.copy:
     src: sdf.asc
     dest: /etc/apt/keyrings/sdf.asc
@@ -40,14 +40,14 @@
 - name: Install stellar-core (galexie's captive-core binary)
   # `state: present` with an UNVERSIONED name never upgrades an existing
   # binary — deliberate, so a routine deploy can't silently change r1's captive
-  # core. For a PROTOCOL UPGRADE the captive core must move first (e.g. P28
-  # needs core >= 28 by 2026-09-16, else galexie's captive core refuses to sync
-  # past the upgrade ledger and ingestion halts): pin stellar_core_version to
-  # the target in inventory (e.g. "28.0.1-3508.947aad841.noble") and this
-  # installs/upgrades to exactly that. Unset (""), a deploy never upgrades an
-  # existing binary; stellar-core-auto-upgrade.timer (below) does, verified
-  # and with rollback. A pin also stops the timer. See
-  # docs/operations/protocol-upgrades.md.
+  # core. For a PROTOCOL UPGRADE the captive core must move first (a protocol
+  # needs a core of at least that major version before its upgrade ledger, else
+  # galexie's captive core refuses to sync past it and ingestion halts): pin
+  # stellar_core_version to the target in inventory (e.g.
+  # "28.0.1-3508.947aad841.noble") and this installs/upgrades to exactly that.
+  # Unset (""), a deploy never upgrades an existing binary;
+  # stellar-core-auto-upgrade.timer (below) does, verified and with rollback.
+  # A pin also stops the timer. See docs/operations/protocol-upgrades.md.
   ansible.builtin.apt:
     name: "stellar-core{{ ('=' + stellar_core_version) if (stellar_core_version | default('')) else '' }}"
     state: present
@@ -76,9 +76,8 @@
 
 - name: Read the installed-galexie tag stamp
   # The binary self-reports a pseudo-version (v0.0.0-<date>-<sha>), which
-  # can never textually match the pinned tag — the old gate rebuilt on
-  # every run (found on the 2026-07-03 full apply). The stamp records
-  # which TAG produced /usr/local/bin/galexie.
+  # can never textually match the pinned tag — gating on it would rebuild on
+  # every run. The stamp records which TAG produced /usr/local/bin/galexie.
   ansible.builtin.slurp:
     src: /usr/local/bin/.galexie.tag
   register: galexie_stamp
@@ -120,38 +119,30 @@
   # even if the system Go is older.
   #
   # GOPATH/GOCACHE pinned under /root to keep build artefacts off
-  # the stellar-core data dataset. go install is idempotent — re-runs
-  # with the same version tag are no-ops once the binary exists.
+  # the stellar-core data dataset.
   #
-  # F-1312 (codex audit-2026-05-13): NO `creates:` guard. The pre-
-  # fix version had `creates: /root/go/bin/stellar-galexie` which
-  # short-circuits the task once ANY binary exists at that path,
-  # even when galexie_version has been bumped — meaning a version
-  # bump in inventory would skip the rebuild and the copy task
-  # below would install the STALE binary into /usr/local/bin. The
-  # `when:` clause on this task already provides the version-gate
-  # idempotency (skips when the installed version string matches
-  # galexie_version); the `creates:` was a redundant + conflicting
-  # second guard. `go install` is itself idempotent at the
-  # module-cache layer, so re-runs at the same version tag are a
-  # no-op even without `creates:`.
+  # NO `creates:` guard: `creates: /root/go/bin/stellar-galexie` would
+  # short-circuit the task once ANY binary exists at that path, even
+  # after galexie_version is bumped — the rebuild would be skipped and
+  # the copy task below would install the STALE binary into
+  # /usr/local/bin. The `when:` clause already provides the version-gate
+  # idempotency, and `go install` is itself idempotent at the
+  # module-cache layer, so re-runs at the same tag are a no-op.
   # -trimpath is LOAD-BEARING, not tidiness. Without it two `go install`
-  # runs of the SAME tag produce different binaries — measured on r1
-  # 2026-09-13: 72d443a6… then e4bd4960… for galexie-v28.0.1. That makes
-  # galexie_expected_binary_sha256 unmatchable across rebuilds, so the
-  # pre-install sha assert below refuses EVERY upgrade and the codified
-  # path is unusable — which is exactly what it did. defaults/main.yml's
-  # own documented recipe for producing that constant already says
-  # `go install -trimpath`; this task had drifted from it. With -trimpath
-  # the build is reproducible (same sha twice, verified) and the guard
-  # means what it claims.
+  # runs of the SAME tag produce different binaries (measured on r1 for
+  # galexie-v28.0.1). That makes galexie_expected_binary_sha256
+  # unmatchable across rebuilds, so the pre-install sha assert below would
+  # refuse EVERY upgrade. defaults/main.yml's documented recipe for
+  # producing that constant uses `go install -trimpath`; keep this task in
+  # step with it. With -trimpath the build is reproducible (same sha
+  # twice, verified) and the guard means what it claims.
   ansible.builtin.command: >-
     go install -trimpath github.com/stellar/stellar-galexie@{{ galexie_version }}
   environment:
     GOPATH:  /root/go
     GOCACHE: /root/.cache/go-build
     # CGO_ENABLED/GOOS/GOARCH are part of the REPRODUCIBLE build identity,
-    # not defaults. Measured on r1 2026-09-13, same tag, same -trimpath:
+    # not defaults. Measured on r1, same tag, same -trimpath:
     #   without these : 08cf899f…   (cgo-linked)
     #   with these    : 3ca29130…   (static)
     # Both are individually reproducible, so omitting them does not make
@@ -182,23 +173,22 @@
   register: galexie_paths
 
 - name: Remove any stale /usr/local/bin/galexie link
-  # ONLY when it actually IS a symlink (2026-07-03 drift audit: state:
-  # absent removes real files too — unconditional, this deleted the
-  # REAL binary right before a copy whose source only exists after a
-  # fresh `go install`, leaving the host with no galexie at all).
+  # ONLY when it actually IS a symlink: state: absent removes real files
+  # too, and unconditionally it would delete the REAL binary right before a
+  # copy whose source only exists after a fresh `go install`, leaving the
+  # host with no galexie at all.
   when: galexie_paths.results[0].stat.islnk | default(false)
   ansible.builtin.file:
     path: /usr/local/bin/galexie
     state: absent
 
 - name: Assert the go-install artifact matches the pinned sha BEFORE install
-  # 2026-07-27 incident: a stale pre-P27 /root/go/bin/stellar-galexie
-  # (leftover from an old `go install`) was silently copied OVER the
-  # live v27.0.0 binary by this role; only the post-install sha assert
-  # caught it — AFTER the on-disk binary was already wrong, one galexie
-  # restart away from re-running the P27 crash-loop SEV. Verify the
-  # SOURCE artifact against the pin and refuse to touch the live binary
-  # with a mismatched one. A deliberate upgrade updates
+  # A stale /root/go/bin/stellar-galexie (leftover from an old
+  # `go install`) copied over the live binary would leave the host one
+  # galexie restart away from running the wrong build, and the post-install
+  # sha assert only catches it AFTER the on-disk binary is already wrong.
+  # Verify the SOURCE artifact against the pin and refuse to touch the live
+  # binary with a mismatched one. A deliberate upgrade updates
   # galexie_expected_binary_sha256 in the same PR as the new artifact.
   # Same `| default('') | length > 0` escape hatch the POST-install
   # drift-guard checks below use — blanking the pin skips the guard (the
@@ -245,24 +235,23 @@
 # Reads the ACTUAL RUNTIME OUTPUT of the installed binary — the same
 # ground truth stellar-stack-version-probe.sh reads — rather than
 # trusting the .galexie.tag stamp file above, which a hand-installed
-# swap (bypassing ansible entirely, as happened 2026-07-09 fixing the
-# CAP-0071 crash-loop) would never update. Runs unconditionally
-# (not gated on the `when:` above) so it catches drift on every
-# apply, not just ones that also rebuilt galexie.
+# swap (bypassing ansible entirely) would never update. Runs
+# unconditionally (not gated on the `when:` above) so it catches drift
+# on every apply, not just ones that also rebuilt galexie.
 - name: Check installed galexie version string (drift guard)
   ansible.builtin.command: /usr/local/bin/galexie version
   register: galexie_running_version
   changed_when: false
   failed_when: false
   # Read-only probe: must ALSO run during --check (command tasks are
-  # skipped in check mode by default, which left stdout empty and failed
-  # the assert below with "printed NOTHING" — 2026-07-27 drift run).
+  # skipped in check mode by default, which would leave stdout empty and
+  # fail the assert below with "printed NOTHING").
   check_mode: false
-  # Must carry the SAME tags as the set_fact + assert below: a
-  # `--tags observability` run (2026-08-05) skipped this untagged
-  # probe while still running its tagged consumers, so the assert
-  # fired "printed NOTHING (no rc)" against a register that was
-  # never populated — a tag-filtering artifact, not drift.
+  # Must carry the SAME tags as the set_fact + assert below: an untagged
+  # probe is skipped by a `--tags observability` run while its tagged
+  # consumers still run, so the assert fires "printed NOTHING (no rc)"
+  # against a register that was never populated — a tag-filtering
+  # artifact, not drift.
   tags: [observability, stellar-stack-version, drift-guard]
 
 # The comparison reads stdout OR stderr. Observed on r1 (recorded in the
@@ -304,18 +293,9 @@
   # from a fresh build at the tag you actually want), not by disabling
   # the assert.
   #
-  # RESOLVED 2026-07-27 (was "KNOWN OPEN as of 2026-07-25"): the live r1
-  # binary was probed directly — `/usr/local/bin/galexie version` prints
-  # exactly the pinned "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
-  # (the v27.0.0 emergency build embeds the module pseudo-version stamp,
-  # not the tag). All three constants therefore describe the same build
-  # and this assert PASSES against live. The earlier "assert fails on r1
-  # today / printed NOTHING" observation was a CHECK-MODE artifact: the
-  # probe command was skipped in --check, leaving stdout empty — fixed
-  # with check_mode: false on the probe above.
-  # Blank galexie_expected_version_string skips this guard (same escape
-  # hatch as the sha checks) — a from-source test-net build has no codified
-  # version stamp to pin against.
+  # A from-source build embeds the module pseudo-version stamp
+  # (e.g. "stellar-galexie v0.0.0-20260610161848-c97d6484816f"), not the
+  # tag, so galexie_expected_version_string pins that stamp.
   when: galexie_expected_version_string | default('') | length > 0
   ansible.builtin.assert:
     that:
@@ -331,21 +311,20 @@
     success_msg: "installed galexie matches the pinned version stamp."
   tags: [observability, stellar-stack-version, drift-guard]
 
-# Belt-and-suspenders file-hash check. It IS live: defaults/main.yml
-# sets galexie_expected_binary_sha256 from the 2026-07-09 v27.0.0 build.
+# Belt-and-suspenders file-hash check, live whenever defaults/main.yml
+# sets galexie_expected_binary_sha256.
 #
 # The gate is `| default('') | length > 0`, NOT `is defined`. Both
 # comments here and in defaults/main.yml document an escape hatch —
-# "unset it and the task is skipped" — and `is defined` never delivered
+# "unset it and the task is skipped" — and `is defined` cannot deliver
 # it: defaults/main.yml always defines the variable, so `is defined` is
 # unconditionally true, and an operator blanking it in their inventory
-# got the assert comparing the live checksum against "" and failing,
-# rather than the documented skip. That matters precisely while the two
-# galexie constants are known-unreconciled (see the version assert
-# above): the documented way to stand a guard down has to actually work,
-# or the next operator reaches for deleting the task instead. Same
-# `| default('') | length > 0` idiom the ClickHouse serving-profile
-# assert uses (20-clickhouse-serving-profile.yml).
+# would get the assert comparing the live checksum against "" and
+# failing, rather than the documented skip. The documented way to stand
+# a guard down has to actually work, or the next operator reaches for
+# deleting the task instead. Same `| default('') | length > 0` idiom the
+# ClickHouse serving-profile assert uses
+# (20-clickhouse-serving-profile.yml).
 - name: Stat the installed galexie binary (drift guard checksum)
   when: galexie_expected_binary_sha256 | default('') | length > 0
   ansible.builtin.stat:
@@ -401,8 +380,8 @@
 # notifies the restart only for a real content change — in check mode
 # too — and refuses a real apply unless galexie_restart_ack=true.
 #
-# NOT in the list, by design (2026-08-29 r1 incident: a wrapper-only
-# change restarted a healthy galexie → ~9-min captive-core catchup):
+# NOT in the list, by design (a restart of a healthy galexie costs a
+# ~9-min captive-core catchup):
 # galexie-append.sh (ExecStart wrapper, exec'd once per service start —
 # an edit takes effect at the next start), the archive-fill / tip-lag /
 # contiguity scripts + timers (oneshot units the daemon never reads),
@@ -435,8 +414,8 @@
   # Never notifies `Restart galexie`: systemd exec's this script once per
   # service start, then it exec's the galexie binary — the running process
   # does not read it. An edit is picked up at the next (re)start; if it is
-  # needed sooner, restart galexie by hand in a maintenance window
-  # (2026-08-29 r1 incident: a wrapper-only change cost a ~9-min catchup).
+  # needed sooner, restart galexie by hand in a maintenance window (a
+  # restart costs a ~9-min catchup).
   ansible.builtin.copy:
     src: galexie-append.sh
     dest: /usr/local/bin/galexie-append.sh
@@ -520,7 +499,7 @@
     mode: "0755"
 
 - name: Install galexie-archive-contiguity scan
-  # DR-asset shape guard (2026-08-21 DR review): tip-lag proves the
+  # DR-asset shape guard: tip-lag proves the
   # newest edge advances; this proves the MIDDLE is intact — the
   # genesis partition + the declared ARCHIVE_FROM tail with no other
   # holes and no overlaps. A partition deleted by a bad trim cutoff
@@ -646,11 +625,9 @@
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and galexie_unit is changed)
 
-# Standing fix (f12289f6d): schedule the hardened galexie-archive-fill so the
-# durable full-mirror (ADR-0016) can never silently fall ~23 days
-# behind again. The script already existed and was installed; it was
-# only ever run by hand. Hourly timer → a stall is repaired within
-# ~1h instead of going unnoticed for weeks.
+# Schedule the hardened galexie-archive-fill so the durable full-mirror
+# (ADR-0016) can never silently fall weeks behind. Hourly timer → a
+# stall is repaired within ~1h instead of going unnoticed.
 - name: Install galexie-archive-fill systemd service + timer
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
@@ -709,7 +686,7 @@
       changed_when: false
       failed_when: false
 
-# 538d0e752 defense-in-depth: tip-lag textfile metric + alert. Pages
+# Defense-in-depth: tip-lag textfile metric + alert. Pages
 # within hours if the hourly catch-up timer silently breaks.
 - name: Install galexie-archive-tip-lag systemd service + timer
   ansible.builtin.template:
