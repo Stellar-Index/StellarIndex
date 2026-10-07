@@ -36,8 +36,8 @@ import (
 // fiat feed (`fx_quotes`). A pair with neither — the ~54M token/token
 // rows on production — has NO tier in this file and must stay unpriced.
 // Valuing it would mean reading the tier-3b `<token>/XLM` bridge, which
-// is whatever the last counterparty wrote: the 2026-08-04 incident stored
-// $8,559,224.82 for a trade worth $0.86 that way, and the 2026-08-11
+// is whatever the last counterparty wrote: one incident stored
+// $8,559,224.82 for a trade worth $0.86 that way, and a
 // fake-XMR plant stamped $182M off two dust trades. Both scans below are
 // bounded by an asset ALLOW-LIST on the tier's own leg, and the Go gate
 // ([restampScope]) re-asserts the tier from the insert path's own

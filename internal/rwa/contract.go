@@ -19,7 +19,7 @@ import (
 // an unbound claim.
 //
 // What that reasoning missed is that the real-world issuers are not on
-// the classic side at all. Measured on production 2026-09-10, of the
+// the classic side at all. Measured on production, of the
 // sixteen entities a public dashboard attributes 4.03 billion dollars of
 // Stellar real-world assets to, the ones we could check issue NOTHING in
 // classic_assets: Franklin Templeton (both G-addresses), Spiko, Mercado
@@ -87,7 +87,7 @@ import (
 //
 // The curated account directory is not the only independent party that
 // names Stellar contract addresses, and requiring it to be the only one
-// cost the surface a measured, defensible set. Measured 2026-09-15: the
+// cost the surface a measured, defensible set. Measured on production: the
 // directory names 387 contract addresses; a public listing platform's
 // per-coin platform→address map names 17 on Stellar; FOUR are in both.
 // Thirteen addresses are named by the listing and by nobody in the
@@ -676,7 +676,7 @@ type contractInstrument struct {
 //
 // The ledger CORROBORATES the addresses; it is not where they came from.
 // Each contract's own name(), symbol() and decimals() were read over
-// public Soroban RPC (2026-09-15) and byte-match config/production.json
+// public Soroban RPC and byte-match config/production.json
 // — every name verbatim, every decimals 5. That is the contract talking
 // about itself, which admits nothing on its own and is read here for the
 // one thing contract metadata is allowed to answer: whether the address
@@ -739,8 +739,7 @@ const (
 // arm. matrixdock.com is its own registrable domain, and the chain from
 // that domain to this C-strkey has no third party in it: the XAUm
 // product page at matrixdock.com/xaum lists the chains the token is
-// available on, and its Stellar entry names this exact contract address
-// (read 2026-09-16).
+// available on, and its Stellar entry names this exact contract address.
 //
 // Two independent corroborations, neither of which is where the address
 // came from:
@@ -757,7 +756,7 @@ const (
 //
 // The ledger agrees about what it is: code XAUM, token name
 // "Matrixdock Gold", decimals 9 read from the contract's own instance
-// storage, 1,060.884000000 tokens outstanding on 2026-09-16 with 38
+// storage, 1,060.884000000 tokens outstanding when read, with 38
 // trades across 5 markets in the preceding day.
 //
 // # Why `commodity` and not `fund`
@@ -816,7 +815,7 @@ const (
 // issuer, a different instrument, and the vocabulary now has a word for
 // the difference rather than rounding it to the nearest wrong one.
 //
-// Spiko supply read on 2026-09-15, at the 5 decimals each of the nine
+// Spiko supply was read at the 5 decimals each of the nine
 // Spiko contracts declares — decoded from each contract's own METADATA
 // map, not assumed (XAUm declares 9; see above). It is recorded because
 // it is the figure a reader should be able to falsify, and because three

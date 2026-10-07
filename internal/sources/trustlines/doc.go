@@ -1,30 +1,11 @@
-// Package trustlines is the canonical TrustlineEntry observer per
-// ADR-0022. Plugs into the dispatcher's LedgerEntryChange hook
-// (Task #54) and emits one Observation per change touching a
-// trustline whose Asset matches an operator-watched classic
-// credit asset.
+// Package trustlines is the TrustlineEntry observer (ADR-0022): a
+// LedgerEntryChange decoder emitting one Observation per change to a
+// trustline whose asset is in `[supply] watched_classic_assets`
+// (CODE:ISSUER); others are skipped before decode. The sink writes
+// `trustline_observations`, which supply.StorageClassicSupplyReader sums
+// as Algorithm 2's trustline component.
 //
-// Operator usage: populate `[supply] watched_classic_assets` with
-// the asset_keys (CODE:ISSUER form) you want trustline-component
-// supply data for. The observer's Matches fast-path is type
-// discriminator (LedgerEntryTypeTrustline) + asset_key map
-// lookup; non-matching assets are skipped before any decode work.
-//
-// Output: [Observation] events flow through the dispatcher →
-// consumer pipeline. The indexer-side sink writes each
-// observation to `trustline_observations` (migration 0011).
-// `internal/supply.StorageClassicSupplyReader` consumes
-// `Store.SumTrustlineBalancesAtOrBefore` (defined in
-// `internal/storage/timescale/classic_supply_observations.go`)
-// for the trustline-component sum in Algorithm 2.
-//
-// Why classic-only:
-//
-//   - Native (XLM) — Algorithm 1, not Algorithm 2. The
-//     AccountEntry observer (Task #54) already covers XLM holders.
-//   - Pool-share trustlines (TrustLineAsset.LiquidityPoolId) —
-//     LP shares aren't classic-asset trustlines; their reserves
-//     come from the LP-reserve observer (liquidity_pools, Task #55).
-//   - Credit alphanum4 / alphanum12 — Algorithm 2 source. This
-//     observer covers them.
+// Classic credit assets only: native XLM is Algorithm 1 (the accounts
+// observer), and pool-share trustlines are covered by the LP-reserve
+// observer in liquidity_pools.
 package trustlines

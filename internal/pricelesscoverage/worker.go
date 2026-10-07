@@ -93,7 +93,7 @@ type Options struct {
 	// recorded under the contract id while the same asset's price is
 	// served under its classic id, so without this a SAC-wrapped classic
 	// asset that trades on an AMM reads as a priceless popular asset
-	// (yBTC on aquarius, 2026-09-17). Nil disables the aliasing; a miss
+	// (yBTC on aquarius). Nil disables the aliasing; a miss
 	// leaves the candidate as read.
 	ResolveSAC func(ctx context.Context, contractID string) (string, bool)
 	// IsPriced asks the sweep's own priced set about one asset id — the

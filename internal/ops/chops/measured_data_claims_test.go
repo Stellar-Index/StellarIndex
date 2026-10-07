@@ -145,7 +145,7 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				"ORDER IS DEFENSIVE, not load-bearing today",
 			},
 			required: []string{
-				"migration 0002 gave prices_1m and prices_15m a 30-day retention and migration 0031 removed it on 2026-05-14",
+				"migration 0002 gave prices_1m and prices_15m a 30-day retention and migration 0031 removed it",
 				"Every SERVED rung has to be here",
 				"prices_1m leads because it is the one view another aggregate is defined over",
 				// The retired retention claim reached a second site
@@ -158,7 +158,7 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				// one re-derives the wrong repair (re-decode, archive
 				// read) for a range whose trades were never dropped.
 				"The roll-forward policy is the WHOLE reason",
-				"which migration 0031 retired on 2026-05-14 when it removed the 90-day retention",
+				"raw trades are never pruned (migration 0031)",
 			},
 		},
 		{

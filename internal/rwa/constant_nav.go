@@ -111,7 +111,7 @@ var constantNAVBindings = []ConstantNAVBinding{
 	// objective "to maintain a constant net asset value per share of 1
 	// US dollar". The issuer's SEP-1 at www.franklintempleton.com binds
 	// each class to its own account and declares the ISIN; the AB class
-	// page showed NAV $1.00 (mark-to-market $0.9999) on 2026-09-16.
+	// page showed NAV $1.00 (mark-to-market $0.9999).
 	{
 		Code: "gBENJI", Issuer: franklinLuxIBIssuer, ISIN: "LU2900381208", NAVUSD: "1.00",
 		Fund: "Franklin OnChain U.S. Government Liquidity Fund — IB (Ddis) USD", Regime: "EU MMFR short-term public-debt CNAV",
