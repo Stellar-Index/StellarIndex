@@ -12,7 +12,7 @@
 pgbackrest-backup.service:PrivateTmp
 
 # Run as root and drop to postgres with `sudo -u`; no-new-privs blocks
-# sudo's setuid transition (BDR-04, see the units' own comments).
+# sudo's setuid transition (see the units' own comments).
 restore-drill.service:NoNewPrivileges
 restore-drill-offsite.service:NoNewPrivileges
 
