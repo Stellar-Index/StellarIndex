@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ch-schema-drift.sh — the other half of ADR-0043 §2.1 (C6-008/C6-003).
+# ch-schema-drift.sh — the other half of ADR-0043 §2.1.
 #
 # ch-schema-snapshot.sh answers "what IS the live schema" and keeps a
-# daily copy of it. Nothing answered "is the live schema what this
-# repository says it should be". The Tier-1 lake DDL has always been
-# HAND-APPLIED — an operator pastes deploy/clickhouse/tier1_schema.sql
+# daily copy of it. Nothing else answers "is the live schema what this
+# repository says it should be". The Tier-1 lake DDL is HAND-APPLIED — an
+# operator pastes deploy/clickhouse/tier1_schema.sql
 # (and the ad-hoc ALTERs that followed) into clickhouse-client. There is
 # no migration runner for ClickHouse the way migrations/ + golang-migrate
 # cover Postgres, so an ORDER BY changed by hand on r1, a column added
@@ -18,11 +18,10 @@
 #   intent  deploy/clickhouse/tier1_schema.sql — the founding DDL, the
 #           only machine-readable statement of what this repo believes
 #           the lake's structure is.
-#   live    a fresh `SHOW CREATE` sweep straight off the server. That
-#           is the DEFAULT since 2026-09-09. Before it, the default read
-#           the newest ch-schema-snapshot capture — up to a day old, and
-#           not the question the unit's Description asks. Both halves of
-#           what that cost are written out at "which live side" below.
+#   live    a fresh `SHOW CREATE` sweep straight off the server, by
+#           default. The newest ch-schema-snapshot capture is up to a day
+#           old and not the question the unit's Description asks; what
+#           reading it would cost is written out at "which live side" below.
 #
 # WHAT IT COMPARES, and why not more. Both sides go through the SAME
 # parser and the SAME normalizer, so ClickHouse's re-rendering of its own
@@ -65,9 +64,9 @@
 # that direction enforceable needs a NAMED baseline with a per-entry
 # reason, under scripts/ci/ so scripts/ci/lint-baseline-growth.sh's
 # Baseline-Growth tripwire covers it — an ungated allowlist anywhere else
-# would just be the same hole with a new address. Tracked as follow-up;
-# the uncodified count is exported as a metric so the growth is visible
-# in the meantime.
+# would just be the same hole with a new address. Until that baseline
+# exists, the uncodified count is exported as a metric so the growth is
+# visible.
 #
 # Usage:
 #   ch-schema-drift.sh                       # DEFAULT: fresh SHOW CREATE sweep
@@ -114,7 +113,7 @@ LIVE_SCHEMA="${LIVE_SCHEMA:-}"
 # for the snapshot, and an operator who typed nothing gets live.
 live_explicit="${LIVE-}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
-# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
@@ -144,17 +143,16 @@ ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binar
 #      by a fallback: a typo'd path must not silently compare against
 #      something the operator did not name.
 #   2. the copy the role SHIPS to the host. Neither r1 nor the test nets
-#      have a checkout — that is why the role ships the DDL at all — but
-#      until 2026-09-09 this script was the one link in that chain that
-#      did not know the path, so the by-hand run ch-schema-restore.md
-#      documents ("ch-schema-drift.sh", no environment) never found it.
+#      have a checkout — that is why the role ships the DDL at all — and
+#      the by-hand run ch-schema-restore.md documents ("ch-schema-drift.sh",
+#      no environment) depends on this script knowing that path.
 #   3. this checkout: the role's files/ dir is five levels below the repo
 #      root. Installed standalone at /usr/local/bin that arithmetic does
 #      not fail, it CLAMPS — `cd /usr/local/bin/../../../../..` is `/` —
-#      so INTENT became the literal `//deploy/clickhouse/tier1_schema.sql`
-#      the 2026-09-09 testnet triage printed, a path that cannot exist. A
-#      repo root is never `/`, so `/` means "not a checkout", and the
-#      candidate is offered only when the file is genuinely there.
+#      so INTENT would become the literal `//deploy/clickhouse/tier1_schema.sql`,
+#      a path that cannot exist. A repo root is never `/`, so `/` means
+#      "not a checkout", and the candidate is offered only when the file is
+#      genuinely there.
 #
 # When none resolves, REFUSE (exit 2) and name every path tried. "Could
 # not check" must never read as "checked, and fine" — that equivalence is
@@ -249,10 +247,9 @@ parse_schema() {
       # `CREATE TABLE x AS db.base;` clones the base table full definition with no
       # inline ENGINE/columns/ORDER BY of its own (the staging halves of
       # every truncate-fill-EXCHANGE cycle are declared this way). Emitting
-      # empty engine/order/columns facts here made all six *_staging tables
-      # read as 3 drifts each against the live fully-rendered DDL (2026-08-24,
-      # the ch-schema-drift.service red). Emit an alias fact instead; the
-      # comparer resolves it against the base declaration facts.
+      # empty engine/order/columns facts here would make every *_staging table
+      # read as 3 drifts against the live fully-rendered DDL. Emit an alias fact
+      # instead; the comparer resolves it against the base declaration facts.
       if (kind == "table" && aliasbase != "" && engine == "" && cols == "") {
         printf "%s\talias\t%s\n", tbl, aliasbase
         tbl = ""; kind = ""; mvto = ""; engine = ""; partexpr = ""
@@ -327,10 +324,10 @@ parse_schema() {
     # tier1_schema.sql writes the clone as two lines:
     #   CREATE TABLE IF NOT EXISTS stellar.x_staging
     #   AS stellar.x;
-    # so the statement-start capture above never sees it (2026-08-24: the
-    # first fix only matched a same-line AS and the live check stayed red
-    # while the symmetric intent-vs-intent self-test passed — the exact
-    # same-shape blindness this harness header warns about).
+    # so the statement-start capture above never sees it. Matching only a
+    # same-line AS would leave the live check red while the symmetric
+    # intent-vs-intent self-test passes — the exact same-shape blindness this
+    # harness header warns about.
     kind == "table" && incols == 0 && cols == "" && engine == "" && line ~ /^ *AS +[A-Za-z0-9_.\x60]+ *;? *$/ {
       a = line
       sub(/^ *AS +/, "", a)
@@ -371,16 +368,14 @@ parse_schema() {
             printf "%s\ttype\t%s\t%s\n", tbl, name, rest
           }
         } else if (c ~ /^INDEX[ (]/) {
-          # Secondary (skip) indices: compared as real DRIFT, not INFO
-          # (T339, 2026-09 reverification). Unlike a DEFAULT/CODEC text
-          # rendering, which ClickHouse re-renders into its own canonical
-          # form, making textual equality a false-positive machine, an
-          # index TYPE+params+GRANULARITY is exact declared text on BOTH
-          # sides. Before this, an index bloom_filter false-positive rate
+          # Secondary (skip) indices: compared as real DRIFT, not INFO.
+          # Unlike a DEFAULT/CODEC text rendering, which ClickHouse re-renders
+          # into its own canonical form, making textual equality a false-positive
+          # machine, an index TYPE+params+GRANULARITY is exact declared text on
+          # BOTH sides. Without this, an index bloom_filter false-positive rate
           # (e.g. idx_lec_key_xdr) could be retuned in the repo (or left
-          # un-applied on a live host) and this checker would report "no
-          # drift" either way: the column parser discarded the whole INDEX
-          # line here without emitting anything for it.
+          # un-applied on a live host) and this checker would report "no drift"
+          # either way.
           ic = c
           sub(/^INDEX +/, "", ic)
           gsub(/`/, "", ic)
@@ -437,19 +432,18 @@ if [[ ! -r "$INTENT" ]]; then
   exit 2
 fi
 
-# ─── is the INTENT side itself current? (2026-09-09) ────────────────
-# THE BLIND SPOT this closes, measured on both test nets that morning by
-# extracting the `transactions` DDL from each host's OWN shipped intent
-# file and diffing it against that host's live schema:
+# ─── is the INTENT side itself current? ────────────────────────────
+# THE BLIND SPOT this closes, measured on both test nets by extracting
+# the `transactions` DDL from each host's OWN shipped intent file and
+# diffing it against that host's live schema:
 #
-#   testnet    intent shipped 09-08 = POST-#482   live = PRE-#482  -> DRIFT (correct)
-#   futurenet  intent shipped 08-26 = PRE-#482    live = PRE-#482  -> CLEAN (false)
+#   testnet    intent shipped = POST schema change   live = PRE  -> DRIFT (correct)
+#   futurenet  intent shipped = PRE schema change    live = PRE  -> CLEAN (false)
 #
-# Both hosts carry the SAME stale live schema (transactions.ingested_at
-# last, where the repo has put it after `memo` since #482 merged
-# 2026-09-02). testnet reported it. futurenet read CLEAN — not because
-# anything was right, but because its intent file was two weeks stale as
-# well. Two wrongs reading as a right.
+# Both hosts carried the SAME stale live schema (transactions.ingested_at
+# last, where the repo puts it after `memo`). testnet reported it.
+# futurenet read CLEAN — not because anything was right, but because its
+# intent file was two weeks stale as well. Two wrongs reading as a right.
 #
 # The structural cause: the intent side ARRIVES BY THE SAME CONVERGENCE
 # THE CHECK IS SUPPOSED TO POLICE. /usr/local/share/stellarindex/
@@ -457,10 +451,10 @@ fi
 # has not had the role applied compares last fortnight's repo against
 # today's server and calls the agreement clean. The check goes green
 # EXACTLY WHEN A HOST IS FURTHEST BEHIND, which is the one shape a
-# control must never have. Reading live by default (the 2026-09-09 fix
-# above) does not touch this: it corrected the LIVE side.
+# control must never have. Reading live by default ("which live side"
+# below) does not touch this: it corrects the LIVE side.
 #
-# So the intent side now carries provenance, stamped at ship time by the
+# So the intent side carries provenance, stamped at ship time by the
 # role's "Ship the repo's Tier-1 lake DDL" task:
 #
 #   -- Intent-Version: v0.67.0                the release the shipped copy came from
@@ -472,7 +466,7 @@ fi
 # deploy.yml's config-apply baseline reads and that
 # docs/operations/deployed-versions.md names — lowest tag across the
 # release-managed binaries, stellarindex-migrate excluded, exactly as
-# deploy.yml computes it (#427). Lowest, because config from a release
+# deploy.yml computes it. Lowest, because config from a release
 # is unapplied if ANY binary predates it; migrate excluded because it
 # legitimately lags and gates no config surface.
 #
@@ -659,18 +653,18 @@ if [[ "$intent_verified" -eq 0 ]]; then
   fi
 fi
 
-# WHICH LIVE SIDE, and why the default is a fresh sweep (2026-09-09).
+# WHICH LIVE SIDE, and why the default is a fresh sweep.
 #
-# Until this change the default compared the intent against the newest
-# DAILY SNAPSHOT while the unit called itself "repo intent vs live".
-# Both halves of that gap were measured, on r1 and on the test nets:
+# Comparing the intent against the newest DAILY SNAPSHOT, while the unit
+# calls itself "repo intent vs live", has two failure halves, both
+# measured on r1 and on the test nets:
 #
 #   FALSE DRIFT. A deploy ships a new tier1_schema.sql at any hour of the
-#   day; the capture it was compared against had been taken at 05:41. Every
+#   day; the capture it is compared against was taken that morning. Every
 #   table the new intent declares is missing from a file written before it
-#   existed — so the check reported 8 tables "ABSENT from the live schema"
-#   that were all live, one of them holding 20.9M rows, and it would have
-#   cleared itself at the next morning's capture. Red for a reason that is
+#   existed — measured on r1: 8 tables reported "ABSENT from the live
+#   schema" that were all live, one of them holding 20.9M rows, clearing
+#   themselves at the next morning's capture. Red for a reason that is
 #   not real and then green on its own is the worst shape a control has:
 #   it teaches the operator to wait it out.
 #
@@ -690,8 +684,8 @@ fi
 # "ClickHouse is not reachable from here" is not a normal state for it.
 #
 # The snapshot mode is KEPT, as an explicit choice rather than the default:
-# a retained capture is the only way to ask "did the repo match live on
-# 2026-08-01?", and 90 days of them are on the box for exactly that.
+# a retained capture is the only way to ask "did the repo match live on a
+# past date?", and 90 days of them are on the box for exactly that.
 #
 # Precedence, most specific first:
 #   1. LIVE=1 set explicitly       — a fresh sweep, said out loud.
@@ -765,8 +759,8 @@ snapshot)
   # THE FALSE-DRIFT GUARD. A capture taken BEFORE the intent file was
   # installed cannot answer "is this declared table live?" — anything the
   # intent declares after the capture was written is absent from it by
-  # construction. Reporting that as drift is what put 8 live tables on
-  # r1's ABSENT list on 2026-09-09. Refuse instead: exit 2 is this
+  # construction. Reporting that as drift would put live tables on the
+  # ABSENT list (measured: 8 on r1). Refuse instead: exit 2 is this
   # script's "could not check", and could-not-check is precisely the
   # state. It is not a mute — when the capture is at least as new as the
   # intent this mode still reports real drift, unchanged.

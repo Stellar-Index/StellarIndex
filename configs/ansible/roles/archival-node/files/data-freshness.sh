@@ -36,7 +36,7 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex
-# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
@@ -46,8 +46,8 @@ fi
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that
-# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
-# cannot. Call the versioned binary directly to bypass the wrapper.
+# cannot read it — which User=stellarindex cannot. Call the versioned binary
+# directly to bypass the wrapper.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 
 OUT="${TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/data_freshness.prom}"
@@ -91,24 +91,25 @@ trap 'rm -f "$TMP"' EXIT
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
 # generous multiple of each domain's natural cadence so only a real stall fires.
 #
-# ── NO WINDOW ON THE SOURCE ENUMERATION (F149) ───────────────────────────
-# Each per-source leg below used to read `WHERE <time col> > now() - interval
-# '30 days' GROUP BY source`, which makes the window that defines the universe
-# the same window that defines health. A source dead longer than it — the
+# ── NO WINDOW ON THE SOURCE ENUMERATION ─────────────────────────────────
+# A windowed enumeration (`WHERE <time col> > now() - interval '30 days'
+# GROUP BY source`) would make the window that defines the universe the same
+# window that defines health. A source dead longer than it — the
 # coingecko-quota shape, 11 days and climbing — leaves the GROUP BY entirely,
 # its stale series goes ABSENT rather than to 1, Prometheus ages it out, and
-# `stellarindex_data_source_stale == 1` RESOLVES. The watchdog got quieter the
-# worse the outage got, and the same window silenced the supply leg at 7 days.
+# `stellarindex_data_source_stale == 1` RESOLVES. The watchdog gets quieter the
+# worse the outage gets, and the same window would silence the supply leg at
+# 7 days.
 #
-# So the universe is now every source the table has EVER held, and the age is
-# measured against that source's own newest row. The scan cost is unchanged
-# where it mattered: `oracle_updates` is a hypertable on `ts`, and the old
-# predicate was on `ingested_at` — not a dimension, so it never pruned a chunk;
+# So the universe is every source the table has EVER held, and the age is
+# measured against that source's own newest row. The scan cost stays where it
+# matters: `oracle_updates` is a hypertable on `ts`, and a window on
+# `ingested_at` — not a dimension — would never prune a chunk anyway;
 # `fx_quotes` is daily-grain (one row per ticker per bucket, upserted), so its
 # whole history is small; `asset_supply_history` answers max(time) from its
 # time index.
 #
-# The cost of the change is the other direction: a source RETIRED on purpose
+# The cost is the other direction: a source RETIRED on purpose
 # keeps its history and therefore keeps reporting stale. That is the
 # fail-closed side of the trade and it is deliberate — a retired feed is a
 # deliberate act with an operator behind it, a dead feed is not. Retiring one
@@ -145,10 +146,10 @@ WITH f AS (
   -- stricter than the tightest tolerance any consumer actually uses
   -- reports a fault the system does not have.
   --
-  -- 48h could not survive a weekend. `massive` publishes a business-day
+  -- 48h cannot survive a weekend. `massive` publishes a business-day
   -- snapshot and FX markets close, so Friday's bucket is the freshest
   -- thing that exists until Monday: Fri 00:00 → Mon 00:00 is 72h. The
-  -- alert therefore fired EVERY weekend (#370, observed 2026-08-30 00:00Z
+  -- alert would fire EVERY weekend (observed at a Saturday 00:00Z
   -- with the worker healthy — `forex: fx_quotes persisted rows=818` every
   -- hour, and `stellarindex_external_fx_rate_rejected_total` zero for all
   -- reasons). 76h clears Monday's publish with slack.
@@ -174,10 +175,10 @@ WITH f AS (
    GROUP BY source
   UNION ALL
   -- Sparse Soroban AMMs get 24h: phoenix's MEASURED 30-day gap
-  -- distribution (2026-08-05, 3,278 trades) is max 8h28m / p99 3h12m,
+  -- distribution (3,278 trades) is max 8h28m / p99 3h12m,
   -- and a 12h+ genuine market lull false-fired the flat 4h threshold
   -- twice — with the lake confirming zero swap events on ANY known or
-  -- unknown pool (quiet, not stale; the CS-102 class). 24h still
+  -- unknown pool (quiet, not stale). 24h still
   -- catches a dead decoder within a day, and the ADR-0033 verdict
   -- (129600s below) remains the real correctness net.
   SELECT 'trades', source, extract(epoch FROM now()-max(bucket)),
@@ -191,8 +192,8 @@ WITH f AS (
     FROM completeness_snapshots GROUP BY source
   UNION ALL
   -- Newest SUCCESSFUL fetch, not sep1_resolved_at: every failed attempt
-  -- stamps that one, so it stayed green through a refresh failing every
-  -- domain (GH #840). sep1_payload_fetched_at is stamped only on success.
+  -- stamps that one, so it stays green through a refresh failing every
+  -- domain. sep1_payload_fetched_at is stamped only on success.
   SELECT 'sep1', 'issuers', extract(epoch FROM now()-max(sep1_payload_fetched_at)), 172800
     FROM issuers WHERE sep1_payload_fetched_at IS NOT NULL
 )
@@ -213,8 +214,8 @@ then
   echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# CS-102: the `supply` domain above measures max(time) across the WHOLE table,
-# so it only proves SOME asset is publishing. On 2026-07-28 that read green
+# The `supply` domain above measures max(time) across the WHOLE table, so it
+# only proves SOME asset is publishing. It has been observed reading green
 # while 37 of 48 watched assets had frozen — a handful of live assets kept the
 # global max current and hid the rest. An aggregate cannot see a partial
 # freeze, so emit the per-asset shape too: how many watched assets are stale,
@@ -222,7 +223,7 @@ fi
 # per-asset series would grow with the watched set.
 #
 # The 30-day window here bounds the WATCHED SET, not the health verdict, and it
-# is anchored to the newest supply row in the table rather than to now() (F149).
+# is anchored to the newest supply row in the table rather than to now().
 # Anchored to now(), a freeze that outlasts it empties the CTE and the gauge
 # reports a literal healthy 0 — `count(*) FILTER (age > 108000)` over no rows —
 # at the exact moment every watched asset has stopped. Anchored to the domain's
@@ -252,13 +253,12 @@ fi
 # The system 'recognition' row is EXCLUDED: it counts event shapes on contracts
 # NO source owns — i.e. the rest of the Soroban ecosystem (~23k shapes, growing
 # ~30/day) — so complete=false there is the permanent, expected state of a
-# curated indexer, not a served<>lake gap. Folding it into this gauge kept the
-# ticket alert firing continuously (2026-08-17 onward, when W1-flowcompleteness-1
-# restored the row's refresh). Real silent-drop detection lives in each source's
-# OWN recognition axis (recognition_ok on owned contracts), which flips that
-# source's row incomplete and still alerts here. The system row is exported
+# curated indexer, not a served<>lake gap. Folding it into this gauge would keep
+# the ticket alert firing continuously. Real silent-drop detection lives in each
+# source's OWN recognition axis (recognition_ok on owned contracts), which flips
+# that source's row incomplete and still alerts here. The system row is exported
 # below as a COUNT so a registry regression (a whole protocol's shapes suddenly
-# unattributed — the rozo/BACKLOG-89 class) shows as a step change instead.
+# unattributed — the class seen with rozo) shows as a step change instead.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
@@ -316,7 +316,7 @@ then
   echo "data-freshness: recognition unattributed-shape census query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# W1-migrations-1 / REC-01 / F047 / F116 / T425: a continuous aggregate that a
+# A continuous aggregate that a
 # migration recreated WITH NO DATA — or that a replay rewrote the base rows of —
 # is EMPTIED PENDING REFRESH, and nothing else in this system can see that
 # state. Migrations 0115 and 0147 both DROP and recreate all nine price/TWAP
@@ -332,8 +332,8 @@ fi
 #
 # So detect it directly, and judge EVERY view against the thing that is not
 # emptied with them. The reference is `trades` — the raw hypertable all nine
-# aggregate, kept forever (migration 0031 removed its retention). It used to be
-# prices_1m's own min(bucket), which made the detector self-muting in exactly
+# aggregate, kept forever (migration 0031 removed its retention). Using
+# prices_1m's own min(bucket) would make the detector self-muting in exactly
 # the scenario it names: 0147 empties prices_1m TOO, so after it runs the
 # reference is the policy's minutes-old sliver, `tmin > pmin + 1 day` is false
 # for every view, and the gauge publishes a healthy 0 for a database with no
@@ -422,15 +422,15 @@ fi
 # BEST-EFFORT, and it has to stay that way: this is the only non-Postgres
 # probe in the script, and ClickHouse is a separate daemon that can be down
 # while every Postgres-derived gauge above is perfectly computable. A bare
-# `SF_AGE=$(curl … | tr …)` assignment took curl's status under
-# `set -euo pipefail`, so a CH outage ABORTED the script here — the EXIT
-# trap removed $TMP, the atomic `mv` below never ran, and node_exporter
-# went on re-serving the PREVIOUS data_freshness.prom verbatim. Every gauge
-# then FROZE at its last value rather than going absent: stale sources kept
+# `SF_AGE=$(curl … | tr …)` assignment would take curl's status under
+# `set -euo pipefail`, so a CH outage would ABORT the script here — the EXIT
+# trap removes $TMP, the atomic `mv` below never runs, and node_exporter
+# goes on re-serving the PREVIOUS data_freshness.prom verbatim. Every gauge
+# then FREEZES at its last value rather than going absent: stale sources keep
 # reading `stellarindex_data_freshness_stale 0`, and the watchdog's own
-# meta-alert (absent_over_time(...[45m])) could not fire either, because
-# the series were still present. One ClickHouse outage silenced the whole
-# "never get behind" layer (Wave L, #319).
+# meta-alert (absent_over_time(...[45m])) cannot fire either, because the
+# series are still present. One ClickHouse outage would silence the whole
+# "never get behind" layer.
 #
 # Running the probe as an `if` condition exempts it from `set -e`; `-f`
 # turns an HTTP 5xx into a failure instead of an error body that would be
@@ -458,10 +458,9 @@ fi
 # Everything above this line reached $TMP UNEXAMINED. Seven psql
 # invocations write their stdout straight into it and compose their
 # exposition text inside SQL, so nothing in this shell script even looks
-# like a metric line — which is why this producer was the one left
-# unhardened when the class was gated (c8ceb7c55), and why it carries
-# the largest exposure of the 21: 162 samples on r1 (measured
-# 2026-09-10), every byte of every value chosen by Postgres.
+# like a metric line, and it carries the largest exposure of the 21
+# gated producers: 162 samples on r1, every byte of every value chosen by
+# Postgres.
 #
 # node_exporter does not skip an unparseable line, it rejects the WHOLE
 # file. One NULL rendering as an empty value field, one error string,
@@ -490,10 +489,10 @@ fi
 #   timestamp: NOTHING goes absent, so that alert cannot fire, and every
 #   gauge FREEZES at its last value — genuinely stale sources keep
 #   reading stellarindex_data_freshness_stale 0. That is not a
-#   hypothetical; it is Wave L / #319, the incident the ClickHouse probe
-#   above is shaped the way it is (an `if`, not a bare assignment) to
-#   avoid. Refusing here would re-admit through the front door the
-#   failure that fix removed through the back.
+#   hypothetical: it is the failure the ClickHouse probe above is shaped
+#   (an `if`, not a bare assignment) to avoid. Refusing here would
+#   re-admit through the front door the failure that probe keeps out the
+#   back.
 #
 # So: publish, and withhold only the offending lines. 161 true samples
 # beat 162 frozen ones, and a withheld line leaves its series ABSENT —
