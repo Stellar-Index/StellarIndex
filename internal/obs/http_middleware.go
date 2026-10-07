@@ -114,13 +114,13 @@ func HTTPMetrics(next http.Handler) http.Handler {
 			return
 		}
 		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
-		// F-0105: only count non-5xx in the success histogram. The
+		// Only count non-5xx in the success histogram. The
 		// latency SLO numerator filters on this histogram while the
 		// denominator counts everything via HTTPRequestDuration, so a
 		// fast 500 lands in the denominator but not the numerator —
-		// SLO ratio drops, budget burns, alert fires. Pre-this-PR
-		// both numerator + denominator pulled from the same histogram
-		// and a fast 500 reported as "good." 499 (client-aborted)
+		// SLO ratio drops, budget burns, alert fires. A single
+		// histogram for both numerator and denominator would report
+		// a fast 500 as "good." 499 (client-aborted)
 		// also stays out: it isn't a service-side failure but it
 		// isn't customer success either; safer to exclude than to
 		// dilute the numerator.
@@ -325,7 +325,6 @@ func (r *statusRecorder) Flush() {
 // http.NewResponseController can reach SetWriteDeadline / Hijack
 // on it. Required for SSE handlers that need to clear the global
 // 30s WriteTimeout so long-running streams don't get cut.
-// F-1228 (codex audit-2026-05-12).
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
