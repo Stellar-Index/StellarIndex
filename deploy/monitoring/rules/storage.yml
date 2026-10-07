@@ -6,12 +6,12 @@ groups:
     interval: 30s
     rules:
 
-      # F-1329: the scrape job is `postgres_exporter` (not `postgres`)
-      # and postgres_exporter emits no `role` label, so the old
-      # `up{job="postgres",role="primary"}` selector matched no series
-      # and this PAGE was dead. postgres_exporter exposes `pg_up` (1 =
-      # the exporter reached the server, 0 = it could not) — the direct
-      # liveness signal for the single-node r1 primary.
+      # The scrape job is `postgres_exporter` (not `postgres`) and
+      # postgres_exporter emits no `role` label, so a
+      # `up{job="postgres",role="primary"}` selector matches no series.
+      # postgres_exporter exposes `pg_up` (1 = the exporter reached the
+      # server, 0 = it could not) — the direct liveness signal for the
+      # single-node r1 primary.
       - alert: stellarindex_timescale_primary_down
         expr: pg_up == 0
         for: 30s
@@ -28,12 +28,11 @@ groups:
             within 60 s — if not, follow the manual-failover path in the
             runbook.
 
-      # F-0151 (audit-2026-05-26): the indexer's *sql.DB pool
-      # silently held dead conns for ~14 h after postgres@15-main
-      # crashed + recovered, until a manual indexer restart. The
-      # pool now retires conns every 30 min via
-      # `PoolConnMaxLifetime`; this alert is the LIVE signal so
-      # the next cascade surfaces in minutes instead of hours.
+      # A *sql.DB pool can silently hold dead conns for hours after
+      # postgres crashes + recovers (r1 sat ~14 h on one until a manual
+      # indexer restart). The pool retires conns every 30 min via
+      # `PoolConnMaxLifetime`; this alert is the LIVE signal so a
+      # cascade surfaces in minutes instead of hours.
       # The indexer's `watchPostgresPing` goroutine probes the
       # pool every 60 s and increments
       # `stellarindex_postgres_ping_total{outcome="error"}` per
@@ -41,11 +40,8 @@ groups:
       # THRESHOLD IS `> 0`, NOT `> 0.5`. The probe ticks once per 60 s,
       # so the maximum achievable rate is 1/60 = 0.0167/s — a `> 0.5`
       # threshold (150 errors in 5 minutes) is unreachable by 30x, and
-      # this page could never fire. That is the F-0151 incident's own
-      # detector: on 2026-05-26 the indexer sat on a wedged pool for
-      # ~14 h and was found by hand. The metric's own docstring in
-      # internal/obs/metrics.go prescribes `> 0` for 2m; the rule did
-      # not match it. Corrected 2026-08-04 (cold audit).
+      # this page could never fire. The metric's own docstring in
+      # internal/obs/metrics.go prescribes `> 0` for 2m.
       - alert: stellarindex_postgres_ping_failing
         expr: rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0
         for: 2m
@@ -107,32 +103,25 @@ groups:
             live cluster state. `systemctl status
             patroni-textfile-scraper.timer`.
 
-      # F-1251 (audit-2026-05-12): lock-table headroom. The
-      # 2026-05-06 SEV-3 hit `out of shared memory (53200)` when
-      # the per-tx lock table saturated under concurrent ingest.
-      # Default Postgres setting (max_locks_per_transaction = 64)
-      # × max_connections = 200 = 12,800-entry table. The R1
-      # ansible role now templates max_locks_per_transaction = 4096
-      # by default (819,200 entries — permanent growth headroom;
-      # re-sized 2026-05-15 after a 256 recurrence). This alert
-      # fires at 70% saturation so we get warning before the
-      # next bump is forced. postgres_exporter HAS been scraped
-      # on R1 since F-0152 closed (2026-05-27, job
-      # `postgres_exporter` on :9187) — the stale "not currently
-      # scraped" note this block used to carry is what let the
-      # broken join below go unnoticed.
+      # Lock-table headroom. A saturated per-tx lock table fails
+      # concurrent ingest with `out of shared memory (53200)`. Default
+      # Postgres setting (max_locks_per_transaction = 64) × max_connections
+      # = 200 = 12,800-entry table; the R1 ansible role templates
+      # max_locks_per_transaction = 4096 by default (819,200 entries —
+      # permanent growth headroom, after 256 also saturated). This alert
+      # fires at 70% saturation so we get warning before the next bump is
+      # forced. postgres_exporter is scraped on R1 (job
+      # `postgres_exporter` on :9187).
       #
-      # #301: `pg_locks_count` is NOT a single series. The
-      # exporter's built-in `pg_locks` collector emits one sample
-      # per (datname, mode) — eight lock modes × every database —
-      # so the old unqualified `pg_locks_count / (...)` had no
-      # right-hand label set to match and evaluated to the empty
-      # vector on every tick: the SEV-3 guard was silently dead.
-      # Sum the modes/databases into a per-instance total and join
-      # `on (instance)` against the single-series settings gauges,
-      # the same shape the sibling `_connections_saturated` was
-      # corrected to in 1bcd6a9e. The lock table is one
-      # cluster-wide shared-memory arena, so summing across
+      # `pg_locks_count` is NOT a single series. The exporter's built-in
+      # `pg_locks` collector emits one sample per (datname, mode) — eight
+      # lock modes × every database — so an unqualified
+      # `pg_locks_count / (...)` has no right-hand label set to match and
+      # evaluates to the empty vector on every tick: a silently dead
+      # guard. Sum the modes/databases into a per-instance total and join
+      # `on (instance)` against the single-series settings gauges, the
+      # same shape as the sibling `_connections_saturated`. The lock table
+      # is one cluster-wide shared-memory arena, so summing across
       # databases as well as modes is the correct numerator.
       - alert: stellarindex_timescale_lock_table_pressure
         expr: |
@@ -192,9 +181,8 @@ groups:
 
       # Root filesystem (/) — distinct from /var/lib/postgresql
       # which has its own ZFS dataset with separate space.
-      # Caught the 2026-05-10 outage retrospectively: root FS hit
-      # 100 % from log accumulation before any existing alert
-      # fired. Without this rule the operator sees the symptom
+      # Root can hit 100 % from log accumulation before any other alert
+      # fires. Without this rule the operator sees the symptom
       # downstream (Redis MISCONF → /v1/price 404s) rather than
       # the cause.
       - alert: stellarindex_node_root_disk_full
@@ -242,12 +230,11 @@ groups:
             grows into the page-tier alert.
 
       # Fast-fill predictor — the static thresholds above fire when
-      # the line is ALREADY crossed; the 2026-06-11 CH log-wedge loop
-      # filled root at ~3.8 GB/min, going from healthy to full in
-      # ~5 min — faster than a human can act on a <10% page. This
-      # fires while there is still time: root trending to FULL within
-      # 30 min. The avail<50% guard keeps meaningless trends on a
-      # roomy disk from paging.
+      # the line is ALREADY crossed; a log-wedge loop (ClickHouse logging
+      # at ~3.8 GB/min) takes root from healthy to full in ~5 min — faster
+      # than a human can act on a <10% page. This fires while there is
+      # still time: root trending to FULL within 30 min. The avail<50%
+      # guard keeps meaningless trends on a roomy disk from paging.
       - alert: stellarindex_node_root_disk_filling_fast
         expr: |
           (
@@ -272,13 +259,11 @@ groups:
             `du -xs /var/log/* /tmp | sort -rh | head` — and see the
             runbook for the CH log-wedge kill sequence.
 
-      # Guard-config liveness — born 2026-07-03: the 2026-06-11
-      # incident's rsyslog suppression was codified in ansible but
-      # NEVER applied to r1 (recorded as fixed), and live-only hand
-      # fixes existed that an ansible render would erase. Ansible does
-      # not auto-run against r1, so neither direction self-heals;
-      # config-assertions.sh (hourly timer) checks the load-bearing
-      # files' CONTENT and this pages the gap within ~2h.
+      # Guard-config liveness: a fix codified in ansible is not applied
+      # to r1 until someone runs it (ansible does not auto-run against r1),
+      # and a live-only hand fix is erased by the next render — neither
+      # direction self-heals. config-assertions.sh (hourly timer) checks
+      # the load-bearing files' CONTENT and this pages the gap within ~2h.
       - alert: stellarindex_config_assertion_failed
         expr: stellarindex_config_assertion_ok == 0
         for: 65m
@@ -365,22 +350,20 @@ groups:
             > 80 % of max_connections in use for 5+ minutes. PgBouncer should
             be smoothing this; check that the pool is healthy + sized right.
 
-      # ── WAS INERT (F-1329) — NOW PRODUCED ─────────────────────────
+      # ── TimescaleDB job-scheduler state ────────────────────────────────
       # The two TimescaleDB-internal alerts below describe job-scheduler
       # state (timescaledb_information.job_stats / .chunks) that
-      # postgres_exporter's default queries do not cover, so their
-      # metrics had no producer and the rules could not fire:
+      # postgres_exporter's default queries do not cover:
       #   - stellarindex_cagg_last_refresh_unix /
       #     stellarindex_cagg_refresh_interval_seconds (cagg-stale)
       #   - stellarindex_timescale_chunks_overdue_compression
       #     (compression-lag)
       #
       # The timescale-jobs-probe timer (archival-node role,
-      # 10-observability.yml) now queries those views every minute and
+      # 10-observability.yml) queries those views every minute and
       # writes them to the node_exporter textfile collector, and
       # lint-metric-refs.sh reads the inline ansible `content:` blocks
-      # via ANSIBLE_TASK_PATHS — so neither metric is parked in that
-      # lint's KNOWN_INERT any more. Both are live series.
+      # via ANSIBLE_TASK_PATHS, so both are known-produced series.
       - alert: stellarindex_timescale_cagg_stale
         # Producer: timescale-jobs-probe.timer (every 60s). The probe
         # interval is deliberately well inside this rule's 5x-of-30s
@@ -482,26 +465,20 @@ groups:
         # Producer: timescale-jobs-probe.timer (every 60s), same probe as
         # the two alerts above.
         #
-        # This counter was added BECAUSE nothing surfaced the failure it
-        # measures: r1 was silently failing 37-69% of every CAGG refresh
-        # run with "failed to start job" (background-worker starvation).
-        # The jobs got a slot on a later tick, so last_run_status read
-        # Success and the caggs were never stale — _cagg_stale and
-        # _compression_lag both stayed quiet, and the only evidence was
-        # this counter. Which no rule referenced, so the evidence was
-        # collected and never acted on (wave-D ALERT-12).
+        # This counter exists because nothing else surfaces the failure it
+        # measures: r1 has silently failed 37-69% of every CAGG refresh run
+        # with "failed to start job" (background-worker starvation). The
+        # jobs got a slot on a later tick, so last_run_status read Success
+        # and the caggs were never stale — _cagg_stale and _compression_lag
+        # both stayed quiet, and the only evidence was this counter.
         #
-        # Ticket, not informational (#485). This comment used to argue the
-        # opposite — that "the CAGG-staleness ticket above is the real
-        # customer-impact signal" — and the rule's own description directly
-        # contradicts it: "the caggs may look fresh and no staleness ticket
-        # will fire". Both cannot be true, and the description is the one
-        # that matches the incident it was written for. An alert authored
-        # specifically to expose a silent failure mode, then routed to a
+        # Ticket, not informational. The rule's own description says "the
+        # caggs may look fresh and no staleness ticket will fire", so the
+        # CAGG-staleness ticket is NOT the customer-impact signal here, and
+        # an alert authored to expose a silent failure mode, routed to a
         # receiver that delivers to nobody, is the failure mode twice over.
-        # What this catches is the SHAPE that hid the incident —
-        # failures accumulating steadily while everything downstream
-        # looks healthy.
+        # What this catches is the SHAPE of that failure — failures
+        # accumulating steadily while everything downstream looks healthy.
         #
         # increase() over 6h rather than a rate threshold: the counter is
         # per-job cumulative and jobs run on minute-scale intervals, so a
@@ -515,18 +492,17 @@ groups:
         # T < 36 minutes. Every compression policy (12h schedule_interval)
         # and five of the CAGG refresh policies (prices_4h 1h, prices_1d
         # 6h, prices_1w and prices_1mo 1d, twap_1d 6h) are slower than
-        # that, so for them this alert was arithmetically unable to fire —
-        # and they are exactly the jobs r1's probe found failing 66-81%.
+        # that, so for them the first arm alone is arithmetically unable to
+        # fire — and they are exactly the jobs r1's probe found failing 66-81%.
         #
-        # Measured on r1 2026-09-18, which is why the second arm is worth
-        # its noise: `policy_compression` on `trades` (job 1000, 12h
-        # schedule) had failed 6 times in 7 days with "Failed to convert
-        # '1' chunks to columnstore", three of them inside three hours,
-        # and nothing fired or could have. Over the same 7 days the only
-        # other failing job was the prices_1m refresh with a single
-        # failure — under the 3-in-3-days threshold, so the arm buys that
-        # detection without turning the fleet's ordinary retry noise into
-        # tickets.
+        # Measured on r1, which is why the second arm is worth its noise:
+        # `policy_compression` on `trades` (job 1000, 12h schedule) failed
+        # 6 times in 7 days with "Failed to convert '1' chunks to
+        # columnstore", three of them inside three hours, and the first arm
+        # could not fire. Over the same 7 days the only other failing job
+        # was the prices_1m refresh with a single failure — under the
+        # 3-in-3-days threshold, so the arm buys that detection without
+        # turning the fleet's ordinary retry noise into tickets.
         #
         # 3 days rather than a week: local Prometheus keeps 7 days
         # (local_prometheus_retention_time), and an increase() window at
@@ -539,7 +515,8 @@ groups:
         # counts still cap out: a job scheduled every T runs at most 3d/T
         # times in the window, so `>= 3 in 3d` is unreachable once T
         # exceeds a day, and any future slower policy (weekly retention,
-        # say) would be as unjudgeable as the compression policies were.
+        # say) would be as unjudgeable as the compression policies are by
+        # the first arm.
         # failures x schedule_interval is the scheduled time those failed
         # runs covered; >= half the window (36h) means at least half of the
         # runs scheduled in 3 days failed, whatever T is — one failure for
@@ -553,11 +530,11 @@ groups:
         # Every arm discounts failures that were a concurrent CAGG refresh
         # rejecting the policy (an operator replay refreshing the same
         # window): the job body is fine and the next tick retries, yet one
-        # such collision held the 3-day arm for three days. The probe counts
-        # them per job over each arm's own window; where that gauge is
-        # absent the `or 0 *` term falls back to the raw count, so a missing
-        # gauge can only make the alert louder. A collision that never ends
-        # stops the refreshes, which is cagg_stale's to report.
+        # such collision can hold the 3-day arm for three days. The probe
+        # counts them per job over each arm's own window; where that gauge
+        # is absent the `or 0 *` term falls back to the raw count, so a
+        # missing gauge can only make the alert louder. A collision that
+        # never ends stops the refreshes, which is cagg_stale's to report.
         expr: |
           (
             increase(stellarindex_timescale_job_failures_total[6h])
@@ -616,25 +593,22 @@ groups:
 
       # Judged against each policy's OWN window, per hypertable.
       #
-      # The metric this replaced counted every uncompressed chunk older
-      # than a hardcoded 7 days on any hypertable that had a compression
-      # policy — one scalar, one interval, 46 policies. Two false shapes
-      # came out of that, both measured on r1 2026-09-05:
+      # A single "uncompressed chunk older than a hardcoded 7 days on any
+      # hypertable with a compression policy" count is wrong two ways
+      # (both measured on r1):
       #
       #   1. `compress_after` is per-policy, not 7 days. fx_quotes is
       #      90 days, aquarius_admin and defindex_fees are 30. Their
-      #      8-to-89-day-old chunks are uncompressed BY DESIGN, and the
-      #      old metric called every one of them lag. The runbook carried
-      #      that as a "known false-positive pattern" rather than a bug.
+      #      8-to-89-day-old chunks are uncompressed BY DESIGN, and a
+      #      fixed 7-day count calls every one of them lag.
       #   2. A policy only compresses on its scheduled tick, and every
       #      policy here runs on a 12h `schedule_interval`. A chunk that
       #      crossed compress_after ten minutes ago is not behind, it is
-      #      queued. The old metric was a daily sawtooth: 2-28 at 00:00
-      #      as day-chunks crossed the line, back to 0 by ~10:00 once the
-      #      policies ran. The alert sat PENDING for a third of every day
-      #      and its 24h `for:` was all that kept it from firing.
+      #      queued. A count ignoring that is a daily sawtooth: 2-28 at
+      #      00:00 as day-chunks cross the line, back to 0 by ~10:00 once
+      #      the policies run — PENDING for a third of every day.
       #
-      # So the producer now subtracts the policy's own compress_after AND
+      # So the producer subtracts the policy's own compress_after AND
       # its schedule_interval before counting, and labels by hypertable.
       # A chunk counted here is one the policy said it would have
       # compressed by now and has not. `for: 24h` on top of the 12h
@@ -645,8 +619,8 @@ groups:
       # and 52 GB uncompressed) — a missing policy is
       # `compression_policies_applied` in scripts/ops/config-assertions.sh,
       # surfaced by stellarindex_config_assertion_failed. Counting
-      # policy-less chunks here is what made the old number look like a
-      # 384-chunk backlog when nothing was ever going to compress them.
+      # policy-less chunks here would read as a 384-chunk backlog when
+      # nothing is ever going to compress them.
       - alert: stellarindex_timescale_compression_lag
         # Producer: timescale-jobs-probe.timer (every 60s).
         expr: stellarindex_timescale_chunks_overdue_compression > 0
@@ -751,33 +725,32 @@ groups:
             file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
             hand.
 
-      # ── the lock convoy (r1, 2026-09-10 00:12–00:31 UTC) ────────────
-      #
-      # A deploy restarted stellarindex-aggregator; its cold-start VWAP
-      # alias-map aggregation spilled to disk (IO/BufFileRead) and held
+      # ── the lock convoy ─────────────────────────────────────────────
+      # A restarted stellarindex-aggregator's cold-start VWAP alias-map
+      # aggregation can spill to disk (IO/BufFileRead) and hold
       # AccessShareLock on `trades` for 18+ minutes. A
-      # usd-volume-restamp -chunks run's decompress_chunk wanted
-      # AccessExclusiveLock on a chunk of that hypertable, could not have
-      # it, and QUEUED — and PostgreSQL puts every LATER request for an
+      # usd-volume-restamp -chunks run's decompress_chunk wants
+      # AccessExclusiveLock on a chunk of that hypertable, cannot have
+      # it, and QUEUES — and PostgreSQL puts every LATER request for an
       # object behind a PENDING exclusive one, however trivial and
-      # however compatible with the lock actually held:
+      # however compatible with the lock actually held. Observed on r1:
       #
       #   decompress_chunk (restamp)      blocked 1,984 s
       #   UPDATE trades  x2 (restamp)     blocked 1,164 s
       #   postgres_exporter scrapes x3    blocked   917 s
       #   chunks_detailed_size (watcher)  blocked   904 s
       #
-      # Nothing paged on the convoy itself. What did fire —
-      # stellarindex_postgres_exporter_down and
-      # stellarindex_aggregator_silent — described the wreckage, and both
-      # systemd units read `active` throughout. The restamp stalled 33
-      # minutes and /v1/status went `degraded` before it was cleared by
-      # hand with pg_cancel_backend() on the aggregator's SELECT.
+      # Without this alert nothing pages on the convoy itself. What does
+      # fire — stellarindex_postgres_exporter_down and
+      # stellarindex_aggregator_silent — describes the wreckage, and both
+      # systemd units read `active` throughout; the restamp stalled 33
+      # minutes and /v1/status went `degraded` until the aggregator's
+      # SELECT was cancelled by hand with pg_cancel_backend().
       #
-      # WHERE THIS CHECK RUNS IS THE POINT. postgres_exporter was IN the
-      # convoy (scrape HTTP 000 after 30 s; Prometheus logged `context
-      # deadline exceeded`), so an alert carried by it would have been
-      # blind for exactly the window it was needed. The producer is
+      # WHERE THIS CHECK RUNS IS THE POINT. postgres_exporter is IN the
+      # convoy (scrape HTTP 000 after 30 s; Prometheus logs `context
+      # deadline exceeded`), so an alert carried by it is blind for
+      # exactly the window it is needed. The producer is
       # timescale-jobs-probe.sh — its own short-lived psql connection,
       # published through node_exporter's textfile collector — and its
       # query reads only pg_stat_activity + pg_blocking_pids(), which
@@ -798,10 +771,10 @@ groups:
       #
       # 120 s + for 2m: never normal (a pending request behind another
       # pending request resolves in milliseconds under any healthy
-      # workload), ~13x below the incident's worst waits, and it clears
-      # the 30 s postgres_exporter scrape timeout by enough that a
-      # transient self-clearing stall does not page. It would have fired
-      # around 00:16, some 15 minutes before the manual recovery.
+      # workload), ~13x below the observed convoy's worst waits, and it
+      # clears the 30 s postgres_exporter scrape timeout by enough that a
+      # transient self-clearing stall does not page. On the observed
+      # convoy it fires some 15 minutes before the manual recovery.
       #
       # No absent/staleness arm here on purpose: this gauge is produced
       # by the same probe as stellarindex_timescale_probe_query_ok /
@@ -809,7 +782,7 @@ groups:
       # stellarindex_timescale_probe_degraded's alert, and duplicating it
       # would give one failure two pages.
       #
-      # PREVENTION, separately: the restamp no longer issues an unbounded
+      # PREVENTION, separately: the restamp never issues an unbounded
       # exclusive-lock request — it asks under `SET LOCAL lock_timeout`
       # and retries — so this alert is for a convoy whose head is
       # something else (a by-hand ALTER, a migration, the compression
@@ -842,19 +815,15 @@ groups:
             anything further down only frees its own slot. The runbook has
             the query.
 
-      # F-1329: repointed off the never-emitted
-      # `stellarindex_pgbackrest_last_success_unix` /
-      # `stellarindex_pgbackrest_expected_interval_seconds` pair (note the
-      # bogus `stellarindex_` prefix — the SCRAPED exporter is woblerr's
-      # pgbackrest_exporter, job `pgbackrest_exporter`, which emits
-      # `pgbackrest_*`). The exporter computes
+      # The scraped exporter is woblerr's pgbackrest_exporter (job
+      # `pgbackrest_exporter`), which emits `pgbackrest_*` — there is no
+      # `stellarindex_pgbackrest_*` series. The exporter computes
       # `pgbackrest_backup_since_last_completion_seconds` server-side as
       # (now - last_backup_stop_time), one series per backup_type
       # {full,diff,incr} per stanza — so it IS already "seconds since",
       # no time()-subtraction. We take `min by (stanza)` so the freshest
       # backup of ANY type satisfies the alert, and exclude the exporter's
       # aggregate pseudo-stanzas so a per-stanza failure can't be masked.
-      # Backups can now page if they silently stop (the F-1329 gap).
       - alert: stellarindex_timescale_backup_failed
         expr: |
           min by (stanza) (
@@ -891,14 +860,14 @@ groups:
             RPO breach. At 24h+ without a backup we exceed the documented
             5-min RPO target by 288×. Escalate immediately.
 
-      # backup-restore-1 (audit 2026-08-28): both alerts above are
+      # Both alerts above are
       # `min by (stanza)(...) > N` — over an EMPTY vector that is empty,
       # so an exporter that is UP but has no stanza to report (pgbackrest
       # not installed → unit exits 127; the exporter user cannot read
-      # pgbackrest.conf / the repo; `pgbackrest info` errors) silences
-      # the SEV-1 page for as long as it lasts. The only backstop,
+      # pgbackrest.conf / the repo; `pgbackrest info` errors) would silence
+      # the SEV-1 page for as long as it lasts. The only other backstop,
       # meta.yml stellarindex_pgbackrest_exporter_down, checks `up`
-      # alone — the F-0085 cascade-blindness class, one layer down.
+      # alone — cascade blindness, one layer down.
       # This alert closes it: every up==1 exporter target that has no
       # real-stanza backup series pages. Per-instance (`unless on
       # (instance)`) rather than a bare absent() so a healthy host can
@@ -979,11 +948,10 @@ groups:
       # a partial capture, so a half-written schema reads as stale
       # rather than fresh.
       #
-      # absent_over_time branch (OBS-2 pattern, restore-drill.yml;
-      # backup-restore-2, audit 2026-08-28): because the script
-      # rewrites the textfile WITHOUT the stamp on a partial run, and
-      # exits before writing it at all on a first-run failure, the
-      # never-succeeded / every-run-failed / host-rebuilt cases make
+      # absent_over_time branch (the restore-drill.yml pattern): because
+      # the script rewrites the textfile WITHOUT the stamp on a partial
+      # run, and exits before writing it at all on a first-run failure,
+      # the never-succeeded / every-run-failed / host-rebuilt cases make
       # the series ABSENT, not old. `time() - x` over an empty vector
       # is empty and could never fire on exactly the runs it exists
       # for; absent_over_time(...[36h]) restores that coverage.
@@ -1304,15 +1272,12 @@ groups:
             consequence 36 h / 72 h later; this is the causal signal.
             `journalctl -u ch-schema-snapshot.service -n 50`.
 
-      # T604: ch-schema-drift.sh (ADR-0043 §2.1) has shipped
-      # _divergent/_uncodified/_last_run_unix/_intent_converged since
-      # 2026-09-09 (docs/operations/runbooks/ch-schema-restore.md) but
-      # no rule ever read them — the runbook's own "not yet in
-      # storage.yml" note. This was one of the manifest's 24 textfile
-      # producers with NO alert at all, not merely no staleness guard:
-      # a divergent live schema never paged, and node_exporter serves
-      # ch_schema_drift.prom's last-written gauges forever if the daily
-      # timer dies, so a frozen "0 divergent" from weeks ago reads
+      # ch-schema-drift.sh (ADR-0043 §2.1) publishes
+      # _divergent/_uncodified/_last_run_unix/_intent_converged
+      # (docs/operations/runbooks/ch-schema-restore.md). Without these
+      # rules a divergent live schema never pages, and node_exporter
+      # serves ch_schema_drift.prom's last-written gauges forever if the
+      # daily timer dies, so a frozen "0 divergent" from weeks ago reads
       # identically to a clean run today.
       - alert: stellarindex_ch_schema_drift_detected
         expr: stellarindex_ch_schema_drift_divergent > 0
@@ -1440,14 +1405,14 @@ groups:
             corruption on scrub, but the drive reporting them first is the
             earlier signal.
 
-      # #371 F2: ClickHouse is the only dependency on r1 with no
-      # Prometheus exporter of its own — postgres, redis and minio each
-      # have one. It is also the raw lake the ADR-0033 completeness
-      # claim rests on, so before this alert existed its disappearance
-      # had no single symptom: endpoints would simply start failing.
+      # ClickHouse is the only dependency on r1 with no Prometheus
+      # exporter of its own — postgres, redis and minio each have one. It
+      # is also the raw lake the ADR-0033 completeness claim rests on, so
+      # without this alert its disappearance has no single symptom:
+      # endpoints simply start failing.
       #
       # The signal is the API's OWN readiness check, published as a
-      # gauge (#371). That is deliberately better than a sidecar
+      # gauge. That is deliberately better than a sidecar
       # exporter here: it measures whether the API can actually reach
       # ClickHouse, which is the thing that matters, rather than whether
       # a separate process can.
@@ -1479,20 +1444,21 @@ groups:
             this one and carry more detail — treat those as primary and this
             as corroboration.
 
-      # GH-899: 60 of 66 node_exporter textfile-collector producers
-      # (scripts/ci/textfile-producers.manifest) had no staleness alert at
-      # all — a producer's timer/cron could die silently forever. Rather
-      # than hand-add 60 near-identical per-file rules, this one rule has
-      # no `file=` selector, so it matches every textfile_collector .prom
-      # node_exporter has ever scraped, present or future. A producer with
-      # its own tighter, file-scoped alert (see stellarindex_patroni_textfile_stale,
+      # Catch-all textfile staleness backstop: a producer's timer/cron can
+      # die silently forever, and most of the node_exporter textfile-collector
+      # producers (scripts/ci/textfile-producers.manifest) have no alert of
+      # their own. Rather than hand-add dozens of near-identical per-file
+      # rules, this one rule has no `file=` selector, so it matches every
+      # textfile_collector .prom node_exporter has ever scraped, present or
+      # future. A producer with its own tighter, file-scoped alert (see
+      # stellarindex_patroni_textfile_stale,
       # stellarindex_config_assertions_stale, redis/keepalived/data-freshness/
       # stellar-stack-version above and in the sibling rule files) fires
       # sooner; this is the backstop for everything else. 24h is well above
       # every known producer's expected refresh interval, so it never
       # duplicates a tighter alert, only catches what nothing else does.
       #
-      # 14d-review (2026-09-27) false-fire exclusions:
+      # False-fire exclusions:
       #   - `ops_job_*.pid<N>.prom` (opsutil.pidPath): the fallback file a
       #     run writes when it loses the heartbeat flock. Nothing ever
       #     rewrites it again once that run exits — sweepStalePIDFiles
@@ -1557,11 +1523,11 @@ groups:
 
       # Companion to the catch-all above, which excludes this producer:
       # restore-drill.sh runs on a MONTHLY timer (restore-drill.timer /
-      # restore-drill-offsite.timer), so its 24h backstop false-fires
+      # restore-drill-offsite.timer), so a 24h backstop would false-fire
       # between runs every single month. stellarindex_restore_drill_stale
       # / _offsite_stale already watch the CONTENT signal
       # (stellarindex_restore_drill_last_success_unix, 40d/35d) — this is
-      # the same OBS-2 mtime backstop pattern as
+      # the same mtime backstop pattern as
       # stellarindex_patroni_textfile_stale for the case the timer itself
       # dies before ever writing a fresh gauge.
       - alert: stellarindex_restore_drill_textfile_stale
