@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultDwellTime is the F-0050 / F-0150 fail-open dwell-time
+// DefaultDwellTime is the fail-open dwell-time
 // window: how long Take is allowed to be failing-open on Redis
 // errors before flipping to fail-CLOSED via [ErrThrottleUnavailable].
 //
@@ -30,7 +30,7 @@ const DefaultDwellTime = 30 * time.Second
 // of the wrapped Redis error once the dwell-time threshold is
 // crossed; transient errors within the window keep returning the
 // wrapped Redis error so handlers retain their existing fail-open
-// branch for blip-class outages. F-0050 / F-0150 (audit-2026-05-27).
+// branch for blip-class outages.
 var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (sustained backend errors)")
 
 // Bucket is a per-(client × window) counter.
@@ -39,7 +39,7 @@ var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (
 // construct a single instance at binary startup and share it across
 // handlers.
 //
-// # Dwell-time fail-open inversion (F-0050 / F-0150)
+// # Dwell-time fail-open inversion
 //
 // Take returns a wrapped Redis error on transport failure while
 // the dwell-time clock is still inside its window (default 30s,
@@ -295,8 +295,7 @@ func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 // `Take(ctx, key)` is exactly `Charge(ctx, key, 1, 0)`. Charge exists
 // because a request's price must track the work it buys: a batch route
 // that resolves 1000 ids for the single token a one-id request pays
-// turns the per-minute ceiling into a 1000x amplifier (F035 / F046 /
-// K009, reverification-2026-09-18).
+// turns the per-minute ceiling into a 1000x amplifier.
 //
 // cost and limit are different axes. limit > 0 replaces the bucket's
 // max for this call only — a per-subject ceiling such as an API key's

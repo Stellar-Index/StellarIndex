@@ -192,6 +192,15 @@ git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
 expect_has "go-only: gofumpt selected" "plan  gofumpt:" "$out"
 expect_has "go-only: go vet on ./internal/x" "go vet ./internal/x" "$out"
+
+R="$TMP/gotagged"; new_repo "$R"
+put "$R" go.mod $'module example.com/t\n\ngo 1.22'
+put "$R" internal/x/x.go $'package x'
+put "$R" test/h/h.go $'//go:build integration\n\npackage h'
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
+expect_has "tag-only package: go vet keeps ./internal/x" "go vet ./internal/x" "$out"
+expect_not "tag-only package: no go vet on ./test/h" "./test/h" "$(grep -E 'go (vet|build) ' <<<"$out")"
 expect_not "go-only: no bash -n" "plan  bash -n:" "$out"
 expect_not "go-only: no shellcheck" "plan  shellcheck:" "$out"
 expect_not "go-only: no lint-shell-sigpipe" "lint-shell-sigpipe" "$out"

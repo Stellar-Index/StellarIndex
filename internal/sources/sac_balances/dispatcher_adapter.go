@@ -13,9 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Observer is the dispatcher-facing SAC balance observer per
-// ADR-0022 PR 4/5. Implements
-// [dispatcher.LedgerEntryChangeDecoder].
+// Observer is the dispatcher-facing SAC balance observer (ADR-0022).
+// Implements [dispatcher.LedgerEntryChangeDecoder].
 //
 // Watched-contract driven: the observer's NewObserver takes a
 // map of SAC contract IDs → asset_keys. Match runs:
@@ -24,15 +23,14 @@ import (
 //  2. Contract scAddress == one of the watched contracts
 //  3. Key shape is `Vec(Symbol("Balance"), Address)`
 //
-// PR 5/5 wires the operator TOML
-// (`[supply.sac_wrappers]`) into NewObserver's argument.
+// The operator TOML (`[supply.sac_wrappers]`) feeds NewObserver's argument.
 type Observer struct {
 	// wrappers maps SAC contract C-strkey → asset_key (CODE:ISSUER).
 	wrappers map[string]string
 
 	// unknownValShapeDrops counts Balance-keyed changes for a watched
 	// contract whose value decoded as neither a bare i128 nor a
-	// map-with-amount (Q120). Matches() only checks KEY shape — a
+	// map-with-amount. Matches() only checks KEY shape — a
 	// configured pure-SEP-41 wrapper (contract_id → contract_id, no
 	// classic asset) whose storage layout differs from the native SAC's
 	// still gets claimed on every change and fails every Decode. A
@@ -149,8 +147,8 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 }
 
 // UnknownValShapeDrops is the count of Balance-keyed changes for a watched
-// contract whose value shape [scval.SEP41BalanceAmount] could not decode
-// (Q120). See the field doc on [Observer.unknownValShapeDrops].
+// contract whose value shape [scval.SEP41BalanceAmount] could not decode.
+// See the field doc on [Observer.unknownValShapeDrops].
 func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
 // contractDataFromChange returns the ContractDataEntry +
@@ -163,7 +161,7 @@ func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 // brought back. The EVICTION half is not a change variant at all — a
 // TTL-lapsed entry leaves the live state with no transaction touching
 // it — so the dispatcher's eviction phase turns each of the ledger's
-// evicted keys into a Removed change (dispatcher.walkEvictedKeys, Q119).
+// evicted keys into a Removed change (dispatcher.walkEvictedKeys).
 // Such a change carries an empty TxHash and OpIndex -1: it is
 // ledger-scoped, not transaction-scoped. Nothing extra is needed here —
 // an evicted balance must stop counting toward supply exactly as a

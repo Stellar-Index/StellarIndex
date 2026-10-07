@@ -24,7 +24,7 @@
 // FX-freshness alert), and (via Writer/UpsertNonstandardDecimalsAsset)
 // the confirmed source of truth other packages consume. The forward-
 // looking NORMALIZATION (internal/aggregate.AdjustPrice, a read-time
-// 10^(dec_base−dec_quote) scalar) shipped 2026-07-10 for every query-time
+// 10^(dec_base−dec_quote) scalar) applies to every query-time
 // serving path — see the runbook
 // docs/operations/runbooks/dex.md for exactly what's
 // covered and what remains a documented follow-up (the two CAGG-backed
@@ -68,7 +68,7 @@ const StandardDecimals = 7
 // sweeps overlap and no trade falls between them: any Soroban token that
 // trades even once is enumerated by at least one sweep. The former
 // all-time informational alert (stellarindex_dex_nonstandard_decimals_detected)
-// that latched permanently on a single detection was removed 2026-08-05;
+// that latched permanently on a single detection is gone;
 // the action item today is stellarindex_nonstandard_decimals_correction_failing,
 // which fires only while the correction itself is failing (see
 // configs/prometheus/rules.r1/aggregator.yml).
@@ -130,9 +130,7 @@ type DecimalsResolver interface {
 // (docs/operations/runbooks/dex.md). Satisfied by
 // *timescale.Store via UpsertNonstandardDecimalsAsset.
 //
-// This started life as a stop-serving lever and the docstrings said so
-// long after the behaviour changed; the surfaces now apply
-// aggregate.AdjustPrice rather than declining. Corrected 2026-07-22.
+// The surfaces apply aggregate.AdjustPrice rather than declining to serve.
 //
 // Optional: a nil Writer disables persistence — the guard still fires the
 // metric + ERROR log unconditionally, it just leaves the serving-side
