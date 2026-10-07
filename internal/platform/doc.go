@@ -1,30 +1,10 @@
-// Package platform models the customer + staff dashboard primitives.
+// Package platform models the customer and staff dashboard aggregates:
+// accounts, users and sessions, magic-link tokens and invites, API keys,
+// usage, audit log and customer webhooks; postgresstore implements its
+// stores.
 //
-// The auth flow, key management and Postgres key storage are live:
-//
-//   - The dashboard auth flow (magic-link + session cookies) is
-//     live — see internal/api/v1/dashboardauth, wired in
-//     cmd/stellarindex-api/main.go's buildDashboardBundle.
-//   - Key management (mint/list/revoke) is live via
-//     internal/api/v1/dashboardkeys atop postgresstore.APIKeyStore.
-//   - The Redis-only → Postgres-canonical key-storage cutover is
-//     live and operator-controlled via api.auth_backend ("redis" |
-//     "postgres" — see [config.APIConfig.AuthBackend]'s doc for the
-//     canary/rollback procedure). auth.NewPostgresAPIKeyValidator
-//     (internal/auth/apikey_postgres.go) is the read-through
-//     validator: Postgres is the dashboard's source of truth
-//     regardless of the flag; "postgres" additionally makes it the
-//     RUNTIME validation path, with Redis as a cache.
-//
-// Package layout:
-//
-//	account.go      — Account aggregate
-//	user.go         — User + Session aggregates
-//	token.go        — MagicLinkToken + Invite aggregates
-//	apikey.go       — Extended APIKey aggregate (replaces auth.APIKeyRecord
-//	                  once the migration cuts over)
-//	usage.go        — UsageEvent + UsageRollup wire types
-//	audit.go        — AuditLog entry
-//	webhook.go      — CustomerWebhook + WebhookDelivery aggregates
-//	errors.go       — Sentinel errors
+// Postgres is the source of truth for API keys. `api.auth_backend`
+// ([config.APIConfig.AuthBackend]) chooses whether runtime validation
+// reads it (through the Redis-cached auth.NewPostgresAPIKeyValidator) or
+// Redis alone; its doc has the canary and rollback procedure.
 package platform

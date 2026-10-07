@@ -1,32 +1,11 @@
-// Package obs centralises Prometheus metric definitions and the
-// HTTP middleware that emits HTTP-level metrics.
+// Package obs defines every Prometheus metric in the repository, so an
+// alert in docs/operations/alerts-catalog.md greps to one definition,
+// plus the HTTP metrics middleware.
 //
-// # Why centralised?
-//
-// Every metric in the repo is defined here. When an alert in
-// docs/operations/alerts-catalog.md fires on metric `X`, grep
-// finds its definition in one file. Distributing definitions
-// across packages makes consistent naming + help text a matter
-// of discipline rather than a single source of truth.
-//
-// # Metric naming
-//
-// All metrics start with `stellarindex_` except for the
-// language-native `go_*` and `process_*` that prometheus client
-// emits automatically, plus the HTTP ones which follow
-// Prometheus best-practice naming (`http_request_duration_seconds`
-// etc.) for dashboard portability.
-//
-// # Registration
-//
-// Every metric registers to [Registry] at init. Binaries expose
-// that registry via [Handler] which returns an http.Handler for
-// /metrics endpoints.
-//
-// # Label cardinality
-//
-// Labels that could blow up cardinality (API key, asset_id) are
-// NOT used on histograms — only on counters + gauges where the
-// label set is bounded. High-cardinality metrics go to traces, not
-// Prometheus.
+// Names start with `stellarindex_`, except the client's own go_* and
+// process_* and the conventional http_* names kept for dashboard
+// portability. Everything registers on [Registry], served by [Handler].
+// Unbounded labels (API key, asset id) never go on histograms, only on
+// counters and gauges with a bounded label set; the rest belongs in
+// traces.
 package obs
