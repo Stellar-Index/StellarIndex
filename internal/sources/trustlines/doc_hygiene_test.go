@@ -6,21 +6,17 @@ import (
 	"testing"
 )
 
-// The LP-reserve observer (internal/sources/liquidity_pools) shipped as
-// Task #55 PR 4/5 (commit ecb28f108); "Task #65" in the same internal
-// Task namespace is unrelated work, so citing it misdirects readers.
-func TestLPReserveObserverCitesItsTask(t *testing.T) {
+// Internal task numbers do not resolve outside the private tracker.
+func TestLPReserveObserverCitesNoTask(t *testing.T) {
 	for _, name := range []string{"decode.go", "doc.go"} {
 		src, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		text := string(src)
-		if strings.Contains(text, "Task #65") {
-			t.Errorf("%s cites Task #65 for the LP-reserve observer; it shipped as Task #55", name)
-		}
-		if name == "decode.go" && !strings.Contains(text, "liquidity_pools, Task #55") {
-			t.Errorf(`%s must credit the LP-reserve observer as "liquidity_pools, Task #55"`, name)
+		for _, stale := range []string{"Task #55", "Task #65"} {
+			if strings.Contains(string(src), stale) {
+				t.Errorf("%s cites %q for the LP-reserve observer", name, stale)
+			}
 		}
 	}
 }
