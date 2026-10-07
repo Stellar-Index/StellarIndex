@@ -301,7 +301,7 @@ func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
 // ctxDeadCountingReader answers GetAsset with a distinct Code each
 // call, independent of the request's context state (mirrors the real
 // AssetReader implementations, which don't observe cancellation
-// themselves — see GH-708).
+// themselves).
 type ctxDeadCountingReader struct {
 	calls int
 }
@@ -322,7 +322,7 @@ func (r *ctxDeadCountingReader) ListAssets(_ context.Context, _ string, _ int) (
 }
 
 // TestAssetGet_DeadContextBodyNotCached is the regression proof for
-// GH-708: handleAssetGet had no liveness gate between its cache miss
+// handleAssetGet needs a liveness gate between its cache miss
 // and its assetDetailCache.put, so a request whose context died mid-
 // chain (client gone, or the blanket request-timeout deadline) still
 // cached whatever best-effort body it had assembled and replayed it
@@ -464,7 +464,7 @@ func TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	}
 	// With no metadata resolver wired the status should advance from
 	// the empty default to "not_fetched" — distinct from the
-	// pre-fix "not_applicable" which incorrectly claimed the issuer
+	// "not_applicable", which would incorrectly claim the issuer
 	// has no home-domain at all.
 	if env.Data.Sep1Status != "not_fetched" {
 		t.Errorf("Sep1Status = %q, want not_fetched (resolver not wired but home_domain known)", env.Data.Sep1Status)
@@ -618,8 +618,8 @@ func TestAssetList_ReaderError500(t *testing.T) {
 
 func TestAssetGet_ReaderError500(t *testing.T) {
 	// Reader returning a non-NotFound error → 500 with the
-	// internal error-type URL. Previously the only reader-returning
-	// test path returned ErrAssetNotFound.
+	// internal error-type URL. Unlike the reader-returning
+	// test path that returns ErrAssetNotFound.
 	reader := &stubAssetReader{err: errors.New("storage broke")}
 	srv := v1.New(v1.Options{Assets: reader})
 	ts := httpTestServer(t, srv)
@@ -723,7 +723,7 @@ func TestAssetList_FromAssetsReader_IssuerFilter(t *testing.T) {
 
 func TestAssetList_FromAssetsReader_CodeFilter(t *testing.T) {
 	// ?code=USDC pushes down to the AssetsReader's Code option
-	// (BACKLOG #54). Stub records what was passed.
+	// Stub records what was passed. records what was passed.
 	listReader := &listingStub{}
 	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
@@ -738,7 +738,7 @@ func TestAssetList_FromAssetsReader_CodeFilter(t *testing.T) {
 
 func TestAssetList_FromAssetsReader_IssuerAndCodeCombine(t *testing.T) {
 	// ?issuer=G&code=USDC — both filters combine (the "pin one
-	// classic asset" case). BACKLOG #54.
+	// classic asset" case).
 	listReader := &listingStub{}
 	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
@@ -772,7 +772,7 @@ func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
 
 func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
 	// type=native (or fiat) matches nothing on the listing spine →
-	// empty page WITHOUT hitting the reader (BACKLOG #54 type fold).
+	// empty page WITHOUT hitting the reader.
 	// The stub is seeded with a row that must NOT surface.
 	//
 	// soroban is NOT in that set: the spine gained the traded
@@ -830,7 +830,7 @@ func TestAssetList_TypeSoroban_ReachesTheReader(t *testing.T) {
 }
 
 func TestAssetList_InvalidFilters_400(t *testing.T) {
-	// Malformed type / code / issuer 400 up front (BACKLOG #54),
+	// Malformed type / code / issuer 400 up front,
 	// before any backing reader is consulted.
 	listReader := &listingStub{}
 	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
@@ -955,9 +955,9 @@ func (r slugStubAssetReader) ClassicAssetBySlug(_ context.Context, slug string) 
 // TestAssetGet_ClassicSlugResolves — /v1/assets/{slug} must resolve a
 // migration-0134 public slug to its (code, issuer) identity when the
 // wired reader offers the capability, and keep the 400 for genuinely
-// unresolvable ids. Pre-fix, slug URLs were resolvable ONLY through
+// unresolvable ids. Without this, slug URLs would be resolvable ONLY through
 // the explorer's build cache, so any page not baked at build time
-// 404'd (operator report: /assets/usdt-gasu4kif).
+// 404 (operator report: /assets/usdt-gasu4kif).
 func TestAssetGet_ClassicSlugResolves(t *testing.T) {
 	const usdtID = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 	reader := slugStubAssetReader{
@@ -1000,7 +1000,7 @@ func (unmeasuredSubstanceGate) Probe(context.Context, canonical.Asset, canonical
 }
 
 // TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins
-// GH-578 on both /v1/assets listing paths: when the substance gate cannot
+// the rule on both /v1/assets listing paths: when the substance gate cannot
 // measure a row, the ungated catalogue price must not be published (so it
 // cannot back a market cap — ADR-0018) and the page must say it is
 // degraded. The control shows a MEASURED withhold stays unflagged.

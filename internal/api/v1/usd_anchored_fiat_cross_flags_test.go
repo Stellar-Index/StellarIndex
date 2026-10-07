@@ -18,7 +18,7 @@ import (
 // times an FX rate. The FX feed converts that observation; it is not a
 // second market, and the pair the aggregator freezes is the USD leg —
 // there is no marker for the derived fiat pair. So single_source and
-// frozen on a derived response are the USD leg's (GH-953). The
+// frozen on a derived response are the USD leg's. The
 // freeze-aware surfaces (/v1/price, /v1/price/batch and the SEP-40
 // x_last_price) substitute a held value; the tip stays freeze-agnostic.
 

@@ -18,7 +18,7 @@ import (
 // Q153 hazard on the failed-auth (credential-stuffing) throttle: unlike
 // [middleware.RateLimit] / [middleware.RateLimitBySubject], which detach
 // from the request's cancellation via throttleContext before calling
-// into [ratelimit.Bucket] (REL-06 F059, reverification-2026-09-18),
+// into [ratelimit.Bucket],
 // takeFailedAuth passed r.Context() straight into limiter.Take. A
 // client that opens a connection, sends a bad API key and RSTs before
 // the Redis round-trip completes hands the bucket a context.Canceled
@@ -52,7 +52,7 @@ func TestAuth_FailedAuthThrottle_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 		return r
 	}
 
-	// First abort: pre-fix, this is where the dwell clock gets armed.
+	// First abort: without the detach, this is where the dwell clock gets armed.
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, abortedBadReq())
 	if w.Code != http.StatusUnauthorized {

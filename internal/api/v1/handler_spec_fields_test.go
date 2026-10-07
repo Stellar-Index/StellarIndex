@@ -12,7 +12,7 @@ import (
 )
 
 // TestHandlerResponseFieldsAreDocumented closes the gap that let
-// `display_decimals` ship invisible (wave-D F-SDK-04).
+// `display_decimals` ship invisible.
 //
 // Two gates already reconcile this area and NEITHER could see it:
 //
@@ -25,7 +25,7 @@ import (
 //     green.
 //
 // So a server-added response field was invisible to the whole chain.
-// That is not hypothetical: F-1321 moved the issuer's SEP-1 rounding
+// That is not hypothetical: the issuer's SEP-1 rounding hint moved the issuer's SEP-1 rounding
 // hint OFF `decimals` (where it inflated market_cap_usd by up to
 // 10^(7-display_decimals)× and was an issuer-controlled manipulation
 // vector) onto a new `display_decimals` field. The field never entered
@@ -379,8 +379,8 @@ type specWalkOuterExported struct {
 
 // TestStructJSONWalkers_MatchEncodingJSONPromotion pins the walkers to what
 // encoding/json actually serves: an embedded pointer to an exported struct
-// promotes its fields (the walker used to follow only value embeds, so
-// those fields were invisible to both directions of the gate), and an
+// promotes its fields (a walker that followed only value embeds would leave
+// those fields invisible to both directions of the gate), and an
 // embedded pointer to an unexported type is dropped.
 func TestStructJSONWalkers_MatchEncodingJSONPromotion(t *testing.T) {
 	got := structJSONTags(reflect.TypeOf(specWalkOuterExported{}))

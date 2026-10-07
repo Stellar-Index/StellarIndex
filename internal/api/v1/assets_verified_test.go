@@ -283,7 +283,7 @@ func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 }
 
 // TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader is the
-// COR-14 regression: attachFiatMarketCaps used to skip its ENTIRE
+// guard that attachFiatMarketCaps does not skip its ENTIRE
 // fan-out whenever PriceReader (s.Prices) was nil, even though
 // fiatMarketCapUSD tries fxHistory FIRST and only falls back to
 // PriceReader. A deployment that wires FXHistory but not PriceReader —
@@ -390,14 +390,14 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 	}
 }
 
-// TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes pins the COR-14 fix: the
+// TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes pins that the
 // asset DETAIL page for a non-USD fiat must resolve price_usd (and hence
 // market_cap_usd) through the same fx_quotes-first chain the asset LISTING
 // already used.
 //
-// The two paths had drifted. The listing path was fixed under COR-14
-// (50c93ecd) to try fx_quotes before PriceReader; populateFiatView was never
-// updated and called PriceReader alone. storePriceReader fast-paths ANY
+// The two paths must not drift. The listing path tries fx_quotes
+// before PriceReader; populateFiatView must too rather than
+// calling PriceReader alone. storePriceReader fast-paths ANY
 // fiat-quoted request to ErrPriceNotFound — no on-chain trades exist for a
 // fiat/fiat pair — so the detail endpoint served price_usd: null and
 // market_cap_usd: null for every non-USD currency, while the listing beside
@@ -408,7 +408,7 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 // proves the fx_quotes path ran rather than a price reader happening to
 // answer.
 //
-// Proven red: against the pre-fix populateFiatView both fields are null.
+// Without the fx_quotes-first chain in populateFiatView both fields would be null.
 func TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes(t *testing.T) {
 	// 1 EUR = 1.17 USD.
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{

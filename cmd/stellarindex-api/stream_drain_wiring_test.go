@@ -8,7 +8,7 @@ import (
 )
 
 // TestShutdownSignalsTheStreamsAndNotEveryRequest guards the two halves
-// of the 2026-09-15 deploy-stall fix that live in this file, both of
+// of the deploy-stall fix that live in this file, both of
 // which are one deleted line away from silently reverting.
 //
 // Half one: httpSrv.RegisterOnShutdown(apiSrv.BeginStreamDrain). Without

@@ -35,7 +35,7 @@ type stubHistoryReader struct {
 	observations []canonical.Trade
 	points       []v1.HistoryPoint
 	// pointsByPair, when non-nil, overrides `points` based on the
-	// query pair. Used by the F-1225 stablecoin-fallback regression
+	// query pair. Used by the stablecoin-fallback regression
 	// test where the literal XLM/fiat:USD pair returns empty and a
 	// proxied XLM/USDC-G… pair carries the fixture.
 	pointsByPair map[string][]v1.HistoryPoint
@@ -83,7 +83,7 @@ type stubHistoryReader struct {
 // TradesInRange returns the fixture rows that BELONG to the requested pair,
 // i.e. those whose own Trade.Pair matches it — what a real store does.
 //
-// The filter is load-bearing since C1-024 unified the fiat point path onto
+// The filter is load-bearing since the fiat point path was unified the fiat point path onto
 // the series constituent set: `?quote=fiat:USD` now fans out over all ~18
 // entries of usdPeggedConstituents, and a pair-blind stub would hand the
 // same fixture back once per constituent and multiply every volume /
@@ -296,7 +296,7 @@ func TestHistory_MissingBase400(t *testing.T) {
 	}
 }
 
-// F-0061 closure (2026-05-28): `asset=` is now accepted as an
+// `asset=` is accepted as an
 // alias for `base=` on endpoints that flow through parseBaseQuote,
 // so clients copying /v1/price URLs into /v1/history (or twap/vwap/
 // ohlc) don't hit a 400 on their first try. Pin both halves of the
@@ -700,8 +700,8 @@ func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
 // Six rows: native/usdc at sec 10, 20, 90; crypto:XLM/usdc at sec 30,
 // 40, 50 — interleaved so the native form's LAST row (sec 90) sits after
 // every crypto:XLM row. Draining at limit=1 must still return the full
-// union in strict timestamp order; the pre-fix first-hit gate returns
-// only the three native rows (10, 20, 90) and silently drops all three
+// union in strict timestamp order; a first-hit gate would return
+// only the three native rows (10, 20, 90) and silently drop all three
 // crypto:XLM rows once the native form drains past them.
 func TestHistory_PaginationUnionsInterleavedAliasForms(t *testing.T) {
 	t.Parallel()
@@ -828,8 +828,8 @@ func TestHistorySinceInception_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_StablecoinFallback pins F-1225 (codex
-// audit-2026-05-12): when the literal X/fiat:USD CAGG read returns
+// TestHistorySinceInception_StablecoinFallback pins that, when
+// the literal X/fiat:USD CAGG read returns
 // empty (because no on-chain trades quote in fiat:USD), the handler
 // retries against each operator-declared classic USD-peg and serves
 // the first non-empty result. Without this, since-inception
@@ -892,7 +892,7 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_RowCapTruncated pins #960: since-inception
+// TestHistorySinceInception_RowCapTruncated pins that since-inception
 // has no window to compare against the 50k-bucket cap up front, so a
 // pair whose grid exceeds it must be flagged AFTER the read — an
 // oldest-first cap-hit is otherwise indistinguishable from a series
@@ -929,12 +929,12 @@ func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	}
 }
 
-// TestSpecDeclares404OnScamWithholdingRoutes pins GH-1145: both
+// TestSpecDeclares404OnScamWithholdingRoutes pins that both
 // /history/since-inception and /chart return a 404 price-withheld when
 // seriesWithheldForScam fires (see handleHistorySinceInception and
 // handleChart), but neither route declared a 404 in the OpenAPI
 // contract — a spec-driven client would treat it as endpoint-not-found
-// and fall back elsewhere, the same harm #1087 fixed for the price
+// and fall back elsewhere, the same harm as on the price
 // stream.
 func TestSpecDeclares404OnScamWithholdingRoutes(t *testing.T) {
 	specPath := filepath.Join(moduleRoot(t), "openapi", "stellar-index.v1.yaml")

@@ -29,7 +29,7 @@ func churnTopics(t *testing.T, hub *streaming.Hub, n int) {
 }
 
 // TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins the halves
-// of the retention policy against each other (REL-05): topics minted
+// of the retention policy against each other: topics minted
 // by a client and never published to are dropped as soon as they have
 // no subscriber, while a real topic's ring buffer survives the churn
 // so a reconnecting client still gets its Last-Event-ID replay.

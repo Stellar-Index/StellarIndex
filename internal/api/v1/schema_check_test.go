@@ -98,7 +98,7 @@ func TestSchemaVersionChecker_Ping(t *testing.T) {
 	}
 }
 
-// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins GH-1159:
+// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins that
 // a dirty row at an ATOMIC migration (anything but the 0030 exception)
 // means Postgres rolled the failed attempt back, so the schema is intact
 // at version-1. If that still satisfies ExpectedSchemaVersion, the

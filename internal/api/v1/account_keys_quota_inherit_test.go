@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RLT-404 (reverification 2026-09-18): POST /v1/account/keys built its
+// POST /v1/account/keys built its
 // [auth.CreateAPIKeyRequest] without a monthly cap, so a child minted
 // from a METERED parent persisted MonthlyQuota=0 and
 // middleware.MonthlyQuota's `MonthlyQuota <= 0` short-circuit left it

@@ -15,8 +15,8 @@ import (
 // mint site shares (self-service rotation, signup, admin mint, the ops
 // CLI): a requested monthly ceiling reaches the persisted record, so
 // the validator can map it onto the Subject the quota middleware reads.
-// Pre-fix [CreateAPIKeyRequest] had no such field and every key the
-// store minted was born with MonthlyQuota=0 — unmetered (RLT-404).
+// Without it every key the store mints is born with MonthlyQuota=0 —
+// unmetered.
 func TestStoreCreate_PersistsMonthlyQuota(t *testing.T) {
 	const quota int64 = 1_000_000
 

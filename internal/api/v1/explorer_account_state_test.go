@@ -30,7 +30,7 @@ func (s *wmStub) LakeWatermark(context.Context) (uint32, time.Time, error) {
 func TestExplorer_AccountStateAndHolders_Watermark(t *testing.T) {
 	// cachedLedger is the account state's OWN vintage (stamped at cache
 	// fill time), deliberately different from serveTimeLedger to prove
-	// the two are decoupled — before GH-621's fix, the handler stamped
+	// the two are decoupled — otherwise the handler would stamp
 	// as_of_ledger from a fresh serve-time watermark read regardless of
 	// how old the cached state actually was.
 	const cachedLedger, serveTimeLedger = 63_888_888, 63_999_999
@@ -141,7 +141,7 @@ func TestExplorer_AccountState_RejectsBadStrkey(t *testing.T) {
 }
 
 // TestExplorer_AccountState_RejectsChecksumInvalidStrkey is the
-// API-01 / API-03 regression: a strkey with the right SHAPE (56 chars,
+// regression: a strkey with the right SHAPE (56 chars,
 // leading 'G', valid base32 alphabet) but a corrupted CRC checksum
 // must be rejected with 400 before it ever reaches the lake reader —
 // matching every sibling account endpoint (AccountTransactions,
@@ -198,7 +198,7 @@ func TestExplorer_AssetHolders(t *testing.T) {
 // TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the
 // /v1/accounts wealth ranking (a current-state read over the
 // ledger_entry_changes projection): `as_of_ledger` carries the ranking
-// snapshot's own ledger — NOT the later serve-time watermark (#621) —
+// snapshot's own ledger — NOT the later serve-time watermark —
 // and `flags.stale` fires when the serve-time watermark's close time
 // trails now beyond the threshold. An empty stubPriceReader prices
 // nothing, so the ranking is served straight from the stub wealth rows.

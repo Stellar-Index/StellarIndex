@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The measured defect this file guards (2026-09-11).
+// The measured defect this file guards.
 //
 // stellar.ledger_entries_current populates its `asset` column for
 // entry_type='trustline' ONLY, so the broad classic supply map — a GROUP BY on
@@ -144,7 +144,7 @@ func cetesRow() []AssetDetail {
 // classic arm both call — over an asset whose supply is 36.6% invisible to the
 // trustline sum, and asserts the served circulating supply is the whole of it.
 //
-// Red before the fix: fillRowMarketCap read `broad` alone, so it served
+// Without the fix, fillRowMarketCap reads `broad` alone, so it serves
 // 1000000000 and a $100.00 market cap against a real $136.60.
 func TestListingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	s, stub := lakeSupplyServer(t, cetesTrueSupply)
@@ -257,8 +257,8 @@ func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[str
 // TestStaleTrustlineSumCannotOutrankALowerLakeReading — the trustline-sum
 // map is the one supply arm the listing max()es against a live reading, so
 // it is the one arm whose age decides the answer. Once its refresh starts
-// failing, the last good map used to be served forever: a pre-burn sum then
-// beat the post-burn lake total and published supply that no longer exists.
+// failing, the last good map would be served forever: a pre-burn sum would then
+// beat the post-burn lake total and publish supply that has been burned.
 // Past classicSupplyMaxAge the map is not served, whether the refresh is
 // rate-limited (no attempt this request) or attempted and failed.
 func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {

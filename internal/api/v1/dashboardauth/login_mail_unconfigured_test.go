@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// RLT-321. A deployment with no Resend credential wires a transport that
+// A deployment with no Resend credential wires a transport that
 // declares it cannot deliver (notify.UnconfiguredSender). HandleLogin must
 // refuse up front: 503, a counted failed send, and NO side effect — no
 // magic-link row, no login-intent cookie — for a link nobody can receive.

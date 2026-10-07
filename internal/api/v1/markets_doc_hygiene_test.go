@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// danglingMarketsPRRef is the RSWP-094 citation markets.go's source-filter
-// doc comment used to carry: "PR #1134" was never a real PR, and the bare
+// danglingMarketsPRRef is the citation markets.go's source-filter
+// doc comment must not carry: "PR #1134" was never a real PR, and the bare
 // number now resolves to an unrelated open issue (12-of-27 xdrjson decode
 // arms), not the /v1/coins cursor-guard pattern it was cited for. Built
 // from parts so this guard's own source doesn't trip the check it performs.
 var danglingMarketsPRRef = "PR #" + "1134"
 
-// TestMarketsSourceFilterHasNoDanglingPRReference guards RSWP-094: strip
+// TestMarketsSourceFilterHasNoDanglingPRReference guards that we strip
 // dangling citations instead of leaving them pointing a reader at
 // unrelated content, and don't invent a replacement PR number we can't
 // verify.

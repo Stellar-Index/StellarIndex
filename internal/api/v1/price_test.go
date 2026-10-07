@@ -211,8 +211,8 @@ func (s *stubTriangulatedPriceLooker) LookupTriangulatedVWAP(
 // AND isTriangulated=false the response is 200 with
 // `flags.triangulated=false` — direct rewrites are NOT triangulated.
 //
-// Pre-2026-05-04 this returned 404 because the handler insisted on
-// the provenance marker; the rewrite case has no marker by design.
+// The handler must not insist on
+// the provenance marker (else 404); the rewrite case has none by design.
 func TestPrice_RedisVWAPFallback_DirectRewriteServes(t *testing.T) {
 	reader := &stubPriceReader{
 		err: v1.ErrPriceNotFound, // Timescale miss
@@ -265,22 +265,20 @@ func TestPrice_RedisVWAPFallback_TriangulatedSetsFlag(t *testing.T) {
 	}
 }
 
-// TestPrice_FallbackChainSetsStaleFlag pins the F-1254 contract:
+// TestPrice_FallbackChainSetsStaleFlag pins the contract:
 // every priceFallback degradation MUST surface flags.stale=true.
 //
-// The May-10 SEV-2 (Redis BGSAVE blocked → cache empty → every
-// closed-bucket read hit ErrPriceNotFound → priceFallback served
-// last-known-good for ~9h) didn't surface stale=true to customers
-// because the handler used to clear the flag after a successful
-// fallback. Customers got stale data with stale=false, defeating
+// Scenario: Redis BGSAVE blocked → cache empty → every
+// closed-bucket read hits ErrPriceNotFound → priceFallback serves
+// last-known-good for hours. If the handler cleared the flag after
+// a successful fallback, customers would get stale data with
+// stale=false, defeating
 // the entire point of the contract.
 //
 // The fallback chain is itself the staleness signal — by definition
 // any path that lands in priceFallback is below the surface's
 // documented baseline contract. This test pins that semantic for
 // every fallback the handler reaches.
-//
-// F-1254 (audit-2026-05-12).
 func TestPrice_FallbackChainSetsStaleFlag(t *testing.T) {
 	t.Run("triangulated fallback", func(t *testing.T) {
 		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
@@ -483,7 +481,7 @@ func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
 	})
 }
 
-// TestPrice_DirectServeStillSurfacesCompositeFlags pins T006: a
+// TestPrice_DirectServeStillSurfacesCompositeFlags pins that a
 // configured router target (e.g. XLM/EUR) can also carry a real
 // closed 1m bucket (a genuine CEX print), in which case the direct
 // value wins and flags.triangulated stays false. The aggregator still
@@ -585,12 +583,12 @@ func TestPrice_StablecoinFiatProxy_NoPegsLeaves404(t *testing.T) {
 	}
 }
 
-// TestPrice_StablecoinFiatProxy_PegItselfReturnsOne pins F-1232
-// (codex audit-2026-05-12): querying the declared USD peg against
-// fiat:USD must return ~$1, not 404. Pre-fix, /v1/price?asset=
-// USDC-GA5Z…&quote=fiat:USD 404'd because the fallback loop
-// skipped peg==asset; the asset-detail page meanwhile surfaced a
-// real enrichment price. Now the peg-self branch returns a
+// TestPrice_StablecoinFiatProxy_PegItselfReturnsOne pins that
+// querying the declared USD peg against
+// fiat:USD must return ~$1, not 404. Otherwise /v1/price?asset=
+// USDC-GA5Z…&quote=fiat:USD would 404 because the fallback loop
+// skips peg==asset while the asset-detail page surfaces a
+// real enrichment price. The peg-self branch returns a
 // synthetic price=1.0 snapshot with PriceType=peg so the wire
 // shape across single + batch + asset-detail is consistent.
 func TestPrice_StablecoinFiatProxy_PegItselfReturnsOne(t *testing.T) {
@@ -1012,7 +1010,7 @@ func TestPrice_DivergenceCheckedFollowsServedSpelling(t *testing.T) {
 	}
 }
 
-// TestPrice_DivergenceVerdictNeverFromAnotherSpelling — GH-1045: the price
+// TestPrice_DivergenceVerdictNeverFromAnotherSpelling: the price
 // is served from `native` (the SDEX book) and only `crypto:XLM` (the CEX
 // market) holds a verdict. Falling through to it vouched for an SDEX price
 // with a check that never saw it; the served market has no verdict, so the
@@ -1324,10 +1322,10 @@ func TestPrice_FrozenSetsBothFlags(t *testing.T) {
 		},
 	}
 	frz := &stubFrozenLooker{frozen: true}
-	// F013: a frozen response IS the held last-known-good, so the
-	// fixture has to hold one. This test used to wire a freeze with no
-	// VWAP cache at all — a shape production cannot take (both lookers
-	// hang off the same Redis client) — and thereby certified the
+	// A frozen response IS the held last-known-good, so the
+	// fixture has to hold one. A freeze wired with no
+	// VWAP cache at all would be a shape production cannot take (both lookers
+	// hang off the same Redis client) and would certify the
 	// defect: the reader's raw 0.07 served under frozen=true.
 	held := &stubTriangulatedPriceLooker{value: "0.0655", found: true}
 	srv := v1.New(v1.Options{Prices: reader, Freeze: frz, Triangulated: held})
@@ -1503,7 +1501,7 @@ func TestPriceBatch_FrozenORedAcrossRows(t *testing.T) {
 	}
 	// Looker freezes only the EUR row, not native.
 	frz := &batchFreezeLooker{frozenForBase: "EUR"}
-	// F013: the frozen row serves its held last-known-good, so the
+	// The frozen row serves its held last-known-good, so the
 	// fixture holds one (see TestPrice_FrozenSetsBothFlags). Only the
 	// frozen row consults it — both rows have a closed bucket.
 	held := &stubTriangulatedPriceLooker{value: "1.08", found: true}
@@ -1637,8 +1635,8 @@ func TestPrice_FiatCrossRate_NotFiatBothSides(t *testing.T) {
 // TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM verifies that
 // /v1/price?asset=native&quote=fiat:USD picks up a VWAP published
 // under crypto:XLM/fiat:USD when no native/fiat:USD key exists.
-// This is the F-1308 customer-visible 39h-stale bug on
-// 2026-05-29: SDEX writes `native`, CEX writes `crypto:XLM`; the
+// This guards a customer-visible stale-price bug:
+// SDEX writes `native`, CEX writes `crypto:XLM`; the
 // aggregator's pair-set published under crypto:XLM only, and the
 // public surface queried by `native` and missed.
 func TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM(t *testing.T) {
@@ -1735,7 +1733,7 @@ func TestPrice_XLMAlias_PrefersFreshOverStale(t *testing.T) {
 // gatingStubPriceReader is a stubPriceReader that ALSO implements the
 // optional proxyPairGate (RecentClosedVWAP1mExists) the stablecoin proxy
 // consults to skip empty proxy pairs before the unbounded last-trade walk
-// (2026-07-06 empty-alias latency incident, proxy layer). `exists` keyed
+// (empty-alias latency, proxy layer). `exists` keyed
 // on "<base>/<quote>" drives the gate; `latestCalls` records which pairs
 // reached LatestPrice, so a test can prove a gated-out peg is never walked.
 type gatingStubPriceReader struct {
@@ -1755,7 +1753,7 @@ func (r *gatingStubPriceReader) LatestPrice(ctx context.Context, a, q canonical.
 	return r.stubPriceReader.LatestPrice(ctx, a, q)
 }
 
-// TestPrice_StablecoinProxy_GateSkipsEmptyPeg pins the 2026-07-06 fix at
+// TestPrice_StablecoinProxy_GateSkipsEmptyPeg pins the fix at
 // the proxy layer: when the reader exposes the recent-existence gate, the
 // stablecoin proxy must SKIP a peg with no recent closed VWAP bucket
 // BEFORE calling LatestPrice — which on a classic-peg quote falls through
@@ -1923,7 +1921,7 @@ func (l *pairKeyedCompositeLooker) LookupCompositeMeta(
 	return m, ok, nil
 }
 
-// TestPrice_FallbackCompositeIsSpellingIndependent pins #1025: the
+// TestPrice_FallbackCompositeIsSpellingIndependent pins that the
 // aggregator publishes the GBP composite under crypto:XLM/fiat:GBP only,
 // so on a closed-bucket miss ?asset=native must reach that same composite
 // — value, triangulated flag and the composite's own router meta — rather

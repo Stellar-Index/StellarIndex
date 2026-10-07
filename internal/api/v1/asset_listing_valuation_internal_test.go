@@ -146,7 +146,7 @@ func tlvDustSuppressedRow(assetID, price, servedSupply string) AssetDetail {
 	return row
 }
 
-// TestListingValuation_ObservationIsNeverPromotedOver is #531: the row's
+// TestListingValuation_ObservationIsNeverPromotedOver guards the row's
 // supply is an ADR-0011 observation, which classicSupplyReading ranks
 // ABOVE the lake because the lake over-counts replayed mints (BLND read
 // +11.53%). The floor guard that lets the lake replace a trustline sum

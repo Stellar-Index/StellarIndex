@@ -62,8 +62,8 @@ func (s *stubVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey stri
 // TestF2_VolumeReaderReceivesTradeTableKey — the VolumeReader contract
 // pins assetKey to the trades.base_asset/quote_asset shape (canonical
 // `asset.String()`). For native XLM that's "native", NOT "XLM" — the
-// supply-package convention. Pre-2026-05-04 the call site passed
-// supply.AssetKey() and the lookup never matched any trade row,
+// supply-package convention. A call site that passes
+// supply.AssetKey() would never match any trade row,
 // returning "0" for native indefinitely.
 func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 	cases := []struct {
@@ -313,14 +313,14 @@ func TestF2_NativeAssetWithSupplyAndPrice(t *testing.T) {
 	mustContain(t, body, `"market_cap_usd":"3493000000.00"`)
 	// fdv = 500_018_068_120_000_000 / 10^7 × 0.07 = $3,500,126,476.84
 	mustContain(t, body, `"fdv_usd":"3500126476.84"`)
-	// F-1271: price_usd is inlined so wallet UIs don't need a
+	// price_usd is inlined so wallet UIs don't need a
 	// second /v1/price RT. The handler doesn't go through the
 	// asset-catalogue overlay path for native (no asset-catalogue row), so this
 	// exercises the populateMarketCap-side fallback.
 	mustContain(t, body, `"price_usd":"0.07"`)
 }
 
-// TestF2_PriceUSDInlinedWithoutSupply pins F-1271's contract: even
+// TestF2_PriceUSDInlinedWithoutSupply pins the contract: even
 // when the asset has no supply snapshot (so market_cap_usd stays
 // null), price_usd must still surface from the price lookup that
 // populateMarketCap already pays for. Wallets that just want the
@@ -375,7 +375,7 @@ func TestF2_NoSupplyLooker_FieldsAbsent(t *testing.T) {
 
 // TestF2_SupplyNotFound_FieldsAbsent — the asset has no recorded
 // supply snapshot (e.g. orchestrator hasn't run for it yet);
-// ErrSupplyNotFound is silent — F2 fields stay null, no warning logged.
+// ErrSupplyNotFound is silent — fields stay null, no warning logged.
 func TestF2_SupplyNotFound_FieldsAbsent(t *testing.T) {
 	supplyStub := &stubSupplyLooker{hit: false} // returns ErrSupplyNotFound
 	srv := v1.New(v1.Options{Supply: supplyStub})
@@ -421,8 +421,8 @@ func TestF2_NoMaxSupply_OmitsFDV(t *testing.T) {
 }
 
 // TestF2_SEP1DeclaredMaxOverlay — ADR-0011 max_supply precedence
-// step 2, wired 2026-07-05 (previously supply.Overlay had zero
-// callers, F-1354). A classic asset with an uncapped snapshot (no
+// step 2, applied through supply.Overlay.
+// A classic asset with an uncapped snapshot (no
 // operator override) + an issuer stellar.toml declaring max_number
 // must serve max_supply in RAW units (display × 10^decimals),
 // compute fdv_usd from it, and set max_supply_basis="sep1_declared_max"
@@ -606,11 +606,11 @@ func TestF2_PriceLookupErrorFallsThrough(t *testing.T) {
 // TestLookupUSDPrice_StablecoinFiatProxyFallback — when the
 // reader's literal native/fiat:USD lookup misses (the steady-state
 // case on Stellar mainnet — nothing on-chain quotes in fiat:USD),
-// lookupUSDPrice now walks the operator's classic USD pegs. Same
-// shape as the handler-side fix in 6505934b5 / tryStablecoinFiatProxy,
+// lookupUSDPrice walks the operator's classic USD pegs. Same
+// shape as the handler-side tryStablecoinFiatProxy,
 // but applied at the F2-population layer where the handler's
 // priceFallback isn't reachable. Without this, market_cap_usd /
-// fdv_usd / change_24h_pct stayed null on every on-chain asset.
+// fdv_usd / change_24h_pct would stay null on every on-chain asset.
 func TestLookupUSDPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 
 // ─── read budgets ───────────────────────────────────────────────────
 //
-// THE DEFECT THIS FILE EXISTS FOR (2026-09-07). A chart fix took a
+// THE DEFECT THIS FILE EXISTS FOR. A chart fix took a
 // handler from ONE reader call to TWENTY-FOUR under an unchanged 8s
 // deadline, and every gate passed: build, vet, lint, the full package
 // suite, nine tests proven red. Fixtures answer in microseconds, so a
@@ -144,7 +144,7 @@ func (c *countingCoverageFloorReader) EarliestBucketLiteralQuote(
 
 // r1SACWrapperUSDC is the SAC wrapper r1 declares for the operator's
 // one USD peg, copied from `[supply.sac_wrappers]` in
-// /etc/stellarindex.toml (read 2026-09-07). It is asserted equal to the
+// /etc/stellarindex.toml (a snapshot). It is asserted equal to the
 // value derived from the classic asset in
 // TestReadBudget_FixtureMatchesDeployedConfiguration, so this constant
 // cannot drift into a fiction.
@@ -447,7 +447,7 @@ func TestReadBudget_AliasRegistryWidensTheWalk(t *testing.T) {
 //
 // cmd/stellarindex-api wires History as
 // v1.NewCachedHistoryReader(store, 2*time.Minute). That wrapper caches
-// LatestTradePerSource ONLY (#29) and embeds the reader for everything
+// LatestTradePerSource ONLY and embeds the reader for everything
 // else, so the chart's reads reach the database one for one. If a
 // future change caches a chart method there, this assertion is where
 // the budgets above have to be re-derived rather than quietly

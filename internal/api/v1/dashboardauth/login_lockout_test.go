@@ -19,9 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// C3-032 (audit-2026-07-23) — durable per-email code-guess lockout.
+// Durable per-email code-guess lockout.
 //
-// The pre-fix bound on guessing the 6-digit email code was:
+// Without the lockout, the bound on guessing the 6-digit email code is:
 //
 //	maxCodeAttempts = 5      per TOKEN — and IncrementLoginCodeAttempts
 //	                         burns one on every live token for the
@@ -40,7 +40,7 @@ import (
 // These tests pin the durable counter. The load-bearing one is
 // LockoutSurvivesTokenReMint: it drives the attack — mint, guess, mint,
 // guess — and then presents the CORRECT code for a fresh token, which
-// pre-fix signs the attacker in.
+// without the lockout signs the attacker in.
 
 // lockoutRig is newTestRig with a movable clock, so the 24-hour window
 // and lockout can be crossed without sleeping.
@@ -113,7 +113,7 @@ func (lr *lockoutRig) grind(t *testing.T, email string, n int) {
 //
 // Ten wrong guesses spread across three separate mints (so the per-token
 // cap is reset twice along the way), then the CORRECT code for a
-// brand-new token. Pre-fix that final request mints a session: the fresh
+// brand-new token. Without the lockout that final request mints a session: the fresh
 // token's attempts is 0 and nothing durable remembers the grinding.
 func TestLockout_SurvivesTokenReMint(t *testing.T) {
 	const email = "target@example.com"
@@ -510,7 +510,7 @@ func TestLockout_NoLiveCodeChargesNothing(t *testing.T) {
 }
 
 // TestLockout_SpentTokenChargesNothingFurther — once the newest token has
-// burned maxCodeAttempts it is no longer a candidate, so further requests
+// burned maxCodeAttempts it is not a candidate, so further requests
 // are compared against nothing and must not keep charging the address.
 func TestLockout_SpentTokenChargesNothingFurther(t *testing.T) {
 	const email = "spent-token@example.com"

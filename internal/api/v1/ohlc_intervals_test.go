@@ -106,7 +106,7 @@ func TestOHLCIntervals_ParserAcceptsExactlyTheRouteTable(t *testing.T) {
 // description's prose enumerating which intervals are re-bucketed
 // from a finer continuous aggregate must name every folded route in
 // [timescale.OHLCRoutes], not just the ones true when it was last
-// hand-edited (GH-644: the prose named only 5m/30m/4h after 2h, 12h,
+// hand-edited (e.g. prose naming only 5m/30m/4h after 2h, 12h,
 // 3d and 2w were added as folded routes).
 func TestOHLCIntervals_DescriptionNamesEveryFoldedRoute(t *testing.T) {
 	spec := loadOpenAPISpec(t)

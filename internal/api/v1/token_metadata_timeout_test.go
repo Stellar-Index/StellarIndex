@@ -83,7 +83,7 @@ func sorobanTestAsset(t *testing.T) canonical.Asset {
 	return a
 }
 
-// TestTokenMetadataOverlays_BoundedByOwnBudget pins #371 F9. Both overlays
+// TestTokenMetadataOverlays_BoundedByOwnBudget pins that both overlays
 // are BEST-EFFORT — their failure mode is the documented decimals default
 // of 7 and a null total_supply — yet both ran on the raw request context,
 // so a slow ClickHouse held GET /v1/assets/{id} for the entire request

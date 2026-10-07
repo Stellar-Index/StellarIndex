@@ -20,7 +20,7 @@ import (
 
 // drainAfterResponse blocks until the shared after-response pool has
 // finished every task submitted so far. UsageTracker's counter writes
-// run there (GH-627), so a test that immediately fires the NEXT request
+// run there, so a test that immediately fires the NEXT request
 // — expecting MonthlyQuota to observe the PREVIOUS one's increment —
 // must synchronize on this first; otherwise it is racing the async
 // write against the following request's read.
@@ -31,7 +31,7 @@ func drainAfterResponse(t *testing.T) {
 	}
 }
 
-// RLT-404 — the monthly ceiling is a PLAN budget, so the counter it is
+// The monthly ceiling is a PLAN budget, so the counter it is
 // enforced against must be keyed on the owner ACCOUNT. Keying it on the
 // credential let a customer multiply the plan allowance by the number
 // of keys held and reset it mid-month by revoking and re-minting.

@@ -11,11 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
-// TestSources_IncludeSendsCommaJoinedParam — T532. [Source] documents
+// TestSources_IncludeSendsCommaJoinedParam. [Source] documents
 // TradeCount24h/VolumeUSD24h/MarketsCount24h/VolumeHistory24h as
 // populated only when the request used `?include=stats` (etc), but
-// pre-fix SourcesOptions had no way to set it — the SDK could never
-// request those fields.
+// without an Include option the SDK could never request those fields.
 func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {
 	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("include"); got != "stats,sparkline" {
@@ -32,8 +31,8 @@ func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {
 	}
 }
 
-// TestMarkets_IncludeSourceAssetQueryParams — T532. MarketsOptions
-// had no field for the spec's `include` (sparkline/inception),
+// TestMarkets_IncludeSourceAssetQueryParams. MarketsOptions
+// must have a field for the spec's `include` (sparkline/inception),
 // `source`, or `asset` query parameters despite [Market] documenting
 // include-gated fields and the OpenAPI spec documenting `source` +
 // `asset` filters on GET /v1/markets.

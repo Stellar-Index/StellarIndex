@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestRevokeKeyDoc_Mentions409 — T528. The server's DELETE
+// TestRevokeKeyDoc_Mentions409. The server's DELETE
 // /v1/account/keys/{keyID} handler (internal/api/v1/account.go,
 // handleAccountKeysRevoke) returns a distinct 409 when keyID names
 // the credential the request itself authenticated with. RevokeKey's

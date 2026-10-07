@@ -91,10 +91,10 @@ func TestListAssetsCacheKeyMatchesListAssetsExt(t *testing.T) {
 	}
 }
 
-// TestSeedListingServesStaleWithoutBlocking is the #459 fix itself.
+// TestSeedListingServesStaleWithoutBlocking is the boot-seed behaviour itself.
 //
 // Un-seeded, a cold key takes fetchRows branch (C) and BLOCKS on the
-// upstream aggregate — measured at 11,658 ms on r1's 2026-09-03 boot.
+// upstream aggregate — measured at 11,658 ms on an r1 boot.
 // Seeded, the same call must take branch (A'): return the seeded rows
 // immediately and refresh behind the response.
 //
@@ -176,7 +176,7 @@ func TestSeedListingServesStaleWithoutBlocking(t *testing.T) {
 }
 
 // TestSeedListingRefusals pins every case where seeding must decline
-// and leave the pre-#459 cold-fill behaviour untouched. Each of these
+// and leave the cold-fill behaviour untouched. Each of these
 // would otherwise publish something the cache could not label
 // honestly — or, worse, an empty listing where the real one would have
 // been served.

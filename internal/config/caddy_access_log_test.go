@@ -18,11 +18,11 @@ import (
 // (internal/api/v1/middleware/slow_query_shape.go). Caddy sits in front
 // of both and writes request.uri — query string included — every
 // request header, and every response header straight into journald, on
-// to promtail and Loki. Its redaction filter used to name one query
-// parameter (`token`), so /v1/account/admin/lookup?email=<customer
-// email> was logged verbatim; X-API-Key, the customer credential
-// documented in docs/getting-started.md, was never filtered at all; and
-// the trailing-slash 308's Location header carried the same query back
+// to promtail and Loki. A redaction filter naming one query
+// parameter (`token`) would log /v1/account/admin/lookup?email=<customer
+// email> verbatim; X-API-Key, the customer credential
+// documented in docs/getting-started.md, must be filtered too; and
+// the trailing-slash 308's Location header carries the same query back
 // out on the response side.
 //
 // Four properties are pinned here: no query value leaves the edge on
@@ -66,8 +66,8 @@ func caddyURIFilter(t *testing.T, path string) (*regexp.Regexp, string) {
 
 // TestCaddyAccessLogRedactsEveryQueryValue holds the property the
 // enumeration lacked: a parameter nobody thought of when the filter was
-// written must redact anyway. `?token=` redacted and everything else
-// left alone is what shipped customer emails to Loki.
+// written must redact anyway. Redacting only `?token=` would leak
+// customer emails to Loki.
 func TestCaddyAccessLogRedactsEveryQueryValue(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -203,11 +203,11 @@ func caddyLogBlock(t *testing.T, path string) string {
 	return rest[:end]
 }
 
-// TestCaddyAccessLogFilterIsGlobalNotJustTheSite pins #346 F2b. Attaching
+// TestCaddyAccessLogFilterIsGlobalNotJustTheSite pins that attaching
 // the filter to the SITE's access logger leaves two other loggers in the
-// same process emitting a raw `request` object, and both were caught doing
-// it on r1: reverse_proxy runtime warnings (which embed request.uri and
-// headers when a client disconnects mid-response) and the catch-all
+// same process emitting a raw `request` object: reverse_proxy runtime
+// warnings (which embed request.uri and headers when a client
+// disconnects mid-response) and the catch-all
 // default access logger serving bare-IP / legacy-host traffic (which
 // echoed Location). Filtering the DEFAULT logger covers both.
 //
@@ -249,12 +249,11 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 	}
 }
 
-// ─── Response compression (#331 F2) ─────────────────────────────────
+// ─── Response compression ─────────────────────────────────
 //
 // The edge is also where response compression lives, and the same
-// two-file drift hazard applies. Measured against the live API on
-// 2026-09-02: every JSON route answered `Accept-Encoding: gzip, br,
-// zstd` with NO `content-encoding` at all — 15–34 KB of raw JSON per
+// two-file drift hazard applies. Without `encode`, every JSON route answers `Accept-Encoding: gzip, br,
+// zstd` with NO `content-encoding` — 15–34 KB of raw JSON per
 // page load, of which ~77% is compressible (170,924 B of
 // representative payloads → 40,554 B gzip / 39,399 B zstd).
 //
@@ -263,8 +262,8 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 // handler wraps the response writer and buffers up to
 // `minimum_length` before it can decide whether to encode. Buffering
 // an event stream is precisely the failure the `flush_interval -1`
-// block in the same file exists for — r1 2026-08-03 served ZERO bytes
-// over 25 s to every SSE consumer. So the stream paths are excluded
+// block in the same file exists for — buffering serves ZERO bytes
+// to every SSE consumer. So the stream paths are excluded
 // from `encode` at the REQUEST level (the handler never wraps them)
 // AND the response matcher is narrowed to the JSON/atom bodies the
 // API actually serves.
@@ -422,8 +421,7 @@ func TestCaddyEncodesPublicJSON(t *testing.T) {
 
 // TestCaddyEncodeExcludesEventStreams is the one that matters. Caddy's
 // `encode` buffers, and an SSE response that is buffered is a 200 with
-// the right Content-Type and no bytes — the exact r1 2026-08-03
-// outage, which is invisible to a status-code smoke check. Every SSE
+// the right Content-Type and no bytes — an outage that is invisible to a status-code smoke check. Every SSE
 // route must be excluded at the REQUEST level so `encode` never wraps
 // it, and the exclusion must agree with the `@sse` matcher that the
 // `flush_interval -1` block already hangs off.

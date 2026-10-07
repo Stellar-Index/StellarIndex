@@ -24,8 +24,8 @@ func mkSeriesBar(t time.Time, o, h, l, c, vb, vq string, n int64) v1.OHLCSeriesB
 
 // TestOHLCSeries_ReturnsIntervalsArray — the multi-bar mode wires
 // the OHLCSeries reader call and renders the canonical
-// {intervals: [...]} wire shape. Pre-fix, /v1/ohlc?interval=...
-// returned a single OHLCBar and ignored the param entirely (F-0071).
+// {intervals: [...]} wire shape. Without it, /v1/ohlc?interval=...
+// would return a single OHLCBar and ignore the param entirely.
 func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	bars := []v1.OHLCSeriesBar{
@@ -64,18 +64,18 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 	}
 	// limit+1, exactly: the handler reads ONE row past the requested cap
 	// so it can tell a window that was cut from one that merely filled
-	// (RLT-453, see capOHLCSeriesNewest). Anything else forwarded here is
+	// (see capOHLCSeriesNewest). Anything else forwarded here is
 	// a bug — `limit` loses the truncated signal, more over-reads.
 	if reader.LastLimit() != 25 {
 		t.Errorf("storage call limit = %d, want 25 (limit=24 + the one-row truncation probe)", reader.LastLimit())
 	}
 }
 
-// TestOHLCSeries_StatesVolumeScaleOnWire pins F015's narrowed remainder
+// TestOHLCSeries_StatesVolumeScaleOnWire pins the scale statement
 // for the non-combined path: a series bar must state the smallest-unit
 // scale its v_base/v_quote are expressed in (v_base_decimals /
 // v_quote_decimals), resolved from the CAGG's own `sources` column —
-// mirroring [OHLCBar.QuoteVolumeDecimals] (F096) for the single-bar
+// mirroring [OHLCBar.QuoteVolumeDecimals] for the single-bar
 // path. A bar whose sources are unknown states null, never a guessed
 // scale and never the internal -1 sentinel.
 func TestOHLCSeries_StatesVolumeScaleOnWire(t *testing.T) {
@@ -211,7 +211,7 @@ func TestOHLCSeries_DailyBoundaryAlignment(t *testing.T) {
 // pgTimeBucketOrigin mirrors timescale's time_bucket() default
 // origin (2000-01-03 00:00 UTC, a Monday) — see
 // internal/storage/timescale/aggregates.go's OHLCSeriesReBucketed
-// doc comment. Server-side folded intervals (3d/2w/2h, RLT-258) grid
+// doc comment. Server-side folded intervals (3d/2w/2h) grid
 // off this origin; the tests below pin that the API's default `to`
 // does too.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
@@ -223,7 +223,7 @@ var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 // from pgTimeBucketOrigin. [time.Time.Truncate] floors from Go's
 // zero time instead, whose offset from pgTimeBucketOrigin is not a
 // multiple of 72h, so the un-fixed handler's default `to` is
-// provably off that grid for every possible "now" (RLT-258).
+// provably off that grid for every possible "now".
 func TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin(t *testing.T) {
 	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
 	srv := v1.New(v1.Options{History: reader})
@@ -305,7 +305,7 @@ func TestOHLCSeries_StorageError500(t *testing.T) {
 // TestOHLCSeries_PreservesSingleBarBackcompat — the single-bar mode
 // is reached only when `interval` is absent. With interval set the
 // stub's TradesInRange is NEVER called (the series reader fires
-// instead). Mirrors the F-0071 back-compat contract: clients that
+// instead). Mirrors the back-compat contract: clients that
 // haven't migrated still get the single-bar shape, clients passing
 // interval get the new series.
 func TestOHLCSeries_PreservesSingleBarBackcompat(t *testing.T) {
@@ -423,8 +423,8 @@ func TestOHLCSeries_FiatCombinesUSDPeggedConstituents(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_TriangulatedFalseForDirectlyQuotedFiatSeries — GH-1081
-// finding 3: a fiat-quoted series served ENTIRELY by the directly-quoted
+// TestOHLCSeries_TriangulatedFalseForDirectlyQuotedFiatSeries:
+// a fiat-quoted series served ENTIRELY by the directly-quoted
 // market (crypto:XLM/fiat:USD itself, not a stablecoin/SAC proxy) must
 // not be flagged triangulated just because the quote asset is fiat.
 func TestOHLCSeries_TriangulatedFalseForDirectlyQuotedFiatSeries(t *testing.T) {
@@ -528,7 +528,7 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 // read semantics rather than a fixture's: bars outside [from, to) are
 // not returned, and a positive `limit` keeps the NEWEST `limit` of what
 // remains, ascending — what [timescale.Store.OHLCSeries] does with its
-// `ORDER BY bucket DESC LIMIT n` + reverse (RLT-453). A stub that
+// `ORDER BY bucket DESC LIMIT n` + reverse. A stub that
 // ignores `limit` cannot see any of the defects below, because every one
 // of them is about which rows a capped read leaves behind.
 func newestNSeriesFn(byPair map[string][]v1.OHLCSeriesBar) func(
@@ -566,7 +566,7 @@ func seriesWindowURL(base, quote string, t0 time.Time, hours, limit int) string 
 }
 
 // TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped pins the second
-// half of RLT-453. OHLCSeriesBar.Truncated was declared on the wire
+// half of the newest-buckets cap. OHLCSeriesBar.Truncated was declared on the wire
 // (OpenAPI: "Reserved for future row-cap signalling; absent today") and
 // assigned nowhere, so a capped response gave a caller no way to tell
 // its window was cut.
@@ -661,8 +661,8 @@ func TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets is RLT-453
-// through the consumer the store-level fix alone made WORSE.
+// TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets covers the newest-buckets cap
+// through the consumer that a store-level cap alone would make WORSE.
 //
 // A fiat quote is answered by combining several constituent series, and
 // each constituent read carries the request's `limit`. With the store
@@ -755,7 +755,7 @@ func TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_StatesPerBarVolumeScale pins GH-1152 on the direct
+// TestOHLCSeries_StatesPerBarVolumeScale pins, on the direct
 // (non-fiat) series path: v_base/v_quote are smallest-unit sums at the
 // scale of the venues in the bucket, so each bar must state that scale.
 // Without it a chart reading v_quote had nothing to divide by and plotted
@@ -808,10 +808,10 @@ func TestOHLCSeries_StatesPerBarVolumeScale(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_FiatCombinedStatesLiftTarget pins GH-1152 on the
+// TestOHLCSeries_FiatCombinedStatesLiftTarget pins, on the
 // fiat-combine path: a bucket merging a 7dp on-chain leg with an 8dp CEX
 // leg is summed at 8dp, and the bar must say 8 — the combine's own lift
-// target, which finalize used to drop.
+// target, which finalize must not drop.
 func TestOHLCSeries_FiatCombinedStatesLiftTarget(t *testing.T) {
 	ts := httpTestServer(t, mixedScaleFiatServer(t))
 	bar := fetchMixedScaleSeriesBar(t, ts.URL)

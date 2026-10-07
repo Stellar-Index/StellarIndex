@@ -37,7 +37,7 @@ func meteredBillable(t *testing.T, handler http.HandlerFunc) (int, int64) {
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/markets", nil))
 	// UsageTracker's counter write runs on the shared after-response pool,
-	// not inline (GH-627), so a read right after ServeHTTP returns must
+	// not inline, so a read right after ServeHTTP returns must
 	// wait for it to land first.
 	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
 		t.Fatal("after-response pool did not drain in time")

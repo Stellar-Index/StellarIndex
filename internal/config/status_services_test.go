@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// #328: [api] status_services declares the background services a
+// [api] status_services declares the background services a
 // deployment actually runs, and /v1/status reports + rolls up exactly
 // those. The lean test-net inventories render `["indexer"]` (they already
 // set run_aggregator: false), which must load and validate — and a typo'd
@@ -46,8 +46,8 @@ func TestValidate_StatusServices(t *testing.T) {
 
 // The test-net render of the ansible template sets [region] deployment;
 // pubnet keeps the "production" default so r1's /v1/status wire contract
-// is byte-identical. Before #328 the tier was a Go string literal, so
-// api.testnet.stellarindex.io answered `"deployment": "production"`.
+// is byte-identical. The tier is not a Go string literal, so
+// api.testnet.stellarindex.io does not answer `"deployment": "production"`.
 func TestRegionDeployment_DefaultsToProduction(t *testing.T) {
 	if got := config.Default().Region.Deployment; got != "production" {
 		t.Errorf("Default().Region.Deployment = %q, want production", got)

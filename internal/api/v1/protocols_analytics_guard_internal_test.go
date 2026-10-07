@@ -11,15 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the 2026-07-31 audit fixes on the protocol-detail
+// These tests pin the guards on the protocol-detail
 // analytics path: a degraded FAST-failing rebuild must never displace a
-// previously-good cached entry; the daily-pre-aggregation probe must not
+// good cached entry; the daily-pre-aggregation probe must not
 // latch a transient error for the process lifetime; and the three
 // analytics fills must share one tip read + one fast-vs-raw decision.
 
 // TestProtoDetailRefresh_FastFailKeepsGoodEntry: a rebuild that fails
 // FAST (store down → enrich errors in ms, rctx.Err() == nil) must keep
-// the previously-good entry — before the fix the rctx.Err()-only guard
+// the good entry — an rctx.Err()-only guard would
 // let one prewarm sweep during a ClickHouse outage blank every protocol
 // page while stamping the blanks fresh.
 func TestProtoDetailRefresh_FastFailKeepsGoodEntry(t *testing.T) {
@@ -256,7 +256,7 @@ func (*blockingFastStub) ProtocolContractActivityFast(context.Context, []string,
 }
 
 // TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls is the
-// regression test for GH-587(b): fastActivity used to hold
+// regression test that fastActivity does not hold
 // protocolFastMu across DailyActivityAvailable, so a wedged ClickHouse —
 // which never definitively settles — serialised every concurrent detail
 // build's fast-vs-raw decision behind the one stuck probe. A second call
@@ -364,11 +364,11 @@ func (erroringRosterReader) ProtocolContractIndex(context.Context) (map[string]s
 }
 
 // TestBuildProtocolDetail_RosterReadErrorDegradesStatus is the
-// CA2-A06-harden-3 regression guard: a roster read failure degrades to the
+// regression guard: a roster read failure degrades to the
 // same shape as a genuinely empty roster (protocolRoster swallowed it to
 // []ProtocolContractView{}), so buildProtocolDetail must not stamp the page
 // "ok" on it — a failed read is not a true empty, and an "ok" status
-// displaces a previously healthy cached entry (protoDetailRefreshLocked).
+// displaces a healthy cached entry (protoDetailRefreshLocked).
 func TestBuildProtocolDetail_RosterReadErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -417,7 +417,7 @@ func (tipErrActivityStub) LakeTipLedger(context.Context) (uint32, error) {
 
 // TestEnrichProtocolAnalytics_TipErrorDegradesHonestly: a failed lake-tip
 // read must degrade the analytics (status "unavailable"), never serve a
-// silently-mislabeled window (tip==0 used to collapse the fast path's
+// silently-mislabeled window (tip==0 would collapse the fast path's
 // cutoff to yesterday while still claiming the 90d window).
 func TestEnrichProtocolAnalytics_TipErrorDegradesHonestly(t *testing.T) {
 	srv := New(Options{ProtocolActivity: tipErrActivityStub{}})
@@ -475,8 +475,8 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 // closeTimeActivityStub models a synthetic, deliberately NON-theoretical
 // ledger close cadence (6s, i.e. 14,400/day — distinct from the old code's
 // hardcoded 17,280/day) so protocolWindowFloor's close_time boundary
-// produces a DIFFERENT, independently-computable answer than the old
-// ledger-count arithmetic (CA2-A06-correct-1).
+// produces a DIFFERENT, independently-computable answer than a
+// ledger-count arithmetic.
 type closeTimeActivityStub struct {
 	prewarmActivityStub
 	tip uint32
@@ -524,7 +524,7 @@ func (s closeTimeActivityStub) LedgerBySeq(_ context.Context, seq uint32) (click
 }
 
 // TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount is the
-// CA2-A06-correct-1 regression guard: the raw analytics readers' window
+// regression guard: the raw analytics readers' window
 // cutoff must be derived from the tip's close_time minus
 // protocolActivityWindowDays days, not a ledger-count multiple of the
 // theoretical 17,280/day cadence — which on a real chain overshoots the
@@ -565,7 +565,7 @@ func TestProtocolWindowFloor_GapFarFromBoundary(t *testing.T) {
 }
 
 // TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins
-// CA2-A06-correct-2: a fast breakdown error must not leave the series on
+// that a fast breakdown error must not leave the series on
 // the fast (day-grain) window while the breakdown falls back alone to the
 // raw (ledger-window) source — the two windows differ, and the wire's
 // sum(EventBreakdown)==EventsTotal invariant assumes one shared window
@@ -626,10 +626,10 @@ func TestEnrichProtocolAnalytics_FastContractActivityErrorFallsBackToRaw(t *test
 }
 
 // TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins
-// CA2-A06-correct-5: a completeness-verdict read error must flip
-// analytics.status to "unavailable" — before the fix protocolVerdicts
-// collapsed a read error and a genuinely-absent snapshot to the identical
-// nil map, so a transient Postgres error built (and could cache) a view
+// A completeness-verdict read error must flip
+// analytics.status to "unavailable" — protocolVerdicts must not
+// collapse a read error and a genuinely-absent snapshot to the identical
+// nil map, or a transient Postgres error would build (and could cache) a view
 // stamped "ok" with no completeness block, indistinguishable from "this
 // protocol has never been audited".
 func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {

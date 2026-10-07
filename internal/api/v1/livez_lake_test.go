@@ -14,13 +14,13 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// /v1/livez/lake is the ADR-0050 §7.3 lake-route LB probe. #266 gave it
+// /v1/livez/lake is the ADR-0050 §7.3 lake-route LB probe. It carries
 // readyz's infra exemptions — no auth (middleware/auth.go
 // isUnauthenticatedInfraPath) and no anonymous rate limit
 // (middleware/ratelimit.go SkipHealthAndMetrics) — which is correct for
 // a load-balancer probe but removes every brake an anonymous caller
 // would otherwise hit. Two properties have to hold for that to be safe,
-// and neither did before #310:
+// and neither holds without explicit handling:
 //
 //  1. one lake query per ROUND, not per request (readyz's single-flight,
 //     which the exemption rationale was copied from but the cache was
@@ -63,8 +63,8 @@ func (c *countingLakeCheck) setErr(err error) {
 }
 
 // TestLivezLake_SingleFlightSharesOnePingPerRound — a burst of anonymous
-// probes must cost ONE ClickHouse query, not one per request. Pre-#310
-// every request ran its own LakeTipLedger under a 5s timeout with no
+// probes must cost ONE ClickHouse query, not one per request. Without single-flight,
+// every request would run its own LakeTipLedger under a 5s timeout with no
 // auth and no rate limit in front of it, so N unmetered concurrent
 // callers were N lake queries.
 func TestLivezLake_SingleFlightSharesOnePingPerRound(t *testing.T) {
@@ -158,7 +158,7 @@ func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 
 // TestLivezLake_UnreadyBodyDoesNotEchoPingError — the 503 served to an
 // anonymous caller carries the fixed operator hint, never the driver
-// error. Pre-#310 the handler wrote err.Error() into data.detail, which
+// error. Writing err.Error() into data.detail would leak, because
 // on the real clickhouseChecker (LakeTipLedger) is a dial error naming
 // the ClickHouse host:port — published, unauthenticated, precisely
 // during a lake outage. The error itself must still reach the LOG:

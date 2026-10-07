@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// #328: /v1/status's deployment TIER and background-service list were
+// /v1/status's deployment TIER and background-service list must not be
 // hardcoded at the v1.Options construction site
 // (`RegionDeployment: "production"`, and a literal
 // {"indexer","aggregator"} inside the handler). Every lean test-net

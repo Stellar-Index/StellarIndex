@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A failed directory read is not "no tags" (RLT-089). Every fill that
+// A failed directory read is not "no tags". Every fill that
 // consults the directory to decide whether a row may publish a dollar
 // figure must withhold that figure when the read did not answer, and the
 // answer must survive to the arms that run after the fill.

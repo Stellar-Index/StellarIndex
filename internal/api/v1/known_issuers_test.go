@@ -100,9 +100,9 @@ func (erroringAccountStateReader) AccountStateCached(
 }
 
 // TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap
-// (GH-582): an on-chain read failure (deadline, store error) must
-// NOT be treated the same as a verified absence. Before the fix,
-// onChainHomeDomain collapsed "read failed" and "no domain" into the
+// An on-chain read failure (deadline, store error) must
+// NOT be treated the same as a verified absence. Without this guard,
+// onChainHomeDomain would collapse "read failed" and "no domain" into the
 // same "" and backfillHomeDomain then filled from the curated
 // knownIssuers map — serving a potentially stale hand-maintained
 // domain as if it were a live-confirmed one, with SEP-1 verifying

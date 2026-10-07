@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-// TestTipProducerCeilingIsWiredFromConfig is the wiring guard for T674:
+// TestTipProducerCeilingIsWiredFromConfig is the wiring guard:
 // v1.Server.SetMaxTipProducers and SetMaxTipProducersPerCaller have
 // existed on the shared tip-stream producer registry since it shipped
 // (RT-1 / UNAUTH-DOS-1), but a repo-wide grep found nothing calling
 // them — every deployment silently ran the package-level hardcoded
 // defaults (512 / 24) with no operator lever to tune or disable the
-// ceiling, the same dead-knob shape AGT-dead-code (audit-2026-07-23)
-// found and closed for streaming.SetMaxConcurrentStreams.
+// ceiling, the same dead-knob shape as
+// streaming.SetMaxConcurrentStreams.
 //
 // Read from the AST — like TestDEXTVLGateIsWiredThroughTheNilAbleBuilder
 // and TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo in this

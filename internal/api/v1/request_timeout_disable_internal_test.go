@@ -16,8 +16,8 @@ func stackHasRequestTimeout(s *Server) bool {
 
 // TestRequestTimeout_ExplicitDisableOmitsMiddleware: api.request_timeout = 0
 // is documented to disable the blanket deadline, and config validation
-// skips its ordering checks on that basis. New used to map every zero to
-// the 15s default, so the configuration that was validated never ran.
+// skips its ordering checks on that basis. New must not map every zero to
+// the 15s default, or the configuration that was validated would never run.
 func TestRequestTimeout_ExplicitDisableOmitsMiddleware(t *testing.T) {
 	s := New(Options{DisableRequestTimeout: true, RequestTimeout: 20 * time.Second})
 	if s.requestTimeout != 0 || stackHasRequestTimeout(s) {

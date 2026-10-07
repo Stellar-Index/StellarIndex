@@ -1,9 +1,9 @@
 package v1_test
 
-// GET /v1/rwa/assets — the tokenized-real-world-asset surface (#352).
+// GET /v1/rwa/assets — the tokenized-real-world-asset surface.
 //
 // The tests below are driven by the shape of the production data
-// measured on 2026-09-05, because that shape is what makes the
+// measured on a live deployment, because that shape is what makes the
 // definition load-bearing rather than decorative:
 //
 //   - 130 issuers publish a domain-bound SEP-1 anchor_asset_type naming
@@ -270,7 +270,7 @@ func TestRWAAssets_AdmitsADeclaredAndRecognisedAsset(t *testing.T) {
 }
 
 // TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound pins
-// CA2-A06-correct-3 on the classic arm: an issuer whose listing page fills
+// The scan-cap rule on the classic arm: an issuer whose listing page fills
 // may hold a member in the unread tail, so a total over the served rows is
 // partial even when every one of them is valued.
 func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestSep1GocycloNolintPlacement guards RWC-OBS-3: the //nolint:gocyclo
+// TestSep1GocycloNolintPlacement guards that the //nolint:gocyclo
 // comment describing a "linear field-overlay sequence" must sit directly
 // above applySep1VerifiedFields (the actual linear if-copy sequence it
 // documents), not above sep1StatusForNoPayload (an unrelated short

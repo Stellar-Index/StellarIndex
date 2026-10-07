@@ -15,14 +15,13 @@ func readPackageSource(t *testing.T, name string) string {
 	return string(src)
 }
 
-// The LP-reserve observer's internal task references were dropped.
-func TestLPReserveInsertCitesObserverTask(t *testing.T) {
+// Internal task numbers do not resolve outside the private tracker.
+func TestLPReserveInsertCitesNoObserverTask(t *testing.T) {
 	text := readPackageSource(t, "classic_supply_observations.go")
-	if strings.Contains(text, "Task #65") {
-		t.Error("classic_supply_observations.go cites Task #65 for the LP-reserve observer; it shipped as Task #55")
-	}
-	if !strings.Contains(text, "liquidity_pools, Task #55") {
-		t.Error(`classic_supply_observations.go must credit the LP-reserve observer as "liquidity_pools, Task #55"`)
+	for _, stale := range []string{"Task #55", "Task #65"} {
+		if strings.Contains(text, stale) {
+			t.Errorf("classic_supply_observations.go cites %q for the LP-reserve observer", stale)
+		}
 	}
 }
 

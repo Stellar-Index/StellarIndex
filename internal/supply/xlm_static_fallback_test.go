@@ -10,7 +10,7 @@ import (
 
 // liveArmDown is a live reserve reader whose balance read falls through
 // (one reserve account unobserved) while its observer watermark is
-// healthy — the shape in which the static map used to be published
+// healthy — the shape in which the static map must not be published
 // under the live basis with a fresh-looking anchor.
 type liveArmDown struct{ watermark uint32 }
 

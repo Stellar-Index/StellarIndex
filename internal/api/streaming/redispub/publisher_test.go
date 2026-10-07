@@ -72,7 +72,7 @@ func TestNewPublisher_DefaultsChannel(t *testing.T) {
 }
 
 // TestPublishClosedBucket_StampsProducerID — every event names the
-// process that sent it (#752/#754): one id per Publisher, distinct across
+// process that sent it: one id per Publisher, distinct across
 // Publishers, so the subscriber can tell two aggregators apart.
 func TestPublishClosedBucket_StampsProducerID(t *testing.T) {
 	pair := nativeUSD(t)

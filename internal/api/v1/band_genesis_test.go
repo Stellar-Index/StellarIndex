@@ -12,9 +12,9 @@ import "testing"
 // contract_data writes in `ledger_entry_changes` from the same ledger and
 // by the WASM audit.
 //
-// Two of the four constants that carry it said 60,000,000 until #361/#363.
-// The 9.16M-ledger difference shortened the range every completeness and
-// gap check evaluated for Band, so the source could read CLEAN over a
+// Two of the four constants that carry it must not say 60,000,000:
+// the 9.16M-ledger difference shortens the range every completeness and
+// gap check evaluates for Band, so the source could read CLEAN over a
 // window that excluded most of its history — the worst shape for a
 // coverage claim, because it passes.
 const bandGenesisLedger = 50_842_736

@@ -1,6 +1,6 @@
 package v1_test
 
-// The PERSISTED half of auth-flag provenance on /v1/issuers/{g_strkey} (#374).
+// The PERSISTED half of auth-flag provenance on /v1/issuers/{g_strkey}.
 //
 // issuers_provenance_test.go pins what the read path CONCLUDES from a live
 // AccountEntry. These pin what it does with what the drain already wrote —
@@ -27,7 +27,7 @@ func boolPtr(v bool) *bool { return &v }
 // TestHandleIssuer_ServesThePersistedProvenance — a recovered reading is only
 // safe to serve because it arrives LABELLED. If the handler drops the label,
 // a client sees four auth flags with no way to tell that they describe an
-// account which no longer exists, which is a quieter defect than the
+// account which has been removed, which is a quieter defect than the
 // unresolved row it replaced.
 func TestHandleIssuer_ServesThePersistedProvenance(t *testing.T) {
 	reader := &stubIssuersReader{row: timescale.IssuerRow{

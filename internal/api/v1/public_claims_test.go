@@ -28,7 +28,7 @@ import (
 // Each entry below was measured against the hosted deployment rather
 // than reasoned about:
 //
-//   - "complete since-inception history": issue #349 concluded that any
+//   - "complete since-inception history": a measurement concluded that any
 //     full-history claim would be false. Daily OHLC for XLM/USD starts
 //     2018-07-01 and has no bars between 2021-01-31 and 2026-03-12.
 //   - "back to 2015" on /price/at and /price/changes: same measurement —
@@ -96,7 +96,7 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			required: []string{"not since-inception"},
 		},
 		{
-			// RLT-220: the /rwa/assets requirement-4 prose named only two
+			// The /rwa/assets requirement-4 prose named only two
 			// bases while the same operation's 200 example already listed
 			// a third (sep1_isin_declaration, internal/rwa BasisSep1ISIN).
 			// The narrative and its own example disagreed with each other.
@@ -118,8 +118,8 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			},
 		},
 		{
-			// T495 / RLT-159: §7.1 documented a Starter/Pro/Business/
-			// Enterprise ladder (1k/10k/50k) that platform.Tier no longer
+			// §7.1 documented a Starter/Pro/Business/
+			// Enterprise ladder (1k/10k/50k) that platform.Tier does not
 			// has, and the account override is a floor
 			// (auth/apikey_postgres.go), not a replacement limit.
 			path: "docs/reference/api-design.md",
@@ -140,14 +140,14 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			},
 		},
 		{
-			// T534: the limiter is a fixed-window INCRBY+EXPIRE counter
+			// The limiter is a fixed-window INCRBY+EXPIRE counter
 			// (internal/ratelimit/doc.go), not a token bucket.
 			path:      "docs/reference/api-design.md",
 			forbidden: []string{"**Algorithm:** token bucket"},
 			required:  []string{"**Algorithm:** fixed window"},
 		},
 		{
-			// T534: the runbook called the limiter a token bucket and said it
+			// The runbook must not call the limiter a token bucket or say it
 			// fails open unconditionally; past DefaultDwellTime of sustained
 			// Redis errors the middleware fails CLOSED with 503.
 			path: "docs/operations/runbooks/api.md",
@@ -188,7 +188,7 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 // TestErrorDocExampleMatchesRateLimitResponse holds the api-design.md
 // §11 problem example to the 429 the rate-limit middleware really
 // writes: same `type` URL and status, and no body field the response
-// does not carry (RLT-159: the doc showed `errors/rate-limit-exceeded`
+// does not carry (the doc showed `errors/rate-limit-exceeded`
 // and a `retry_after` body field; the code emits `errors/rate-limited`
 // and carries the delay only in the Retry-After header).
 func TestErrorDocExampleMatchesRateLimitResponse(t *testing.T) {

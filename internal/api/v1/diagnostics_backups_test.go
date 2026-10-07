@@ -43,7 +43,7 @@ func d(dur time.Duration) *time.Duration { return &dur }
 // "stale", within it "ok", and no data is "unknown" — never a fresh
 // zero (the web-status-1 class).
 //
-// The future-dated rows are the #311 regression: a stamp past
+// The future-dated rows are the regression case: a stamp past
 // backupClockSkewTolerance must read "unknown" carrying its RAW
 // negative age, NOT "ok" with a clamped 0 — a forward-skewed host
 // clock or a corrupt future-dated backup label would otherwise paint
@@ -300,12 +300,12 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_FutureDatedOffsite is the #311 regression at
+// TestBuildBackupsSnapshot_FutureDatedOffsite is the regression test at
 // document level: every source is fresh EXCEPT the off-site repo,
 // whose pgBackRest label is stamped 8d 14h in the future (forward host
-// clock, or a corrupt label). Before the fix that row rendered
+// clock, or a corrupt label). Without the check that row would render
 // "ok · 0s ago" and the whole panel went green — an arbitrarily stale
-// off-site copy behind an all-clear. It must now read "unknown"
+// off-site copy behind an all-clear. It must read "unknown"
 // carrying the raw negative age, and drag the roll-up off "ok" (which
 // is also what sets flags.stale on the wire).
 func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
@@ -464,7 +464,7 @@ func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 }
 
 // TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed is the
-// regression proof for RLT-094's silent-degrade shape: a query
+// regression proof for the silent-degrade shape: a query
 // goroutine that panics must count toward `failed` (and so degrade
 // SourceStatus) exactly like a query that returned an error. Before
 // the fix, a panic left both results[i] and errs[i] at their zero
@@ -502,7 +502,7 @@ func (b *blockingBackupMetrics) queryVector(ctx context.Context, _ string) ([]pr
 }
 
 // TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache
-// is the regression proof for RLT-094: handleDiagnosticsBackups ran
+// is the regression proof for the leader-ctx hazard: handleDiagnosticsBackups ran
 // buildBackupsSnapshot's Prometheus fan-out on context.WithTimeout(r.Context(), ...)
 // — the ctx of whichever request happened to hold s.backups.mu when
 // the cache was stale. That build result is then cached and served to
@@ -510,7 +510,7 @@ func (b *blockingBackupMetrics) queryVector(ctx context.Context, _ string) ([]pr
 // own client disconnected mid-flight, its canceled ctx failed every
 // query, and the resulting "unknown" snapshot was cached and handed
 // to a totally unrelated follower request whose own context was never
-// touched — the same shape as RLT-439 (CachedOracleReader.fetch).
+// touched — the same shape as CachedOracleReader.fetch.
 func TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache(t *testing.T) {
 	proceed := make(chan struct{})
 	src := &blockingBackupMetrics{proceed: proceed}
@@ -592,12 +592,12 @@ func (s *switchableBackupMetrics) queryVector(_ context.Context, expr string) ([
 }
 
 // TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild
-// is the GH-583 regression proof: an all-failed rebuild (every
+// is the regression proof: an all-failed rebuild (every
 // Prometheus query erroring, e.g. an outage or a starved fan-out)
-// must not clobber a previously-good cached snapshot with an
-// all-"unknown" document. Before the fix, buildBackupsSnapshot's
+// must not clobber a known-good cached snapshot with an
+// all-"unknown" document. If buildBackupsSnapshot's
 // output unconditionally replaced s.backups.snap regardless of its
-// own SourceStatus, so a transient all-query failure round painted
+// own SourceStatus, a transient all-query failure round would paint
 // the public backups status "unknown" even though the previous
 // rebuild, seconds earlier, was healthy.
 func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *testing.T) {

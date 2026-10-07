@@ -1667,10 +1667,10 @@ func TestPools_NoFilters(t *testing.T) {
 	}
 }
 
-// TestEnvelope_PaginationPointerRoundTrip pins A14-01 (audit-2026-06-14): the
+// TestEnvelope_PaginationPointerRoundTrip pins that the
 // Envelope.Pagination field is a pointer matching the server's *Pagination, so
 // a response WITHOUT pagination decodes to nil and re-encodes WITHOUT a
-// "pagination" key (the old value type made omitempty a no-op → emitted
+// "pagination" key (a value type would make omitempty a no-op → emit
 // "pagination":{}).
 func TestEnvelope_PaginationPointerRoundTrip(t *testing.T) {
 	// Absent pagination → nil → re-marshal omits the key.

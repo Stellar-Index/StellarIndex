@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestDEXTVLTotal_NoStaleIssueCitation guards RLT-429: issue #338 (D4 DEX
-// TVL surface) closed 2026-08-29, and dex_tvl_total.go's comments and the
+// TestDEXTVLTotal_NoStaleIssueCitation guards against citing the closed D4 DEX
+// TVL tracking issue, and dex_tvl_total.go's comments and the
 // classic-liquidity-pools exclusion Reason must not cite it as if it were
 // still open tracking work.
 func TestDEXTVLTotal_NoStaleIssueCitation(t *testing.T) {

@@ -78,7 +78,7 @@ func TestHandleCoverageVerdicts_Happy(t *testing.T) {
 }
 
 // TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator pins
-// #607: a source the audit is expected to cover but which has no verdict row
+// the rule: a source the audit is expected to cover but which has no verdict row
 // (its first audit failed, or the row was cleared) must count in
 // total_sources, so the headline reads 1 of 2, not 1 of 1. A pubnet-only
 // source on a test net stays out of both.
@@ -369,7 +369,7 @@ func TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld(t *testing.T) {
 }
 
 // TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip pins the
-// MNY-04 / A-H-4 live-tip gate.
+// live-tip gate.
 //
 // /v1/coverage is the product's trust surface ("every protocol,
 // verified complete"). Every field on a row — tip_ledger, coverage_pct,
@@ -386,7 +386,7 @@ func TestHandleCoverageVerdicts_StaleWhenProjectionEvidenceIsOld(t *testing.T) {
 // the 34_560 two-audit-period bound at the daily cadence). The
 // response must carry flags.stale = true.
 //
-// Proven red against the pre-fix handler: writeJSON(..., Flags{}) →
+// Red against a handler that calls writeJSON(..., Flags{}) →
 // stale = false.
 func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 	srv := v1.New(v1.Options{
@@ -464,7 +464,7 @@ func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 // A stalled ingest freezes the ledgerstream cursor, and an audit that
 // keeps running stamps each new verdict with that same frozen tip: gap 0,
 // computed_at minutes old. The cursor's own write age is the only signal
-// left that the tip is no longer the network's, so it must carry the flag.
+// left that the tip lags the network, so it must carry the flag.
 func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
 	snaps := []timescale.CompletenessSnapshot{{
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
@@ -499,7 +499,7 @@ func TestHandleCoverageVerdicts_StaleWhenIngestStalled(t *testing.T) {
 
 // With no CursorsReader wired the ledger-gap signal is unavailable, so
 // the verdict's own age has to carry the gate: a verdict computed 30h
-// ago is not a current claim. Proven red against the pre-fix handler
+// ago is not a current claim. Red against a handler that ignores verdict age
 // (stale = false) and non-vacuous — the sibling test above shows a
 // 5-minute-old verdict on the same wiring reads false.
 func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
@@ -526,7 +526,7 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 	}
 }
 
-// TestHandleCoverageVerdicts_NetworkScoping pins #483: on a test net the
+// TestHandleCoverageVerdicts_NetworkScoping pins that on a test net the
 // pubnet-anchored protocol sources are reported as NOT APPLICABLE and
 // excluded from every total, instead of counting as incomplete because
 // their pubnet genesis floor (soroswap 50,746,266) sits above the

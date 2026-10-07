@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Per-caller producer quota (audit-2026-09-02 F054 / K010).
+// Per-caller producer quota.
 //
 // The GLOBAL ceiling bounds the total but partitions it by nothing, so
 // one unauthenticated address looping the key space — ~9 real pairs ×
@@ -178,7 +178,7 @@ func TestTipProducerRegistry_JoiningAnExistingProducerIsNeverCharged(t *testing.
 	}
 }
 
-// The charge follows the entry's HOLDERS, not whoever minted it (#1103).
+// The charge follows the entry's HOLDERS, not whoever minted it.
 // A caller who opened a popular pair and then closed every stream no
 // longer influences the entry's life — other viewers do — so it must not
 // stay charged for it, or it is refused new pairs while holding none. The
@@ -248,7 +248,7 @@ func TestTipProducerRegistry_MinterLeavingHandsTheChargeToAHolder(t *testing.T) 
 }
 
 // A caller joining a LINGERING entry — its minter already left and holds
-// no reference — takes over the charge (#1103). Otherwise the minter stays
+// no reference — takes over the charge. Otherwise the minter stays
 // charged for an entry kept alive only by someone else's stream.
 func TestTipProducerRegistry_JoinDuringLingerTakesTheCharge(t *testing.T) {
 	reg := &tipProducerRegistry{maxPerCaller: 1, lingerFor: time.Hour}

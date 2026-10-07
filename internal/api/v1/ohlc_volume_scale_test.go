@@ -26,7 +26,7 @@ type ohlcScaledBar struct {
 // mkScaledOHLCTrade builds one native/fiat:USD print attributed to
 // `source`, with the raw smallest-unit amounts given verbatim — the
 // point of these fixtures is that the caller chooses the scale, because
-// the source is what decides it (sdex 1e7, coinbase 1e8 — CS-040).
+// the source is what decides it (sdex 1e7, coinbase 1e8).
 func mkScaledOHLCTrade(source string, base, quote *big.Int, opIndex uint32, ts time.Time) canonical.Trade {
 	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
@@ -52,7 +52,7 @@ func scaledUnits(n int64, decimals int) *big.Int {
 
 // assetUnits renders a served volume integer in the asset's own units,
 // the way a consumer must: value / 10^stated_decimals. A response that
-// states no scale cannot be rendered at all, which is the F096 defect
+// states no scale cannot be rendered at all, which is a defect
 // and is reported as such.
 func assetUnits(t *testing.T, raw string, decimals *int) string {
 	t.Helper()
@@ -95,7 +95,7 @@ func getOHLCBar(t *testing.T, reader *stubHistoryReader, query string) ohlcScale
 	return env.Data
 }
 
-// TestOHLC_VolumeScale_CEXWindowIsEightDecimals is the F096 headline: a
+// TestOHLC_VolumeScale_CEXWindowIsEightDecimals is the headline case: a
 // Coinbase-fed pair's volume integers are at 1e8, and until the bar said
 // so the /markets/[pair] page divided them by a hardcoded 1e7 and printed
 // a quote volume ten times the market's.
@@ -124,7 +124,7 @@ func TestOHLC_VolumeScale_CEXWindowIsEightDecimals(t *testing.T) {
 }
 
 // TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint is
-// the narrow window an earlier F096 fix re-opened: the scale must be
+// the narrow window a scale fix could re-open: the scale must be
 // resolved over the PRE-outlier-filter population, because the lift to
 // the common scale ran over that population and the filter does not
 // un-lift the rows it keeps.
@@ -189,11 +189,11 @@ func TestOHLC_VolumeScale_OnChainWindowIsSevenDecimals(t *testing.T) {
 	}
 }
 
-// TestOHLC_VolumeScale_UnregisteredSourceIsUnknown is GH-1285: a source
+// TestOHLC_VolumeScale_UnregisteredSourceIsUnknown pins that a source
 // absent from external.Registry must not be answered with the registry's
 // CEX-flavoured 8-decimal fallback. An unregistered on-chain DEX at 1e7
 // would otherwise be stated as 8, overstating its volume tenfold the
-// opposite way F096 already fixed.
+// opposite way.
 func TestOHLC_VolumeScale_UnregisteredSourceIsUnknown(t *testing.T) {
 	base := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubHistoryReader{

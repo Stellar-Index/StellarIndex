@@ -19,7 +19,7 @@ import (
 // This file is the SDK↔spec reconciliation gate. The OpenAPI spec,
 // the Go handlers, and this SDK are three hand-maintained
 // representations of one contract; lint-docs.sh already reconciles
-// handlers↔spec (CS-052), and this test closes the remaining edge:
+// handlers↔spec, and this test closes the remaining edge:
 //
 //  1. Every SDK method's (HTTP method, path) exists in the spec.
 //  2. Every spec operation is either covered by an SDK method or
@@ -225,8 +225,8 @@ var uncoveredOperations = map[string]string{
 	"PATCH /dashboard/price-alerts/{id}":          "session-cookie dashboard surface",
 	"DELETE /dashboard/price-alerts/{id}":         "session-cookie dashboard surface",
 	// POST rather than GET, and read-only despite the verb: the look-up
-	// term is a customer email address, which must not travel in a URL
-	// (#346). See dashboardauth.adminLookupRequest.
+	// term is a customer email address, which must not travel in a URL.
+	// See dashboardauth.adminLookupRequest.
 	"POST /account/admin/lookup":    "session-cookie dashboard surface — staff-only customer look-up",
 	"DELETE /dashboard/account":     "session-cookie dashboard surface",
 	"GET /dashboard/account/export": "session-cookie dashboard surface",
@@ -734,8 +734,7 @@ func (w *schemaWalker) walkStruct(s map[string]any, typ reflect.Type, path strin
 	}
 }
 
-// TestCoveredOperationsBindToRealMethods closes the wave-D F-SDK-10
-// gap: nothing tied coveredOperations to the code it claims to
+// TestCoveredOperationsBindToRealMethods ties coveredOperations to the code it claims to
 // describe.
 //
 // TestSDKCoversSpec reconciles the TABLE against the OpenAPI spec, so

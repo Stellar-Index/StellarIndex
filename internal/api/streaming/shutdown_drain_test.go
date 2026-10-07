@@ -39,7 +39,7 @@ type sseTestServer struct {
 // startSSEServer boots a server whose /stream endpoint holds an SSE
 // connection open forever. When drain is non-nil it is registered via
 // RegisterOnShutdown and handed to the writer — i.e. the wiring under
-// test. When it is nil the server reproduces the pre-fix shape.
+// test. When it is nil the server reproduces the unwired shape.
 func startSSEServer(t *testing.T, drain *streaming.Drain) *sseTestServer {
 	t.Helper()
 
@@ -131,7 +131,7 @@ func openStream(t *testing.T, ts *sseTestServer) (*http.Response, *bufio.Reader)
 }
 
 // TestShutdownWithAnAttachedStreamIsPrompt is the regression test for
-// the 30s deploy stall measured on r1 on 2026-09-15: one browser
+// the 30s deploy stall measured on r1: one browser
 // holding /v1/ledger/stream made httpSrv.Shutdown burn the entire 30s
 // budget and return "context deadline exceeded", after which the
 // process exited on top of the still-open connection. A restart of the

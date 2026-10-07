@@ -123,8 +123,8 @@ func TestPolicy_Validate_RejectsEmptyEntries(t *testing.T) {
 	}
 }
 
-// Cold audit 2026-08-04: Validate accepted two config shapes that each
-// silently corrupt XLM's published circulating supply.
+// Validate must reject two config shapes that each silently corrupt
+// XLM's published circulating supply.
 func TestPolicyValidate_rejectsNegativeOverrideAndDuplicates(t *testing.T) {
 	t.Run("negative max_supply override", func(t *testing.T) {
 		p := supply.Policy{MaxSupplyOverrides: map[string]string{

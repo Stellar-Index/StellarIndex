@@ -350,9 +350,9 @@ func TestVerifyJWT_ExpiredToken(t *testing.T) {
 	}
 }
 
-// TestVerifyJWT_RejectsFutureNbf is the INFO finding: issueJWT stamps an
-// `nbf` (not-before) claim but VerifyJWT pre-fix only checked `exp`, so a
-// token whose validity window hadn't opened yet was accepted. Here we mint a
+// TestVerifyJWT_RejectsFutureNbf pins that VerifyJWT checks the
+// `nbf` (not-before) claim issueJWT stamps, not only `exp`, so a token whose
+// validity window hasn't opened yet is rejected. Here we mint a
 // token at t0 and verify it from a clock BEFORE t0 — its nbf (== iat == t0)
 // is in the future, so it must be rejected. Mirrors the exp check's strict
 // (no-leeway) posture; the error is a wrap of ErrUnauthorized per VerifyJWT's
@@ -369,7 +369,7 @@ func TestVerifyJWT_RejectsFutureNbf(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 
-	// Move the clock BACK so the token's nbf (== its iat) is now in the
+	// Move the clock BACK so the token's nbf (== its iat) is in the
 	// future relative to "now". A well-behaved verifier must not accept a
 	// token that isn't valid yet.
 	clk.Advance(-10 * time.Minute)

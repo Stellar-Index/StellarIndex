@@ -141,7 +141,7 @@ func TestPriceBatch_OmitsMissingAssets(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_AliasResolvesXLM pins F-1340 on the batch surface:
+// TestPriceBatch_AliasResolvesXLM pins, on the batch surface:
 // asset_ids=native must resolve a snapshot published under the
 // crypto:XLM alias key, exactly like handlePrice's primary read.
 // Pre-fix the batch path queried the literal form only, silently
@@ -561,7 +561,7 @@ func TestPriceBatchPost_DefaultQuoteFiatUSD(t *testing.T) {
 	}
 }
 
-// F-0073 closure (2026-05-28): /v1/price/batch accepts `pairs=` as
+// /v1/price/batch accepts `pairs=` as
 // alias for `asset_ids=` so CG-style callers using `pairs` reach
 // the endpoint without a 400 detour.
 func TestPriceBatch_PairsAcceptedAsAssetIdsAlias(t *testing.T) {
@@ -591,7 +591,7 @@ func TestPriceBatch_AssetIdsAndPairsBoth_Returns400(t *testing.T) {
 // both stamped "crypto:XLM". Since the batch route omits misses rather
 // than returning null rows, `asset_id` is the only mapping the wire shape
 // supports — so a client keying the response by it lost `native`
-// entirely (cold audit 2026-08-04, measured on prod v0.24.0).
+// entirely.
 func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	// Only the crypto:XLM key is populated; `native` must resolve through

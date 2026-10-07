@@ -12,7 +12,7 @@ import (
 // TestRedisSignupEmailLocker_AcquireReleaseRoundTrip — the
 // SETNX adapter's contract is: first Acquire wins, second
 // Acquire (without intervening Release) loses, Release makes
-// the key available again. F-1255 (codex audit-2026-05-12).
+// the key available again.
 func TestRedisSignupEmailLocker_AcquireReleaseRoundTrip(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -60,11 +60,11 @@ func TestRedisSignupEmailLocker_AcquireReleaseRoundTrip(t *testing.T) {
 }
 
 // TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock — the
-// F-C fencing property: caller A's lock TTL-expires while A is still
-// provisioning, caller B SETNX-acquires the now-free key, then A's
+// fencing property: caller A's lock TTL-expires while A is still
+// provisioning, caller B SETNX-acquires the free key, then A's
 // deferred Release runs. A's Release MUST NOT delete B's lock (they
 // carry different tokens), otherwise a third caller could acquire and
-// race B — the exact F-1255 orphan race the lock exists to prevent.
+// race B — the orphan race the lock exists to prevent.
 func TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -83,7 +83,7 @@ func TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock(t *testing.T) 
 	// A's critical section overruns the TTL; the lock expires.
 	mr.FastForward(2 * time.Second)
 
-	// B acquires the now-free key with its own token.
+	// B acquires the free key with its own token.
 	okB, tokenB, err := locker.Acquire(ctx, key, 5*time.Second)
 	if err != nil || !okB {
 		t.Fatalf("B acquire: ok=%v err=%v", okB, err)

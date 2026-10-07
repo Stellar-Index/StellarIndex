@@ -96,7 +96,7 @@ func TestProbeOneHost_OK(t *testing.T) {
 }
 
 // TestProbeOneHost_CertFailingVerificationIsStillRead is the
-// CA2-A08-correct-6 regression. The production dial verifies the chain,
+// regression guard. The production dial verifies the chain,
 // so an expired or mis-issued leaf failed the handshake and was counted
 // as a bare dial_error with its NotAfter never read: after a restart the
 // host had no gauge at all, and the one condition the probe exists to

@@ -274,7 +274,7 @@ func TestVWAP_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestVWAP_CarriesNoDivergenceVerdict — GH-1045: the cross-reference
+// TestVWAP_CarriesNoDivergenceVerdict — the cross-reference
 // verdict compares the aggregator's shortest-window VWAP now, while
 // /v1/vwap computes over a caller-chosen [from, to) from raw trades. A
 // January window shipped today's `divergence_checked: true`, vouching for

@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// F013 (MNY-22): `flags.frozen=true` promises that the response carries
+// `flags.frozen=true` promises that the response carries
 // the last-known-good value the freeze is holding (ADR-0019, and the
 // `frozen` flag's own wording in openapi). The default /v1/price path
 // read the newest closed prices_1m bucket — the bucket the anomaly
@@ -309,7 +309,7 @@ func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
 	})
 }
 
-// F013 residual: the freeze that governs a response is the freeze on the
+// The freeze that governs a response is the freeze on the
 // pair whose bucket is being SERVED. A `native` request answered from
 // crypto:XLM's closed bucket is governed by crypto:XLM's marker alone; a
 // marker that exists only on the requested literal (`native/fiat:GBP`)

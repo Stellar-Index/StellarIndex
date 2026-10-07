@@ -13,8 +13,7 @@ import (
 // K012 — every goroutine in the stellarindex-api process recovers.
 //
 // An unrecovered panic in ANY goroutine terminates the whole Go process; it
-// is not confined to the goroutine that panicked. #368 closed that hole in
-// two places and guarded each with an AST walk:
+// is not confined to the goroutine that panicked. Two places close that hole, and guarded each with an AST walk:
 //
 //   - cmd/*/main.go, via each binary's TestBackgroundWorkersRecover
 //     (guardscan.ScanFile("main.go", …) — ONE file); and

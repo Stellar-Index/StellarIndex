@@ -122,7 +122,7 @@ func poolByID(t *testing.T, pools []DEXTVLPoolView, id string) DEXTVLPoolView {
 }
 
 // TestDEXTVLPools_EveryLegBranchIsLabelled drives each way a leg can be
-// valued or excluded and asserts the wire says which (#338): a valued
+// valued or excluded and asserts the wire says which: a valued
 // leg carries asset + basis + usd and no exclusion; an excluded leg
 // carries the reason and NO usd — never a silent "0.00".
 func TestDEXTVLPools_EveryLegBranchIsLabelled(t *testing.T) {
@@ -204,7 +204,7 @@ func TestDEXTVLPools_EveryLegBranchIsLabelled(t *testing.T) {
 
 // TestDEXTVLPools_ReconcileAtEveryLevel is the per-pool half of the
 // acceptance criterion "a reconciliation test against pool reserves"
-// (#338): on every protocol of both fixtures, the sum of the published
+// — on every protocol of both fixtures, the sum of the published
 // leg usd strings is the pool's tvl_usd and the sum of the published
 // pool tvl_usd strings is the protocol's — byte-for-byte, the property
 // a consumer of the drill-down actually checks.

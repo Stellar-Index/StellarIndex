@@ -15,7 +15,7 @@ import (
 )
 
 // TestPriceStream_AliasFanOut_MergesDistinctVenuesIntoOneStream is a
-// documented-defect reproduction for RLT-345, not a green regression
+// documented-defect reproduction, not a green regression
 // guard: it records CURRENT behaviour so the fix (tracked separately —
 // see the finding) has a concrete before/after to work from, rather
 // than landing on top of an un-derived symptom.

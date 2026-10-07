@@ -13,17 +13,17 @@ import (
 	"time"
 )
 
-// White-box regressions for the topic-map bound (REL-05). They read
+// White-box regressions for the topic-map bound. They read
 // h.topics under h.mu on purpose: what these tests pin is what the MAP
 // does, and asserting it through the exported TopicCount() would stop
-// them compiling against the pre-fix Hub — a regression test that
+// them compiling against a Hub without the bound — a regression test that
 // can't be run red proves nothing.
 
-// TestHub_TopicMapDoesNotGrowWithChurn pins REL-05: a client that
+// TestHub_TopicMapDoesNotGrowWithChurn pins the bound: a client that
 // streams one made-up pair after another must not leave a permanent
-// topic (with its ring buffer) behind for each one. Before the fix
-// getOrCreateTopic only ever inserted, so h.topics grew by one entry
-// per distinct topic name ever seen and nothing ever removed it —
+// topic (with its ring buffer) behind for each one. Without the bound,
+// getOrCreateTopic would only ever insert, so h.topics would grow by one entry
+// per distinct topic name ever seen and nothing would remove it —
 // memory exhaustion driven entirely by unauthenticated input.
 func TestHub_TopicMapDoesNotGrowWithChurn(t *testing.T) {
 	const churn = 500
@@ -48,7 +48,7 @@ func TestHub_TopicMapDoesNotGrowWithChurn(t *testing.T) {
 	// most one sweep's worth of churn plus slack — NOT one entry per
 	// pair ever streamed. The bound is spelled as a literal, not as
 	// 2*topicSweepGrowth, so this file still compiles against the
-	// pre-fix Hub and can be run RED.
+	// Hub without the bound and can be run RED.
 	const wantMax = 128
 	if got > wantMax {
 		t.Fatalf("topic map holds %d topics after %d one-shot subscriptions, want <= %d "+
@@ -193,11 +193,11 @@ func TestStream_TopicCapRefusedWith503(t *testing.T) {
 }
 
 // TestStream_CapRejectsBeforeTopicCreation pins
-// REL-05-resource-exhaustion: a connection the concurrency caps refuse
-// must never allocate a Hub topic. Before the fix Stream() called
+// a connection the concurrency caps refuse
+// must never allocate a Hub topic. If Stream() called
 // hub.Subscribe FIRST and only then entered StreamFromChannel where
-// the caps live, so every rejected connection still minted a permanent
-// topic keyed by client-controlled input — the caps bounded sockets
+// the caps live, every rejected connection would still mint a permanent
+// topic keyed by client-controlled input — the caps would bound sockets
 // but not Hub memory.
 func TestStream_CapRejectsBeforeTopicCreation(t *testing.T) {
 	SetMaxStreamsPerIP(1)

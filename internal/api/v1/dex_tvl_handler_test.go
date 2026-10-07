@@ -109,7 +109,7 @@ func decodeProblem(t *testing.T, resp *http.Response) v1.Problem {
 }
 
 // GET /v1/protocols/{name}/tvl is the per-pool drill-down behind the
-// `tvl` block on /v1/protocols (#338): every pool the protocol figure
+// `tvl` block on /v1/protocols: every pool the protocol figure
 // was summed from, every reserve leg of each, the served-price identity
 // each leg was valued under, and — for a leg that contributed nothing —
 // the reason it was excluded rather than a silent zero.
@@ -282,9 +282,9 @@ func TestHandleProtocolTVL_CarriedForwardIsLabelledStale(t *testing.T) {
 // (only the envelope's as_of stamp moves). What the snapshot costs to
 // serialise is measured by BenchmarkHandleProtocolTVL_LargeSnapshot,
 // on a quiet machine: a wall-clock ceiling in the unit suite measures
-// how loaded the runner is, not what the handler does. The 5 s ceiling
-// that used to sit here spent 1.1 s of itself under -race on an idle
-// machine and breached at 5.3 s under CPU load, on one unchanged
+// how loaded the runner is, not what the handler does. A 5 s ceiling
+// would spend 1.1 s of itself under -race on an idle
+// machine and breach at 5.3 s under CPU load, on one unchanged
 // commit.
 func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 	const pools = 5_000
@@ -308,9 +308,9 @@ func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 
 	// A handful of requests, not a crowd: the counters are read after
 	// each one and a handler that read per request moves them on the
-	// first, so further repetitions buy nothing but runtime. The twenty
-	// this loop used to make were a sample size for the clock, and went
-	// with it.
+	// first, so further repetitions buy nothing but runtime. Twenty
+	// requests would be a sample size for the clock, and are dropped
+	// here.
 	const requests = 5
 	var first []byte
 	for i := 0; i < requests; i++ {

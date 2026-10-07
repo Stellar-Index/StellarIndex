@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// GH-1144: the pre-handler throttle seams detach from the request's
+// The pre-handler throttle seams detach from the request's
 // cancellation so a client abort cannot arm their dwell clocks, but
 // context.WithoutCancel drops the DEADLINE too. With a flat 5 s per seam
 // the MonthlyQuota read and the RateLimit take ran outside the request

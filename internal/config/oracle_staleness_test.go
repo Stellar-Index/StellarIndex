@@ -12,7 +12,7 @@ import (
 )
 
 // TestValidate_OracleStalenessOverrideAccepted is the shape an operator
-// writes when an asset is legitimately slow (issue #478).
+// writes when an asset is legitimately slow.
 func TestValidate_OracleStalenessOverrideAccepted(t *testing.T) {
 	c := config.Default()
 	c.Oracle.StalenessOverrides = []config.OracleStalenessOverrideConfig{{
@@ -179,7 +179,7 @@ func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
 }
 
 // TestAnsibleOracleStalenessOverrides_ValidAndComplete is the codified-
-// config gate for the one shipped override (#478).
+// config gate for the one shipped override.
 //
 // The override lives in the deployed ansible template, which is plain
 // TOML behind jinja control lines. Nothing else parses it before a

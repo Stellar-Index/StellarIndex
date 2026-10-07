@@ -219,7 +219,7 @@ func TestGlobalMarket_DepegWarningFoldsIssuerSignals(t *testing.T) {
 }
 
 // A thin-market price served under include_thin is never a basis for a
-// divergence, depeg warning or issuer signals (#2144); the reference stays.
+// divergence, depeg warning or issuer signals; the reference stays.
 func TestGlobalMarket_ThinPriceCarriesNoDerivedSignals(t *testing.T) {
 	s := globalMarketServer(t)
 	refs := map[string]rwaReference{"crypto:USDC": {

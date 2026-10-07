@@ -37,17 +37,16 @@ func seedCachedDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair, 
 	}
 }
 
-// TestDivergenceAdapter_ChecksMatchWorkerQuorum pins COR-14
-// (audit-2026-07-23): the API's `divergence_checked` flag must use the
+// TestDivergenceAdapter_ChecksMatchWorkerQuorum pins that the API's `divergence_checked` flag must use the
 // same source quorum the divergence worker gates WarningFired on.
 //
 // The worker computes `checked := res.SuccessCount >= s.minSources` and
 // hard-forces WarningFired=false below that floor — a below-quorum run
-// reached NO verdict. The pre-fix adapter answered `checked =
-// SuccessCount > 0`, so a single responding reference produced
+// reached NO verdict. An adapter answering `checked =
+// SuccessCount > 0` would let a single responding reference produced
 // `divergence_checked=true, divergence_warning=false`: a clean bill of
 // health the cross-check never issued, which is precisely the
-// misreading CS-087 introduced the flag to prevent.
+// misreading the flag exists to prevent.
 //
 // Against the un-fixed `cached.SuccessCount > 0` predicate the
 // below-quorum subtest fails with `checked = true, want false`.
@@ -157,12 +156,11 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 	}
 }
 
-// TestDivergenceAdapter_QuoteSpecific pins GH-1045: a diverging
-// XLM/GBP verdict must never attach to an XLM/USD response. The
-// pre-fix adapter called svc.LookupCached(ctx, asset), which reads the
-// per-base index set and ORs every quote's WarningFired together — so
-// a GBP-only divergence made every quote of XLM, including a clean
-// USD, report firing=true.
+// TestDivergenceAdapter_QuoteSpecific pins that a diverging
+// XLM/GBP verdict never attaches to an XLM/USD response. A per-asset
+// svc.LookupCached(ctx, asset) reads the per-base index set and ORs every
+// quote's WarningFired together, so a GBP-only divergence would make every
+// quote of XLM, including a clean USD, report firing=true.
 func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 	const minSources = 2
 

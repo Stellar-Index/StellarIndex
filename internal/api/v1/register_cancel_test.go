@@ -90,7 +90,7 @@ func (cancelTestKeyStore) TouchUsage(_ context.Context, _ string, _ net.IP, _ st
 
 // cancelTestMirror is a minimal [KeyMirror] double that records
 // whether the context it was handed for a rollback was ALREADY dead —
-// the GH-977 tell: a rollback on the same canceled request context
+// the tell: a rollback on the same canceled request context
 // fails immediately, the same way a real Redis SCAN does.
 type cancelTestMirror struct {
 	mu               sync.Mutex
@@ -117,7 +117,7 @@ func (m *cancelTestMirror) RevokeKeyByID(ctx context.Context, _, _ string) error
 	return nil
 }
 
-// TestHandleRegister_ClientCancelDuringKeyCreate is the GH-977
+// TestHandleRegister_ClientCancelDuringKeyCreate is the
 // regression: a client disconnecting between the Redis mirror write
 // and the Postgres management-row INSERT must still (a) quarantine
 // the now-orphaned account for the signup-reaper, and (b) roll the
@@ -125,7 +125,7 @@ func (m *cancelTestMirror) RevokeKeyByID(ctx context.Context, _, _ string) error
 // rollback fails the same way the Postgres write just did, and a
 // live, unlistable credential outlives the request that minted it.
 //
-// RED on the pre-fix code: the `errors.Is(err, context.Canceled)`
+// Without the fix: the `errors.Is(err, context.Canceled)`
 // branch in handleRegister returns before suspendRegisterOrphan runs
 // (suspendCalls stays 0), and mintRegisterKey's rollback reuses the
 // same canceled ctx (revokeSawDeadCtx is true).

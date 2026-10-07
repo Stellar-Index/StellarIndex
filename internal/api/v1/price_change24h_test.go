@@ -16,7 +16,7 @@ func (s stubChange24h) USDPrice24hAgo(context.Context, canonical.Asset) (string,
 	return s.then, nil
 }
 
-// TestBatchChange24h pins the board-#41 contract: USD-quoted batch
+// TestBatchChange24h pins the contract: USD-quoted batch
 // rows carry the signed trailing-24h change; non-USD quotes omit it.
 func TestBatchChange24h(t *testing.T) {
 	s := &Server{Options: Options{Change24h: stubChange24h{then: "0.20"}}}

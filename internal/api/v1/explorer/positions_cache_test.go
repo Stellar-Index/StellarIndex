@@ -11,12 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These pin the #332 F1 serving contract for GET /v1/accounts/{g}/positions.
+// These pin the serving contract for GET /v1/accounts/{g}/positions.
 // Measured cause: the six protocol folds ran inline on the request context
 // with no memoisation and no flight — live on r1 the endpoint answered in
 // 1.253 s then 1.148 s back-to-back, i.e. every visitor paid the whole
-// fan-out, while the sibling /v1/accounts/{g} had been SWR-cached since
-// 2026-07-30.
+// fan-out, while the sibling /v1/accounts/{g} is SWR-cached.
 
 // countingPositionsReader answers every fold immediately, counting how many
 // times the BLEND fold (the first) was entered — a proxy for "how many full
@@ -164,7 +163,7 @@ func TestDetailTTLForKey_PositionsClassIsShorterThanContractDetail(t *testing.T)
 
 // Positions must get their OWN detached-refresh class, so a burst of cold
 // accounts cannot starve the contract-detail panels (and vice versa) — the
-// per-class cap's whole purpose (2026-08-13).
+// per-class cap's whole purpose.
 func TestAccountPositions_HasItsOwnRefreshClass(t *testing.T) {
 	got := detachedClassForKey(positionsCacheKey + validTestAccount)
 	if got == detachedClassForKey("ev:"+validTestContract) {

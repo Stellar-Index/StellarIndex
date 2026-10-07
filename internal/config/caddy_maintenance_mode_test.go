@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ─── The serving kill-switch (audit-2026-09-02 F137 / Q239) ─────────
+// ─── The serving kill-switch ─────────────────────────────
 //
 // `sudo touch /etc/caddy/MAINTENANCE_MODE` is the documented way to
 // stop serving during a live data-integrity incident
@@ -44,8 +44,7 @@ import (
 //   - switch ENGAGED: nothing, stream routes included, gets past the 503;
 //   - switch DISENGAGED: every stream route still proxies with
 //     `flush_interval -1`, i.e. the fix must not buy the kill-switch by
-//     breaking streaming (r1 2026-08-03: buffered SSE = zero bytes in
-//     25 s).
+//     breaking streaming (buffered SSE = zero bytes).
 
 // caddyDirective is one non-comment line of a Caddyfile together with
 // the brace depth its content sits at: depth 1 is a site-block
@@ -100,7 +99,7 @@ func TestCaddyKillSwitchOutranksTheStreamProxy(t *testing.T) {
 			dirs := caddyDirectives(t, path)
 
 			// A `handle` block anywhere in the site outranks `respond`
-			// and reintroduces the defect, whatever the source order
+			// and defeats the 503, whatever the source order
 			// says. `handle_path` has the same rank.
 			for _, d := range dirs {
 				if strings.HasPrefix(d.text, "handle ") || strings.HasPrefix(d.text, "handle_path ") ||
@@ -173,7 +172,7 @@ func caddyStreamProxyBlock(t *testing.T, path string) string {
 // ─── The same property, proved through caddy ────────────────────────
 //
 // Caddy's directive order is precisely the thing a careful human reader
-// gets wrong — that is how this shipped — so when the binary is
+// gets wrong, so when the binary is
 // available the compiled config is the witness, not the text.
 
 // caddyCompiledRoute is one route of an adapted config, flattened into

@@ -245,9 +245,9 @@ func TestStream_ContextCancelEndsStream(t *testing.T) {
 
 // TestStream_KeepsRouteCacheControl — the v1 CacheControl middleware
 // sets each stream's per-route policy before the handler runs; the SSE
-// writer must not overwrite it (it used to force a bare `no-cache`,
-// turning /v1/price/stream's no-store into a storable response and
-// dropping `private` from tip/observations). With no policy set, the
+// writer must not overwrite it (forcing a bare `no-cache` would turn
+// /v1/price/stream's no-store into a storable response and
+// drop `private` from tip/observations). With no policy set, the
 // writer's own fallback must still forbid storage.
 func TestStream_KeepsRouteCacheControl(t *testing.T) {
 	for _, preset := range []string{"no-store", "private, no-cache, must-revalidate", "private, no-store", ""} {

@@ -16,7 +16,7 @@ import (
 // detached workers (forex poller, TLS-cert probe, four cache refreshers, two
 // prewarms, stream publisher + subscriber, customer-webhook sender, usage
 // rollup, three auth reapers, the ingestion-snapshot refresher and the
-// self-prewarm loop) and before this guard NONE of them recovered, so a panic
+// self-prewarm loop) and without this guard NONE of them would recover, so a panic
 // in any one took the entire API down along with every healthy request in
 // flight.
 //
@@ -26,13 +26,11 @@ import (
 // through a real dependency, and would still only cover the ones that exist
 // today. So this derives the worker set from the source itself and fails if any
 // of them lacks recovery — find every call site of the thing being guarded, not
-// a sample. Same discipline as TestSSEProducerGoroutinesRecover (AGT-12).
+// a sample. Same discipline as TestSSEProducerGoroutinesRecover.
 //
-// It used to see only the `go func(){…}()` spelling. Four workers were
-// started as `go namedFunc(…)` and the walk returned early on every one of
-// them, so they were not merely unchecked — they did not exist as far as
-// this test's own "did I find enough workers?" floor was concerned (#368
-// M1). [guardscan] now resolves a named callee to its declaration (this
+// The walk must see `go namedFunc(…)` as well as the `go func(){…}()`
+// spelling, or those workers would not count toward this test's own "did I
+// find enough workers?" floor. [guardscan] resolves a named callee to its declaration (this
 // package, or another package of this module, located from go.mod) and
 // checks the guard there; a callee it cannot resolve fails the test rather
 // than passing quietly.
@@ -84,8 +82,8 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 	}
 
 	// Guard against the guard covering nothing (e.g. the spawn idiom changes
-	// and the AST match stops finding anything). 20 detached goroutines exist
-	// as of #368 M1; this is a floor, not an exact count.
+	// and the AST match stops finding anything). 20 detached goroutines exist;
+	// this is a floor, not an exact count.
 	if checked < 20 {
 		t.Errorf("only %d background goroutine(s) discovered, expected at least 20 — "+
 			"the discovery in this test has drifted from the code and is no longer "+
@@ -102,7 +100,7 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 // process does not exit on top of a worker that is mid-write. The
 // concrete case is the customer-webhook sender, which can be between
 // "the customer accepted the POST" and "MarkDelivered" — exiting there
-// is how a delivery gets repeated on the next boot (#368 LOW).
+// is how a delivery gets repeated on the next boot.
 //
 // Scoped to literals started inside run(), because bgWG is declared
 // there. Two content-checked exclusions:

@@ -30,7 +30,7 @@ type deliverySweeper interface {
 // dashboard bundle writes and nothing else bounds. A store without the
 // sweep seam (dashboard not wired, or a non-Postgres fake) yields none.
 // The registration reaper runs only on the redis auth backend: there an
-// expired validator record means the key no longer authenticates. The
+// expired validator record means the key stops authenticating. The
 // postgres backend reads that record without extending it and falls back
 // to the never-expiring api_keys row, so a key in daily use would be erased.
 func retentionReaperTargets(b dashboardBundle, rdb redis.Cmdable, authBackend string, logger *slog.Logger) []retentionreaper.Options {

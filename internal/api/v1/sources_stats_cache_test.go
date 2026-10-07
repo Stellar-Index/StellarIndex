@@ -138,7 +138,7 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 	}
 }
 
-// TestCachedSourcesStatsReader_WaitersSeeLeaderError — RLT-097: when
+// TestCachedSourcesStatsReader_WaitersSeeLeaderError — when
 // the single-flight leader's upstream call errors, every goroutine
 // that waited on it must get that error back too, not a fabricated
 // cache "hit" of the stale/nil field. Before the fix, a waiter did

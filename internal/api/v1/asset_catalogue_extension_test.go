@@ -246,11 +246,11 @@ func TestAssetGet_AssetExtension_FiatAsset_Skipped(t *testing.T) {
 	}
 }
 
-// TestAssetGet_ZeroObservationCountIsServedNotDropped — COR-03.
+// TestAssetGet_ZeroObservationCountIsServedNotDropped.
 //
 // `observation_count` is a COUNT column declared `NOT NULL DEFAULT 0`
 // (migrations/0023), so a registered asset that hasn't traded in the
-// window legitimately reads 0. The overlay used to gate the field on
+// window legitimately reads 0. An overlay that gated the field on
 // `!= 0`, which dropped it from the response — leaving a client unable
 // to distinguish "this asset has zero observations" from "we have no
 // catalogue row for this asset at all", the two states the field's own
@@ -315,7 +315,7 @@ func TestAssetGet_ZeroObservationCountIsServedNotDropped(t *testing.T) {
 	}
 }
 
-// TestAssetGet_NativeObservationCountIsAbsent pins GH-701 item 3. Native
+// TestAssetGet_NativeObservationCountIsAbsent pins that Native
 // XLM has no registry row, so its row holds no trade count;
 // observation_count must be absent rather than whatever figure the
 // synthetic row carries (it once served a 24 h prices_1m bucket count

@@ -73,7 +73,7 @@ func TestSetTrustedProxyCIDRs(t *testing.T) {
 // trusted proxy APPENDS the peer it saw. We walk RIGHT-TO-LEFT and
 // return the first entry NOT inside a trusted-proxy CIDR (the
 // closest untrusted hop). Taking the leftmost would let a client
-// forge its own value. (F-1338)
+// forge its own value.
 func TestRightmostUntrustedForwardedFor(t *testing.T) {
 	resetTrustedProxyConfig(t)
 	// Trust the 10/8 proxy tier for these cases.
@@ -176,7 +176,7 @@ func TestRemoteIPFor(t *testing.T) {
 		// 10.0.0.5 is appended. A leftmost parser would attribute the
 		// request to the forged 9.9.9.9 — spoofing rate-limit identity
 		// and bypassing per-key IP allowlists. The rightmost-untrusted
-		// walk must resolve to 8.8.8.8. (F-1338)
+		// walk must resolve to 8.8.8.8.
 		_ = SetTrustedProxyCIDRs([]string{"10.0.0.0/8"})
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.5:1234"
@@ -224,7 +224,7 @@ func TestRemoteIPFor(t *testing.T) {
 
 // TestRemoteIPThrottleKey pins the throttle identity the middleware
 // derives: IPv4 exact, IPv4-in-IPv6 unmapped to the same budget as its
-// IPv4 spelling, IPv6 aggregated to its /64 (SEC-15). The mask itself is
+// IPv4 spelling, IPv6 aggregated to its /64. The mask itself is
 // table-tested in internal/ratelimit; this proves the middleware uses it.
 func TestRemoteIPThrottleKey(t *testing.T) {
 	resetTrustedProxyConfig(t)

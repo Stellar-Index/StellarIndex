@@ -96,7 +96,7 @@ func (r onChainPriceReader) GetAssetByAssetID(context.Context, string) (timescal
 
 // onChainListingPriceUSD feeds the global asset view's on-chain price
 // fallback from the PER-ASSET reader, whose price is a raw prices_1m
-// ratio. It used to hand that string straight back.
+// ratio. It must not hand that string straight back.
 func TestOnChainListingPriceUSD_NormalisesNonstandardDecimals(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	raw := "0.0250000000"

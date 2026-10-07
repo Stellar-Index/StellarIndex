@@ -10,7 +10,7 @@ import (
 // AggregatorPairs and AggregatorWindows are documented as
 // infallible in practice (validate() rejects bad entries at
 // startup). They still return errors to keep the seam testable
-// and to surface a regression loudly if validation is bypassed.
+// and to surface a failure loudly if validation is bypassed.
 // Pin those error branches by calling the methods directly on a
 // struct that skips validation — covers the seam, catches a
 // refactor that swallows the underlying parse error.

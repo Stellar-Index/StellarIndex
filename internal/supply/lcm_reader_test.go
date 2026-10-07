@@ -15,7 +15,7 @@ type fakeLookup struct {
 	err  error
 
 	// watermark is what the account OBSERVER has reached across all
-	// accounts — the CS-102 freshness anchor. Distinct from any row's
+	// accounts — the freshness anchor. Distinct from any row's
 	// Ledger on purpose: the tests assert the anchor tracks this and NOT
 	// the per-account minimum.
 	watermark uint32
@@ -110,14 +110,13 @@ func TestLCMReserveBalanceReader_StoreError(t *testing.T) {
 	}
 }
 
-// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath pins CS-102's
-// third leg: the anchor is the account OBSERVER's watermark, not the oldest
-// per-account observation.
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath pins that the
+// anchor is the account OBSERVER's watermark, not the oldest per-account
+// observation (49,999,500 here).
 //
-// This test previously asserted the minimum (49,999,500 here). That was the
-// defect: SDF reserve accounts move every few days-to-weeks by design, so the
+// SDF reserve accounts move every few days-to-weeks by design, so the
 // minimum goes stale while nothing is wrong, the gate reads a stalled
-// observer, and XLM's served supply freezes — which it was doing on r1.
+// observer, and XLM's served supply freezes.
 func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
@@ -143,7 +142,7 @@ func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T)
 // TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts — a
 // removed account still COUNTS as observed, so it does not force the
 // gate-permissive bypass; the AccountEntry-delete is a real observation. Its
-// ledger no longer sets the anchor though (CS-102): the observer watermark
+// ledger does not set the anchor though: the observer watermark
 // does, so a long-ago removal cannot drag XLM's freshness backwards forever.
 func TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{

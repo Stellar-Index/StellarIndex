@@ -481,10 +481,8 @@ func (c *Client) Assets(ctx context.Context, opts AssetsOptions) (*Envelope[[]As
 // (ADR-0042 LC-040). assetID accepts either a canonical Stellar
 // asset_id (native, CODE-G…, C… contract, fiat:CODE) OR a
 // verified-currency catalogue slug (usdc, eurc, aqua, …) — the two
-// forms route to different wire shapes server-side, and this method
-// was previously documented as canonical-id-only, which was already
-// inaccurate before this change (the server has dispatched slugs to
-// the catalogue view since R-018).
+// forms route to different wire shapes server-side, and the server
+// dispatches slugs to the catalogue view.
 //
 // The returned [AssetLookup] carries whichever shape the server
 // sent; branch on [AssetLookup.Kind] or call StellarAsset() /
@@ -592,8 +590,6 @@ func (c *Client) Aggregators(ctx context.Context) (*Envelope[[]AggregatorRow], e
 // No options — the response is a static projection of compile-
 // time constants + the in-memory source registry + operator
 // config. Sub-millisecond on the server.
-//
-// R-023 in `docs/review-2026-05-10.md`.
 func (c *Client) Methodology(ctx context.Context) (*Envelope[Methodology], error) {
 	var env Envelope[Methodology]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/methodology", nil, nil, &env); err != nil {
@@ -608,7 +604,7 @@ type MarketsOrderBy string
 const (
 	// MarketsOrderByPair sorts by `<base>|<quote>` lex order
 	// ascending. Stable for paginating the full set. NOT the
-	// server default — pass it explicitly (corrected 2026-08-04).
+	// server default — pass it explicitly.
 	MarketsOrderByPair MarketsOrderBy = "pair"
 	// MarketsOrderByVolume24hUSDDesc sorts by 24h USD volume
 	// descending (NULLS LAST), with `<base>|<quote>` as the
@@ -622,12 +618,10 @@ type MarketsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100); max 500
 	// OrderBy controls sort + cursor scheme. Empty → the server default,
-	// which is VOLUME-DESC, not alphabetic — it was switched on
-	// 2026-05-10 because the alphabetical default surfaced spam tokens
-	// (`0-…`, `0TAX-…`) at the top of the listing.
+	// which is VOLUME-DESC, not alphabetic, because an alphabetical default
+	// surfaces spam tokens (`0-…`, `0TAX-…`) at the top of the listing.
 	//
-	// This godoc said "alphabetic" until wave-D F-SDK-02. That is worth
-	// knowing if you walk the full catalogue: volume-desc ranks on a
+	// Worth knowing if you walk the full catalogue: volume-desc ranks on a
 	// MUTABLE key, so a pair whose 24h volume changes mid-walk can be
 	// seen twice or missed. For a complete enumeration pass
 	// [MarketsOrderPair] explicitly — its keyset is the immutable

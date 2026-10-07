@@ -68,11 +68,11 @@ func TestParseFromToClamped_ExplicitToPreserved(t *testing.T) {
 	}
 }
 
-// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins #924:
+// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins the rule:
 // ADR-0015 says the most-recent row served is ALWAYS closed, not
 // "closed unless the client asked for a specific `to`". An explicit
 // `to` landing inside the still-filling bucket (here, wall-clock now)
-// used to be honoured verbatim, serving a partial, unflagged window —
+// would be honoured verbatim, serving a partial, unflagged window —
 // indistinguishable on the wire from a real closed-bucket answer.
 func TestParseFromToClamped_ExplicitToInOpenBucketClamps(t *testing.T) {
 	now := time.Now().UTC()
@@ -156,10 +156,10 @@ func TestParseFromToClamped_ExplicitFromNotShifted(t *testing.T) {
 	}
 }
 
-// TestParseFromTo_WindowParam covers F-0072 closure: the `window=`
+// TestParseFromTo_WindowParam covers the `window=`
 // shortcut sets `from = to - duration` so CG-style customers don't
-// have to compute it. Pre-F-0072 the param was silently ignored,
-// users got the 1h default, and a 24h-window request returned a
+// have to compute it. If the param were silently ignored,
+// users would get the 1h default, and a 24h-window request would return a
 // confusing 404 over the wrong range.
 func TestParseFromTo_WindowParam(t *testing.T) {
 	cases := []struct {
@@ -189,10 +189,10 @@ func TestParseFromTo_WindowParam(t *testing.T) {
 	}
 }
 
-// TestParseFromTo_WindowAndFrom_Conflict pins F-0072's loud-rejection
+// TestParseFromTo_WindowAndFrom_Conflict pins the loud-rejection
 // rule. Passing both `window` and `from` is ambiguous (they both
 // control the start time); a 400 is louder than picking one
-// silently — which is what pre-F-0072 did when `window` was ignored.
+// silently — which is what happens if `window` is ignored.
 func TestParseFromTo_WindowAndFrom_Conflict(t *testing.T) {
 	url := "/v1/twap?window=24h&from=2026-01-01T00:00:00Z"
 	req := httptest.NewRequest(http.MethodGet, url, nil)

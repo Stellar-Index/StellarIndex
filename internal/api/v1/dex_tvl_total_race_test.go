@@ -40,7 +40,7 @@ func (r *togglingAquariusReader) LatestAquariusReserves(context.Context, int) ([
 	}}, nil
 }
 
-// TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh is the RLT-235
+// TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh is the
 // regression: GET /v1/protocols joins the per-protocol tvl block and
 // the headline tvl_total from the DEX TVL cache. Both must come from
 // the SAME refresh cycle. Serving them via two independent

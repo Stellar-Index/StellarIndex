@@ -22,7 +22,7 @@ import (
 // A dashboard key must authenticate against the validator the deployment
 // runs. Under the default auth_backend=redis that is RedisAPIKeyValidator,
 // which reads nothing but apikey:<hash>, so these tests mint through
-// HandleCreate and Lookup the returned plaintext through it (GH-966).
+// HandleCreate and Lookup the returned plaintext through it.
 
 func newMirroredHandlers(t *testing.T, keys platform.APIKeyStore, rdb redis.Cmdable) *Handlers {
 	t.Helper()

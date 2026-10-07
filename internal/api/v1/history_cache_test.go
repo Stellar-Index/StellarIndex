@@ -14,8 +14,8 @@ import (
 // fill cached from the trade a refresh replaces it with: the fake
 // moves the latest trade forward a ledger on every call after the
 // first, which is what a "latest trade per source" read moving on
-// looks like. The stub used to return one fixed row, identical before
-// and after a refresh, so nothing but a stopwatch separated a caller
+// looks like. A stub returning one fixed row, identical before
+// and after a refresh, would leave nothing but a stopwatch to separate a caller
 // served the cached entry from one handed the refresh's result.
 const (
 	histStaleLedger = 100
@@ -211,8 +211,8 @@ func TestCachedHistoryReader_DetachedColdFillWarms(t *testing.T) {
 // that refresh returns is what replaces it.
 //
 // What a stale read is served is a value, so it is asserted as one.
-// The fake used to return one fixed row, so the trade before the
-// refresh and the trade after it were the same trade, and no assertion
+// A fake returning one fixed row would make the trade before the
+// refresh and the trade after it the same trade, and no assertion
 // here could tell a read served the entry from a read handed the
 // refresh's result — the 120 ms ceiling on each reader was the whole
 // evidence, and what it measured was how quickly the runner

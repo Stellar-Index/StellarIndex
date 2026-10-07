@@ -97,9 +97,9 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 		}
 	})
 
-	// This is the live SDK bug ADR-0042's AssetLookup union fixes,
-	// pinned as a regression test. Pre-fix, Client.Asset() decoded
-	// unconditionally into Envelope[AssetDetail]: a catalogue-slug
+	// This is the SDK bug ADR-0042's AssetLookup union prevents,
+	// pinned as a regression test. Client.Asset() decoding
+	// unconditionally into Envelope[AssetDetail] means a catalogue-slug
 	// response would "succeed" with AssetDetail's required fields
 	// (AssetID, Type, Code, Decimals, Sep1Status) silently left at
 	// their zero value — no error, no signal. The first sub-test

@@ -5,12 +5,12 @@ package supply
 
 import "testing"
 
-// TestCanonicalizeWatchedClassic pins the 2026-07-02 production bug:
-// the config documents CODE-ISSUER (dash) but the observers match on
-// CODE:ISSUER (colon). The raw config strings went straight into the
-// watched sets, so the trustline/claimable/LP observers matched
-// NOTHING and every classic asset's served supply degraded to its
-// SAC-held slice (USDC 40M vs ~266M).
+// TestCanonicalizeWatchedClassic pins that the config's
+// CODE-ISSUER (dash) form is canonicalised to the CODE:ISSUER (colon)
+// form the observers match on. Raw config strings in the watched sets
+// would match NOTHING in the trustline/claimable/LP observers and every
+// classic asset's served supply would degrade to its SAC-held slice
+// (USDC 40M vs ~266M).
 func TestCanonicalizeWatchedClassic(t *testing.T) {
 	const usdcDash = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcColon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
