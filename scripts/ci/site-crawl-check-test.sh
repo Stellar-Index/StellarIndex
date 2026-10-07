@@ -6,15 +6,15 @@
 # only place these defects are provable is a fake `curl` on PATH that
 # answers from a fixture manifest instead of the network.
 #
-# F136: an unfetchable/unparseable issuer listing left KEYS empty, the
+# An unfetchable/unparseable issuer listing left KEYS empty, the
 # closure loop ran zero times, and the script printed ALL CHECKS PASSED
 # instead of failing.
-# T328/T300: the sitemap/hub sample can never reach a CF Pages
+# The sitemap/hub sample can never reach a CF Pages
 # shell-fallback Function's long-tail branch (sitemap.ts excludes those
 # URLs by design) or the og image Function, so a broken one went unnoticed.
-# Q225: nothing compared the deployed BUILD_SHA against main or measured
+# Nothing compared the deployed BUILD_SHA against main or measured
 # its wall-clock age.
-# T331: listing->detail closure probed only the API issuer endpoint —
+# Listing->detail closure probed only the API issuer endpoint —
 # never the site pages the listings link to, and never the asset listing.
 #
 # Run: bash scripts/ci/site-crawl-check-test.sh
@@ -217,67 +217,67 @@ expect_pass "healthy site: ALL CHECKS PASSED"
 SITEMAP_BODY="<urlset><url><loc>$SITE/bare</loc></url></urlset>" run
 expect_pass "pipefail: a family with no matching sub-URL falls back, not aborts"
 
-# --- F136: an empty/unparseable issuer listing must FAIL, not silently
+# --- An empty/unparseable issuer listing must FAIL, not silently
 # skip the closure loop ---
 ISSUERS_BODY="not json" run
 expect_fail "F136: unparseable issuer listing fails the check" \
   "issuer listing unfetchable or unparseable"
 unset ISSUERS_BODY
 
-# --- T331: the issuer page the /issuers listing links to must resolve on
+# --- The issuer page the /issuers listing links to must resolve on
 # the SITE, not only its API detail endpoint ---
 PROBE_OVERRIDE_MATCH="$SITE/issuers/GISSUERONE" PROBE_OVERRIDE_STATUS=404 run
 expect_fail "T331: a dead site issuer page for a listed issuer is caught" \
   "listed issuer GISSUERONE[A-Z]* → site page HTTP 404"
 unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
 
-# --- T331: a listed asset whose detail endpoint is dead is caught. The
+# --- A listed asset whose detail endpoint is dead is caught. The
 # probe key is the row's slug (what the explorer links), not asset_id. ---
 PROBE_OVERRIDE_MATCH="$API/v1/assets/asset3" PROBE_OVERRIDE_STATUS=404 run
 expect_fail "T331: a dead API asset detail for a listed asset is caught" \
   "listed asset asset3 → detail HTTP 404"
 unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
 
-# --- T331: a listed asset whose site page is dead is caught ---
+# --- A listed asset whose site page is dead is caught ---
 PROBE_OVERRIDE_MATCH="$SITE/assets/asset7" PROBE_OVERRIDE_STATUS=404 run
 expect_fail "T331: a dead site asset page for a listed asset is caught" \
   "listed asset asset7 → site page HTTP 404"
 unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
 
-# --- T331: a row with no slug is linked by asset_id, so that is the key ---
+# --- A row with no slug is linked by asset_id, so that is the key ---
 ASSETS_BODY='{"data":[{"asset_id":"CODE-GNOSLUGISSUER","slug":null}]}' \
   PROBE_OVERRIDE_MATCH="$API/v1/assets/CODE-GNOSLUGISSUER" PROBE_OVERRIDE_STATUS=404 run
 expect_fail "T331: a slug-less row is probed by its asset_id" \
   "listed asset CODE-GNOSLUGISSUER → detail HTTP 404"
 unset ASSETS_BODY PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
 
-# --- T331: an unparseable asset listing fails the closure check rather
+# --- An unparseable asset listing fails the closure check rather
 # than silently iterating zero rows ---
 ASSETS_BODY="not json" run
 expect_fail "T331: unparseable asset listing fails the closure check" \
   "asset listing unfetchable or unparseable"
 unset ASSETS_BODY
 
-# --- T328/T300: a broken long-tail shell (CF Pages Function fallback)
+# --- A broken long-tail shell (CF Pages Function fallback)
 # must be caught — the sitemap/hub sample structurally cannot reach it ---
 PROBE_OVERRIDE_MATCH="/accounts/G" PROBE_OVERRIDE_STATUS=404 run
 expect_fail "T328: a 404 long-tail shell fallback is caught" \
   "CF Pages Function fallback broken"
 unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
 
-# --- T300: the og image Function returning non-image content is caught ---
+# --- The og image Function returning non-image content is caught ---
 OG_CONTENT_TYPE="text/html" run
 expect_fail "T300: a non-image og response is caught" \
   "is not an image"
 unset OG_CONTENT_TYPE
 
-# --- Q225: a deploy far behind main is caught ---
+# --- A deploy far behind main is caught ---
 COMPARE_BODY='{"status":"ahead","ahead_by":9001}' run
 expect_fail "Q225: a deploy far behind main is caught" \
   "commit(s) behind main"
 unset COMPARE_BODY
 
-# --- Q225: a stale (wall-clock-old) deploy is caught even when the
+# --- A stale (wall-clock-old) deploy is caught even when the
 # commit itself still resolves cleanly against main ---
 HOME_BADGE_TIME="2020-01-01T00:00:00Z" run
 expect_fail "Q225: a wall-clock-stale deploy is caught" \

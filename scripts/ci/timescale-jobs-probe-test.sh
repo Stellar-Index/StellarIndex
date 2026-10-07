@@ -28,7 +28,7 @@
 #   5. the output is valid Prometheus text (a malformed textfile makes
 #      node_exporter drop the WHOLE file, i.e. all families at once),
 #      it is world-readable, and no temp file survives;
-#   6. the PG lock-convoy gauges (2026-09-10) carry their values
+#   6. the PG lock-convoy gauges carry their values
 #      intact, EMIT an explicit zero on a quiet database, and emit
 #      nothing at all when their query failed. They live in this probe
 #      rather than in postgres_exporter because the exporter was
@@ -152,7 +152,7 @@ done
 #     5|1164|7
 #
 # and the probe's `IFS='|' read -r convoyed worst blocked` takes `SET`
-# as its first field. That is r1 2026-09-10, and this file passed 34/34
+# as its first field. That happened on r1, and this file passed 34/34
 # with it live: a test that supplies its own well-formed input cannot
 # see a malformed-input bug. So the narration is now DERIVED from the
 # SQL — every statement before the last one puts a line on stdout ahead
@@ -174,7 +174,7 @@ while [[ "$rest" == *';'* ]]; do
 done
 
 case "$kind" in
-  # The 2026-09-10 shape: five backends convoyed behind a decompress
+  # The observed shape: five backends convoyed behind a decompress
   # that is ITSELF blocked, worst wait 1,164 s, seven blocked in all.
   lock_convoy) printf "${LOCK_CONVOY_ROW:-5|1164|7}\n" ;;
   cagg)        printf "${CAGG_ROWS:-prices_1m|1788598634|60
@@ -278,7 +278,7 @@ eq "-rw-r--r--" "$mode" "textfile is 0644"
 leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l | tr -d ' ')
 eq 0 "$leftovers" "no temp file survives"
 
-# ─── 1b. the lock-convoy gauges (2026-09-10) ────────────────────────
+# ─── 1b. the lock-convoy gauges ───────────────────────────────────────────────────────────
 #
 # The alerting layer went cascade-blind during the incident because
 # postgres_exporter was itself queued in the convoy. These gauges are
@@ -372,11 +372,11 @@ $(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1 | sed
   fi
 }
 
-# ─── 6. the reply is an EXTERNAL input (2026-09-10) ──────────────────
+# ─── 6. the reply is an EXTERNAL input ───────────────────────────────────────────────
 #
 # psql narrates: a command tag ahead of the rows, a NULL rendered as an
 # empty field, a short row leaving later fields unset. `${x:-0}` cannot
-# tell a number from a word, so on 2026-09-10 the word `SET` was written
+# tell a number from a word, so once the word `SET` was written
 # as a metric value and node_exporter rejected the WHOLE file — the three
 # convoy gauges and, as collateral, 127 pre-existing
 # stellarindex_timescale_* series that merely share timescale_jobs.prom.
@@ -389,7 +389,7 @@ $(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1 | sed
 
 # 6a. The stub's fidelity is itself under test. If it stops narrating,
 #     every assertion here silently becomes an assertion about a psql
-#     that cannot exist — which is exactly how 2026-09-10 shipped green.
+#     that cannot exist — which is exactly how it once shipped green.
 tag_reply="$(runuser -u postgres -- psql -d stellarindex -At -F'|' \
   -c "SET statement_timeout = '10s'; SELECT count(*) FROM pg_stat_activity a WHERE pg_blocking_pids(a.pid) <> '{}'")"
 # Sliced with parameter expansion, not `| head -1`: head exits after the

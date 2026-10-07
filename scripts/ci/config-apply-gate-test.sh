@@ -3,10 +3,10 @@
 # config-apply gate.
 #
 # config-apply-gate.sh is what stops a binary-only deploy from silently
-# shipping a feature whose config half never landed (2026-08-25
+# shipping a feature whose config half never landed (e.g.
 # declared-peg + rules.d). Its SURFACES list IS the gate: a config path
 # it does not name is a path it will never flag. That list is pinned
-# here rather than assumed, because on 2026-08-28 a node_exporter probe
+# here rather than assumed, because a node_exporter probe once
 # + its systemd units shipped as inline `content:` blocks in
 # tasks/10-observability.yml — under tasks/, which the list did not
 # cover — and only a hand check noticed the gate would have passed it.
@@ -14,10 +14,10 @@
 #   - a release that changed no surface passes;
 #   - a diff under roles/archival-node/templates/ fails un-acknowledged
 #     and passes with config_acknowledged=true;
-#   - a diff under roles/archival-node/tasks/ (the 2026-08-28 hole)
+#   - a diff under roles/archival-node/tasks/ (the inline-config hole)
 #     fails un-acknowledged;
 #   - a diff under roles/archival-node/files/ fails un-acknowledged;
-#   - (audit deploy-ansible-gate-4, 2026-08-28) a diff under
+#   - a diff under
 #     roles/archival-node/defaults/, handlers/, inventory/, a sibling
 #     role, configs/healthchecks/, or one of the repo scripts the role
 #     copies onto the host fails un-acknowledged — each of these renders
@@ -30,7 +30,7 @@
 #     see, FAILS rather than passing as "no changes" (fail-closed);
 #   - a first release (no prior tag) skips rather than failing.
 #
-# Since 2026-09-07 it also covers the two OTHER refusals the deploy path
+# It also covers the two OTHER refusals the deploy path
 # gained, because they share this file's registration in ci.yml and
 # verify.sh: the gate's three-way classification (comment-only /
 # already-applied / substantive) and deploy.yml's per-region binary
@@ -210,7 +210,7 @@ expect "templates/ change fails un-acknowledged" 1 "changed 1 config surface(s)"
 runGate v0.2.0 true
 expect "templates/ change passes with config_acknowledged=true" 0 "config-apply acknowledged"
 
-# --- 3. THE 2026-08-28 HOLE: tasks/ carries inline config ----------
+# --- 3. THE INLINE-CONFIG HOLE: tasks/ carries inline config ---------
 mkrepo
 release configs/ansible/roles/archival-node/tasks/10-observability.yml
 runGate v0.2.0
@@ -289,7 +289,7 @@ expect "unresolvable host baseline fails closed" 1 "does not resolve to a commit
 # in the deploy job, and VERIFIES against /api/v1/rules rather than just
 # copying). The risk of that exemption is that it is written too broadly
 # and silently clears surfaces nobody applied — which would restore the
-# exact 2026-09-01 failure the gate exists to catch. So the cases that
+# exact failure the gate exists to catch. So the cases that
 # matter are the negative ones: the exemption must not leak.
 mkrepo
 release configs/prometheus/rules.r1/storage.yml
@@ -360,8 +360,8 @@ expect "a loose prefix does not exempt a sibling rule tree" 1 "changed 1 config 
 
 # ═══ Three-way classification: comment-only / applied / substantive ═══
 #
-# Until 2026-09-07 the gate knew only "changed" and "unchanged", so every
-# diff was an operator decision. Two of that day's four failed deploys were
+# The gate used to know only "changed" and "unchanged", so every
+# diff was an operator decision, and failed deploys were
 # spent discovering that a deploy/clickhouse/*.sql diff was comment-only.
 # The rule generalised from that — "comment-only, so acknowledge" — is
 # FALSE: v0.61.1..v0.62.0 added CREATE TABLE stellar.account_creators_ops
@@ -389,7 +389,7 @@ YML
 runGate v0.2.0
 expect "a comment-only ansible-tasks diff passes (the '#' marker)" 0 "COMMENT-ONLY"
 
-# --- 13. THE 2026-09-07 TRAP: DDL wearing a comment-only costume -------
+# --- 13. THE TRAP: DDL wearing a comment-only costume -------
 #
 # The shape of the real v0.61.1..v0.62.0 diff: several paragraphs of new
 # comment and, at the end of them, a CREATE TABLE. Anyone applying
@@ -682,8 +682,8 @@ else
   # closed on every deploy and skipped the post-deploy smoke step.
   #
   # Asserted as a PROPERTY, not one spelling: the read must run `awk 1`
-  # and must not `cat` the directory. #427 replaced the single-line
-  # `awk 1 /var/lib/.../stellarindex-*` with a loop that skips the
+  # and must not `cat` the directory. The single-line
+  # `awk 1 /var/lib/.../stellarindex-*` was replaced with a loop that skips the
   # migrate sidecar and calls `awk 1 "$f"` per file — same guarantee,
   # different text, and the old literal grep failed it.
   if grep -q 'deployed-versions' "$WF" \
@@ -706,8 +706,8 @@ else
   # The minimum runs over the REGION'S MANIFEST SET, not every sidecar on
   # disk. A binary the manifest excludes at a region (testnet's
   # aggregator: unit disabled, sidecar frozen at v0.63.0) is deployed by
-  # nothing, so its sidecar can only drag the baseline back — on
-  # 2026-09-30 it made the gate diff 32 releases and refute a cut-over
+  # nothing, so its sidecar can only drag the baseline back — once
+  # it made the gate diff 32 releases and refute a cut-over
   # DDL the host had finished. The filter must live in the baseline step
   # and read the manifest set the binset step publishes.
   bl_end=$(awk -v s="${bl_line:-0}" 'NR > s && /^      - name:/ { print NR; exit }' "$WF")
@@ -751,8 +751,8 @@ fi
 # ═══ deploy.yml's per-region binary manifest ═════════════════════════
 #
 # The workflow carried ONE default binary list for three regions that run
-# different unit sets, and nothing declared the difference to it. Both of
-# 2026-09-07's binary-set failures follow:
+# different unit sets, and nothing declared the difference to it. Both
+# observed binary-set failures follow:
 #
 #   - the pubnet six-binary default dispatched at futurenet, which has no
 #     stellarindex-aggregator unit. deploy-one-binary.yml restarts
@@ -864,7 +864,7 @@ fi
 
 # --- 22. testnet's aggregator: PRESENT but disabled --------------------
 #
-# Measured 2026-09-07: testnet's stellarindex-aggregator is
+# Measured: testnet's stellarindex-aggregator is
 # UnitFileState=disabled with ActiveState=active — off at boot, running
 # now, and deployed there by this workflow at v0.62.0. futurenet's is
 # LoadState=not-found. Deployability is unit PRESENCE; an enablement test
@@ -1252,7 +1252,7 @@ stellar.ledgers"
     fail=$((fail + 1))
   fi
 
-  # THE ACKNOWLEDGEMENT HOLE (found live, 2026-09-18). Certifying nothing
+  # THE ACKNOWLEDGEMENT HOLE (found live). Certifying nothing
   # is only half the answer. On the v0.91.0 deploy this step asked r1,
   # was told stellar.asset_month_usd_prices was absent, printed exactly
   # that as a ::warning:: — and the gate passed the release anyway,

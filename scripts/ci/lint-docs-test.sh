@@ -91,7 +91,7 @@ for f in "${EDITED[@]}"; do mkdir -p "$BACKUP/$(dirname "$f")"; cp -p "$f" "$BAC
 # §8: an ADR shipping with no row in docs/adr/README.md's Index table.
 printf -- '---\nadr: 0099\ntitle: Fixture ADR for lint-docs self-test\nstatus: Accepted\ndate: 2026-09-21\nsupersedes: []\nsuperseded_by: null\n---\n\n# ADR-0099: fixture (never added to docs/adr/README.md)\n' > "$ADR_NOROW"
 
-# T557: docs/adr is out of §6's freshness find-root — an ADR is an immutable
+# docs/adr is out of §6's freshness find-root — an ADR is an immutable
 # record gated only by §8, so a stale last_verified on one must not be aged.
 # It gets a valid index row so §8 passes and only §6 is under test.
 printf -- '---\nadr: 0098\ntitle: Fixture ADR for lint-docs self-test\nstatus: Accepted\nlast_verified: 2020-01-01\ndate: 2026-09-21\nsupersedes: []\nsuperseded_by: null\n---\n\n# ADR-0098: fixture (deliberately stale last_verified)\n' > "$ADR_STALE"
@@ -107,12 +107,12 @@ printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n(PR #1231)\nsupersedes depe
 printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\nDeferred #1347 — go-stellar-sdk v0.5->v0.6\n#1353\n#1369\n' >> docs/architecture/coverage-matrix.md
 printf '# fixture design doc\n\nCites the dangling reference (PR #1042).\n' > "$DESIGN"
 
-# §15 (K089/F168): an aged incident's action item gates CI only as a `- [ ]`
+# §15: an aged incident's action item gates CI only as a `- [ ]`
 # checkbox; a plain prose bullet escapes the 30-day forcing function.
 incident "$INC_PROSE" '-'
 incident "$INC_BOX" '- [ ]'
 
-# RLT-171: an unquoted comma in a flow-mapping `description:` splits the
+# An unquoted comma in a flow-mapping `description:` splits the
 # mapping into a bogus null-valued key; and internal_routes_re must not
 # exempt a route the spec documents, so undocumenting it must be caught.
 sed -e 's/asset:           { type: string, description: Reserve underlying token (C-strkey). }/asset: { type: string, description: Reserve underlying token, C-strkey. }/' \

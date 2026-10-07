@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # integration-shard-test.sh — fixture tests for scripts/ci/integration-shard.sh
-# (the 4-way split of ci.yml's `integration tests (Docker)` job, 2026-08-29).
+# (the 4-way split of ci.yml's `integration tests (Docker)` job).
 #
 # The property that matters: the N shards PARTITION the test listing —
 # every test lands in exactly one shard, no shard is empty, and the split is
@@ -10,11 +10,11 @@
 # fail loudly too.
 #
 # The stub listing carries `TestÜber`: Go identifiers admit Unicode letters,
-# and the pre-#333 ASCII-only filter dropped such a test from the listing
+# and the old ASCII-only filter dropped such a test from the listing
 # entirely — it then appeared in no shard's -run regex and ran nowhere. The
 # union assertion below is what catches that.
 #
-# Section 6 pins the OTHER half of #333 F1: the shard-0-only package list is
+# Section 6 pins the OTHER half of that fix: the shard-0-only package list is
 # DERIVED from the Makefile's INT_TEST_PKGS (`make print-int-test-pkgs`)
 # rather than hand-copied, so adding a package to the Makefile cannot leave
 # it executed by no shard. Fixture makefiles prove it tracks additions and
@@ -147,7 +147,7 @@ if [[ "$one" == "$expected_sorted" ]]; then ok "1 shard == the full sorted listi
 # The shard-0-only package list used to be a hand-copied literal guarded by
 # a "keep in lockstep" comment; a package added to INT_TEST_PKGS then ran
 # under `make test-integration` and compiled under `make
-# test-integration-build`, but no shard executed it (#333 F1). It is now
+# test-integration-build`, but no shard executed it. It is now
 # read from `make print-int-test-pkgs` at run time — these fixtures pin
 # that it TRACKS the Makefile rather than merely matching it today.
 mkmakefile() { # mkmakefile FILE PKGS...
