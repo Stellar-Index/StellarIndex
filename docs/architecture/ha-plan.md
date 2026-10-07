@@ -540,7 +540,7 @@ Current state on r1:
 
 | Asset | Mechanism | Off-site | RPO | Restore |
 |---|---|---|---|---|
-| Postgres | pgBackRest `repo1` at `/var/lib/pgbackrest` (same ZFS pool as the DB): full Sunday, diff Mon–Sat 02:00 UTC, continuous async WAL archiving | **Live:** `repo2`, encrypted, on AWS S3 since 2026-08-29, moving to B2. Rendered only when `pgbackrest_repo2_s3_bucket` is set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`); staleness alert `stellarindex_backup_offsite_stale` | 5 min (WAL) | ~1–3 h |
+| Postgres | pgBackRest `repo1` at `/var/lib/pgbackrest` (same ZFS pool as the DB): full Sunday, diff Mon–Sat 02:00 UTC, continuous async WAL archiving | **Live:** `repo2`, encrypted, on AWS S3 since 2026-08-29, moving to B2. Rendered only when `pgbackrest_repo2_s3_bucket` is set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:130`); staleness alert `stellarindex_backup_offsite_stale` | 5 min (WAL) | ~1–3 h |
 | ClickHouse lake | `scripts/ops/ch-lake-backup.sh`: native `BACKUP DATABASE` to an `s3_plain` disk, 28-day full + daily incrementals | **Not running:** installed, but backs nothing up until `ch_lake_backup_s3_endpoint` and its vault keys are set; `stellarindex_ch_lake_backup_stale` tickets each lake host until then | daily (target) | ~4–36 h (10 Gbps / 1 Gbps); re-derivation ~1–2 weeks is the last resort |
 | Raw galexie archive | Not backed up by design; re-pulled from `aws-public-blockchain` (`galexie_archive_mirror_enabled: false`) | — | — | days to weeks |
 | Config, vault, systemd | No job exists | — | — | — |
@@ -553,7 +553,7 @@ Provider, cost and sequencing:
 on the first Saturday at 04:00 UTC
 (`configs/ansible/roles/archival-node/templates/systemd/restore-drill.timer.j2:27`);
 the enable task and its rationale are at
-`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:707-732`.
+`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:691-703`.
 The drill's precondition check refuses (exit 2, not counted) when free
 space is short. It emits only `last_success_unix` and `failures`, not
 throughput, so a lake-scale restore time is unmeasured. Evidence goes to
