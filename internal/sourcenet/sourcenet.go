@@ -1,16 +1,15 @@
 // Package sourcenet is the single answer to "does this source exist on
-// this Stellar network?" (#483).
+// this Stellar network?"
 //
 // Every protocol source in the registry is anchored to CONTRACT IDENTITY
 // (ADR-0035): the soroswap factory, Blend's child gate, the curated
 // phoenix / aquarius / defindex / comet sets, the reflector / redstone /
 // band oracle contracts. Those identities are PUBNET addresses. On testnet
-// or futurenet the same decoders correctly match nothing — but the
-// completeness catalogue, the coverage endpoint and the gap-detector still
-// listed all of them with pubnet genesis floors (soroswap 50,746,266 on a
-// network whose tip is 4.4M), so /v1/coverage on both test nets read
-// "0 of 14 complete" BY CONSTRUCTION and the completeness alerts there were
-// noise. The lake itself was complete.
+// or futurenet the same decoders correctly match nothing — but a consumer
+// that lists all of them anyway carries pubnet genesis floors (soroswap
+// 50,746,266 on a network whose tip was 4.4M): /v1/coverage on both test
+// nets read "0 of 14 complete" BY CONSTRUCTION and the completeness
+// alerts there were noise while the lake itself was complete.
 //
 // This package is deliberately a static table, not configuration: a
 // source becomes applicable on a network when a contract set for that

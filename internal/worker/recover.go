@@ -58,8 +58,8 @@ func Report(logger *slog.Logger, name string, r any) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	// Count before logging so the metric exists even if logging fails
-	// (#368 M4): this is the ONLY signal that a worker is now dead.
+	// Count before logging so the metric exists even if logging fails:
+	// this is the ONLY signal that a worker is now dead.
 	obs.WorkerPanicsTotal.WithLabelValues(name).Inc()
 	logger.Error("background worker panicked — worker STOPPED, process still running",
 		"worker", name,

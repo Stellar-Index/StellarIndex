@@ -2,7 +2,7 @@
 // (migration 0027) that the dashboard magic-link / email-code sign-in
 // flow writes to.
 //
-// # Why this exists (PRV-2)
+// # Why this exists
 //
 // `magic_link_tokens` is durable plaintext PII — it stores the
 // requester's email (citext) and requested_ip (inet). Its key is
@@ -14,11 +14,12 @@
 //
 // A row is removed only by being consumed (a successful click of the
 // emailed link), which never happens for an address the caller does
-// not own — nobody clicks the link. The only bound was the anonymous
-// per-IP rate limit, which on a disk-fixed host makes this a slow,
-// cheap, remote table-fill whose first alarm would otherwise be the
-// volume-level disk page. The sibling `login_code_lockouts` table
-// (C3-032) already has exactly this reaper; this table lacked one.
+// not own — nobody clicks the link. Without this reaper the only bound
+// is the anonymous per-IP rate limit, which on a disk-fixed host makes
+// this a slow, cheap, remote table-fill whose first alarm would
+// otherwise be the volume-level disk page. The sibling
+// `login_code_lockouts` table has the same reaper in
+// internal/logincodereaper.
 //
 // # What is swept
 //
@@ -176,7 +177,7 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		r.logger.Info("magic-link-token reaper: deleted expired rows", "deleted", deleted)
 	}
 	r.refreshGauge(ctx)
-	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
+	// Liveness: the sweep COMPLETED — including the failure arm
 	// above; only the cancelled early return skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperMagicLink).Set(float64(r.now().Unix()))
 }

@@ -5,12 +5,10 @@
 // official `testutil.CollectAndCount` cannot act on a per-label
 // child directly.
 //
-// Centralised here on wave 100 (2026-05-13) after four
-// identical 20-line copies of the same helper accumulated across
-// the wave-92/93/94/95 regression-test series. Cross-package
-// test helpers carry an import-cycle risk for some shapes; this
-// package deliberately depends only on the upstream Prometheus
-// client libraries, so it's import-safe from every test package.
+// Cross-package test helpers carry an import-cycle risk for some
+// shapes; this package deliberately depends only on the upstream
+// Prometheus client libraries, so it's import-safe from every test
+// package.
 package obstest
 
 import (
