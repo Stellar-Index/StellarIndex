@@ -22,19 +22,18 @@
 
 # ───── Region ────────────────────────────────────────────────────────
 # [Per-region: r1=FSN1 (Hetzner Falkenstein), r2=US-East-1, r3=Singapore]
-# No default on purpose (audit-2026-07-23 CFG-02): region_id feeds the
-# rendered stellarindex.toml [region] id, the galexie S3 region, and
-# per-region ADR-0016 data-path decisions. A previous "r1" default
-# meant a new-region inventory that forgot to override it would
-# silently mislabel the host as r1 — the 01-preflight.yml assert below
-# now requires every inventory to set this explicitly instead.
+# No default on purpose: region_id feeds the rendered stellarindex.toml
+# [region] id, the galexie S3 region, and per-region ADR-0016 data-path
+# decisions. A default would let a new-region inventory that forgot to
+# override it silently mislabel the host; the 01-preflight.yml assert
+# requires every inventory to set this explicitly instead.
 region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
 # Tier label the API reports in /v1/status's `region.deployment` block.
 # Pubnet is "production"; the lean test-net inventories override to
-# "testnet" / "futurenet" so api.testnet.stellarindex.io stops telling
-# the explorer's status page that a test net is PRODUCTION (#328).
+# "testnet" / "futurenet" so a test net's status page never claims to be
+# PRODUCTION.
 region_deployment:   "production"
 
 # Minimum RAM the preflight requires (MB). Default = the pubnet archival-node
@@ -51,19 +50,17 @@ run_postgres:        true
 run_stellar_core:    false
 run_galexie:         true
 # Restarting galexie is never casual: its captive core cold-catches-up
-# for ~9 minutes on mainnet (2026-08-27 + 2026-08-29 r1 incidents). When
-# the role finds an EFFECTIVE change in a galexie input it has to restart
-# for (galexie.toml, captive-core cfg, /etc/default/galexie, the unit) or
-# a galexie_version bump, and galexie is active, it FAILS before writing
-# anything unless this is true. Pass `-e galexie_restart_ack=true` in a
-# maintenance window; never set it in inventory. `--check --diff` shows
-# the pending restart (RUNNING HANDLER [Restart galexie]) without it.
+# for ~9 minutes on mainnet. When the role finds an EFFECTIVE change in a
+# galexie input it has to restart for (galexie.toml, captive-core cfg,
+# /etc/default/galexie, the unit) or a galexie_version bump, and galexie
+# is active, it FAILS before writing anything unless this is true. Pass
+# `-e galexie_restart_ack=true` in a maintenance window; never set it in
+# inventory. `--check --diff` shows the pending restart (RUNNING HANDLER
+# [Restart galexie]) without it.
 galexie_restart_ack: false
 # stellar-rpc is NOT part of this role. Our indexer reads galexie's
-# MinIO output directly via ingest.ApplyLedgerMetadata, so
-# stellar-rpc's JSON-RPC surface isn't on the Stellar Index data
-# path. It was removed from r1 on 2026-04-23 and the role's
-# stellar-rpc task/templates were deleted on 2026-05-22 — see
+# MinIO output directly via ingest.ApplyLedgerMetadata, so stellar-rpc's
+# JSON-RPC surface isn't on the Stellar Index data path — see
 # docs/operations/r1-deployment-state.md for the rationale.
 run_minio:           true
 run_observability:   true
@@ -73,11 +70,11 @@ run_observability:   true
 # the whole file is skipped when run_observability is false.
 run_promtail:        true
 
-# Data services hand-installed out-of-band on r1 (2026-06 lake pivot),
-# codified for fresh hosts (r2/r3/test net). run_clickhouse defaults FALSE
-# so a re-run NEVER touches r1's hand-tended lake — a fresh host sets it true
-# (together with clickhouse_apply_schema to lay down the deploy/clickhouse
-# DDL). run_redis defaults true; `state: present` never upgrades r1's redis.
+# Data services hand-installed out-of-band on r1, codified for fresh
+# hosts (r2/r3/test net). run_clickhouse defaults FALSE so a re-run NEVER
+# touches r1's hand-tended lake — a fresh host sets it true (together
+# with clickhouse_apply_schema to lay down the deploy/clickhouse DDL).
+# run_redis defaults true; `state: present` never upgrades r1's redis.
 run_redis:               true
 run_clickhouse:          false
 
@@ -98,38 +95,26 @@ redis_password: ""
 # installed where the ClickHouse tasks run at all, i.e. behind
 # run_clickhouse. Set false to opt a host out deliberately.
 #
-# Q240 asked whether that gate leaves r1 — the one host whose lake is
-# live — without a self-healer. It does NOT, and the next reader should
-# not have to re-derive it. Measured on r1 2026-09-19:
-# `ch-live-catchup.timer` is enabled AND active, clickhouse-server is
-# active, and the last service run exited 0 at 10:34. r1's healer, like
-# the rest of r1's lake, was hand-installed out-of-band — which is the
-# posture run_clickhouse: false exists to preserve.
-#
-# What IS open, and is a different (better-evidenced) defect than the
-# one Q240 filed: no inventory in this repo installs the healer at all.
-# r1.example.yml sets no run_clickhouse, and testnet.yml / futurenet.yml
-# set run_clickhouse: true but ch_live_catchup_enabled: false — so the
-# ansible path installs it nowhere, and r1's out-of-band copy is the
-# pre-#371 one (/usr/local/bin/ch-live-catchup.sh, 3421 bytes, dated
-# 2026-06-12; the repo's is 6298 bytes and since #371 F10 REFUSES to run
-# without stellarindex_ch_live_era_from, which r1's
-# /etc/default/stellarindex-ops does not carry). Closing that needs the
-# inventories and/or 08-clickhouse.yml, and whether r1 should let the
-# ClickHouse install tasks run at all is a deploy-topology decision.
+# That gate does not leave r1 without a healer: r1's copy, like the rest
+# of its lake, is installed out-of-band — the posture run_clickhouse:
+# false exists to preserve. No inventory in this repo installs the
+# healer through ansible (r1.example.yml sets no run_clickhouse;
+# testnet.yml / futurenet.yml set ch_live_catchup_enabled: false), and
+# the repo's script REFUSES to run without stellarindex_ch_live_era_from.
+# Whether r1 should let the ClickHouse install tasks run at all is a
+# deploy-topology decision.
 ch_live_catchup_enabled: true
 # stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its
 # gap scan from: one past the ceiling of the certified bulk backfill.
 #
-# DELIBERATELY UNDEFINED HERE (#371 F10). It is a per-network,
-# per-deployment fact, and both ways of being wrong fail SILENTLY: too
-# high and the scan matches nothing (the lake's only self-healer becomes
-# a no-op and the projector stalls behind the first unhealed hole); too
-# low and a 10-minute timer becomes a full-history DISTINCT scan against
-# the ClickHouse that also serves the explorer. The script previously
-# carried r1's mainnet value as a literal and 08-clickhouse.yml copies
-# that script verbatim to every host, so testnet/futurenet inherited a
-# mainnet floor. A role default would recreate exactly that.
+# DELIBERATELY UNDEFINED HERE. It is a per-network, per-deployment fact,
+# and both ways of being wrong fail SILENTLY: too high and the scan
+# matches nothing (the lake's only self-healer becomes a no-op and the
+# projector stalls behind the first unhealed hole); too low and a
+# 10-minute timer becomes a full-history DISTINCT scan against the
+# ClickHouse that also serves the explorer. 08-clickhouse.yml copies the
+# script verbatim to every host, so a role default would hand every
+# test net a mainnet floor.
 #
 # State it in the host's inventory (see inventory/r1.example.yml);
 # 09-minio.yml templates it into /etc/default/stellarindex-ops. Unset ⇒
@@ -159,10 +144,10 @@ clickhouse_server_config_dir: "/etc/clickhouse-server"
 # "Why not raidz3"). It is NOT a description of any host we run — every
 # region pins its own topology in its inventory:
 # [Per-region:
-#   r1 = raidz1 across 4× NVMe (single-drive tolerance; live-verified
-#        2026-07-17, pinned in inventory/r1.example.yml — this default
-#        does NOT describe r1, and a raidz2 rebuild there would be too
-#        small for r1's own footprint)
+#   r1 = raidz1 across 4× NVMe (single-drive tolerance; pinned in
+#        inventory/r1.example.yml — this default does NOT describe r1,
+#        and a raidz2 rebuild there would be too small for r1's own
+#        footprint)
 #   r2 = NOT used — EBS gp3 directly, no ZFS layer
 #   r3 = mirror across 2× NVMe (Vultr SG SKU only ships 2 drives;
 #        single-drive tolerance, acceptable for an async DR replica)
@@ -190,9 +175,9 @@ zfs_arc_min_bytes: 8589934592
 # recordsize is the PARSABLE byte value (131072, not "128K"): the
 # community.general.zfs module reads current properties with `zfs get -p`
 # and string-compares, so a human-readable "128K" never equals the live
-# "131072" and the task reports a phantom change on every --check run
-# (BACKLOG #50 / 2026-07-06 drift reconcile). Every value here is grounded
-# in the live `zfs get -p -o property,value,source data/<ds>` output on r1.
+# "131072" and the task reports a phantom change on every --check run.
+# Every value here is grounded in the live
+# `zfs get -p -o property,value,source data/<ds>` output on r1.
 #
 # List ONLY the properties a dataset sets LOCALLY. A property left to
 # inherit the pool default (recordsize 131072 / compression zstd / atime
@@ -207,8 +192,8 @@ zfs_datasets:
     atime: "off"
     mountpoint: "/var/lib/stellarindex"
     # Must agree with 04-users.yml "Ownership — stellarindex data dir"
-    # (0750); the 0755 default here ping-ponged the mode every apply
-    # and kept the drift check permanently red (2026-07-27).
+    # (0750); any other mode here ping-pongs every apply and keeps the drift
+    # check permanently red.
     dir_mode: "0750"
     # Holds hashdb.bin (ADR-0016 drift detector) among other state.
     # Deliberately not in zfs_snapshot_datasets below and not in
@@ -223,12 +208,11 @@ zfs_datasets:
     primarycache: "metadata"
     mountpoint: "/var/lib/postgresql"
   # pg_wal (/var/lib/postgresql/wal/15-main/pg_wal, symlinked from the data
-  # directory), moved off the 49 GB root in v0.92.1; the 2026-05-17
-  # pool-full emergency had put it on /pgwal. A CHILD of postgres so the
-  # recursive rolling snapshot captures data and WAL in one instant. Every
-  # tuning property is local because the parent's 8K / throughput /
-  # metadata-only values are wrong for sequential WAL writes, and the
-  # refreservation keeps other datasets from starving WAL as the pool fills.
+  # directory), off the 49 GB root. A CHILD of postgres so the recursive
+  # rolling snapshot captures data and WAL in one instant. Every tuning
+  # property is local because the parent's 8K / throughput / metadata-only
+  # values are wrong for sequential WAL writes, and the refreservation
+  # keeps other datasets from starving WAL as the pool fills.
   - name: "postgres/wal"
     recordsize: "131072"
     compression: "lz4"
@@ -264,13 +248,12 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/srv/history-archive"
-  # Out-of-band datasets, hand-created during incidents and now fully
-  # codified (BACKLOG #50 — no un-codified ZFS dataset remains on r1):
-  #   clickhouse  — ADR-0034 lake (2026-06-05 pivot)
-  #   loki        — CH logs off the 49G root (2026-06-11, commit 5dd6fcda)
-  #   prometheus  — TSDB off the root (2026-06-30)
+  # Datasets first created by hand on r1, all codified here:
+  #   clickhouse  — ADR-0034 lake
+  #   loki        — CH logs off the 49G root
+  #   prometheus  — TSDB off the root
   #   pgbackrest  — pgBackRest repo1 backups (ADR-0043)
-  #   restore-drill — DRILL_ROOT for scripts/ops/restore-drill.sh (CS-110)
+  #   restore-drill — DRILL_ROOT for scripts/ops/restore-drill.sh
   - name: "clickhouse"
     recordsize: "131072"
     compression: "zstd"
@@ -282,9 +265,9 @@ zfs_datasets:
     atime: "off"
     mountpoint: "/var/lib/loki"
   - name: "prometheus"
-    # The Prometheus TSDB (~12-13G) lived on the 49G OS root and kept it
-    # chronically >90% full; relocated to ZFS 2026-06-30,
-    # where zstd compresses it ~12x. recordsize 128K suits its chunk writes.
+    # The Prometheus TSDB (~12-13G) on the 49G OS root keeps it chronically
+    # >90% full; on ZFS, zstd compresses it ~12x. recordsize 128K suits its
+    # chunk writes.
     recordsize: "131072"
     compression: "zstd"
     atime: "off"
@@ -297,24 +280,20 @@ zfs_datasets:
   - name: "pgbackrest"
     mountpoint: "/var/lib/pgbackrest"
     dir_mode: "0750"
-  # NOT under /var/tmp: PrivateTmp=true (which restore-drill.service sets,
-  # like every hardened unit here) gives the unit its OWN empty /tmp AND
-  # /var/tmp, so a drill root under there is invisible inside the service's
-  # mount namespace — systemd failed the unit at namespace setup with
-  # 226/NAMESPACE and the drill never once ran on its schedule (2026-08-19).
-  # A 616 GB Postgres restore is also not temp data. /var/lib stays writable
-  # under ProtectSystem=full and is not shadowed.
-  # /srv, not /var/tmp and not /var/lib/stellarindex (BDR-04, 2026-08-19):
-  #   - /var/tmp is shadowed by PrivateTmp=true, so the unit could not see
-  #     its own drill dataset and systemd failed it at namespace setup
-  #     (226/NAMESPACE) on every scheduled fire — the drill had never once
-  #     run on its timer.
+  # /srv, not /var/tmp and not /var/lib/stellarindex:
+  #   - PrivateTmp=true (which restore-drill.service sets, like every
+  #     hardened unit here) gives the unit its OWN empty /tmp AND /var/tmp,
+  #     so a drill root under there is invisible inside the service's mount
+  #     namespace and systemd fails the unit at namespace setup
+  #     (226/NAMESPACE) on every scheduled fire. A 616 GB Postgres restore
+  #     is not temp data either.
   #   - /var/lib/stellarindex is drwxr-x--- stellarindex:stellarindex, and
   #     pgbackrest runs as POSTGRES, which cannot traverse it ([041]
   #     Permission denied on the scratch pgdata dir).
-  # /srv is root:root 0755 (traversable by anyone) and already hosts
-  # history-archive. The mount dir itself is postgres-owned because
-  # pgbackrest creates the scratch pgdata dir inside it.
+  # /srv is root:root 0755 (traversable by anyone), stays writable under
+  # ProtectSystem=full, and already hosts history-archive. The mount dir
+  # itself is postgres-owned because pgbackrest creates the scratch pgdata
+  # dir inside it.
   - name: "restore-drill"
     mountpoint: "/srv/restore-drill"
     dir_owner: "postgres"
@@ -362,25 +341,15 @@ postgres_wal_compression: "zstd"
 postgres_max_connections: 200
 
 # Per-tx lock table sizing — see postgresql.conf.j2 for context.
-# History of this knob (it keeps needing to grow as the trades
-# hypertable accrues chunks — every full-scan query needs ~1 lock
-# per chunk):
-#   - Postgres default 64 → table 64×200=12,800. Blew during the
-#     2026-05-06 SEV-3 ("Postgres lock-table-full", SQLSTATE 53200).
-#   - Bumped 64→256 by hand (4×) → table 256×200=51,200. Lasted
-#     ~9 days: by 2026-05-15 trades had grown to ~2,738 chunks and
-#     concurrent diagnostic queries (coverage / pools / cagg / fx)
-#     + the all-time SDEX backfill thrashed the table again — a
-#     single observed query held 26,927 locks.
-#   - 2026-05-15: 256→4096 (16× the default, 8× the prior value) →
-#     table 4096×200 = 819,200 entries. Sized for permanent
-#     headroom rather than another incremental bump: handles ~30
-#     concurrent peak-size (~27k-lock) queries, or the chunk count
-#     growing to ~15,000 (decades at ~365/yr) while still leaving
-#     room for 50+ concurrent full scans. Memory cost ≈ 220 MB,
-#     negligible against the 48 GB shared_buffers / 188 GB host RAM.
-# Lock table size = max_locks_per_transaction × max_connections.
-# F-1251 (audit-2026-05-12); re-sized 2026-05-15.
+# Lock table size = max_locks_per_transaction × max_connections; every
+# full-scan query over the trades hypertable needs ~1 lock per chunk, so
+# the need grows with history. The Postgres default (64 → 12,800 entries)
+# overflows with SQLSTATE 53200, and a single diagnostic query has been
+# observed holding ~27k locks. 4096 → 819,200 entries is sized for
+# permanent headroom rather than another incremental bump: ~30
+# concurrent peak-size queries, or ~15,000 chunks (decades at ~365/yr)
+# with room for 50+ concurrent full scans. Memory cost ≈ 220 MB,
+# negligible against the 48 GB shared_buffers / 188 GB host RAM.
 postgres_max_locks_per_transaction: 4096
 
 postgres_db_core:        "stellar_core"
@@ -459,14 +428,14 @@ ch_lake_backup_s3_region: "auto"
 ch_lake_backup_state_dir: "/var/lib/stellarindex/ch-lake-backup"
 ch_lake_backup_full_interval_days: 28
 # Chains kept after a new full succeeds. 1 = only the newest, the same
-# lean off-site posture as pgbackrest_repo2_retention_full (#298); the
-# old chain is removed only once the new full is BACKUP_CREATED.
+# lean off-site posture as pgbackrest_repo2_retention_full; the old chain
+# is removed only once the new full is BACKUP_CREATED.
 ch_lake_backup_retain_chains: 1
 # Bytes/s ClickHouse may read for a backup — 100 MiB/s keeps a full of the
 # lake (~2 days) off the serving path's disks. 0 = unlimited.
 ch_lake_backup_max_bandwidth: 104857600
 
-# ───── Galexie archive off-site mirror (retired 2026-10-02) ───────────────
+# ───── Galexie archive off-site mirror (retired) ───────────────────────
 # The raw archive is NOT backed up off-site: it is a copy of SDF's public
 # dataset and is re-pulled from there (ADR-0043 §2).
 # Off-site copies are the ClickHouse lake and Postgres on B2. false removes
@@ -482,7 +451,7 @@ galexie_archive_mirror_dest_alias: "r2-archive"
 galexie_archive_mirror_dest_bucket: "stellarindex-galexie-archive"
 galexie_archive_mirror_source_alias: "local/galexie-archive"
 
-# ───── ClickHouse schema DRIFT check (C6-008 / C6-003) ────────────────
+# ───── ClickHouse schema DRIFT check ───────────────────────────────────
 # The other half of the snapshot: compares deploy/clickhouse/tier1_schema.sql
 # (repo intent) against the LIVE schema, on engine (incl. args) /
 # PARTITION BY / ORDER BY / column names. Enabled by default — it is one
@@ -500,25 +469,23 @@ ch_schema_drift_intent: "/usr/local/share/stellarindex/tier1_schema.sql"
 # host running", and REFUSES to render a verdict when the shipped intent
 # is stamped with an older release: the intent side arrives by the same
 # convergence the check polices, so a host the role has not reached
-# compares a stale repo against a stale server and reads CLEAN. Measured
-# on futurenet 2026-09-09. Same mechanism deploy.yml's config-apply
-# baseline reads — not a second one.
+# would compare a stale repo against a stale server and read CLEAN. Same
+# mechanism deploy.yml's config-apply baseline reads — not a second one.
 ch_schema_drift_deployed_versions_dir: "/var/lib/stellarindex/deployed-versions"
-# true (DEFAULT since 2026-09-09) = the check runs its OWN SHOW CREATE
-#   sweep. This is the only reading that answers the question the unit's
-#   Description asks, and the only one that fails when ClickHouse is down
-#   instead of reporting "0 divergent" off an ageing file.
+# true (DEFAULT) = the check runs its OWN SHOW CREATE sweep. This is the
+#   only reading that answers the question the unit's Description asks,
+#   and the only one that fails when ClickHouse is down instead of
+#   reporting "0 divergent" off an ageing file.
 # false = compare against the newest ch-schema-snapshot capture instead.
 #   Saves one loopback sweep a day and costs the control its meaning: the
-#   capture is up to a day old, blind to anything applied since, and on
-#   2026-09-09 it put 8 live r1 tables (one of them 20.9M rows) on the
-#   ABSENT list purely because that day's deploy shipped a newer intent
-#   than the morning's capture. The script REFUSES that comparison now
-#   (exit 2) rather than reporting it, so this mode is honest — but it
-#   still measures a day-old schema. Set it only where a fresh sweep is
+#   capture is up to a day old and blind to anything applied since — a
+#   deploy shipping a newer intent than the morning's capture puts live
+#   tables on the ABSENT list. The script REFUSES that comparison (exit 2)
+#   rather than reporting it, so this mode is honest — but it still
+#   measures a day-old schema. Set it only where a fresh sweep is
 #   genuinely unavailable, or to interrogate a retained capture by hand.
-# The unit's Description renders from THIS variable, so it can never
-# again claim "vs live" while comparing a snapshot.
+# The unit's Description renders from THIS variable, so it cannot claim
+# "vs live" while comparing a snapshot.
 ch_schema_drift_use_live: true
 
 # ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
@@ -568,33 +535,30 @@ clickhouse_serving_password: "{{ vault_clickhouse_serving_password | default('')
 # sequencing rationale.
 stellarindex_clickhouse_serving_enabled: false
 
-# ───── ClickHouse ops-batch isolation (2026-08-28 r1 incident) ────────
+# ───── ClickHouse ops-batch isolation ──────────────────────────────────
 # The LOW-priority counterpart of the api_serving profile above: a
 # settings profile + user that stellarindex-ops batch jobs (ch-rebuild,
 # ch-backfill, classic-movements-backfill, verify/gate reads, replays)
 # authenticate as, so CH's query scheduler yields their CPU to the
-# serving side. WHY: a runbook-prescribed `ch-rebuild -sep41` dry-run
-# over 2M ledgers drove r1's load to 12.9 and starved the AGGREGATOR's
-# supply refresher — stellarindex_aggregator_supply_refresh_error_dominant
-# fired for all 39 watched contracts within 3 minutes; killing the job
-# cleared it. run-heavy-job.sh's cgroup caps could not help because the
-# contention was INSIDE clickhouse-server, where every ops query ran as
-# the same unauthenticated `default` user as the aggregator's. See
+# serving side. WHY: a multi-million-ledger ops scan running as the same
+# `default` user as the aggregator starves its supply refresher
+# (stellarindex_aggregator_supply_refresh_error_dominant fires for every
+# watched contract within minutes). run-heavy-job.sh's cgroup caps cannot
+# help because the contention is INSIDE clickhouse-server. See
 # 20-clickhouse-serving-profile.yml for the per-knob rationale and
 # docs/operations/clickhouse-ops-batch-profile.md for the operator view.
 #
 # Defaults FALSE (unlike clickhouse_serving_profile_enabled) because
 # enabling asserts a vault password, and ansible-drift.yml runs the
 # full playbook --check against r1 weekly with the real vault: a
-# default of true would turn that workflow red from the merge that
-# adds the profile until every inventory (r1, testnet, futurenet) has
-# vault_clickhouse_ops_batch_password, and block any `--tags
-# clickhouse` apply meanwhile. Flip to true PER INVENTORY in the same
-# PR that adds that inventory's vault password. Until then the CH user
-# is not provisioned, /etc/default/stellarindex-ops carries no
-# STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh WARNS on
-# every launch that the job runs as CH `default` — the gap is loud,
-# not silent (14-stellarindex-services.yml).
+# default of true would turn that workflow red until every inventory
+# (r1, testnet, futurenet) has vault_clickhouse_ops_batch_password, and
+# block any `--tags clickhouse` apply meanwhile. Flip to true PER
+# INVENTORY in the same PR that adds that inventory's vault password.
+# Until then the CH user is not provisioned, /etc/default/stellarindex-ops
+# carries no STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh
+# WARNS on every launch that the job runs as CH `default` — the gap is
+# loud, not silent (14-stellarindex-services.yml).
 #
 # Two-step activation, same as api_serving: this provisions the CH-side
 # user; the ops binary only authenticates as it once
@@ -613,8 +577,8 @@ clickhouse_ops_batch_max_concurrent_queries: 8
 clickhouse_ops_batch_priority: 100
 # Linux nice value for the ops queries' own CH execution threads
 # (api_serving is -5; background merges run at 0). Positive so a batch
-# scan also yields to merges — falling behind on compaction was the
-# other way the 2026-08-28 job hurt the serving side.
+# scan also yields to merges — falling behind on compaction is the other
+# way a heavy job hurts the serving side.
 clickhouse_ops_batch_os_thread_priority: 5
 # clickhouse_ops_batch_password ← ansible-vault, vault_clickhouse_ops_batch_password
 # (same discipline as vault_clickhouse_serving_password: SHA-256-hashed
@@ -659,20 +623,18 @@ clickhouse_ops_admin_user: "ops_admin"
 # clickhouse_ops_admin_password ← ansible-vault, vault_clickhouse_ops_admin_password
 clickhouse_ops_admin_password: "{{ vault_clickhouse_ops_admin_password | default('') }}"
 
-# ───── ClickHouse destructive-DDL size guard (2026-08-29 r1 audit) ─────
+# ───── ClickHouse destructive-DDL size guard ───────────────────────────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
 # anything larger than max_table_size_to_drop / max_partition_size_to_drop
 # unless the operator first touches /var/lib/clickhouse/flags/force_drop_table
 # — the one line between a typo'd `DROP TABLE` and losing a 582 GiB
 # account_movements. ClickHouse's own default is 50 GB (53687091200 bytes);
-# r1 was measured at 1 TiB for BOTH, set by hand for D2's REPLACE PARTITION
-# (2026-07) and never codified or lowered, so every big lake table was
-# droppable with no second step. This drop-in pins the guard back to
-# ClickHouse's default on every host. Raising it is NOT the way to do a
-# planned big drop — the force flag is (one drop per touch, self-deleting);
-# see docs/operations/clickhouse-destructive-ddl.md for the procedure
-# (ZFS snapshot first, then the flag, then the statement). 0 = unlimited
-# and is refused by the task file.
+# this drop-in pins every host to it, so a raised hand-set value cannot
+# leave every big lake table droppable with no second step. Raising it is
+# NOT the way to do a planned big drop — the force flag is (one drop per
+# touch, self-deleting); see docs/operations/clickhouse-destructive-ddl.md
+# for the procedure (ZFS snapshot first, then the flag, then the
+# statement). 0 = unlimited and is refused by the task file.
 # Hot-reloaded by clickhouse-server (config.d reloader) — no restart.
 # Mirrored as CH_DROP_GUARD_MAX_BYTES in scripts/ops/config-assertions.sh
 # (hourly live check); its test fails if the two values diverge.
@@ -680,18 +642,17 @@ clickhouse_drop_guard_enabled: true
 clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
 clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
 
-# ───── ClickHouse Prometheus endpoint (2026-09-03 r1 gap) ─────────────
+# ───── ClickHouse Prometheus endpoint ──────────────────────────────────
 # ClickHouse serves its own /metrics; there is no exporter to install.
 # The stock config.xml ships the whole <prometheus> block inside an XML
-# comment, so a default install publishes NOTHING — measured on r1
-# 2026-09-03: nothing listening on 9363, zero `ClickHouse*` series in
-# Prometheus. The lake is the substrate for the API's explorer read
-# path and the projector, and its only signal was ingest-side drop
-# counters the project's own binaries emit. Enabled by default: the collectors
-# run whether or not anything scrapes them, so the endpoint costs one
-# loopback listener. 9363 is ClickHouse's own documented default and
-# collides with nothing here (native 9300, MinIO 9000, node_exporter
-# 9100, redis 9121, postgres 9187, pgbackrest 9854).
+# comment, so a default install publishes NOTHING — nothing on 9363,
+# zero `ClickHouse*` series. The lake is the substrate for the API's
+# explorer read path and the projector; without this its only signal is
+# the ingest-side drop counters our own binaries emit. Enabled by
+# default: the collectors run whether or not anything scrapes them, so
+# the endpoint costs one loopback listener. 9363 is ClickHouse's own
+# documented default and collides with nothing here (native 9300, MinIO
+# 9000, node_exporter 9100, redis 9121, postgres 9187, pgbackrest 9854).
 clickhouse_prometheus_enabled: true
 clickhouse_prometheus_port: 9363
 clickhouse_prometheus_endpoint: "/metrics"
@@ -733,36 +694,18 @@ stellarindex_enabled_sources:
   - "sdex"
   - "cctp"
   - "rozo"
-  # sushiswap_v3 — the decoder landed in 3f575923e and the source is
-  # reported by the completeness surface, but it was never added here, so
-  # r1 served ZERO sushiswap trades while its archive read "complete":
-  # substrate verified and hash-chained from genesis 61487379, projection
-  # empty. That combination is the one the completeness verdict exists to
-  # catch, and it was the sole incomplete source of 21.
-  #
-  # Safe to enable without any pool list: the registry self-populates from
-  # the factory's own `pool_created` events (ADR-0035 trust root,
-  # CD3KRKGD…GLYF), of which the lake holds 58 from ledger 61487379 — the
-  # same genesis the completeness surface reports. A pool whose token
-  # mapping is still unknown fails CLOSED (no row, counted) rather than
-  # inventing a NULL-asset trade.
+  # sushiswap_v3 — safe to enable without any pool list: the registry
+  # self-populates from the factory's own `pool_created` events (ADR-0035
+  # trust root, CD3KRKGD…GLYF) from ledger 61487379, the same genesis the
+  # completeness surface reports. A pool whose token mapping is still
+  # unknown fails CLOSED (no row, counted) rather than inventing a
+  # NULL-asset trade.
   - "sushiswap_v3"
 
-  # upshift — the SECOND instance of exactly the defect described above,
-  # found 2026-09-09 hours after fixing the first. The Upshift/Gami
-  # tokenized-vault decoder (#503) is live in the deployed binaries — the
-  # indexer carries 73 `upshift` string references and ops 74 — and the
-  # completeness surface tracks the source and asserts a verdict about
-  # it. But it was never listed here, so no projector ran: there is a
-  # gap-detector cursor and NO projector cursor, coverage_pct 0,
-  # recognition_ok false, and a watermark sitting at exactly
-  # genesis_ledger - 1, meaning it had done nothing whatsoever since
-  # being registered.
-  #
-  # Two occurrences of one bug class is a pattern, not bad luck: shipping
-  # a decoder registers a source for completeness but does not run it,
-  # and nothing fails loudly in between. A CI gate for that invariant is
-  # being built separately; this entry is the immediate fix.
+  # upshift — the Upshift/Gami tokenized-vault decoder. Listed here
+  # because the completeness surface tracks it; a tracked source missing
+  # from this list has no projector and reads INCOMPLETE forever
+  # (scripts/ci/lint-source-enablement.sh enforces the pairing).
   - "upshift"
 
   # spectra — factory-anchored (pt_deployed admits a PT, its yt_deployed the
@@ -782,10 +725,9 @@ stellarindex_enabled_sources:
 # not enabled" is a DECISION with a name on it instead of an omission,
 # and it is enforced by scripts/ci/lint-source-enablement.sh: every
 # KnownSources name must appear either in the list above or here, so
-# shipping a decoder now forces this file open whichever answer you give.
-# That is the whole point — the two production occurrences of this bug
-# (sushiswap_v3, fixed 2026-09-09 in 72ad4ad4d; upshift, #503) were both
-# six Go edits with nobody ever opening the deployment default.
+# shipping a decoder forces this file open whichever answer you give —
+# a decoder can otherwise ship as a handful of Go edits with nobody ever
+# opening the deployment default.
 #
 # A waiver here is NOT a licence to keep claiming a verdict. The same gate
 # refuses any name that is still a reconSource in the compute-completeness
@@ -808,12 +750,12 @@ stellarindex_backfill_from_ledger: 0
 # passed as --start when the live tail first started writing —
 # query the running galexie process args:
 #   pgrep -af 'galexie append'
-# 0 = live-only mode (pre-2026-04-26 default; archive bucket unused).
+# 0 = live-only mode (archive bucket unused).
 #
 # [Per-region: each region has its own seam — the ledger where that
-#  region's *own* galexie-live bucket starts emitting. R1's seam was
-#  the cutover from archive-fill to live-tail (~April 2026). R2/R3
-#  will have later seams set when their indexers first start.]
+#  region's *own* galexie-live bucket starts emitting. R1's seam is the
+#  cutover from archive-fill to live-tail. R2/R3 get their seams when
+#  their indexers first start.]
 stellarindex_live_seam_ledger: 0
 
 # Lowest ledger the LOCAL galexie-archive mirror holds on purpose
@@ -831,10 +773,9 @@ stellar_network:         "pubnet"
 # The full network passphrase, derived from stellar_network. ONE source
 # of truth feeding BOTH stellar-core.cfg's NETWORK_PASSPHRASE AND (for
 # non-preset networks like futurenet) galexie's captive core — declared
-# here so the two can never drift. Fixes the pre-2026-08-26 bug where
-# stellar-core.cfg.j2's else-branch emitted the literal network NAME
-# ("futurenet") as the passphrase, so a futurenet captive-core could not
-# join the network. MUST match internal/config/config.go's passphrase map.
+# here so the two can never drift; emitting the network NAME as the
+# passphrase leaves a captive core unable to join the network. MUST
+# match internal/config/config.go's passphrase map.
 stellar_passphrases:
   pubnet:    "Public Global Stellar Network ; September 2015"
   testnet:   "Test SDF Network ; September 2015"
@@ -887,8 +828,8 @@ stellar_history_archive_url_set: "{{ stellar_history_archive_url_sets[stellar_ne
 # Captive stellar-core apt version. Empty = fresh-host "latest available"; an
 # existing binary is upgraded by stellar-core-auto-upgrade.timer, not deploys. Pin the exact apt version
 # (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE core bump —
-# required before a network reaches a protocol the installed core predates
-# (P28: core >= 28 by mainnet 2026-09-16). See docs/operations/protocol-upgrades.md.
+# required before a network reaches a protocol the installed core predates.
+# See docs/operations/protocol-upgrades.md.
 stellar_core_version: ""
 
 # stellar-core-auto-upgrade.timer installs apt's newer core every 6h with a
@@ -922,13 +863,12 @@ stellar_archivist_version: ""
 # the ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
 #
 # The movements floor is 2, not 1, off pubnet: no lake holds ledger 1 (the
-# genesis ledger is never exported — min(ledger_seq) is 2 on r1, testnet
-# and futurenet alike), and the cap67 follow daemon's first run starts AT
-# the floor, gated on ContiguousWatermark, which reads a resume point the
-# lake does not hold as a boundary hole and answers "nothing to derive"
-# forever. Floored at 1, both test nets' account_movements archives sat
-# empty for months (2026-09-17). The daemon now also clamps its first run
-# up to the lake's first ledger; this default is the belt to that brace.
+# genesis ledger is never exported — min(ledger_seq) is 2 on every
+# network), and the cap67 follow daemon's first run starts AT the floor,
+# gated on ContiguousWatermark, which reads a resume point the lake does
+# not hold as a boundary hole and answers "nothing to derive" forever.
+# The daemon also clamps its first run up to the lake's first ledger;
+# this default is the belt to that brace.
 # The same value flows into stellarindex.toml movements_floor_ledger (the
 # API's PG/CH split, where 2 is harmless: no ledger sits below it) and,
 # via -config, into the creators rollup's arm boundary.
@@ -972,18 +912,14 @@ verify_archive_tier_d_enabled: "{{ (stellar_network | default('pubnet')) == 'pub
 # the same pubnet-only local mirror Tier B anchors on. There is no
 # test-net-meaningful part of this check.
 #
-# Left ungated it did real harm on the test nets, not just noise. The
-# tool's `-network` flag (which the unit template never passed, so it took
-# its "pubnet" DEFAULT) enables a cross-anchor FILL phase that fetches
-# missing checkpoints FROM PUBNET ARCHIVES. On testnet it measured the
-# pubnet stub against testnet's ledger range [2, 4354688], declared 2,506
-# checkpoints "missing", and set about downloading pubnet checkpoints to
-# fill them — which is also why the unit blew its 30-minute
-# TimeoutStartUSec every night. audit-2026-08-26 already identified this
-# fill as pubnet-only and added the refusal; nothing was passing the flag
-# that triggers it.
+# Left ungated it does real harm on a test net, not just noise. The
+# tool's `-network` flag enables a cross-anchor FILL phase that fetches
+# missing checkpoints FROM PUBNET ARCHIVES; defaulting to "pubnet", it
+# measures the pubnet stub against the test net's ledger range, declares
+# thousands of checkpoints "missing", and downloads pubnet checkpoints to
+# fill them, blowing the unit's 30-minute TimeoutStartUSec every night.
 #
-# The template now passes `-network` explicitly (defence in depth — the
+# The template passes `-network` explicitly (defence in depth — the
 # fill refuses even if the unit is enabled by hand), and the unit is
 # omitted where its anchor is not network-correct.
 archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
@@ -1041,12 +977,10 @@ stellar_extra_known_peers: []
 # reference config:
 #   https://github.com/stellar/packages/blob/master/docs/examples/
 #   pubnet-validator-full/stellar-core.cfg
-# (re-fetched 2026-07-17: OBSRVR added to the T1 set; SatoshiPay and
-#  Creit validators dropped from SDF's reference — see notes below).
 #
 # 6 organizations × 3 validators each = 18 tier-1 validators, plus
 # stellar.creit.tech retained as a HIGH-quality HOME_DOMAIN that SDF
-# currently lists with no validators.
+# lists with no validators.
 # stellar-core auto-builds the quorum set from the HOME_DOMAINS
 # groupings below: inner set per org (2/3 threshold), outer set
 # across orgs (QUALITY=HIGH).
@@ -1068,8 +1002,7 @@ stellar_home_domains:
   - home_domain: "stellar.withobsrvr.com"
     quality:     "HIGH"
   # stellar.creit.tech retained as a HIGH-quality org per SDF's canonical
-  # config, though SDF currently lists no Creit validators (validators
-  # dropped from the reference set as of the 2026-07-17 re-fetch).
+  # config, though SDF's reference set lists no Creit validators.
   - home_domain: "stellar.creit.tech"
     quality:     "HIGH"
   - home_domain: "www.stellar.org"
@@ -1129,8 +1062,7 @@ stellar_validators:
     address:     "stellar1.franklintempleton.com:11625"
     history:     "curl -sf https://stellar-history-usw.franklintempleton.com/azuswshf401/{0} -o {1}"
 
-  # OBSRVR — 3 validators (added to SDF's Tier-1 canonical set as of the
-  # 2026-07-17 re-fetch; replaced the dropped SatoshiPay + Creit validators)
+  # OBSRVR — 3 validators (in SDF's Tier-1 canonical set).
   - name: "OBSRVR Validator 1"
     home_domain: "stellar.withobsrvr.com"
     public_key:  "GDRCZ4IPJR7V3HK4GR45CRTE72SDAOZUF2TDBQ5E5IGWC4KM5TSKU2LS"
@@ -1203,15 +1135,14 @@ captive_peer_port_backfill:         11727
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
 galexie_version:         "galexie-v29.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16. 2026-09-13: bumped v28.0.0 -> v28.0.1 (same protocol major) ahead of that activation — the point release should be in place BEFORE the network crosses P28, not during it. 2026-10-02: bumped v28.0.1 -> v29.0.0 after mainnet activated Protocol 29 (ledger 64717645). Version string stamped from a real build on r1, not computed.
-# Drift guard (docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag,
-# 2026-07-09). Distinct from `galexie_version` above on purpose:
+# Drift guard (docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag).
+# Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
 # output of `/usr/local/bin/galexie version` on the RUNNING binary —
 # a Go pseudo-version (v0.0.0-<date>-<sha>) that never textually
 # equals the tag (see "Read the installed-galexie tag stamp" below).
 # 07-galexie.yml asserts the live host matches this string; a hand-
-# swapped binary (as happened 2026-07-09, fixing the CAP-0071
-# crash-loop) that never got codified here is exactly the drift
+# swapped binary that never got codified here is exactly the drift
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
 galexie_expected_version_string: "stellar-galexie v0.0.0-20260924160425-c927ffc38c29"
@@ -1222,15 +1153,7 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260924160425-c927ffc3
 # 07-galexie.yml skip (`| default('') | length > 0`); it is SET below,
 # so the sha256 assert is LIVE.
 #
-# ── SUPERSEDED. The 2026-07-27 resolution note that used to live here
-#    (audit deps F-002 / C6-003) probed r1 against the v27.0.0 pin and
-#    found the live binary matched. Two deliberate upgrades have
-#    happened since (27→28 on 2026-08-27, 28.0.0→28.0.1 on 2026-09-13)
-#    and neither carried a matching live probe, so that resolution no
-#    longer describes the current pin — do not read it as current
-#    status.
-#
-# For a FUTURE deliberate upgrade, read both values off the ONE real
+# For a deliberate upgrade, read both values off the ONE real
 # artifact you deploy:
 #
 #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -1240,7 +1163,7 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260924160425-c927ffc3
 #
 # Set BOTH from THAT ONE artifact, in the same PR, together with
 # VERSIONS.md. If `galexie version` prints on stderr rather than
-# stdout, the 07-galexie.yml guard now reads either stream, so the
+# stdout, the 07-galexie.yml guard reads either stream, so the
 # fail_msg will show you what it actually printed.
 #
 # Never stand the assert down by editing a constant to match whatever
@@ -1270,17 +1193,14 @@ galexie_files_per_partition: 64000      # ~1 checkpoint per partition
 # live pair above, defaulting to the live values so every existing network
 # renders a byte-identical galexie-backfill.toml.
 #
-# Why separate (2026-08-28): the testnet archive backfill died three times
-# on the same S3 retry-quota signature because ledgers_per_file=1 means
-# 4.34M objects for testnet's 4.34M ledgers — an fsync-bound MinIO on a
-# 20 GB VM cannot sustain that PUT rate (r1's bare-metal NVMe could, and
-# its mainnet replay is ~10× slower per ledger, so it never crossed the
-# threshold). The fix is a coarser schema for the BACKFILL bucket only.
-# It must never reach galexie.toml: the live-tail bucket already carries a
-# 1/64000 manifest, and the SDK refuses to start a galexie whose config
-# disagrees with the bucket's .config.json — sharing one var would have
-# restarted live testnet galexie straight into that halt (caught by the
-# 2026-08-28 adversarial audit of the change before it shipped).
+# Why separate: ledgers_per_file=1 means one object per ledger, and an
+# fsync-bound MinIO on a small test-net VM cannot sustain that PUT rate
+# for a full archive backfill (it dies on the S3 retry-quota signature).
+# The fix is a coarser schema for the BACKFILL bucket only. It must never
+# reach galexie.toml: the live-tail bucket already carries a 1/64000
+# manifest, and the SDK refuses to start a galexie whose config disagrees
+# with the bucket's .config.json — one shared var would restart live
+# galexie straight into that halt.
 #
 # Mainnet MUST stay at the live default for its archive too: the hot
 # archive is mirrored object-for-object from the AWS Public Blockchain
@@ -1309,8 +1229,7 @@ galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct 
 minio_image:              "cgr.dev/chainguard/minio:latest@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b"  # RELEASE.2026-09-22T19-25-18Z — INV-0706: dl.min.io/Docker Hub/quay.io all stopped serving minio+mc binaries; this is the one registry still pullable anonymously, and it bundles both.
 # Listener interface. Loopback-only by default: galexie, the indexer,
 # and the 09-minio.yml health probe all reach MinIO via 127.0.0.1:9000
-# (galexie_s3_endpoint above). The MINIO_OPTS template previously bound
-# ":9000"/":9001" (all interfaces); loopback keeps the S3 API + console
+# (galexie_s3_endpoint above), and loopback keeps the S3 API + console
 # off the public interface. Override to the private interface ONLY for a
 # genuine cross-host MinIO consumer (and add port 9000 to
 # internal_allow_ports for that host).
@@ -1318,9 +1237,8 @@ minio_bind_address:      "127.0.0.1"
 minio_port:              9000
 minio_console_port:      9001
 minio_data_path:         "/var/lib/minio"
-# F-1291 (codex audit-2026-05-13): supply-chain checksums for the
-# MinIO server + `mc` client, both extracted from minio_image above
-# (INV-0706). NOT defaulted here because:
+# Supply-chain checksums for the MinIO server + `mc` client, both
+# extracted from minio_image above. NOT defaulted here because:
 #   - Both are per-architecture (amd64 vs arm64 differ).
 #   - Both change whenever minio_image's digest is bumped.
 # 09-minio.yml asserts at role-start that these are set + 64 chars.
@@ -1377,24 +1295,22 @@ public_allow_ports_base:
 public_allow_ports_primary_core:
   - { port: 11625, proto: "tcp", comment: "stellar-core SCP peer (Phase 3 validator)" }
 
-# No default on purpose (audit-2026-07-23 SEC-network / INF-20): SSH is
-# the one port on this box that grants root, and the previous
-# `0.0.0.0/0` default meant an inventory that simply never mentioned
-# allowed_ssh_cidrs got the whole internet — silently, by inheritance.
-# Every inventory must now state its own answer; 01-preflight.yml
-# asserts it (that import carries the `always` tag, so `--tags firewall`
-# cannot skip the check).
+# No default on purpose: SSH is the one port on this box that grants
+# root, and a `0.0.0.0/0` default would give the whole internet to any
+# inventory that simply never mentioned allowed_ssh_cidrs — silently, by
+# inheritance. Every inventory must state its own answer;
+# 01-preflight.yml asserts it (that import carries the `always` tag, so
+# `--tags firewall` cannot skip the check).
 allowed_ssh_cidrs: []
 
 # Break-glass acknowledgement for a genuinely world-open SSH port.
 # Leaving allowed_ssh_cidrs at 0.0.0.0/0 requires setting this to true
 # IN THE INVENTORY, next to the CIDR it excuses — the same shape as
-# pgbackrest_offsite_ack (audit-2026-07-23 REL-DR). It does not narrow
-# anything; it makes the exposure an explicit, greppable, reviewable
-# declaration instead of an unremarked default. r1 sets it today
-# because its operator + the deploy workflow both reach the host from
-# dynamic addresses; retiring it needs a jump host or a VPN, not a
-# guess at a CIDR.
+# pgbackrest_offsite_ack. It does not narrow anything; it makes the
+# exposure an explicit, greppable, reviewable declaration instead of an
+# unremarked default. r1 sets it because its operator + the deploy
+# workflow both reach the host from dynamic addresses; retiring it needs
+# a jump host or a VPN, not a guess at a CIDR.
 ssh_world_open_ack: false
 
 # Internal ports accessible from the LAN / VPN CIDRs only.
@@ -1413,21 +1329,17 @@ internal_cidrs:
   - "192.168.0.0/16"
 
 # API HTTP bind address. Default loopback-only: on r1 Caddy runs ON the box
-# and reverse-proxies to localhost:3000 (audit-2026-07-23 INF-19 — a public
-# 0.0.0.0 bind is the tighter-surface regression to avoid). The test-net VMs
-# instead run Caddy on the KVM HOST, which reaches the API over the private
-# NAT — so they override this to "0.0.0.0:3000" AND add 3000 to
-# internal_allow_ports (host source ∈ internal_cidrs).
+# and reverse-proxies to localhost:3000, and a public 0.0.0.0 bind would
+# widen the surface for nothing. The test-net VMs instead run Caddy on the
+# KVM HOST, which reaches the API over the private NAT — so they override
+# this to "0.0.0.0:3000" AND add 3000 to internal_allow_ports (host
+# source ∈ internal_cidrs).
 stellarindex_api_listen_addr: "127.0.0.1:3000"
 
 # ───── Observability ─────────────────────────────────────────────────
-# node_exporter_version / node_exporter_release_sha256 (F-1291,
-# codex audit-2026-05-13) described a checksum-pinned tarball
-# download. The #33 cutover (2026-05-20, see 10-observability.yml)
-# replaced that with the Debian `prometheus-node-exporter` package,
-# installed unpinned so it picks up distro CVE fixes; no task reads
-# either var. Removed rather than left as a checksum that verifies
-# nothing.
+# node_exporter is the Debian `prometheus-node-exporter` package (see
+# 10-observability.yml), installed unpinned so it picks up distro CVE
+# fixes; it has no version or checksum var.
 node_exporter_port:      9100
 
 core_exporter_port:      9473
@@ -1439,17 +1351,17 @@ core_exporter_port:      9473
 # role's `promtail_target_url` for the multi-host shape).
 loki_push_url:           "http://localhost:3100/loki/api/v1/push"
 
-# ───── Prometheus exporters (F-0152, audit-2026-05-26) ───────────────
+# ───── Prometheus exporters ───────────────────────────────────────────
 # redis_exporter + postgres_exporter ship as Debian packages
 # (prometheus-redis-exporter / prometheus-postgres-exporter) — no
 # version pinning here; the apt-source distribution release governs.
 #
 # pgbackrest_exporter has no Debian package; pinned upstream tarball
 # from https://github.com/woblerr/pgbackrest_exporter/releases. SHA
-# must be set in inventory (same fail-fast pattern as F-1280/F-1285/
-# F-1291/F-1293). Bump `pgbackrest_exporter_version` here when the
-# operator wants a newer release; re-paste the matching SHA into
-# r1.secrets.yml / non-secret inventory.
+# must be set in inventory (same fail-fast pattern as the other pinned
+# tarballs). Bump `pgbackrest_exporter_version` here when the operator
+# wants a newer release; re-paste the matching SHA into r1.secrets.yml /
+# non-secret inventory.
 pgbackrest_exporter_version: "0.23.0"  # 2026-07-03: matched to the version live on r1 (0.18.0 predated it AND its release URL 404s upstream)
 # pgbackrest_exporter_release_sha256: <required; set in inventory>
 
@@ -1592,14 +1504,14 @@ ssh_max_auth_tries: 3
 # attaching debuggers to non-child processes.
 hardening_cis_l2: true
 
-# ── SDF reserve accounts (CS-010, ADR-0011 Algorithm 1) ────────────────
+# ── SDF reserve accounts (ADR-0011 Algorithm 1) ──────────────────────
 # Network-wide truth, identical for every region: the accounts whose XLM
 # balances are excluded from circulating supply. Source:
 # stellar/dashboard common/lumens.js (escrows, direct development,
 # growth, product+innovation, assets+liquidity, network upgrade
-# reserve); the sum was lake-verified against SDF's published
-# mandate+upgradeReserve to 4e-13 on 2026-07-02. If SDF announces a
-# reserve-account change, update BOTH lists here in one PR.
+# reserve); the sum is lake-verified against SDF's published
+# mandate+upgradeReserve to 4e-13. If SDF announces a reserve-account
+# change, update BOTH lists here in one PR.
 stellarindex_sdf_reserve_accounts:
   - "GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP"
   - "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA"
@@ -1624,13 +1536,13 @@ stellarindex_sdf_reserve_accounts:
 # circulating supply. Empty = no issuer is observed.
 stellarindex_metadata_watched_issuer_accounts: []
 
-# Point-in-time balance snapshot (stroops, 2026-07-02) — the supply
-# writer's fallback until account_observations covers each account
-# (config.go SupplyConfig: every account above MUST appear here or the
-# writer refuses to start). Dated by stellarindex_reserve_balances_as_of:
-# once older than reserve_balances_max_age (default 168h) the fallback
-# refuses and the XLM supply tick fails instead of republishing it.
-# Refresh both together from the live balances.
+# Point-in-time balance snapshot (stroops) — the supply writer's fallback
+# until account_observations covers each account (config.go SupplyConfig:
+# every account above MUST appear here or the writer refuses to start).
+# Dated by stellarindex_reserve_balances_as_of: once older than
+# reserve_balances_max_age (default 168h) the fallback refuses and the
+# XLM supply tick fails instead of republishing it. Refresh both together
+# from the live balances.
 stellarindex_reserve_balances_as_of: "2026-07-02"
 stellarindex_reserve_balances_stroops:
   "GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP": "20000129"
@@ -1650,30 +1562,26 @@ stellarindex_reserve_balances_stroops:
   "GANII5Y2LABEBK74NWNKS4NREX2T52YTBGQDRDKVBFRIIF5VE4ORYOVY": "52873404079631"
   "GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBITLF5ZEBPJXFT46YZM": "2588858475135952"
 
-# Caddy public edge. The legacy-domain alias was REMOVED by decision on
-# 2026-07-03 (brand purge): the old domain's DNS is being deleted, so
-# clients on it get a hard cutover, not a deprecation window.
+# Caddy public edge. There is no legacy-domain alias: clients on the
+# old domain get a hard cutover, not a deprecation window.
 run_caddy: true
 caddy_site_addresses: "api.stellarindex.io"
 
 # Alias: 09-minio.yml consumes the unprefixed name; the canonical
-# secret lives in the vault as vault_stellarindex_reader_secret_key
-# (2026-07-03 drift audit; renamed from the pre-rebrand var name).
+# secret lives in the vault as vault_stellarindex_reader_secret_key.
 stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
 
 # Same alias pattern for the trimmer identity (CA2-A37-harden-6).
 stellarindex_archive_trimmer_secret_key: "{{ vault_stellarindex_archive_trimmer_secret_key }}"
 
-# SEP-41 watched-contract set (BACKLOG #9): the curated SAC-wrapper
-# roster — the same trust surface as /v1/sac-wrappers. Drives the
-# sep41_supply + sep41_transfers dispatcher decoders (empty list =
-# observers skipped, which is how r1 silently captured nothing
-# until 2026-07-05) and the ch-rebuild -sep41 re-derive.
+# SEP-41 watched-contract set: the curated SAC-wrapper roster — the same
+# trust surface as /v1/sac-wrappers. Drives the sep41_supply +
+# sep41_transfers dispatcher decoders (empty list = observers skipped,
+# so the host silently captures nothing) and the ch-rebuild -sep41
+# re-derive.
 stellarindex_watched_sep41_contracts:
-  # FxDAO FXG governance token (2026-07-10 residual-DeFi census). The other
-  # three FxDAO stablecoins (USDx/EURx/GBPx) were ALREADY watched —
-  # the census's "entirely untracked" claim was wrong on those three;
-  # FXG was the only genuinely missing member of the family.
+  # FxDAO FXG governance token; FxDAO's USDx/EURx/GBPx stablecoins are
+  # listed alongside it.
   - CDBR4FMYL5WPUDBIXTBEBU2AFEYTDLXVOTRZHXS3JC575C7ZQRKYZQ55 # FxDAO FXG (governance)
   - CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
   - CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
@@ -1714,7 +1622,7 @@ stellarindex_watched_sep41_contracts:
   - CDIKURWHYS4FFTR5KOQK6MBFZA2K3E26WGBQI6PXBYWZ4XIOPJHDFJKP
   - CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV
 
-# ─── Rolling ZFS snapshots (decision 2026-08-29; tag `zfs-snapshots`) ──
+# ─── Rolling ZFS snapshots (tag `zfs-snapshots`) ─────────────────────
 # Daily crash-consistent snapshots of the ClickHouse lake, the Postgres
 # datasets and the MinIO Galexie archive so a logical fault (bad
 # migration, DROP, bad re-derive, a mis-aimed `mc rm --recursive`) is a
@@ -1728,17 +1636,13 @@ zfs_snapshots_enabled: true
 # renders this through zfs-snapshot.env.j2 and compares the two.
 #
 # ClickHouse merges churn ~250 GB/day of parts, so each retained day
-# pins ~250 GB. Postgres keeps three days: its pinned churn measured
+# pins ~250 GB. Postgres keeps three days: its pinned churn measures
 # 0.15-0.2 TiB over a week, and pgBackRest PITR (repo1 + off-site repo2)
 # already covers a logical fault older than that.
 #
-# minio (NS03, 2026-09-19): the Galexie LCM archive — the CDP source of
-# truth the lake and the served tier are RE-DERIVED FROM, and until now
-# the one durable store in neither safety net (no snapshot here, and the
-# off-site §1 mirror in docs/operations/off-site-backup-plan.md is still
-# proposed; pgBackRest repo2 covers Postgres only). Measured on r1
-# 2026-09-19: data/minio 2.64 TB used, 0 snapshots. It is append-mostly,
-# so a retained day pins only what was deleted or overwritten that day —
+# minio: the Galexie LCM archive (~2.6 TB) — the CDP source of truth the
+# lake and the served tier are RE-DERIVED FROM. It is append-mostly, so
+# a retained day pins only what was deleted or overwritten that day —
 # ~0 on the happy path — which is why it gets Postgres's week rather
 # than the lake's three days: the window is there to NOTICE a deletion,
 # and the cost of the window is only paid when there is something to
@@ -1760,10 +1664,10 @@ zfs_snapshot_min_free_bytes: 2199023255552
 # 01:45 UTC: before pgbackrest-backup (02:00) and the ch-schema-snapshot
 # (03:40), so the day's snapshot predates the day's other ops jobs.
 zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
-# pgBackRest repo2 (off-site S3) retention — deliberately LEAN (#298,
-# ADR-0043 §1): one full + 7 days of diffs/WAL ≈
-# 460–670 GB in S3 Standard ≈ $12–17/month. Raising these multiplies
-# storage cost roughly linearly; PITR window = the diff/WAL retention.
+# pgBackRest repo2 (off-site S3) retention — deliberately LEAN (ADR-0043
+# §1): one full + 7 days of diffs/WAL ≈ 460–670 GB in S3 Standard ≈
+# $12–17/month. Raising these multiplies storage cost roughly linearly;
+# PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1
 pgbackrest_repo2_retention_diff: 7
 
@@ -1775,8 +1679,7 @@ pgbackrest_repo2_retention_diff: 7
 # resolves false. pgbackrest_backup_enabled gates the on-box drill, so it
 # gates this one too.
 #
-# WHAT IT COSTS, per monthly run, measured on the 2026-09-03 drill at the
-# then-current database size:
+# WHAT IT COSTS, per monthly run, at the measured database size:
 #   - ~$24 of S3 egress (~269 GB pulled out of repo2), i.e. ~$24/month,
 #     and it scales with the database;
 #   - ~47 min of restore load on the SHARED ZFS pool the live Postgres
