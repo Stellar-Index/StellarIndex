@@ -132,13 +132,12 @@ type Subject struct {
 	// owning account's override.
 	MonthlyQuota int64
 
-	// EmailVerifiedAt is the timestamp the customer confirmed
-	// ownership of the email they signed up with by clicking the
-	// link emailed at signup. Zero = never verified. The optional
-	// `middleware.RequireEmailVerified` gates /v1/* access on this
-	// field when the operator opts in via config — unverified API-key Subjects
-	// 403 with a clear message pointing at the verify endpoint.
-	// Without the middleware, the field is informational only.
+	// EmailVerifiedAt is when the customer proved ownership of their
+	// signup email. Zero = never verified. `middleware.RequireEmailVerified`,
+	// mounted unless the operator disables signup_require_email_verification,
+	// answers an unverified `signup-` Subject with 403
+	// `signup-verify-required`. Without the middleware, the field is
+	// informational only.
 	EmailVerifiedAt time.Time
 
 	// ExpiresAt — when the presented API key stops authenticating. Zero

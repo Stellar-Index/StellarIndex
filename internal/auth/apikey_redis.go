@@ -234,13 +234,10 @@ type APIKeyRecord struct {
 	// disables the check.
 	MonthlyQuota int64 `json:"monthly_quota,omitempty"`
 
-	// EmailVerifiedAt is the timestamp the customer clicked
-	// the verification link in the post-signup email. Zero =
-	// never verified. The optional `RequireEmailVerified` middleware
-	// uses this
-	// flag to gate /v1/* access — keys minted via /v1/signup
-	// stay usable until an operator opts in via config, then
-	// unverified keys 403 until the customer clicks the link.
+	// EmailVerifiedAt is when the customer proved ownership of their
+	// signup email. Zero = never verified. The `RequireEmailVerified`
+	// middleware, mounted by default, answers an unverified key whose
+	// identifier starts with `signup-` with 403.
 	EmailVerifiedAt time.Time `json:"email_verified_at,omitempty"`
 }
 

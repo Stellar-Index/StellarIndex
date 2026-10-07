@@ -80,8 +80,8 @@ type CreateAPIKeyRequest struct {
 	// it to the caller's own expiry via [ChildKeyRequest].
 	ExpiresAt time.Time
 
-	// EmailVerifiedAt — zero means the key has not (yet) passed the
-	// /v1/signup/verify email-link flow. Set by the self-service
+	// EmailVerifiedAt — zero means the key's owner never proved
+	// ownership of their signup email. Set by the self-service
 	// rotation path (POST /v1/account/keys) to the caller's own
 	// stamp so a child key inherits its parent's verification:
 	// the verification is a property of the identifier's owner,
