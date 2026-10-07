@@ -16,7 +16,7 @@ func errorf(sentinel error, format string, args ...any) error {
 // Every error returned from canonical either IS one of these
 // sentinels or wraps one. Callers classify via errors.Is.
 //
-// See docs/discovery/engineering-standards.md §4.5.
+// See docs/engineering-standards.md §4.5.
 var (
 	// ErrInvalidAmount — a value could not be interpreted as a
 	// valid Amount (bad string format, wrong Scan type, etc.).

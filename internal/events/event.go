@@ -76,7 +76,7 @@ type Event struct {
 	// Redstone is the current primary user: the WritePrices event's
 	// `updated_feeds` vec carries price+timestamps but no feed_id;
 	// the feed_ids live in the op args and need to be zipped in at
-	// decode time. See docs/discovery/oracles/redstone.md.
+	// decode time. See docs/protocols/redstone.md.
 	//
 	// NOT serialized in the stellar-rpc JSON shape — `omitempty` so
 	// fixture replays from RPC round-trip unchanged.

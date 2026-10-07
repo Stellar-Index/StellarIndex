@@ -1,5 +1,4 @@
-// Package metadata resolves SEP-1 stellar.toml records per
-// [docs/discovery/data-sources/sep1-home-domain.md].
+// Package metadata resolves SEP-1 stellar.toml records.
 //
 // # What SEP-1 is
 //
@@ -51,5 +50,5 @@
 // # References
 //
 //   - SEP-1 v2 spec: <https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md>
-//   - Phase-1 design: docs/discovery/data-sources/sep1-home-domain.md
+//   - Operational reference: docs/operations/sep1-resolution.md
 package metadata

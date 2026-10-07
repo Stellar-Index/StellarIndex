@@ -69,8 +69,7 @@ var ErrDepthExceeded = errors.New("kraken: requested range starts before the ven
 // ~30 days back; at 1d it's ~2 years. A `from` older than that horizon
 // returns ErrDepthExceeded (see below) rather than silently truncating;
 // it's the venue's limit, not a bug in our code. Documented in
-// docs/discovery/oracles/band.md and external.Registry
-// (BackfillAvailable=true with 30-day caveat).
+// external.Registry (BackfillAvailable=true with 30-day caveat).
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.Backfill: from %v must be before to %v", from, to)

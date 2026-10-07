@@ -153,8 +153,8 @@ type swapConfigFields struct {
 //	body = Map{ new_backstop: Address, new_backstop_token: Address,
 //	            unlock_time: u64 }
 //
-// Decode-by-Map-field-name per docs/architecture/contract-schema-
-// evolution.md — resilient to a future WASM upgrade adding fields.
+// Decode-by-Map-field-name per docs/architecture/ingest-pipeline.md
+// §Contract schema evolution — resilient to a future WASM upgrade adding fields.
 func decodeSwapConfig(e *events.Event) (swapConfigFields, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

@@ -1,7 +1,7 @@
 // Package blend ingests events from the Blend Capital Soroban
 // lending protocol on Stellar.
 //
-// Per docs/discovery/dexes-amms/blend.md: Blend is **not** a spot
+// Per internal/sources/blend/README.md: Blend is **not** a spot
 // trading venue. We index it for:
 //
 //  1. Liquidation auctions — directional price signals during
@@ -99,7 +99,7 @@ const (
 )
 
 // Mainnet V2 contract addresses — verified via stellar.expert and
-// cross-referenced against docs/discovery/dexes-amms/blend.md and the
+// cross-referenced against docs/protocols/blend.md and the
 // Blend Capital blend-contracts-v2 deploy manifest.
 const (
 	// MainnetPoolFactory is the documented Pool Factory V2. Blend was

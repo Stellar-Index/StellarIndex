@@ -75,9 +75,8 @@ var Registry = map[string]Metadata{
 	// ─── On-chain lending protocols ─────────────────────────────
 	// Auction events surface stress-prices during liquidations; we
 	// report them alongside as a secondary validation surface but
-	// they DO NOT contribute to VWAP. See
-	// docs/discovery/dexes-amms/blend.md and the blend source
-	// package README for the full extraction scope.
+	// they DO NOT contribute to VWAP. See the blend source package
+	// README for the full extraction scope.
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter — protocol-emissions plumbing (mints/distributes
 	// BLND to backstops), same family as `blend`. No published price,

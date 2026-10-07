@@ -57,11 +57,10 @@ const DefaultDecimals uint8 = 8
 // `0.2% deviation OR 24h heartbeat`. Emitted as the
 // `stellarindex_oracle_resolution_seconds` gauge by
 // [pipeline.BuildDispatcher] at registration time, so the
-// oracle-stale alert has a per-source threshold. Set to 24h (the
-// lower bound on assumed freshness — per
-// docs/discovery/oracles/redstone.md a feed may go quiet for up
-// to 24h if no price movement exceeds the 0.2% deviation
-// threshold).
+// oracle-stale alert has a per-source threshold. Set to 24h, the
+// lower bound on assumed freshness: a feed may go quiet for up to
+// 24h when no price movement crosses the relayer's deviation
+// threshold.
 const DefaultResolutionSeconds = 24 * 60 * 60
 
 // WriteFnName is the adapter contract's update entry point and the

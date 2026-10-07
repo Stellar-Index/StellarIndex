@@ -12,7 +12,7 @@ import (
 // No goroutines, no state, no polling. Attribution comes from the
 // InvokeContract op args that the dispatcher now plumbs through
 // events.Event.OpArgs; decoded on each event. See
-// docs/discovery/oracles/redstone.md for the full wire shape.
+// docs/protocols/redstone.md for the full wire shape.
 type Decoder struct {
 	contractID string
 }

@@ -31,7 +31,7 @@
 // band-soroban/src/storage/ref_data.rs:56 compares against
 // `env.ledger().timestamp()` which is seconds).
 //
-// See docs/discovery/oracles/band.md for the full analysis.
+// See docs/protocols/band.md for the full analysis.
 package band
 
 import "errors"

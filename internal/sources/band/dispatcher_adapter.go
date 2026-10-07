@@ -9,7 +9,7 @@ import (
 // event-based Decoders in sibling packages, Band plugs in here
 // because its Soroban contract emits zero events — the relayer's
 // `relay()` / `force_relay()` InvokeContract call carries the full
-// update payload. See docs/discovery/oracles/band.md + events.go.
+// update payload. See docs/protocols/band.md + events.go.
 //
 // No goroutines, no state. Matching is by (contract_id, function
 // name) — O(1) string compare, no SCVal parsing on the hot path.
