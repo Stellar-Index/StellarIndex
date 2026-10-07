@@ -8,30 +8,23 @@ groups:
     interval: 30s
     rules:
 
-      # F-1212b (audit-2026-05-12): the 5-minute rate window was
-      # too short for low-volume Soroban / FX contracts. R1 saw
-      # routine false-positive firings for `band`, `blend`,
-      # `comet`, `ecb`, `phoenix` — all of which legitimately
-      # emit events sporadically (auctions, oracle pushes, FX
-      # dailies). The runbook `ingestion.md#stellarindex_ingestion_source_stopped` explicitly
-      # acknowledges "Low-volume sources during quiet windows …
-      # can genuinely see zero swaps for 5+ minute stretches" and
-      # recommends extending the window. Total-outage coverage is
-      # still the 3-minute `stellarindex_ingestion_all_sources_stopped`
-      # alert below — that one stays tight because if no source
-      # at all emits, something is broken across the whole
-      # indexer/upstream surface.
-      # F-1208 (codex audit-2026-05-12): per-source-class windows.
-      # The original universal-30m rule false-positived on
+      # A 5-minute window false-positives routinely on low-volume Soroban /
+      # FX sources (band, blend, comet, ecb, phoenix), which legitimately
+      # emit events sporadically (auctions, oracle pushes, FX dailies). The
+      # runbook `ingestion.md#stellarindex_ingestion_source_stopped`
+      # acknowledges "Low-volume sources during quiet windows … can
+      # genuinely see zero swaps for 5+ minute stretches". Total-outage
+      # coverage is the 3-minute `stellarindex_ingestion_all_sources_stopped`
+      # alert below — that one stays tight because if no source at all
+      # emits, something is broken across the whole indexer/upstream surface.
+      # Per-source-class windows: one universal window false-positives on
       # legitimately low-volume sources:
       #   - low-volume Soroban DEXes (comet/phoenix/soroswap) can go
       #     hours between swaps
       #   - ECB publishes rates once daily
-      # Each got triaged manually + acknowledged repeatedly; the
-      # alert needs to match the source's actual cadence to be
-      # useful. Splitting into three rules by source-name regex is
-      # the simplest path that doesn't require adding a `class`
-      # label to stellarindex_source_events_total.
+      # The alert needs to match the source's actual cadence to be useful.
+      # Three rules by source-name regex is the simplest path that doesn't
+      # require adding a `class` label to stellarindex_source_events_total.
 
       # High-volume sources (CEX feeds, SDEX, oracles, aggregators).
       # 30-min rate / 15-min sustained — the original window. These
@@ -73,12 +66,10 @@ groups:
       # Low-volume Soroban DEX sources. 24-hour rate / 30-min sustained.
       # These can go hours between swaps on quiet days and that's
       # not an outage signal — long-tail TVL just doesn't trade
-      # constantly. F-1208 (codex audit-2026-05-12). Widened 6h → 24h
-      # 2026-08-05: phoenix's measured 30-day max swap gap is 8h28m,
-      # and a genuine 12h lull (lake-verified quiet — zero swap events
-      # on any known or unknown pool) tripped the 6h window right after
-      # the same evidence widened the insert-stale budget. One cadence,
-      # one threshold: all three phoenix-cadence rules now agree at 24h.
+      # constantly. 24h, not 6h: phoenix's measured 30-day max swap gap is
+      # 8h28m, and a genuine 12h lull (lake-verified quiet — zero swap events
+      # on any known or unknown pool) trips a 6h window. One cadence, one
+      # threshold: all three phoenix-cadence rules agree at 24h.
       - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
           sum by (source) (rate(stellarindex_source_events_total[24h])) == 0
@@ -164,7 +155,7 @@ groups:
         # sum(rate()) over nothing is the EMPTY VECTOR — not zero. The
         # alert stops matching and Alertmanager sends a RESOLVED for a
         # SEV-1 while ingestion is still completely down, which reads to
-        # a responder as "it fixed itself" (wave-D ALERT-01).
+        # a responder as "it fixed itself".
         #
         # absent_over_time takes over at exactly the point rate() gives
         # up — both use a 5m window — so the two branches hand over
@@ -196,20 +187,17 @@ groups:
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
 
-      # A MinIO / lake outage must PAGE, and until 2026-09-03 it did not
-      # (RV2 #5). Three changes composed into that hole:
+      # A MinIO / lake outage must PAGE, and three things compose so that
+      # no other rule pages for it:
       #
-      #   1. #371 F3 gave the live-tail read a ~5-minute retry budget, so
-      #      the process no longer exits within seconds of the lake going
-      #      away.
-      #   2. StartLimitBurst 60 / 15 min means a ~5min10s start cycle can
-      #      never accumulate enough restarts to park the unit, so
+      #   1. The live-tail read has a ~5-minute retry budget, so the process
+      #      does not exit within seconds of the lake going away.
       #      `stellarindex_systemd_unit_failed` (a TICKET, 15m) cannot
       #      fire for it either.
       #   3. The CEX/FX connectors run in the SAME binary and keep
       #      incrementing stellarindex_source_events_total, so
-      #      `all_sources_stopped` — which the unit file named as the
-      #      cover — stays quiet while no ledger is being ingested at all.
+      #      `all_sources_stopped` stays quiet while no ledger is being
+      #      ingested at all.
       #
       # What is left without this rule: cursor_stuck (ticket) cannot fire
       # for this cursor, because it joins `on (source)
@@ -314,14 +302,13 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
-      # A decoder CRASHED on an input (#371 F1). The dispatcher recovers
-      # the panic, skips that one input, counts it as a decode error and
-      # lets the ledger complete — which is the only design that does not
-      # turn one decoder's bug into an all-source ingest outage (before
-      # the guard the process exited, systemd restarted it onto the same
-      # cursor, and StartLimitBurst restarts later the unit parked in
-      # `failed`). The trade is only sound if the skip is LOUD, so this
-      # pages on the FIRST occurrence.
+      # A decoder CRASHED on an input. The dispatcher recovers the panic,
+      # skips that one input, counts it as a decode error and lets the
+      # ledger complete — the only design that does not turn one decoder's
+      # bug into an all-source ingest outage (an unrecovered panic exits the
+      # process, systemd restarts it onto the same cursor, and after
+      # StartLimitBurst restarts the unit parks in `failed`). The trade is
+      # only sound if the skip is LOUD, so this pages on the FIRST occurrence.
       #
       # Raw value, not increase(): the counter is process-lifetime and a
       # poison input usually panics ONCE, so the series is born at 1 and
@@ -353,27 +340,23 @@ groups:
       # Oracle capture-totality (docs/design/oracle-capture-totality-design.md):
       # an indexed on-chain oracle (Reflector / RedStone / Band) is
       # publishing a symbol / feed_id the canonical allow-list does not
-      # map. Until the decoders emit `raw:` rows those slots are DROPPED
-      # from the price surface; afterwards they are recorded verbatim
-      # and this alert means "extend the allow-list / feed registry".
-      # Either way it is a mapping gap only a code change closes — the
-      # 2026-07-24 RedStone expansion lost ~5,600 events this way, and
-      # r1 carried 7,794 dropped reflector slots with NO consumer of this
-      # counter (cold audit 2026-08-04). 25h window: band publishes once
-      # a day, so a trailing window shorter than its cadence flaps daily.
-      # An unmapped symbol recurs on EVERY event of that source until the
-      # registry catches up, so any increase is a persistent gap, not a
-      # one-off.
+      # map. The observations are recorded verbatim as `raw:` rows, and
+      # this alert means "extend the allow-list / feed registry" — a
+      # mapping gap only a code change closes. 25h window: band publishes
+      # once a day, so a trailing window shorter than its cadence flaps
+      # daily. An unmapped symbol recurs on EVERY event of that source
+      # until the registry catches up, so any increase is a persistent
+      # gap, not a one-off.
       #
-      # INFORMATIONAL, not ticket (2026-09-08). An oracle listing a new
-      # token is normal business, not a fault of ours, and we index what
-      # our sources publish rather than holding opinions about which
-      # tickers deserve to exist. The observations are captured under
-      # `raw:<symbol>` either way, so nothing is lost while this is open —
-      # which is exactly why it should not sit in the ticket queue
-      # competing with things that ARE broken. It routes to its own
-      # low-traffic channel so the notice still arrives and a mapping can
-      # be added when convenient.
+      # INFORMATIONAL, not ticket. An oracle listing a new token is normal
+      # business, not a fault of ours, and we index what our sources
+      # publish rather than holding opinions about which tickers deserve
+      # to exist. The observations are captured under `raw:<symbol>`
+      # either way, so nothing is lost while this is open — which is
+      # exactly why it should not sit in the ticket queue competing with
+      # things that ARE broken. It routes to its own low-traffic channel
+      # so the notice still arrives and a mapping can be added when
+      # convenient.
       - alert: stellarindex_ingestion_oracle_unknown_symbols
         expr: sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h])) > 0
         for: 30m
@@ -398,7 +381,7 @@ groups:
             doing at leisure, which is why this is informational rather than a
             ticket. See the runbook.
 
-      # #291: a slot whose feed_id the record layer cannot represent at
+      # A slot whose feed_id the record layer cannot represent at
       # all (empty / >64 bytes / a byte outside printable ASCII) is
       # DROPPED — not even a raw: row lands. Its own alert, not a fold
       # into the unknown-symbols one above: that alert's remedy is
@@ -478,28 +461,24 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
-      # audit-2026-07-16 C4-3: the soroswap-router + defindex persist
-      # paths used to log a Warn without bumping any counter, so a
-      # dropped swap / vault-flow row was invisible to metrics. Those
-      # sites now increment source_insert_errors_total like every sibling
-      # case; this alert is the SENSITIVE (rate > 0) tripwire on exactly
-      # those money-flow kinds — the existing stellarindex_ingestion_
-      # insert_errors alert only fires above 0.1/s, so a low-rate silent
-      # drop would slip past it.
+      # SENSITIVE (rate > 0) tripwire on the money-flow insert kinds
+      # (the soroswap-router + defindex persist paths count a dropped swap /
+      # vault-flow row in source_insert_errors_total like every sibling). The
+      # generic stellarindex_ingestion_insert_errors alert only fires above
+      # 0.1/s, so a low-rate silent drop would slip past it.
       # kind="trade" (a trade permanently dropped on a data fault: sdex,
-      # the projected DEXes, external) is in the set too — it was the one
-      # money-flow kind left to the coarse 0.1/s line. A ctx-abandoned
+      # the projected DEXes, external) is in the set too. A ctx-abandoned
       # trade retry (cursor held, re-derivable) counts as
-      # kind="trade_abandoned" and is deliberately NOT in it (GH-612).
+      # kind="trade_abandoned" and is deliberately NOT in it.
       # Q261: `for: 0m`, NOT `for:` = the increase window. A tripwire must
       # fire on ONE isolated increment, and `increase(m[W]) > 0` with
       # `for: W` cannot: the expression is true only for W after the
-      # increment, and the pending period needs it true for a further W.
-      # It fired only while increments KEPT arriving — a sustained-rate
-      # alert wearing a tripwire's description. A `for:` shorter than the
-      # window would be a pure delay that filters nothing (the expression
-      # cannot go false sooner than W after the event), so it is dropped
-      # outright, as stellarindex_ingestion_sink_undrained_rows already does.
+      # increment, and the pending period needs it true for a further W,
+      # so it would fire only while increments KEPT arriving — a
+      # sustained-rate alert wearing a tripwire's description. A `for:`
+      # shorter than the window would be a pure delay that filters nothing
+      # (the expression cannot go false sooner than W after the event), so
+      # there is none, as stellarindex_ingestion_sink_undrained_rows does.
       # Second arm: this CounterVec child is not pre-seeded, so it is BORN
       # at 1 by the very increment the alert is for, and increase() over a
       # series with no earlier sample reads 0. Counters reset on every
@@ -546,10 +525,9 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
-      # audit-2026-07-16 C4-3: discovery Recorder.Record failures were
-      # log-only inside the async sink, so a recorder outage silently
-      # stopped discovered_assets from growing. Now counted +
-      # alertable. Informational (best-effort: the contract re-appears
+      # Discovery Recorder.Record failures inside the async sink: without
+      # this count a recorder outage would silently stop discovered_assets
+      # from growing. Informational (best-effort: the contract re-appears
       # on a later event), same posture as discovery_drops.
       # lint-tripwire-window:sustained: best-effort write, the contract
       # re-appears on a later event; the description asks for "kept failing
@@ -618,15 +596,13 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
-      # #371 F6: `errored` had no alert in either tree — both live-sink
-      # rules matched outcome="dropped" only, and `errored` is a
-      # different fault. A drop is the sink shedding a ledger it
+      # `errored` is a different fault from outcome="dropped" (which the
+      # live-sink pages match). A drop is the sink shedding a ledger it
       # accepted; an error is either ExtractLedger failing before the
       # sink is even offered the ledger (cmd/stellarindex-indexer/
       # main.go, the sampled `ch extract` WARN) or the sink's own
       # Add/Flush failing. The remedies differ, so this is its own rule
-      # rather than a widened matcher on the existing page — redefining
-      # a page an operator already reads is not a bug fix.
+      # rather than a widened matcher on the drop page.
       #
       # Range [30m] against `for: 15m` deliberately: a single step must
       # stay true for longer than the pending period, otherwise the
@@ -721,17 +697,16 @@ groups:
             (events); re-derive it from the CH lake (ADR-0034) per the
             runbook. Usually Postgres was slow or down during a deploy.
 
-      # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
-      # RETRIES an infrastructure-classified insert failure (connection
-      # refused/reset, PG restarting) with backpressure instead of
-      # dropping the write. While it retries, the on-chain drain
-      # goroutine is blocked, so the ledger cursor STALLS (nothing lost)
-      # but the served tier is frozen. A sustained retry rate is the
-      # early signal that Postgres is unreachable and ingest is
-      # backpressured. Ticket, not page: no data is being lost, and
+      # ADR-0041: the trade sink RETRIES an infrastructure-classified
+      # insert failure (connection refused/reset, PG restarting) with
+      # backpressure instead of dropping the write. While it retries, the
+      # on-chain drain goroutine is blocked, so the ledger cursor STALLS
+      # (nothing lost) but the served tier is frozen. A sustained retry
+      # rate is the early signal that Postgres is unreachable and ingest
+      # is backpressured. Ticket, not page: no data is being lost, and
       # cursor-stuck / all-sources-stopped page separately if this turns
       # into a full outage. Mirror of the rule in
-      # deploy/monitoring/rules/ingestion.yml (wave-96 pairing lint).
+      # deploy/monitoring/rules/ingestion.yml (the pair lint keeps both in sync).
       - alert: stellarindex_ingestion_trade_insert_backpressure
         expr: sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m])) > 0
         for: 10m
@@ -775,7 +750,7 @@ groups:
             overflow (kind=dropped). Escalate quickly if the rate is high.
 
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (the
-      # wave-96 monitoring-rules CI dual-validation pattern). ADR-0041
+      # pair lint requires both copies to stay in sync). ADR-0041
       # companion to trade_insert_backpressure above: kind="dropped" is
       # GENUINE, PERMANENT loss — the external (CEX/FX) retry buffer
       # trimmed its oldest entry because an infra fault (sick DB) outlasted
@@ -819,11 +794,11 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
 
-      # INV-0786: classic-supply companion to stellarindex_ingestion_persist_drop
+      # Classic-supply companion to stellarindex_ingestion_persist_drop
       # / trade_buffer_drop above, same reason — kind="trustline_observation"
-      # rose ~17,663 errors over 30 days on r1 (~0.007/s average), well under
-      # the generic insert_errors 0.1/s fleet-wide gate, and had NO alert
-      # coverage at all. persistTrustlineObservation (internal/pipeline/sink.go)
+      # measured ~17,663 errors over 30 days on r1 (~0.007/s average), well
+      # under the generic insert_errors 0.1/s fleet-wide gate, so no other
+      # alert covers it. persistTrustlineObservation (internal/pipeline/sink.go)
       # has no retry/backpressure path of its own (unlike trade, ADR-0041): a
       # failed insert is one classic-supply trustline delta permanently
       # missing from that account's history.
@@ -855,16 +830,15 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
       # Detects cursor-replay / stuck-tip pattern via the
-      # trade_insert_outcome_total counter (added 2026-05-28).
+      # trade_insert_outcome_total counter.
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
-      # the per-host wave-96 lint requires both copies to stay in
-      # sync.
-      # 2026-08-29 (#302): `unless on (source) rate(new[10m]) > 0`, not
+      # the per-host pair lint requires both copies to stay in sync.
+      # `unless on (source) rate(new[10m]) > 0`, not
       # `and on (source) rate(new[10m]) == 0` — the join form needs the
       # outcome="new" child series to EXIST, and a source that has
       # produced only duplicates since process start never creates it
       # (call-site-seeded counter, config-dependent `source` label), so
-      # the alert was silent in exactly its target scenario.
+      # the `and` form would be silent in exactly its target scenario.
       - alert: stellarindex_ingestion_duplicate_flood
         expr: |
           sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
@@ -892,22 +866,21 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
 
-      # Unit-ratio trade sentinel (2026-07-07 Phoenix incident). Mirror
-      # of the rule in deploy/monitoring/rules/ingestion.yml; the
-      # wave-96 pair lint requires both copies to stay in sync. A
-      # decoder field-mapping bug swapped/collapsed base_amount and
-      # quote_amount for every Phoenix trade, landing 237k rows at an
-      # exact 1:1 price for MONTHS — ADR-0033 completeness checks
-      # verify presence, not economic plausibility, so nothing caught
-      # it. stellarindex_dex_trade_unit_ratio_total (emitted from
+      # Unit-ratio trade sentinel. Mirror of the rule in
+      # deploy/monitoring/rules/ingestion.yml; the pair lint requires both
+      # copies to stay in sync. A decoder field-mapping bug that
+      # swaps/collapses base_amount and quote_amount lands every trade of
+      # a source at an exact 1:1 price (measured: 237k Phoenix rows, for
+      # months) — and ADR-0033 completeness checks verify presence, not
+      # economic plausibility, so nothing else catches it.
+      # stellarindex_dex_trade_unit_ratio_total (emitted from
       # internal/storage/timescale InsertTrade + BatchInsertTrades)
       # bumps per landed ON-CHAIN trade whose base_amount exactly
       # equals quote_amount (CEX/FX excluded — they scale amounts
       # differently). Legitimate 1:1 trades are COMMON on parity pairs
-      # (yUSDC/USDC, yETH/ETH wrapper redemptions; EUR-stable crosses
-      # — 2026-07-31: a busy wrapper morning tripped the old absolute
-      # threshold on sdex with ~2% of flow). The decode-bug fingerprint
-      # this alert exists for (2026-07-07 Phoenix field-mapping) makes
+      # (yUSDC/USDC, yETH/ETH wrapper redemptions; EUR-stable crosses —
+      # a busy wrapper morning can reach ~2% of sdex flow), so an
+      # absolute threshold false-fires. The decode-bug fingerprint makes
       # EVERY trade 1:1, so alert on the FRACTION of the source's flow
       # (>50%) with a >25 min-volume guard. Ticket, not page — a
       # data-quality signal, not an outage.
@@ -945,16 +918,14 @@ groups:
 
       # Mirror of source_insert_stale in deploy/monitoring/rules/
       # ingestion.yml — timestamp-shape sibling to duplicate_flood
-      # above. wave-96 pair lint requires both copies to stay in
+      # above. The pair lint requires both copies to stay in
       # sync.
       - alert: stellarindex_ingestion_source_insert_stale
         # 1 h budget for normal sources; 24 h for the genuinely-sparse Soroban
         # AMMs (comet, phoenix). Comet is tiny — ~20-70 trades/day, bursty —
-        # so multi-hour quiet stretches are normal and the flat 1 h budget
-        # false-fired (2026-06-20); the 6 h budget that replaced it ALSO
-        # false-fired (2026-08-05: phoenix's measured 30-day max gap is
-        # 8h28m and a genuine 12h market lull tripped it while the lake
-        # showed zero swap events on any known or unknown pool). 24 h
+        # so multi-hour quiet stretches are normal; phoenix's measured 30-day
+        # max gap is 8h28m, and a genuine 12h market lull (zero swap events on
+        # any known or unknown pool in the lake) trips a 6 h budget. 24 h
         # still catches a real day-scale stall; the ADR-0033 completeness
         # verdict is the correctness net. Tune the regex as new sparse
         # sources appear.
@@ -993,7 +964,7 @@ groups:
 
       # Data-derived gap detector — mirrors the multi-host rule.
       # See deploy/monitoring/rules/ingestion.yml for the full
-      # rationale. The wave-96 lint requires both copies to stay
+      # rationale. The pair lint requires both copies to stay
       # in sync.
       - alert: stellarindex_ingest_gap_detected
         expr: |
@@ -1022,13 +993,12 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detected
 
-      # 2026-08-28 (found verifying PR #258): the absent_over_time clause
-      # is satisfied by the ERROR outcome of runs_total just as well as
-      # the ok one, and a target that has never once succeeded in this
-      # process life (no cursor row → nothing re-emits the stamp) has NO
-      # last_success series for the staleness clause to age. Such a
-      # target — soroban_events failing every 6h cycle on
-      # statement_timeout — fired NOTHING. Third clause: the target's
+      # The absent_over_time clause is satisfied by the ERROR outcome of
+      # runs_total just as well as the ok one, and a target that has never
+      # once succeeded in this process life (no cursor row → nothing
+      # re-emits the stamp) has NO last_success series for the staleness
+      # clause to age — e.g. soroban_events failing every 6h cycle on
+      # statement_timeout would fire NOTHING. Third clause: the target's
       # error counter is present now AND 8h ago (so a fresh process's
       # first failed scan doesn't ticket; identical labels across a
       # restart, so the previous process's errors count) and no
@@ -1085,12 +1055,10 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
-      # ── C6-020 (audit-2026-07-23): long-running ops jobs ──────────
-      # There was NO backfill-progress alert in either rule tree — every
-      # grep hit was runbook prose. Long backfills are the dominant ops
-      # activity right now (Phase A recompress, movement backfills), they
-      # run for days, and a HUNG one was indistinguishable from a working
-      # one unless somebody happened to be tailing the journal.
+      # ── long-running ops jobs ──────────────────────────────────────
+      # Long backfills run for days, and without these alerts a HUNG one is
+      # indistinguishable from a working one unless somebody happens to be
+      # tailing the journal.
       #
       # internal/ops/opsutil.JobHeartbeat publishes three things
       # separately, on purpose, because they need different responses:
@@ -1176,18 +1144,18 @@ groups:
         # jobs that unit is structurally zero for whole phases of a
         # perfectly healthy run: `usd-volume-restamp -chunks` must
         # decompress a Timescale chunk before it can restamp one row in it,
-        # and on r1 (2026-09-09) that decompress ran 49+ minutes on a
-        # 17.3 GB chunk and about 1.5 hours on the 159.7 GB outlier at
-        # [2026-06-06, 2026-07-06). This alert ticketed on EVERY healthy
-        # chunked run, and an alert that fires on every healthy run is one
-        # the operator learns to ignore — the same blindness it exists to
-        # prevent, reached by a different route.
+        # and on r1 that decompress takes 49+ minutes on a 17.3 GB chunk
+        # and about 1.5 hours on a 159.7 GB one. Alerting on progress_total
+        # alone would ticket on EVERY healthy chunked run, and an alert that
+        # fires on every healthy run is one the operator learns to ignore —
+        # the same blindness it exists to prevent, reached by a different
+        # route.
         #
         # The answer is NOT a phase mute or a wider window: that phase is
         # the longest and most dangerous part of the run, and "alive and
         # hung" is real there (decompress_chunk waits on a lock the
         # ledgerstream replay can hold; a stalled read never returns). The
-        # job now reports the work it IS doing — `progress_bytes_total`,
+        # job reports the work it IS doing — `progress_bytes_total`,
         # the chunk's on-disk size climbing as its heap and indexes are
         # extended (measured on TimescaleDB 2.26.4 / PG 15.17: every sample
         # moved through a decompress). A WEDGED decompress extends no
@@ -1197,10 +1165,10 @@ groups:
         # ZERO for a job that does not publish that series. Without it the
         # `+` would be a one-to-one vector match that DROPS every label set
         # missing the right-hand side, and this alert would go silent for
-        # any job whose emitter predates the series — a monitoring hole
+        # any job whose binary lacks the series — a monitoring hole
         # disguised as a monitoring upgrade. The emitter publishes the
         # series unconditionally (at 0), so the fallback only covers a job
-        # still running an older binary across the rollout.
+        # still running an older binary across a rollout.
         expr: |
           (
             changes(stellarindex_ops_job_progress_total[30m])
@@ -1237,16 +1205,14 @@ groups:
             recurred (galexie wedge, 2026-07-05) and the stack is the
             only evidence of which read blocked.
 
-      # ── T578: a job that RAN TO COMPLETION and FAILED had no alert ──
-      # `stellarindex_ops_job_last_exit_ok` has been emitted by
-      # opsutil.JobHeartbeat.render() since C6-020, but no rule in either
-      # tree ever selected it — the metric existed, was scraped, and was
-      # silently unread. A job that exits 1 (backfill hit a permanent
-      # error, verify-contiguity found a gap it couldn't close) finishes
-      # cleanly from the heartbeat's point of view: running→0, no further
-      # staleness, no_progress's `running == 1` guard goes false too. Both
-      # existing siblings are correctly silent on it, and nothing else
-      # was watching.
+      # ── A job that RAN TO COMPLETION and FAILED ──
+      # `stellarindex_ops_job_last_exit_ok`, emitted by
+      # opsutil.JobHeartbeat.render(). A job that exits 1 (backfill hit a
+      # permanent error, verify-contiguity found a gap it couldn't close)
+      # finishes cleanly from the heartbeat's point of view: running→0, no
+      # further staleness, no_progress's `running == 1` guard goes false
+      # too. Both siblings are correctly silent on it, so without this rule
+      # nothing watches it.
       #
       # No `running == 1` guard here — unlike the two siblings above, this
       # alert is specifically about the TERMINAL state a finished run left
@@ -1281,10 +1247,9 @@ groups:
             same as heartbeat_stale — deliberate, so a failed run does not
             go invisible just because nothing is currently running.
 
-      # RLT-143 / #615: the three dispatcher whole-transaction skip
-      # counters (tx_read_errors, tx_event_read_errors,
-      # entry_meta_unsupported — promoted to Prometheus by RLT-135)
-      # had a WARN log but no alert, so a sustained climb was invisible
+      # The three dispatcher whole-transaction skip counters
+      # (tx_read_errors, tx_event_read_errors, entry_meta_unsupported)
+      # log a WARN; this makes a sustained climb visible to on-call.
       # to on-call. Sensitive (any nonzero increase): each counter means
       # a whole transaction's events, or its whole apply-phase entry
       # walk, vanished — indistinguishable downstream from an empty
