@@ -127,7 +127,7 @@ assert_cmd nft_https_open sh -c 'nft list ruleset | grep -qE "dport \{? ?(80, 44
 # ── incident-sweep guards ────────────────────────────────────────────
 assert_grep redis_maxmemory /etc/redis/redis.conf '^maxmemory [0-9]'
 
-# ── CS-010 supply config (erased if ansible renders without its vars) ─
+# ── supply config (erased if ansible renders without its vars) ─
 assert_grep supply_reserve_accounts /etc/stellarindex.toml \
   'sdf_reserve_accounts = \['
 # The reserve accounts are mainnet SDF accounts; test-net inventories leave the list empty.

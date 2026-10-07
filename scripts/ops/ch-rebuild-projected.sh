@@ -13,7 +13,7 @@
 # still writing stays untouched; the delete/rebuild range never overlaps the
 # indexer's current writes, so ingestion keeps running. Append-logged.
 #
-# The DELETE is destructive, so five rules bound it (F075, RLT-380, RLT-381, #782):
+# The DELETE is destructive, so five rules bound it:
 #
 #   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
 #      DELETE: the same BackfillSafe / live-cursor / buffered-range refusals
@@ -64,7 +64,7 @@
 # the pre-per-source format, written by the full-SRC run, and still reads as
 # "done for every source" — skipping is the non-destructive reading of it.
 #
-# A SUCCESSFUL window files no projection dirty window, on purpose (#408):
+# A SUCCESSFUL window files no projection dirty window, on purpose:
 # filing one per window for 8 sources over [50M,62.894M] would force the next
 # nightly compute-completeness to re-reconcile ~12.9M ledgers × 8
 # un-prefiltered sources — a likely timeout that takes out EVERY source's
@@ -88,7 +88,7 @@
 # This is the ONE sanctioned ch-rebuild over projected domains (the replay
 # decision rule in docs/architecture/ingest-pipeline.md points here):
 # additive upserts cannot repair a wrong PK, so the window is DELETEd first.
-# Since #333 `ch-rebuild -write` reads the live projector's cursor per
+# `ch-rebuild -write` reads the live projector's cursor per
 # source and refuses a range the live tail is still inside — the TO<=62.894M
 # scoping above already satisfies it, EXCEPT for a source whose own
 # projector cursor is lagging behind TO (e.g. a held blend_backstop catch-up).

@@ -2,7 +2,7 @@
 # restore-drill-run-test.sh — drives the REAL restore-drill.sh through its
 # failure paths with shimmed host tools, root-free and second-fast.
 #
-# THE DEFECTS THIS EXISTS FOR (audit 2026-08-28, backup-restore-3/-4):
+# THE DEFECTS THIS EXISTS FOR:
 #
 #  1. The drill's only capacity guard was a fixed MIN_FREE_GB=200 floor,
 #     below the ~600 G database it restores onto the single shared pool.
@@ -19,16 +19,16 @@
 #     the backup had just been proven restorable. Every run past the
 #     preconditions now records evidence + rewrites the metric.
 #
-#  3. (2026-09-04, restore-drill-offsite.timer) Two timers now drive the
-#     script — repo1 and repo2 — and each run rewrote ONE textfile whole,
-#     so a clean repo2 run erased a failed repo1 verdict and no series
-#     said which copy it proved. The metric is now per-repo (one file per
+#  3. (restore-drill-offsite.timer) Two timers drive the script — repo1
+#     and repo2 — so a run that rewrote ONE shared textfile whole would let
+#     a clean repo2 run erase a failed repo1 verdict, with no series saying
+#     which copy it proved. The metric is per-repo (one file per
 #     repo, a `repo` label on every series); case 4 drives a repo2 abort
 #     and checks repo1's file is untouched.
 #
-#  4. (2026-09-04) The one-drill-at-a-time lock was entirely untested —
-#     the `flock` shim returned 0 unconditionally — and `exec 9>$LOCK`
-#     under `set -e` exited 1, this script's code for ONE FAILED CHECK,
+#  4. The one-drill-at-a-time lock needs a real test — a `flock` shim
+#     that returns 0 unconditionally proves nothing — and `exec 9>$LOCK`
+#     under `set -e` exits 1, this script's code for ONE FAILED CHECK,
 #     so an unwritable lock path would have been recorded as the backup
 #     failing a check. Cases 6 and 7 drive a HELD lock and an UNOPENABLE
 #     lock file; case 8 drives a postgres left on the scratch port by a
@@ -391,7 +391,7 @@ fi
 
 # ─── 9. emit_metric: no rendered line may lack a value ──────────────
 #
-# THE DEFECT (2026-09-10 class, pre-existing). The throughput series was
+# THE DEFECT. The throughput series was once
 # written as
 #   echo "…_ledgers_per_second${lbl} $(echo "scale=2; …" | bc)"
 # and `bc` is a separate Debian package that nothing this drill installs
@@ -401,7 +401,7 @@ fi
 # would vanish entirely on precisely the runs that measured a re-derive,
 # taking stellarindex_restore_drill_failures and _last_success_unix (the
 # drill's only evidence that the backups restore) with it. That is the
-# r1 2026-09-10 shape, which nothing alerted on for ~20 minutes.
+# r1 shape, which nothing alerted on for ~20 minutes.
 #
 # emit_metric is driven directly, extracted from the SHIPPED bytes: the
 # CH stage it guards runs only after a full successful restore against a

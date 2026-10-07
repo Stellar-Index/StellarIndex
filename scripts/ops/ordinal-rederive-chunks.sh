@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ordinal-rederive-chunks.sh — re-derive ledger_entry_changes across the
 # un-ordinaled band so `intra_ledger_seq` is populated, which is the
-# MANDATORY pre-step before D3 (audit C2-4c / CS-021).
+# MANDATORY pre-step before D3.
 #
 # Why this exists, and why it is chunked + tuned the way it is:
 #
@@ -56,7 +56,7 @@ BAND_END="${BAND_END:-63550000}"
 CHUNK="${CHUNK:-110000}"
 START="${START:-63000000}"
 # r1 has no live seam, so without -bucket ch-backfill reads the trimmed live
-# bucket and the first historical chunk finds zero ledgers (INV-1313).
+# bucket and the first historical chunk finds zero ledgers.
 BUCKET="${BUCKET-galexie-archive}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 POOL="${POOL:-data}"

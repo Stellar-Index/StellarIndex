@@ -2,7 +2,7 @@
 # route-sweep.sh — hit EVERY GET route in the OpenAPI spec and report its
 # status, so "which surfaces actually work" is evidence rather than belief.
 #
-# Why this exists: on 2026-07-27 the explorer's core routes
+# Why this exists: the explorer's core routes
 # (/v1/accounts/{addr}, /v1/ledgers, /v1/contracts) were found returning
 # 503 in production — invisible to every existing check, because
 # r1-smoke.sh covers a hand-picked set of GETs and the SLA probe covers the
@@ -39,7 +39,7 @@ SPEC="${SPEC:-openapi/stellar-index.v1.yaml}"
 # entries collapse onto index 0 and every lookup returns the LAST value.
 # The sweep then requests the same nonsense id for every route and the
 # 4xx column is pure noise — which is exactly what happened on the first
-# two runs (2026-07-28) before this was caught. `case` works everywhere.
+# two runs before this was caught. `case` works everywhere.
 #
 # Per-key rationale:
 #   pool        - a Blend/Phoenix pool contract id
@@ -66,12 +66,12 @@ fixture_for() {
 
 # A tooling failure here (missing PyYAML, an unreadable/malformed spec,
 # a generator that silently matches nothing) must never read as "every
-# route healthy" — that is exactly the shape of the 2026-07-27 incident
+# route healthy" — that is exactly the shape of the route-503 incident
 # this script exists to catch, just moved one layer down into the tool
 # itself. So the generator's own exit status is checked (a heredoc's
 # exit code IS the interpreter's, since there is no pipe in front of
 # it), and the resulting list is required to clear a floor AND contain
-# routes from the exact 2026-07-27 outage (/ledgers, /contracts,
+# routes from the exact route-503 outage (/ledgers, /contracts,
 # /accounts/{g_strkey}) before a single curl is issued. Any of these
 # failing is a REFUSAL (exit 2), not a zero-route clean sweep.
 ROUTE_SWEEP_MIN_ROUTES="${ROUTE_SWEEP_MIN_ROUTES:-50}"

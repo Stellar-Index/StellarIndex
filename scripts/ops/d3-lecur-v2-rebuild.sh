@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # D3 — ledger_entries_current version rebuild:
 # ReplacingMergeTree(ledger_seq) → ReplacingMergeTree(version),
-# version = (ledger_seq << 32) | intra_ledger_seq  (audit C2-4c / CS-021).
+# version = (ledger_seq << 32) | intra_ledger_seq.
 #
 # Executes deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql — the
 # operator-run migration artifact — as a phased, resumable script. Read that
-# file's header + the 2026-07-18 rehearsal note before running: the tie-break
+# file's header + its rehearsal note before running: the tie-break
 # is only effective where intra_ledger_seq is populated in the source
 # append-log (D2 partitions 39–53, Phase-0 re-derived ranges, live ingest
 # ≥~63,550,000). Run `probe-ordinals` first to see actual coverage.

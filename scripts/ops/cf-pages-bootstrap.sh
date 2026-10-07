@@ -6,7 +6,7 @@
 # "stellarindex-showcase" project, detaching the live explorer. See
 # the safety interlock below. The word "idempotent" is what made
 # docs/operations/cf-pages-setup.md describe this as safe to run
-# from CI (#362).
+# from CI.
 #
 # Creates / updates three Pages projects (showcase, dashboard,
 # status), binds custom domains, and (when the zone is on
@@ -44,8 +44,8 @@ set -euo pipefail
 
 # ─── SAFETY INTERLOCK (do not remove without reading this) ────────
 #
-# This script was written for the ORIGINAL bootstrap, before the
-# 2026-07-03 rename. Run against the live zone today it does two
+# This script is for the ORIGINAL bootstrap, before the project
+# rename. Run against the live zone it does two
 # irreversible things:
 #
 #   1. Creates the PRE-RENAME Pages projects (stellarindex-showcase

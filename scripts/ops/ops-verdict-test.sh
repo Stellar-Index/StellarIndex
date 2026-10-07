@@ -3,7 +3,7 @@
 #
 # `systemctl` is STUBBED on PATH with a file-backed fake unit, so this
 # runs on any box (macOS included), starts nothing and restarts nothing.
-# The fixtures are the property values MEASURED on r1 on 2026-09-07:
+# The fixtures are the property values MEASURED on r1:
 #
 #   creators-rollup.service   Type=oneshot RemainAfterExit=no
 #                             ran 11:32:26 → 11:48:29 CEST
@@ -76,7 +76,7 @@ t() { test "$@"; }
 # is `active` or `reloading`, exit 3 otherwise. That contract is what
 # makes the naive loop exit on iteration zero, and r1 shows why it is
 # not a detail: creators-rollup.service completed a 16-minute run on
-# 2026-09-07 with ActiveEnterTimestampMonotonic still 0, so `is-active`
+# r1 with ActiveEnterTimestampMonotonic still 0, so `is-active`
 # could not have returned 0 at any instant of it.
 
 FAKE="$TMP/units"
@@ -337,7 +337,7 @@ res "$(t "$rc" -eq 0; echo $?)" \
 
 # A RemainAfterExit=yes unit that FAILS goes activating → failed and
 # never enters `active` at all, so ActiveEnterTimestampMonotonic never
-# moves — GH #562 / RLT-053. The unit's failure is proven instead by
+# moves. The unit's failure is proven instead by
 # InactiveEnterTimestampMonotonic, which real systemd advances on entry
 # to `failed` regardless of RemainAfterExit.
 mkunit failing-apparmor.service yes \

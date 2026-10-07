@@ -46,7 +46,7 @@
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
-# INV-0802: CH as ops_monitor once the role renders this file; /dev/null (no
+# CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
@@ -243,7 +243,7 @@ if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
     # Land the output before slicing it: `mc alias list` on one alias is a
     # handful of lines, but piping it straight into an early-exit `awk`
     # under this script's pipefail is the exact class scripts/ci/
-    # lint-shell-sigpipe.sh exists to catch (#475), and the gate does not
+    # lint-shell-sigpipe.sh exists to catch, and the gate does not
     # get to assume this call site is small enough to be exempt.
     alias_out=$("${mc_clean[@]}" mc alias list "$offsite_alias" 2>/dev/null)
     alias_url=$(awk '/URL/ { print $3; exit }' <<<"$alias_out")

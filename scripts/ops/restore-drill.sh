@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# restore-drill.sh — the CS-110 answer: a backup that has never been
+# restore-drill.sh — a backup that has never been
 # restored is a hope, not a backup. NON-DESTRUCTIVE scratch restore
 # of the pgBackRest stanza + a ClickHouse re-derive sample, with the
 # results appended to the drill evidence log (ADR-0043).
