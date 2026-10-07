@@ -42,8 +42,8 @@ const (
 	OracleSourceBand         = "band"
 )
 
-// Staleness ceilings per oracle family (the CS-089 discipline
-// applied to served rows: a frozen feed must read as "reference
+// Staleness ceilings per oracle family (the external references'
+// staleness discipline applied to served rows: a frozen feed must read as "reference
 // unavailable", never as agreement/divergence).
 //
 //   - Reflector publishes every ~5 minutes per contract; 30m means
@@ -192,7 +192,7 @@ func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, 
 			ErrAssetUnsupported, r.source, pair.String(), u.Asset.String(), u.Quote.String())
 	}
 
-	// Staleness gate (CS-089 analogue). observedAt is the comparison
+	// Staleness gate. observedAt is the comparison
 	// timestamp Compare passes through; zero falls back to wall time
 	// defensively, mirroring the Chainlink reference.
 	asOf := observedAt

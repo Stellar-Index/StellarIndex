@@ -23,12 +23,10 @@ import (
 // ChainlinkReference is a [Reference] backed by Chainlink Data
 // Feeds via off-chain Ethereum JSON-RPC reads.
 //
-// Design rationale (per docs/discovery/oracles/chainlink.md):
-// Stellar joined Chainlink Scale in 2025/2026 but at audit time
-// no Soroban Data Feeds contracts were live on mainnet. Chainlink's
-// data is on-chain on Ethereum + L2s; we read it via eth_call
-// against the AggregatorV3 contract's `latestRoundData()` view
-// function on a public Ethereum RPC endpoint.
+// Design rationale: the reference reads Chainlink's Ethereum
+// deployment, not Soroban — we call the AggregatorV3 contract's
+// `latestRoundData()` view function via eth_call on a public
+// Ethereum RPC endpoint.
 //
 // Role: divergence cross-check ONLY. Chainlink does not contribute
 // to VWAP/TWAP — we compare its reported price against our
@@ -36,8 +34,8 @@ import (
 // GBP/USD, etc.) and surface `flags.divergence_warning` on /v1/price
 // when the spread exceeds threshold.
 //
-// Chainlink does NOT publish XLM/USD or USDC/USD on its mainnet
-// feeds at audit time, so this reference covers fiat reference
+// The built-in feed map has no XLM/USD or USDC/USD feed, so this
+// reference covers fiat reference
 // rates + major crypto pairs that we use as anchors via FX or
 // stablecoin proxy. Adding more feed coverage is operator
 // configuration only — the FeedMap maps canonical pair → AggregatorV3
@@ -77,7 +75,7 @@ type chainlinkFeedSpec struct {
 	// MaxAge is the staleness ceiling: a round whose updatedAt is
 	// older than this (relative to the comparison's observedAt) is
 	// rejected as ErrPriceUnavailable instead of being served as a
-	// fresh reference (CS-089 — a frozen feed must read as
+	// fresh reference (a frozen feed must read as
 	// "reference unavailable", never as agreement/divergence).
 	// Calibrated per feed class: crypto/USD feeds heartbeat at
 	// ≤1h, FX feeds at 24h AND pause over market closes (a Friday
@@ -92,7 +90,7 @@ type ChainlinkOptions struct {
 	HTTPClient *http.Client
 
 	// RPCURL is the JSON-RPC Ethereum endpoint used for eth_call.
-	// Public free options at audit time:
+	// Public free options:
 	//
 	//   https://cloudflare-eth.com
 	//   https://eth.llamarpc.com
@@ -152,13 +150,13 @@ type ChainlinkFeed struct {
 	Invert bool
 
 	// MaxAge is the staleness ceiling for the feed's latestRoundData
-	// updatedAt (CS-089). Zero = the built-in feed's budget for a
+	// updatedAt. Zero = the built-in feed's budget for a
 	// built-in key, 76h for any other fiat/fiat key, else 3h.
 	MaxAge time.Duration
 }
 
-// defaultChainlinkMaxAgeFX is the Chainlink FX staleness default
-// (CS-089), owned by the ingest source so both readers agree.
+// defaultChainlinkMaxAgeFX is the Chainlink FX staleness default,
+// owned by the ingest source so both readers agree.
 const defaultChainlinkMaxAgeFX = externalchainlink.DefaultMaxAgeFX
 
 // NewChainlinkReference constructs a Chainlink-backed reference.
@@ -207,7 +205,7 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 		}
 		feedMap[k] = spec
 	}
-	// GH-641: pre-register the zero-valued mismatch/verify-failed series
+	// Pre-register the zero-valued mismatch/verify-failed series
 	// for every configured feed, same reasoning as
 	// obs.seedBoundedLabelSeries — without it, a feed that has never
 	// mis-scaled or failed a decimals() call has no series at all, so
@@ -262,14 +260,14 @@ func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 // the configured AggregatorV3 contract's `latestRoundData()` view
 // function (selector 0xfeaf968c). Decodes the answer AND the round's
 // updatedAt, applies the resolved decimals, (optionally) inverts, and
-// — CS-089 — REJECTS the answer as ErrPriceUnavailable when
-// updatedAt is older than the feed's MaxAge relative to observedAt:
-// a frozen feed served as fresh can both mask a real divergence and
-// fabricate a false one, and the pre-fix `latestAnswer()` carried no
-// timestamp at all. Returns ErrAssetUnsupported when the pair has no
-// feed mapping; transport / decode / staleness errors surface as
-// wrapped errors so the divergence worker treats them as "reference
-// unavailable this run" (feeding the CS-088 no_reference outcome).
+// REJECTS the answer as ErrPriceUnavailable when updatedAt is older
+// than the feed's MaxAge relative to observedAt: a frozen feed served
+// as fresh can both mask a real divergence and fabricate a false one.
+// `latestRoundData()` is used rather than `latestAnswer()` because the
+// latter carries no timestamp at all. Returns ErrAssetUnsupported when
+// the pair has no feed mapping; transport / decode / staleness errors
+// surface as wrapped errors so the divergence worker treats them as
+// "reference unavailable this run" (feeding the no_reference outcome).
 func (r *ChainlinkReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	spec, ok := r.feedMap[pair.String()]
 	if !ok {
@@ -303,7 +301,7 @@ func (r *ChainlinkReference) LookupQuote(ctx context.Context, pair canonical.Pai
 		return Quote{}, fmt.Errorf("chainlink: non-positive answer for %s: %s", pair.String(), answer.String())
 	}
 
-	// CS-089 staleness gate. observedAt is the comparison timestamp
+	// Staleness gate. observedAt is the comparison timestamp
 	// Compare passes through (also our injected clock for tests);
 	// zero falls back to wall time defensively.
 	asOf := observedAt
@@ -413,7 +411,7 @@ func (r *ChainlinkReference) ethCall(ctx context.Context, to, data string) (stri
 // uint256, updatedAt uint256, answeredInRound uint80), one 32-byte
 // word each. Returns the answer (two's-complement int256) and
 // updatedAt as UTC time. Rejects results shorter than 5 words —
-// a proxy answering the legacy latestAnswer shape must fail loudly,
+// a proxy answering the one-word latestAnswer shape must fail loudly,
 // not decode garbage.
 func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
 	raw, err := hex.DecodeString(strings.TrimPrefix(hexStr, "0x"))

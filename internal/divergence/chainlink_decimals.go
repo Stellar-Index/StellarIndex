@@ -15,11 +15,10 @@ import (
 
 // On-chain decimals() verification for the Chainlink reference.
 //
-// The feed's `decimals` used to be STATIC config (defaulting to 8) that
-// the code never checked against the AggregatorV3 proxy's `decimals()`
-// view — so a wrong or drifted configured value scaled every reading
-// by 10^(configured-actual) silently, producing a permanent false
-// divergence (or, worse, masking a real one). The reference now reads
+// A configured `decimals` that is never checked against the AggregatorV3
+// proxy's `decimals()` view lets a wrong or drifted value scale every
+// reading by 10^(configured-actual) silently, producing a permanent false
+// divergence (or, worse, masking a real one). The reference therefore reads
 // `decimals()` from each feed over the same JSON-RPC path it uses for
 // `latestRoundData()`, on first use and again every
 // chainlinkDecimalsRefreshInterval, and:

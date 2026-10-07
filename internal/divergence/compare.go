@@ -145,9 +145,9 @@ const overallDeadlineLabel = OutcomeDeadlineExceeded
 //     recorded in Failures with the verbatim error message.
 //   - A reference that has not reported by opts.OverallTimeout is
 //     recorded as [overallDeadlineLabel] and Compare returns the
-//     PARTIAL result (REL-01). Waiting on the WaitGroup alone made a
-//     single reference that ignores context cancellation able to
-//     block the comparison — and, through it, the aggregator's
+//     PARTIAL result. Waiting on the WaitGroup alone would let a
+//     single reference that ignores context cancellation block the
+//     comparison — and, through it, the aggregator's
 //     divergence refresh — indefinitely. The abandoned goroutine is
 //     left to finish on its own; its send cannot block or panic
 //     because the results channel is buffered to len(refs) and is
@@ -327,7 +327,7 @@ func collectOutcomes(
 // threshold agrees). A delta exactly AT the threshold counts as
 // agreement, mirroring `flushObservations`' strict `>` firing test.
 //
-// CS-087 semantics (DivergenceChecked): only references that
+// DivergenceChecked semantics: only references that
 // RESPONDED can agree or disagree. Failed references are simply not
 // in `sources` — they contribute neither agreement nor disagreement.
 // An empty map returns 0, which consumers MUST read as "unchecked"
@@ -357,7 +357,7 @@ func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct fl
 
 // countOutcome returns how many entries of [Result.Outcomes] equal want —
 // e.g. how many references were OutcomeAssetUnsupported, to separate
-// structural non-coverage from a genuine reference failure (#1044).
+// structural non-coverage from a genuine reference failure.
 func countOutcome(outcomes map[string]string, want string) int {
 	n := 0
 	for _, o := range outcomes {

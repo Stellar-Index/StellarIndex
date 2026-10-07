@@ -71,14 +71,14 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// T015: 8s ceiling on the price read, matching every other
+	// 8s ceiling on the price read, matching every other
 	// hypertable/Redis-backed handler on this surface (markets.go,
 	// vwap.go, oracle.go, …).
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	// F-1340: route the primary read through the rc.89 XLM dual-form
-	// alias loop, exactly as handlePrice does. Without it, SEP-40
+	// Route the primary read through the XLM dual-form alias loop,
+	// exactly as handlePrice does. Without it, SEP-40
 	// `lastprice(native)` queries only the literal `native/fiat:USD`
 	// key and misses a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate — returning stale/empty here while /v1/price
@@ -109,12 +109,12 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// Without this, SEP-40 `lastprice(native)` 404s in steady
 		// state because prices_1m has no literal native/fiat:USD
 		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
-		// via the same fallback. Caught by the 2026-05-08 prod audit.
+		// via the same fallback.
 		viaFallback = true
 		fb := s.priceFallback(ctx, asset, defaultPriceQuote)
 		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
 		ok := fb.ok
-		// MSP-06: a withheld verdict reached from the proxy leg must be
+		// A withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
@@ -122,11 +122,9 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 			s.writeFallbackMiss(w, r, asset, defaultPriceQuote, fb, nil)
 			return
 		}
-		// F-1339 (G2-02): every fallback degradation is below the
-		// surface's documented baseline contract, so flags.stale MUST
-		// be true — the chain itself is the staleness signal (F-1254).
-		// /v1/price does this; the SEP-40 surfaces used to force
-		// stale=false here, shipping stale data with stale=false.
+		// Every fallback degradation is below the surface's documented
+		// baseline contract, so flags.stale MUST be true: the chain
+		// itself is the staleness signal, as on /v1/price.
 		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
@@ -281,7 +279,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		records = n
 	}
 
-	// T015: same 8s ceiling as lastprice/x_last_price — see that
+	// Same 8s ceiling as lastprice/x_last_price — see that
 	// handler's comment.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -334,15 +332,14 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	}
 	// A peg-proxied series is not a print of the fiat:USD pair and sits
 	// below the surface's baseline: stale as well as triangulated, the
-	// F-1339 rule lastprice/x_last_price follow.
+	// rule lastprice/x_last_price follow.
 	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
 }
 
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
 // with the same X/fiat:USD → X/<peg> retry shape used in the
-// other handler-side stablecoin-proxy fallbacks (6505934b5 / a8be130dd /
-// #1220). When the literal asset/fiat:USD lookup returns an
-// empty slice AND quote is fiat:USD AND the operator declared
+// other handler-side stablecoin-proxy fallbacks. When the literal
+// asset/fiat:USD lookup returns an empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
 // asset/<peg> result. viaPeg=true on the return so the envelope can
 // stamp the peg-served series stale and triangulated.
@@ -353,16 +350,15 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // returned so the handler answers withheld rather than 200 [].
 //
 // Without this, /v1/oracle/prices?asset=native silently returns an
-// empty data array on Stellar mainnet — same out-of-the-box failure
-// mode as /v1/oracle/lastprice had pre-3aaa5c2a4, just expressed as
-// 200-empty rather than 404.
+// empty data array on Stellar mainnet — the same failure as a
+// lastprice without its fallback, expressed as 200-empty rather than
+// 404.
 //
-// T015: both the literal-quote read and the peg walk go through
-// [Server.recentClosedForAliases], the same rc.89 XLM dual-form alias
-// loop lastprice/x_last_price use via readPriceWithAliases — without
-// it, `/v1/oracle/prices?asset=native` misses a `crypto:XLM/fiat:USD`
-// bucket the aggregator wrote under the alias spelling, the same gap
-// F-1340 closed on the single-snapshot surfaces.
+// Both the literal-quote read and the peg walk go through
+// [Server.recentClosedForAliases], the same XLM dual-form alias loop
+// lastprice/x_last_price use via readPriceWithAliases — without it,
+// `/v1/oracle/prices?asset=native` misses a `crypto:XLM/fiat:USD`
+// bucket the aggregator wrote under the alias spelling.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, viaPeg bool, err error) {
@@ -402,8 +398,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 // [assetAliases]) against quote, in priority order, and returns the
 // first non-empty result. Mirrors [Server.readPriceWithAliasesServed]'s
 // alias loop so /v1/oracle/prices doesn't miss a native-vs-crypto:XLM
-// split of the same market the way lastprice/x_last_price used to
-// before F-1340.
+// split of the same market.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
 	var firstErr error
 	for _, a := range assetAliases(asset) {
@@ -457,13 +452,13 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// T015: same 8s ceiling as handleOracleLastPrice — see that
+	// Same 8s ceiling as handleOracleLastPrice — see that
 	// handler's comment.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	// F-1340: route the primary read through the rc.89 XLM dual-form
-	// alias loop, exactly as handlePrice does — so `x_last_price(native,
+	// Route the primary read through the XLM dual-form alias loop,
+	// exactly as handlePrice does — so `x_last_price(native,
 	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate rather than missing it on the literal form.
 	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, quote)
@@ -473,7 +468,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
 		return
 	}
-	// viaFallback mirrors handlePrice / handleOracleLastPrice: the M2
+	// viaFallback mirrors handlePrice / handleOracleLastPrice: the
 	// normalizeRawPriceSnapshot below must run ONLY on the RAW closed-1m-bucket
 	// read, never on a priceFallback result (already normalized at its own
 	// source) — see normalizeRawPriceSnapshot's doc comment.
@@ -483,20 +478,19 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
 		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
-		// cross-rate. Companion to the equivalent fix on
-		// /v1/oracle/lastprice — see that handler's comment.
+		// cross-rate, for the reason /v1/oracle/lastprice gives — see
+		// that handler's comment.
 		viaFallback = true
 		fb := s.priceFallback(ctx, base, quote)
 		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
 		ok := fb.ok
-		// MSP-06, as above.
+		// A withheld proxy-leg verdict is reported as withheld, as above.
 		if !ok && (fb.withheld != "" || fb.err != nil) {
 			s.writeFallbackMiss(w, r, base, quote, fb, nil)
 			return
 		}
-		// F-1339 (G2-02): fallback responses surface flags.stale=true
-		// — the chain itself is the staleness signal (F-1254). The
-		// SEP-40 surface used to force stale=false here.
+		// Fallback responses surface flags.stale=true: the chain itself
+		// is the staleness signal.
 		stale = fb.stale
 		if !ok || isDeclaredPeg(snapshot) {
 			writeProblem(w, r,
