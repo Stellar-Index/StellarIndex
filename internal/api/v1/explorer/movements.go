@@ -200,19 +200,21 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 // keyset-paged by the opaque composite (ledger, tx_hash, op_index,
 // leg_index) cursor, with optional ?kind=/?direction=/?asset= filters.
 //
-// Merge seam: ClickHouse's stellar.account_movements (the pre-P23
-// classic-movement archive, ADR-0047/0048 D2) covers every ledger
-// BELOW classicmovements.P23StartLedger; Postgres' sep41_transfers
-// 'transfer' rows (ADR-0048 D5's "recent tail",
+// Merge seam: ClickHouse's stellar.account_movements (the classic-movement
+// archive, ADR-0047/0048 D2, plus the cap67-derived rows up to its
+// watermark) covers every ledger BELOW the merge boundary; Postgres'
+// sep41_transfers 'transfer' rows (ADR-0048 D5's "recent tail",
 // ListSEP41TransfersByAddress) cover every ledger AT OR ABOVE it. The
-// two ranges cannot overlap by construction — assertP23NonOverlap
-// checks that invariant on every request rather than only trusting
-// the doc comment. Because the ranges never overlap, merging two
-// DESC-sorted per-store pages degenerates to "drain whichever side's
-// next row is newer", which mergeAccountMovementRows implements as a
-// real two-pointer merge (not a special-cased concatenation) so the
-// endpoint stays correct even if that invariant is ever violated by a
-// future regression elsewhood.
+// boundary is movementsSplit's pgFloor: timescale.MovementsFloor() (the
+// P23 ledger on pubnet, genesis on a test net), raised to one past the
+// cap67 archive watermark when that is higher. The two ranges cannot
+// overlap by construction — assertMovementsNonOverlap checks that
+// invariant on every request rather than only trusting the doc comment.
+// Because the ranges never overlap, merging two DESC-sorted per-store
+// pages degenerates to "drain whichever side's next row is newer", which
+// mergeAccountMovementRows implements as a real two-pointer merge (not a
+// special-cased concatenation) so the endpoint stays correct even if a
+// regression elsewhere ever violates that invariant.
 //
 // Honest empty-state: classic-movements-backfill is a historical-only,
 // operator-run job (AGENTS.md "Heavy one-shot jobs on r1"), so
@@ -721,20 +723,17 @@ func canonicalizeSACName(name string) string {
 	return asset.String()
 }
 
-// assertP23NonOverlap is ADR-0048 D5's "assert [the non-overlap] in
-// code" requirement: the ClickHouse archive is hard-clamped below
-// classicmovements.P23StartLedger and the Postgres tail is hard-floored
-// at-or-above it (timescale.SEP41MovementsFloorLedger, pinned to the
-// same value by TestP23BoundaryConstantsAgree), so the two inputs to
-// mergeAccountMovementRows should never straddle the boundary. A
-// violation can only mean one of those two floors/clamps regressed
-// elsewhere; it's logged as an error rather than panicking a
-// user-facing read path — loud in observability, not a 500.
-// assertMovementsNonOverlap checks the merge invariant at the DYNAMIC
-// boundary (the cap67 watermark's Postgres floor — pgFloor): the CH arm
-// serves strictly below it, the PG arm at/above it. pgFloor ==
-// P23StartLedger when the cap67 archive isn't provisioned, so the static
-// P23 boundary is the degenerate case.
+// assertMovementsNonOverlap is ADR-0048 D5's "assert [the non-overlap] in
+// code" requirement, checked at the DYNAMIC merge boundary pgFloor from
+// movementsSplit: the CH arm serves strictly below it, the PG arm at or
+// above it, so the two inputs to mergeAccountMovementRows should never
+// straddle it. Without a cap67 archive watermark pgFloor is
+// timescale.MovementsFloor() — on pubnet classicmovements.P23StartLedger,
+// pinned to timescale.SEP41MovementsFloorLedger by
+// TestP23BoundaryConstantsAgree — so the static P23 boundary is the
+// degenerate case. A violation can only mean a floor or ceiling regressed
+// elsewhere; it is logged as an error rather than panicking a user-facing
+// read path — loud in observability, not a 500.
 func (h *Handler) assertMovementsNonOverlap(chRows, pgRows []clickhouse.AccountMovementRow, pgFloor uint32) {
 	for _, row := range chRows {
 		if row.Ledger >= pgFloor {

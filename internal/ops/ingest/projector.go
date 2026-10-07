@@ -115,16 +115,13 @@ func projectorReplay(w io.Writer, args []string) error {
 		// to currentLedger=0, where `target >= 0` prints "no action"
 		// and exits 0.
 		//
-		// This is not a theoretical typo. The projector writes its
-		// cursor under the projector SOURCE name (blend_backstop,
-		// sep41_transfers, …), but `find-data-gaps` prints a
-		// remediation command using the gap detector's per-TABLE
-		// target names, which are hyphenated (blend-backstop,
-		// sep41-transfers, soroswap-skim …) and mostly do not match —
-		// and the runbook lists several of those hyphenated names as
-		// valid under a heading claiming they match the registry. So
-		// an operator pasting the generated command for a real
-		// projection hole would get a green exit code and a "no action"
+		// The projector writes its cursor under the projector SOURCE
+		// name (blend_backstop, sep41_transfers, …), while the gap
+		// detector's per-TABLE target names are hyphenated
+		// (blend-backstop, sep41-transfers, soroswap-skim …) and mostly
+		// do not match. `find-data-gaps` prints the projector name, but
+		// an operator who typed the table target for a real projection
+		// hole would otherwise get a green exit code and a "no action"
 		// line, while nothing is rewound and the gap survives.
 		//
 		// A genuinely never-run source has no cursor row either, but

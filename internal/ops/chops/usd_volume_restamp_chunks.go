@@ -27,9 +27,11 @@ import (
 // compression policy, the run lock and the free-space guard; it knows
 // nothing about which usd_volume tier is being repaired. The rows are the
 // tier's business, reached through [chunkRestampTier] — implemented by
-// usd_volume_restamp_chunks_xlmbase.go (the XLM-base anchor re-derive) and
-// usd_volume_restamp_chunks_exact.go (the exact-tier peg identity). Both tiers
-// live in COMPRESSED chunks and both pay the same price for writing into
+// estimatedChunkTier in usd_volume_restamp_chunks_estimated.go (the
+// row-list tiers: the XLM-base anchor re-derive, its XLM-quote mirror and
+// the CEX fiat-quote re-derive) and exactChunkTier in
+// usd_volume_restamp_chunks_exact.go (the exact-tier peg identity). Every
+// tier lives in COMPRESSED chunks and pays the same price for writing into
 // one, so they share the walk rather than each growing their own.
 //
 // # Why a second walk exists
