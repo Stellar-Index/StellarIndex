@@ -445,7 +445,7 @@ jobs:
           if [ "${FILTER_GO:-false}" = true ]; then
             go_pkgs="$(go run ./scripts/ci/affected-go-pkgs "$RESOLVED" | tr '\n' ' ')"
           fi
-          echo "unit tests will run: ${go_pkgs:-(none — no package's code changed)}"
+          echo "unit tests will run: ${go_pkgs:-(none: no package code changed)}"
           {
             echo "integration=${integration}"
             echo "go=${FILTER_GO:-false}"
