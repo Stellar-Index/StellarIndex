@@ -36,7 +36,7 @@ const usageRollupDateLayout = "2006-01-02"
 //
 //	stellarindex-ops usage-rollup-backfill \
 //	  -config /etc/stellarindex.toml \
-//	  -from 2026-07-19 -to 2026-07-21 -write
+//	  -from YYYY-MM-DD -to YYYY-MM-DD -write
 //
 // Omitting -write runs a dry pass: it scans Redis and reports what it
 // would upsert without touching usage_daily (see [opsutil.RegisterWriteGate]).

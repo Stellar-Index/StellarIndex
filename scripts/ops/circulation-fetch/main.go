@@ -29,7 +29,7 @@ import (
 // currencyToCountry maps each currency the WB serves to its ISO
 // 3166 alpha-3 country code. Eurozone and currency-union pairs
 // (e.g. CFA franc) point at a representative country with the
-// most-recent published series. Curated 2026-05-08.
+// most-recent published series.
 var currencyToCountry = map[string]string{
 	"ALL": "ALB", // Albania
 	"ARS": "ARG", // Argentina

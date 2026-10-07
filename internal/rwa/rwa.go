@@ -47,7 +47,7 @@
 // R3 — INDEPENDENT RECOGNITION. The issuer G-address is named in the
 // curated third-party account directory (migration 0136) with at least
 // one recognition tag and no scam-class tag. A self-declaration alone
-// is worthless here: measured on the production directory 2026-09-05,
+// is worthless here: measured on the production directory,
 // of the 130 issuers publishing a domain-bound real-world
 // anchor_asset_type, 128 carry the `malicious` tag — the declarations
 // come overwhelmingly from lookalike domains impersonating real

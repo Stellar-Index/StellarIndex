@@ -195,7 +195,7 @@ func classifySymbol(sym string) (SEP41EventType, bool) {
 }
 
 // oracleEventSymbols is the oracle-suggestive topic[0] symbol set
-// from the 2026-07-10 investigation's ClickHouse lake census
+// from the ClickHouse lake census
 // (docs/architecture/oracle-manipulation-defense.md §"Lake census" — the exact
 // `WHERE topic_0_sym IN (...)` list the census ran against r1's
 // `stellar.contract_events` table). Sighting one of these on a

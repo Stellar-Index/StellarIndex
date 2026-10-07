@@ -21,7 +21,7 @@ import (
 // structurally classic-only (`issuer_g_strkey NOT NULL`), so no
 // Soroban-native contract asset can reach them at all.
 //
-// Measured on r1 2026-08-27: `CAUP7NFA…` traded $71.8k over 6,418 trades
+// Measured on r1: `CAUP7NFA…` traded $71.8k over 6,418 trades
 // in 7 days and served no price, because its ONLY counterparty is
 // `CBIJ…`, which is itself a Soroban-native contract. Both legs are
 // substantial — CAUP7/CBIJ is $18,872 over 1,216 buckets spanning 24h,

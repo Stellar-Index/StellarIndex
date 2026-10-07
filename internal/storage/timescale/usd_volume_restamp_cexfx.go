@@ -31,7 +31,7 @@ import (
 // be. So before the resolver learned to read `fx_quotes`
 // every non-USD-quoted CEX pair fell through all four tiers of
 // [tradeUSDVolume] and inserted with `usd_volume` NULL — ~$939M of
-// unpriced volume on 2026-07-17 alone
+// unpriced volume on one day alone
 // (docs/operations/usd-volume-coverage-plan.md). The insert path is
 // correct at HEAD; what is left is the history behind it.
 //

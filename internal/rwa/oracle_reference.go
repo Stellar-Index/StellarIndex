@@ -91,7 +91,7 @@ type instrumentBinding struct {
 // USTRY / KTB set is that issuer's product line rather than a generic
 // list of sovereign debt.
 //
-// The tie to the FEED is price-proved on all three, measured 2026-09-09
+// The tie to the FEED is price-proved on all three, measured
 // against each token's own 24h SDEX VWAP:
 //
 //	USTRY    1.0739100040 vs feed 1.07403800   —  1.19 bps

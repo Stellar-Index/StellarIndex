@@ -96,7 +96,7 @@ type VWAPUSDFXResolver struct {
 	// bridge leg. Deliberately much wider than `freshness`: that one
 	// is calibrated for liquid direct markets, while the bridge exists
 	// precisely to price tokens whose markets are thin. Measured
-	// 2026-07-22, the tokens behind the largest unpriced classes trade
+	// on r1, the tokens behind the largest unpriced classes trade
 	// $8-$220 across a whole day, so requiring a bridge rate from the
 	// last hour rejects most of them — and the alternative to a
 	// slightly-stale rate is not a better rate, it is NULL, which
@@ -540,7 +540,7 @@ const fiatUSDRateScale = 18
 // in a currency other than USD (binance BTC/EUR, kraken ETH/GBP, …)
 // fell through all four tiers of [tradeUSDVolume] and inserted with
 // `usd_volume` NULL, silently deflating every aggregate built on that
-// column — measured at ~$939M of unpriced volume on 2026-07-17 alone,
+// column — measured at ~$939M of unpriced volume on a single day,
 // ~23% of that day's total. See docs/operations/usd-volume-coverage-plan.md.
 //
 // The rate is computed by [fxSnapFromRows] as an exact *big.Rat
@@ -710,9 +710,9 @@ const bridgeRateMaxScale = 80
 //
 // This is what takes on-chain coverage past the USD-pegged markets.
 // Most Stellar tokens have no stablecoin pair at all but do have an XLM
-// one — measured 2026-07-22, the tokens behind the largest unpriced
+// one — measured on r1, the tokens behind the largest unpriced
 // classes (6T, F8, YxT, aTTaiN, GYEN, uniT) ALL have XLM markets, and
-// 237,305 on-chain trades on 2026-07-17 were unpriced purely because
+// 237,305 on-chain trades in one day were unpriced purely because
 // neither leg was XLM or a stablecoin while both legs had XLM markets.
 //
 // Returns ("", zero, nil) on a miss — a token with no XLM market
@@ -970,7 +970,7 @@ const pegQuoteScaleDenominator = 10_000_000
 // split across them by VENUE, so binding `native` alone made the anchor
 // structurally blind to every Soroban XLM book.
 //
-// Measured on r1 2026-09-03, prices_1m buckets clearing this query's own
+// Measured on r1, prices_1m buckets clearing this query's own
 // dust floor, XLM base x the operator's single declared peg:
 //
 //	base=native      x quote=USDC-GA5Z… (classic)  215,790  from 2026-03-12

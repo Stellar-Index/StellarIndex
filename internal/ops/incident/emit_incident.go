@@ -145,7 +145,7 @@ func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
 //
 //	stellarindex-ops emit-incident \
 //	  -config /etc/stellarindex.toml \
-//	  -slug 2026-05-12-redis-blip \
+//	  -slug YYYY-MM-DD-redis-blip \
 //	  -event sev1 \
 //	  -write
 //
