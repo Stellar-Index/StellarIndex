@@ -54,7 +54,7 @@ type IssuerAuthFlags struct {
 // bidirectional [[CURRENCIES]] back-reference, so persisting one would create
 // an impersonation surface on exactly the accounts that can no longer be
 // verified on-chain — and it is not hypothetical: 979 of 985 recovered
-// pre-images in a 1,000-issuer r1 sample (2026-09-03) carry one, including
+// pre-images in a 1,000-issuer r1 sample carry one, including
 // `stellarkraken.com` and `stellarbrunch.com` on accounts that no longer
 // exist. clickhouse.RemovedAccountsLastKnownAuthFlags already blanks it at
 // the reader, which is the primary defence; this refuses to be the second
@@ -223,20 +223,18 @@ var persistIssuerAuthFlagsQuery = `
 //   - "" (unlabelled): a non-empty value overwrites, an empty one leaves the
 //     row alone, because nothing says what produced it.
 //
-// It used to be the other way round — COALESCE kept the stored value,
-// "because the SEP-1 resolver's domain is better sourced than the
-// AccountEntry's". The SEP-1 resolver does not write this column. It READS
-// it, to choose which domain to fetch. The clause therefore protected one
-// snapshot of the AccountEntry from a newer snapshot of the same
-// AccountEntry, and between this writer and the enrich job the column was
-// write-once: an anchor that moved domain on-chain and let the old name
-// lapse could never take its identity back, because nothing would ever
-// overwrite the lapsed name the SEP-1 refresh keeps fetching. See
-// [Store.SyncIssuerHomeDomain]. Treating an empty reading as "not read"
-// kept the column frozen the same way for an anchor that CLEARED its domain,
-// or merged its account, and let the name lapse.
+// A COALESCE that kept the stored value would be wrong: the SEP-1 resolver
+// does not write this column, it READS it, to choose which domain to fetch.
+// Such a clause would only protect one snapshot of the AccountEntry from a
+// newer snapshot of the same AccountEntry, and between this writer and the
+// enrich job the column would be write-once: an anchor that moved domain
+// on-chain and let the old name lapse could never take its identity back,
+// because nothing would ever overwrite the lapsed name the SEP-1 refresh
+// keeps fetching. See [Store.SyncIssuerHomeDomain]. Treating an empty
+// reading as "not read" would freeze the column the same way for an anchor
+// that CLEARED its domain, or merged its account, and let the name lapse.
 //
-// # PROVENANCE (#374)
+// # PROVENANCE
 //
 // auth_flags_source + auth_flags_as_of_ledger move TOGETHER or not at all.
 // Writing a new source beside a retained as-of ledger would assert that the

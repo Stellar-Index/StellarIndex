@@ -29,7 +29,7 @@ type AquariusReservesSyncEvent struct {
 // InsertAquariusReservesSync appends one reserves_sync observation,
 // fanned to one row per token position. Idempotent on the
 // (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index, token_index) PK, with the INV-3 generation-guarded
+// event_index, token_index) PK, with the generation-guarded
 // corrective upsert (migration 0110): a re-derive at a HIGHER
 // derive_generation lands its correction in place; a lower generation
 // can never revert one. Mirrors InsertAquariusReserves.

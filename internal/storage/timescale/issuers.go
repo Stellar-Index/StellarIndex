@@ -21,7 +21,7 @@ type IssuerRow struct {
 	OrgName    string // sep1_payload->>'OrgName' — empty when SEP-1 not fetched
 	// OrgVerified is true only when the SEP-1 toml's [[CURRENCIES]] lists this
 	// issuer back (bidirectional proof). Without it, OrgName is issuer-self-
-	// declared and must NOT be rendered as authoritative (CS-100 impersonation).
+	// declared and must NOT be rendered as authoritative (impersonation vector).
 	OrgVerified   bool
 	AuthRequired  *bool
 	AuthRevocable *bool
@@ -31,7 +31,7 @@ type IssuerRow struct {
 	// of the AuthFlagsSource* constants, or "" when the provenance is not
 	// known (flags unresolved, or persisted before migration 0153). Empty
 	// means UNKNOWN, never "current": a consumer must not read the absence
-	// of a label as a claim that the reading is live (#374).
+	// of a label as a claim that the reading is live.
 	AuthFlagsSource string
 	// AuthFlagsAsOfLedger is the ledger the flags are true as of. nil when
 	// not known.
@@ -251,10 +251,10 @@ const Sep1RefreshMaxLimit = 5000
 // -issuer <G>` is the way to force one.
 //
 // `limit` is clamped INTO [1, Sep1RefreshMaxLimit] rather than reset to
-// a default. It used to snap any out-of-range value to 100, so an
-// operator raising LIMIT past the ceiling silently got a FIFTH of the
-// old budget instead of more — the failure mode reads as "the job is
-// slow", never as "your setting was rejected".
+// a default. Snapping an out-of-range value to 100 would silently give
+// an operator raising LIMIT past the ceiling a smaller budget instead
+// of a larger one — a failure that reads as "the job is slow", never
+// as "your setting was rejected".
 func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Duration, limit int) ([]IssuerSep1Candidate, error) {
 	if limit <= 0 {
 		limit = 1
@@ -353,7 +353,7 @@ type IssuerSep1Currency struct {
 // sep1-refresh cron hasn't visited it). Returns (nil, sql.ErrNoRows)
 // when the issuer is completely unknown.
 //
-// Replaces the live HTTPS fetch the API used to do per-request via
+// Stands in for a live per-request HTTPS fetch via
 // [metadata.Resolver.Resolve] — that fetch dominated /v1/assets/{id}
 // p95 (4+ seconds on cold issuers). The DB-cached path is one indexed
 // SELECT.
@@ -363,9 +363,9 @@ type IssuerSep1Currency struct {
 //
 // [GetIssuerSep1Cached] returns (nil, nil) for both of the ways an issuer can
 // hold no payload, and they are opposite findings: OUR backlog, or the
-// ISSUER's publication — on 2026-09-16 a real asset manager's stellar.toml
-// with an unterminated string on line 20, thirteen live RWA-class
-// declarations unreadable.
+// ISSUER's publication — e.g. a real asset manager's stellar.toml with an
+// unterminated string on line 20, thirteen live RWA-class declarations
+// unreadable.
 //
 // It reads sep1_consecutive_failures, not sep1_resolved_at, because the
 // refresh cron stamps resolved_at BEFORE each fetch and keeps it through
@@ -446,11 +446,11 @@ func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool
 //
 // # Why the projection, measured
 //
-// The column is not a few dozen rows of metadata any more. On r1
-// 2026-09-13 it held 35,829 payloads totalling 448 MB of JSON, up ~50%
-// in two days on the back of a deliberate SEP-1 backfill. Reproduced on
+// The column is not a few dozen rows of metadata. On r1 it held
+// 35,829 payloads totalling 448 MB of JSON, up ~50% in two days on the
+// back of a deliberate SEP-1 backfill. Reproduced on
 // the integration harness' TimescaleDB with a 611 MB equivalent set, the
-// old `SELECT g_strkey, sep1_payload` split as:
+// plain `SELECT g_strkey, sep1_payload` split as:
 //
 //	row scan + IS NOT NULL predicate     12 ms   (EXPLAIN ANALYZE)
 //	detoast + wire transfer of 610 MB   ~250 ms
@@ -542,8 +542,8 @@ SELECT i.g_strkey,
 // and — since nothing here filters on org_verified either, and
 // projectCatalogueRows assigns the result unconditionally — take over
 // the logo served for USDC on /v1/assets and the explorer homepage,
-// giving a per-visitor beacon under a verified brand (cold audit
-// 2026-08-03). A TOML may still describe only the issuer that served it.
+// giving a per-visitor beacon under a verified brand. A TOML may still
+// describe only the issuer that served it.
 func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 	rows, err := s.db.QueryContext(ctx, allSep1ImagesQuery)
 	if err != nil {
@@ -575,13 +575,13 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 //
 // # Why this overwrites
 //
-// issuers.home_domain used to be write-once — both of its writers refused
-// a row that already held a value, each citing a SEP-1 resolver whose
-// domain was "better sourced" than the AccountEntry's. That resolver does
-// not write this column; it READS it to choose which domain to fetch. So
-// the clause protected one snapshot of the AccountEntry from a newer
-// snapshot of the same AccountEntry, and the column froze at whatever it
-// was first given.
+// issuers.home_domain must not be write-once. A writer that refused a
+// row already holding a value, on the theory that a SEP-1 resolver's
+// domain is "better sourced" than the AccountEntry's, would be wrong:
+// that resolver does not write this column; it READS it to choose which
+// domain to fetch. Such a clause would protect one snapshot of the
+// AccountEntry from a newer snapshot of the same AccountEntry, and the
+// column would freeze at whatever it was first given.
 //
 // A frozen identity column is an attack surface, not a conservatism. An
 // anchor that moves domain with SetOptions and lets the old name lapse
@@ -769,12 +769,13 @@ const (
 //
 // Two separate jobs, and they are easy to conflate:
 //
-//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, and predates the
+//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, independent of the
 //     ladder. IssuersNeedingSep1Refresh orders `sep1_resolved_at ASC
-//     NULLS FIRST`, so a row left NULL stays candidate #1 on every
-//     subsequent run; the ~43k pubnet issuers with dead home_domains
-//     used to occupy the whole front of the queue and good issuers
-//     behind them were never reached. Every failure path must stamp it.
+//     NULLS FIRST`, so a row left NULL stays the first candidate on
+//     every subsequent run; unstamped, the ~43k pubnet issuers with dead
+//     home_domains would occupy the whole front of the queue and good
+//     issuers behind them would never be reached. Every failure path
+//     must stamp it.
 //
 //   - sep1_consecutive_failures / sep1_next_attempt_after are the
 //     BUDGET. Stamping alone only reorders the queue; it still hands a
@@ -860,10 +861,10 @@ func intervalArg(d time.Duration) string {
 
 // issuerAssetsHardCap bounds one issuer's asset list.
 //
-// The query used to have no LIMIT at all, on the documented assumption
-// that an issuer has "typically <20" assets. That assumption held only
-// while the registry was fed by trades: an issuer had to get each of its
-// codes traded to appear at all. Since migration 0158 the registry also
+// An unbounded query would rest on the assumption that an issuer has
+// "typically <20" assets. That assumption holds only for a registry fed
+// by trades, where an issuer has to get each of its codes traded to
+// appear at all. Since migration 0158 the registry also
 // carries every classic asset with a TRUSTLINE — 512,496 of them against
 // 199,793 traded ones — and minting many codes and airdropping trustlines
 // for them is an established spam pattern on this network. An unbounded,

@@ -24,7 +24,7 @@ import (
 // chunk in the trades hypertable (539M+ rows on r1) — measured at
 // 4-5 minutes per call, far past any client deadline. With the
 // 14-day cap the scan touches ~1.5M rows and finishes inside the
-// 30s API budget. Pre-2026-05-04 the unbounded query ran every
+// 30s API budget. Without it the unbounded query would run on every
 // /v1/assets call; the recency cap brings the endpoint into the
 // SLA range without a new materialised table. The planned
 // optimisation is a materialised `asset_catalogue` populated
@@ -105,10 +105,10 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 //   - AssetClassic: PK lookup on `classic_assets`. The registry table
 //     has one row per (code, issuer) ever observed and a primary key
 //     on `asset_id`; an unknown classic asset costs one index seek.
-//     Bypasses the trades hypertable entirely. F-0157 perf
-//     (audit-2026-05-26): pre-fix `/v1/assets/AAAA-G…` cold path was
-//     4-5 s because the `WHERE base_asset = $1 OR quote_asset = $1`
-//     across 2.7 B trades rows had to seek every chunk's index.
+//     Bypasses the trades hypertable entirely: answering from `trades`
+//     measured 4-5 s on the `/v1/assets/AAAA-G…` cold path, because the
+//     `WHERE base_asset = $1 OR quote_asset = $1` across 2.7 B trades
+//     rows has to seek every chunk's index.
 //   - Every other type (native / soroban / fiat / crypto / rwa):
 //     [Store.hasNonClassicAsset], a WINDOW-BOUNDED probe. No registry
 //     table can hold these types — `classic_assets` requires a non-null
@@ -120,7 +120,7 @@ func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	// it exists on every Stellar network from the genesis ledger, whether
 	// or not anyone has traded it, so no evidence needs to be sought and
 	// none can be absent. Answering it from trade activity is a category
-	// error that bites on a QUIET network — measured 2026-09-09,
+	// error that bites on a QUIET network — when measured,
 	// futurenet had ZERO XLM trades in the 14-day window this file's
 	// non-classic probe bounds on, so routing native through that probe
 	// would 404 the native asset of a network we ask developers to build
@@ -135,25 +135,23 @@ func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	return s.hasNonClassicAsset(ctx, a)
 }
 
-// hasClassicAsset is the F-0157-perf fast path: PK lookup on
+// hasClassicAsset is the fast path: PK lookup on
 // classic_assets. The registry was specifically designed (migration
 // 0023) as "the catalogue of every classic asset ever observed."
 //
-// It used to be populated ONLY by the trade-insert hook, so presence
-// here was a strict subset of presence in `trades` and an absent
-// asset_id provably had no trades. That is no longer the relationship,
-// and the change is the point: since migration 0158 the registry also
-// carries assets registered from TRUSTLINE HOLDINGS
-// ([Store.RegisterClassicAssetsHeld]), which is 61% of the classic-asset
-// population — an asset that is held but never traded had no row here at
-// all, so [Store.HasAsset] answered false for an asset that demonstrably
-// exists and GET /v1/assets/{id} returned 404 for it.
+// The registry is not populated only by the trade-insert hook: since
+// migration 0158 it also carries assets registered from TRUSTLINE
+// HOLDINGS ([Store.RegisterClassicAssetsHeld]), which is 61% of the
+// classic-asset population. Presence here is therefore NOT a subset of
+// presence in `trades`, and that is the point: without the holdings rows
+// an asset that is held but never traded would have no row here,
+// [Store.HasAsset] would answer false for an asset that demonstrably
+// exists, and GET /v1/assets/{id} would 404 it.
 //
-// The short-circuit itself is UNCHANGED and still sound: this function
-// answers "does this asset exist", not "has it traded". A hit still
-// avoids the hypertable; a miss still means we have never observed the
-// asset from any source. What a hit no longer implies is a trade — read
-// last_trade_at for that.
+// The short-circuit is sound: this function answers "does this asset
+// exist", not "has it traded". A hit avoids the hypertable; a miss means
+// we have never observed the asset from any source. A hit does not imply
+// a trade — read last_trade_at for that.
 func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `SELECT EXISTS (SELECT 1 FROM classic_assets WHERE asset_id = $1)`
 	var exists bool
@@ -170,30 +168,27 @@ func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, e
 // hasNonClassicAsset answers existence for every asset type the classic
 // registry cannot hold.
 //
-// # What this replaced, and why
+// # Why not an unbounded existence scan
 //
-// Until 2026-09-09 this arm was an UNBOUNDED existence scan:
+// The obvious arm is an UNBOUNDED existence scan:
 //
 //	SELECT EXISTS (SELECT 1 FROM trades
 //	                WHERE base_asset = $1 OR quote_asset = $1 LIMIT 1)
 //
 // — precisely the shape the standing no-unbounded-trade-scan rule
-// forbids, and the same F-0157 shape hasClassicAsset was written to
-// escape, left behind on the arm that serves `native`. The OR across
-// two columns cannot be one scan of either single-column index, so the
+// forbids, and the same shape hasClassicAsset was written to escape.
+// The OR across two columns cannot be one scan of either single-column index, so the
 // planner BitmapOrs both per chunk and appends chunks until a row turns
 // up; on r1 that is thousands of chunks spanning 2017, nearly all
-// compressed. It survived only by getting lucky early in the append
-// order. Measured on r1 2026-09-09, while a usd-volume re-stamp was
+// compressed. It survives only by getting lucky early in the append
+// order. Measured on r1, while a usd-volume re-stamp was
 // decompressing and re-compressing historical chunks (routine
 // maintenance here), `GET /v1/assets/native` blew the 15 s request
 // budget on three consecutive attempts — `GetAsset failed
 // err="timescale: HasAsset: timeout: context deadline exceeded"` —
 // while `/v1/assets/USDC-GA5Z…` on the classic arm answered in 2.5 ms.
-// The native asset of the network this project indexes was the one
-// asset the fast path did not cover.
 //
-// # The shape now
+// # The shape
 //
 // Three index probes ORed together, short-circuited on the first TRUE:
 //
@@ -208,11 +203,11 @@ func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, e
 //     shape [Store.RecentSorobanDEXTrades] already uses), and `since` is
 //     computed Go-side — never `now() - INTERVAL` — so the planner sees
 //     a constant timestamp and excludes out-of-window chunks at plan
-//     time. That exclusion IS the fix: maintenance on historical chunks
-//     is no longer on this query's path.
+//     time. That exclusion is what matters: maintenance on historical
+//     chunks stays off this query's path.
 //
 // Measured on a migrated Timescale 2.26/pg15 with 40 days of trades
-// (chunk interval 7 days since migration 0062): the pre-fix statement
+// (chunk interval 7 days since migration 0062): the unbounded statement
 // plans a BitmapOr against every chunk; this one plans three InitPlans —
 // a classic_assets index-only scan, then per-side index scans over the
 // in-window chunks ONLY, with the `ts >= …` qual dropped on the chunks

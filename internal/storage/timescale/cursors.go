@@ -29,9 +29,9 @@ import (
 // tick on a freshly-migrated cluster). The density-coverage
 // projection declines to credit any live span in that transient
 // window — honest about "we don't yet know how far back this
-// cursor reaches" — rather than the pre-2026-05-28 fallback to
-// sourceGenesisLedger which silently inflated density to 100%
-// for sources whose live cursor stayed NULL. See migration 0046
+// cursor reaches" — rather than falling back to
+// sourceGenesisLedger, which would silently inflate density to
+// 100% for sources whose live cursor stayed NULL. See migration 0046
 // + UpsertCursor.
 type Cursor struct {
 	Source      string
@@ -162,10 +162,9 @@ func (s *Store) ListCursors(ctx context.Context) ([]Cursor, error) {
 //     [first-write-after-deploy, last_ledger] — honest about
 //     "we started tracking from here", with no false claim
 //     to genesis-onwards coverage. The diagnostic density
-//     projection no longer needs a NULL fallback (it had
-//     been falling back to sourceGenesisLedger and silently
-//     inflating density to 100% for sources with NULL live
-//     cursors — F-0020 density audit, 2026-05-28).
+//     projection needs no NULL fallback (falling back to
+//     sourceGenesisLedger would silently inflate density to
+//     100% for sources with NULL live cursors).
 func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
 	const q = `
         INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger, last_updated)
@@ -195,7 +194,7 @@ type CursorRead struct {
 // AdvanceCursorFrom advances (source, sub) to newLast ONLY IF the row is
 // still exactly what the caller read — a compare-and-swap, for readers
 // whose read→write gap is long enough for someone else to move the cursor
-// in between (findings F159 / K013). It reports whether the advance was
+// in between. It reports whether the advance was
 // applied; false with a nil error means "the cursor moved under you —
 // abandon this commit and re-read".
 //
@@ -261,16 +260,15 @@ func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expec
 
 // RewindCursor moves an existing cursor BACKWARD to lastLedger — the
 // deliberate-rewind path that UpsertCursor's monotonic-forward guard
-// (WHERE EXCLUDED.last_ledger > last_ledger, F-0020) intentionally
+// (WHERE EXCLUDED.last_ledger > last_ledger) intentionally
 // refuses. `projector-replay` is the only production caller: rewinding
 // the projector's per-source cursor is how historical re-projection
 // works (ADR-0032 Phase 5).
 //
-// Without this method projector-replay silently NO-OPed: it called
-// UpsertCursor with a lower ledger, the guard matched zero rows, the
-// command printed success, and the projector stayed at tip (found
-// 2026-06-12 during the deliverable re-derives — the blend TRUNCATE +
-// replay wrote nothing until this landed).
+// Without this method projector-replay would silently NO-OP: UpsertCursor
+// with a lower ledger matches zero rows under the guard, the command
+// prints success, and the projector stays at tip — a TRUNCATE + replay
+// would write nothing.
 //
 // Errors if the cursor row doesn't exist — a rewind of a source that
 // has never run is operator error, not a seed path (use UpsertCursor /

@@ -30,10 +30,10 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 	// are one statement. On conflict we DO UPDATE every value column plus
 	// derive_generation, guarded by
 	// `oracle_updates.derive_generation <= EXCLUDED.derive_generation`
-	// (migration 0109 / INV-3): a re-derive with a higher-or-equal
+	// (migration 0109): a re-derive with a higher-or-equal
 	// generation lands its corrected price in place, while a lower
 	// generation (a live gen-0 replay) can never revert a correction —
-	// replacing the old `DO NOTHING`, which silently discarded corrected
+	// a plain `DO NOTHING` would silently discard corrected
 	// re-derives. `xmax = 0` distinguishes a fresh insert from an
 	// on-conflict update, and the `HAVING count(*) FILTER (WHERE inserted)
 	// > 0` gate means a re-walked duplicate OR a re-derive update never
@@ -199,7 +199,7 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 	// max(ts) per (source, asset, quote) — the compress_segmentby key — is
 	// answered from compressed-batch metadata, and the lateral fetches one
 	// stream's newest rows by exact ts. The DISTINCT ON form sorted the
-	// asset's whole history (318,908 rows, 541 ms on r1 2026-09-28).
+	// asset's whole history (318,908 rows, 541 ms on r1).
 	// OFFSET 0 keeps the lateral a parameterised nested loop; flattened,
 	// the planner hash-joins against a full scan of the open chunk.
 	const q = `
@@ -479,11 +479,11 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 		}
 		u.Decimals = uint8(decimals)
 		// A parse failure still drops the row — there is nothing sane to
-		// serve for an asset we cannot name — but it is no longer SILENT.
-		// This used to `continue` with no log, metric or error, so a row
+		// serve for an asset we cannot name — but it is never SILENT.
+		// A bare `continue` with no log, metric or error would make a row
 		// whose stored canonical text the running binary could not parse
-		// vanished from /v1/oracle/streams and the explorer's /oracles
-		// page with zero signal (wave-D SI-OC-04).
+		// vanish from /v1/oracle/streams and the explorer's /oracles
+		// page with zero signal.
 		//
 		// The likeliest cause is also the worst time for silence: the
 		// documented remediation for a mislabelled oracle row is an

@@ -19,8 +19,7 @@ type CompletenessSnapshot struct {
 	// LakeComplete is the ADR-0033/ADR-0034 two-axis verdict's lake
 	// (archive) axis: substrate ∧ recognition only, genesis-to-tip,
 	// decoupled from the retention-scoped projection reconcile that
-	// additionally gates Complete (the served/combined axis). See
-	// notes/DECISION-genesis-complete-verdict-2026-07-16.md Option B.
+	// additionally gates Complete (the served/combined axis).
 	LakeComplete bool
 	FirstProblem uint32 // 0 = none
 	// FoundProblem is write-only (no column): this run's own check found a
@@ -60,7 +59,7 @@ type CompletenessSnapshot struct {
 
 // upsertCompletenessSnapshotQuery is the verdict write. Package-level so
 // [Store.UpsertCompletenessSnapshot] and [Store.PublishCompletenessVerdict]
-// run the byte-identical statement — the CS-083 guard it ends in is what
+// run the byte-identical statement — the never-regress guard it ends in is what
 // makes "did this write land?" a question at all, and two copies of it
 // would drift.
 const upsertCompletenessSnapshotQuery = `
@@ -111,7 +110,7 @@ type snapshotExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// foundProblem is the CS-083 guard's problem arm: this run's own checks
+// foundProblem is the never-regress guard's problem arm: this run's own checks
 // found a failure, located (FirstProblem) or not (FoundProblem). A verdict
 // that is false only because a claim was not evaluated does not qualify.
 func (snap CompletenessSnapshot) foundProblem() bool {
@@ -119,9 +118,9 @@ func (snap CompletenessSnapshot) foundProblem() bool {
 }
 
 // execCompletenessSnapshot runs the verdict write and reports whether it
-// was APPLIED. The CS-083 guard makes a regressive run match zero rows,
-// which the driver reports as success — so rows-affected is the only
-// signal that a verdict was actually stored (finding F072).
+// was APPLIED. The never-regress guard makes a regressive run match zero
+// rows, which the driver reports as success — so rows-affected is the only
+// signal that a verdict was actually stored.
 func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap CompletenessSnapshot) (bool, error) {
 	res, err := ex.ExecContext(ctx, upsertCompletenessSnapshotQuery,
 		snap.Source, int64(snap.Genesis), int64(snap.Tip), int64(snap.Watermark),
@@ -144,7 +143,7 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 
 // UpsertCompletenessSnapshot writes (or refreshes) a source's verdict.
 //
-// It does NOT report whether the CS-083 guard rejected the write. A caller
+// It does NOT report whether the never-regress guard rejected the write. A caller
 // whose next step depends on the verdict having been STORED — clearing a
 // replay-rewind dirty window is the one that exists — must use
 // [Store.PublishCompletenessVerdict] instead.
@@ -166,7 +165,7 @@ type DirtyWindowClear struct {
 
 // VerdictPublication is what [Store.PublishCompletenessVerdict] did.
 type VerdictPublication struct {
-	// Applied is false when the CS-083 never-regress guard rejected the
+	// Applied is false when the never-regress guard rejected the
 	// write (this run's tip is below the stored tip and it found no
 	// problem). The stored verdict is then UNCHANGED — whatever the run
 	// computed was not recorded.
@@ -180,13 +179,13 @@ type VerdictPublication struct {
 
 // PublishCompletenessVerdict writes a source's verdict and — only if that
 // write was APPLIED — clears the replay-rewind dirty window the verdict
-// discharged, in ONE transaction (findings F072 / K013).
+// discharged, in ONE transaction.
 //
-// The pair used to be two independent statements, and the first could not
-// report that it did nothing. A run with a `-to` below the stored tip and
-// no problem is rejected by the CS-083 guard with a nil error; the caller
-// then deleted the window on the strength of a verdict that was never
-// stored. The rewound range dropped out of every later reconcile floor
+// Two independent statements would not do: the first cannot report that it
+// did nothing. A run with a `-to` below the stored tip and no problem is
+// rejected by the never-regress guard with a nil error; the caller would
+// then delete the window on the strength of a verdict that was never
+// stored. The rewound range would drop out of every later reconcile floor
 // while the STORED verdict still carried its pre-rewind clean claim over
 // it — precisely the carried-claim invalidation the window exists to
 // prevent.
@@ -286,7 +285,7 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 // DeleteCompletenessSnapshots removes the verdict rows of the named
 // sources. Used by compute-completeness on a non-pubnet network to clear
 // rows written for pubnet-only sources before the catalogue was
-// network-scoped (#483); the caller passes only catalogue names it has
+// network-scoped; the caller passes only catalogue names it has
 // itself classified as not applicable, never arbitrary input. A nil or
 // empty list is a no-op.
 func (s *Store) DeleteCompletenessSnapshots(ctx context.Context, sources []string) (int64, error) {

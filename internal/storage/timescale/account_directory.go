@@ -43,8 +43,8 @@ type DirectoryEntry struct {
 //
 // Keeping one Go list means "shows a Flagged pill", "has its price
 // withheld" and "is demoted in the ranking" can never disagree —
-// a split between those three is exactly the drift that let a
-// pill-bearing scam token rank #12 on the /assets page (#356).
+// a split between those three is exactly the drift that would let a
+// pill-bearing scam token rank near the top of the /assets page.
 // Tags are stored in [CanonicalDirectoryTags] form, so the Go matcher
 // (which trims), the SQL predicates and the explorer (which only fold
 // case) see identical bytes; the frontend list is pinned equal by
@@ -272,7 +272,7 @@ func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entri
 	// declare the same address. Two rows with an equal address in one
 	// multi-row upsert chunk make Postgres reject the whole statement
 	// ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
-	// which would abort the entire day's sync (RA-3). Collapse duplicate
+	// which would abort the entire day's sync. Collapse duplicate
 	// addresses last-wins before chunking so one bad pair can't freeze
 	// the sync.
 	entries = dedupDirectoryEntriesByAddress(entries)
@@ -426,7 +426,7 @@ func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source strin
 // relative order of the surviving entries. A single multi-row upsert
 // chunk can contain each conflict key at most once, so this is what
 // keeps a duplicate-address upstream from aborting ReplaceDirectory's
-// whole transaction (RA-3).
+// whole transaction.
 func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]DirectoryEntry, 0, len(entries))
@@ -451,16 +451,16 @@ func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 // = EXCLUDED.source`, so a sync updates only the rows it owns and
 // `source` itself is never rewritten. That is migration 0136's stated
 // contract ("scoped by `source` so a future second directory source can
-// coexist without the syncs deleting each other's rows"), which the
-// unconditional `source = EXCLUDED.source` arm quietly broke in two
+// coexist without the syncs deleting each other's rows"). An
+// unconditional `source = EXCLUDED.source` arm would break it in two
 // ways: a second upstream would STEAL every shared address from the
-// first (whose prune, `WHERE source = $1`, then no longer sees them,
-// while the thief's prune eventually deletes them), and — the reason
-// this was found — an operator's hand-held correction was adopted into
-// the upstream snapshot and overwritten within 24 hours, so there was
-// no durable override for a false-positive scam flag at all. Rows the
-// chunk conflicts with but does not own are left untouched (no error)
-// and reported as [DirectorySyncResult.Shadowed]: the first source to
+// first (whose prune, `WHERE source = $1`, then stops seeing them,
+// while the thief's prune eventually deletes them), and an operator's
+// hand-held correction would be adopted into the upstream snapshot and
+// overwritten within 24 hours, leaving no durable override for a
+// false-positive scam flag at all. Rows the chunk conflicts with but
+// does not own are left untouched (no error) and reported as
+// [DirectorySyncResult.Shadowed]: the first source to
 // hold an address keeps it, and the other's prune never sees it.
 func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any) {
 	var (

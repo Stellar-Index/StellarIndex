@@ -4,7 +4,7 @@ import "fmt"
 
 // ─── CCTP chain-identity tables (SDF-facing: verified, never guessed) ────
 //
-// Both tables were verified 2026-07-30 against Circle's PRIMARY docs:
+// Both tables were verified against Circle's PRIMARY docs:
 //
 //   - USDC token contracts per chain:
 //     https://developers.circle.com/stablecoins/usdc-contract-addresses
@@ -78,8 +78,8 @@ func cctpChainForBurnToken(tail string) string {
 }
 
 // cctpDomainChains is Circle's public CCTP domain registry (verified against
-// https://developers.circle.com/cctp/concepts/supported-chains-and-domains,
-// 2026-07-30; Noble/Sui/Aptos are CCTP-v1-legacy domains, kept because
+// https://developers.circle.com/cctp/concepts/supported-chains-and-domains;
+// Noble/Sui/Aptos are CCTP-v1-legacy domains, kept because
 // deposit_for_burn rows reference them). Domains 20/23/24 are unassigned.
 var cctpDomainChains = map[uint32]string{
 	0:  "Ethereum",

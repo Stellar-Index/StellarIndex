@@ -32,13 +32,12 @@ type DecoderStatsBucket struct {
 // ALL-OR-NOTHING. The batch runs inside one transaction because the
 // caller's failure compensation depends on it: statsflush retains its
 // previous snapshot on any error so the unwritten delta folds into the
-// next successful flush (INT-05). Combined with the ACCUMULATING
-// conflict clause above, a partial batch would make that compensation
-// double-count — rows committed before the failing statement would be
-// re-emitted into the next bucket and added on top of what already
-// landed, inflating events_seen by a whole window and corrupting the
-// decode-error RATE that denominator exists to serve (cold audit
-// 2026-08-04).
+// next successful flush. Combined with the ACCUMULATING conflict clause
+// above, a partial batch would make that compensation double-count —
+// rows committed before the failing statement would be re-emitted into
+// the next bucket and added on top of what already landed, inflating
+// events_seen by a whole window and corrupting the decode-error RATE
+// that denominator exists to serve.
 func (s *Store) InsertDecoderStats(ctx context.Context, rows []DecoderStatsBucket) error {
 	if len(rows) == 0 {
 		return nil

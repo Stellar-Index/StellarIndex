@@ -43,10 +43,10 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmis
 		return fmt.Errorf("timescale: InsertBlendEmissionEvent: marshal attributes: %w", err)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the emission `amount` (or asset / user /
 	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_emissions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,

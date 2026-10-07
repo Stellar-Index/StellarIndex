@@ -250,10 +250,8 @@ func strPtrOrNil(s *string) any {
 // Both directions for the same reason every other pair-bound CAGG read
 // does it (see [dirVWAP] and TestCAGGPairReadsFoldBothDirections): the
 // decoder does not normalise orientation, so the market lands in
-// prices_1m as both (A,B) and (B,A) rows. This query filtered one
-// orientation until 2026-08-31 — the third instance of that class, and
-// the one neither wave-D UNAUTH-DOS-9 nor its skeptic found; the class
-// guard did.
+// prices_1m as both (A,B) and (B,A) rows, and filtering one orientation
+// would miss every row stored the other way round.
 //
 // Ordering is ASC here rather than DESC, which
 // [scanCombinedVwap1mRows] handles unchanged — it only requires that

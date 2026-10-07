@@ -27,9 +27,8 @@ func (l DefindexLayer) IsValid() bool {
 }
 
 // DefindexDirection discriminates deposit / withdraw / harvest.
-// Matches the defindex_flows.direction CHECK constraint (widened to
-// admit harvest by migration 0138 — strategy yield realised into the
-// vault, decoded since the 2026-08-10 audit-finding-4 fix).
+// Matches the defindex_flows.direction CHECK constraint (migration 0138
+// widens it to admit harvest — strategy yield realised into the vault).
 type DefindexDirection string
 
 const (
@@ -107,11 +106,10 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		// `amounts` Vec (a zero-asset deposit/withdraw is valid SCVal)
 		// and documents that the decision of what to do with it belongs
 		// downstream (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it
-		// here reintroduced the mismatch that empty check was meant to
-		// guard against: a genuine on-chain event turned into an
-		// unclassified sink fault (held, then quarantined) instead of a
-		// clean insert. Only a Go-nil AmountsVec — the caller never set
-		// the field at all — is the actual bug this guard exists for.
+		// here would turn a genuine on-chain event into an unclassified
+		// sink fault (held, then quarantined) instead of a clean insert.
+		// Only a Go-nil AmountsVec — the caller never set the field at
+		// all — is the caller bug this guard exists for.
 		if e.AmountsVec == nil {
 			return errors.New("timescale: InsertDefindexFlow: vault layer requires AmountsVec")
 		}
@@ -120,11 +118,10 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		}
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the flow amounts (amount / amounts_vec /
 	// df_tokens) or direction / actor lands in place when its generation is
-	// >= the stored one; a live gen-0 replay can never revert it. Replaces
-	// the old DO NOTHING no-op.
+	// >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO defindex_flows (
             ledger, ledger_close_time, tx_hash, op_index, event_index,

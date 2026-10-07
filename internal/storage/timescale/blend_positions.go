@@ -15,7 +15,7 @@ import (
 // / borrow / repay / flash_loan) to the blend_positions hypertable.
 // Idempotent on the (pool, ledger, tx_hash, op_index, event_kind,
 // event_index, ledger_close_time) PK via a generation-guarded
-// corrective upsert (INV-3, migration 0110): a re-derive lands only
+// corrective upsert (migration 0110): a re-derive lands only
 // when its derive_generation is >= the stored one, so a stale replay
 // can't revert a later correction.
 //
@@ -26,12 +26,11 @@ import (
 // Defensive: rejects empty Pool / TxHash, an invalid Kind, and a
 // nil or negative money amount before touching the DB. Mirrors the
 // SQL-boundary magnitude guards the sibling money-market writers
-// already carry (comet Amount.Sign() > 0, aquarius reserve >= 0):
-// the sole producer (decode_money_market.go) errors rather than
-// emitting a nil amount today, so this closes the one spot-checked
-// writer whose committed value was not guarded at the insert
-// boundary (BLEND-1) — a defaulted/fuzzed struct can no longer land
-// a bad row via the nil-to-"0" coercion.
+// carry (comet Amount.Sign() > 0, aquarius reserve >= 0): the sole
+// producer (decode_money_market.go) errors rather than emitting a nil
+// amount, but without this guard at the insert boundary a
+// defaulted/fuzzed struct could land a bad row via the nil-to-"0"
+// coercion.
 func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")
@@ -55,10 +54,10 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 		return fmt.Errorf("timescale: InsertBlendPositionEvent: BOrDAmount must be >= 0 (got %s)", e.BOrDAmount)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the i128 amounts (token_amount / b_or_d_amount)
 	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it. Replaces the old DO NOTHING no-op.
+	// replay can never revert it.
 	const q = `
         INSERT INTO blend_positions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,

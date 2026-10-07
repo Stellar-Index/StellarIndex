@@ -38,10 +38,10 @@ import (
 
 // assetRegistryDedupeTTL throttles per-asset upserts so the
 // classic_assets row's `last_seen_*` + `observation_count` keep
-// advancing while still bounding DB pressure. F-1243 (codex
-// audit-2026-05-12): the prior `sync.Map` of asset_id → struct{}
-// short-circuited every subsequent trade in the same process,
-// leaving the row frozen at first observation. A coarse TTL
+// advancing while still bounding DB pressure. A plain `sync.Map` of
+// asset_id → struct{} would short-circuit every subsequent trade in
+// the same process, leaving the row frozen at first observation. A
+// coarse TTL
 // caps the upsert rate to one per asset per window while
 // guaranteeing the row advances under sustained trading.
 //
@@ -57,9 +57,8 @@ const assetRegistryDedupeTTL = 60 * time.Second
 // package-level map is keyed by asset_id alone, which is only unique
 // within a database: two Stores over different DBs in one process
 // (every integration-test container; a future multi-network binary)
-// shared one cache, so the second DB's first trade for an asset was
-// "deduped" and its classic_assets row never written — the
-// TestAssetsReader `HasAsset(USDC) = false` flake (2026-08-28). The
+// would share one cache, so the second DB's first trade for an asset
+// would be "deduped" and its classic_assets row never written. The
 // zero value is ready to use, so the `&Store{db: db}` constructors
 // need no wiring. See the field docs on [Store].
 
@@ -131,12 +130,10 @@ func (s *Store) registerClassicAssetRange(
 		return nil
 	}
 	assetID := asset.String()
-	// F-1243 (codex audit-2026-05-12): TTL-based dedupe. The
-	// prior `sync.Map` of bare sentinels froze the row at first
-	// observation; now we only skip the upsert when the last
-	// successful one was within `assetRegistryDedupeTTL`. Out-of-
-	// window trades fire the upsert again so `last_seen_*` and
-	// `observation_count` advance.
+	// TTL-based dedupe: skip the upsert only when the last
+	// successful one was within `assetRegistryDedupeTTL`, so the row
+	// is never frozen at first observation. Out-of-window trades fire
+	// the upsert so `last_seen_*` and `observation_count` advance.
 	if s.shouldSkipAssetRegistryUpsert(assetID, time.Now()) && !s.lowersCachedMinLedger(assetID, o.minLedger) {
 		return nil
 	}
@@ -153,17 +150,15 @@ func (s *Store) registerClassicAssetRange(
 	// processes ledgers out of order cannot leave a higher value
 	// behind. Without this, replaying an older window after the
 	// row already exists would leave first_seen_ledger pinned at
-	// the original (later) ledger — wrong by definition. F-1239.
+	// the original (later) ledger — wrong by definition.
 	//
-	// slug (migration 0135, 2026-08-05): the fully-qualified asset_id,
-	// verbatim. 0134 briefly shipped an abbreviated
-	// lower(code)-issuer8 form; the operator flipped it to the full
-	// form one day later because an 8-char issuer prefix is a ~2^32
-	// vanity-grind (dust-attack address mimicry does this routinely)
-	// and the abbreviation bought nothing but URL length. The full
-	// form is self-certifying and unique by construction — it IS the
-	// primary key's value — which also deletes the collision-retry
-	// apparatus 0134's writer needed. ON CONFLICT the existing slug
+	// slug (migration 0135): the fully-qualified asset_id, verbatim,
+	// not an abbreviated lower(code)-issuer8 form: an 8-char issuer
+	// prefix is a ~2^32 vanity-grind (dust-attack address mimicry
+	// does this routinely) and the abbreviation buys nothing but URL
+	// length. The full form is self-certifying and unique by
+	// construction — it IS the primary key's value — so the writer
+	// needs no collision-retry apparatus. ON CONFLICT the existing slug
 	// is kept (a slug is a public URL; it never silently changes).
 	// first_trade_* / last_trade_* (migration 0158) carry the same values
 	// as the *_seen_* pair on THIS path and only on this path. They exist
@@ -199,7 +194,7 @@ func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
 
 // ResetAssetRegistryDedupeForTest clears this Store's
 // dedupe cache used by [Store.registerClassicAssetSeen]. Used by
-// the F-1243 (codex audit-2026-05-13) duplicate-replay integration
+// the duplicate-replay integration
 // proof to simulate a process restart between an original trade
 // insert and a replay of the same trade — the test asserts that
 // the registry row's `observation_count` does NOT advance on the
@@ -228,7 +223,7 @@ func (s *Store) ResetAssetRegistryDedupeForTest() {
 // within `assetRegistryDedupeTTL` of the last recorded upsert
 // for `assetID` on THIS store. Returns false on no-cache (first
 // time) and on expired-cache (TTL elapsed). Touches nothing but
-// the in-memory cache so the F-1243 TTL-gate semantics can be
+// the in-memory cache so the TTL-gate semantics can be
 // unit-tested without standing up a Postgres container.
 func (s *Store) shouldSkipAssetRegistryUpsert(assetID string, now time.Time) bool {
 	cached, ok := s.assetRegistryDedupe.Load(assetID)

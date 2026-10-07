@@ -1,15 +1,15 @@
 package timescale
 
-// Split out of protocol_bespoke.go (2026-07-30) so per-category visual
-// suites can be built in parallel without colliding on one file. Shared
-// types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the
-// scan helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built
+// in parallel without colliding on one file. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
+// helpers stay in protocol_bespoke.go.
 
 // ─── Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band) ─────
 //
 // Everything here is COUNTS + TIMESTAMPS over oracle_updates scoped by
 // source = the protocol page's name (which matches oracle_updates.source
-// exactly for all five oracle pages — verified on r1 2026-07-30). No price
+// exactly for all five oracle pages — verified on r1). No price
 // averaging, rescaling, or aggregation happens on this page: aggregated
 // pricing is the aggregator's domain (ADR-0006 / docs/methodology), and
 // oracle sources never feed VWAP anyway (external.Registry class policy).
@@ -24,7 +24,7 @@ package timescale
 // zero and would report a dishonest "0s cadence".
 //
 // History note: oracle_updates carries NO retention (migration 0040
-// removed the original 90-day policy), so "all-time" figures cover every
+// drops the 90-day policy), so "all-time" figures cover every
 // retained observation — history begins at each source's first ingested
 // observation (e.g. reflector-* 2026-03-11, redstone 2025-09-09 on r1),
 // NOT at protocol genesis.

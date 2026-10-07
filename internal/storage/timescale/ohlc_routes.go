@@ -38,17 +38,16 @@ func (r OHLCRoute) Folded() bool { return r.Native == "" }
 // literal that composes into that query is accepted precisely when a
 // folded row here declares it.
 //
-// It used to be two hand-kept lists in two packages: the reader's
-// switch learnt 2h/12h/3d/2w in #213, the allow-list did not, and
-// every request at those four widths answered 500 for the whole time
-// between (launch plan W8 items 17 and 20).
+// Two hand-kept lists in two packages would drift: a width the reader's
+// switch learns but the allow-list does not answers 500 for every
+// request at that width.
 //
 // The fold pairings are query-time derivations over views that
 // already exist — nothing here needs a backfill. 3d folds the DAILY
 // view rather than the hourly one: 3 source rows instead of 72, and
 // prices_1d is already the closed-bucket authority for day
-// boundaries. 4h folds prices_1h although prices_4h exists — that is
-// how it was routed before this table, and moving it onto the native
+// boundaries. 4h folds prices_1h although prices_4h exists — that keeps
+// its served rows unchanged, and moving it onto the native
 // view changes which rows the extremes' notional floor (migration
 // 0147) admits, so it is a served-value decision to take on its own.
 var OHLCRoutes = []OHLCRoute{
@@ -65,7 +64,7 @@ var OHLCRoutes = []OHLCRoute{
 	{Interval: "1w", Native: Granularity1w},
 	{Interval: "2w", Source: Granularity1w, Fold: "2 weeks"},
 	// Calendar-month view (prices_1mo, migration 0002) — the RFP's
-	// suggested-granularity ladder tops out at 1 month (board #43).
+	// suggested-granularity ladder tops out at 1 month.
 	{Interval: "1mo", Native: Granularity1mo},
 }
 

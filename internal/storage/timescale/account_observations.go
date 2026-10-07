@@ -15,7 +15,7 @@ import (
 // InsertAccountObservation appends one [domain.AccountObservation]
 // (the persisted shape of internal/sources/accounts.Observation — see
 // domain's doc.go for why storage takes the domain type rather than
-// importing the accounts package, D8 M0-1) to `account_observations`.
+// importing the accounts package) to `account_observations`.
 // Per the migration, identity is (account_id, ledger, observed_at) —
 // the partition column is dragged into the PK because Timescale
 // requires it.
@@ -42,10 +42,10 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 	}
 	// (walk_version, intra_ledger_seq) guards the upsert so a LATER
 	// intra-ledger change always wins regardless of which parallel
-	// PersistEvents worker commits last (audit-2026-07-16 C2-6), and a
-	// re-derive under a newer walk replaces an older walk's row. `<=` (not
-	// `<`) keeps a deterministic re-backfill — which re-assigns the SAME
-	// position per change — idempotent-corrective rather than a no-op.
+	// PersistEvents worker commits last, and a re-derive under a newer
+	// walk replaces an older walk's row. `<=` (not `<`) keeps a
+	// deterministic re-backfill — which re-assigns the SAME position per
+	// change — idempotent-corrective rather than a no-op.
 	const q = `
         INSERT INTO account_observations (
             account_id, ledger, observed_at,
@@ -268,15 +268,14 @@ func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLed
 // when no watermark has been recorded yet (fresh cluster before the first live
 // tick), which the refresher's freshness gate treats as its permissive bypass.
 //
-// F-1320 / R-002 / CS-102 tail (live r1 root-cause). This USED to return
-// MAX(ledger) FROM account_observations — but that table only gets a row when
-// a watched account's balance CHANGES, so MAX(ledger) was the most recent SDF-
-// reserve balance change, NOT the observer's progress. During any quiet period
-// it went stale while the observer was healthy: the XLM freshness gate crossed
-// its dormancy horizon and false-rejected, firing a continuous
-// supply_refresh_error_dominant ticket AND freezing XLM's served as_of on a
-// value that was actually current — while MASKING a genuinely-dead observer
-// behind the same stale signal.
+// Why a watermark and not MAX(ledger) FROM account_observations: that table
+// only gets a row when a watched account's balance CHANGES, so MAX(ledger) is
+// the most recent SDF-reserve balance change, NOT the observer's progress.
+// During any quiet period it would go stale while the observer was healthy: the
+// XLM freshness gate would cross its dormancy horizon and false-reject, firing
+// a continuous supply_refresh_error_dominant ticket AND freezing XLM's served
+// as_of on a value that was actually current — while MASKING a genuinely-dead
+// observer behind the same stale signal.
 //
 // The watermark advances every ledger the indexer drives the observer over
 // (see [Store.UpsertAccountObserverWatermark]), so a healthy-but-quiet

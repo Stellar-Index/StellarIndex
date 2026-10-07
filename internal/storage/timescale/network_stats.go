@@ -22,24 +22,21 @@ type NetworkStats struct {
 	// MAGNITUDE SMALLER than AssetsIndexed, not larger: it counts
 	// only pairs that TRADED in the window, while AssetsIndexed
 	// counts every classic asset ever seen, most of which never
-	// trade. Measured on 2026-09-03: 20,932 markets vs 198,636
-	// assets.
+	// trade. Measured: 20,932 markets vs 198,636 assets.
 	MarketsCount24h int64
-	// AssetsIndexed: total rows in classic_assets — 198,636 on
-	// 2026-09-03 (measured via /v1/network/stats; the figure grows
+	// AssetsIndexed: total rows in classic_assets — 198,636 when
+	// measured via /v1/network/stats (the figure grows
 	// monotonically as issuers appear, so read it, don't quote it).
 	// Doesn't filter by recent activity; this is "what we know
 	// about", not "what's currently trading".
 	//
 	// EXPECT A STEP CHANGE the first time `stellarindex-ops
 	// asset-registry-backfill` runs: up to ~512,496, the number of
-	// classic assets the lake holds a trustline for (measured
-	// 2026-09-10). That is not an anomaly and not double counting — it
-	// is this figure finally meaning what its own comment already
-	// claimed. Until then the registry only ever learned about an asset
-	// from a TRADE, so 61% of the population was missing and the number
-	// was "assets that have traded at least once" wearing the label
-	// "what we know about".
+	// classic assets the lake held a trustline for when measured. That
+	// is not an anomaly and not double counting. Without the backfill
+	// the registry learns about an asset only from a TRADE, so 61% of
+	// the population was missing when measured and the number meant
+	// "assets that have traded at least once", not "what we know about".
 	AssetsIndexed int64
 	// LatestLedger: max(ingestion_cursors.last_ledger) across the live
 	// cursor namespaces ([LiveCursorSources]). A one-shot job's shard

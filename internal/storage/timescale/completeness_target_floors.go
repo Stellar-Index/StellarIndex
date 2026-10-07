@@ -6,7 +6,7 @@ import (
 )
 
 // CompletenessTargetFloor is one projection target's durable verification
-// floor (migration 0116, ADR-0033 — the N-F2 residual).
+// floor (migration 0116, ADR-0033).
 //
 // VerifiedFrom is the LOWEST ledger this target has ever been reconciled
 // from. It exists because compute-completeness otherwise derives its floor
@@ -41,9 +41,10 @@ type CompletenessTargetFloor struct {
 //     the target's true floor at all.
 //
 // Letting the column rise would allow a partial or narrowed run to quietly
-// ratchet the floor up to the post-loss MIN and re-create the exact bug
-// migration 0116 closes. Same regressive-run hazard CS-083 guards on
-// completeness_snapshots, in the opposite direction.
+// ratchet the floor up to the post-loss MIN, hiding the very loss the
+// durable floor of migration 0116 exists to expose. Same regressive-run
+// hazard the never-regress guard covers on completeness_snapshots, in the
+// opposite direction.
 func (s *Store) UpsertCompletenessTargetFloor(ctx context.Context, floor CompletenessTargetFloor) error {
 	const q = `
         INSERT INTO completeness_target_floors (

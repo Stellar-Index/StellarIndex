@@ -15,7 +15,7 @@ import (
 type AquariusAdminKind string
 
 // Governance / upgrade admin event kinds — see
-// internal/sources/aquarius/README.md (ROADMAP #89) for the per-kind
+// internal/sources/aquarius/README.md for the per-kind
 // lifetime counts + wire-shape citations.
 const (
 	AquariusAdminApplyUpgrade            AquariusAdminKind = "apply_upgrade"
@@ -81,10 +81,10 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 		return fmt.Errorf("timescale: InsertAquariusAdminEvent: marshal attributes: %w", err)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the decoded governance columns (admin / target /
 	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO aquarius_admin (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -115,9 +115,9 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 
 // ─── Read side: governance analytics for the Aquarius bespoke block ────
 //
-// See aquarius_rewards.go's matching section header — same v0.12
-// "backfilled but served nowhere" gap, same consumer
-// (protocol_bespoke.go's aquariusRewardsBlocks).
+// These reads serve the governance events to the same consumer as
+// aquarius_rewards.go's matching section (protocol_bespoke.go's
+// aquariusRewardsBlocks).
 
 // aquariusAdminAllKinds is the ordered set of the eight governance/upgrade
 // kinds — the migration-0100 census order (busiest kind first).

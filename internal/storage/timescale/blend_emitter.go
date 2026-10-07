@@ -91,12 +91,12 @@ type BlendEmitterSwapConfigEvent struct {
 // three event kinds differ only in which columns are populated vs
 // NULL.
 //
-// INV-3 generation-guarded corrective upsert (migration 0110): a corrected
+// Generation-guarded corrective upsert (migration 0110): a corrected
 // re-derive of the emission `amount` (or the other decoded columns) lands in
 // place when its generation is >= the stored one; a live gen-0 replay can
 // never revert it. The drop fan-out issues one Exec per recipient with a
 // distinct recipient_index (a conflict-key component), so one statement never
-// repeats a key — no intra-batch dedup needed. Replaces the old DO NOTHING.
+// repeats a key — no intra-batch dedup needed.
 const insertBlendEmitterEventQuery = `
     INSERT INTO blend_emitter_events (
         contract_id, ledger, ledger_close_time, tx_hash, op_index,
@@ -157,7 +157,7 @@ func execBlendEmitterRow(
 // Idempotent on the (ledger_close_time, contract_id, ledger, tx_hash,
 // op_index, event_kind, event_index, recipient_index) PK — a
 // projector-replay over the same range writes the same row via the
-// generation-guarded corrective upsert (INV-3, migration 0110): the
+// generation-guarded corrective upsert (migration 0110): the
 // row is only overwritten when the incoming derive_generation is >=
 // the stored one, so a stale replay can't revert a later correction.
 //

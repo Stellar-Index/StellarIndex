@@ -38,7 +38,7 @@ type AquariusProtocolFeeEvent struct {
 
 // InsertAquariusProtocolFee lands one protocol-fee event, idempotent on
 // the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) PK with the INV-3 generation-guarded corrective upsert
+// event_index) PK with the generation-guarded corrective upsert
 // (migration 0110). The per-kind columns are NULL for the other kind.
 //
 // Defensive: rejects an empty ContractID / TxHash, a zero

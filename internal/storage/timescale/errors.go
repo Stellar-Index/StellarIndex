@@ -28,21 +28,20 @@ func sqlStateClass(code string) string {
 // (constraint / numeric / check violation) or transient row-lock
 // contention (deadlock / serialization).
 //
-// The distinction drives the sink's failure policy (2026-07-06
-// Postgres-outage incident): an infra fault affects every row
-// identically and clears only when the DB comes back, so the sink
-// RETRIES with backpressure rather than dropping the write. A data
-// fault is permanent for the offending row, so the sink error-and-
-// skips it (one bad row must not wedge the pipeline). Contention is
-// left to the existing per-row fallback in the batch path — it is
-// neither an unavailability signal nor a permanent row fault, and the
-// 2026-07-05 batch-sort fix already made it rare.
+// The distinction drives the sink's failure policy: an infra fault
+// affects every row identically and clears only when the DB comes
+// back, so the sink RETRIES with backpressure rather than dropping the
+// write. A data fault is permanent for the offending row, so the sink
+// error-and-skips it (one bad row must not wedge the pipeline).
+// Contention is left to the existing per-row fallback in the batch
+// path — it is neither an unavailability signal nor a permanent row
+// fault, and the batch path's sorted insert order keeps it rare.
 //
-// The incident signature — `dial tcp 127.0.0.1:5432: connect:
-// connection refused` — was NOT retried before this predicate existed:
-// the trade sink logged "insert trade failed" and dropped the write
-// while the ledger cursor kept advancing. This function is the gate
-// that turns that drop into a blocking retry.
+// Without this predicate, a Postgres outage — `dial tcp
+// 127.0.0.1:5432: connect: connection refused` — would make the trade
+// sink log "insert trade failed" and drop the write while the ledger
+// cursor kept advancing. This function is the gate that turns that
+// drop into a blocking retry.
 //
 // Conservative by design: only clear unavailability/capacity signals
 // return true. Anything unrecognised returns false so it falls to the

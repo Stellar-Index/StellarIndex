@@ -21,7 +21,7 @@ import (
 type FXQuote struct {
 	Bucket time.Time
 	Ticker string
-	//floatmoney:ok known debt (#600) — write-input boundary from the forex ingest pipeline (worker.go/cache.go RateUSD), which is float end to end today; the read side already returns NUMERIC text (RateUSDText) per the doc comment above
+	//floatmoney:ok known debt — write-input boundary from the forex ingest pipeline (worker.go/cache.go RateUSD), which is float end to end today; the read side already returns NUMERIC text (RateUSDText) per the doc comment above
 	RateUSD float64
 	// InverseUSD is IGNORED on write: [Store.InsertFXQuoteBatch] derives
 	// inverse_usd from rate_usd in NUMERIC so the column never carries a
@@ -42,16 +42,15 @@ type FXQuote struct {
 // observed_at because it's diagnostic: the row's first observation
 // date is more useful than its most-recent.)
 //
-// INV-3 generation-guarded corrective upsert (migration 0141, audit-
-// 2026-08-14 MR-1): rate_usd is the denominator of every fiat-quoted
-// usd_volume, so the DO UPDATE is guarded by
-// `derive_generation <= EXCLUDED.derive_generation`. The live forex worker
-// writes at generation 0; the operator fx-history-backfill tool stamps a
-// POSITIVE generation ([SetDeriveGeneration]) so its corrected rate wins
-// the conflict AND survives — a later live gen-0 worker refresh can no
-// longer silently revert an operator correction (the last-writer-wins hole
-// MR-1 describes). A gen-0-over-gen-0 write (worker idempotency) still
-// re-writes the same row, exactly as before.
+// Generation-guarded corrective upsert (migration 0141): rate_usd is the
+// denominator of every fiat-quoted usd_volume, so the DO UPDATE is
+// guarded by `derive_generation <= EXCLUDED.derive_generation`. The live
+// forex worker writes at generation 0; the operator fx-history-backfill
+// tool stamps a POSITIVE generation ([SetDeriveGeneration]) so its
+// corrected rate wins the conflict AND survives — a later live gen-0
+// worker refresh cannot silently revert an operator correction (a
+// last-writer-wins hole). A gen-0-over-gen-0 write (worker idempotency)
+// re-writes the same row.
 //
 // The per-source `entries` tally (source_entry_counts, migration 0035)
 // is bumped INLINE, the way the trades / oracle_updates inserts do it:
@@ -108,7 +107,7 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 		// becomes NaN. Latent today only because the one live producer
 		// pre-filters non-finite values; this is an exported method with
 		// a second caller, and both the guard and the CHECK read as
-		// "positive rates only" (cold audit 2026-08-04).
+		// "positive rates only".
 		if q.Ticker == "" || math.IsNaN(q.RateUSD) || math.IsInf(q.RateUSD, 0) || q.RateUSD <= 0 {
 			continue
 		}
@@ -189,33 +188,35 @@ func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote,
 	return out, nil
 }
 
-// ─── X2.5 forex-snap read path (fx_quotes-first, BACKLOG #42) ────────
+// ─── forex-snap read path (fx_quotes-first) ─────────────────────────
 //
-// The triangulation forex-snap ([Store.FXQuoteAtOrBefore]) historically
-// read the `trades` hypertable filtered by external.FXSources() — the
-// connector-path FX sources (exchangeratesapi / ecb)
-// which are DISABLED in production. The ACTIVE FX feed (`massive`, the
-// internal/sources/external/forex worker) writes the `fx_quotes` hypertable
-// instead, so the snap always soft-fell-back to cached VWAP while fresh
-// quotes sat one table over. The helpers below are the fx_quotes-first
-// leg of the unified read path; the trades read survives only as the
-// compatibility fallback for re-enabled connector-path sources.
+// The connector-path FX sources (exchangeratesapi / ecb) that
+// external.FXSources() selects from the `trades` hypertable are DISABLED
+// in production. The ACTIVE FX feed (`massive`, the
+// internal/sources/external/forex worker) writes the `fx_quotes`
+// hypertable instead, so a trades-only triangulation forex-snap
+// ([Store.FXQuoteAtOrBefore]) would always soft-fall-back to cached VWAP
+// while fresh quotes sat one table over. The helpers below are the
+// fx_quotes-first leg of the unified read path; the trades read survives
+// only as the compatibility fallback for re-enabled connector-path
+// sources.
 
 // fxQuotesSnapLookback bounds how far back the fx_quotes snap read
 // accepts a row. fx_quotes buckets are daily and the feed skips
 // weekends/holidays for some tickers, so 7 days tolerates the longest
 // routine gap while still refusing to price a chained-fiat leg off a
 // quote stale enough to be wrong. Misses inside the window fall back to
-// the legacy trades path; a total miss surfaces [ErrNoFXQuote] and the
+// the trades path; a total miss surfaces [ErrNoFXQuote] and the
 // caller's cached-VWAP fallback. The floor also lets TimescaleDB prune
 // to the window's chunks instead of walking the hypertable to genesis
-// on a miss (same rationale as the G11-06 fix in usd_fx_resolver.go).
+// on a miss (same rationale as USDPriceAt's lower bucket bound in
+// usd_fx_resolver.go).
 const fxQuotesSnapLookback = 7 * 24 * time.Hour
 
 // fxQuotesSourceLabel is the provenance label for fx_quotes rows. It is
 // both the source tag the forex worker stamps on every row it writes
-// AND the label substituted for legacy backfill rows whose source
-// column is NULL (migration 0028 allows NULL only for pre-attribution
+// AND the label substituted for backfill rows whose source column
+// is NULL (migration 0028 allows NULL only for pre-attribution
 // recovery rows — same pipeline, provenance merely unrecorded).
 const fxQuotesSourceLabel = "massive"
 
@@ -260,15 +261,15 @@ func fxSnapTickers(pair canonical.Pair) []string {
 //
 // Math is exact *big.Rat throughout: rate_usd(T) is "T per 1 USD", so
 // price(B/Q) = quote-per-base = rate_usd(Q) / rate_usd(B), with either
-// USD side contributing an exact 1. (M3: the earlier code divided the
-// other way, rate_usd(B)/rate_usd(Q), which inverted every served
-// fiat-quoted pair.) The cached float-derived `inverse_usd` column is
+// USD side contributing an exact 1. (Dividing the other way,
+// rate_usd(B)/rate_usd(Q), would invert every served fiat-quoted
+// pair.) The cached float-derived `inverse_usd` column is
 // deliberately NOT used — inversion happens in Rat space.
 //
 // observedAt is the OLDEST bucket among the rows used (the staler
 // input governs the quote's freshness). The source label is the
 // sorted "+"-join of the distinct row sources (a cross like EUR/GBP
-// can mix providers); NULL-source legacy rows read as
+// can mix providers); NULL-source rows read as
 // [fxQuotesSourceLabel].
 //
 // Returns [ErrNoFXQuote] when a needed ticker has no row.
@@ -321,7 +322,7 @@ func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, t
 	sort.Strings(sources)
 
 	// price = quote-per-base = rate_usd(Q)/rate_usd(B) because rate_usd
-	// is ticker-per-USD (M3). USD legs carry an exact 1.
+	// is ticker-per-USD. USD legs carry an exact 1.
 	return new(big.Rat).Quo(quoteRate, baseRate), observedAt, strings.Join(sources, "+"), nil
 }
 

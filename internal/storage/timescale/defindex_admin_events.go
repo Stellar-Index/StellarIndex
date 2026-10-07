@@ -34,7 +34,7 @@ type DefindexAdminEvent struct {
 
 // InsertDefindexAdminEvent lands one vault admin event, idempotent on
 // the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) PK with the INV-3 generation-guarded corrective upsert
+// event_index) PK with the generation-guarded corrective upsert
 // (migration 0110 convention).
 func (s *Store) InsertDefindexAdminEvent(ctx context.Context, e DefindexAdminEvent) error {
 	if e.TxHash == "" {

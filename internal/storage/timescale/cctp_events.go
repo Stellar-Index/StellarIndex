@@ -12,17 +12,14 @@ import (
 // CCTPEventType discriminates the 26 Circle CCTP v2 event variants.
 // String values match the cctp_events.event_type CHECK constraint
 // (migration 0038, extended by 0070, 0092 and 0094) and
-// internal/sources/cctp's event-name constants. LESSON (board #31,
-// v0.7.0→v0.7.1): the type is gated in THREE layers — the decoder's
-// Classify, this enum's IsValid, and the SQL CHECK. Adding an event
-// means all three, or rows are rejected at whichever layer was
-// missed. Re-confirmed 2026-07-08 (ROADMAP #89b) when the first 5
-// governance/admin events were added, and again 2026-07-09 (#89c)
-// closing the full topic census: this file is easy to miss because
+// internal/sources/cctp's event-name constants. The type is gated in
+// THREE layers — the decoder's Classify, this enum's IsValid, and the
+// SQL CHECK. Adding an event means all three, or rows are rejected at
+// whichever layer was missed. This file is easy to miss because
 // InsertCCTPEvent's defensive IsValid rejection fires INSIDE the Go
 // binary, before the SQL CHECK ever sees the row — a mismatch here
-// silently drops every governance event at insert time even though
-// decode + dispatch work.
+// silently drops every event of the new type at insert time even
+// though decode + dispatch work.
 type CCTPEventType string
 
 const (
@@ -37,7 +34,7 @@ const (
 	CCTPRemoteTokenMessengerAdded  CCTPEventType = "remote_token_messenger_added"
 	CCTPTokenPairLinked            CCTPEventType = "token_pair_linked"
 
-	// Lower-signal admin/governance events — ROADMAP #89c, 2026-07-09.
+	// Lower-signal admin/governance events.
 	CCTPAdminChangeStarted        CCTPEventType = "admin_change_started"
 	CCTPAttesterEnabled           CCTPEventType = "attester_enabled"
 	CCTPAttesterManagerUpdated    CCTPEventType = "attester_manager_updated"
@@ -88,7 +85,7 @@ type CCTPEvent struct {
 	OpIndex    uint32
 	// EventIndex is the position of this event within its operation's
 	// contract-event list — the migration-0112 PK discriminator that keeps
-	// two same-type events emitted by one op from collapsing (C2-13a).
+	// two same-type events emitted by one op from collapsing.
 	EventIndex         uint32
 	ObservedAt         time.Time
 	EventType          CCTPEventType
@@ -103,7 +100,7 @@ type CCTPEvent struct {
 // (contract_id, ledger, tx_hash, op_index, event_type, ts) PK.
 // Re-running the indexer or a backfill over the same range writes
 // the same rows. ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// `derive_generation <= EXCLUDED.derive_generation`: a replay
 // at an equal-or-higher generation OVERWRITES the stored value
 // columns, a lower-generation one is refused. Idempotent in row count,
 // NOT inert in value — the corrective upsert exists so a re-derive can
@@ -135,12 +132,12 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 		attrs = marshaled
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the i128 amounts (amount / fee) or the other
 	// decoded columns lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// one; a live gen-0 replay can never revert it.
 	// event_index ($13) is in the INSERT column list AND the ON CONFLICT
-	// target (migration 0112, C2-13a): two same-type events emitted by one
+	// target (migration 0112): two same-type events emitted by one
 	// op differ only in event_index, so it MUST be part of the conflict key
 	// or the second row collapses onto the first.
 	const q = `

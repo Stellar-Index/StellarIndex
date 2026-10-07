@@ -1,15 +1,14 @@
 package timescale
 
-// Split out of protocol_bespoke.go (2026-07-30) so per-category visual
-// suites can be built in parallel without colliding on one file. Shared
-// types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the
-// scan helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built
+// in parallel without colliding on one file. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
+// helpers stay in protocol_bespoke.go.
 
 // ─── Yield bespoke analytics (DeFindex) ──────────────────────────────────
 //
 // Built from defindex_flows (migration 0050), which records BOTH layers of
-// every protocol flow — ground-truthed on r1 2026-07-30 over all 160,206
-// rows:
+// every protocol flow — ground-truthed on r1 over all 160,206 rows:
 //
 //   - VAULT layer (who/when): actor is the end-user (G-strkey, occasionally
 //     a routing C-strkey), contract_id is the vault. The amount lives in
@@ -28,9 +27,9 @@ package timescale
 //      vector shows '—' instead of a fabricated cross-asset sum.
 //   2. Amounts are NEVER summed ACROSS vaults or strategies into one
 //      number-with-a-unit: different vaults hold different assets. The
-//      cross-vault headline numbers are therefore COUNTS; the existing
-//      cross-strategy gross-volume KPIs keep their long-standing
-//      "summed base units across strategies" caveat in the Notes.
+//      cross-vault headline numbers are therefore COUNTS; the
+//      cross-strategy gross-volume KPIs carry a "summed base units across
+//      strategies" caveat in the Notes.
 //
 // Every windowed query is bounded by ledger_close_time > now() -
 // $1::interval; the one all-time read is a count over the small (~160k
@@ -57,7 +56,7 @@ const (
 const yieldBreakdownTopN = 10
 
 // defindexWindowKPIQuery returns the windowed headline figures: gross
-// strategy-layer deposit/withdraw volume (the long-standing capital KPIs),
+// strategy-layer deposit/withdraw volume (the capital KPIs),
 // vault-layer deposit/withdraw counts, unique depositors, active vaults,
 // and unique actors across both layers. $1 = interval.
 func defindexWindowKPIQuery() string {
