@@ -19,10 +19,8 @@
   # The bootstrap path builds + ships whatever is in the OPERATOR'S
   # checkout and (with stellarindex_apply_migrations) applies ITS
   # migrations. A half-done branch with an uncommitted migration would
-  # reach the host under a version nobody can reproduce — the same
-  # incident class the migrations task below records for prod
-  # (2026-08-28 audit, deploy-ansible-drift-3). Refuse unless the tree is
-  # clean; for a deliberate unreleased-branch bring-up pass
+  # reach the host under a version nobody can reproduce. Refuse unless the
+  # tree is clean; for a deliberate unreleased-branch bring-up pass
   # `-e stellarindex_bootstrap_allow_dirty_tree=true` (the sidecar then
   # records `-dirty`). `bin/` is gitignored, so prior build output does
   # not trip this.
@@ -54,20 +52,16 @@
   check_mode: false
 
 - name: Cross-compile stellarindex-* binaries (localhost)
-  # 2026-07-03 drift audit: binary builds/installs moved to the
-  # deploy.yml GitHub workflow (release-artifact + SHA256SUMS + staged
-  # install + auto-rollback) — the config playbook manages CONFIG.
-  # Flip manage_stellarindex_binaries only for a from-scratch bootstrap
-  # where no release exists yet.
+  # Binary builds/installs belong to the deploy.yml GitHub workflow
+  # (release-artifact + SHA256SUMS + staged install + auto-rollback) — the
+  # config playbook manages CONFIG. Flip manage_stellarindex_binaries only
+  # for a from-scratch bootstrap where no release exists yet.
   when: manage_stellarindex_binaries | default(false) | bool
-  # F-1314 (codex audit-2026-05-13): `sla-probe` added to the
-  # bootstrap build/install list. The Healthchecks stellarindex-
-  # sla-probe.{service,timer} units invoke
-  # /usr/local/bin/stellarindex-sla-probe; pre-fix archival-node
-  # bootstrap built indexer/aggregator/api/migrate/ops only, so a
-  # fresh-host apply would enable the timer (via the healthchecks
-  # role) but find no binary under it. Bootstrap is now complete
-  # without an out-of-band ssh side-channel.
+  # `sla-probe` is in the bootstrap build/install list because the
+  # Healthchecks stellarindex-sla-probe.{service,timer} units invoke
+  # /usr/local/bin/stellarindex-sla-probe; without it a fresh-host apply
+  # would enable the timer (via the healthchecks role) but find no binary
+  # under it.
   delegate_to: localhost
   # Local `go build` on the CONTROLLER — never escalate. The play sets
   # become: true for the remote host; inheriting it here makes ansible try
@@ -99,11 +93,10 @@
   changed_when: true   # rebuild every apply; copy step decides if r1 changed
 
 - name: Install stellarindex binaries on r1
-  # 2026-07-03 drift audit: binary builds/installs moved to the
-  # deploy.yml GitHub workflow (release-artifact + SHA256SUMS + staged
-  # install + auto-rollback) — the config playbook manages CONFIG.
-  # Flip manage_stellarindex_binaries only for a from-scratch bootstrap
-  # where no release exists yet.
+  # Binary builds/installs belong to the deploy.yml GitHub workflow
+  # (release-artifact + SHA256SUMS + staged install + auto-rollback) — the
+  # config playbook manages CONFIG. Flip manage_stellarindex_binaries only
+  # for a from-scratch bootstrap where no release exists yet.
   when: manage_stellarindex_binaries | default(false) | bool
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../bin/stellarindex-{{ item }}"
@@ -118,13 +111,12 @@
     - migrate
     - ops
     - sla-probe
-  # Every long-running unit whose binary this task replaces. It used to
-  # notify only the indexer, so a bootstrap apply left the api (and
-  # aggregator) units running the OLD binary from memory while
-  # /usr/local/bin held the new one — the unit tasks below use
-  # `state: started`, which never restarts a running unit (2026-08-28
-  # audit, deploy-ansible-drift-3). The aggregator handler self-gates on
-  # run_aggregator (no-op on test nets).
+  # Every long-running unit whose binary this task replaces. Notifying
+  # only the indexer would leave the api (and aggregator) units running
+  # the OLD binary from memory while /usr/local/bin holds the new one —
+  # the unit tasks below use `state: started`, which never restarts a
+  # running unit. The aggregator handler self-gates on run_aggregator
+  # (no-op on test nets).
   notify:
     - Restart stellarindex-indexer
     - Restart stellarindex-aggregator
@@ -161,22 +153,19 @@
 # ──── Migrations (versioned schema for trades + oracle_updates + CAGGs) ───
 
 # Same ONE-transfer sync deploy-binary.yml uses, not a second
-# implementation of it. This step used to be a directory-src
-# `ansible.builtin.copy`, chosen because ansible.posix.synchronize runs
-# rsync on the CONTROLLER and so cannot inherit a ProxyJump — which is
-# true, and is why the NAT-only test-net VMs were unreachable through it.
+# implementation of it. ansible.posix.synchronize is out: it runs rsync
+# on the CONTROLLER and so cannot inherit a ProxyJump, which leaves the
+# NAT-only test-net VMs unreachable.
 #
-# But `copy` with a directory src is O(files): one SFTP round-trip plus a
-# remote checksum PER FILE, with no ControlPersist between module
-# invocations. At 308 migrations over the test nets' jump host that task
-# alone ran past twenty minutes on an apply where every file was already
-# byte-identical, and two runs on 2026-09-15 were killed believing it had
-# hung. deploy-binary.yml had already hit this (>16 minutes for 291
-# identical files on r1) and solved it in ../../../tasks/sync-migrations.yml:
-# a deterministic tar built on the controller, one `unarchive` over the
-# same jump-safe connection every other module uses, and an explicit
-# fail-closed prune that restores the delete semantics `copy` silently
-# dropped.
+# A directory-src `ansible.builtin.copy` is out too: it is O(files), one
+# SFTP round-trip plus a remote checksum PER FILE, with no ControlPersist
+# between module invocations — hundreds of migrations over the test
+# nets' jump host take over twenty minutes even when every file is
+# already byte-identical. ../../../tasks/sync-migrations.yml instead
+# builds a deterministic tar on the controller, runs one `unarchive` over
+# the same jump-safe connection every other module uses, and does an
+# explicit fail-closed prune that restores the delete semantics `copy`
+# drops.
 #
 # Importing it rather than copying it keeps one implementation. Its
 # `local_dist_dir` is the directory HOLDING `migrations/` — the release
@@ -193,15 +182,14 @@
     cancel_dsn: "{{ postgres_dsn_stellarindex }}"
 
 - name: Run pending migrations against the stellarindex database
-  # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
-  # applier (stages migrations FROM THE TAG, guaranteeing
-  # binary<->migration parity). This task syncs from the OPERATOR'S
-  # LOCAL CHECKOUT, so running it by default applied an UNRELEASED
-  # migration (0101) to production during a plain config apply — and
-  # it failed on an ownership drift, leaving schema_migrations dirty
-  # and the play aborted before the config template it was invoked
-  # for. Set stellarindex_apply_migrations=true explicitly (greenfield
-  # bringup / deliberate out-of-band apply) to run it.
+  # OPT-IN: deploy.yml is the canonical migration applier (stages
+  # migrations FROM THE TAG, guaranteeing binary<->migration parity). This
+  # task syncs from the OPERATOR'S LOCAL CHECKOUT, so running it by default
+  # would apply an UNRELEASED migration to production during a plain config
+  # apply — and a failure there leaves schema_migrations dirty and aborts
+  # the play before the config template it was invoked for. Set
+  # stellarindex_apply_migrations=true explicitly (greenfield bringup /
+  # deliberate out-of-band apply) to run it.
   when: stellarindex_apply_migrations | default(false) | bool
   ansible.builtin.command:
     argv:
@@ -427,8 +415,8 @@
   tags: [heavy-job-wrapper]
 
 - name: heavy-job wrapper (mandatory for ops one-shots on this host)
-  # Serialises + host-protects heavy ops one-shots. Two jobs:
-  #   1. Singleton lock (C4-14 / INF-11): a per-job flock so overlapping
+  # Serialises + host-protects heavy ops one-shots. Four jobs:
+  #   1. Singleton lock: a per-job flock so overlapping
   #      timer fires (or a manual run racing a timer run) can't stack
   #      and exhaust the single R1 host — while the first is still
   #      going, a unit's second fire and any other caller are both
@@ -442,8 +430,7 @@
   #      time among themselves (a second lock, same exit 75 deferral).
   #   2. For root callers, wraps the command in a systemd transient
   #      scope with a hard memory budget + batch-class CPU/IO so a
-  #      ballooning job gets killed before it can starve galexie/CH/PG
-  #      (the 2026-07-05 lesson).
+  #      ballooning job gets killed before it can starve galexie/CH/PG.
   #   3. Bounds the STOP: the scope carries TimeoutStopSec (5min by
   #      default, HEAVY_JOB_STOP_TIMEOUT to override, validated) so
   #      `systemctl stop` gives a job's SIGTERM cleanup time to finish
@@ -625,7 +612,7 @@
         exit 75
       fi
 
-      # ── ClickHouse ops-batch identity (2026-08-28 r1) ─────────────
+      # ── ClickHouse ops-batch identity ──────────────────────────────
       # Import STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD from
       # /etc/default/stellarindex-ops HERE, so every wrapped
       # stellarindex-ops ClickHouse connection authenticates as the
@@ -634,10 +621,9 @@
       # CALLER's shell. The runbooks that prescribe the heavy jobs
       # (sep41-mint-recovery, usd-volume-rederive, fx-history-missing,
       # lcm-cache-tiering) source /etc/default/stellarindex — the PG /
-      # MinIO service identity — not -ops, and the 2026-08-28 `ch-rebuild
-      # -sep41` that starved the aggregator's supply refresher was
-      # launched exactly that way; relying on the caller to source the
-      # right file made the profile a silent no-op on the incident path.
+      # MinIO service identity — not -ops, so relying on the caller to
+      # source the right file would make the profile a silent no-op and let
+      # a `ch-rebuild -sep41` starve the aggregator's supply refresher.
       # Only this PAIR is imported, never the whole file: sourcing -ops
       # wholesale would override a caller's deliberate AWS_*/DSN choice
       # (lcm-cache-tiering uses the service identity on purpose). A
@@ -654,8 +640,8 @@
           esac
         done < "$OPS_ENV"
       fi
-      # Loud either way (the whole 2026-08-28 class is a job that ran
-      # at serving priority with nothing saying so): name the identity
+      # Loud either way (the failure this guards is a job running at
+      # serving priority with nothing saying so): name the identity
       # the job will use, or WARN that it is the CH `default` user.
       if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
         echo "run-heavy-job: ${NAME} ClickHouse identity: ${STELLARINDEX_CLICKHOUSE_OPS_USER} (ops_batch low-priority profile)" >&2
@@ -679,7 +665,7 @@
 
       UNIT="heavy-${NAME}-$$"
 
-      # Disk watchdog (2026-06-11 incident follow-up, extended 2026-07-21).
+      # Disk watchdog.
       # Two independent failure modes, each with its own filesystem:
       #   1. ROOT (49G): a heavy job that floods logs or scratch space
       #      fills root faster than anyone reacts, wedging service logging
@@ -697,11 +683,10 @@
       # env-overridable for non-standard hosts (same pattern as
       # HEAVY_JOB_LOCK_DIR above).
       POOL_PATH="${HEAVY_JOB_POOL_PATH:-/var/lib/clickhouse}"
-      # Default 300 GiB (2026-07-18 rationale): a heavy job that fills the
-      # shared ZFS pool wedges LIVE ingest + merges, not just this job — the
-      # runaway-phase0 near-miss ran unattended with ~2 TiB left and <1 TiB
-      # free, guarded only on root. 300 GiB keeps headroom for merges + the
-      # live sink, well above the point where ZFS write performance collapses.
+      # Default 300 GiB: a heavy job that fills the shared ZFS pool wedges
+      # LIVE ingest + merges, not just this job. 300 GiB keeps headroom for
+      # merges + the live sink, well above the point where ZFS write
+      # performance collapses.
       POOL_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
       # Fail LOUD, not silent: if POOL_PATH doesn't resolve, every watchdog tick
       # would hit the "df glitched — skip" arm and the pool guard would protect
@@ -758,21 +743,20 @@
       fi
       trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT
 
-      # ── Stop bound (2026-09-04) ──────────────────────────────────
+      # ── Stop bound ──────────────────────────────────────────────
       # `systemctl stop <unit>.scope` — what stop_job above runs, and
       # what an operator runs to end a job by hand — SIGTERMs every
       # process in the scope, then SIGKILLs when TimeoutStopSec expires.
       # A transient scope with no TimeoutStopSec inherits systemd's 90 s
       # default, which is shorter than the cleanup some jobs do on
-      # SIGTERM. `usd-volume-restamp -chunks` (#372) brackets each chunk
+      # SIGTERM. `usd-volume-restamp -chunks` brackets each chunk
       # decompress → restamp → compress_chunk, and runs the re-compress
       # on a context that survives cancellation precisely so a SIGTERM
-      # puts the chunk back; the largest trades chunk in that window is
-      # 160 GB uncompressed (r1 sizing 2026-09-03: 90 chunks, 379 GB
-      # uncompressed / 25 GB compressed). At 90 s the SIGKILL lands
-      # mid-compress_chunk: the server aborts it, the chunk stays
-      # DECOMPRESSED and the compression policy stays PAUSED until an
-      # operator runs the repair the tool prints.
+      # puts the chunk back; the largest trades chunk can be ~160 GB
+      # uncompressed. At 90 s the SIGKILL lands mid-compress_chunk: the
+      # server aborts it, the chunk stays DECOMPRESSED and the compression
+      # policy stays PAUSED until an operator runs the repair the tool
+      # prints.
       #
       # The DEFAULT is deliberately short. Almost every payload this
       # wrapper starts installs no signal handler at all and is gone the
@@ -783,16 +767,15 @@
       # (docs/operations/usd-volume-rederive-2026-08.md, Chunk mode:
       # HEAVY_JOB_STOP_TIMEOUT=2h) rather than every other job
       # inheriting a multi-hour stop it will never use. 5min is well
-      # above the 90 s it replaces — nothing that used to finish inside
-      # systemd's default is slowed — and short enough that the disk
-      # watchdog's own escalation stays quick for the other payloads.
+      # above systemd's 90 s — nothing that finishes inside systemd's
+      # default is slowed — and short enough that the disk watchdog's
+      # own escalation stays quick for the other payloads.
       #
       # 2h, where the restamp asks for it, is a BUDGET not a
       # measurement: the largest chunk (160 GB) at ~22 MB/s of
-      # uncompressed input. No compress_chunk rate has been measured on
-      # r1 — the tool prints per-chunk seconds and bytes, so the first
-      # -chunks run should record the largest chunk's re-compress and
-      # that launch value be tightened to it.
+      # uncompressed input. The tool prints per-chunk seconds and bytes,
+      # so a -chunks run's largest re-compress is the number to tighten
+      # that launch value to.
       #
       # What the bound costs while it is in force: the disk watchdog
       # above takes up to this long to escalate its own stop, and
@@ -800,12 +783,11 @@
       # `|| systemctl kill` fallback cannot fire during the wait. That
       # is affordable at the one place a long value is used — the
       # cleanup it waits on is a compress_chunk, which writes the
-      # compressed copy (~1/15 of the chunk at the window's ratio)
-      # beside the heap and then truncates it, so it PEAKS well inside
-      # the 300 GiB the pool guard preserves and ends by FREEING space.
-      # SIGTERM is still delivered immediately, so a job that exits on
-      # it promptly is not slowed: the bound only decides how long a job
-      # still cleaning up may take.
+      # compressed copy (~1/15 of the chunk) beside the heap and then
+      # truncates it, so it PEAKS well inside the 300 GiB the pool guard
+      # preserves and ends by FREEING space. SIGTERM is still delivered
+      # immediately, so a job that exits on it promptly is not slowed:
+      # the bound only decides how long a job still cleaning up may take.
       #
       # A scope keeps the properties it was created with, so a job
       # already running when this file is re-rendered stays on the bound
@@ -915,10 +897,10 @@
   when: archive_completeness_enabled | bool
 
 - name: archive-completeness override drop-in (root user, no legacy env)
-  # Replaces a hand-written pre-rebrand override that still loaded
+  # Replaces a hand-written pre-rebrand override that loaded
   # /etc/default/ratesengine — dead legacy credentials whose values
   # loaded AFTER the unit's real env file (later EnvironmentFile wins).
-  # Site-audit follow-up 2026-07-03; the legacy file is removed below.
+  # The legacy file is removed below.
   ansible.builtin.copy:
     dest: /etc/systemd/system/archive-completeness.service.d/override.conf
     owner: root
@@ -932,10 +914,9 @@
   when: archive_completeness_enabled | bool
 
 - name: Remove the legacy ratesengine env file
-  # Pre-rebrand credentials (old DB, deleted MinIO reader) that
-  # survived the 2026-07-03 brand purge because a systemd drop-in
-  # still referenced the path. Nothing references it after the
-  # override above.
+  # Pre-rebrand credentials (old DB, deleted MinIO reader) kept alive
+  # only by a systemd drop-in that referenced the path. Nothing
+  # references it after the override above.
   ansible.builtin.file:
     path: /etc/default/ratesengine
     state: absent
@@ -943,7 +924,7 @@
 - name: Install compute-archive-to.sh helper
   # archive-completeness.service's ExecStartPre derives ARCHIVE_TO
   # from the indexer cursor. Without it ARCHIVE_TO stays 0 and the
-  # completeness verify is a no-op (F-1205, audit-2026-05-12).
+  # completeness verify is a no-op.
   ansible.builtin.copy:
     src: compute-archive-to.sh
     dest: /usr/local/sbin/compute-archive-to.sh
@@ -997,9 +978,8 @@
   # for [last-seeded+1, tip] from the certified CH lake, in case the indexer's
   # live decode-at-ingest writer ever falls behind (normally a no-op).
   # supply_flows is what backs /v1/assets SEP-41 supply — summed live on
-  # every request (no materialized rollup; the old stellar.token_supply
-  # rollup + its -write refresh were retired, ROADMAP #66, 2026-07-10). Seed
-  # is chunked + memory-guarded.
+  # every request (no materialized rollup). Seed is chunked +
+  # memory-guarded.
   ansible.builtin.copy:
     src: run-ch-supply.sh
     dest: /usr/local/sbin/run-ch-supply.sh
@@ -1140,12 +1120,10 @@
     - asset-registry-backfill.service
     - asset-registry-backfill.timer
   notify: Reload systemd
-  # First tag in this file (36 tasks, none tagged until now), added so
-  # the ops-job units can be applied WITHOUT running the whole
-  # archival-node role. That matters specifically here: a full role
-  # apply can restart galexie, and a galexie restart is a ~9-minute
-  # mainnet cold catchup — the 2026-08-27 sequence that cost 22 minutes
-  # of r1 ingestion. Rendering unit files should not carry that risk.
+  # Tagged so the ops-job units can be applied WITHOUT running the whole
+  # archival-node role. That matters specifically here: a full role apply
+  # can restart galexie, and a galexie restart is a ~9-minute mainnet cold
+  # catchup. Rendering unit files should not carry that risk.
   #
   # Untagged behaviour is unchanged: a plain run still includes these,
   # because ansible only filters when --tags is passed.
@@ -1189,14 +1167,12 @@
     - issuer-flags.timer
     - asset-registry-backfill.timer
   when:
-    # Role-installed units — CHECK-MODE UNIT GUARD, tasks/main.yml. This
-    # is the task that aborted the 2026-08-10 weekly drift run 42 tasks
-    # early: census-rollup.timer had been added to the loop above and
-    # never applied, so `--check` left it off the host and systemd
-    # answered "Could not find the requested service". The register is
-    # the whole loop, so ONE new unit stands the preview down for all
-    # twelve — but in that state the install task above is already
-    # naming the drift.
+    # Role-installed units — CHECK-MODE UNIT GUARD, tasks/main.yml. A unit
+    # added to the loop above but never applied is left off the host by
+    # `--check`, so systemd answers "Could not find the requested service"
+    # and the drift run aborts here. The register is the whole loop, so ONE
+    # new unit stands the preview down for all of them — but in that state
+    # the install task above is already naming the drift.
     - not (ansible_check_mode and ops_job_units is changed)
   tags: [ops-jobs]
 
@@ -1501,15 +1477,15 @@
 # pubnet ONLY — see verify_archive_tier_b_enabled in defaults/main.yml for
 # the full rationale and the observed testnet mismatch.
 - name: Install + enable verify-archive-tier-b (networks with a correct anchor)
-  # Tagged for the same reason as the tier-a install above (:697): the
+  # Tagged for the same reason as the tier-a install above: the
   # ops-job units must be renderable WITHOUT a full archival-node run,
   # because a full run can restart galexie and a galexie restart is a
-  # ~9-minute mainnet cold catchup. Tier B was left untagged when that
-  # tag was introduced, so `--tags ops-jobs` — the apply procedure
-  # docs/operations/runbooks/archive.md#stellarindex_stellar_archive_divergence prescribes — rendered
-  # tier-a's unit and silently skipped tier-b's, leaving the checkpoint
-  # tier's `-textfile-output` export path (#282) permanently unwired
-  # while the confirm step still read green. Untagged behaviour is
+  # ~9-minute mainnet cold catchup. Untagged, `--tags ops-jobs` — the
+  # apply procedure
+  # docs/operations/runbooks/archive.md#stellarindex_stellar_archive_divergence
+  # prescribes — would render tier-a's unit and silently skip tier-b's,
+  # leaving the checkpoint tier's `-textfile-output` export path unwired
+  # while the confirm step still reads green. Untagged behaviour is
   # unchanged: a plain run still includes this block.
   tags: [ops-jobs]
   when: verify_archive_tier_b_enabled | bool
@@ -1646,11 +1622,10 @@
   notify: Reload systemd
 
 - name: Install cap67-movements.service (own task so a unit change restarts ONLY this daemon)
-  # Split out of the shared unit loop above on 2026-09-02: that loop notifies
-  # only "Reload systemd", and the daemon used to be restarted UNCONDITIONALLY
-  # by the enable task below (ansible-drift red since 08-31). Templating it
-  # here lets a genuine unit-file change notify a targeted restart, while an
-  # unchanged unit leaves the running daemon alone.
+  # Split out of the shared unit loop above: that loop notifies only
+  # "Reload systemd". Templating it here lets a genuine unit-file change
+  # notify a targeted restart, while an unchanged unit leaves the running
+  # daemon alone.
   ansible.builtin.template:
     src: systemd/cap67-movements.service.j2
     dest: /etc/systemd/system/cap67-movements.service
@@ -1665,20 +1640,14 @@
   # FOLLOW_INTERVAL. Restart=always in the unit makes it crash-safe; it
   # resumes from the persisted watermark.
   #
-  # `restarted` (NOT `started`): `started` is a no-op while the unit is
-  # active/activating, which on the timer→daemon cutover leaves an in-flight
-  # OLD oneshot running and NEVER launches the new -follow ExecStart (the play
-  # goes green with no daemon), and on any later run leaves the running daemon
-  # on stale unit config. A deterministic restart is safe here — SIGTERM is
-  # graceful (the loop exits mid-derive, the watermark holds, ReplacingMergeTree
-  # dedups any re-derived window).
-  #
-  # 2026-09-02 (ansible-drift red since 08-31): `restarted` is unconditional,
-  # so this task reports `changed` on EVERY run — including every `--check`
-  # — and restarts a healthy daemon on every real apply. The timer→daemon
-  # cutover it guarded against is long past. `started` + a handler notified
-  # by the unit-template task above restarts the daemon exactly when its
-  # unit file changes, which is the only time a restart is warranted.
+  # `started` + a handler, NOT an unconditional `restarted`: `restarted`
+  # reports `changed` on EVERY run — including every `--check`, which
+  # turns ansible-drift red — and restarts a healthy daemon on every real
+  # apply. The handler notified by the unit-template task above restarts
+  # the daemon exactly when its unit file changes, which is the only time
+  # a restart is warranted. A restart is safe — SIGTERM is graceful (the
+  # loop exits mid-derive, the watermark holds, ReplacingMergeTree dedups
+  # any re-derived window).
   ansible.builtin.systemd:
     name: cap67-movements.service
     state: started
@@ -1697,20 +1666,16 @@
 # for galexie-archive S3 creds. Output to journald (logger -t).
 #
 # -to is CONDITIONAL, and that is load-bearing. `verify-archive -to` is
-# an fs.Uint (internal/ops/archive/verify_archive.go:66) whose ZERO value
+# an fs.Uint (internal/ops/archive/verify_archive.go) whose ZERO value
 # means "unbounded — resolve the upper bound from the peers' own
-# .well-known/stellar-history.json" (verify_archive.go:805-819). This
-# task used to render `-to {{ stellarindex_live_seam_ledger | int - 1 }}`
-# unconditionally; stellarindex_live_seam_ledger defaults to 0
-# (defaults/main.yml), so on every host that has not set a seam the cron
-# rendered `-to -1`, which the flag parser rejects with
+# .well-known/stellar-history.json". stellarindex_live_seam_ledger
+# defaults to 0 (defaults/main.yml), so an unconditional
+# `-to {{ stellarindex_live_seam_ledger | int - 1 }}` renders `-to -1` on
+# every host without a seam, which the flag parser rejects with
 #   invalid value "-1" for flag -to: parse error
-# before the tool does any work. Verified live on r1 2026-09-02: the
-# rendered /etc/cron.d file carried `-from 2 -to -1` and
-# `journalctl -t stellarindex-tier-d --since -60d` was EMPTY — the
-# fork-detection control ADR-0016 §7.4 requires had never run once.
-# Emitting nothing when there is no seam lets the zero-value semantics
-# do their job. Guarded by scripts/ci/verify-archive-tier-d-test.sh.
+# before the tool does any work — the fork-detection control would
+# never run. Emitting nothing when there is no seam lets the zero-value
+# semantics do their job. Guarded by scripts/ci/verify-archive-tier-d-test.sh.
 #
 # -from follows the sibling units (verify-archive-tier-a/-b,
 # archive-completeness): the node's hot floor when it has one, else 2.
@@ -1726,14 +1691,11 @@
 #
 # Gated on verify_archive_tier_d_enabled (defaults/main.yml): Tier D
 # cross-checks a region's own PEERS (R1/R2/R3), so a single-VM testnet/
-# futurenet host has no peer region to cross-check against. Ungated it
-# still installed everywhere, unconditionally — same drift class the
-# invalid-flag fix above closed, left open here. Same gating shape as
-# Tier E just below.
+# futurenet host has no peer region to cross-check against. Same gating
+# shape as Tier E just below.
 #
-# Tagged ops-jobs like every other unit in this file (RLT-305): this task
-# was the one job install left untagged, so `--tags ops-jobs` converged
-# every sibling tier but silently skipped Tier D's cron.
+# Tagged ops-jobs like every other unit in this file, so `--tags
+# ops-jobs` converges Tier D's cron with its sibling tiers.
 #
 # -textfile-output like Tier E just below, for the same reason: without it
 # stellarindex_verify_archive_last_success_unix{tier="peers"} never exists,
