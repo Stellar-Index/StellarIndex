@@ -41,7 +41,7 @@ import (
 // admits none; an absence from it means "not listed", which is the
 // normal condition of nearly every asset on the network.
 //
-// Scale, measured against the live upstream 2026-09-15: 21,247 coin
+// Scale, measured against the live upstream: 21,247 coin
 // objects / 3.7 MB, of which exactly 50 carry a non-empty
 // `platforms.stellar` — 17 Soroban contract C-strkeys and 33 classic
 // `CODE-GISSUER` pairs. The price call then covers those 50 ids in one
@@ -299,7 +299,7 @@ func (c *listingClient) get(ctx context.Context, path string, q url.Values) (*ht
 		return nil, fmt.Errorf("listing-sync: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	// G10-04: the key goes in a request HEADER, never the query string.
+	// The key goes in a request HEADER, never the query string.
 	// A transport error's *url.Error embeds the request URL in its
 	// message, so a key in the query string leaks into every log line
 	// that reports a failed fetch. The upstream still accepts the

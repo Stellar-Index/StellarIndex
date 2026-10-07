@@ -57,7 +57,7 @@ const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, whi
 // serve from the aggregates. So once the projector has re-walked past
 // the original cursor, this command re-materializes the price CAGGs
 // over the replayed range and fails loudly if it cannot — rather than
-// leaving that as a sentence in a runbook (K006). `-refresh-caggs=false`
+// leaving that as a sentence in a runbook. `-refresh-caggs=false`
 // opts out explicitly and says what it costs. See
 // docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
@@ -124,9 +124,8 @@ func projectorReplay(w io.Writer, args []string) error {
 		// and the runbook lists several of those hyphenated names as
 		// valid under a heading claiming they match the registry. So
 		// an operator pasting the generated command for a real
-		// projection hole got a green exit code and a "no action"
-		// line, while nothing was rewound and the gap survived (cold
-		// audit 2026-08-03).
+		// projection hole would get a green exit code and a "no action"
+		// line, while nothing is rewound and the gap survives.
 		//
 		// A genuinely never-run source has no cursor row either, but
 		// there is nothing to rewind in that case, so refusing is
@@ -249,12 +248,11 @@ func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRe
 
 // projectorRefreshOnly is projector-replay's -refresh-only recovery path:
 // re-materialize the price CAGGs over an explicit [from,to] ledger range
-// WITHOUT touching the cursor. It exists because the only recovery
-// awaitProjectorCursor's timeout used to offer — "re-run with the same
-// -from" — rewinds again from the projector's now partially-advanced
-// cursor and re-walks the whole range from scratch, so the ledgers the
-// timed-out run already re-projected (but couldn't refresh in time)
-// never get a refresh of their own (CA2-A19-correct-8). This path skips
+// WITHOUT touching the cursor. It exists because re-running with the
+// same -from after awaitProjectorCursor times out rewinds again from the
+// projector's now partially-advanced cursor and re-walks the whole range
+// from scratch, so the ledgers the timed-out run already re-projected
+// (but couldn't refresh in time) never get a refresh of their own. This path skips
 // checkReplayBackfillSafe and the rewind entirely: no decoding happens
 // here, only a refresh_continuous_aggregate over rows the projector has
 // already written. It still fails closed if the cursor has not actually
@@ -302,22 +300,22 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 
 // checkReplayBackfillSafe refuses a replay of a source whose decoder has
 // not been audited against every WASM generation that ran over its
-// history (finding F050).
+// history.
 //
 // A rewind hands the live projector's CURRENT decoder every historical
 // event from `from` to the tip — the same "current-only decoder over
 // old-generation event bodies" hazard `backfill` refuses via
-// checkBackfillSources. Until this check the gate guarded `backfill`
-// alone, while projector-replay is the documented catch-up procedure
-// for every projected source, so the control never ran on the path
-// operators actually use. No override flag, matching `backfill`: the
-// way through is the audit plus the registry flip, in one reviewed PR.
+// checkBackfillSources. projector-replay is the documented catch-up
+// procedure for every projected source, so a gate on `backfill` alone
+// would never run on the path operators actually use. No override
+// flag, matching `backfill`: the way through is the audit plus the registry
+// flip, in one reviewed PR.
 //
 // The question is asked through [external.ReplayBackfillSafe], which
 // resolves the three projector source names that deliberately have no
 // registry row of their own; an unknown name is refused (fail-closed) —
 // the message carries the same naming hint the cursor-lookup refusal
-// below gives, because a typo now stops here first.
+// below gives, because a typo stops here first.
 func checkReplayBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -343,7 +341,7 @@ type sep41RollupResetter interface {
 
 // resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold
 // checkpoint whenever a replay rewinds and re-walks the sep41_supply
-// source itself (finding F024, audit 2026-09-02).
+// source itself.
 //
 // [Store.AdvanceSEP41SupplyRollup] only ever folds `ledger >
 // last_ledger`, and [Store.SEP41KindTotalsAtOrBefore]'s fast path trusts
@@ -355,9 +353,9 @@ type sep41RollupResetter interface {
 // forever: the fold never looks back down to find them, and served
 // supply stays wrong no matter how many times the replay runs. The
 // fold's own NOTE documents the requirement; `ch-rebuild -sep41 -write`
-// already satisfies it for its own re-derive path (sep41RollupResetPlan
-// in internal/ops/chops/ch_rebuild.go) — this is the same requirement
-// for the projector's replay path, which had no reset at all.
+// satisfies it for its own re-derive path (sep41RollupResetPlan in
+// internal/ops/chops/ch_rebuild.go) — this is the same requirement for
+// the projector's replay path.
 //
 // A FULL reset (nil contractIDs), not scoped: a source-level replay
 // re-walks every watched contract's events over the rewound range, not

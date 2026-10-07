@@ -28,11 +28,11 @@ import (
 // externalInsertBudget bounds the DATABASE half of a backfill-external
 // run, separately from the venue-walk budget.
 //
-// One shared deadline used to cover both halves, which made a long walk
+// One shared deadline over both halves would make a long walk
 // self-defeating: the fills endpoint is paced at one page per 1.1s, so a
-// multi-year pair walk spends hours in pagination and then has whatever
-// is left — possibly nothing — to write tens of millions of rows with.
-// A walk that used its whole budget therefore discarded every fill it
+// multi-year pair walk spends hours in pagination and would then have
+// whatever is left — possibly nothing — to write tens of millions of rows
+// with. A walk that used its whole budget would discard every fill it
 // had just paid the venue rate limit to fetch. The insert loop gets its
 // own clock so salvage is possible at all.
 const externalInsertBudget = 12 * time.Hour
@@ -184,8 +184,8 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 	// populates usd_volume exactly the way live ingest does. This MUST
 	// install every tier: combined with the positive derive_generation
 	// above, a store missing the FX resolver computes NULL and then wins
-	// the upsert, overwriting correct stored values. (It previously
-	// mirrored L2.2 phase 1 only — see InstallUSDVolumeResolution.)
+	// the upsert, overwriting correct stored values. See
+	// InstallUSDVolumeResolution for the tiers.
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
 		cfg.Trades.USDPeggedClassicAssets,

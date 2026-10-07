@@ -9,9 +9,8 @@
 // `seed-soroswap-pairs`, `seed-protocol-contracts`,
 // `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
 // `state-snapshot`, `issuer-enrich`, `sep1-refresh`,
-// `asset-registry-backfill`. Extracted from
-// cmd/stellarindex-ops (maintainability audit 2026-07-01, D1 finding
-// M1-5); main.go's dispatch table calls Run below.
+// `asset-registry-backfill`. The dispatch table in
+// cmd/stellarindex-ops/main.go calls Run below.
 package ingest
 
 import (

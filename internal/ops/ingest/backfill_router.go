@@ -137,7 +137,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			AmountIn:        ev.Swap.AmountIn.String(),
 			AmountOut:       ev.Swap.AmountOut.String(),
 			CallSig:         ev.Swap.CallSig(),
-			// ROADMAP #11 tree-position columns (migration 0101).
+			// Tree-position columns (migration 0101).
 			CallPath:  ev.Swap.CallPath,
 			CallDepth: ev.Swap.CallDepth,
 			CallKind:  ev.Swap.CallKind,
@@ -171,8 +171,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		// insert. -resume defaults to true and SKIPS checkpointed
 		// ledgers, so advancing here loses those rows permanently with
 		// no dead-letter record. This mirrors projected-rebuild's
-		// checkpointWindow, which withholds for exactly this reason
-		// (cold audit 2026-08-04).
+		// checkpointWindow, which withholds for exactly this reason.
 		if insertFailures > 0 {
 			return
 		}
@@ -231,16 +230,15 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	// any ledger was processed — that's fine, GetCursor will
 	// ErrNotFound on the next run.
 	//
-	// lastWalked, NOT *to. This used to checkpoint the operator's
-	// declared range top regardless of how far the walk actually got —
-	// and UpsertCursor is monotonic-forward, so that write always won
-	// and could never be corrected. A run that failed partway (or that
-	// returned success with a trailing hole, which
-	// TolerateTrailingMissing permits) therefore jumped the cursor to
-	// the range top, and the retry printed "cursor already at or past
-	// -to — nothing to do" and exited 0 with the remainder permanently
-	// unfilled. This is the same defect the indexer's seamed reader
-	// documents one layer up (cold audit 2026-08-04).
+	// lastWalked, NOT *to. Checkpointing the operator's declared range
+	// top regardless of how far the walk actually got could never be
+	// corrected, because UpsertCursor is monotonic-forward. A run that
+	// failed partway (or that returned success with a trailing hole,
+	// which TolerateTrailingMissing permits) would jump the cursor to
+	// the range top, and the retry would print "cursor already at or
+	// past -to — nothing to do" and exit 0 with the remainder
+	// permanently unfilled. The indexer's seamed reader documents the
+	// same hazard one layer up.
 	if totalLedgers > 0 && streamErr == nil {
 		checkpoint(lastWalked, true)
 	}
