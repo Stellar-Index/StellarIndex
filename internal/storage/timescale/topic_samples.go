@@ -305,7 +305,7 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 // NOTE: this query carries NO per-pair count/min/max aggregate. For a
 // DORMANT pair with a large historical footprint (e.g. an old mint topic
 // with millions of ancient rows), such an aggregate scans the pair's
-// entire row set — one such pair ate a whole verdict's 2h budget.
+// entire row set and can exhaust the whole verdict's run budget.
 // Recognition only needs the EXAMPLE ROW (is this shape handled by a
 // decoder?); the count/span are informational. So fallback-sampled
 // pairs report Count = -1 ("not measured — dormant pair"), and each

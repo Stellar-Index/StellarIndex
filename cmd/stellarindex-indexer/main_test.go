@@ -496,7 +496,7 @@ func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
 // an already-recorded ledger with DIFFERENT bytes (upstream rewrite,
 // or a restart replaying past the last committed cursor) silently
 // clobbered the original fingerprint — destroying the exact tamper
-// evidence ADR-0016's drift detector exists to preserve. This asserts
+// evidence the hashdb drift detector exists to preserve. This asserts
 // the second, differing-content call for the SAME seq leaves the
 // FIRST hash on disk, increments HashdbDriftTotal, and does NOT
 // advance lastAppended for that call.

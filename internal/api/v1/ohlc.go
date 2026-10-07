@@ -501,11 +501,11 @@ func parseWindowDuration(s string) (time.Duration, error) {
 // matches the Freighter ≤30 s freshness SLA.
 //
 // Per ADR-0015, snapping the implicit "now" to this boundary is what
-// makes "all 3 regions return the same rate" a real property: a
-// request landing at 12:00:01.234 across two regions both clamp to
-// 12:00:00.000 and answer over the identical [from, 12:00:00.000)
-// window — same trades, same result, same JSON bytes once
-// replication has carried the trades to both regions.
+// makes "every region returns the same rate" a real property: a
+// request landing at 12:00:01.234 in two regions clamps to
+// 12:00:00.000 in both and answers over the identical
+// [from, 12:00:00.000) window — same trades, same result, same JSON
+// bytes once both regions have ingested those trades.
 const closedBucketWindow = 30 * time.Second
 
 // parseFromToClamped is the rate-endpoint flavour of [parseFromTo]:

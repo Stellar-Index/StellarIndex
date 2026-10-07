@@ -23,7 +23,7 @@
 //	-config PATH             TOML config file (required)
 //	-dry-run                 Load config, open connections, validate, exit.
 //	                         No ledgers consumed. Boot sanity only.
-//	-verify-hashdb-from N    Run one ADR-0016 hashdb verify pass over an
+//	-verify-hashdb-from N    Run one hashdb verify pass over an
 //	-verify-hashdb-to N      explicit [from,to] ledger range against the
 //	                         archive bucket and exit — for verifying or
 //	                         bootstrapping history older than the live
@@ -131,7 +131,7 @@ func realMain() int {
 		cfgPath     = flag.String("config", "", "Path to TOML config file (required)")
 		dryRun      = flag.Bool("dry-run", false, "Load config + open connections + exit without ingesting")
 		showVersion = flag.Bool("version", false, "Print version and exit")
-		verifyFrom  = flag.Uint("verify-hashdb-from", 0, "Run one ADR-0016 hashdb verify pass over [from,to] against the archive bucket and exit, instead of ingesting (requires -verify-hashdb-to)")
+		verifyFrom  = flag.Uint("verify-hashdb-from", 0, "Run one hashdb verify pass over [from,to] against the archive bucket and exit, instead of ingesting (requires -verify-hashdb-to)")
 		verifyTo    = flag.Uint("verify-hashdb-to", 0, "See -verify-hashdb-from")
 	)
 	flag.Parse()
@@ -199,7 +199,7 @@ func (f verifyHashDBRangeFlags) validate() (from, to uint32, requested bool, err
 	return uint32(f.from), uint32(f.to), true, nil
 }
 
-// runVerifyHashDBRange loads cfgPath and runs one bounded ADR-0016 verify
+// runVerifyHashDBRange loads cfgPath and runs one bounded hashdb verify
 // pass over the operator-supplied [from, to] range against the archive
 // bucket (pipeline.LedgerstreamConfig's historical-reads config — the same
 // one the ordinary catch-up path uses for ledger < the live seam), then
@@ -814,7 +814,7 @@ func run(cfgPath string, dryRun bool) error {
 		)
 	}
 
-	// ─── HashDB (ADR-0016 drift detector) ───────────────────────
+	// ─── HashDB drift detector ───────────────────────
 	// Off by default (opt-in). Two
 	// independent *hashdb.DB handles on the SAME file: hashdbAppendDB
 	// is written synchronously from the live LCM read loop below;
@@ -903,7 +903,7 @@ func run(cfgPath string, dryRun bool) error {
 				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), accountObserverActive); perr != nil {
 					return perr
 				}
-				// ADR-0016 append: best-effort, never stalls or fails
+				// hashdb append: best-effort, never stalls or fails
 				// ingest. See recordHashdb's docstring for why this
 				// runs synchronously rather than fanned out to a
 				// buffered channel.
@@ -2415,7 +2415,7 @@ func recordCursorMetric(ledger uint32) {
 	obs.CursorLastLedger.WithLabelValues(cursorSource).Set(float64(ledger))
 }
 
-// ─── HashDB (ADR-0016 drift detector) ───────────────────────────────
+// ─── HashDB drift detector ───────────────────────────────
 
 // defaultHashDBVerifyInterval / defaultHashDBVerifyWindow are the
 // library fallbacks config.HashDBConfig's zero-value fields defer to
@@ -2486,7 +2486,7 @@ var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
 }
 
 // recordHashdb appends the ledger's sha256(LCM) into hdb — the
-// append side of ADR-0016's drift detector, called once per ledger
+// append side of the hashdb drift detector, called once per ledger
 // from the live LCM read loop.
 //
 // Design choice: this runs SYNCHRONOUSLY on the ingest hot path,
@@ -2553,7 +2553,7 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	lastAppended.Store(seq)
 }
 
-// startHashDBVerifier runs the periodic half of ADR-0016's drift
+// startHashDBVerifier runs the periodic half of the hashdb drift
 // detector: every cfg.VerifyIntervalMinutes it re-reads a trailing
 // window of cfg.VerifyWindowLedgers ledgers from the SAME bucket the
 // append side reads (lsCfg — the live-tail config) and compares each
@@ -2677,7 +2677,7 @@ func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]s
 }
 
 // hashDBVerifyPass (window: hashDBWindowRecent|hashDBWindowHistory, the
-// runs-counter label) runs one bounded ADR-0016 verify pass over an explicit
+// runs-counter label) runs one bounded hashdb verify pass over an explicit
 // [from, to] ledger range and records/logs its outcome. It is separate
 // from hashDBVerifySweep so the same pass can run either off the live
 // tip's trailing window (hashDBVerifySweep's job) OR over an
@@ -2697,7 +2697,7 @@ func hashDBVerifyPass(
 	// edge needs that), but this sweep's window trails ledgers the
 	// indexer itself already read successfully — every object in
 	// [from, to] existed once, so "object missing" here is exactly the
-	// deleted-history tamper class ADR-0016 exists to catch, not a
+	// deleted-history tamper class hashdb exists to catch, not a
 	// race. With tolerance on, a deleted object silently ended the
 	// sweep early and the run recorded outcome="ok" — a vacuously
 	// green detector.

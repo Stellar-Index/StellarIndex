@@ -19,7 +19,7 @@ import (
 // needs for the sep41_transfers "recent tail" half of the ADR-0048 D5
 // merge. *timescale.Store satisfies it via ListSEP41TransfersByAddress.
 // Nil disables the PG-side contribution (the endpoint still serves the
-// ClickHouse pre-P23 archive alone, with an honest coverage_note — see
+// ClickHouse movement archive alone, with an honest coverage_note — see
 // AccountMovements below).
 type SEP41MovementsReader interface {
 	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction, contractID string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
@@ -399,7 +399,7 @@ func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 // round-trip.
 func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) ([]clickhouse.AccountMovementRow, string) {
 	if h.SEP41Movements == nil {
-		return nil, "this deployment has not wired the recent (post-P23) Postgres tail reader; showing only the ClickHouse pre-P23 archive"
+		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger)
 	}
 	if filter.Kind != "" && filter.Kind != "transfer" {
 		return nil, ""
@@ -409,7 +409,7 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), scopeContract, floorLedger)
 	if err != nil {
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
-		return nil, "the recent (post-P23) tail is temporarily unavailable; showing the pre-P23 ClickHouse archive only"
+		return nil, fmt.Sprintf("the recent tail is temporarily unavailable; showing only the movement archive, which ends before ledger %d", floorLedger)
 	}
 	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset), ""
 }

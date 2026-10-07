@@ -5386,7 +5386,7 @@ var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	[]string{"site", "asset"},
 )
 
-// ─── hashdb (ADR-0016 drift detector) ───────────────────────────────
+// ─── hashdb drift detector ───────────────────────────────
 
 // HashdbAppendTotal — per-outcome counter for the indexer's hashdb
 // append call, made once per ledger from the live LCM read loop

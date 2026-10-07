@@ -25,9 +25,8 @@ import (
 const SourceName = "soroswap-router"
 
 // MainnetRouter is the contract ID of the Soroswap router on
-// Stellar pubnet. Verified in
-// docs/discovery/dexes-amms/soroswap.md against the
-// `public/router.json` config in the soroswap-core repo.
+// Stellar pubnet, as recorded in
+// docs/operations/wasm-audits/soroswap-router.md.
 const MainnetRouter = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
 
 // Function names the router exposes. We track only the swap

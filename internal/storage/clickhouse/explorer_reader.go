@@ -1271,15 +1271,15 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		argMax(protocol_version, ledger_seq) AS protocol_version
 		-- FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at); without it
 		-- an un-merged re-ingested ledger contributes TWO parts, so count() and
-		-- every sum(*_count) double-count until a background merge (audit
-		-- C2-12). FINAL is a no-op once merged. The ledger_seq predicate keeps
+		-- every sum(*_count) double-count until a background merge.
+		-- FINAL is a no-op once merged. The ledger_seq predicate keeps
 		-- the FINAL bounded to the recent partitions (pruning hint ONLY); the
 		-- close_time predicate is the authoritative, day-aligned boundary.
 		FROM stellar.ledgers FINAL
 		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?
 		  -- Day window anchored to the DATA's tip close_time, not now('UTC'):
-		  -- deterministic for any two regions ingesting the same chain (the
-		  -- multi-region plan's determinism contract) and equal to wall clock
+		  -- deterministic for any two regions ingesting the same chain
+		  -- (ADR-0050 §4: byte-identical closed buckets) and equal to wall clock
 		  -- within one ledger close when live.
 		  AND close_time >= toStartOfDay((SELECT max(close_time) FROM stellar.ledgers)) - toIntervalDay(?)
 		GROUP BY day
