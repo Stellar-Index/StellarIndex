@@ -1525,7 +1525,8 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -key-id kid_515c8d94191f4e93 \
                               -rate-limit-per-min 10000 \
-                              -reason 'partner contract 2026-09'
+                              -reason 'partner contract 2026-09' \
+                              -write
   emit-incident -config PATH -slug SLUG -event {sev1|resolved} -write
                           Fan out one incident.sev1 or
                           incident.resolved customer webhook for
@@ -1540,7 +1541,8 @@ Subcommands:
                             stellarindex-ops emit-incident \
                               -config /etc/stellarindex.toml \
                               -slug 2026-05-12-redis-blip \
-                              -event sev1
+                              -event sev1 \
+                              -write
   usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-write] [-timeout DUR]
                           Re-fold the Redis per-endpoint usage
                           counters into the usage_daily hypertable

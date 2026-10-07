@@ -181,12 +181,12 @@ stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
 nice -n 15 ionice -c2 -n7 stellarindex-ops compute-completeness \
     -config /etc/stellarindex.toml -ch \
     -source sep41_supply \
-    -skip-substrate -skip-recognition
+    -skip-substrate -skip-recognition -write
 
 nice -n 15 ionice -c2 -n7 stellarindex-ops compute-completeness \
     -config /etc/stellarindex.toml -ch \
     -source sep41_transfers \
-    -skip-substrate -skip-recognition
+    -skip-substrate -skip-recognition -write
 ```
 
 - No `-from`, mandatory; with it you get P3 again.

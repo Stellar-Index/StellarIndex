@@ -384,7 +384,7 @@ GROUP BY key_xdr;
    the reduction, **not** to `ledger_entries_current`.
 4. `SELECT count(*) FROM account_observations WHERE intra_ledger_seq = 4294967295`
    should equal the number of `(key, ledger)` pairs you seeded — not more.
-5. Run `stellarindex-ops compute-completeness -ch` for the range; a residual
+5. Run `stellarindex-ops compute-completeness -ch -write` for the range; a residual
    substrate/projection mismatch means step 1 did not fully replay.
 6. Run `stellarindex-ops compare-entry-changes -config /etc/stellarindex.toml
    -from N -to M`. It extracts the range from our export and from the cold-tier

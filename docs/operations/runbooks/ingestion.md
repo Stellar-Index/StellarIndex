@@ -664,7 +664,7 @@ stellarindex-ops projector-replay -config /etc/stellarindex.toml \
 stellarindex-ops ch-rebuild ...   # see docs/operations/backfill-procedure.md
 
 # Then re-run the verdict for the window and confirm it goes green:
-stellarindex-ops compute-completeness ...
+stellarindex-ops compute-completeness -write ...
 ```
 
 ### Root cause analysis
