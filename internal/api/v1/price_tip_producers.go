@@ -21,15 +21,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// Shared tip-stream producers (real-time program RT-1; audit 2026-08-04
-// "tip stream = 6 DB queries/s PER CONNECTION"). The legacy shape ran
-// one compute loop per CONNECTION, so N viewers of the same pair cost
-// N× the tip computation and the shared pool saturated at ~2300
-// streams. One producer now runs per DISTINCT (asset, quote, window)
-// and publishes into the streaming Hub's topic ring; every connection
-// is a plain Hub subscriber. Cost scales with distinct pairs being
-// watched, not with viewers — the precondition for making every asset
-// page hold a live stream ("this should feel alive", 2026-08-08).
+// Shared tip-stream producers. A compute loop per CONNECTION makes N
+// viewers of the same pair cost N× the tip computation: measured
+// at 6 DB queries/s per connection, saturating the shared
+// pool at ~2300 streams. One producer runs
+// per DISTINCT (asset, quote, window) and publishes into the streaming
+// Hub's topic ring; every connection is a plain Hub subscriber. Cost
+// scales with distinct pairs being watched, not with viewers — the
+// precondition for every asset page holding a live stream.
 
 // tipProducerLinger keeps a producer alive briefly after its last
 // subscriber leaves, absorbing page reloads/reconnects without a
@@ -37,7 +36,7 @@ import (
 const tipProducerLinger = 30 * time.Second
 
 // defaultMaxTipProducers caps how many distinct tip producers may run at
-// once (wave-D UNAUTH-DOS-1).
+// once.
 //
 // The SSE caps count CONNECTIONS. A tip-stream connection also mints a
 // DETACHED producer: its context comes from context.Background(), it
@@ -85,7 +84,7 @@ const defaultMaxTipProducers = 512
 // entry lives — releasing the connection is not enough to give the slot
 // back, because the linger is exactly what the flood exploits.
 //
-// 24 is chosen against the shipped per-IP concurrent-stream cap
+// 24 is chosen against the per-IP concurrent-stream cap
 // ([config].api.max_streams_per_ip, default 20): a compliant caller can
 // stream at most 20 distinct pairs at once, so 24 admits every producer
 // it can legitimately be watching plus headroom for the linger overlap
@@ -761,7 +760,7 @@ func (s *Server) SetMaxTipProducersPerCaller(n int) {
 // to: the trusted-proxy-aware client IP, aggregated to its /64 prefix
 // for IPv6.
 //
-// The prefix, not the address (SEC-15, mirroring
+// The prefix, not the address (mirroring
 // every per-IP cap — one definition, [ratelimit.ThrottleIPKey]):
 // residential and mobile ISPs delegate a whole /64 to one subscriber, so
 // a quota keyed on the full /128 is bypassed by rotating the low bits —

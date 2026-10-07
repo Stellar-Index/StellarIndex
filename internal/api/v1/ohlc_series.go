@@ -32,9 +32,9 @@ type OHLCSeriesBar struct {
 	// VBaseDecimals / VQuoteDecimals state the smallest-unit scale of
 	// VBase/VQuote — the per-source scale [barScaleDecimals] resolves
 	// from the bucket's contributing venues (7dp on-chain, 8 CEX, 6
-	// FX), NOT a fixed stroop. Mirrors [OHLCBar.QuoteVolumeDecimals]
-	// (finding F096): a consumer that divided v_quote by a hardcoded
-	// 1e7 overstated a CEX-fed bucket tenfold. Equal to each other
+	// FX), NOT a fixed stroop. Mirrors [OHLCBar.QuoteVolumeDecimals]:
+	// a consumer that divides v_quote by a hardcoded 1e7 overstates a
+	// CEX-fed bucket tenfold. Equal to each other
 	// today (a source stamps both legs of a trade at one scale, and a
 	// combined bucket's lift target — [ohlcBucketAcc.commonScale] — is
 	// per bucket, not per leg). Null when the scale is unknown
@@ -57,7 +57,7 @@ type OHLCSeriesBar struct {
 // OHLCSeriesResponse is the wire envelope for /v1/ohlc?interval=...
 // — distinct from the single-bar [OHLCBar] response. CG/CMC clients
 // expect a series shape (`[{t,o,h,l,c,v},...]`); this is the
-// CG-parity payload (F-0071).
+// CG-parity payload.
 type OHLCSeriesResponse struct {
 	Base      string          `json:"base"`
 	Quote     string          `json:"quote"`
@@ -245,9 +245,8 @@ func (s *Server) handleOHLCSeries(
 
 	bars = capOHLCSeriesNewest(bars, limit)
 
-	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
-	// the deferred CAGG-reading tail from docs/operations/runbooks/
-	// dex.md): the SAME per-pair scalar factor that
+	// dex-nonstandard-decimals forward normalization: the SAME per-pair
+	// scalar factor that
 	// corrects a single-bar OHLC's open/high/low/close corrects every bar
 	// here too — K = 10^(baseDec-quoteDec) is a constant for the whole
 	// requested pair, so applying it once to the FINISHED series (rather
@@ -262,7 +261,7 @@ func (s *Server) handleOHLCSeries(
 	// they are raw smallest-unit sums at the per-SOURCE scale — 7dp
 	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the
 	// CAGG's own `sources` column. The single-bar path states that scale
-	// on the wire ([OHLCBar.QuoteVolumeDecimals], finding F096); a series
+	// on the wire ([OHLCBar.QuoteVolumeDecimals]); a series
 	// bar states it too ([OHLCSeriesBar.VBaseDecimals] /
 	// [OHLCSeriesBar.VQuoteDecimals]) — [annotateOHLCSeriesBarScale] for
 	// the non-combined path here, [ohlcBucketAcc.finalize]'s own
@@ -310,7 +309,7 @@ func (s *Server) handleOHLCSeries(
 // capOHLCSeriesNewest trims an ascending series read with a `limit+1`
 // probe down to the NEWEST `limit` bars, and marks every surviving bar
 // `truncated` when — and only when — the probe row came back, i.e. the
-// window really held a bucket the response does not carry (RLT-453).
+// window really held a bucket the response does not carry.
 //
 // The probe is what makes the flag exact. `len(bars) == limit` is not
 // evidence of a cut: a request with no `from` is sized to exactly
@@ -348,7 +347,7 @@ func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 // divide the offset between the two origins — true for 1h/4h/12h/1d
 // (whole-day widths) but false for 3d and 2w, whose default `to`
 // then lands on a boundary [Store.OHLCSeriesReBucketed]'s folded
-// rows never do (RLT-258).
+// rows never do.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
 // truncateToBucketOrigin rounds t DOWN to the nearest multiple of d
@@ -423,7 +422,7 @@ func parseOHLCSeriesFromTo(
 }
 
 // ohlcSeriesWithAliases reads the bar series trying each XLM dual-form
-// alias pair (rc.89 / F-1340) and returns the FIRST non-empty series.
+// alias pair and returns the FIRST non-empty series.
 // The continuous aggregates key bars by the canonical id the
 // contributing trades carried — CEX-driven bars live under
 // `crypto:XLM`, so `?base=native` read zero bars while
