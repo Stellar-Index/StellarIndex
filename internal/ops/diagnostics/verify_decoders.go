@@ -166,8 +166,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	// hardcoded to cfg.Storage.S3BucketLive, which is TRIMMED: pointing
 	// verify-decoders at a historic range read a prefix of it or none of
 	// it, and the table below then reported every decoder as silent —
-	// the exact conclusion an operator uses this command to reach
-	// (RLT-282).
+	// the exact conclusion an operator uses this command to reach.
 	streamBucket, err := opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))
 	if err != nil {
 		return err
@@ -273,7 +272,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	}
 
 	// Coverage last, so the operator keeps the full table, but non-zero
-	// so a short walk is never read as the verdict (RLT-282). Every
+	// so a short walk is never read as the verdict. Every
 	// number above — and above all the "emitted zero outputs" line, the
 	// single claim this command exists to make — describes the ledgers
 	// that were actually delivered. A walk that covered a fraction of

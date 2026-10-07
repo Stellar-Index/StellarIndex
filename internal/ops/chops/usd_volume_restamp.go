@@ -215,7 +215,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if err := checkRestampPrices1mRetention(ctx, store, *tier, write); err != nil {
 		return err
 	}
-	// INV-3: one generation for the whole run, like ch-rebuild. A resumed
+	// One generation for the whole run, like ch-rebuild. A resumed
 	// chunk run may carry its predecessor's.
 	generation := time.Now().Unix()
 	if *runGeneration > 0 {

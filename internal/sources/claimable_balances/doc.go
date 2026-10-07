@@ -33,7 +33,7 @@
 // created and never removed is counted forever — total AND
 // circulating supply (and market cap / FDV downstream) drift upward
 // without bound. The pre-fix behaviour OVER-reported both; it was
-// not the conservative direction. (audit-2026-07-23 DAT-10)
+// not the conservative direction.
 //
 // Removal is written as an absorbing state (is_removal=true,
 // balance 0) rather than a decrement, so re-ingesting a ledger

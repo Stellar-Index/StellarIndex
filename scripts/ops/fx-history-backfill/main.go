@@ -100,8 +100,8 @@ func run() int {
 }
 
 // openBackfillStore opens the timescale store and stamps a POSITIVE
-// derive_generation before any write (MR-1, audit-2026-08-14). This tool is
-// an INV-3 corrective entry point: it writes historical (ticker, bucket)
+// derive_generation before any write. This tool is
+// a generation-guarded corrective entry point: it writes historical (ticker, bucket)
 // rows with source='frankfurter-historical' over the same key the live
 // forex worker owns (source='massive', generation 0). Stamping
 // time.Now().Unix() makes each correction win the fx_quotes generation

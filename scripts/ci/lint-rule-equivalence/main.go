@@ -10,7 +10,7 @@
 // pairing; nothing checked that the paired files stay SEMANTICALLY
 // equivalent — an operator fixing a threshold in one tree silently
 // diverges the only live deployment from the documented one (the
-// api.yml header has warned about exactly this since F-1222).
+// api.yml header warns about exactly this).
 //
 // This linter parses both trees and compares, per paired file, the
 // set of alert/record rules and each rule's expr (job labels
@@ -28,8 +28,8 @@
 //
 //	<file>:<rule>[:<field>]  — allow this specific divergence
 //
-// The .baseline suffix puts the file under lint-baseline-growth.sh
-// (CS-098): growth requires a declared Baseline-Growth: trailer.
+// The .baseline suffix puts the file under lint-baseline-growth.sh:
+// growth requires a declared Baseline-Growth: trailer.
 // Stale entries (divergence no longer present) fail, so the
 // baseline shrinks monotonically.
 //

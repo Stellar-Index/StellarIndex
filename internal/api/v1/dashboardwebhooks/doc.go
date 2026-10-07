@@ -1,7 +1,6 @@
 // Package dashboardwebhooks serves the customer-facing
 // `/v1/dashboard/webhooks*` CRUD surface that backs the dashboard's
-// "incident callbacks" page (per the F-1270 audit-2026-05-12
-// finding — proposal-promised Discord/Slack callbacks).
+// "incident callbacks" page (Discord/Slack callbacks).
 //
 // Mounting + session auth follow the same pattern as
 // `internal/api/v1/dashboardkeys`: a session cookie planted by
@@ -19,7 +18,7 @@
 //
 // Wire shape: bare JSON, not the v1 envelope — the dashboard
 // surface is session-scoped and intentionally bypasses the
-// envelope per `docs/reference/api-design.md §4.1` (F-1235).
+// envelope per `docs/reference/api-design.md §4.1`.
 //
 // Persistence: every method delegates to the
 // platform.WebhookStore wired by main.go (production:

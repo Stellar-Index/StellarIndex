@@ -134,7 +134,7 @@ const VWAPMaxAge = 5 * time.Minute
 // This is the package-default grace only. A caller whose tick interval
 // is not [orchestrator.DefaultInterval] — the "10 missed ticks"
 // relationship above is stated in prose, not derived — should use
-// [VWAPTTLWithMaxAge] instead (#1294): a deployment that raises the
+// [VWAPTTLWithMaxAge] instead: a deployment that raises the
 // interval otherwise gets fewer missed ticks of grace, and one whose
 // tick cycle exceeds VWAPMaxAge flaps between 200 and 404 for a reason
 // nothing here surfaces.
@@ -163,8 +163,7 @@ func VWAPTTLWithMaxAge(window, maxAge time.Duration) time.Duration {
 // as "not triangulated".
 //
 // Used by the API's price handler to set `flags.triangulated`
-// (per ADR-0018 + the "triangulation in serving path" remediation
-// for audit F-0014). When the API serves from a Redis-fallback
+// (per ADR-0018: triangulation in the serving path). When the API serves from a Redis-fallback
 // path (because the pair has no direct prices_1m row but has a
 // triangulated implied value), it consults this key to populate
 // the flag.
@@ -499,7 +498,7 @@ const MetadataTTL = 5 * time.Minute
 // Value: JSON with sources compared + max deviation + threshold.
 // Written by the divergence worker after each check cycle.
 //
-// F-1344 (G16-03): the key is per-PAIR, not per-base-asset. The
+// The key is per-PAIR, not per-base-asset. The
 // orchestrator's divergence refresh loops every configured pair
 // (XLM/fiat:USD, XLM/fiat:EUR, XLM/fiat:GBP, …) and each one calls
 // RefreshPair. The pre-fix key was `div:<base>` so the last pair in
@@ -638,7 +637,7 @@ const FreezeTTL = 5 * time.Minute
 // in the JSON record, not at the Redis layer. An operator rotating
 // keys deletes the record explicitly. No TTL does NOT protect a record
 // from an allkeys-* eviction policy, and the plaintext cannot be
-// re-issued (GH #1317, open).
+// re-issued.
 
 // APIKeyRecordKey is the typed Redis key for the
 // `apikey:<sha256-hex>` family. Named distinctly from the [APIKey]

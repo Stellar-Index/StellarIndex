@@ -32,7 +32,7 @@ import (
 //
 // Wired in production via internal/auth/sep10/redisreplay.go
 // (Redis-backed). Nil ReplayGuard preserves prior behaviour for
-// callers that haven't opted in. F-1224 (audit-2026-05-12).
+// callers that haven't opted in.
 type ReplayGuard interface {
 	Reserve(ctx context.Context, txHash string, ttl time.Duration) error
 	Claim(ctx context.Context, txHash string) error
@@ -48,7 +48,7 @@ const reservationSlack = time.Minute
 // prefixed signature payload, the same value Stellar itself identifies a
 // transaction by), hex-encoded and therefore bounded at 64 bytes.
 //
-// CON-05 (audit-2026-07-23): this used to be the SHA-256 of the raw
+// It is not the SHA-256 of the raw
 // caller-supplied base64 string, which is not a canonical identity for a
 // transaction — distinct strings decode to the same envelope, so one
 // redemption could be replayed simply by re-spelling it. Two
@@ -57,7 +57,7 @@ const reservationSlack = time.Minute
 // swapping the order of the envelope's decorated signatures, and
 // inserting a "\n" into the base64 (Go's decoder skips "\r"/"\n"). Each
 // produced a fresh, unused dedupe key for the identical challenge, so
-// the F-1224 guard could be walked straight past: capture one signed XDR
+// the replay guard could be walked straight past: capture one signed XDR
 // (XSS exfil from a client wallet is the threat model that motivated the
 // guard) and mint a JWT stream for the rest of the challenge window.
 // Hashing the parsed transaction removes the whole class — the identity
@@ -146,7 +146,6 @@ type Options struct {
 	// redeemable once so a captured signed XDR cannot be re-submitted
 	// inside its time-bound window. Nil = no replay defence (prior
 	// behaviour). See [ReplayGuard] for production wiring.
-	// F-1224 (audit-2026-05-12).
 	ReplayGuard ReplayGuard
 
 	// AccountLoader supplies the client account's signers and medium

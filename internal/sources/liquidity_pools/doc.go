@@ -39,5 +39,4 @@
 // ([supply.ClassicComputer.Compute]), so reserves of a withdrawn-and-
 // deleted pool would otherwise be counted forever, drifting total and
 // circulating supply (and market cap / FDV) upward without bound.
-// (audit-2026-07-23 DAT-10)
 package liquidity_pools
