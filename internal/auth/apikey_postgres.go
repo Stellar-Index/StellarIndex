@@ -18,13 +18,11 @@ import (
 // `api_keys` table (the dashboard's source of truth) with an
 // optional Redis read-through cache.
 //
-// This is the cutover validator: keys minted by the dashboard
-// (`internal/api/v1/dashboardkeys`) authenticate without a
-// separate mirror-write step. Existing Redis-only keys (minted
-// by `/v1/signup` before the cutover) still work — their canonical
+// Keys minted by the dashboard (`internal/api/v1/dashboardkeys`)
+// authenticate without a separate mirror-write step. Redis-only keys
+// (minted by the retired `/v1/signup`) also work — their canonical
 // `apikey:<hash>` records are consulted before Postgres, so the
-// validator transparently serves both populations until every
-// legacy record has been rotated through dashboard mint.
+// validator transparently serves both populations.
 //
 // On a Postgres-served lookup the result is written back into
 // the read-through cache (`apikey-cache:<hash>`, cacheTTL) so
@@ -121,10 +119,9 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		}
 		return Subject{}, fmt.Errorf("auth: postgres lookup: %w", err)
 	}
-	// COR-14 (audit-2026-07-23): [platform.APIKey.IsActive] is the single
-	// source of truth for "may this key authenticate". Re-implementing its
-	// revoked/expired predicate inline here — as this hot path used to —
-	// created a second copy that a future change to the platform rule
+	// [platform.APIKey.IsActive] is the single source of truth for "may
+	// this key authenticate". Re-implementing its revoked/expired
+	// predicate inline here would create a second copy that a future change to the platform rule
 	// (grace periods, a `disabled_at` column, an inclusive-vs-exclusive
 	// expiry boundary) would silently leave behind, on the one path where
 	// being wrong means authenticating a dead credential. The field checks
@@ -160,15 +157,12 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	//     unmetered (the current default when nothing is set).
 	//   - per-key > 0 AND override > 0: use min(per-key, override) so
 	//     an override always clamps a per-key value budgeted above it.
-	//     This retroactively closes the hole for any key minted before
-	//     the dashboard's mint-time clamp shipped (audit-2026-07
-	//     MEDIUM): even a persisted `monthly_quota: 9_000_000_000` can
+	//     This covers keys persisted without the dashboard's mint-time
+	//     clamp: even a persisted `monthly_quota: 9_000_000_000` can
 	//     never exceed the operator's account cap at enforcement time.
 	//   - per-key > 0 AND override 0: honour the per-key value (the
 	//     dashboard already clamped it to the tier ceiling at mint).
 	//
-	// F-1226 (codex audit-2026-05-12) introduced the fallback leg;
-	// audit-2026-07 hardened it into a ceiling.
 	// The cascade lives on platform.Account so the account views that
 	// report "your limit" resolve it exactly as enforced here.
 	monthlyQuota := acct.ResolveKeyMonthlyQuota(pgKey.MonthlyQuota)
@@ -188,7 +182,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	// silently shrink a customer's paid-for limit. Effective
 	// immediately for cache-miss lookups; cache hits inherit the
 	// resolved value on the next Postgres read after the cache TTL
-	// (same staleness window the monthly-quota override already has).
+	// (same staleness window the monthly-quota override has).
 	rateLimit := acct.ResolveKeyRateLimitPerMin(pgKey.RateLimitPerMin)
 	sub := Subject{
 		Identifier:          AccountIdentifier(acct.Slug),
@@ -224,7 +218,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 // Postgres". When hit=true the second return is the sentinel the
 // caller should propagate (or nil for a successful auth).
 //
-// The canonical `apikey:` record (legacy /v1/signup keys, /v1/register
+// The canonical `apikey:` record (retired /v1/signup keys, /v1/register
 // mirrors) is read before the `apikey-cache:` row: it is the one that
 // can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
@@ -327,7 +321,6 @@ func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string
 // convertPermissionEntries maps platform.KeyPermissionEntry into
 // auth.SubjectPermissionEntry so the middleware can enforce
 // per-endpoint allow/deny without importing the platform package.
-// F-1226 (codex audit-2026-05-12).
 func convertPermissionEntries(entries []platform.KeyPermissionEntry) []SubjectPermissionEntry {
 	if len(entries) == 0 {
 		return nil

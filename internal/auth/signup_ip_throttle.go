@@ -11,15 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// DefaultSignupThrottleDwellTime is the F-0049 / F-0149 dwell-time
-// window: how long the throttle is allowed to be failing-open on
+// DefaultSignupThrottleDwellTime is the dwell-time window: how long the throttle is allowed to be failing-open on
 // Redis errors before [RedisSignupIPThrottle.CheckIP] flips to
 // fail-CLOSED with [ErrThrottleUnavailable].
 //
 // 30s is the documented tradeoff: long enough that a single Redis
 // blip (MISCONF, brief network partition, fail-over) doesn't take
-// signup offline, short enough that the J40 adversarial vector
-// (sustained outage to disable abuse-prevention) can't pivot to
+// signup offline, short enough that an attacker who sustains an
+// outage to disable abuse-prevention can't pivot to
 // bulk-mint accounts indefinitely. Tune via
 // [SignupIPThrottleOptions.DwellTime] if the operator has a
 // different Redis-availability SLO.
@@ -42,8 +41,7 @@ const signupThrottleIncrTimeout = 5 * time.Second
 //
 // The signup endpoint sees one request per attempted account; the
 // global anonymous rate limit caps at 6000/min per IP (r1's
-// configured value; the 60/min this comment used to cite was a
-// 100x under-estimate that made bulk abuse look infeasible) — plenty for
+// configured value) — plenty for
 // browsing the public surfaces but lets a single IP bulk-mint
 // 6000 accounts/min × 60 min = 360,000/hr of email→key_id pairs.
 // The default 5/hour cap here closes that vector while still
@@ -51,14 +49,12 @@ const signupThrottleIncrTimeout = 5 * time.Second
 // single shared egress complete normally. The cap is set only through
 // [SignupIPThrottleOptions]; there is no config key for it.
 //
-// F-1232 (audit-2026-05-12).
-//
-// # Dwell-time fail-open inversion (F-0049 / F-0149)
+// # Dwell-time fail-open inversion
 //
 // On a Redis transport failure CheckIP starts a dwell-time clock.
 // Errors observed inside the window (default 30s, see
 // [DefaultSignupThrottleDwellTime]) propagate as wrapped Redis
-// errors and the handler falls open as before. Once the window is
+// errors and the handler falls open. Once the window is
 // exceeded — i.e. Redis has been failing continuously for longer
 // than the dwell-time — CheckIP returns [ErrThrottleUnavailable]
 // and the handler returns 503 + Retry-After instead. The clock
@@ -80,8 +76,8 @@ type RedisSignupIPThrottle struct {
 	redisErrorSince time.Time
 	// healthySince: start of the current unbroken Redis-success run; any failure
 	// resets it. redisErrorSince clears only after dwellTime of unbroken success —
-	// a single stray success must NOT reopen the throttle (REL-06; identical fix
-	// to ratelimit.Bucket, which this deliberately mirrors).
+	// a single stray success must NOT reopen the throttle (identical to
+	// ratelimit.Bucket, which this deliberately mirrors).
 	healthySince time.Time
 	// lastFailure lets a success that follows a failure-free dwellTime clear
 	// the clock, so a long-ago outage cannot make the next blip fail closed.
@@ -100,14 +96,14 @@ type SignupIPThrottleOptions struct {
 	// KeyPrefix is the Redis key namespace for this throttle.
 	// Default "signup-ip:". Override only in tests.
 	KeyPrefix string
-	// DwellTime is the F-0049 / F-0149 fail-open window. Errors
-	// observed within DwellTime of the first error since the last
-	// success fall open as today; errors observed past DwellTime
-	// return [ErrThrottleUnavailable] so the handler emits 503 +
-	// Retry-After. Default [DefaultSignupThrottleDwellTime] (30s).
-	// Set to a negative value to disable the dwell-time inversion
-	// (legacy fail-open-always behaviour) — operators should NOT
-	// reach for this without understanding the J40 vector.
+	// DwellTime is the fail-open window. Errors observed within
+	// DwellTime of the first error since the last success fall open;
+	// errors observed past DwellTime return [ErrThrottleUnavailable]
+	// so the handler emits 503 + Retry-After. Default
+	// [DefaultSignupThrottleDwellTime] (30s). Set to a negative value
+	// to disable the dwell-time inversion (fail-open-always) —
+	// operators should NOT reach for this without understanding the
+	// sustained-outage bulk-mint vector.
 	DwellTime time.Duration
 	// NowFn overrides the clock source. Tests inject a synthetic
 	// clock to drive dwell-time transitions deterministically; nil
@@ -163,8 +159,8 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	if ip == "" {
 		// No usable IP — let the request through; the global
 		// rate-limit middleware also failed to find one and capped
-		// via its own fallback. F-1232 hardens against IP-rotators,
-		// not against IP-less direct calls (which production
+		// via its own fallback. This throttle hardens against
+		// IP-rotators, not against IP-less direct calls (which production
 		// shouldn't see — Caddy + Cloudflare always populate one).
 		return nil
 	}
@@ -176,11 +172,12 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// billing meter).
 	//
 	// The address is masked to its throttle-key identity first — see
-	// [ratelimit.ThrottleIPKey]. Keying on the caller's exact IPv6 /128 made this
-	// cap free to bypass: one delegated /64 is 2^64 distinct addresses,
-	// each landing on its own empty bucket, so the bulk-account-mint
-	// vector F-1232 exists to close was open to anyone with IPv6
-	// (audit-2026-07-23).
+	// [ratelimit.ThrottleIPKey]. Keying on the caller's exact IPv6 /128 would
+	// make this cap free to bypass: one delegated /64 is 2^64 distinct
+	// addresses, each landing on its own empty bucket, so the
+	// bulk-account-mint vector this throttle exists to close would be open
+	// to anyone with IPv6.
+	//
 	// The increment runs on the caller's VALUES without its
 	// cancellation, bounded by [signupThrottleIncrTimeout].
 	//
@@ -191,11 +188,10 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// keeps the clock armed forever — the 30 s unbroken-success streak
 	// that disarms it can never accumulate — and past the window CheckIP
 	// returns ErrThrottleUnavailable, taking signup offline for
-	// EVERYONE while Redis is healthy (REL-06 F059,
-	// reverification-2026-09-18). Second, an attempt that errors out is
-	// an attempt that was never counted: aborting mid-flight would
+	// EVERYONE while Redis is healthy. Second, an attempt that errors out
+	// is an attempt that was never counted: aborting mid-flight would
 	// otherwise buy unlimited uncounted signup attempts, which is
-	// exactly the bulk-mint vector F-1232 exists to close.
+	// exactly the bulk-mint vector this throttle exists to close.
 	incrCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signupThrottleIncrTimeout)
 	defer cancel()
 	count, err := t.counter.Incr(incrCtx, t.keyPrefix+ratelimit.ThrottleIPKey(ip))
@@ -218,9 +214,8 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 // [ErrThrottleUnavailable] and false to a wrapped transport error
 // (the handler falls open on the latter).
 //
-// Disabled (negative DwellTime) always returns false — preserves
-// the pre-F-0049 fail-open-always behaviour for operators who
-// explicitly opt out.
+// Disabled (negative DwellTime) always returns false: fail-open-always
+// for operators who explicitly opt out.
 func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	if t.dwellTime < 0 {
 		return false
@@ -228,7 +223,7 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	now := t.nowFn()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.healthySince = time.Time{} // any failure breaks the recovery streak (REL-06)
+	t.healthySince = time.Time{} // any failure breaks the recovery streak
 	t.lastFailure = now
 	if t.redisErrorSince.IsZero() {
 		t.redisErrorSince = now
@@ -238,7 +233,7 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 }
 
 // observeRedisSuccess clears the fail-closed clock only after dwellTime of
-// UNBROKEN successes (REL-06) — NOT on a single success, which under a flapping
+// UNBROKEN successes — NOT on a single success, which under a flapping
 // Redis (occasional OK amid sustained errors) would keep the signup throttle
 // fail-open indefinitely. The "first OK after outage" recovery marker operators
 // want comes from the success-path metric, not from weakening the throttle.

@@ -307,8 +307,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	// `sip_` namespace prefix (Stellar Index Pricing). Matches the
 	// dashboard minter (dashboardkeys.generatePlaintext). Validation
 	// is SHA-256 of the full plaintext, so the prefix is purely a
-	// human-facing namespace label. (The last pre-rebrand-prefixed
-	// key was deleted from the store 2026-07-03.)
+	// human-facing namespace label.
 	plaintext, err := generateID(s.randRead, "sip_", 32)
 	if err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: generate plaintext: %w", err)
@@ -330,8 +329,8 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		// dashboard issuance default (Permissions.All=true). Without this
 		// the permission middleware's closed posture (no allow entries +
 		// PermissionsAll=false) 403s EVERY request from a freshly minted
-		// key ("this key has no permission entries") — caught 2026-06-12
-		// when a mint-key'd load-test key failed 210k/210k requests.
+		// key ("this key has no permission entries"); a mint-key'd
+		// load-test key failed 210k/210k requests that way.
 		// Per-endpoint restriction stays a dashboard feature.
 		PermissionsAll: true,
 	}

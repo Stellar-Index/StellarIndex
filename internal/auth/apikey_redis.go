@@ -105,14 +105,14 @@ const DefaultAccountStatusCacheTTL = 30 * time.Second
 
 // MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
 // the validator pool as a SLIDING idle window rather than a
-// hard expiry (W1-flow-register-2). The record is written with this TTL
+// hard expiry. The record is written with this TTL
 // ([RedisAPIKeyStore.CreateWithSecret], and [RedisAPIKeyStore.Create] for
 // a SelfService request) and every successful validated
 // [Lookup] slides it forward, so an actively-used key never expires while
 // a key untouched for the whole window TTLs out on its own — capping the
 // keyspace growth that open, anonymous /v1/register would otherwise make
-// unbounded, WITHOUT re-introducing the "valid key → permanent silent
-// 401" defect for keys that are actually in use.
+// unbounded, WITHOUT turning a key that is actually in use into a
+// permanent silent 401.
 //
 // 90 days: comfortably longer than any plausible active-use gap, so only
 // a genuinely abandoned credential is ever dropped. The TTL also puts the
@@ -160,8 +160,8 @@ type APIKeyRecord struct {
 	// listings to identify which row corresponds to which key in
 	// their secret manager.
 	//
-	// Empty for keys minted before this field shipped — the
-	// dashboard renders "—" in that case. New keys always have it.
+	// Empty on records minted without a prefix — the dashboard
+	// renders "—" in that case. New keys always have it.
 	KeyPrefix string `json:"key_prefix,omitempty"`
 
 	// Tier — the [Tier] this key authenticates as. Production
@@ -179,12 +179,6 @@ type APIKeyRecord struct {
 	// `scope-denied` problem response. Minting a key with a narrow scope
 	// set therefore narrows what it can call — verify the scope names
 	// against keypolicy.go's route table before issuing.
-	//
-	// This paragraph used to say the opposite ("stored but NOT enforced
-	// at any runtime endpoint … relying on them for access control is a
-	// footgun"), a day-1 note that outlived the enforcement hook landing.
-	// An operator reading it minted deliberately-scoped keys believing
-	// them inert and got 403s (C3-088, audit-2026-07-23).
 	Scopes []string `json:"scopes,omitempty"`
 
 	// RateLimitPerMin — overrides the per-tier default (zero means
@@ -209,13 +203,11 @@ type APIKeyRecord struct {
 	// IPAllowlist / RefererAllowlist / Permissions are the
 	// per-key policy fields the dashboard exposes for
 	// Postgres-backed keys (the PostgresAPIKeyValidator cache).
-	// F-1226 (codex audit-2026-05-12): without these the cache-
-	// hit path constructed a Subject with empty policy fields,
-	// silently bypassing KeyPolicy enforcement until the cache
-	// entry TTL elapsed and the next request rebuilt from
-	// Postgres. Now the cache mirrors what the Postgres rebuild
-	// produces so the cache-hit Subject is policy-identical to
-	// the cache-miss Subject.
+	// The cache mirrors what the Postgres rebuild produces so the
+	// cache-hit Subject is policy-identical to the cache-miss
+	// Subject; without these a cache hit would carry empty policy
+	// fields, silently bypassing KeyPolicy enforcement until the
+	// cache entry TTL elapsed.
 	//
 	// IPAllowlist is rendered as `[]string` of CIDR text on the
 	// wire (e.g. ["10.0.0.0/8"]) — netip.Prefix isn't directly
@@ -239,13 +231,13 @@ type APIKeyRecord struct {
 
 	// MonthlyQuota — when > 0, the per-key monthly request cap
 	// the runtime quota middleware enforces. Zero (the default)
-	// disables the check. F-1226 (codex audit-2026-05-12).
+	// disables the check.
 	MonthlyQuota int64 `json:"monthly_quota,omitempty"`
 
 	// EmailVerifiedAt is the timestamp the customer clicked
 	// the verification link in the post-signup email. Zero =
-	// never verified. F-1218 wave 45 (codex audit-2026-05-12):
-	// the optional `RequireEmailVerified` middleware uses this
+	// never verified. The optional `RequireEmailVerified` middleware
+	// uses this
 	// flag to gate /v1/* access — keys minted via /v1/signup
 	// stay usable until an operator opts in via config, then
 	// unverified keys 403 until the customer clicks the link.
@@ -261,28 +253,27 @@ func WithClock(now func() time.Time) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.now = now }
 }
 
-// WithAccountStatus wires the account-level kill switch (C3-010,
-// audit-2026-07-23).
+// WithAccountStatus wires the account-level kill switch.
 //
-// The whole suspension machinery already existed and was already
-// enforced by the Postgres validator (`acct.Status != AccountActive` →
-// [ErrUnauthorized]) and by the dashboard session middleware — but this
-// validator never read account status at all, and it is the DEFAULT
-// backend (`auth_backend=redis`). So an operator suspending an account
-// did not stop its keys from authenticating here: not through the admin
-// API, not through the dashboard, not even through a manual
+// The Postgres validator (`acct.Status != AccountActive` →
+// [ErrUnauthorized]) and the dashboard session middleware enforce
+// suspension on their own, but this validator is the DEFAULT backend
+// (`auth_backend=redis`). Without a reader, an operator suspending an
+// account does not stop its keys from authenticating here: not through
+// the admin API, not through the dashboard, not even through a manual
 // `UPDATE accounts SET status='suspended'`.
 //
 // With a reader wired, a record whose Identifier is
 // [AccountIdentifier](slug) — the shape the Postgres validator stamps
 // and POST /v1/account/keys copies onto every self-service record — has
 // its account resolved and is rejected unless the account is active.
-// Legacy `signup-<emailhash>` records carry no account reference and are
+// `signup-<emailhash>` records (minted by the retired /v1/signup) carry
+// no account reference and are
 // unaffected; the operator kill switch for those is the per-key revoke
 // (DELETE /v1/admin/keys/{keyID}).
 //
-// Nil (the default) preserves the pre-fix behaviour exactly: no account
-// lookup, no per-request Postgres read.
+// Nil (the default) skips the account check: no account lookup, no
+// per-request Postgres read.
 func WithAccountStatus(accounts AccountStatusReader) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.status.accounts = accounts }
 }
@@ -370,7 +361,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		sub.MonthlyQuota = acct.ResolveKeyMonthlyQuota(sub.MonthlyQuota)
 	}
 
-	// Refresh-on-use (W1-flow-register-2): a fully-validated key that
+	// Refresh-on-use: a fully-validated key that
 	// carries a TTL (the register mirror) has its idle window slid
 	// forward, so an actively-used credential never hard-expires while a
 	// genuinely idle one still TTLs out of the validator pool. Placed
@@ -386,8 +377,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 // subjectFromRecord is the single APIKeyRecord→Subject mapping. Both
 // validators' record reads go through it and [recordFromSubject] is its
 // exact inverse, so a field cannot be carried by one path and dropped by
-// another (a missed MonthlyQuota and permission posture both shipped
-// that way). Rejection gates (revoked / expired / account) stay with the
+// another. Rejection gates (revoked / expired / account) stay with the
 // caller; this only maps. An unparseable allowlist entry is an error so
 // the caller fails closed.
 func subjectFromRecord(rec APIKeyRecord) (Subject, error) {
@@ -465,19 +455,17 @@ func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) 
 // Override changes therefore propagate within ttl, like suspension.
 //
 // A short-TTL in-process cache fronts the kill-switch GetBySlug so the
-// status is read at most once per account per ttl window
-// (auth-ks-1): within the fresh window it serves last-read status
-// without touching Postgres, bounding hot-path Postgres load and
+// status is read at most once per account per ttl window: within the
+// fresh window it serves last-read status without touching Postgres, bounding hot-path Postgres load and
 // suspension-propagation latency to ttl.
 //
-// Degradation posture (auth-ks-1):
+// Degradation posture:
 //
-//   - ErrNotFound: the record references an account that no longer
-//     exists — the closed-account case, rejected as [ErrUnauthorized]
-//     (unchanged).
+//   - ErrNotFound: the record references an account that does not
+//     exist — the closed-account case, rejected as [ErrUnauthorized].
 //   - Transport error WITH a cached status within maxStale:
 //     ride out on last-known status (bounded staleness). A Postgres
-//     blip no longer 401s every active customer; a still-suspended
+//     blip does not 401 every active customer; a still-suspended
 //     account is still rejected off its cached status.
 //   - Transport error with NO usable cached status (truly unknown):
 //     [ErrAccountStatusUnavailable] — a retryable 503, NOT the 401
@@ -492,7 +480,7 @@ func (g *accountStatusGate) check(
 	}
 	slug, ok := strings.CutPrefix(identifier, AccountIdentifierPrefix)
 	if !ok || slug == "" {
-		return platform.Account{}, false, nil // legacy signup-<hash> record: no account to check
+		return platform.Account{}, false, nil // signup-<hash> record: no account to check
 	}
 
 	// Fresh cache hit: serve without a Postgres read.

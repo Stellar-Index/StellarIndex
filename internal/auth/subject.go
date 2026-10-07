@@ -52,10 +52,9 @@ type Subject struct {
 
 	// Scopes — optional capability list drawn from the
 	// platform.KeyScope* vocabulary ("read", "account",
-	// "dashboard", "admin"). EMPTY means full access — the
-	// back-compat posture for every key minted before scopes
-	// shipped. Non-empty confines the key to the listed route
-	// families; the KeyPolicy middleware enforces via
+	// "dashboard", "admin"). EMPTY means full access, so a key
+	// minted without scopes keeps working. Non-empty confines the
+	// key to the listed route families; the KeyPolicy middleware enforces via
 	// [RequiredScope] + [Subject.HasScope].
 	Scopes []string
 
@@ -85,27 +84,21 @@ type Subject struct {
 	Label string
 
 	// KeyPrefix — first 12 chars of the plaintext key (e.g.
-	// `sip_4f9c1d8b`).
-	// Set on records minted after the key-prefix
-	// feature shipped; empty on legacy records and on anonymous
-	// subjects. Customers see this in dashboard listings to
+	// `sip_4f9c1d8b`). Empty on records minted without a prefix and
+	// on anonymous subjects. Customers see this in dashboard listings to
 	// identify which key matches a row in their secret manager.
 	KeyPrefix string
 
 	// IPAllowlist — when non-empty, the request's resolved client
 	// IP must fall in at least one prefix or the request is
-	// rejected with 403. F-1226 (codex audit-2026-05-12): pre-fix
-	// the dashboard accepted this field but no middleware
-	// enforced it. Populated only by API-key validators that have
-	// the field from the Postgres platform store (the legacy
-	// Redis-only validator leaves it empty so allowlist
-	// enforcement is opt-in per validator).
+	// rejected with 403. Populated by both API-key validators from
+	// the key record.
 	IPAllowlist []netip.Prefix
 
 	// RefererAllowlist — when non-empty, the request's `Referer`
 	// header's host must exactly match one entry or the request
 	// is rejected with 403. Populated like IPAllowlist; empty
-	// disables the check. F-1226 (codex audit-2026-05-12).
+	// disables the check.
 	//
 	// NOT a theft control. `Referer` is fully client-settable, so
 	// anyone holding a stolen key sends whatever host the list
@@ -116,41 +109,34 @@ type Subject struct {
 	RefererAllowlist []string
 
 	// AllowAllPermissions — if true, the per-endpoint permission
-	// check is skipped (legacy posture). When false, the
-	// Allow/Deny lists below decide. Populated by the validator
-	// from the persisted KeyPermissions.All flag. F-1226 (codex
-	// audit-2026-05-12).
+	// check is skipped. When false, the Allow/Deny lists below
+	// decide. Populated by the validator from the persisted
+	// KeyPermissions.All flag.
 	AllowAllPermissions bool
 
 	// AllowPermissions — exact (METHOD PATH) or prefix-on-path
 	// rules that grant access. Non-empty with AllowAllPermissions
-	// false enables allow-list mode. F-1226 (codex audit-2026-05-12).
+	// false enables allow-list mode.
 	AllowPermissions []SubjectPermissionEntry
 
 	// DenyPermissions — exact / prefix rules that deny access
 	// even when the allow-list would otherwise admit them. Always
 	// consulted (even when AllowAllPermissions is true).
-	// F-1226 (codex audit-2026-05-12).
 	DenyPermissions []SubjectPermissionEntry
 
 	// MonthlyQuota — when > 0, the [middleware.MonthlyQuota]
 	// enforcer 429s authenticated requests for this Subject once
 	// the calendar-month request count reaches the value. Zero
-	// (the default) disables the check. F-1226 (codex audit-
-	// 2026-05-12): pre-fix the dashboard accepted this field and
-	// `/v1/account/keys` POST persisted it, but no runtime
-	// middleware enforced the cap — paid customers on metered
-	// plans could keep spending indefinitely. Populated by the
-	// Postgres-backed validator (Postgres is the only store that
-	// has this column at time of writing).
+	// (the default) disables the check. Populated by both API-key
+	// validators from the key record, then resolved against the
+	// owning account's override.
 	MonthlyQuota int64
 
 	// EmailVerifiedAt is the timestamp the customer confirmed
 	// ownership of the email they signed up with by clicking the
-	// link emailed by the F-1218 wave 44 producer step. Zero =
-	// never verified. The optional `middleware.RequireEmailVerified`
-	// (F-1218 wave 45) gates /v1/* access on this field when the
-	// operator opts in via config — unverified API-key Subjects
+	// link emailed at signup. Zero = never verified. The optional
+	// `middleware.RequireEmailVerified` gates /v1/* access on this
+	// field when the operator opts in via config — unverified API-key Subjects
 	// 403 with a clear message pointing at the verify endpoint.
 	// Without the middleware, the field is informational only.
 	EmailVerifiedAt time.Time
@@ -165,8 +151,7 @@ type Subject struct {
 // SubjectPermissionEntry mirrors platform.KeyPermissionEntry so
 // the auth layer can carry the policy without importing the
 // platform package. Either Endpoint (exact `<METHOD> <PATH>`) or
-// EndpointPrefix (`<PATH-PREFIX>`) — never both. F-1226 (codex
-// audit-2026-05-12).
+// EndpointPrefix (`<PATH-PREFIX>`) — never both.
 //
 // JSON tags are present so this type can round-trip through the
 // `APIKeyRecord` cache entry the PostgresAPIKeyValidator writes
