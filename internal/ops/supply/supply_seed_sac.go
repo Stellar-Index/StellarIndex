@@ -26,9 +26,9 @@ import (
 // Balance entry created before that window and idle since never emits a
 // LedgerEntryChange, so dormant contract-held (C-address) SAC balances
 // are invisible to Algorithm-2 classic supply — dragging a token's
-// Algorithm-2 total under its true supply (incident 2026-07-06: ~98% of
-// PHO sits dormant in a handful of Phoenix contracts → PHO reads 156.9%
-// under; BLND 12.4% under). That under-count also flows to
+// Algorithm-2 total under its true supply (measured: ~98% of PHO sat
+// dormant in a handful of Phoenix contracts → PHO read 156.9% under;
+// BLND 12.4% under). That under-count also flows to
 // `/v1/assets/{id}` circulating_supply + market_cap.
 //
 // One seeding pass scans stellar.ledger_entries_current for every live
@@ -52,8 +52,7 @@ import (
 // id lives inside key_xdr, so the watched-set filter runs in Go, not
 // SQL) — it is READ-HEAVY and MUST run under run-heavy-job.sh on r1.
 //
-// -full-history (incident 2026-07-06 PHO/BLND VERDICT follow-up, ROADMAP
-// ROADMAP #14). The default source, stellar.ledger_entries_current, is fed by a
+// -full-history. The default source, stellar.ledger_entries_current, is fed by a
 // ClickHouse materialized view that only processes rows inserted AFTER
 // the MV was created (~ledger 62,000,000) — a Balance entry dormant
 // since before that floor is invisible to it even though it has always
@@ -70,7 +69,7 @@ import (
 //
 // Expect the full-history pass to run for roughly an hour on r1 and to print
 // nothing until it finishes: the reader walks the append-log in ledger windows
-// (a ClickHouse memory bound — incident 2026-07-27) and can only emit once the
+// (a ClickHouse memory bound) and can only emit once the
 // last window has been reduced, so all inserts land at the end of the scan
 // rather than interleaved with it. Silence is not a hang.
 //

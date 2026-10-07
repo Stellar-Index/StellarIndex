@@ -48,7 +48,7 @@ func classify(e *events.Event) string {
 //	topic[1] = Symbol("deposit"|"withdraw"|<governance/admin>)
 //
 // Per the EVERY-event policy: classifies all 12 vault-layer topic[1]
-// symbols enumerated by the upstream contract (audit-2026-05-14 §
+// symbols enumerated by the upstream contract (the WASM audit's §
 // "Topic structure" + the n_wasm census). deposit + withdraw drive a
 // VaultFlow, dfees drives per-entry DFees and the seven admin topics a
 // VaultAdmin; rebalance and n_wasm have no decoder but recognising them
@@ -99,7 +99,7 @@ func classifyVault(e *events.Event) string {
 // doesn't file them as "unmatched topic" — EVERY-event policy
 // (project_every_event_principle). Neither `create` nor `n_fee` has
 // its BODY decoded: a `create` body is UNTRUSTED for registry fan-out
-// because the factory is permissionless (task #34, W8 recon 6c — see
+// because the factory is permissionless (anyone can create a vault — see
 // Decoder.Decode), and `n_fee` is protocol-fee-recipient governance,
 // not a creation announcement. Neither ever produces a consumer.Event:
 // Decoder.Decode returns no Event on a factory match (drops cleanly
@@ -207,7 +207,7 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 //	            df_tokens_burned:  i128,
 //	            total_managed_funds_before, total_supply_before }
 //
-// We ignore the `total_*_before` NAV-snapshot fields at Phase B —
+// We ignore the `total_*_before` NAV-snapshot fields —
 // they're useful for NAV reconstruction but not for flow
 // attribution. Fields are pulled by name (decode-by-name per
 // ingest-pipeline.md#contract-schema-evolution), so the decoder is robust against
@@ -300,7 +300,7 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 // into its per-asset [DFee] entries — one per distributed_fees Vec
 // element, FeeIndex = position.
 //
-// Body shape (PROVEN from live r1-lake blobs, 2026-08 — decoded with
+// Body shape (PROVEN from live r1-lake blobs — decoded with
 // internal/scval, never invented; see [DFee] for the lake facts):
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
@@ -460,7 +460,7 @@ func decodeVaultAdmin(e *events.Event, kind string) (VaultAdmin, error) {
 // or the discriminator field is absent / not a Symbol.
 //
 // This is the multiplexer scaffolding for the four-way rebalance
-// event (BACKLOG #58): production Decode() does not yet emit a
+// event: production Decode() does not yet emit a
 // consumer.Event for rebalance (the payload is unmodelled pending a
 // real on-chain sample), so this decoder is exercised by the golden
 // tests + available to operator tooling that inspects raw rebalance

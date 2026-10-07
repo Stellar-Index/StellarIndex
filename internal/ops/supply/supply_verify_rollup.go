@@ -29,17 +29,16 @@ type rollupTruthReader interface {
 
 // supplyVerifyRollup wires internal/completeness.ReconcileRunningTotals
 // — the fourth ADR-0033 integrity check, the DERIVED-CHECKPOINT
-// reconcile — into a runnable operator command. Before this it was pure
-// but uncalled: a comparator with no caller.
+// reconcile — into a runnable operator command.
 //
 // It diffs every watched contract's sep41_supply_rollup fold (the served
 // incremental checkpoint) against the AUTHORITATIVE same-source PG re-sum
 // of the exact sep41_supply_events rows that checkpoint folds
 // (ledger ≤ last_ledger), and reports any (contract, kind) that disagree
-// by more than -tolerance. It would have caught the KALE 2× double-fold
-// (incident 2026-07-06): a re-derive re-folded history below the
-// checkpoint, so checkpoint = 2×truth — invisible to the row-count
-// reconciles because the raw rows were correct.
+// by more than -tolerance. It would have caught the KALE 2× double-fold,
+// in which a re-derive re-folded history below the checkpoint, so
+// checkpoint = 2×truth — invisible to the row-count reconciles because
+// the raw rows were correct.
 //
 // TRUTH SOURCE (see internal/completeness/rollup.go): the re-sum is the
 // SAME-SOURCE sep41_supply_events aggregate, NOT the ClickHouse lake. The
@@ -55,7 +54,7 @@ type rollupTruthReader interface {
 // per-tick job, and it must NEVER run in the aggregator hot path (it is a
 // one-shot CLI). Each per-contract re-sum is the full at-or-before
 // aggregate the served fast path avoids; on the hundreds-of-millions-row
-// hypertable it can scan every chunk (the incident's 30s probe timed out
+// hypertable it can scan every chunk (a 30s probe timed out
 // at just 6 contracts). Consequences baked in here:
 //   - each re-sum runs under a generous -statement-timeout (default 15m),
 //   - -contracts scopes the run to a subset so an operator can check

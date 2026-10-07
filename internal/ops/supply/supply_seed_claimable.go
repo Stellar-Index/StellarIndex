@@ -29,7 +29,7 @@ const claimableSeedBatchSize = 2000
 // credit asset (ADR-0022 / migration 0012). It is the claimable analogue of
 // `supply seed-sac-balances -full-history`.
 //
-// # Why this exists (verified on r1, 2026-07-27)
+// # Why this exists (verified on r1)
 //
 // claimable_observations was never seeded from history: 997 rows, minimum
 // ledger 63,301,831 — i.e. only what the live LedgerEntryChange observer
@@ -253,8 +253,8 @@ func unresolvedClaimablesErr(unresolved map[string]timescale.LiveClaimable, walk
 // Entries go through supply.CanonicalizeWatchedClassic, so an operator may
 // paste either the canonical wire form (`AQUA-GBNZ…`) or the storage form
 // (`AQUA:GBNZ…`) and a typo is a loud error rather than a silently-empty
-// filter — the 2026-07-02 production bug that zeroed three supply components
-// was exactly a dash/colon mismatch that failed open.
+// filter — a dash/colon mismatch that failed open in production zeroed three
+// supply components.
 func parseClaimableSeedAssets(raw string) (map[string]struct{}, error) {
 	fields := strings.Split(raw, ",")
 	entries := make([]string, 0, len(fields))

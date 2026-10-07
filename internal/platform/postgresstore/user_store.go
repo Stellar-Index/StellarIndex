@@ -298,12 +298,11 @@ func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 // can't be written as NULL — but it must not be written as a fake
 // address either: `clientIP` (dashboardauth/handlers.go) can
 // legitimately return nil (RemoteAddr without a splittable port),
-// and RNC36 found this method stamping the literal sentinel
-// "0.0.0.0" into that row whenever it did, corrupting the
-// session-hijack / abuse-forensics column this data exists for.
-// COALESCE against the existing value leaves the column genuinely
-// unchanged on a nil ip, matching what the caller's own comment
-// (dashboardauth/middleware.go's parseIP) already promised.
+// and stamping the literal sentinel "0.0.0.0" into that row whenever
+// it did would corrupt the session-hijack / abuse-forensics column
+// this data exists for. COALESCE against the existing value leaves
+// the column genuinely unchanged on a nil ip, matching what the caller's
+// own comment (dashboardauth/middleware.go's parseIP) promises.
 func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE sessions SET
@@ -388,12 +387,10 @@ var errNilClientIP = errors.New("postgresstore: nil client IP")
 // ipString renders ip as the literal the `inet NOT NULL` session /
 // magic-link-token columns require.
 //
-// Q188 (audit-2026-09-18): this used to silently return the "0.0.0.0"
-// sentinel for a nil IP, commented "but this only happens for tests" —
-// false: clientIP (internal/api/v1/dashboardauth) returns nil whenever
-// r.RemoteAddr fails to split into host:port, which reaches
-// CreateSession and CreateMagicLinkToken on every real login /
-// magic-link request, not just tests. Writing a plausible-looking
+// A nil IP is not test-only: clientIP (internal/api/v1/dashboardauth)
+// returns nil whenever r.RemoteAddr fails to split into host:port,
+// which reaches CreateSession and CreateMagicLinkToken on a real login
+// or magic-link request. Writing a plausible-looking
 // placeholder into a security-forensics column would let that
 // malformed-request condition masquerade as "the client at 0.0.0.0"
 // instead of surfacing. The schema has no representable NULL here

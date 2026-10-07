@@ -51,13 +51,12 @@ func (r *TokenStore) WithSweepBatchSize(n int) *TokenStore {
 // reaper-driven DELETE in this package (TokenStore's login-code-lockout
 // and magic-link sweeps; AccountStore's suspended-orphan reap).
 //
-// Q142: each of these deleted an unbounded row count in one statement
-// — `DELETE FROM t WHERE <predicate>` with no LIMIT — against a table
-// whose growth an unauthenticated caller controls (an attacker-chosen
-// email or a signup-race retry). A single sweep landing during a large
-// backlog held row locks and WAL for as long as the delete took, on
-// the same connection pool the request path shares. Each sweep now
-// issues bounded `DELETE ... WHERE pk IN (SELECT pk ... LIMIT
+// Each of these tables grows at a rate an unauthenticated caller
+// controls (an attacker-chosen email or a signup-race retry). An
+// unbounded `DELETE FROM t WHERE <predicate>` landing during a large
+// backlog would hold row locks and WAL for as long as the delete took,
+// on the same connection pool the request path shares. Each sweep
+// instead issues bounded `DELETE ... WHERE pk IN (SELECT pk ... LIMIT
 // defaultSweepBatchRows)` statements in a loop, capped at
 // sweepMaxBatchesPerCall batches per call rather than holding one
 // unbounded transaction open. The remainder waits for the next call:
@@ -147,7 +146,7 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 //
 // Only the newest token is selected, and the cap is checked on it rather
 // than used to pick among tokens: an older token must never step in as
-// the candidate, or the number of codes a guess can hit would again grow
+// the candidate, or the number of codes a guess can hit would grow
 // with the number of mints (see [platform.TokenStore.ReserveLoginCode]).
 //
 // Charge and cap check are one statement so the cap holds under
@@ -222,14 +221,14 @@ func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAtte
 }
 
 // RegisterFailedLoginCode records one failed 6-digit-code attempt
-// against the EMAIL (migration 0122, C3-032) and returns the resulting
+// against the EMAIL (migration 0122) and returns the resulting
 // lockout state.
 //
 // The whole point is that this counter is independent of any token:
 // `magic_link_tokens.attempts` resets to 0 on every new mint, and the
 // only thing bounding re-mints is a Redis-backed send throttle that a
 // flush, a fail-over or a restart clears. An attacker who re-mints
-// therefore had an indefinite ~25-guesses/hour budget against a ~1e6
+// therefore would have an indefinite ~25-guesses/hour budget against a ~1e6
 // code space. Here the budget is per address and survives all of that.
 //
 // One statement, so concurrent verify attempts for the same address
@@ -635,12 +634,9 @@ func (r *TokenStore) RevokeInvite(ctx context.Context, tokenHash []byte) error {
 // ListInvitesForAccount returns active (unrevoked, unaccepted)
 // invites — used by the team-management UI.
 func (r *TokenStore) ListInvitesForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.Invite, error) {
-	// COR-15 (audit-2026-07-23): this used to filter on SQL `now()`
-	// (Postgres server time) instead of `r.now()` like every other
-	// expiry check in this file — the one method [WithClock]'s
-	// injected clock had no effect on, contradicting both the
-	// convention every sibling method follows and this type's own
-	// "tests use WithClock" doc claim.
+	// Filter on `r.now()`, not SQL `now()` (Postgres server time), like
+	// every other expiry check in this file, so [WithClock]'s injected
+	// clock governs this method too.
 	now := r.now()
 	const q = `
 		SELECT ` + inviteColumns + `

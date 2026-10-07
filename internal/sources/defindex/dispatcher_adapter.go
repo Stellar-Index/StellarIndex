@@ -15,7 +15,7 @@ import (
 //   - Blend strategies: `("BlendStrategy","deposit"|"withdraw"|…)` —
 //     vault↔strategy capital movement (`from` = vault C-strkey).
 //
-// We match both, gated on CONTRACT IDENTITY (ADR-0035/0040, CS-026):
+// We match both, gated on CONTRACT IDENTITY (ADR-0035/0040):
 // the namespaced topic strings are still just strings any pubnet
 // contract can emit, and the lake contains emitters that carry the
 // topic shape but none of the four independent DeFindex-provenance
@@ -33,13 +33,12 @@ type Decoder struct {
 	// so the BlendStrategy addresses a create body NAMES are
 	// attacker-controlled: a canonical-factory emitter proves only that
 	// the real factory announced SOME (possibly attacker-owned) vault,
-	// never that a named address is a genuine DeFindex strategy. The
-	// old ROADMAP #7 fan-out Seeded them anyway, which let an attacker
-	// register arbitrary contracts as "strategies" merely by naming
-	// them in a create they triggered, contaminating flow/TVL stats
-	// (task #34, W8 recon 6c). Both layers now behave the same: neither
-	// the VAULT's own address (never carried by any observed create
-	// body) nor a strategy address self-registers — each fail-closes
+	// never that a named address is a genuine DeFindex strategy. A
+	// fan-out that Seeded them would let an attacker register arbitrary
+	// contracts as "strategies" merely by naming them in a create they
+	// triggered, contaminating flow/TVL stats. Both layers behave the
+	// same: neither the VAULT's own address (never carried by any
+	// observed create body) nor a strategy address self-registers — each fail-closes
 	// into an ADR-0033 recognition gap until an operator verifies
 	// provenance and seeds it (docs/protocols/defindex.md).
 	reg *contractid.Registry
@@ -52,7 +51,7 @@ type Decoder struct {
 // strategy's identity can be safely reconstructed from the
 // PERMISSIONLESS factory's creation events (the create omits the vault
 // address entirely and only NAMES attacker-controlled strategy
-// addresses — task #34, W8 recon 6c). Caller opts layer the
+// addresses). Caller opts layer the
 // protocol_contracts DB warm + live-upsert hook on top; that operator
 // seam (verify provenance, then seed protocol_contracts / extend the
 // in-code set) is how a future BlendStrategy deployment is admitted —
@@ -86,7 +85,7 @@ func (d *Decoder) Name() string { return SourceName }
 // in-code set) for BOTH layers. The factory `create` body is NOT
 // trusted to self-register children: it omits the vault address
 // entirely and only NAMES attacker-controlled strategy addresses
-// (the factory is permissionless — task #34, W8 recon 6c), so a
+// (the factory is permissionless), so a
 // canonical-factory emitter cannot vouch for them.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) != "" || classifyVault(&ev) != "" {
@@ -103,11 +102,10 @@ func (d *Decoder) Matches(ev events.Event) bool {
 // `n_fee`) drops cleanly with (nil, nil): "match, nothing to emit".
 // Returning an ERROR is a "skip + count-as-decode-error" signal,
 // reserved for genuinely malformed bodies of modelled topics — NOT for
-// topics we recognise but intentionally don't model yet (BACKLOG #58),
-// and NOT for factory bodies (their contents are untrusted and never
-// decoded — task #34, W8 recon 6c). Filing those as decode errors
-// would inflate the source's decode-error counter for normal upstream
-// traffic.
+// topics we recognise but intentionally don't model yet, and NOT for
+// factory bodies (their contents are untrusted and never decoded).
+// Filing those as decode errors would inflate the source's decode-error
+// counter for normal upstream traffic.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classify(&ev); kind != "" {
 		return d.decodeStrategy(&ev, kind)
@@ -120,17 +118,17 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		// doesn't file them as "unmatched topic"; neither is itself a
 		// consumer.Event, and neither's BODY is decoded.
 		//
-		// SECURITY (task #34, W8 recon 6c): the DeFindex factory is
+		// SECURITY: the DeFindex factory is
 		// PERMISSIONLESS — anyone can create a vault — and a `create`
 		// body's `assets[].strategies[].address` fields are
 		// attacker-controlled. Matches() proving ev.ContractID is a
 		// canonical factory does NOT make those NAMED addresses genuine
 		// DeFindex strategies; it only proves the real factory announced
-		// SOME (possibly attacker-owned) vault. The old ROADMAP #7
-		// fan-out Seeded them anyway, so an attacker could register
-		// arbitrary contracts as "strategies" merely by naming them, and
-		// their subsequent ("BlendStrategy",…) events then decoded as
-		// recognised DeFindex flows, contaminating flow/TVL attribution.
+		// SOME (possibly attacker-owned) vault. A fan-out that Seeded
+		// them would let an attacker register arbitrary contracts as
+		// "strategies" merely by naming them, and their subsequent
+		// ("BlendStrategy",…) events would then decode as recognised
+		// DeFindex flows, contaminating flow/TVL attribution.
 		//
 		// No execution-corroboration signal (the dispatcher's
 		// ExecutionCorroborated — an ACTUAL invocation of the strategy)
@@ -147,13 +145,11 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 }
 
 // decodeStrategy handles a classified BlendStrategy event.
-// deposit/withdraw/harvest each model a StrategyFlow. The old premise
-// that harvest's body "has never been observed on-chain" was disproved
-// by the lake (audit 2026-08-04 finding 4: 1,018 harvests; body
-// `{amount: i128, from: Address, price_per_share: i128}` — the exact
-// {from, amount} shape decodeFlow reads by name, the extra field
-// unread), so dropping them under-counted vault NAV by the full
-// harvested yield. Recovery: projector-replay -source defindex.
+// deposit/withdraw/harvest each model a StrategyFlow. The lake holds
+// harvests (1,018 counted; body `{amount: i128, from: Address,
+// price_per_share: i128}` — the exact {from, amount} shape decodeFlow
+// reads by name, the extra field unread), and dropping them would
+// under-count vault NAV by the full harvested yield.
 func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Event, error) {
 	if kind != EventDeposit && kind != EventWithdraw && kind != EventHarvest {
 		return nil, nil // any future unmodelled strategy topic

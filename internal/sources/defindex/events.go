@@ -14,20 +14,17 @@
 //     Vec<i128>) and share-token deltas (`df_tokens_minted` /
 //     `df_tokens_burned`, i128).
 //
-// Phase A (2026-05-19) shipped only the strategy layer because the
-// initial WASM walk confirmed only the strategy WASM
-// (`11329c24…988`) on the 3 named "fixed strategy" vault contracts
-// in `mainnet.contracts.json`. That walk MISSED the wrapper
-// contracts deployed by the factory (different WASM `ae3409a4…468b`
-// or its upgraded `07097f83…84b0`); we now know there are 100+
+// The 3 named "fixed strategy" vault contracts in
+// `mainnet.contracts.json` run the strategy WASM (`11329c24…988`); the
+// wrapper contracts the factory deploys run a different WASM
+// (`ae3409a4…468b` or its upgraded `07097f83…84b0`). There are 100+
 // such wrappers spawned over the protocol's life (factory
-// `CDKFHFJI…NFKI` emits one `create` event per spawn). The vault
-// wrappers ARE where end-user attribution lives, and missing them
-// is what the 2026-05-21 cross-check vs Soroban RPC revealed
-// (~27% coverage in a 12-hour sample; pre-rc.63 walker only 14%).
+// `CDKFHFJI…NFKI` emits one `create` event per spawn), and they are
+// where end-user attribution lives: a strategy-only decoder measured
+// ~27% coverage in a 12-hour sample cross-checked against Soroban RPC.
 //
-// Phase B (2026-05-21) adds the DeFindexVault topic-match. Topic
-// only classifies an event; a match additionally requires contract
+// Both layers' topics are matched. Topic only classifies an event; a
+// match additionally requires contract
 // identity (ADR-0035/0040): flows only from a registered vault or
 // strategy (MainnetGatedSet + protocol_contracts), factory events only
 // from MainnetFactories. An unregistered emitter fails closed.
@@ -85,11 +82,9 @@ const PrefixVault = "DeFindexVault"
 const PrefixFactory = "DeFindexFactory"
 
 // Topic[1] symbols for the user-facing flow events we decode. The
-// strategy contract publishes more (harvest / keeper admin / …);
-// Phase A only decodes deposit + withdraw at the strategy layer.
-// The vault layer reuses the same two symbols (`deposit`,
-// `withdraw`) — they're shared between layers, so Phase B doesn't
-// need new symbol constants.
+// strategy contract publishes more (harvest / keeper admin / …). The
+// vault layer reuses the same two symbols (`deposit`, `withdraw`) —
+// they're shared between layers, so neither needs its own constants.
 const (
 	EventDeposit  = "deposit"
 	EventWithdraw = "withdraw"
@@ -98,7 +93,7 @@ const (
 	// classify() enumerates the full upstream event surface per the
 	// EVERY-event policy (project_every_event_principle).
 	EventHarvest = "harvest"
-	// Vault-layer governance / admin events. Per Phase-B audit doc:
+	// Vault-layer governance / admin events. Per the WASM audit doc:
 	//   rescue, paused, unpaused, nreceiver, nmanager, nemanager,
 	//   rbmanager, dfees, rebalance
 	// `dfees` is modelled as [DFee] and the seven role/pause/rescue
@@ -113,7 +108,7 @@ const (
 	EventRBManager = "rbmanager"
 	EventDFees     = "dfees"
 	EventRebalance = "rebalance"
-	// EventNWasm — ROADMAP #89 residual (2026-07-10): a read-only lake
+	// EventNWasm is the n_wasm vault topic. A read-only lake
 	// topic census against the gated vault set found 2 real n_wasm
 	// events classifyVault didn't recognize. Likely a WASM-upgrade
 	// announcement ("new wasm"), matching the n_receiver/n_manager/
@@ -174,7 +169,7 @@ var (
 // From is the caller moving capital — for these strategies it is
 // typically the vault/router *contract* address (a C-strkey), not
 // the end-user; end-user attribution requires correlating with the
-// same-tx vault event (a Phase-B follow-up). It can also be a
+// same-tx vault event. It can also be a
 // plain account G-strkey; scval.AsAddressStrkey renders both.
 //
 // Amount is the underlying-asset delta as a big-int-backed
@@ -201,8 +196,8 @@ const (
 	// DirectionHarvest is strategy yield realised into the vault — not a
 	// user flow. Position sums exclude it by construction (their CASE
 	// arms name deposit/withdraw only); NAV math must include it
-	// (audit 2026-08-04 finding 4: reconstructing NAV from
-	// deposit+withdraw under-counted by the full harvested yield).
+	// (reconstructing NAV from deposit+withdraw alone under-counts by
+	// the full harvested yield).
 	DirectionHarvest Direction = "harvest"
 )
 
@@ -215,8 +210,8 @@ const (
 // SCOPE / HONESTY (do-not-invent; AGENTS.md "Soroban DeFi contracts
 // upgrade in place"): the discriminator FIELD NAME + method values
 // below come from upstream research, NOT from an observed on-chain
-// sample — the r1 lake has ZERO ("DeFindexVault","rebalance") emits
-// as of 2026-07-06, so this is forward-looking scaffolding.
+// sample — a lake census found ZERO ("DeFindexVault","rebalance")
+// emits, so this is forward-looking scaffolding.
 // [DecodeRebalanceMethod] reads only this one discriminator field and
 // returns the raw Symbol verbatim (so a real sample validates the
 // exact wire spelling — snake_case vs CamelCase is unconfirmed); the
@@ -254,8 +249,8 @@ func (m RebalanceMethod) Known() bool {
 }
 
 // Event wraps a StrategyFlow so it satisfies consumer.Event for the
-// dispatcher / pipeline path. Log-only sink for now; a per-flow
-// persist hypertable is a Phase-C follow-up (see audit doc).
+// dispatcher / pipeline path. The sink persists it to defindex_flows
+// with layer='strategy'.
 type Event struct {
 	Flow StrategyFlow
 }
@@ -285,7 +280,7 @@ func (e Event) Source() string { return SourceName }
 //
 // Amounts is a Vec because DeFindex supports multi-asset vaults
 // (one Vec entry per asset in the vault's basket). The
-// `mainnet.contracts.json` Phase-A trio (USDC / EURC / XLM blend
+// `mainnet.contracts.json` strategy trio (USDC / EURC / XLM blend
 // autocompound) are all single-asset (vec length 1), but the
 // etherfuse-strategy variants (cetes, ustry, tesouro) may have
 // multiple — the decoder makes no length assumption.
@@ -321,7 +316,7 @@ func (e VaultEvent) EventKind() string {
 func (e VaultEvent) Source() string { return SourceName }
 
 // DFee is one per-asset entry of a vault-layer `dfees` protocol-fee
-// distribution (W5.2, 2026-08). Body shape PROVEN from live r1-lake
+// distribution. Body shape PROVEN from live r1-lake
 // blobs (decoded with internal/scval — never invented):
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
@@ -332,7 +327,7 @@ func (e VaultEvent) Source() string { return SourceName }
 // EMPTY vec is a real observed shape (a distribution ran with nothing
 // to distribute) and emits zero events.
 //
-// Lake facts at capture (2026-08): 12,785 events on 27 vault
+// Lake facts at capture: 12,785 events on 27 vault
 // contracts, ledgers 60,903,337 → tip, still firing live — every
 // sample in the SAME op as the vault deposit/withdraw flow, which is
 // why dfees lands in its own table (defindex_fees, migration 0146)
@@ -421,7 +416,7 @@ var (
 // current factory (also the one the team's own
 // mainnet.contracts.json names); the other three are earlier
 // deployments whose vaults still hold funds and emit events.
-// Lake-verified 2026-07-05: no fifth DeFindexFactory emitter exists.
+// A lake census found no fifth DeFindexFactory emitter.
 var MainnetFactories = []string{
 	"CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI", // current (108 events, 57.06M → 62.97M)
 	"CDHPT7OBQKIUFHIJMLI4W7TNOQUHEVOOVMCW7HA4O5SPFNLDRCE6DQ5F", // 10 events, 60.95M → 60.97M (n_fee only)
@@ -441,7 +436,7 @@ const GenesisLedger uint32 = 55_484_403
 // blend/soroswap the deploy-graph cannot self-register vaults —
 // this in-code seed is the trust root. Every entry carries at
 // least one of four independent proofs, recorded per-contract in
-// docs/protocols/defindex.md ("Verification 2026-07-05"):
+// docs/protocols/defindex.md (its gate-evidence "Verification" section):
 //
 //	A. first event inside a factory create transaction (71/110);
 //	B. listed in a factory create event body (strategies);
