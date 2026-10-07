@@ -136,13 +136,13 @@ type chunkResult struct {
 //
 // Empty chunks (zero ledgers processed — the SDK's stream may
 // legitimately yield zero ledgers for ranges before a bucket exists)
-// are skipped when choosing WHICH pairs to compare, but never skip
-// the check itself: the boundary is re-targeted at the
-// nearest non-empty neighbours on each side, so an empty chunk
-// sitting between two non-empty chunks — which would mask a genuine
-// mid-range hole if the check were skipped outright — still surfaces
-// as a seq/hash mismatch between those surrounding chunks. An empty
-// chunk cannot silently absorb an interior gap.
+// are skipped when choosing WHICH pairs to compare, but never skip the
+// check itself: the boundary is re-targeted at the nearest non-empty
+// neighbours on each side, so an empty chunk sitting between two
+// non-empty chunks — which would mask a genuine mid-range hole if the
+// check were skipped outright — still surfaces as a seq/hash mismatch
+// between those surrounding chunks. An empty chunk cannot silently
+// absorb an interior gap.
 //
 // A boundary failure increments obs.VerifyArchiveMismatchesTotal
 // under the same reason taxonomy verifyChunk uses (a gap is

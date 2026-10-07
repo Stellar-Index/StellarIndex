@@ -26,10 +26,10 @@ import (
 )
 
 // validateFollowFlags checks the -follow/-to/-parallel combination shared by
-// wasm-history and extract-wasm-from-galexie: -follow is the
-// explicit opt-in for an unbounded live tail, so it can't be combined with
-// an explicit -to, and a bounded parallel split has no meaning without a
-// fixed upper bound. Pure — unit-testable without a live archive.
+// wasm-history and extract-wasm-from-galexie: -follow is the explicit opt-in
+// for an unbounded live tail, so it can't be combined with an explicit -to,
+// and a bounded parallel split has no meaning without a fixed upper bound.
+// Pure — unit-testable without a live archive.
 func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) error {
 	if follow && to != 0 {
 		return fmt.Errorf("%s: -follow tails indefinitely and is incompatible with an explicit -to", toolName)

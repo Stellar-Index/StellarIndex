@@ -11,16 +11,15 @@
 // wasm-history/extract-wasm-from-galexie live here rather than in
 // internal/ops/discovery (discovery groups Soroban discovery / WASM
 // tracking together) because they're genuinely code-coupled with
-// verify-archive: verify_archive.go
-// declares the wasm-history JSON output types (wasmRange,
-// contractHistory, wasmContractState, storageChange,
-// contractStorageHistory, codeUpload) that wasm_history.go builds, and
-// both walk their ranges in chunks from internal/ops/opsutil.SplitRange.
-// Splitting them into separate packages would mean a cross-package
-// cycle or moving six structurally-tied types into opsutil for no real
-// decoupling benefit — keeping the archive walker and its WASM-tracking
-// sibling in one package is the more
-// honest reflection of the actual code; discovery.go's own concern
+// verify-archive: verify_archive.go declares the wasm-history JSON
+// output types (wasmRange, contractHistory, wasmContractState,
+// storageChange, contractStorageHistory, codeUpload) that
+// wasm_history.go builds, and both walk their ranges in chunks from
+// internal/ops/opsutil.SplitRange. Splitting them into separate packages
+// would mean a cross-package cycle or moving six structurally-tied types
+// into opsutil for no real decoupling benefit — keeping the archive
+// walker and its WASM-tracking sibling in one package is the more honest
+// reflection of the actual code; discovery.go's own concern
 // (auto-discovered SEP-41 contracts) is unrelated to either.
 //
 // The dispatch table in cmd/stellarindex-ops/main.go calls Run below.

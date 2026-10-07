@@ -104,9 +104,9 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	}
 	defer func() { _ = cold.Close() }()
 
-	// Both tiers' schemas must agree before any
-	// path is built. rehydratePaths derives every object key from
-	// ONE schema (hot's); if cold's actual layout uses a different
+	// Both tiers' schemas must agree before any path is built.
+	// rehydratePaths derives every object key from ONE schema (hot's);
+	// if cold's actual layout uses a different
 	// LedgersPerFile/FilesPerPartition/extension, every key handed to
 	// cold.Exists is simply wrong-shaped and 404s — indistinguishable
 	// from a genuine archive gap. Mirrors the hard-fail-on-mismatch

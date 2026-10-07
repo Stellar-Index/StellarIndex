@@ -197,24 +197,23 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		}
 	}
 
-	// systemd Type=notify integration: signal READY=1 once at start
-	// (so the unit transitions from "activating" to "active") and
-	// then ping WATCHDOG=1 every 30s for the rest of the process's
-	// life. The matching unit sets WatchdogSec=1h, so the walk has
-	// up to an hour of true silence before systemd intervenes —
-	// orders of magnitude more headroom than the wall-clock-bound
-	// TimeoutStartSec would give, and tied to liveness
-	// rather than guessed duration. SdNotify is a no-op when
-	// $NOTIFY_SOCKET isn't set (manual `stellarindex-ops verify-
-	// archive` invocations from a shell), so this is safe outside
-	// systemd too.
+	// systemd Type=notify integration: signal READY=1 once at start (so
+	// the unit transitions from "activating" to "active") and then ping
+	// WATCHDOG=1 every 30s for the rest of the process's life. The
+	// matching unit sets WatchdogSec=1h, so the walk has up to an hour
+	// of true silence before systemd intervenes — orders of magnitude
+	// more headroom than the wall-clock-bound TimeoutStartSec would
+	// give, and tied to liveness rather than guessed duration. SdNotify
+	// is a no-op when $NOTIFY_SOCKET isn't set (manual
+	// `stellarindex-ops verify-archive` invocations from a shell), so
+	// this is safe outside systemd too.
 	//
-	// The ping is GATED on observed walk progress. An
-	// unconditional 30s ticker feeds the watchdog for as long as the
-	// process is alive, which detects a crash (no process, no pings)
-	// but is blind to exactly the failure the unit says WatchdogSec is
-	// there for — "binary hung / dead-locked". A wedged chunk walker
-	// (say a stuck object read) would keep the pings flowing forever. See
+	// The ping is GATED on observed walk progress. An unconditional 30s
+	// ticker feeds the watchdog for as long as the process is alive,
+	// which detects a crash (no process, no pings) but is blind to
+	// exactly the failure the unit says WatchdogSec is there for —
+	// "binary hung / dead-locked". A wedged chunk walker (say a stuck
+	// object read) would keep the pings flowing forever. See
 	// verifyArchiveProgress.
 	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
 		fmt.Fprintf(os.Stderr, "verify-archive: warn: sd_notify READY failed: %v\n", err)
@@ -737,15 +736,14 @@ func checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirr
 // where that flag doesn't apply. Pure — unit-testable without a live
 // archive walk.
 //
-// checkpointsOK == 0 && checkpointsMissed > 0 (every
-// checkpoint anchor missed — the run verified NOTHING against the
-// cross-anchor archive) is fatal REGARDLESS of failOnMissed. This is
-// distinct from a PARTIAL miss (some matched, some missed), which
-// fails unless the operator opted out with -fail-on-missed=false. An
-// all-missed range was never actually anchored, so it must not be
-// certified complete or advance the checkpoint tier's
-// LastVerifiedLedger — the caller skips the state-persist on any
-// non-nil error returned here.
+// checkpointsOK == 0 && checkpointsMissed > 0 (every checkpoint anchor
+// missed — the run verified NOTHING against the cross-anchor archive)
+// is fatal REGARDLESS of failOnMissed. This is distinct from a PARTIAL
+// miss (some matched, some missed), which fails unless the operator
+// opted out with -fail-on-missed=false. An all-missed range was never
+// actually anchored, so it must not be certified complete or advance
+// the checkpoint tier's LastVerifiedLedger — the caller skips the
+// state-persist on any non-nil error returned here.
 //
 // checkpointsMissed counts only checkpoints absent from
 // INSIDE the mirror's coverage span — a hole in the cross-anchor
@@ -910,11 +908,11 @@ func peerCheckpointQuorum(numPeers int) int {
 // holds none.
 //
 // The arithmetic runs through uint64 on purpose: the naive unsigned
-// form would underflow for sub-checkpoint inputs — `(to/64*64)-1`
-// wraps to ~4.29e9 for any to < 64, which then passes the
-// `lastCP < firstCP` guard and sends the sampler chasing checkpoints
-// past the end of the chain, and picks the checkpoint BELOW `to` when
-// `to` is itself a checkpoint; the ceiling form here includes it.
+// form would underflow for sub-checkpoint inputs — `(to/64*64)-1` wraps
+// to ~4.29e9 for any to < 64, which then passes the `lastCP < firstCP`
+// guard and sends the sampler chasing checkpoints past the end of the
+// chain, and picks the checkpoint BELOW `to` when `to` is itself a
+// checkpoint; the ceiling form here includes it.
 func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
 	noneErr := fmt.Errorf("range [%d,%d] contains no checkpoint ledgers (checkpoints are at seq mod 64 == 63)", from, to)
 	if to < 63 || from > to {

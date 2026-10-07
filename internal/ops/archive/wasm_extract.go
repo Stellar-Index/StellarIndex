@@ -328,15 +328,14 @@ func maybeWriteWasmCode(
 ) {
 	// Match every change type that carries a [LedgerEntry] body
 	// (everything except LEDGER_ENTRY_REMOVED, which carries a
-	// LedgerKey instead). Created + Restored alone are not enough:
-	// the wasm-history walker finds ContractInstance updates under
-	// Updated too, and an r1 walk matching only those two returned
-	// MISSING for every hash in the same archive the wasm-history
-	// walker reads cleanly. State is the pre-image
-	// of an Updated change in V2/V3 LCMs; if a ContractCode entry
-	// already exists at the target hash and is being TTL-extended
-	// or otherwise touched, the bytes are still in the State /
-	// Updated entry body.
+	// LedgerKey instead). Created + Restored alone are not enough: the
+	// wasm-history walker finds ContractInstance updates under Updated
+	// too, and an r1 walk matching only those two returned MISSING for
+	// every hash in the same archive the wasm-history walker reads
+	// cleanly. State is the pre-image of an Updated change in V2/V3
+	// LCMs; if a ContractCode entry already exists at the target hash
+	// and is being TTL-extended or otherwise touched, the bytes are
+	// still in the State / Updated entry body.
 	var entry *sdkxdr.LedgerEntry
 	switch change.Type {
 	case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:

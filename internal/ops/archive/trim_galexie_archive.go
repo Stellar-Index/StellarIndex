@@ -166,16 +166,16 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	}
 
 	// Raw S3 client for DeleteObject — the SDK's datastore.DataStore
-	// interface has no Delete method. We construct the same shape
-	// the SDK's NewS3DataStore builds (path-style, optional anonymous
-	// fallback for public buckets that don't need it here), then
-	// call DeleteObject directly. Auth comes from the standard AWS
-	// env vars (or the operator's ~/.aws/credentials if running
-	// interactively). Hot is local MinIO; the env vars
-	// STELLARINDEX_S3_ACCESS_KEY + STELLARINDEX_S3_SECRET_KEY map to
-	// the dedicated stellarindex-archive-trimmer MinIO identity
-	// (List+Delete, galexie-archive only) via the
-	// systemd EnvironmentFile, NOT to MinIO's root creds.
+	// interface has no Delete method. We construct the same shape the
+	// SDK's NewS3DataStore builds (path-style, optional anonymous
+	// fallback for public buckets that don't need it here), then call
+	// DeleteObject directly. Auth comes from the standard AWS env vars
+	// (or the operator's ~/.aws/credentials if running interactively).
+	// Hot is local MinIO; the env vars STELLARINDEX_S3_ACCESS_KEY +
+	// STELLARINDEX_S3_SECRET_KEY map to the dedicated
+	// stellarindex-archive-trimmer MinIO identity (List+Delete,
+	// galexie-archive only) via the systemd EnvironmentFile, NOT to
+	// MinIO's root creds.
 	//
 	// This client is HOT-ONLY and therefore does NOT share the
 	// cold-tier credential hazard: every argument below
@@ -362,13 +362,13 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 // objects (.config.json: ledgersPerBatch=1, batchesPerPartition=64000;
 // 995 partitions; one object per ledger).
 //
-// Worse, those 1000 are always the WRONG 1000. Partition
-// directories are named "%08X--<start>-<end>/" where the hex is
-// MaxUint32-start (SDK DataStoreSchema.GetObjectKeyFromSequenceNumber),
-// so the hex DESCENDS as the ledger ASCENDS: "FFFFFFFF--0-63999/"
-// sorts before "FC354BFF--63616000-63679999/". A lexicographic listing
-// therefore returns the NEWEST objects first, and the newest 1000 are
-// above any cutoff worth naming. Measured on r1 with a single listing:
+// Worse, those 1000 are always the WRONG 1000. Partition directories
+// are named "%08X--<start>-<end>/" where the hex is MaxUint32-start
+// (SDK DataStoreSchema.GetObjectKeyFromSequenceNumber), so the hex
+// DESCENDS as the ledger ASCENDS: "FFFFFFFF--0-63999/" sorts before
+// "FC354BFF--63616000-63679999/". A lexicographic listing therefore
+// returns the NEWEST objects first, and the newest 1000 are above any
+// cutoff worth naming. Measured on r1 with a single listing:
 //
 //	trim-galexie-archive -older-than-ledger 10000000 -dry-run
 //	  hot file enumeration  total_files=1000

@@ -170,8 +170,8 @@ func archiveCompletenessVerify(args []string) error {
 	// Populate metrics. LastSuccessTimestamp is set ONLY when the
 	// post-fix state is clean AND non-vacuous — alert rules rely on
 	// this gauge going stale when something's wrong, and a range that
-	// contained no checkpoint position at all verified
-	// nothing, so it must not stamp success either.
+	// contained no checkpoint position at all verified nothing, so it
+	// must not stamp success either.
 	//
 	// Leaving it zero here does NOT drop the series: WriteTextfileAtomic
 	// re-reads the previous textfile and carries the last clean run's
