@@ -20,8 +20,7 @@ import "github.com/Stellar-Index/StellarIndex/internal/events"
 //
 // Matches() alone proves the topic *shape* is owned, not that this
 // specific sample would decode — a decoder can match on
-// (contract_id, topic[0]) and still fail deeper SCVal parsing (RLT-137
-// / #608 "recognition proves less than every event shape"). Recognize
+// (contract_id, topic[0]) and still fail deeper SCVal parsing. Recognize
 // cannot close that gap by calling Decode directly: d.decoders are the
 // SAME instances the live pipeline runs, and decoders with correlation
 // state (Soroswap swap+sync, Phoenix 8-field) would have that state
@@ -30,12 +29,12 @@ import "github.com/Stellar-Index/StellarIndex/internal/events"
 // side-effect-free check of this exact sample; stateful decoders
 // simply don't implement it and keep today's shape-only behavior.
 func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
-	// Decoder-panic guard (#371 F1, ops path). Matches is arbitrary source
+	// Decoder-panic guard (ops path). Matches is arbitrary source
 	// code running on adversary-influenced ledger data — it type-asserts
 	// topic vectors and reads body fields — so it panics as readily as
 	// Decode. Recognize is called from the completeness recogniser and two
-	// ops subcommands, none of which recovered, so one malformed row took
-	// the whole verification run down.
+	// ops subcommands, none of which recovers, so without this guard one
+	// malformed row would take the whole verification run down.
 	//
 	// A panic here resolves to NOT RECOGNISED, which is the fail-closed
 	// direction: the shape is then counted as an unrecognised event on an

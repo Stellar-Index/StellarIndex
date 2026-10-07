@@ -47,7 +47,7 @@ type LedgerSource interface {
 // statsWriter is the narrow subset of [*timescale.Store] the flusher
 // depends on. Declared as an interface — the same pattern
 // internal/pipeline's tradeWriter uses — so the write-failure /
-// retained-snapshot behaviour (INT-05, audit-2026-07-23) is
+// retained-snapshot behaviour is
 // unit-testable with a fake that fails on demand, without a real
 // Postgres: *timescale.Store.Open pings before returning, so there's
 // no way to construct a *Store that succeeds at construction and then
@@ -75,13 +75,13 @@ type Flusher struct {
 	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported,
 	// EvictedKeysUnreadable) separately from last. Those obs.Add + WARN emissions happen
 	// unconditionally, before InsertDecoderStats, so they must not
-	// share a baseline with the per-source DB rows: INT-05
+	// share a baseline with the per-source DB rows: flush
 	// deliberately holds `last` back on a write failure so the next
 	// successful insert recovers the dropped window, but that same
 	// hold-back would otherwise replay the identical counter delta
 	// and WARN on every subsequent tick until a new occurrence
-	// finally moves `current` past the stuck baseline (CA2-A25-
-	// harden-3). obsLast advances right after each emission,
+	// finally moves `current` past the stuck baseline. obsLast
+	// advances right after each emission,
 	// independent of whether the DB write that follows succeeds.
 	obsLast dispatcherObsCounters
 }
@@ -94,7 +94,7 @@ type dispatcherObsCounters struct {
 	EntryMetaUnsupported  int
 	EvictedKeysUnreadable int
 	LedgerUpgradeEntries  int
-	// UncorroboratedCalls is per-source (W8.4a oracle-forgery rejections
+	// UncorroboratedCalls is per-source (oracle-forgery rejections
 	// can hit any oracle-class ContractCallDecoder), unlike its scalar
 	// siblings above. Same obsLast-not-f.last reasoning applies.
 	UncorroboratedCalls map[string]int
@@ -154,11 +154,11 @@ func (f *Flusher) Run(ctx context.Context) error {
 			// captures the final partial bucket.
 			//
 			// It must NOT use ctx: that context is what just fired,
-			// so database/sql rejects the write before it reaches
-			// Postgres and every restart silently dropped up to a
-			// full interval of counters — while logging the
+			// so database/sql would reject the write before it
+			// reaches Postgres and every restart would silently drop
+			// up to a full interval of counters — while logging the
 			// retain-snapshot warning, a promise an exiting process
-			// cannot keep (cold audit 2026-08-04). Detach from the
+			// cannot keep. Detach from the
 			// cancellation but keep a bound so a wedged pool can't
 			// hold shutdown open.
 			drainCtx, cancel := context.WithTimeout(
@@ -216,7 +216,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	// Surface dispatcher-level tx-read errors at WARN when a delta
 	// appears in this flush window, and add it to the Prometheus
-	// counter (RLT-135). The counter sits outside the per-source row
+	// counter. The counter sits outside the per-source row
 	// schema (LedgerTransactionReader.Read failures aren't attributable
 	// to a source) so the statsflush hypertable can't carry it.
 	if delta := current.TxReadErrors - f.obsLast.TxReadErrors; delta > 0 {
@@ -249,7 +249,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	// / LP change in it becomes invisible, which downstream is
 	// indistinguishable from a ledger in which nothing happened. Same
 	// WARN treatment as the sibling tx-event break above, and for the
-	// same reason (cold audit 2026-08-04).
+	// same reason.
 	if delta := current.EntryMetaUnsupported - f.obsLast.EntryMetaUnsupported; delta > 0 {
 		f.logger.Warn("dispatcher: unsupported TransactionMeta version during this flush window — apply-phase entry changes being skipped",
 			"delta", delta,
@@ -278,12 +278,12 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 	f.obsLast.LedgerUpgradeEntries = current.LedgerUpgradeEntries
 
-	// UncorroboratedCalls (W8.4a): a call an oracle decoder refused to
+	// UncorroboratedCalls: a call an oracle decoder refused to
 	// corroborate is a security signal (rejected forgery, or a
 	// routing-shape change), not routine noise — same immediate-WARN
 	// treatment as the tx-level counters above, but per-source since a
 	// forgery attempt targets one oracle's routing shape at a time. Never
-	// touches f.last, so INT-05's hold-back-on-write-failure can't make
+	// touches f.last, so the hold-back-on-write-failure below can't make
 	// this replay a stale delta once a later tick moves current past it.
 	for source, n := range current.UncorroboratedCalls {
 		delta := n - f.obsLast.UncorroboratedCalls[source]
@@ -302,7 +302,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {
-			// INT-05 (audit-2026-07-23): do NOT advance f.last on a
+			// Do NOT advance f.last on a
 			// write failure. This window's rows never landed, so the
 			// delta they represent must stay live — advancing the
 			// snapshot anyway would make the NEXT tick compute its
@@ -321,7 +321,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	// EvictedKeysUnreadable are NOT
 	// carried here — obsLast (advanced above, independent of write
 	// success) is their baseline; folding them into this DB-row
-	// snapshot would re-couple them to INT-05's hold-back-on-failure
+	// snapshot would re-couple them to the hold-back-on-failure
 	// behaviour.
 	f.last = dispatcher.Stats{
 		EventsSeen:    copyIntMap(current.EventsSeen),
