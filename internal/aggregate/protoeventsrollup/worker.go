@@ -5,7 +5,7 @@
 // (a UNION ALL count(*) over ~17 served protocol hypertables) on a slow
 // cadence and upserts one row per source into the rollup table, so the
 // API read path is a keyed-on-PK lookup instead of the multi-second
-// census the 2026-07-06 latency incident measured. Runs in the
+// census. Runs in the
 // aggregator binary alongside the change-summary + supply refresh
 // workers.
 //

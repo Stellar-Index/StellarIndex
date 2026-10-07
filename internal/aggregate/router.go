@@ -152,7 +152,7 @@ type RouteLeg struct {
 	// row). Nil for an organically observed market edge, whose {From,To}
 	// pair already IS its own provenance. [corroboratingRouteCount] folds
 	// this into edge identity so two nominally different pairs that both
-	// bottom out in the same underlying row (RLT-278: USD/GBP and EUR/GBP
+	// bottom out in the same underlying row (e.g. USD/GBP and EUR/GBP
 	// both reading the same fx_quotes GBP row) are not miscounted as
 	// edge-disjoint corroboration.
 	Provenance []string
@@ -203,7 +203,7 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 	// all-regions-serve-the-same-rate invariant. Sort by pair string
 	// first so the dedup winner is stable. Not reachable in the shipped
 	// single-orientation chain config, but a latent trap with no other
-	// guard (audit 2026-08-03). Safe to sort in place — the caller hands
+	// guard. Safe to sort in place — the caller hands
 	// a freshly-built slice each tick.
 	sort.SliceStable(quotes, func(i, j int) bool {
 		return quotes[i].Pair.String() < quotes[j].Pair.String()
@@ -493,7 +493,7 @@ type scoredRoute struct {
 //     pre-corroboration behaviour.
 //   - corroborationCount: the number of INDEPENDENT, TIGHTLY-AGREEING,
 //     NON-DIVERGED routes that back the composite — an audit signal only;
-//     it never feeds a source count (ADR-0019 amendment 2026-07-25 §2). This is
+//     it never feeds a source count (ADR-0019 amendment §2). This is
 //     STRICTLY tighter than pathCount: it is 0 when the result diverged;
 //     0 when no two survivors agree within routerCorroborationAgreePct
 //     (loosely-agreeing routes inside the 40% band do NOT corroborate);
@@ -780,7 +780,7 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 //     entry, collapse to one independent confirmation, so an
 //     all-through-one-bottleneck agreeing set scores 1 (not suppressing),
 //     a pair of nominally different fiat crosses secretly sourced from the
-//     same fx_quotes row also scores 1 (RLT-278), and genuinely
+//     same fx_quotes row also scores 1, and genuinely
 //     edge-disjoint agreeing routes score their true multiplicity.
 func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	if diverged {
@@ -882,7 +882,7 @@ func routeEdgeSet(route []RouteLeg) map[string]struct{} {
 // provenanceEdgeKey namespaces a leg's [RouteLeg.Provenance] entry so it can
 // never collide with an [undirectedEdgeKey] market key in the same set: two
 // routes sharing a provenance key are exactly as non-independent as two
-// routes sharing a market edge (RLT-278).
+// routes sharing a market edge.
 func provenanceEdgeKey(p string) string {
 	return "provenance\x00" + p
 }

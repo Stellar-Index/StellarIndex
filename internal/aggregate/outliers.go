@@ -32,11 +32,11 @@ import (
 // The deviation is measured symmetrically in RATIO space
 // ([symmetricDev]; ADR-0046 §1's direction symmetry), so the acceptance band is
 // [median²/(median + sigma·scale), median + sigma·scale]: a ½× print is
-// exactly as outlying as a 2× one. The band used to be additive in
-// price space, which made its lower edge non-positive once the relative
-// MAD reached 1/(sigma·1.4826) — 16.9 % at sigma=4 — from where NO
+// exactly as outlying as a 2× one. An additive band in price space
+// would have a non-positive lower edge once the relative
+// MAD reaches 1/(sigma·1.4826) — 16.9 % at sigma=4 — after which NO
 // downward print, not even a 0, could be rejected while the mirrored
-// up-move still was (MNY-22 / F037).
+// up-move still would be.
 //
 // Everything on the value path is exact *big.Rat (ADR-0003): prices
 // are quote/base rationals, the median and MAD are exact, and the only

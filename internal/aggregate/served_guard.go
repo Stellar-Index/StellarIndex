@@ -197,16 +197,16 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	hi = new(big.Rat).Mul(centre, guardRatioBound)
 
 	// MAD band: up to centre + K·(1.4826·MAD), and down to that edge's
-	// RATIO-SYMMETRIC mirror centre²/(centre + K·scale) ([symmetricDev],
-	// MNY-22 / F039). Unioned with the ratio band; both intervals contain
+	// RATIO-SYMMETRIC mirror centre²/(centre + K·scale) ([symmetricDev]).
+	// Unioned with the ratio band; both intervals contain
 	// centre, so their union is a single interval.
 	//
-	// The lower edge used to be the additive centre − K·scale, which goes
+	// An additive lower edge centre − K·scale would go
 	// non-positive once the baseline's relative MAD reaches 1/(K·1.4826)
 	// = 6.75 % — ordinary long-tail volatility — and from there the guard
-	// had NO downside at all: a crafted bucket at any price down to 0 was
+	// have NO downside at all: a crafted bucket at any price down to 0 would be
 	// served verbatim as a confident price, while the mirror-image pump
-	// was still caught. The mirrored edge is always strictly positive and
+	// would still be caught. The mirrored edge is always strictly positive and
 	// never below the old one, so a volatile pair still earns its wider
 	// band from its own spread, symmetrically in both directions.
 	scale := new(big.Rat).Mul(madToStd, madRat(vals, centre)) // σ-equivalent

@@ -170,21 +170,14 @@ type Policy struct {
 // is "don't freeze", which is achieved by disabling the Phase 2 gate
 // rather than by a zero duration.
 //
-// Corrected 2026-08-04. This block used to justify the sentinel for
-// UnfreezeConfidenceMin by claiming a zero bound "would make the
-// auto-unfreeze condition unreachable, since confidence is clamped to
-// [0, 1] and the comparison is strict". That is backwards: the test is
-// `sig.Confidence > p.UnfreezeConfidenceMin`, so a zero bound makes
-// that leg MAXIMALLY reachable — satisfied by any positive confidence.
-// The sentinel is still the right behaviour (an operator who leaves the
-// field unset gets the ADR-0019 default rather than an unbounded
-// release gate), but the stated reason was the opposite of the truth,
-// and an operator who deliberately wants z to be the only release gate
-// silently gets 0.30 instead of the 0 they asked for.
+// The UnfreezeConfidenceMin sentinel exists so an unset field gets the
+// ADR-0019 default rather than an unbounded release gate: the test is
+// `sig.Confidence > p.UnfreezeConfidenceMin`, so a zero bound would be
+// satisfied by any positive confidence. A deliberate 0 therefore cannot
+// be expressed; it becomes 0.30.
 //
-// The same block advertised "set MaxExtensions negative" to escalate
-// immediately. That escape hatch is unreachable through the supported
-// path: config validation rejects max_extensions < 0.
+// A negative MaxExtensions is not an escalate-immediately switch:
+// config validation rejects max_extensions < 0.
 func (p Policy) WithDefaults() Policy {
 	if p.InitialHold <= 0 {
 		p.InitialHold = DefaultInitialHold
@@ -328,8 +321,7 @@ type Signal struct {
 	// with the bucket's own computed price (the one an auto-unfreeze
 	// would publish).
 	//
-	// It exists because the calm legs alone cannot release safely
-	// (2026-08-24 corroborated-release panel): under the per-tick
+	// It exists because the calm legs alone cannot release safely: under the per-tick
 	// shadow comparator ANY held level reads calm, and mid-freeze the
 	// cached divergence result compares the references against the
 	// SERVED last-known-good — evidence about the LKG, not about the
@@ -448,16 +440,11 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		// scoring outage. An extension is supposed to mean "we asked
 		// whether this pair recovered and it had not"; an unscored
 		// bucket asked NOTHING, so it must not climb the ladder.
-		// Pre-fix this was the restart-rehydration trap the runbook
-		// documents: a freeze rehydrated across a deploy could never
-		// accumulate an unfreeze streak (unscored ⇒ streak=0) while
-		// its expiries still burned extensions, so it marched
-		// deterministically to ESCALATED — operator-only — without a
-		// single scored evaluation (live occurrence: crypto:XLM/
-		// fiat:GBP 24h, 2026-08-05, escalated entirely inside the
-		// v0.25.0 restart's bootstrap window). Slide the hold and wait
-		// for scoring to return; the ladder resumes exactly where it
-		// was. ADR-0019's 2-hour escalation budget thereby counts two
+		// Counting these expiries would let a freeze rehydrated across a
+		// restart (unscored ⇒ streak=0) burn its extensions and reach
+		// ESCALATED, operator-only, without a single scored evaluation.
+		// Slide the hold and wait for scoring to return; the ladder
+		// resumes exactly where it was. ADR-0019's 2-hour escalation budget thereby counts two
 		// hours of SCORED asking, which is what it always meant.
 		st.HoldUntil = sig.Now.Add(p.Extension)
 		return p.frozen(st, TransitionHeldUnscored, sig.Now)

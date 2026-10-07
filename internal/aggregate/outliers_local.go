@@ -10,7 +10,7 @@ import (
 
 // Time-local outlier trimming for the published-VWAP path.
 //
-// Why a second filter (2026-08-28 outlier-trim drift artifact): the
+// Why a second filter: the
 // whole-window [FilterOutliers] scores every print against ONE
 // centre — the window median — with ONE scale — 1.4826·MAD of the
 // whole window. MAD is the MAJORITY regime's dispersion (~0.1–0.3%
@@ -52,8 +52,8 @@ import (
 // that neighbourhood contains: a wash burst that is the majority of
 // its own 1 m bucket (≥ MinBucket prints at 2–3×) would set the
 // bucket's median to the wash level and score itself z≈0, at ANY
-// density, and the 2026-08-14 token-farm wave validated itself 480/480
-// in the unanchored prototype. Two rules close that:
+// density, and a token-farm wave would validate itself. Two rules
+// close that:
 //
 //   - the local scale is CLAMPED to [localScaleRelFloor,
 //     localScaleRelCeiling]·centre (0.25 %–1 %): a tight neighbourhood
@@ -297,7 +297,7 @@ type localIndex struct {
 // source name last. The local index and
 // internal/api/v1.sortTradesChronological both sort with it.
 //
-// The tie-break is NOT decorative (finding K036). Ledger-close
+// The tie-break is NOT decorative. Ledger-close
 // timestamps are shared by every trade in the ledger, so same-timestamp
 // prints are the common case, and the index references a print's
 // neighbours BY POSITION ([localIndex.neighbourhoodRef]) and walks the

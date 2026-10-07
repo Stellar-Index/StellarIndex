@@ -243,7 +243,7 @@ func computeDeviationPct(prev, curr *big.Rat) float64 {
 	// move was. Unreachable today (a VWAP is a ratio of priceable,
 	// positive legs), but it arms the moment any signed
 	// series — a spread, a funding rate, a delta — is routed through
-	// Evaluate (cold audit 2026-08-04).
+	// Evaluate.
 	delta.Abs(delta)
 	delta.Mul(delta, big.NewRat(100, 1))
 	f, _ := delta.Float64() // i128:ok percentage move for the anomaly threshold compare, not an amount

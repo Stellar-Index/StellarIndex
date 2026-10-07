@@ -155,7 +155,7 @@ type Worker struct {
 	oracles  OracleScanner  // optional
 	auctions AuctionScanner // optional
 	// order is optional and may be wired after construction (SetOrder) by
-	// a background dial retry (K024), while Run is already ticking on
+	// a background dial retry, while Run is already ticking on
 	// another goroutine — hence atomic rather than a plain field.
 	order     atomic.Pointer[TxOrderResolver]
 	logger    *slog.Logger
@@ -232,7 +232,7 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 
 // SetOrder wires (or re-wires) the tx-order resolver after construction.
 // Safe to call concurrently with Run: a background ClickHouse dial retry
-// (K024) arms the sandwich/oracle-sandwich detectors once the lake
+// arms the sandwich/oracle-sandwich detectors once the lake
 // answers, rather than the worker either blocking start on that dial or
 // giving up on it forever after one failure.
 func (w *Worker) SetOrder(o TxOrderResolver) {

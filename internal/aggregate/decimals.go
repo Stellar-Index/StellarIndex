@@ -57,8 +57,7 @@ func ResolveDecimals(lookup DecimalsLookup, asset canonical.Asset) int {
 // *big.Rat outputs of [VWAP], [TWAP], and [ComputeOHLC] (ADR-0003).
 //
 // baseDecimals == quoteDecimals (the overwhelmingly common case — every
-// pair observed on Stellar mainnet until 2026-06-22, and every pair
-// today whose legs are both absent from `nonstandard_decimals_assets`)
+// pair whose legs are both absent from `nonstandard_decimals_assets`)
 // returns the exact rational 1, making [AdjustPrice] a byte-identical
 // no-op for that case.
 func DecimalsAdjustment(baseDecimals, quoteDecimals int) *big.Rat {

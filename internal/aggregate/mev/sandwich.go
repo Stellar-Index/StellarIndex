@@ -10,15 +10,13 @@ import (
 // candidates.
 const KindSandwich = "sandwich"
 
-// Direction opposition (cold audit 2026-08-04): trades.base_asset IS the
-// trade direction — the amounts are both positive, so direction lives in
-// which asset the source places in Base, under a per-source convention
-// (see takerBaseIsReceived). A genuine sandwich front-runs then back-runs
-// the SAME pair in OPPOSITE directions; buildSandwichCandidate now
-// enforces that. Before the check, ~196/200 published candidates had both
-// bracket legs in the SAME direction and could not be sandwiches — this
-// feeds a publicly-served accusation, so same-direction (and
-// direction-unknown) brackets are dropped rather than naming an account.
+// Direction opposition: trades.base_asset IS the trade direction — the
+// amounts are both positive, so direction lives in which asset the source
+// places in Base, under a per-source convention (see takerBaseIsReceived).
+// A genuine sandwich front-runs then back-runs the SAME pair in OPPOSITE
+// directions; buildSandwichCandidate enforces that. This feeds a
+// publicly-served accusation, so same-direction (and direction-unknown)
+// brackets are dropped rather than naming an account.
 const sandwichNote = "One account's trades in two different transactions bracket at " +
 	"least one other account's trade on the same pair within a single ledger " +
 	"(tx_index application order from the raw lake), and the account's front and " +
@@ -127,11 +125,9 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 		return Candidate{}, false
 	}
 	// A real sandwich front-runs then back-runs the SAME pair in OPPOSITE
-	// directions. The positional bracket ALONE flagged ~196/200 published
-	// candidates that were same-direction and thus structurally impossible
-	// (cold audit 2026-08-04). Drop same-direction — and
-	// direction-unknown — brackets so no account is named on impossible
-	// evidence.
+	// directions; the positional bracket alone admits same-direction
+	// ones. Drop same-direction and direction-unknown brackets so no
+	// account is named on impossible evidence.
 	if !oppositeDirection(trades[front], trades[back]) {
 		return Candidate{}, false
 	}

@@ -311,7 +311,7 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	}
 
 	// ATH / ATL across the full series, compared with big.Rat so a price
-	// with more significant digits than float64 carries (see GH #602)
+	// with more significant digits than float64 carries
 	// never gets truncated on the way into the ratcheted ath_value /
 	// atl_value columns. Note this is "30d ATH" not all-time — the
 	// worker only fetches 30d of history. A future pass that wants true
@@ -417,8 +417,8 @@ func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 // unparseable leg (avoids divide-by-zero; a delta against a zero
 // baseline is undefined and we'd rather leak a fresh entity's NULL
 // than stamp Inf%). *DeltaPct is a percentage, not money — display-grade
-// float64 rounding here is accepted by design (GH #602's fix keeps the
-// underlying *Value fields exact; only this ratio stays float).
+// float64 rounding here is accepted by design (the underlying *Value
+// fields stay exact; only this ratio is float).
 func deltaPct(pastStr, currentStr string) float64 {
 	past, errP := strconv.ParseFloat(pastStr, 64)
 	current, errC := strconv.ParseFloat(currentStr, 64)

@@ -9,14 +9,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Composite corroboration (2026-07-25).
+// Composite corroboration.
 //
 // A triangulation chain does two things once it is configured: it
 // publishes an implied price for its target pair, and — the part this
 // file adds — it produces a SECOND, independently-routed opinion about
 // a pair we also price directly. On the pairs chains are deployed for
 // that second opinion is worth more than the first: XLM/EUR ran 87.5%
-// single-source minutes and XLM/GBP 100% (measured 2026-07-25), while
+// single-source minutes and XLM/GBP 100% (as measured), while
 // XLM/USD ran 0.0% — so a composite through USD reaches those pairs via
 // markets that are not thin, not single-venue, and not the venue an
 // attacker would pick.
@@ -37,7 +37,7 @@ import (
 // gated, pairwise edge-disjoint routes) is held to the same rule. Two
 // routes through our own graph still re-use our own leg VWAPs, filters
 // and upstream venues, so they are not a second VENUE, and ADR-0019
-// (amendment 2026-07-25 §2) forbids them from feeding `source_count`:
+// (amendment §2) forbids them from feeding `source_count`:
 // counting them would let configuring a chain disarm the
 // `source_count <= 1` leg of the freeze on exactly the thin single-venue
 // pairs chains are deployed for. Both freeze phases therefore read
@@ -45,7 +45,7 @@ import (
 // the freeze reason string and the composite meta carry it beside the
 // venue count, never merged into it. The sanctioned way for a composite
 // to stand down a single-venue freeze is the SAME-bucket composite
-// reference (composite_reference.go, ADR-0019 amendment 2026-08-29),
+// reference (composite_reference.go, ADR-0019 amendment),
 // which changes the verdict and leaves the source count untouched.
 
 // compositeSample is the most recent composite (triangulated) price the
@@ -192,7 +192,7 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 // value therefore cannot reach the confidence score any more than it
 // can reach the published price.
 //
-// Current-bucket precedence (2026-08-29): when the composite-reference
+// Current-bucket precedence: when the composite-reference
 // evaluator produced a RESOLVED reading for this bucket
 // (composite_reference.go — allow-listed single-venue targets only),
 // that reading is returned instead of the prior tick's chain sample, so

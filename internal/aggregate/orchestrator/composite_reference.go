@@ -20,7 +20,7 @@ import (
 )
 
 // Composite-reference corroboration for structurally single-venue
-// targets (2026-08-29, product decision — design doc
+// targets (design doc
 // docs/design/composite-route-corroboration-for-structurally-single-venue.md
 // §10 amendment).
 //
@@ -95,8 +95,7 @@ type CompositeReferenceConfig struct {
 	// rather than the 6h poll-liveness alert.
 	FXMaxAge time.Duration
 
-	// LegDispersionBps is the leg-dispersion guard (verifier advisory A1,
-	// 2026-08-29): every venue's own bucket VWAP on a priced leg must be
+	// LegDispersionBps is the leg-dispersion guard: every venue's own bucket VWAP on a priced leg must be
 	// within this many bps of the leg VWAP, else the leg cannot
 	// corroborate (`composite_unavailable: leg_dispersion=…`). A leg
 	// where one venue dominates and a dust print on another sits 3 % off
@@ -121,7 +120,7 @@ const (
 	DefaultCompositeReferenceToleranceBps = 75
 
 	// DefaultCompositeReferenceMinLegSources — 2 real venues on the
-	// crypto/USD leg (maintainer, 2026-08-29): a single-venue leg is the very
+	// crypto/USD leg: a single-venue leg is the very
 	// thing under suspicion and corroborates nothing.
 	DefaultCompositeReferenceMinLegSources = 2
 
@@ -135,9 +134,8 @@ const (
 
 	// DefaultCompositeReferenceReleaseBandPct — 2 %. A genuine repricing
 	// lands the venue back within low single digits of the composite; a
-	// held venue-specific offset the 2026-08-24 corroborated-release
-	// panel measured (~5–40 %) never does, and neither does the +4 %
-	// offset the shared 5 % band would have waved through.
+	// held venue-specific offset (~5–40 % measured) never does, and
+	// neither does a +4 % offset the shared 5 % band would wave through.
 	DefaultCompositeReferenceReleaseBandPct = 2.0
 )
 
@@ -169,8 +167,7 @@ const (
 	// the direct print on the current bucket and decided the verdict.
 	corroborationBasisComposite = "composite"
 	// corroborationBasisVenue: the decision rests on the venue's own
-	// print (composite refuted it or was unavailable) — the pre-2026-08-29
-	// behaviour.
+	// print (composite refuted it or was unavailable).
 	corroborationBasisVenue = "venue"
 )
 

@@ -427,7 +427,7 @@ func (o *Orchestrator) publishComposite(
 	}
 
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
-	ttl := o.vwapTTL(window) // #1294: derive from this orchestrator's own cadence
+	ttl := o.vwapTTL(window) // derived from this orchestrator's own cadence
 	metaKey := cachekeys.VWAPCompositeMeta(chain.Target.Base, chain.Target.Quote, window)
 	metaBody, err := json.Marshal(o.withPivotComposition(chain, window, o.withCorroborationBasis(chain.Target, window, compositeMeta{
 		ServedRouteCount:   servedRouteCount,
@@ -478,7 +478,7 @@ func (o *Orchestrator) publishComposite(
 
 	// The served VWAP key was just written, so this pair published this
 	// tick: stamp the pair-level write clock the staleness gauge reads
-	// (F067). This is the key's SECOND writer — a target served only
+	// This is the key's SECOND writer — a target served only
 	// through its chain never reaches refreshPairWindow's stamp, and
 	// without this one it reads as a dead feed while publishing every
 	// tick. Only here, after the value landed: every refusal above
@@ -519,7 +519,7 @@ func excludeDirectEdge(edges []aggregate.RouteLeg, target canonical.Pair) []aggr
 // [edgeConfidence]); nothing new is invented. Built by refreshPairWindow
 // only after a confident publish, so frozen / dropped / empty /
 // below-floor windows contribute no edge — the min_usd_volume gate is
-// what keeps a dust pair out of the cross-rate graph (INV-11).
+// what keeps a dust pair out of the cross-rate graph.
 func newEdgeQuote(
 	pair canonical.Pair,
 	vwap *big.Rat,
@@ -572,8 +572,7 @@ func (o *Orchestrator) tickEdgePrice(pair canonical.Pair, window time.Duration) 
 // source-count factor (0.731 at 4 sources, 0.953 at 6) OUTRANKED every
 // fully-scored edge and cleared the reroute and corroboration gates —
 // so the least-evidenced edges, with no z-score, no liquidity measure and
-// no cross-oracle check, were the ones setting composites (cold audit
-// 2026-08-03). Capped, an unscored edge cannot clear those gates at all:
+// no cross-oracle check, would set composites. Capped, an unscored edge cannot clear those gates at all:
 // they are strictly above the cap ([aggregate.RouteTrustFloor]). Ranking
 // among unscorable edges is preserved below the cap.
 func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.Trade) float64 {
@@ -618,7 +617,7 @@ type compositeMeta struct {
 	// surface a leg-substitution instead of it being a silent change.
 	Rerouted bool `json:"rerouted,omitempty"`
 
-	// CorroborationBasis / CompositeLegSources (2026-08-29) carry the
+	// CorroborationBasis / CompositeLegSources carry the
 	// composite-reference reading the freeze decision for this target
 	// used on THIS tick: "composite" when the current-bucket reference
 	// corroborated the direct print, "venue" when it refuted it or was
@@ -742,7 +741,7 @@ func (o *Orchestrator) setCompositeMeta(
 		return err
 	}
 	key := cachekeys.VWAPCompositeMeta(target.Base, target.Quote, window)
-	return o.cache.Set(ctx, key.String(), body, o.vwapTTL(window)).Err() // #1294
+	return o.cache.Set(ctx, key.String(), body, o.vwapTTL(window)).Err()
 }
 
 // isFXLeg reports whether a leg should use the X2.5 forex-snap rule.
@@ -786,7 +785,7 @@ func legConfidence(leg canonical.Pair) float64 {
 // Non-FX legs (and FX legs when FXStore is nil, and a snap-miss
 // fallback) read the cached VWAP the per-pair refresh wrote earlier
 // this tick and carry no FX provenance — only a genuine snap hit does
-// (RLT-278: two different fiat crosses can snap the same underlying
+// (two different fiat crosses can snap the same underlying
 // fx_quotes row, e.g. USD/GBP and EUR/GBP both reading the GBP row, and
 // the router needs that identity to refuse counting them as
 // independent corroboration).
@@ -833,7 +832,7 @@ func (o *Orchestrator) legPrice(
 // exact 1 — see internal/storage/timescale/fx_quotes.go's fxSnapTickers,
 // which this mirrors). USD/GBP snaps only the GBP row; EUR/GBP snaps BOTH
 // the EUR and GBP rows — so the two share "fx:GBP" and the router's
-// corroboration count (RLT-278) correctly refuses to treat them as
+// corroboration count correctly refuses to treat them as
 // independent evidence.
 func fxLegProvenance(leg canonical.Pair) []string {
 	var out []string
@@ -882,7 +881,7 @@ const outcomeStaleLeg = "stale_leg"
 // to this tick's own VWAP, or to [outcomeStaleLeg] when this tick priced
 // nothing for it (empty window, under min_usd_volume, no VWAP). Its cache
 // entry is then a previous tick's value, and admitting it would bypass
-// the very gate that refused the window (INV-11).
+// the very gate that refused the window.
 func (o *Orchestrator) legPriceFromCache(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -991,7 +990,7 @@ func (o *Orchestrator) inheritLegFreeze(
 
 	// The chain skipped its value write, so the target's prior value
 	// must outlive its ordinary TTL exactly as a directly-frozen pair's
-	// does (F-1345).
+	// does.
 	o.keepFrozenVWAPAlive(ctx, chain.Target, window, cachekeys.FreezeTTL)
 
 	// The target has no lifecycle of its own, so frozen_since is the leg's.

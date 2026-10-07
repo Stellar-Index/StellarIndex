@@ -46,10 +46,9 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 	// panic in it (or the references it fans out to) must never crash the
 	// aggregator and take the PRIMARY VWAP refresh down with it. Contain
 	// it here so the panic path matches the "best-effort, never abort the
-	// tick" contract the caller (Tick) already documents — before this,
-	// a panic propagated through Tick→Run and crash-looped the process
-	// (audit 2026-08-03). Compare already recovers per-reference
-	// goroutine panics; this covers the outer per-pair loop.
+	// tick" contract the caller (Tick) already documents. Compare already
+	// recovers per-reference goroutine panics; this covers the outer
+	// per-pair loop.
 	defer func() {
 		if r := recover(); r != nil {
 			o.logger.Error("divergence refresh panicked; VWAP tick protected", "panic", r)
@@ -62,13 +61,12 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 	// Set before the interval gate and the per-pair loop, so a pass that
 	// never reaches an outcome still arms stellarindex_divergence_no_ok_outcomes.
 	obs.DivergenceRefresherWired.Set(1)
-	// F-0030 follow-up (2026-05-27): gate the refresh behind a
-	// minimum-elapsed interval so the external-reference quota (CMC
-	// free tier = 10K/month) isn't exhausted by every-tick refreshes.
-	// Skip silently when within the interval — operators see the gap
-	// via `obs.DivergenceRefreshTotal{outcome=*}` rate going to zero
-	// during the suppressed window. Zero interval = legacy
-	// every-tick behaviour for backwards compatibility.
+	// Gate the refresh behind a minimum-elapsed interval so the
+	// external-reference quota (CMC free tier = 10K/month) isn't
+	// exhausted by every-tick refreshes. Skip silently when within the
+	// interval — operators see the gap via
+	// `obs.DivergenceRefreshTotal{outcome=*}` rate going to zero during
+	// the suppressed window. Zero interval = refresh every tick.
 	if o.cfg.DivergenceMinInterval > 0 && !o.lastDivergenceRefreshAt.IsZero() &&
 		now.Sub(o.lastDivergenceRefreshAt) < o.cfg.DivergenceMinInterval {
 		return
@@ -110,7 +108,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 			continue
 		}
 		if err := o.refreshPairDivergence(ctx, pair, shortest, ourPrice, now); err != nil {
-			// CS-088: distinguish "all references dark" from a real refresh
+			// Distinguish "all references dark" from a real refresh
 			// error so a total reference outage is alertable, not silently
 			// folded into the healthy path. Both still `continue`.
 			outcome := "refresh_error"

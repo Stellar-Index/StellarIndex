@@ -6,7 +6,7 @@
 // base OR quote) on a slow cadence and upserts one row per asset into
 // the rollup table, so the listing LEFT JOINs a small keyed-on-PK table
 // instead of re-summing prices_1m per request — the ~4.8s cold
-// all-asset scan the 2026-07-06 latency incident measured. Runs in the
+// all-asset scan. Runs in the
 // aggregator binary alongside the change-summary + supply refresh
 // workers.
 //

@@ -23,10 +23,9 @@ const sourceCountInflectionN = 3.0
 
 // liquidityFloorUSD and liquidityCeilingUSD bound [LiquidityFactor]'s
 // log-saturating shape. Below the floor the factor is ~0; above the
-// ceiling it's ~1. ADR-0019 specified $1K → 0, $100K → ~1; the ceiling
-// was raised to $1M on 2026-07-25 (see the ADR amendment).
+// ceiling it's ~1: $1K → 0, $1M → ~1 (ADR-0019 amendment).
 //
-// Why $100K was the wrong ceiling: it is not a "deep bucket", it is
+// Why not $100K: it is not a "deep bucket", it is
 // roughly a typical one. Measured on the live index, BTC/USD's 5m
 // bucket volume has p50 ≈ $123,678 — the MEDIAN bucket of our
 // deepest pair already saturates the factor at 1.0, so the factor
@@ -56,7 +55,7 @@ const sourceCountInflectionN = 3.0
 // The 8 non-USD-quoted default pairs — the population at highest
 // false-freeze risk — are not affected at all: they pass
 // [LiquidityUnmeasured] and read [LiquidityUnmeasuredFactor], which
-// this change deliberately leaves at 0.5 (see its doc comment).
+// deliberately stays at 0.5 (see its doc comment).
 const (
 	liquidityFloorUSD   = 1_000.0
 	liquidityCeilingUSD = 1_000_000.0
@@ -83,14 +82,10 @@ const LiquidityUnmeasured = -1.0
 // [CrossOracleFactor]'s 0.7, which is anchored to an ADR-0019 worked
 // example this factor has no counterpart for).
 //
-// It is NOT tracked to the curve. Until 2026-07-25 this constant had a
-// second justification — `LiquidityFactor(10_000)` was also exactly 0.5,
-// and 10_000 is the production `min_usd_volume` floor, i.e. the single
-// most likely measured value — which made 0.5 the natural midpoint in
-// two independent senses. Raising [liquidityCeilingUSD] to $1M broke
-// the coincidence: the floor now reads LiquidityFactor(10_000) = 0.333,
-// and the curve's log-midpoint moved to sqrt(1_000 × 1_000_000) ≈
-// $31,623.
+// It is NOT tracked to the curve: 10_000 is the production
+// `min_usd_volume` floor, i.e. the single most likely measured value,
+// and LiquidityFactor(10_000) = 0.333, while the curve's log-midpoint
+// is sqrt(1_000 × 1_000_000) ≈ $31,623.
 //
 // Following the curve down to 0.333 was considered and DELIBERATELY
 // rejected. The unmeasured population is the 8 non-USD-quoted pairs in
@@ -210,9 +205,9 @@ func DiversityFactor(classCount int) float64 {
 }
 
 // LiquidityFactor maps USD bucket volume to a confidence factor on
-// a log-saturating shape. Below $1K → ~0; above $1M → ~1.0 (the
-// ceiling was $100K until 2026-07-25 — see [liquidityCeilingUSD] for
-// the measurement that moved it). The boundary value is computed as a
+// a log-saturating shape. Below $1K → ~0; above $1M → ~1.0 (see
+// [liquidityCeilingUSD] for why the ceiling is $1M). The boundary value
+// is computed as a
 // log-interpolation between the floor and ceiling.
 //
 // A NEGATIVE volume is the [LiquidityUnmeasured] sentinel and returns
@@ -293,7 +288,7 @@ func CrossOracleFactor(divergencePct float64) float64 {
 // divergence is a MANIPULATION SIGNAL, not merely missing information:
 // one of the two prices is wrong, and on the pairs this is deployed
 // for (87.5% single-source minutes on XLM/EUR, 100% on XLM/GBP as
-// measured 2026-07-25) the thin direct print is the likelier suspect.
+// measured) the thin direct print is the likelier suspect.
 // So it decays hard rather than reverting to neutral.
 //
 // The "no composite available" case is signalled by passing a negative
