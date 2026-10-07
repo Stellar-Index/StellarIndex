@@ -64,7 +64,7 @@ import (
 // verified to match the adapter, so this is the ONLY divergence
 // source), (2) a dropped feed whose median coincidentally equals the
 // surviving price (cross-feed median collisions are real — see the
-// BENJI twins below), and (3) order-preserving position — a rare
+// BENJI twins in statewrite_test.go), and (3) order-preserving position — a rare
 // compound, and only on the payload-FALLBACK path (the primary
 // state-write path is exact). When the op's state-write keys name ANY
 // of its feeds, the fallback's result must be a subset of the changed

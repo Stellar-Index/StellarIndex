@@ -474,11 +474,10 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		Settings:    clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second,
-		// 8 -> 16: explorer pages fan out — one cold
-		// contract page issues five concurrent reads — so a pool of 8
-		// was barely one and a half visitors wide, and the detached
-		// refresh gate (half the pool, see DefaultDetachedRefreshLimit)
-		// was narrower than a single page. Each explorer scan is pinned
+		// Explorer pages fan out — one cold contract page issues five
+		// concurrent reads — and the detached refresh gate takes half
+		// the pool (see DefaultDetachedRefreshLimit), so 16 keeps that
+		// gate wider than a single page. Each explorer scan is pinned
 		// to max_threads = 4 and r1 has 20 cores at ~2 concurrent
 		// queries idle, so this stays well inside the host.
 		MaxOpenConns:    16,

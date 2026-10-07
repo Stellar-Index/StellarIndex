@@ -76,7 +76,7 @@ Mitigation (15 min):
 
 - [ ] Step 1: check the dispatcher's per-source sink is still writing rows (Phase 3 safety net). If yes, customer impact is bounded and this alert is operational only (not for sep41).
 - [ ] Step 2: if `outcome="error"` rate is high, inspect log lines tagged `component=projector` for the failing source. Common causes: postgres connection saturation, downstream PK constraint failure on a malformed event, decoder panic.
-- [ ] Step 3: **catch-up after a real outage.** If the cursor is simply behind (moves too slowly, or restarted from a lower watermark), rewind it and let the running projector tail forward. `-config`, `-source` and `-from` are ALL required; the source name is the projector's own name (`internal/projector/registry.go`), not the hyphenated table name `find-data-gaps` prints:
+- [ ] Step 3: **catch-up after a real outage.** If the cursor is simply behind (moves too slowly, or restarted from a lower watermark), rewind it and let the running projector tail forward. `-config`, `-source` and `-from` are ALL required; the source name is the projector's own name (`internal/projector/registry.go`), which `find-data-gaps` prints as `--source` in its backfill plan; the hyphenated `source=` in its report header is the table target, not a valid `-source`:
 
   ```sh
   # Dry run is the DEFAULT: prints the intended rewind, writes nothing.
@@ -177,7 +177,7 @@ stellarindex-ops projector-replay -config /etc/stellarindex.toml \
 
 Source names match the projector registry (`internal/projector/registry.go`): `aquarius`, `soroswap`, `phoenix`, `comet`, `blend`, `cctp`, `rozo`, `defindex`, `sep41_transfers`, `sep41_supply`, `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`. Soroswap skim rows replay under `soroswap`; there is no soroswap-skim projector source.
 
-Spelling matters and the list is not exhaustive; the registry is the authority. The `sep41_*` and `blend_*` sources are **underscored** (`sep41_transfers`, `sep41_supply`, `blend_backstop`); the hyphenated per-table names `find-data-gaps` prints are not valid here. An unknown `-source` fails non-zero rather than printing "no action". So does a source that has never run: it has no cursor row until its first cycle (which starts at the source's declared `Source.Genesis` or the lake floor), so there is nothing to rewind. A `-from` at or above the current cursor exits 0 with "nothing to rewind" and the number of ledgers still ahead of the cursor: the forward pass has not reached that range yet, so it has not been projected.
+Spelling matters and the list is not exhaustive; the registry is the authority. The `sep41_*` and `blend_*` sources are **underscored** (`sep41_transfers`, `sep41_supply`, `blend_backstop`); the hyphenated per-table target `find-data-gaps` prints as `source=` in its report header is not valid here; copy the `--source` from its backfill plan instead. An unknown `-source` fails non-zero rather than printing "no action". So does a source that has never run: it has no cursor row until its first cycle (which starts at the source's declared `Source.Genesis` or the lake floor), so there is nothing to rewind. A `-from` at or above the current cursor exits 0 with "nothing to rewind" and the number of ledgers still ahead of the cursor: the forward pass has not reached that range yet, so it has not been projected.
 
 ### After the rewind: the command waits, then refreshes the price CAGGs
 

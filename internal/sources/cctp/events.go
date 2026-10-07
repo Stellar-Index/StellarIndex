@@ -16,8 +16,10 @@
 //	mint_and_forward   (CctpForwarder)        — inbound mint relayed onward
 //
 // Governance/admin events (all three contracts unless noted; verified
-// against real mainnet events by a topic-match pass, and the trailing
-// 16 by a full topic census of the lake):
+// against real mainnet events: ownership_transfer,
+// ownership_transfer_completed, admin_changed,
+// remote_token_messenger_added and token_pair_linked by a topic-match
+// pass, the other 16 by a full topic census of the lake):
 //
 //	ownership_transfer             — 2-step ownership transfer initiated
 //	ownership_transfer_completed   — 2-step ownership transfer accepted

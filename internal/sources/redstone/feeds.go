@@ -60,27 +60,6 @@ var (
 	quoteSolvBTC = mustCrypto("SolvBTC")
 )
 
-// feedRegistry maps each EXACT on-chain feed_id() string to the
-// canonical (base, quote) pair it prices — the 32 RedStone Stellar
-// mainnet feeds: 19 captured on-chain (see ADR-0028), 11 from the
-// relayer expansion at ledger 63624934, and USDT0. The count is
-// asserted by TestFeedRegistry_CountMatchesItsDocComment rather than
-// trusted.
-//
-// Invariant (pinned by TestFeedRegistry_UniquePairs): no two
-// feed_ids map to the same (Base, Quote) pair — feeds arrive
-// together in one batch, so a shared pair would interleave two
-// different quantities into one price series.
-//
-// The key is the string the relayer passes in
-// write_prices(updater, feed_ids, payload) — which is NOT always the
-// display name. EUROC's feed_id is `EUROC/EUR`; BENJI's is
-// `BENJI_ETHEREUM_FUNDAMENTAL`. Matching a plain-ticker allow-list
-// against these would silently drop 5 feeds, EUROC among them.
-//
-// An explicit registry, not `canonical.IsKnownCrypto(feedID)`, is
-// required because (a) feed_id ≠ ticker for 5 feeds and (b) the quote
-// currency is per-feed, not a global USD assumption.
 // earnUSDCVaultContract is the Gami earnUSDC vault on Stellar — a
 // TOKENIZED vault that accepts native USDC deposits and mints
 // proportional earnUSDC shares, so the vault contract IS the share
@@ -99,6 +78,27 @@ var (
 // underneath it drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
+// feedRegistry maps each EXACT on-chain feed_id() string to the
+// canonical (base, quote) pair it prices — the 32 RedStone Stellar
+// mainnet feeds: 19 captured on-chain (see ADR-0028), 11 from the
+// relayer expansion at ledger 63624934, USDT0 and earnUSDC_FUNDAMENTAL.
+// The count is asserted by TestFeedRegistry_CountMatchesItsDocComment
+// rather than trusted.
+//
+// Invariant (pinned by TestFeedRegistry_UniquePairs): no two
+// feed_ids map to the same (Base, Quote) pair — feeds arrive
+// together in one batch, so a shared pair would interleave two
+// different quantities into one price series.
+//
+// The key is the string the relayer passes in
+// write_prices(updater, feed_ids, payload) — which is NOT always the
+// display name. EUROC's feed_id is `EUROC/EUR`; BENJI's is
+// `BENJI_ETHEREUM_FUNDAMENTAL`. Matching a plain-ticker allow-list
+// against these would silently drop 5 feeds, EUROC among them.
+//
+// An explicit registry, not `canonical.IsKnownCrypto(feedID)`, is
+// required because (a) feed_id ≠ ticker for 5 feeds and (b) the quote
+// currency is per-feed, not a global USD assumption.
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},
@@ -239,10 +239,11 @@ func reciprocalAtScale(a canonical.Amount, decimals uint8) canonical.Amount {
 	return canonical.NewAmount(twoNum.Quo(twoNum, twoR))
 }
 
-// mustCrypto / mustRWA / mustFiat build a canonical reference asset
-// for the registry. The codes are compile-time constants vetted
-// against the ADR-0014 / ADR-0028 allow-lists — an error means a
-// typo in this file, so panic at init rather than degrade silently.
+// mustSoroban / mustCrypto / mustRWA / mustFiat build a canonical
+// reference asset for the registry. Their arguments are compile-time
+// constants (the codes vetted against the ADR-0014 / ADR-0028
+// allow-lists) — an error means a typo in this file, so panic at init
+// rather than degrade silently.
 func mustSoroban(contractID string) canonical.Asset {
 	a, err := canonical.NewSorobanAsset(contractID)
 	if err != nil {

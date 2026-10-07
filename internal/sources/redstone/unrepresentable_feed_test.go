@@ -20,7 +20,7 @@ import (
 // length — not the `ScSymbol` the Reflector/Band raw path was written
 // against. So `canonical.NewOracleRawAsset` CAN refuse one, and because
 // write_prices batches every updated feed into ONE event, an
-// event-level refusal takes all ~19 feeds dark until a code change.
+// event-level refusal takes every feed dark until a code change.
 // Refusal must therefore be per-SLOT: the unrepresentable slot is
 // dropped (counted + WARN-logged), every sibling feed still lands, and
 // op_index positions are unchanged (DAT-03).

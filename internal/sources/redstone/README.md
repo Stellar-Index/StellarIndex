@@ -116,7 +116,7 @@ dropped ALONE — counted on
 `stellarindex_source_unrepresentable_symbols_total{source="redstone"}`
 with a WARN naming the slot — and every sibling feed in the same
 `write_prices` batch still lands. Refusing the whole event instead
-(the pre-#291 behaviour) took all ~19 feeds dark on one bad feed_id.
+(the pre-#291 behaviour) took every feed dark on one bad feed_id.
 
 ### Q4 — Quote asset is per-feed (ADR-0028)
 
