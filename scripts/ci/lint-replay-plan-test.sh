@@ -26,7 +26,9 @@
 # Plus the wrong-command ADVISORY (#333): a plan that replays a PROJECTED
 # source with backfill/ch-rebuild warns (never fails), the projected
 # commands do not, and the projector source names are DERIVED from the
-# fixture's own registry rather than listed in the gate.
+# fixture's own SourceSpec registry rather than listed in the gate. This
+# repo's registry yields the projected set, and a registry the gate cannot
+# read fails it loudly instead of leaving the advisory checking nothing.
 #
 # Run: bash scripts/ci/lint-replay-plan-test.sh
 set -uo pipefail
@@ -48,16 +50,74 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0
 fail=0
 
-# mkrepo <bulk-commits> — build a throwaway repo carrying a copy of the
-# gate at the same relative path the real one lives at (the gate cds to
-# `dirname $0/../..`, so the layout is what points it at the fixture
-# rather than at this repo). Seeds one file per watched class plus an
-# un-watched neighbour. Leaves BASE set to the seed commit.
+REAL="$PWD"
+
+# write_registry <mode> — the projected-source registry the fixture's
+# advisory derives from (it reads the repo it is run in, not this one).
+#   spec   — a SourceSpec registry: `demo` has a Projector, `other` does not,
+#            so a non-projected name must not warn.
+#   real   — this repo's own source_spec.go and the source packages it names.
+#   legacy — the pre-SourceSpec `case <pkg>.SourceName:` switch only.
+#   broken — a projected spec whose Name constant does not exist.
+write_registry() {
+  local mode="$1" d f
+  mkdir -p internal/pipeline internal/sources/other
+  printf 'package other\n\nconst SourceName = "other"\n' > internal/sources/other/events.go
+  case "$mode" in
+    spec | broken)
+      [[ "$mode" == spec ]] || printf 'package demo\n\nconst Name = "demo"\n' > internal/sources/demo/consumer.go
+      cat > internal/pipeline/source_spec.go <<'EOF'
+package pipeline
+
+import (
+	"github.com/example/fixture/internal/sources/demo"
+	other "github.com/example/fixture/internal/sources/other"
+)
+
+var specs = []SourceSpec{
+	{
+		Name:      demo.SourceName,
+		Projector: &ProjectorSpec{Genesis: 1},
+	},
+	{
+		Name:     other.SourceName,
+		Dispatch: func() error { return nil },
+	},
+}
+EOF
+      ;;
+    real)
+      # registry.go too: the crash this pins came from it existing with no
+      # `case` lines left, not from it being absent.
+      mkdir -p internal/projector
+      cp "$REAL/internal/projector/registry.go" internal/projector/
+      cp "$REAL/internal/pipeline/source_spec.go" internal/pipeline/
+      for d in "$REAL"/internal/sources/*/; do
+        d="${d%/}"
+        mkdir -p "internal/sources/${d##*/}"
+        for f in "$d"/*.go; do
+          [[ -f "$f" && "$f" != *_test.go ]] && cp "$f" "internal/sources/${d##*/}/"
+        done
+      done
+      ;;
+    legacy)
+      mkdir -p internal/projector
+      printf 'package projector\n\nfunc buildSource(name string) {\n\tswitch name {\n\tcase demo.SourceName:\n\t}\n}\n' \
+        > internal/projector/registry.go
+      ;;
+  esac
+}
+
+# mkrepo <bulk-commits> [registry-mode] — build a throwaway repo carrying a
+# copy of the gate at the same relative path the real one lives at (the
+# gate cds to `dirname $0/../..`, so the layout is what points it at the
+# fixture rather than at this repo). Seeds one file per watched class plus
+# an un-watched neighbour. Leaves BASE set to the seed commit.
 mkrepo() {
-  local bulk="${1:-0}"
+  local bulk="${1:-0}" mode="${2:-spec}"
   rm -rf "$TMP/repo"
   mkdir -p "$TMP/repo/scripts/ci" "$TMP/repo/internal/canonical" \
-           "$TMP/repo/internal/sources/demo" "$TMP/repo/internal/projector"
+           "$TMP/repo/internal/sources/demo"
   cp "$GATE" "$TMP/repo/scripts/ci/lint-replay-plan.sh"
   (
     cd "$TMP/repo" || exit 1
@@ -72,13 +132,8 @@ mkrepo() {
     printf 'package demo\n\nfunc DefaultPairs() {}\n' > internal/sources/demo/pairs.go
     printf 'package demo\n\nfunc TestDecode() {}\n' > internal/sources/demo/decode_test.go
     printf 'package demo\n\nfunc helper() {}\n' > internal/sources/demo/helper.go
-    # The projector registry + the source constant it refers to, so the
-    # wrong-command advisory has a real derivation to resolve (it reads
-    # the repo it is run in, not this one). `other` is deliberately NOT
-    # in the registry: a non-projected name must not warn.
     printf 'package demo\n\nconst SourceName = "demo"\n' > internal/sources/demo/consumer.go
-    printf 'package projector\n\nfunc buildSource(name string) {\n\tswitch name {\n\tcase demo.SourceName:\n\t}\n}\n' \
-      > internal/projector/registry.go
+    write_registry "$mode"
     git add -A
     git commit -qm "base"
     git rev-parse HEAD > "$TMP/base"
@@ -263,6 +318,55 @@ else
   echo "ok: ch-rebuild on a non-projected source does not warn"
   pass=$((pass + 1))
 fi
+
+# --- 11. this repo's registry yields the projected set (invariant 7) ---
+# One name per spec shape: a literal with excludeFirehose(), a multi-line
+# &ProjectorSpec{}, the reflectorSpec helper, the Watched sep41 pair. The
+# specs with no Projector must be absent.
+OUT="$(bash "$GATE" --list-projected 2>&1)"
+RC=$?
+expect "--list-projected reads this repo's registry" 0
+for want in soroswap comet redstone reflector-dex reflector-cex reflector-fx defindex sep41_supply sep41_transfers; do
+  if grep -qx "$want" <<<"$OUT"; then
+    echo "ok: projected set contains $want"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: projected set is missing $want"
+    fail=$((fail + 1))
+  fi
+done
+for unwanted in band soroswap-router sdex; do
+  if grep -qx "$unwanted" <<<"$OUT"; then
+    echo "FAIL: projected set wrongly contains $unwanted (no Projector)"
+    fail=$((fail + 1))
+  else
+    echo "ok: projected set excludes $unwanted"
+    pass=$((pass + 1))
+  fi
+done
+
+# --- 12. a valid trailer passes end-to-end against the real registry ---
+mkrepo 0 real
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): widen the decoder\n\nReplay-Plan: stellarindex-ops projector-replay -source aquarius -from 61602787 on r1 after deploy')"
+runGate
+expect "valid trailer passes against the real registry" 0 "$DECLARED"
+mkrepo 0 real
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): widen the decoder\n\nReplay-Plan: stellarindex-ops ch-rebuild -sources sep41_transfers -from 1 -to 2 -write')"
+runGate
+expect "ch-rebuild on a real projected source warns" 0 "WARNING: the plan replays projected source 'sep41_transfers'"
+
+# --- 13. a registry the parser cannot read fails loudly, never vacuously ---
+# legacy is the shape #2558 removed; the derivation must red the gate even
+# on a range with nothing to declare, so the PR that moves it goes red.
+MOVED="derived no projected source names"
+mkrepo 0 legacy
+touch_commit internal/sources/demo/helper.go "chore(demo): tidy a helper"
+runGate
+expect "pre-SourceSpec registry fails loudly" 1 "$MOVED"
+mkrepo 0 broken
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): x\n\nReplay-Plan: none — refactor only')"
+runGate
+expect "an unresolvable projected Name fails loudly" 1 "cannot resolve demo.SourceName"
 
 echo
 echo "lint-replay-plan-test: $pass passed, $fail failed"
