@@ -44,16 +44,15 @@ func AssetKey(a canonical.Asset) (string, error) {
 // CanonicalizeWatchedClassic converts operator-config entries
 // (canonical "CODE-ISSUER" wire form, per the [supply]
 // watched_classic_assets doc) into the CODE:ISSUER AssetKey form the
-// classic-supply observers' decoders produce. THE BUG THIS FIXES
-// (2026-07-02, found by verify-served-values): the raw config strings
-// went straight into the observers' watched sets, so dash-form
-// entries never matched colon-form decoded keys and the trustline /
-// claimable / LP observers silently observed NOTHING — every classic
-// asset's served supply degraded to its SAC-held slice (USDC read
-// 40M vs ~266M real, an 85% under-read on the flagship stablecoin).
+// classic-supply observers' decoders produce. Passing the raw config
+// strings straight into the observers' watched sets would never match:
+// dash-form entries do not match colon-form decoded keys, so the
+// trustline / claimable / LP observers would silently observe NOTHING
+// and every classic asset's served supply would degrade to its
+// SAC-held slice (USDC would read 40M vs ~266M real, an 85% under-read).
 // Colon-form entries are parsed too (never passed through verbatim);
 // anything unparseable or non-classic is a loud error so a config typo
-// can never silently zero a supply component again.
+// can never silently zero a supply component.
 func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {

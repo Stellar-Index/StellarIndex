@@ -46,15 +46,14 @@ type AggregatorRow struct {
 }
 
 // aggregatorRowNotes returns the coverage caveat(s) for a registry
-// row, or nil when none apply. Two honest-degrade cases (ROADMAP
-// #11 / #29):
+// row, or nil when none apply. Two honest-degrade cases:
 //
 //   - auto_discovered rows (currently: the migration 0103
 //     aggregator-exec seed) are evidence-observed, not vendor- or
 //     WASM-audit-verified, AND their routed-trade count only
 //     reflects trades whose router call carried call_path (recorded
-//     since migration 0101 / live ingest from 2026-07-10) — older
-//     activity through this exact wrapper is invisible until the
+//     since migration 0101) — older activity through this exact
+//     wrapper is invisible until the
 //     queued r1 soroswap-router call-path re-derive lands, so
 //     routed_trades_24h=0 here means "not yet attributed", not
 //     "zero volume".
@@ -98,9 +97,9 @@ func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 // partial routed_via index), NOT a closed-bucket series — treat the
 // numbers like /v1/network/stats, not /v1/vwap.
 //
-// A router call observed as a sub-invocation (migration 0101,
-// ROADMAP #11) is attributed to its outermost wrapping contract when
-// that contract is itself a registered 'router'-kind entry
+// A router call observed as a sub-invocation (migration 0101) is
+// attributed to its outermost wrapping contract when that contract is
+// itself a registered 'router'-kind entry
 // (timescale.TagTradesRoutedVia); otherwise it falls back to the
 // plain router's name. Each row's Notes explain that degrade —
 // see aggregatorRowNotes.

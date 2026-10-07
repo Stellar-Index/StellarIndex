@@ -96,8 +96,8 @@ type Flags struct {
 	// (≥ `min_sources_for_warning` responding references — the SAME quorum
 	// the worker gates its verdict on; below it the cross-check reaches no
 	// verdict at all). When false the check is blind (references dark, or no
-	// record yet), so a `false` warning must not be read as "prices agree"
-	// (CS-087); a `true` warning is the last evaluated verdict carried
+	// record yet), so a `false` warning must not be read as "prices agree";
+	// a `true` warning is the last evaluated verdict carried
 	// forward through the outage, not a fresh one.
 	//
 	// Set on the surfaces that consult the verdict: /v1/price, its
@@ -357,12 +357,11 @@ func writeProblemCoverage(
 	w.Header().Set("Cache-Control", "no-store")
 	// RFC 7235 §3.1: every 401 response MUST include a
 	// WWW-Authenticate header naming at least one challenge the
-	// client can use. Pre-fix our 401s emitted the problem+json
-	// envelope but no WWW-Authenticate, leaving programmatic
-	// clients without a way to discover the accepted scheme. Our
-	// authenticated endpoints all accept Bearer (API key + SEP-10
-	// token); the magic-link cookie path is parallel and doesn't
-	// have a standard challenge token, so we advertise Bearer only.
+	// client can use; without it programmatic clients have no way
+	// to discover the accepted scheme. Our authenticated endpoints all
+	// accept Bearer (API key + SEP-10 token); the magic-link cookie path
+	// is parallel and doesn't have a standard challenge token, so we
+	// advertise Bearer only.
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
@@ -489,23 +488,24 @@ func writeProblemErr(
 // the opposite case — a SERVER-side budget expiring with the client
 // still on the wire. Two of those exist: the cold-path
 // context.WithTimeout guards inside handlers, and
-// since C3-102 the blanket middleware.RequestTimeout deadline, which
-// wraps r.Context() itself. Testing only `Err() != nil` conflated the
-// second with a client abort: on the global deadline the handler
-// returned silently and net/http emitted a BODYLESS 200, which reads
-// to a client as an authoritative empty result rather than a failure
-// (a Blend pool with real supply rendered as "0 reserves / $0 TVL").
+// the blanket middleware.RequestTimeout deadline, which
+// wraps r.Context() itself. Testing only `Err() != nil` would conflate
+// the second with a client abort: on the global deadline the handler
+// would return silently and net/http would emit a BODYLESS 200, which
+// reads to a client as an authoritative empty result rather than a
+// failure (a Blend pool with real supply would render as "0 reserves /
+// $0 TVL").
 // Both server-side deadlines belong on the 503 problem+json path.
 //
-// The 499 relabel above does NOT cover that case, which is why the
-// bodyless 200 was invisible: obs.HTTPMetrics is installed OUTSIDE
+// The 499 relabel above does NOT cover that case, so a bodyless 200
+// would be invisible: obs.HTTPMetrics is installed OUTSIDE
 // middleware.RequestTimeout (server.go's Handler stack), so the
 // r.Context() it inspects is the UN-deadlined one. On a server-side
 // deadline with the peer still connected that context's Err() is nil,
 // the 499 override never fires, and the recorder's default
-// http.StatusOK stands — so those requests were counted as 200 and, on
+// http.StatusOK stands — so the request would be counted as 200 and, on
 // that status, admitted into http_request_success_duration_seconds, the
-// latency SLO's success numerator. They are 5xx now.
+// latency SLO's success numerator.
 //
 // Handlers should structure error handling as:
 //
@@ -545,9 +545,6 @@ func clientAborted(r *http.Request, _ error) bool {
 // The OR with errors.Is keeps drivers that DO wrap correctly
 // (Timescale's hypercore extension does in some paths) on the same
 // branch.
-//
-// R-021 in `docs/review-2026-05-10.md` — pre-fix, /v1/markets cold
-// cache returned `500 Internal error` instead of `503 markets-timeout`.
 //
 // A true verdict is also recorded for usage metering
 // ([middleware.MarkReadDeadline]): a timed-out read is billable.
@@ -604,14 +601,11 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 //	    if transientStorageErr(err) { /* 503 retry-later */ }
 //	    /* 500 internal */
 //	}
-//
-// Refs: 25fc0dedc residual ("/v1/issuers returns HTTP 500 (fast ~50ms)
-// on the sla-probe's request shape — real bug, low severity").
 func transientStorageErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Postgres UNREACHABLE, not merely slow (#371 F8). Every substring
+	// Postgres UNREACHABLE, not merely slow. Every substring
 	// arm below describes a connection that EXISTED and then misbehaved;
 	// none of them matches pgx's failure to establish one in the first
 	// place, which is what a restarting/downed/failed-over Postgres

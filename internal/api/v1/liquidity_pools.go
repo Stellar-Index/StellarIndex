@@ -193,14 +193,12 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 
 // nativeLPListing returns the cached top-N ranked native-pool listing.
 //
-// STALE-SERVE (#332 F4, 2026-09-02). It used to hold nativeLPMu across the
-// refresh, so the first caller after every 60s TTL lapse paid the whole
-// `liquidity_pool`-prefix lake scan on its request deadline (measured live:
-// 0.825 s on /v1/liquidity-pools) and every concurrent caller queued behind
-// it — and with no prewarm anywhere, at production's arrival rate that first
-// caller was close to the common case rather than the exception. Now an
-// existing entry is ALWAYS returned immediately; a lapsed one additionally
-// kicks ONE detached refresh. Only a never-computed process fills inline,
+// STALE-SERVE. An existing entry is ALWAYS returned immediately; a lapsed
+// one additionally kicks ONE detached refresh. Holding nativeLPMu across the
+// refresh would make the first caller after every 60s TTL lapse pay the
+// whole `liquidity_pool`-prefix lake scan on its request deadline (measured
+// live: 0.825 s on /v1/liquidity-pools) with every concurrent caller queued
+// behind it. Only a never-computed process fills inline,
 // and PrewarmNativeLiquidityPools removes even that from the request path.
 //
 // The listing's `flags.stale` is NOT set from the cache's age: on this

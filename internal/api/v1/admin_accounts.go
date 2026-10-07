@@ -35,7 +35,7 @@ type PlatformAccountStore interface {
 	Update(ctx context.Context, a platform.Account) error
 	// UpdateAtomic loads the row, applies mutate, and writes the result
 	// back inside one transaction holding a row lock — see
-	// postgresstore.AccountStore.UpdateAtomic (Q148). PATCH
+	// postgresstore.AccountStore.UpdateAtomic. PATCH
 	// /v1/admin/accounts/{id} uses this instead of Get+Update so two
 	// concurrent operator PATCHes on the same account can't race a
 	// lost update on the kill-switch (status) field.
@@ -104,15 +104,11 @@ type adminAccountOverrideRequest struct {
 	// billing).
 	Tier *string `json:"tier,omitempty"`
 	// Status, when set, moves the account's lifecycle state:
-	// active | suspended | closed. This is the operator KILL SWITCH
-	// (C3-010, audit-2026-07-23) — the whole suspension machinery
-	// already existed and was already enforced on the read paths
-	// (postgresstore.AccountStore.Suspend, the Postgres API-key
-	// validator's `acct.Status != AccountActive` rejection, the
-	// dashboard session middleware's suspended/closed denial), but
-	// nothing in the HTTP surface could TRIGGER it: this PATCH covered
-	// tier + the two overrides and never touched Status, and Suspend()'s
-	// only caller was an internal signup-race recovery path.
+	// active | suspended | closed. This is the operator KILL SWITCH:
+	// the HTTP trigger for the suspension machinery enforced on the
+	// read paths (postgresstore.AccountStore.Suspend, the Postgres
+	// API-key validator's `acct.Status != AccountActive` rejection, the
+	// dashboard session middleware's suspended/closed denial).
 	Status *string `json:"status,omitempty"`
 	// SuspendedReason is the customer-visible-ish note stored alongside
 	// a suspension (distinct from the mandatory X-Reason audit header,
@@ -235,7 +231,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 
 	// UpdateAtomic loads the row under a row lock and writes the mutated
 	// result back inside the same transaction, so a concurrent PATCH on
-	// this account can't read the same stale snapshot we did (Q148).
+	// this account can't read the same stale snapshot we did.
 	beforeAcct, acct, err := s.PlatformAccounts.UpdateAtomic(r.Context(), id, func(a *platform.Account) error {
 		if a.Status == platform.AccountClosed && req.Status != nil &&
 			platform.AccountStatus(*req.Status) != platform.AccountClosed {
@@ -387,13 +383,12 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 // the tier ceiling. Returns (keys lowered, per-key failures) so the
 // caller can record both in the audit row.
 //
-// 52105fdb residual (audit-2026-07-23). PATCH /v1/admin/accounts/{id}
-// originally only wrote `accounts.tier`. The enforced per-minute budget
-// is read straight off the key record (auth/apikey_postgres.go
+// Writing `accounts.tier` alone is not enough. The enforced per-minute
+// budget is read straight off the key record (auth/apikey_postgres.go
 // `rateLimit := pgKey.RateLimitPerMin`; auth/apikey_redis.go returns
 // the stored value), so an operator demoting an abusive account
-// Pro→Free left every existing key serving 10_000/min indefinitely
-// (the C3-014 defect class). The clamp helper + the tier ladder
+// Pro→Free would leave every existing key serving 10_000/min
+// indefinitely. The clamp helper + the tier ladder
 // (`platform.Tier.MaxRateLimitPerMin`) close that.
 //
 // Only runs when the ceiling DROPS. A raise is intentionally not
@@ -426,7 +421,7 @@ func (s *Server) clampKeysAfterTierChange(
 // the validator's ~1h read-through TTL. Two such transitions exist:
 //
 //   - The account left the active state (active→suspended/closed): the operator
-//     kill switch (C3-010). The validator's cache-HIT path
+//     kill switch. The validator's cache-HIT path
 //     (auth/apikey_postgres.go cacheLookup) checks only the KEY's own
 //     revoked/expired fields, never the account status, so persisting
 //     `accounts.status='suspended'` changes nothing an already-warm key can
@@ -437,7 +432,7 @@ func (s *Server) clampKeysAfterTierChange(
 //     early-returns unless the tier ceiling drops, so a pure status flip evicts
 //     nothing.
 //
-//   - The rate-limit or monthly-quota OVERRIDE changed (F-A, audit-2026-08-14).
+//   - The rate-limit or monthly-quota OVERRIDE changed.
 //     The validator RESOLVES the effective per-minute floor and monthly-quota
 //     ceiling from these account overrides at Lookup time (apikey_postgres.go
 //     :164-191) and caches the resolved Subject verbatim, so a tightened
@@ -446,8 +441,8 @@ func (s *Server) clampKeysAfterTierChange(
 //     keyed on ANY override delta — not just a tightening — because the cache
 //     must reflect the persisted account row in either direction, and keying
 //     on "did an enforcement-relevant field change" (rather than one bespoke
-//     per-direction guard) is exactly the seam the override knob previously
-//     slipped through.
+//     per-direction guard) leaves no direction for an override change to
+//     slip through.
 //
 // POSTGRES BACKEND ONLY. Under the default auth_backend=redis there is no
 // read-through cache: the key this would DEL is the canonical credential (the
@@ -806,8 +801,8 @@ func (s *Server) recordAdminAccountAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.Audit.Append(r.Context(), entry); err != nil {
-		// C3-067: a tier/quota override landed with no durable record of the
-		// operator, the reason, or the previous values.
+		// A failed append leaves a tier/quota override with no durable
+		// record of the operator, the reason, or the previous values.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("account_override").Inc()
 		s.logger.Warn("admin account override: audit append failed (best-effort)",
 			"err", err, "account_id", accountID)

@@ -7,12 +7,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Boot-seeding the /v1/assets listing cache (#459).
+// Boot-seeding the /v1/assets listing cache.
 //
 // The problem this file exists to solve is a race the prewarm cannot
-// win. Measured on r1 at the 2026-09-03 03:50:22 restart (v0.58.0):
-// the process logs "starting" at 03:50:22.985 and "http listening" at
-// 03:50:22.997 — 12 ms later — while the first real /v1/assets request
+// win. Measured on r1 at a v0.58.0 restart: the process logs "http listening"
+// 12 ms after "starting", while the first real /v1/assets request
 // arrives at +3.5 s and the first browser request at +4.0 s. The cold
 // listing aggregate itself takes ~11 s (that boot: 11,658 ms for
 // `?limit=50`, 11,658 ms for `?include=sparkline&limit=10&order_by=…`,
@@ -135,8 +134,7 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 	// rows arrived afterwards is a race: a refresh landing in between
 	// returns FRESH rows stamped with the STALE entry's time and
 	// stale=true, so the handler publishes correct data under a wrong
-	// as_of and a wrong freshness flag. A test caught exactly that under
-	// load before this shipped.
+	// as_of and a wrong freshness flag.
 	rows, at, err := c.fetchRowsAt(ctx, "list_coins", key,
 		func(ctx context.Context) ([]timescale.AssetRow, error) {
 			return c.upstream.ListAssetsExt(ctx, opts)

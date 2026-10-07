@@ -22,7 +22,7 @@ type AnomalyReader interface {
 	// optional `?include=daily` calendar-heatmap block.
 	FreezeDailyReasonCounts(ctx context.Context, sinceDays int) ([]timescale.FreezeDailyReasonCount, error)
 	// CountFiringFreezes is an exact count, NOT a page length —
-	// firing_count must stay correct past any page cap (C1-051).
+	// firing_count must stay correct past any page cap.
 	CountFiringFreezes(ctx context.Context) (int64, error)
 }
 
@@ -39,10 +39,9 @@ type DivergenceReader interface {
 // AnomaliesView is the wire response for GET /v1/anomalies.
 //
 // FiringCount is an exact COUNT(*) over currently-firing freezes, not the
-// length of a page: it used to be `len(ListFreezeEvents(…, 500))`, so a
-// storm of more than 500 assets reported exactly 500 and the number
-// silently saturated at the moment it mattered most (C1-051,
-// audit-2026-07-23).
+// length of a page: `len(ListFreezeEvents(…, 500))` would report exactly
+// 500 for a storm of more than 500 assets, silently saturating at the
+// moment it matters most.
 type AnomaliesView struct {
 	FiringCount int64             `json:"firing_count"`
 	ReasonTally []ReasonCountV    `json:"reason_tally"`

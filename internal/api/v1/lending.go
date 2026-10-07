@@ -172,7 +172,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	}
 
 	// The longest budget that still fires ahead of the blanket request
-	// deadline. Since #504 the reserve lookup is a PK-prefix probe on the
+	// deadline. The reserve lookup is a PK-prefix probe on the
 	// lake's current-state projection rather than a 250k-ledger scan (see
 	// BlendPoolReserves), and the per-reserve pricing below fans out
 	// bounded rather than serially, so this ceiling is a backstop for a
@@ -211,15 +211,15 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Price the reserves with a BOUNDED fan-out, not a serial walk (#504).
+	// Price the reserves with a BOUNDED fan-out, not a serial walk.
 	// buildReserveView is DB-bound: each call resolves a USD price, and a
 	// single resolution can cost several round-trips (the alias walk, then
 	// the stablecoin-peg proxy's per-peg probes) — the reserve token is a
 	// SAC whose price lives under the classic asset it wraps, so the miss
-	// paths are the common ones here. Serially that made the route's cost
-	// scale with the reserve count on top of the lake read, which is why
-	// the largest pool crossed the ceiling FIRST while a small one already
-	// sat at 78% of it. Fanned out, the pricing stage costs one lookup's
+	// paths are the common ones here. Serially the route's cost scales
+	// with the reserve count on top of the lake read: measured serial,
+	// the largest pool crossed the ceiling while a small one already sat
+	// at 78% of it. Fanned out, the pricing stage costs one lookup's
 	// latency instead of len(states) of them, for every pool size.
 	//
 	// Each goroutine writes only its own index-keyed slot (the sanctioned
@@ -305,12 +305,12 @@ func (s *Server) writeLendingLookupError(ctx context.Context, w http.ResponseWri
 // caller when its [maxHandlerBudget] ceiling fires (12s — the 15s global
 // request deadline less 3s, so this fires FIRST and the caller gets a
 // typed problem rather than a bare cut-off), mirroring the
-// `lending-timeout` response [Server.handleLendingPools] already returns
-// in this file (C-F2). A deadline on a lake contract_data read is a
-// RETRYABLE capacity condition, not an internal fault: the 500 these
-// sites used to emit told clients "don't retry, it's broken", burned an
-// availability point in the sla-probe's 5xx accounting, and wasn't even
-// a status the OpenAPI spec declares for this path (400 + 503 only).
+// `lending-timeout` response [Server.handleLendingPools] returns in this
+// file. A deadline on a lake contract_data read is a RETRYABLE capacity
+// condition, not an internal fault: a 500 would tell clients "don't retry,
+// it's broken", burn an availability point in the sla-probe's 5xx
+// accounting, and is not a status the OpenAPI spec declares for this path
+// (400 + 503 only).
 func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Request, stage, pool string) {
 	s.logger.Warn("lending reserves deadline exceeded", "stage", stage, "pool", pool)
 	writeProblem(w, r,

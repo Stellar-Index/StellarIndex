@@ -35,8 +35,7 @@ import (
 //
 // Every timestamp / age is a pointer: nil means "no data" (series
 // absent, or the query failed) and the matching freshness verdict is
-// "unknown". The panel renders that grey, never as a fresh zero
-// (web-status-1 class, PR #273).
+// "unknown". The panel renders that grey, never as a fresh zero.
 //
 // No secrets, no filesystem paths, no hostnames: repo keys are the
 // pgBackRest `repoN` ordinals, backup labels are pgBackRest's own
@@ -120,7 +119,7 @@ type BackupRepo struct {
 }
 
 // BackupRestoreDrill is the monthly pgBackRest restore-drill evidence
-// (ADR-0043 §3 / CS-110), from restore-drill.sh's textfile.
+// (ADR-0043 §3), from restore-drill.sh's textfile.
 type BackupRestoreDrill struct {
 	// LastRunTS is when the drill last wrote its textfile at all —
 	// node_exporter's mtime of restore_drill.prom. Nil = never ran on
@@ -137,8 +136,7 @@ type BackupRestoreDrill struct {
 	// most recent run; nil when unknown.
 	FailedChecks *int64 `json:"failed_checks"`
 	// RestoredBackupTS / DurationSeconds are reserved: the drill does
-	// not export which backup it restored or how long it took yet
-	// (follow-up to scripts/ops/restore-drill.sh once PR #271 lands).
+	// not export which backup it restored or how long it took yet.
 	RestoredBackupTS *WireTime `json:"restored_backup_ts"`
 	DurationSeconds  *float64  `json:"duration_s"`
 }
@@ -210,7 +208,7 @@ const (
 	freshnessUnknown = "unknown"
 )
 
-// Backup freshness SLOs (maintainer, 2026-08-29). Weekly full (Sunday) +
+// Backup freshness SLOs. Weekly full (Sunday) +
 // daily diff + archive-async WAL + monthly drill + daily snapshot,
 // each with one missed cycle of slack. The alert thresholds in
 // storage.yml / restore-drill.yml are deliberately looser (they page

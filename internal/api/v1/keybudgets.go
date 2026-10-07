@@ -14,10 +14,7 @@ import (
 // SelfServiceKeyManager is the v1 boundary onto the Redis-backed
 // self-service key store (keys minted through POST /v1/account/keys).
 // Implementation: [auth.RedisAPIKeyStore] (which provides both
-// methods). Formerly named StripeKeyManager; the Stripe webhook that
-// shared this seam was removed when the platform went free
-// (2026-08-10) — the operator tier-clamp path is the remaining
-// caller.
+// methods). The operator tier-clamp path is its caller.
 type SelfServiceKeyManager interface {
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
@@ -30,8 +27,8 @@ type KeyMirror interface {
 	// RevokeKeyByID removes a mirrored credential by KeyID, scoped to its
 	// owner identifier. The register path uses it to roll back a mirror
 	// that succeeded but whose durable management row then failed to
-	// commit, so no credential ever outlives its management record
-	// (NS-3). Implemented by [auth.RedisAPIKeyStore.RevokeKeyByID].
+	// commit, so no credential ever outlives its management record.
+	// Implemented by [auth.RedisAPIKeyStore.RevokeKeyByID].
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
@@ -51,7 +48,7 @@ type KeyCacheInvalidator interface {
 
 // APIKeyBudgetStores groups the credential stores a TIER CHANGE has to
 // clamp, so every path that lowers an account's tier lowers the budget
-// on every credential that tier used to allow.
+// on every credential the previous tier allowed.
 //
 // There are two independent key stores in production and a missed one
 // is a live throughput leak: Postgres-backed dashboard keys
@@ -94,14 +91,13 @@ type APIKeyBudgetStores struct {
 // platformKeys is the Postgres dashboard key store (nil without
 // Postgres); rdb is the shared Redis client (nil without Redis).
 //
-// The invalidator is wired ONLY under auth_backend=postgres. It used to
-// be wired whenever Redis was configured, which under the default redis
-// backend pointed a DEL at the canonical credential: any admin PATCH
-// that changed an override, suspended the account or lowered its tier
-// permanently destroyed every POST /v1/register key the account held —
-// the plaintext is shown once and Postgres keeps only the hash, so the
-// record cannot be rebuilt. Under the redis backend nothing needs
-// evicting: the tier clamp rewrites the canonical record in place
+// The invalidator is wired ONLY under auth_backend=postgres. Under the
+// default redis backend it would point a DEL at the canonical credential:
+// any admin PATCH that changed an override, suspended the account or
+// lowered its tier would permanently destroy every POST /v1/register key
+// the account held — the plaintext is shown once and Postgres keeps
+// only the hash, so the record cannot be rebuilt. Under the redis
+// backend nothing needs evicting: the tier clamp rewrites the canonical record in place
 // through [SelfServiceKeyManager], and suspension and the account
 // overrides are read by the Redis validator's own account cache.
 func NewAPIKeyBudgetStores(platformKeys platform.APIKeyStore, rdb redis.Cmdable, authBackend string) APIKeyBudgetStores {

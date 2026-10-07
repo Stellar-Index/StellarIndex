@@ -32,7 +32,7 @@ type ClassicSupplyStore interface {
 	// cannot distinguish "no rows, COALESCEd to zero" from "rows exist
 	// and genuinely sum to zero" — this method supplies that signal so
 	// [ClassicSupplyComponents.SACObserved] (and in turn
-	// [Supply.SACWrappedStroops]'s nil-ness) reflects reality (RLT-248).
+	// [Supply.SACWrappedStroops]'s nil-ness) reflects reality.
 	SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error)
 
 	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
@@ -40,19 +40,18 @@ type ClassicSupplyStore interface {
 
 	// MinClassicComponentLedger returns the lowest "most-recent
 	// observation ledger" across the four classic-supply component
-	// tables for `assetKey`. F-1236 (codex audit-2026-05-12):
-	// powers the Refresher's stale-component freshness gate.
+	// tables for `assetKey`. Powers the Refresher's stale-component freshness gate.
 	// Zero = no observations in any component table for this
 	// asset (treated as "no signal" by the gate). Optional —
 	// implementations that don't surface it can return (0, nil)
-	// and the gate stays in legacy-permissive mode.
+	// and the gate stays permissive.
 	MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error)
 }
 
 // StorageClassicSupplyReader satisfies [ClassicSupplyReader] by
-// composing the four classic-supply hypertables (3e215c2e2) populated
+// composing the four classic-supply hypertables populated
 // by the trustlines / claimable_balances / liquidity_pools /
-// sac_balances observers. Per ADR-0022 PR 5/5 — closes the
+// sac_balances observers. Per ADR-0022, this is the
 // Algorithm 2 producer pipeline.
 //
 // Issuer-balance handling: Algorithm 2 subtracts the asset
@@ -77,7 +76,7 @@ type StorageClassicSupplyReader struct {
 // positional constructor param; see docs/architecture/lexicon.md).
 type ClassicSupplyReaderOptions struct {
 	// Logger surfaces the fail-permissive MinClassicComponentLedger error
-	// path (F-1236); it is the only thing the reader logs. A nil Logger
+	// path; it is the only thing the reader logs. A nil Logger
 	// defaults to [slog.Default], keeping the blast radius small for
 	// callers that don't wire one.
 	Logger *slog.Logger
@@ -149,12 +148,10 @@ func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset 
 		return ClassicSupplyComponents{}, fmt.Errorf("supply: locked-contracts sum for %s: %w", assetKey, err)
 	}
 
-	// F-1236 (codex audit-2026-05-12): per-component freshness
-	// for the Refresher's stale-component gate. A storage-side
-	// failure here is non-fatal — the gate stays permissive
-	// (MinComponentLedger=0) so a transient query error doesn't
-	// reject a snapshot that the legacy posture would have
-	// accepted. Operator's signal is the WARN log line.
+	// Per-component freshness for the Refresher's stale-component
+	// gate. A storage-side failure here is non-fatal: the gate stays
+	// permissive (MinComponentLedger=0) so a transient query error
+	// doesn't reject an otherwise acceptable snapshot. Operator's signal is the WARN log line.
 	minLedger, err := r.store.MinClassicComponentLedger(ctx, assetKey, ledger)
 	if err != nil {
 		// Don't bail — the snapshot is still correct, just

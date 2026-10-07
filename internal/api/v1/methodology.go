@@ -40,10 +40,9 @@ type Methodology struct {
 	// `internal/sources/external`. Subdivides ClassExchange into
 	// dex/cex/fx subclasses.
 	//
-	// "Every" is load-bearing and was not true until 2026-09-12:
-	// this list carried four classes while Sources served seven, so
-	// the eight router / lending / bridge venues came back stamped
-	// with a class the same document never defined.
+	// "Every" is load-bearing: a class missing here leaves the
+	// sources that carry it stamped with a class the same document
+	// never defines.
 	// TestMethodology_EveryServedSourceClassIsDescribed holds it.
 	SourceClasses []MethodologySourceClass `json:"source_classes"`
 
@@ -155,8 +154,6 @@ const methodologyVersion = "1.0"
 // Cache-Control is set by the cachecontrol middleware; the
 // content only changes on binary deploy or operator config
 // reload, so it's safe to cache aggressively.
-//
-// R-023 in `docs/review-2026-05-10.md`.
 func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 	pegs := make([]MethodologyStablecoinPeg, 0, len(s.USDPeggedClassics))
 	for _, peg := range s.USDPeggedClassics {
@@ -171,13 +168,9 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 	// belong here because `sources` below is the WHOLE registry (the
 	// same rows /v1/sources serves), so a consumer that reads
 	// `class: "router"` off a row needs somewhere in this document
-	// to look that word up. Before 2026-09-12 there was nowhere: the
-	// list stopped at the four price-bearing classes and the eight
-	// router / lending / bridge venues were labelled with a term the
-	// document never defined, while the page, the spec and this
-	// package's own godoc all repeated the count of four.
+	// to look that word up.
 	//
-	// The three additions restate the class godoc in
+	// The three non-price classes restate the class godoc in
 	// internal/sources/external/framework.go, which is the
 	// authoritative narrative for why each is excluded.
 	classes := []MethodologySourceClass{
@@ -219,12 +212,10 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			OutlierFilter: MethodologyOutlierFilter{
 				Endpoint:     "/v1/ohlc",
 				DefaultSigma: ohlcDefaultOutlierSigma,
-				// Corrected 2026-08-04. This note used to claim
-				// "volume-weighting and arithmetic-mean already dampen
-				// outliers" as the justification for defaulting the
-				// other two endpoints to 0. That is false in the case
-				// that matters: VWAP is Σquote/Σbase, so an attacker who
-				// supplies the QUOTE asset dominates the numerator for
+				// Volume-weighting and arithmetic-mean do not dampen
+				// outliers in the case that matters, so neither justifies
+				// an unfiltered default: VWAP is Σquote/Σbase, so an
+				// attacker who supplies the QUOTE asset dominates the numerator for
 				// free, and TWAP has no volume term at all — one print
 				// alone in its hour carries that hour entirely. Measured
 				// on one production window: /v1/twap 5,449,858 vs
@@ -238,11 +229,9 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		Sources:       sources,
 		// Titles are the referenced ADRs' OWN titles, verbatim, and
 		// TestMethodology_ReferenceTitlesMatchTheADRs holds them to it.
-		// They used to be paraphrases, which is how ADR-0007 came to be
-		// served as "Aggregation policy + cache-key contract" — a
-		// document that does not exist. The real 0007 is about Redis,
-		// so a reader who followed the reference got something other
-		// than what the reference promised.
+		// A paraphrase can name a document that does not exist, and a
+		// reader who follows the reference then gets something other
+		// than what it promised.
 		References: []MethodologyReference{
 			{ID: "ADR-0007", Title: "Redis as hot-path cache + rate-limit + ephemeral state", URL: "/research/adr/0007"},
 			{ID: "ADR-0015", Title: "API rates served from last-closed bucket, never in-progress", URL: "/research/adr/0015"},

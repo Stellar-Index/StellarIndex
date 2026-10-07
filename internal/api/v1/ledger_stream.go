@@ -36,14 +36,13 @@ const (
 	// growing) lag every ~10s during a stall.
 	ledgerStreamRefreshInterval = 10 * time.Second
 
-	// ledgerStreamTickTimeout bounds a single per-tick cursors read
-	// (REL-01, partial fix of G2-04). RequestTimeout deliberately
-	// excludes `/stream` paths (the connection is long-lived by
-	// design), so without a per-tick bound a slow ListCursors call
-	// could hold this producer's goroutine — and its DB connection —
-	// open indefinitely, once per open connection. Mirrors
-	// observationsScanTimeout's 8s ceiling, the same fix already
-	// applied to the observations-stream producer.
+	// ledgerStreamTickTimeout bounds a single per-tick cursors read.
+	// RequestTimeout deliberately excludes `/stream` paths (the
+	// connection is long-lived by design), so without a per-tick bound a
+	// slow ListCursors call could hold this producer's goroutine — and
+	// its DB connection — open indefinitely, once per open connection.
+	// Mirrors observationsScanTimeout's 8s ceiling on the
+	// observations-stream producer.
 	ledgerStreamTickTimeout = 8 * time.Second
 
 	// ledgerStreamTipTTL is how long one cursors read serves every open
@@ -129,9 +128,9 @@ type ledgerStreamTipResult struct {
 // established) are returned as problem+json with the right status —
 // once the SSE body starts there is no way to set a non-200 code.
 func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
-	// REL-05: admit against the concurrency caps FIRST, before the
+	// Admit against the concurrency caps FIRST, before the
 	// synchronous pre-flight read below (ledgerTip) runs. Without this,
-	// a client already at its stream cap still paid for the full
+	// a client already at its stream cap would still pay for the full
 	// pre-flight cursors read before being rejected. release is
 	// idempotent and deferred here so every return path releases
 	// exactly once; the stream is handed off via
@@ -154,8 +153,8 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 	// First synchronous read — the chance to return a non-200 before
 	// the response switches into SSE mode.
 	// Bounded — see the note on the tip stream's pre-flight. Unbounded,
-	// this held a handler goroutine and a pool connection for as long as
-	// the client stayed connected (cold audit 2026-08-04).
+	// this would hold a handler goroutine and a pool connection for as
+	// long as the client stayed connected.
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), ledgerStreamTickTimeout)
 	defer cancelPreflight()
 	first, ok, err := s.ledgerStreamTip(preflightCtx)
@@ -199,7 +198,7 @@ func (s *Server) runLedgerStreamProducer(
 	ch chan<- streaming.Event,
 	first LedgerTipView,
 ) {
-	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// This producer runs in its OWN goroutine, so an
 	// unrecovered panic in the compute path below terminates the WHOLE process —
 	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
 	// stream is reachable unauthenticated. Recover here so a panic tears down only
@@ -317,7 +316,7 @@ func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.
 }
 
 // recoverStreamProducer is the deferred panic guard for the SSE producer
-// goroutines (AGT-12, audit-2026-07-24). It MUST be invoked as
+// goroutines. It MUST be invoked as
 // `defer s.recoverStreamProducer("<stream>")` from the producer itself:
 // recover() only works when called by a function the panicking goroutine
 // deferred, so this cannot be hoisted into a helper the producer merely calls.
@@ -330,7 +329,7 @@ func (s *Server) recoverStreamProducer(stream string) {
 		// Report rather than log locally: this is the ONE counter the
 		// stellarindex_worker_panics_total page rule reads, so a
 		// producer that dies here reaches an operator with a runbook
-		// instead of only a log line (#368 M4). The stream name becomes
+		// instead of only a log line. The stream name becomes
 		// the worker label, which is what tells the operator WHICH
 		// stream stopped.
 		worker.Report(s.logger, "api-sse-"+stream, r)

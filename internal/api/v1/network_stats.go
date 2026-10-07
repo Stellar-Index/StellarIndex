@@ -21,7 +21,7 @@ type NetworkStatsReader interface {
 // reader satisfies it, handleNetworkStats stamps an honest as_of (the
 // served data's real observation time) and flags.stale, instead of the
 // cache's SWR stale-serve path silently asserting stale:false / as_of=now
-// over a value a failing refresh has let age past the TTL (REC-05).
+// over a value a failing refresh has let age past the TTL.
 //
 // GetNetworkStatsAt returns the stats, observedAt (the served value's fetch
 // time; zero → as_of=now, not stale), and stale (the served value is past
@@ -51,12 +51,11 @@ type networkStatsStaleReader interface {
 //   - /v1/status.freshness.active_sources further narrows to
 //     enabled sources that have emitted an event in the last 7 days.
 //
-// Measured on r1 2026-09-03: Registry=28, enabled=25, active=24 (25 and 26
-// once this gauge is published) —
-// before the API binary published `massive`'s own enabled series
-// (internal/sources/external/forex); with that series present both
-// status counts read one higher, 18 and 16. The gap between the two
-// `total_sources` fields is by design (different metrics) — kept in
+// Measured on r1: Registry=28, enabled=25, active=24 (25 and 26 once this
+// gauge is published) — before the API binary published `massive`'s own
+// enabled series (internal/sources/external/forex); with that series
+// present both status counts read one higher, 18 and 16. The gap
+// between the two `total_sources` fields is by design (different metrics) — kept in
 // separate envelopes so the names don't collide in any single
 // response.
 type NetworkStats struct {

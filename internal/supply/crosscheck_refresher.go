@@ -46,9 +46,8 @@ type CrossCheckPair struct {
 	// WrapClass selects which invariant [CrossCheckForClass] checks
 	// for this pair. Zero value ("") normalizes to [WrapClassPartial]
 	// — the safe default — via [normalizeWrapClass], so existing
-	// callers that don't set this field get the corrected
-	// 2026-07-08 behaviour automatically rather than silently
-	// reverting to the pre-fix equality compare.
+	// callers that don't set this field get the subset-bound check
+	// rather than the equality compare.
 	WrapClass WrapClass
 }
 
@@ -85,8 +84,8 @@ const (
 
 	// CrossCheckOutcomeMisaligned — both snapshots loaded, but their
 	// LedgerSequences are further apart than
-	// [CrossCheckLedgerTolerance], so the invariant is not evaluable
-	// (MNY-04). Neither passes nor pages: the gauge series is CLEARED
+	// [CrossCheckLedgerTolerance], so the invariant is not evaluable.
+	// Neither passes nor pages: the gauge series is CLEARED
 	// (a stale reading must not be served as agreement) and no
 	// divergence is computed (a lagging snapshot on either side makes
 	// the subset bound meaningless in BOTH directions — a stale
@@ -157,9 +156,9 @@ type CrossCheckEmitter interface {
 	// outcomes. Negative values are a caller bug ([CrossCheck] /
 	// [CrossCheckSubsetBound] always return a non-negative value).
 	//
-	// wrapClass is carried through as a metric label (2026-07-08,
-	// BACKLOG #59) so operators can see which invariant produced a
-	// given reading — purely observational: the alert threshold
+	// wrapClass is carried through as a metric label so operators can
+	// see which invariant produced a given reading. It is purely
+	// observational: the alert threshold
 	// doesn't need to filter on it, because DivergenceStroops itself
 	// is already zero in the benign partial-wrap case (see
 	// [CrossCheckSubsetBound]).
@@ -284,7 +283,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
-	// MNY-04: each snapshot is the LATEST for its own asset_key, written
+	// Each snapshot is the LATEST for its own asset_key, written
 	// by its own per-asset refresher, so they can describe wildly
 	// different ledgers; CrossCheckForClass refuses such a pair rather
 	// than publish a verdict the data can't support.
