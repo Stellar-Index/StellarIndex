@@ -1,10 +1,10 @@
 ---
-# promtool unit tests for freeze-lifecycle.yml (GH-1124).
+# promtool unit tests for freeze-lifecycle.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/freeze-lifecycle-r1_test.yml
 #
-# PROVEN-RED: reverting the GH-1124 fix (removing the ladder-write-
-# failures / operator-unfreeze-rate alerts) makes the matching case
+# PROVEN-RED: removing the ladder-write-failures /
+# operator-unfreeze-rate alerts makes the matching case
 # below FAIL with "no rule with alertname …" — these exercise the real
 # rules, not a mock.
 

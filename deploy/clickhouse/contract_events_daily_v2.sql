@@ -10,11 +10,10 @@
 -- schema drift forever. si-cutover-object is what exempts them from the
 -- lint's "every operator-created object is also declared fresh-host" rule.
 --
--- HISTORY — this file DID auto-apply until 2026-09-09. The archival-node
--- role executed every deploy/clickhouse/*.sql it could glob wherever
--- clickhouse_apply_schema is true (testnet.yml, futurenet.yml), so the
--- paragraph below was false on those hosts and every fresh test-net
--- provision built the v2 pair as an exact duplicate of
+-- TEST NETS — an earlier archival-node role applied every
+-- deploy/clickhouse/*.sql it could glob wherever clickhouse_apply_schema is
+-- true (testnet.yml, futurenet.yml), so the paragraph below did not hold on
+-- those hosts and each test-net provision built the v2 pair as an exact duplicate of
 -- stellar.contract_events_daily: same column list and order, same
 -- AggregatingMergeTree, same ORDER BY, an MV reading the same
 -- stellar.contract_events with the same SELECT into a second target. The
@@ -25,8 +24,7 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- contract_events_daily uniqExact → uniqCombined(17) rebuild (2026-07-09
--- incident).
+-- contract_events_daily uniqExact → uniqCombined(17) rebuild.
 --
 -- This file is NOT auto-applied by any bootstrap and is NOT idempotent
 -- re-run tooling — it is the operator-run migration artifact for an

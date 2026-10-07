@@ -215,19 +215,18 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     change_index UInt32,
     change_type  LowCardinality(String),
     entry_type   LowCardinality(String),
-    -- CODEC(ZSTD(3)) applied on R1 2026-07-18/19 (Phase A capacity relief,
-    -- the retired phase-a-capacity-relief runbook, git history, Step 2)
+    -- CODEC(ZSTD(3)) applied on r1 by ALTER (Phase A capacity relief)
     -- — measured 1.75x over the LZ4 default on entry_xdr. Keep this in sync
-    -- with the live ALTER so schema and new-ingest match (audit-2026-07-23
+    -- with the live ALTER so schema and new-ingest match
     -- DAT-04: this had drifted).
     key_xdr      String CODEC(ZSTD(3)),
     entry_xdr    String CODEC(ZSTD(3)),
     -- ingested_at sits HERE, before the ADR-0038 columns below, because that
     -- is the LIVE column order: account_id/asset/balance/intra_ledger_seq
     -- were ALTER TABLE ADDed on r1 (appended after ingested_at), and the
-    -- drift check compares ordered column lists (2026-08-24: this file
-    -- declared them inline and read as .columns drift forever). A fresh
-    -- bootstrap from this file now matches the operative table exactly.
+    -- drift check compares ordered column lists (declared inline, they
+    -- would read as .columns drift forever). A fresh
+    -- bootstrap from this file matches the operative table exactly.
     ingested_at  DateTime DEFAULT now(),
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
@@ -254,19 +253,19 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     --   phase 3  every tx's post-apply fee changes (P23 Soroban refunds)
     -- This mirrors the SDK's canonical ingest.LedgerChangeReader state machine
     -- (feeChangesState → metaChangesState → postTxApplyState) and
-    -- dispatcher.walkLedgerEntryChanges. This comment previously described a
-    -- PER-TRANSACTION order ("within each tx: fee-changes, …"), which ranked
-    -- tx1's apply-phase change BELOW tx2's fee change and so let FINAL keep a
-    -- fee-phase row as a key's ledger-final state (C2-032, audit-2026-07-23).
+    -- dispatcher.walkLedgerEntryChanges. It is NOT a per-transaction order
+    -- ("within each tx: fee-changes, …"): that ranks tx1's apply-phase change
+    -- BELOW tx2's fee change and so lets FINAL keep a fee-phase row as a
+    -- key's ledger-final state.
     -- Folded into ledger_entries_current's ReplacingMergeTree version so the
     -- LAST change to a key within one ledger wins FINAL dedup
-    -- deterministically (audit-2026-07-16 C2-4c). DEFAULT 0 (old-binary-safe
-    -- + the value legacy/pre-fix rows carry until a re-derive repopulates
+    -- deterministically. DEFAULT 0 (old-binary-safe
+    -- + the value legacy rows carry until a re-derive repopulates
     -- them); snapshot/seed backfill rows stamp 4294967295 (math.MaxUint32 —
     -- authoritative final state for their ledger).
     --
     -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3).
-    -- The C2-032 fix RENUMBERED every ledger, so a legacy row can carry a
+    -- EntryWalkVersion 3 RENUMBERED every ledger, so a legacy row can carry a
     -- HIGHER version than the corrected row for the same key — and a lower
     -- RMT version never displaces a higher one. Re-deriving a range therefore
     -- requires DROPPING the partition first, not just re-inserting. See
@@ -291,8 +290,8 @@ ORDER BY (ledger_seq, tx_hash, op_index, change_index);
 -- current by the materialized view below — every insert into
 -- ledger_entry_changes (live-capture + ch-backfill re-derive) flows through.
 --
--- Version = (ledger_seq << 32) | intra_ledger_seq, NOT ledger_seq alone
--- (audit-2026-07-16 C2-4c). ledger_seq is not unique per key within a ledger —
+-- Version = (ledger_seq << 32) | intra_ledger_seq, NOT ledger_seq alone.
+-- ledger_seq is not unique per key within a ledger —
 -- a single ledger can hold several changes to one key (update-then-remove, or
 -- remove-then-recreate). With ledger_seq as the sole version those same-ledger
 -- rows tied, so FINAL kept an ARBITRARY one: it could resurrect a deleted entry
@@ -344,19 +343,19 @@ FROM stellar.ledger_entry_changes;
 -- internal/storage/clickhouse/ttl_liveness.go's ClassifyTTLLiveness as a
 -- primary-key lookup, replacing the per-batch scan of ledger_entries_current's
 -- 586M ttl rows (which read the wide entry_xdr per row and OOM'd its own 8 GiB
--- pin — six failed production attempts, 2026-07-29). Three tiny columns, one
+-- pin — six failed production attempts). Three tiny columns, one
 -- row per TTL change: ~20-30 GB vs the 590 GB source; the reader is bounded by
 -- construction. The v0.21.4+ binary hard-errors if this table is absent — no
 -- scan fallback exists.
 --
--- Extraction (production-validated 2026-07-28; ttl_liveness_test.go pins these
+-- Extraction (production-validated; ttl_liveness_test.go pins these
 -- expressions against the Go layout constants, here AND in the operator
 -- migration artifact deploy/clickhouse/ttl_live_until.sql — keep all three in
 -- lockstep): a TTL LedgerKey is 36 bytes (type=00000009 | sha256(LedgerKey)),
 -- a TTLEntry is 48 bytes (lastModified(4) | data.type(4) | keyHash(32) |
 -- liveUntilLedgerSeq(4) | ext(4)); XDR is big-endian, reinterpretAsUInt32 is
 -- little-endian, hence reverse(). version = (ledger_seq << 32) |
--- intra_ledger_seq — same composite as ledger_entries_current (C2-4c).
+-- intra_ledger_seq — same composite as ledger_entries_current.
 --
 -- Fail-open guard: rows failing the exact 36/48 decoded-length checks are
 -- SKIPPED (→ key absent → TTLUnknown → callers KEEP the entry) — a layout
@@ -415,14 +414,14 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 
 -- ── contract_events_daily — pre-aggregated per-contract activity ──────────
 -- Serves /v1/protocols/{name} detail (event breakdown + activity series)
--- without the ~15s raw scan (BACKLOG #43 / page-audit REMAINING). The
+-- without the ~15s raw scan. The
 -- source table is ReplacingMergeTree, so a SummingMergeTree MV would
 -- OVERCOUNT on duplicate inserts (live-sink retries, ch-rebuild
 -- re-derives re-inserting parts) — the `events` column has to dedup on
 -- the event's natural key (ledger_seq, tx_hash, op_index, event_index),
 -- not just sum row counts.
 --
--- events uses uniqCombined(17), NOT uniqExact (2026-07-09 incident).
+-- events uses uniqCombined(17), NOT uniqExact.
 -- uniqExact's state
 -- is a literal hash SET that grows ~16 bytes per distinct event and is
 -- UNBOUNDED for a hot contract+day+event_type+topic group — on r1 this
@@ -456,9 +455,9 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 --
 -- Changing the table's shape on an EXISTING deployment (r1) — an
 -- AggregateFunction column's serialized state format is tied to its
--- declared function+params, so neither the t0_xdr column (2026-06, it's
--- in the ORDER BY) nor the uniqExact→uniqCombined engine swap
--- (2026-07-09) can be a bare ALTER; both needed recreate + re-fill:
+-- declared function+params, so neither the t0_xdr column (it's in the
+-- ORDER BY) nor the uniqExact→uniqCombined engine swap
+-- can be a bare ALTER; both needed recreate + re-fill:
 --   RENAME TABLE stellar.contract_events_daily TO stellar.contract_events_daily_old;
 --   -- (also drop/recreate the _mv), run this CREATE, then the fill above,
 --   -- then DROP the _old table. Until the new table is populated the fast
@@ -684,7 +683,7 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);
 
--- ── movements_by_asset — asset-keyed copy of account_movements (INV-2140) ──
+-- ── movements_by_asset — asset-keyed copy of account_movements ──
 -- "Everything that ever moved asset X" is a scan over account_movements, whose
 -- ORDER BY leads with address. Same rows, same columns, asset-first key; the
 -- trailing address makes the sent/received pair of one movement two distinct
@@ -719,7 +718,7 @@ SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, directi
        movement_kind, provenance, asset, counterparty, amount, attributes, ingested_at
 FROM stellar.account_movements;
 
--- ── ops_by_source: slim sourced-history projection (2026-07-30) ─────────────
+-- ── ops_by_source: slim sourced-history projection ─────────────
 -- (source_account → ledger/tx/op keys) from BOTH stellar.operations (op-
 -- effective source, real op_index) and stellar.transactions (tx source,
 -- sentinel op_index 4294967295). The account-history readers' sourced arms
@@ -751,7 +750,7 @@ SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
 
--- ── account_activity — see deploy/clickhouse/account_activity.sql (#31) ──
+-- ── account_activity — see deploy/clickhouse/account_activity.sql ──
 -- Per-account activity watermark: (account → the max ledger the account was
 -- EVER named in, across EVERY role the account-history readers serve — op
 -- source, tx source/fee-payer, non-source participant). ~1 row per account,
@@ -759,7 +758,7 @@ WHERE source_account != '';
 -- max(last_ledger) as an EXACT UPPER BOUND (`ledger_seq <= ?`) on its per-arm
 -- reverse primary-key resolves, so a long-idle account's page stops at the
 -- account's real last activity instead of walking granules back from the tip
--- (measured ~4s live for a 46d-idle account, 2026-08-24).
+-- (measured ~4s live for a 46d-idle account).
 --
 -- CORRECTNESS INVARIANT (data-hiding — read before touching the MV set): the
 -- watermark must be >= the ledger_seq of every row the account-history
@@ -933,7 +932,7 @@ CREATE TABLE IF NOT EXISTS stellar.accounts_trustline_histogram_staging
 AS stellar.accounts_trustline_histogram;
 
 -- ── account_creators — see deploy/clickhouse/account_creators_rollup.sql ──
--- Funder → created-account league table (#351), aggregated from the
+-- Funder → created-account league table, aggregated from the
 -- create_account arm of stellar.account_movements. funded_stroops and
 -- live_stroops are Int128 to match account_movements.amount; both are
 -- served as decimal strings (ADR-0003). account_creators_ops is a
@@ -990,7 +989,7 @@ ORDER BY metric;
 CREATE TABLE IF NOT EXISTS stellar.account_creators_stats_staging
 AS stellar.account_creators_stats;
 
--- Creation GRAPH edges (#351) — one row per DISTINCT (creator, created)
+-- Creation GRAPH edges — one row per DISTINCT (creator, created)
 -- pair, held in both sort orders so each direction of "who created whom"
 -- is a primary-key range read. The collapse to distinct pairs is what
 -- bounds the inbound direction: an address can be created, merged and
@@ -1033,7 +1032,7 @@ AS stellar.account_creator_edges_by_created;
 
 
 -- ── account_sponsors — see deploy/clickhouse/account_sponsors_rollup.sql ──
--- Sponsor -> sponsored-account league table (#351), aggregated from the
+-- Sponsor -> sponsored-account league table, aggregated from the
 -- Begin/End/Revoke sponsorship operations in stellar.operations. The
 -- sponsored identity comes from the End operation's source_account, so
 -- no body_xdr is read. account_sponsors_ops is a per-cycle working
@@ -1089,7 +1088,7 @@ ORDER BY metric;
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats_staging
 AS stellar.account_sponsors_stats;
 
--- Sponsorship GRAPH edges (#351) — one row per DISTINCT
+-- Sponsorship GRAPH edges — one row per DISTINCT
 -- (sponsor, sponsored) pair, held in both sort orders so each direction
 -- is a primary-key range read. HISTORY, like the board: an edge means an
 -- arrangement was STARTED, never that one is in force, and no per-edge
@@ -1129,7 +1128,7 @@ CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored_staging
 AS stellar.account_sponsor_edges_by_sponsored;
 
 -- account_cohort_* — what the accounts this address CREATED or SPONSORED
--- went on to hold and do. The sponsor and creator boards (#351) rank an
+-- went on to hold and do. The sponsor and creator boards rank an
 -- address by how many accounts it stood behind; these tables answer the
 -- question that ranking invites — what value did that cohort bring to
 -- the network — from the cohort's own ledger footprint: current
@@ -1341,9 +1340,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions_staging
 AS stellar.account_cohort_positions;
 
 -- contract_instance_changes — per-contract instance-executable timeline
--- index for the explorer's code-history + wasm reads (open-fixes
--- inventory #26 items 3 + wasm; route sweeps 2026-07-29 → 2026-08-09:
--- /v1/contracts/{id}/code-history was the LAST persistent 503 class).
+-- index for the explorer's code-history + wasm reads (without it,
+-- /v1/contracts/{id}/code-history is a persistent 503 class).
 --
 -- WHY: stellar.ledger_entry_changes is ORDER BY (ledger_seq, …), so the
 -- "instance entry for contract X" predicate (key_xdr IN (…)) is
@@ -1354,7 +1352,7 @@ AS stellar.account_cohort_positions;
 -- THE INDEX: one narrow row per captured instance-entry WRITE, keyed
 -- (contract, ledger, tx_hash, change_index), carrying just the decoded
 -- verdict: SAC or wasm + which hash. The wire layout makes the MV extraction a
--- pair of fixed-offset substrings (byte-verified 2026-08-09 against
+-- pair of fixed-offset substrings (byte-verified against
 -- go-stellar-sdk marshalling, all three shapes):
 --
 --   key_xdr   (48 bytes): [1-4]=LedgerKey type contract_data(6)
@@ -1366,7 +1364,7 @@ AS stellar.account_cohort_positions;
 --                         [61-64]=executable type (0=wasm 1=SAC)
 --                         [65-96]=wasm hash (wasm only)
 --
--- Instance-STORAGE writes rewrite the same key (audit-2026-07-23 C-F1),
+-- Instance-STORAGE writes rewrite the same key,
 -- so a busy contract contributes many rows — but each is ~90 bytes vs
 -- the multi-KB entry_xdr, and readers collapse to distinct executables.
 --
@@ -1444,7 +1442,7 @@ WHERE entry_type = 'contract_data'
   AND entry_xdr != ''
   AND substring(tryBase64Decode(entry_xdr), 57, 4) = unhex('00000013');
 -- contracts_census_daily — day-keyed per-contract event counts behind
--- the /v1/contracts directory (open-fixes inventory #26 item 2).
+-- the /v1/contracts directory.
 --
 -- WHY: the directory's census query (uniqExact over the PK of
 -- billions-row contract_events, GROUP BY contract_id over multi-day

@@ -95,7 +95,7 @@ tests:
                 `candidate read failed` warns (Postgres reachability), then the
                 runbook.
 
-  # ── the false-positive this scoping fixes (2026-08-26) ────────────
+  # ── the false-positive this scoping fixes ─────────────────────────
   # The gauge is registered in the shared obs registry, so the indexer +
   # api export it at unix 0 forever (they never run the sweep). Before the
   # job matcher, time()-0 crossed 1800 on every eval and paged a perma-
@@ -124,7 +124,7 @@ tests:
         alertname: stellarindex_priceless_coverage_check_stale
         exp_alerts: []
 
-  # ── GH-1039: outcome="error" is now read by a real alert ───────────
+  # ── outcome="error" is now read by a real alert ───────────
   - interval: 1m
     name: sustained coverage-sweep errors page a ticket
     input_series:

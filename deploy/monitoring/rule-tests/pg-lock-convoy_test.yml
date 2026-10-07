@@ -1,6 +1,6 @@
 ---
-# promtool unit tests for stellarindex_pg_lock_convoy — the r1 incident of
-# 2026-09-10 00:12–00:31 UTC (see the rule comment in ../rules/storage.yml).
+# promtool unit tests for stellarindex_pg_lock_convoy — an r1 incident
+# (see the rule comment in ../rules/storage.yml).
 #
 #   promtool test rules deploy/monitoring/rule-tests/pg-lock-convoy_test.yml
 #
@@ -36,7 +36,7 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── Case 1: the 2026-09-10 convoy ────────────────────────────────────
+  # ── Case 1: the r1 convoy ────────────────────────────────────────────
   #
   # Quiet for 10 min, then the aggregator's cold-start read collides with
   # the restamp's decompress. The decompress queues behind the read; the

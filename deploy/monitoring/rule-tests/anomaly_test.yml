@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for anomaly.yml (GH-1121, GH-1039).
+# promtool unit tests for anomaly.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/anomaly_test.yml
 #
@@ -16,7 +16,7 @@ rule_files:
 evaluation_interval: 30s
 
 tests:
-  # ── GH-1121: escalation no longer double-pages from this file ──────
+  # ── escalation no longer double-pages from this file ──────
   # stellarindex_anomaly_freeze_escalated_total climbing must NOT
   # produce a `stellarindex_anomaly_freeze_sustained` alert from
   # anomaly.yml any more — that page now lives solely in
@@ -32,7 +32,7 @@ tests:
         alertname: stellarindex_anomaly_freeze_sustained
         exp_alerts: []
 
-  # ── GH-1039: a sustained ActionWarn rate pages a ticket ────────────
+  # ── a sustained ActionWarn rate pages a ticket ────────────
   - interval: 30s
     name: sustained warn decisions on one class page a ticket
     input_series:
@@ -71,7 +71,7 @@ tests:
         alertname: stellarindex_anomaly_warn_rate
         exp_alerts: []
 
-  # ── GH-1124: freeze_recovery_stalled no longer fires on ordinary,
+  # ── freeze_recovery_stalled no longer fires on ordinary,
   # healthy freeze activity — the pre-fix left clause
   # (rate(engaged) > rate(recovered)) was true any time a freeze was
   # simply ongoing, because engaged increments every 30s tick and

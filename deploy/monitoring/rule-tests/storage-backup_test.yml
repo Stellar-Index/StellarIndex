@@ -1,29 +1,28 @@
 ---
-# promtool unit tests for the backup-freshness alerts in storage.yml
-# (audit 2026-08-28, backup-restore-1 / backup-restore-2).
+# promtool unit tests for the backup-freshness alerts in storage.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/storage-backup_test.yml
 #
-# Both findings are the same OBS-2 / F-0085 class the repo already fixed
-# for restore-drill.yml: a `time() - x > N` or `min(x) > N` alert
-# evaluates over an EMPTY vector when the series is absent, so the
+# Both cases are the absent-series class restore-drill.yml also guards:
+# a `time() - x > N` or `min(x) > N` alert evaluates over an EMPTY
+# vector when the series is absent, so without an absent arm the
 # never-succeeded / every-run-failed / exporter-up-but-no-stanza cases —
-# the worst cases — were the ones that could never page.
+# the worst cases — are the ones that can never page.
 #
-#   backup-restore-1: pgbackrest_exporter is up (up==1) but emits no
+#   exporter up, no stanza: pgbackrest_exporter is up (up==1) but emits no
 #     pgbackrest_backup_since_last_completion_seconds (pgbackrest not
 #     installed, config unreadable by the exporter user, stanza error).
 #     stellarindex_timescale_backup_none_24h / _failed are `min by
-#     (stanza)(...) > N` — empty, never fire — and the only backstop
+#     (stanza)(...) > N` — empty, never firing alone — and the only backstop
 #     (meta.yml stellarindex_pgbackrest_exporter_down) checks `up` alone.
-#   backup-restore-2: ch-schema-snapshot.sh stamps last_success ONLY on
+#   never-succeeded: ch-schema-snapshot.sh stamps last_success ONLY on
 #     a clean run and rewrites the textfile each run (or exits before
 #     writing it on a first-run failure), so every-run-failed / never-ran
 #     makes the series ABSENT, not old. `time() - last_success > 36h`
 #     could never fire there. Same for the offsite stamp.
 #
-# PROVEN-RED on origin/main (008d5b66): the four cases marked (RED)
-# report `got:[]` — 0 firing alerts — against the un-fixed rules. The
+# PROVEN-RED: the four cases marked (RED) report `got:[]` — 0 firing
+# alerts — against rules without the absent arms. The
 # healthy / silent cases pass either way and exist to pin the alerts'
 # non-firing side (no false page on a fresh backup, on an acked
 # local-only host, or while the exporter is down and another alert owns
@@ -396,13 +395,12 @@ tests:
                 configured but pushing — check the `mc` alias/credentials
                 and the remote's quota.
 
-  # (RED) NO offsite target has ever been configured. This is the state
-  # r1 was measured in on 2026-09-03 — the gauge reads 0 — and it used
-  # to be the one state the alert could not report, because the absent
-  # branch was gated on that same gauge reading 1. The alert's own
-  # precondition gated the alert: a never-configured off-site was
-  # silent, a broken one was loud, and the silent case is the worse of
-  # the two. Ungated, so it fires — and it fires ON THIS HOST, carrying
+  # (RED) NO offsite target has ever been configured. This is a state
+  # r1 has been measured in — the gauge reads 0. An absent branch gated
+  # on that same gauge reading 1 cannot report it: the alert's own
+  # precondition would gate the alert, leaving a never-configured
+  # off-site silent and a broken one loud, and the silent case is the
+  # worse of the two. Ungated, so it fires — and it fires ON THIS HOST, carrying
   # the instance label (see the two-host case below).
   - interval: 1h
     name: offsite never configured — offsite_stale fires
@@ -730,7 +728,7 @@ tests:
         alertname: stellarindex_ch_lake_backup_stale
         exp_alerts: []
 
-  # (RED) r1 as of 2026-10: configured, but no full has ever been
+  # (RED) configured, but no full has ever been
   # confirmed, so both stamps are ABSENT.
   - interval: 1h
     name: lake backup configured, no full ever confirmed — stale ticket fires

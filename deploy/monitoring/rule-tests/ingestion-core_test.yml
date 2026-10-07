@@ -371,9 +371,9 @@ tests:
   # the series STOPS, and once the last samples age out of the range
   # window, sum(rate(...)) is the EMPTY vector rather than zero.
   #
-  # Pre-fix that made the SEV-1 fire at ~t+3m and then RESOLVE at ~t+5m
-  # while ingestion was still completely down — a resolved P1 reads as
-  # "it fixed itself" (wave-D ALERT-01). This case evaluates well past
+  # Without the absent_over_time branch the SEV-1 fires at ~t+3m and
+  # RESOLVEs at ~t+5m while ingestion is still completely down — a resolved P1 reads as
+  # "it fixed itself". This case evaluates well past
   # the handover point, where only the absent_over_time branch can be
   # true.
   - interval: 1m
@@ -550,7 +550,7 @@ tests:
   # ── the RV2 #5 scenario, end to end ──────────────────────────────
   # A MinIO outage on r1: the ledger cursor freezes while the CEX/FX
   # connectors in the SAME binary keep incrementing source_events_total.
-  # all_sources_stopped (the cover the unit file used to name) stays
+  # all_sources_stopped stays
   # correctly quiet — its input is still moving — so this page is the
   # only one that fires. That is the whole point of the rule.
   - interval: 1m
@@ -735,10 +735,10 @@ tests:
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
-  # ── firing: a single permanently dropped trade tickets (GH-612) ──
+  # ── firing: a single permanently dropped trade tickets ──
   # kind="trade" means the row is gone (sdex, projected DEX, external).
-  # It used to be excluded, so a trickle below the coarse 0.1/s
-  # insert_errors line was never alerted on at all.
+  # Excluding it would leave a trickle below the coarse 0.1/s
+  # insert_errors line unalerted.
   - interval: 1m
     name: one permanently dropped sdex trade trips the sensitive tripwire
     input_series:
@@ -1182,13 +1182,13 @@ tests:
         alertname: stellarindex_ingestion_duplicate_flood
         exp_alerts: []
 
-  # ── the post-restart shape: a source whose ONLY inserts since
+  # ── the post-restart shape (#302): a source whose ONLY inserts since
   # process start were duplicates never creates the outcome="new" child
   # (WithLabelValues is call-site-seeded per source, and `source` is
-  # config-dependent so internal/obs does not pre-seed it). An
-  # `and on (source) … == 0` join needs that child to EXIST, so it is
-  # silent in exactly the target scenario. `unless on (source)
-  # … > 0` treats absent and zero alike. Red on the join form
+  # config-dependent so internal/obs does not pre-seed it). The old
+  # `and on (source) … == 0` join needed that child to EXIST, so the
+  # alert was silent in exactly its target scenario. `unless on (source)
+  # … > 0` treats absent and zero alike. Red on the pre-fix rule
   # (got: []).
   - interval: 1m
     name: an absent outcome-new child still tickets after a restart
@@ -1550,12 +1550,12 @@ tests:
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
-  # ── guard: restart with no scan due (an r1 false-fire shape)
+  # ── guard: restart with no scan due ──────────────────────────────
   # The seeded schedule (persisted scan cursor) defers every scan for
   # hours after a deploy restart, so no Inc() runs; without the
-  # process pre-registering the runs_total series at 0 the whole family
-  # is absent and the absent_over_time[15m] clause reads "no scan due
-  # yet" as "detector dead". Series present at 0 for 30m + a fresh
+  # runs_total series pre-registered at 0 the whole family is
+  # absent and the absent_over_time[15m] clause reads "no scan due yet"
+  # as "detector dead". Series present at 0 for 30m + a fresh
   # last_success stamp (re-emitted from the cursor) must stay silent.
   - interval: 1m
     name: a restarted detector with runs_total pre-registered at 0 and no scan due raises nothing
@@ -1584,11 +1584,11 @@ tests:
         alertname: stellarindex_ingest_gap_detector_silent
         exp_alerts: []
 
-  # ══ stellarindex_ingestion_ch_live_sink_errors ══════════
+  # ══ stellarindex_ingestion_ch_live_sink_errors (#371 F6) ══════════
   # `errored` is a DIFFERENT fault class from `dropped`: the sink's
   # bounded queue never saw the ledger, because either
   # clickhouse.ExtractLedger failed on it (a decode/meta-version break)
-  # or the sink's own Add/Flush errored. No other alert covers it.
+  # or the sink's own Add/Flush errored. It had no alert of any kind.
   #
   # ── firing: a single extract failure tickets ──────────────────────
   # A meta-version break fails every ledger in lock-step, but the

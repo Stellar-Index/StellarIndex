@@ -4,22 +4,20 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/stellar_test.yml
 #
-# Issue #282. The alert had TWO independent reasons it could not page
-# on r1, and fixing only the first (2026-06-11, F-1329 — it selected
-# `stellarindex_archive_divergence_total`, a name nothing emits) left
-# the second in place:
+# The alert needs THREE things to page on r1: it must select a name
+# something emits (`stellarindex_archive_divergence_total` is not one),
+# and it must clear the two traps below:
 #
 #   1. NO PRODUCER. `stellarindex_verify_archive_mismatches_total`
 #      only ever left the verify-archive process through the opt-in
-#      `-metrics-listen` HTTP endpoint, which the tier-a/tier-b units
-#      did not pass and prometheus.r1.yml has no scrape job for. The
-#      units now pass `-textfile-output`, so node_exporter's textfile
+#      `-metrics-listen` HTTP endpoint, which prometheus.r1.yml has
+#      no scrape job for. The tier-a/tier-b units pass `-textfile-output`, so node_exporter's textfile
 #      collector serves the counter
 #      (internal/ops/archive/verify_archive_textfile.go).
 #   2. A ONE-HOUR LOOKBACK ON A NIGHTLY PRODUCER. Even with the
-#      textfile wired, `increase(...[1h])` made the step visible for
+#      textfile wired, `increase(...[1h])` makes the step visible for
 #      one hour out of every twenty-four — a SEV-1 page that
-#      self-resolves before the operator's morning. The window is now
+#      self-resolves before the operator's morning. The window is
 #      26h (24h cadence + the timer's 10-min jitter + cushion).
 #
 # LABEL SHAPES HERE ARE POST-SCRAPE, ON PURPOSE — the same reasoning
@@ -110,7 +108,7 @@ tests:
   # A counter series that first APPEARS at 1 and then stays flat has
   # no earlier sample to subtract from, so increase() is 0 and the
   # page never fires — no matter how wide the window. This pins the
-  # emitter's zero-seeding contract (F-0033 / C4-038, "absence reads
+  # emitter's zero-seeding contract ("absence reads
   # as health") from the ALERT's side: drop the seeding and this test
   # keeps passing while the previous one is the only thing left
   # standing between a divergence and silence.

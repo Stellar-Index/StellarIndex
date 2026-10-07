@@ -17,13 +17,12 @@ groups:
       # (≈21 minutes of bucket time) is the first sign that a
       # decode is hot-looping or that postgres writes are slow.
       #
-      # The `unless` arm (issue #325, 2026-08-29) excuses the ONE lag
-      # that is intended: an operator-initiated `stellarindex-ops
-      # projector-replay` rewind. The reflector-fx replay of 2026-08-29
-      # rewound the cursor 2,574,496 ledgers ON PURPOSE and this rule
-      # ticketed for the whole ~4h catch-up — no information the
-      # operator did not already have, and it MASKED a genuine lag on
-      # the same source for the duration. stellarindex_projector_
+      # The `unless` arm excuses the ONE lag that is intended: an
+      # operator-initiated `stellarindex-ops projector-replay` rewind.
+      # Without it, a reflector-fx replay that rewinds the cursor
+      # 2,574,496 ledgers ON PURPOSE tickets for the whole ~4h catch-up —
+      # no information the operator does not already have — and MASKS a
+      # genuine lag on the same source for the duration. stellarindex_projector_
       # replay_window_active is 1 only while the cursor is still inside
       # the window the replay tool RECORDED (migration 0125) and still
       # below its pre-rewind position, so the excuse expires with the
@@ -31,7 +30,7 @@ groups:
       # is NOT a silence: the paired stellarindex_projector_replay_
       # stalled rule below fires if the replay stops advancing, and an
       # indexer that never publishes the gauge (or fails to read the
-      # windows) leaves this rule exactly as it was.
+      # windows) leaves this rule unexcused.
       - alert: stellarindex_projector_lag_high
         expr: |
           max by (source) (stellarindex_projector_lag_ledgers) > 256
@@ -54,12 +53,12 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
-      # The other half of the #325 replay pair: the lag rule above stops
+      # The other half of the replay pair: the lag rule above stops
       # ticketing while a replay is climbing, so THIS rule is what keeps a
       # replay covered. A stuck replay is the failure that actually matters
       # during the window — the cursor sits still, the served-row deficit the
-      # replay was supposed to repair stays open, and (pre-#325) it was
-      # indistinguishable from the expected lag ticket.
+      # replay was supposed to repair stays open, and without this rule it
+      # is indistinguishable from the expected lag ticket.
       #
       # "Not climbing" is read off the lag gauge rather than a cursor gauge:
       # while a replay catches up, lag falls every cycle (the cursor advances
@@ -135,7 +134,7 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_lag_high
 
-      # COR-11/COR-01 (audit-2026-07-23): the projector's poison-row escape
+      # The projector's poison-row escape
       # hatch (quarantineCandidate) gives up on at most ONE un-processable
       # row per cycle once its retry budget is exhausted, then advances the
       # cursor past it so a deterministic sink failure can't wedge a
@@ -185,15 +184,14 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
-      # RLT-131 (audit-2026-09-18). The SISTER of the quarantine rule above,
-      # and the gap that made this finding "high": the skip arm — a
+      # The SISTER of the quarantine rule above: the skip arm — a
       # POSITIVELY-identified permanent data fault, SQLSTATE class 22/23 or a
       # canonical value-shape rejection — sheds rows and advances the cursor
-      # past them exactly like a quarantine does, and had no rule of any kind.
-      # The only signal was an ERROR log. classifySinkFault returns
+      # past them exactly like a quarantine does, and without this rule the
+      # only signal is an ERROR log. classifySinkFault returns
       # dispositionSkip for ANY class 22/23 error, and those classes are not
       # always row-local: a migration adding a NOT NULL or a CHECK the live
-      # rows violate rejects EVERY row of the window. The projector now holds
+      # rows violate rejects EVERY row of the window. The projector holds
       # such a window for QuarantineAfterCyclesNoProgress (~1 h) and then
       # bleeds one row per cycle, which makes the stall visible — but the rows
       # that do leave still leave the served tier silently without this.
@@ -241,11 +239,11 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
-      # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
+      # ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Consequences):
       # "any observed errors.Is(err, canonical.ErrI128Overflow) in
       # production fires a SEV-1. It indicates an int64 sneaking in
-      # somewhere." That promise had no implementation — the sentinel is in
-      # the projector's valueShapeSentinels, so an overflow was skipped and
+      # somewhere." This is that SEV-1. The sentinel is in the projector's
+      # valueShapeSentinels, so without this rule an overflow is skipped and
       # counted as an ordinary sink_permanent drop, indistinguishable from a
       # bad on-chain value.
       #
@@ -294,7 +292,7 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_row_quarantined
 
-      # DATA-6 / NS-2 (audit-2026-08-14): a projector decode soft-fail (a
+      # A projector decode soft-fail (a
       # returned decode error or a recovered decoder panic) SKIPS the row and
       # lets the cursor advance past it. That is correct for a rare, scattered
       # poison row — but a shipped decoder REGRESSION breaks a whole CLASS of
@@ -303,12 +301,12 @@ groups:
       # every affected event from the served tier while the cursor sails to tip.
       # The row-level loss is counted as events_decoded_total{outcome=
       # "decode_error"} and the cycle is marked runs_total{outcome=
-      # "decode_degraded"} (so it is no longer reported "ok"), but the cursor
-      # still advances (holding would re-wedge a sole-writer source — COR-11), so
+      # "decode_degraded"} (so it is not reported "ok"), but the cursor
+      # still advances (holding would re-wedge a sole-writer source), so
       # this RATE alert is the defence: a SUSTAINED per-source decode_error rate
       # is a regression, not the odd bad row. Sibling of
       # stellarindex_ingestion_decode_error (ingestion.yml), which watches the
-      # dispatcher/ingest decode path; the projector path had no equivalent.
+      # dispatcher/ingest decode path.
       # Threshold deliberately more sensitive than the ingest sibling's (>1/s):
       # a class-wide regression on a QUIET source (rozo/defindex) can sit well
       # below 1/s yet still be a total loss for that class, so >0.1/s sustained
@@ -371,13 +369,13 @@ groups:
 
             Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
-      # PROJECTOR WEDGE (task #33 / W8 recon 9b). The adaptive window halves
+      # PROJECTOR WEDGE. The adaptive window halves
       # on a per-cycle deadline down to the MinBatchLimit floor (25 ledgers).
       # A floor-sized range that STILL stays over PerSourceTimeout — a dense +
-      # compressed chunk (the 2026-07-10 aquarius-rewards and 2026-08-01
-      # aquarius-reserves incidents) — has nothing left to halve: it retries the
-      # IDENTICAL range every cycle forever, the cursor never advances, and the
-      # only prior signal was a flat runs_total{outcome="error"} rate that an
+      # compressed chunk (seen on aquarius-rewards and aquarius-reserves) —
+      # has nothing left to halve: it retries the IDENTICAL range every cycle
+      # forever, the cursor never advances, and the only other signal is a
+      # flat runs_total{outcome="error"} rate that an
       # error storm from other sources can mask. cycleOneSource flips this gauge
       # to 1 once a source has sat at the floor and failed to advance for
       # WedgeCycles (5) consecutive cycles, and clears it on any advancing cycle.

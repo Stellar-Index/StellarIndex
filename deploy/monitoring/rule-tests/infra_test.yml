@@ -3,10 +3,10 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/infra_test.yml
 #
-# These pin C6-118: the two pool-capacity floors used to be ABSOLUTE
-# byte counts (1.3e12 / 0.65e12) hand-calibrated to r1's ~16.8 TiB pool
-# and shipped verbatim to every host the file is deployed to. That is
-# wrong in BOTH directions on a differently-sized pool, and the
+# These pin the pool-capacity floors as ratios. ABSOLUTE byte counts
+# (1.3e12 / 0.65e12) hand-calibrated to r1's ~16.8 TiB pool and shipped
+# verbatim to every host the file is deployed to would be wrong in
+# BOTH directions on a differently-sized pool, and the
 # dangerous direction is silent:
 #
 #   * a SMALL host that is nearly empty trips the absolute floor
@@ -15,7 +15,7 @@
 #     is exactly the "pool full, ingest stalls" state the pair exists
 #     for.
 #
-# Post-fix both are ratios of reconstructed pool capacity
+# Both are ratios of reconstructed pool capacity
 # (pool_used = Σ(size − avail), pool_avail = min(avail)), so the same
 # rule travels to r2/r3 (ADR-0016 — entirely different topologies)
 # unchanged.
@@ -60,11 +60,11 @@ tests:
                 Either the host is down or the scrape path is broken. Service-
                 level alerts (timescale/redis/api) on this host will also fire.
 
-  # ── C6-118, false-positive direction ─────────────────────────────
+  # ── false-positive direction ─────────────────────────────
   # A small host: 650 GB pool, 600 GB of it FREE (92 % empty). Nothing
-  # is wrong. Post-fix neither alert fires.
+  # is wrong. Neither alert fires.
   #
-  # Pre-fix BOTH fired forever: 600e9 < 1.3e12 and 600e9 < 0.65e12.
+  # Absolute floors would fire forever: 600e9 < 1.3e12 and 600e9 < 0.65e12.
   - interval: 1m
     name: a nearly-empty small pool raises nothing
     input_series:
@@ -85,11 +85,11 @@ tests:
         alertname: stellarindex_zfs_pool_critical_space
         exp_alerts: []
 
-  # ── C6-118, silent-miss direction ────────────────────────────────
+  # ── silent-miss direction ────────────────────────────────
   # A large host: 100 TB pool with 2 TB free (2 %). ZFS is stalling
-  # writes territory. Post-fix both tiers fire.
+  # writes territory. Both tiers fire.
   #
-  # Pre-fix NEITHER fired: 2e12 is above both absolute floors.
+  # Absolute floors would NEVER fire: 2e12 is above both.
   - interval: 1m
     name: a nearly-full large pool pages
     input_series:
@@ -142,7 +142,7 @@ tests:
                 and Postgres. Reclaim space NOW (drop stale snapshots, move
                 pgBackRest off-box) or ingestion will halt.
 
-  # ── C6-118, r1 behaviour is PRESERVED ────────────────────────────
+  # ── r1 behaviour is PRESERVED ────────────────────────────
   # r1's own shape: ~18.5 TB pool with 1.2 TB free. The old absolute
   # floors said ticket-but-not-page (1.2e12 < 1.3e12, > 0.65e12); the
   # ratios say the same (0.0649 < 0.07, > 0.035). The generalisation
@@ -184,11 +184,10 @@ tests:
         alertname: stellarindex_zfs_pool_critical_space
         exp_alerts: []
 
-  # ── ALERT-09, the NVMe pair ──────────────────────────────────────
-  # Both NVMe rules in infra.yml named series nothing emits —
-  # `node_disk_io_errors_total` and `node_nvme_temperature_celsius`,
-  # neither of which is a node_exporter metric — so they were
-  # structurally unfireable, the same class as C4-037/038 above. The
+  # ── the NVMe pair ────────────────────────────────────────────────
+  # `node_disk_io_errors_total` and `node_nvme_temperature_celsius` are
+  # not node_exporter metrics, so rules naming them are structurally
+  # unfireable, the same class as the archive-completeness blind spots. The
   # live telemetry is the packaged nvme collector's textfile
   # (`nvme.prom`), which publishes bare `nvme_*` series labelled per
   # device. These two cases feed exactly that shape.
@@ -253,7 +252,7 @@ tests:
                 replacement during the next maintenance window even if ZFS
                 isn't complaining yet.
 
-  # ── 14d-review (2026-09-27): r1's OS/boot disks are mdadm RAID1
+  # ── r1's OS/boot disks are mdadm RAID1
   # (md0 swap, md1 /) — a failed member on one array must not be
   # masked by the other array staying healthy.
   - interval: 1m

@@ -1,4 +1,4 @@
-# usd-volume coverage — the 100%-NULL blindness (wave-D ALERT-04).
+# usd-volume coverage — the 100%-NULL blindness.
 #
 # Both coverage alerts divide a "priced" counter by a "total" counter.
 # The usd_volume_populated="yes" child is created only by the first

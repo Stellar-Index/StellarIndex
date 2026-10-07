@@ -13,8 +13,7 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── 14d-review (2026-09-27, extended 2026-09-28): the
-  # textfile_producer_stale catch-all false-fires on producer shapes with
+  # ── the textfile_producer_stale catch-all false-fires on producer shapes with
   # no dedicated staleness alert: ops_job's pid-orphan siblings, the
   # one-off backfill, usd-volume-restamp and per-source projected-rebuild
   # jobs, the monthly

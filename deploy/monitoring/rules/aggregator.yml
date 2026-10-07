@@ -38,17 +38,15 @@ groups:
             scans raw trades on-query).
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent
 
-      # 2026-08-28 REDESIGN (was: sum by (pair) rate(dropped_trades_total
-      # {reason="outlier"}[10m]) > 10, for 2h — itself the 2026-08-26 rescope
-      # of a self-poisoning offset comparator). Live on r1 the counter rule
-      # fired for HOURS on crypto:XLM/fiat:USD and /GBP while binance /
-      # coinbase / kraken agreed within 0.9% and the served prices were
-      # right. Root cause: the counter measures how many prints the
-      # whole-window median+MAD band trimmed, re-counted every 30 s tick
-      # per window, and that band trims an AGREED regime shift (a genuine
-      # +2% Kraken step on XLM/GBP) until the shift becomes the window
-      # majority — i.e. it measured a filter artifact, not venue
-      # disagreement. The filter is now time-local
+      # Venue dispersion, not a dropped-trades counter. A counter rule
+      # (sum by (pair) rate(dropped_trades_total{reason="outlier"}[10m]) > 10)
+      # fires for HOURS on crypto:XLM/fiat:USD and /GBP while binance /
+      # coinbase / kraken agree within 0.9% and the served prices are
+      # right: it counts how many prints a whole-window median+MAD band
+      # trims, re-counted every 30 s tick per window, and that band trims
+      # an AGREED regime shift (a genuine +2% Kraken step on XLM/GBP) until
+      # the shift becomes the window majority — a filter artifact, not venue
+      # disagreement. The filter is time-local
       # (internal/aggregate/outliers_local.go) and this alert measures what
       # "persistent price dispersion" actually means: the spread between
       # the highest and lowest per-VENUE VWAP of the pre-filter 5m set, from
@@ -92,9 +90,8 @@ groups:
             price impact.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
 
-      # Successor to the counter-based storm gate for what venue
-      # disagreement cannot see: a SINGLE-venue pair (SDEX-only token,
-      # the 2026-08-14 token-farm shape) whose prints the outlier filter
+      # Covers what venue disagreement cannot see: a SINGLE-venue pair
+      # (SDEX-only token, the token-farm shape) whose prints the outlier filter
       # is rejecting wholesale. stellarindex_aggregator_window_trades is
       # a per-refresh gauge (stage=class is the filter's input, stage=
       # outlier its survivors), so the fraction is the CURRENT window's
@@ -103,7 +100,7 @@ groups:
       # genuine dispersion inside the window (spam / wash / dust prints),
       # not a regime shift. 24h window: a spam wave lasts hours and the
       # 5m share flaps as the wave breathes. Same runbook as outlier_storm.
-      # PROVEN ON THE 2026-08-14 SHAPE: internal/aggregate/
+      # PROVEN ON THE TOKEN-FARM SHAPE: internal/aggregate/
       # outliers_spam_test.go (TestFilterOutliersLocal_TokenFarmWaveTrim
       # ShareMatchesLegacy) runs the token-farm fixture — 720 honest
       # prints over 24h + a 2h wave of 480 dust self-trades gapping
@@ -337,20 +334,18 @@ groups:
             increased volume.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike
 
-      # F-1253 (audit-2026-05-12): explicit alert on aggregator
-      # cache-write-error rate. The May-10 SEV-2 (root-FS full →
-      # Redis BGSAVE blocked → every Set returned MISCONF for ~9h)
-      # surfaced only as customer 404s on rewritten pairs because
-      # `flags.stale` was not flipped (the aggregator was running,
-      # just unable to publish). The post-mortem
+      # Explicit alert on aggregator cache-write-error rate. A Redis that
+      # cannot write (measured: root-FS full → Redis BGSAVE blocked → every
+      # Set returned MISCONF for ~9h) surfaces only as customer 404s on
+      # rewritten pairs, because `flags.stale` is not flipped (the
+      # aggregator is running, just unable to publish). The post-mortem
       # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
-      # explicitly recommends "alert on aggregator WARN rate (not
-      # just service-up status)" — this is the metric realisation:
-      # the new stellarindex_aggregator_vwap_cache_write_errors_total
-      # counter (internal/obs/metrics.go) increments on every
-      # cache Set failure, and any sustained non-zero rate is an
-      # operator-page-worthy signal because it means the customer
-      # surface is silently degraded.
+      # recommends "alert on aggregator WARN rate (not just service-up
+      # status)" — this is the metric realisation:
+      # stellarindex_aggregator_vwap_cache_write_errors_total
+      # (internal/obs/metrics.go) increments on every cache Set failure,
+      # and any sustained non-zero rate is an operator-page-worthy signal
+      # because it means the customer surface is silently degraded.
       - alert: stellarindex_aggregator_cache_write_errors
         expr: |
           sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0
@@ -450,32 +445,30 @@ groups:
             volume_24h_usd are unaffected. Fix the failing Postgres
             backend; the next sweep catches up.
 
-      # ─── Decimals-assumption landmine (decoder-correctness audit F2) ─
+      # ─── Decimals-assumption landmine ───────────────────────────────
       # The served price is Σ(quote_amount)/Σ(base_amount) on RAW
       # smallest-unit integers (prices_* CAGGs + aggregate.VWAP); the
       # per-asset decimals cancel ONLY when base and quote share a scale
-      # — true today because every DEX-traded token is 7-decimal. The
+      # — true when every DEX-traded token is 7-decimal. The
       # decimals-guard sweep (internal/decimalsguard, in the aggregator)
       # raises this counter the first time a DEX trade is observed for a
-      # Soroban token whose on-chain decimals() != 7. As of 2026-07-10
-      # EVERY serving path auto-normalizes via the
+      # Soroban token whose on-chain decimals() != 7. EVERY serving path
+      # auto-normalizes via the
       # nonstandard_decimals_assets correction table
       # (aggregate.AdjustPrice / aggregate.ResolveDecimals), so a
       # detected non-7-decimal token is EXPECTED and HANDLED — this is
-      # now an awareness signal, not an action item. The genuine risk
+      # an awareness signal, not an action item. The genuine risk
       # isn't "a non-7-decimal token exists", it's "the correction
       # isn't being applied" — see
       # stellarindex_nonstandard_decimals_correction_failing below for
       # that action-item alert.
       #
-      # (2026-08-05: the former informational
-      # stellarindex_dex_nonstandard_decimals_detected alert was
-      # REMOVED. It compared an all-time counter to zero, so once any
-      # nonstandard token traded it fired FOREVER — three
-      # already-confirmed, actively-normalized aquarius tokens held it
-      # permanently active. The awareness signal lives on the
-      # dashboard metric; the actionable failure mode is
-      # correction_failing below.)
+      # There is deliberately no "nonstandard decimals detected" alert:
+      # comparing the all-time counter to zero fires FOREVER once any
+      # nonstandard token trades (three already-confirmed,
+      # actively-normalized aquarius tokens would hold it permanently
+      # active). The awareness signal lives on the dashboard metric; the
+      # actionable failure mode is correction_failing below.
       #
       # The `unless ... offset 15m` arms exist because increase() cannot
       # see a counter's FIRST increment: a series whose first sample in
@@ -487,8 +480,8 @@ groups:
       # ingestion.yml's stellarindex_decoder_panicked compares the raw
       # value to escape, and the same born-inside-the-window idiom
       # backup-offsite.yml uses; it ages out with the window, so a
-      # one-off blip still resolves instead of latching the way the
-      # removed detector above did.
+      # one-off blip still resolves instead of latching the way an
+      # all-time-counter detector would.
       - alert: stellarindex_nonstandard_decimals_correction_failing
         expr: |
           increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0
@@ -540,16 +533,15 @@ groups:
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
-      # ─── Decimals-guard sweep heartbeat (audit-2026-09-02 F040) ───
+      # ─── Decimals-guard sweep heartbeat ───────────────────────────
       # The offender counters above (correction_failing and its inputs)
       # cannot tell "the guard swept and found nothing" apart from "the
       # guard never armed" — both read as a healthy-looking zero. A
       # ClickHouse still loading metadata for the 150B-row lake at
-      # aggregator boot used to disable the guard for the WHOLE process
-      # lifetime with no metric surfacing it (the guard's lake dial now
-      # retries with backoff instead of retiring — see
-      # cmd/stellarindex-aggregator/main.go — but this alert is the
-      # backstop for a wedge the retry itself doesn't cover, e.g. the
+      # aggregator boot can keep the guard from arming (its lake dial
+      # retries with backoff — see cmd/stellarindex-aggregator/main.go —
+      # and this alert is the backstop for a wedge the retry itself
+      # doesn't cover, e.g. the
       # goroutine panicking past worker.Recover or the process losing
       # its lake for good). internal/decimalsguard.Guard.Sweep stamps
       # stellarindex_decimals_guard_sweep_last_success_unix on every

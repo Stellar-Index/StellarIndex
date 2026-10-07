@@ -10,14 +10,14 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- accounts_stats rollup — network-wide account analytics for the
--- /accounts hub (operator request 2026-08-08: totals, wealth
+-- /accounts hub (totals, wealth
 -- distribution, trustline distribution, most-held assets).
 --
 -- Computed by the SAME `stellarindex-ops ch-holders-rollup` cycle that
 -- builds the holders boards (30-min timer, staging + atomic EXCHANGE) —
 -- it already scans exactly these tables, so the analytics ride along
 -- for one extra aggregation pass each. Readers are keyed/tiny:
--- sub-second by construction (page-speed goal 2026-08-08).
+-- sub-second by construction.
 --
 -- accounts_stats is metric-keyed (one Int64 per metric) rather than a
 -- wide singleton row so adding a metric is an INSERT, not a schema

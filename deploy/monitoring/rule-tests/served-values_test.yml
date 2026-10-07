@@ -1,8 +1,8 @@
 ---
 # promtool unit tests for the served-value harness's meta-alerts —
-# stellarindex_served_value_check_stale (the OBS-2 arm) and
+# stellarindex_served_value_check_stale (the absent-series arm) and
 # stellarindex_served_value_unit_failed — and for the reserve-LIST check's
-# own ticket, stellarindex_sdf_reserve_list_drift (C4-069). Rules live in
+# own ticket, stellarindex_sdf_reserve_list_drift. Rules live in
 # data-freshness.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/served-values_test.yml
@@ -13,11 +13,10 @@
 # alerts read that textfile; this one is the meta-alert that catches the
 # harness itself going dark.
 #
-# It could not. The harness had no systemd unit, no timer and no ansible
-# task, so the textfile had never been written on r1 and the series had never
-# existed — and `time() - <absent series>` is an EMPTY VECTOR, not a large
-# number. The alert designed to notice "the harness has not run in 48h" was
-# structurally incapable of noticing that it had never run at all. The
+# A harness with no systemd unit, timer or ansible task never writes the
+# textfile, so the series never exists — and `time() - <absent series>` is an
+# EMPTY VECTOR, not a large number. The subtraction alone cannot notice that
+# the harness has never run at all. The
 # `absent_over_time(...[2d])` branch covers the absent case over the same 48h
 # window the subtraction measures.
 #

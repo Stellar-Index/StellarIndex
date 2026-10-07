@@ -9,7 +9,7 @@
 # storage-textfile-stale-exclusions_test.yml and
 # storage-restore-drill-stale_test.yml (split out so they run in parallel);
 # everything else in storage.yml is covered here. Several of these exprs reference series that are inert or absent
-# on r1 today (see the F-1329 blocks in the rule file) — that is exactly
+# on r1 today (see the rule file's comments) — that is exactly
 # why they get promtool tests: the expr's logic is validated against
 # synthetic input so the rule is proven able to fire the day its
 # producer lands.
@@ -67,7 +67,7 @@ tests:
         alertname: stellarindex_timescale_primary_down
         exp_alerts: []
 
-  # ══ stellarindex_postgres_ping_failing (F-0151) ═══════════════════
+  # ══ stellarindex_postgres_ping_failing ═══════════════════
   # The threshold is deliberately `> 0`: the probe ticks once per 60s,
   # so 3 failures/min = 0.05/s is a fully-wedged pool.
   - interval: 1m
@@ -146,14 +146,13 @@ tests:
         alertname: stellarindex_timescale_replica_lag
         exp_alerts: []
 
-  # ══ stellarindex_timescale_lock_table_pressure (F-1251) ═══════════
+  # ══ stellarindex_timescale_lock_table_pressure ═══════════
   # REALISTIC LABEL SHAPE. postgres_exporter's built-in `pg_locks`
   # collector emits one `pg_locks_count` series per (datname, mode) —
   # eight lock modes × every database — while the `pg_settings_*`
-  # gauges are single-series. The pre-#301 expr divided the two with
-  # UNQUALIFIED 1:1 matching, so no label set on the left ever equalled
-  # the right and the SEV-3 guard silently evaluated to nothing on r1
-  # (postgres_exporter has been scraped since F-0152 closed). These
+  # gauges are single-series. Dividing the two with UNQUALIFIED
+  # 1:1 matching means no label set on the left ever equals the right,
+  # and the SEV-3 guard silently evaluates to nothing on r1. These
   # fixtures therefore give the numerator the exporter's real per-mode
   # labels; the rule must `sum` them and join `on (instance)`, exactly
   # as the sibling `_connections_saturated` does. (The r1 scrape also
@@ -376,7 +375,7 @@ tests:
         exp_alerts: []
 
   # ══ stellarindex_node_root_disk_filling_fast ══════════════════════
-  # ── firing: the 2026-06-11 log-flood shape, ~2 GB/min ─────────────
+  # ── firing: the r1 log-flood shape, ~2 GB/min ─────────────────────
   # 100 GB root, 40 GB free and draining 2 GB/min: the 10m linear
   # trend crosses zero within 30 min while free is already under 50%.
   - interval: 1m
@@ -668,24 +667,23 @@ tests:
   # ══ stellarindex_timescale_compression_lag ════════════════════════
   # for: 24h — the series must stay non-zero for a full day.
   #
-  # The alert used to read a single unlabelled scalar,
-  # stellarindex_uncompressed_chunks_older_than_7d, that counted every
+  # A single unlabelled scalar,
+  # stellarindex_uncompressed_chunks_older_than_7d, counting every
   # uncompressed chunk older than a hardcoded 7 days across all 46
-  # compression policies on r1. Two things that metric could not say,
+  # compression policies on r1, cannot say two things,
   # and the cases below pin both:
   #
-  #   - WHICH hypertable is behind (it had no label, so the alert named
-  #     nothing and the responder started from a full chunk census).
+  #   - WHICH hypertable is behind (with no label the alert names
+  #     nothing and the responder starts from a full chunk census).
   #   - Whether being older than 7 days means anything for that
   #     hypertable at all. fx_quotes compresses after 90 DAYS, so its
   #     8-to-89-day-old chunks are uncompressed exactly as intended;
-  #     the old scalar counted them and the runbook wrote the resulting
-  #     alert up as a "known false-positive pattern".
+  #     the scalar counts them, producing a standing false positive.
   #
-  # The producer (timescale-jobs-probe.timer) now subtracts each policy's
+  # The producer (timescale-jobs-probe.timer) subtracts each policy's
   # own compress_after AND its schedule_interval before counting, and
-  # labels per hypertable. Measured on r1 2026-09-05: the old query
-  # returned 3 and peaked at 28 on a daily sawtooth; the new one returns
+  # labels per hypertable. Measured on r1: the scalar query returned 3
+  # and peaked at 28 on a daily sawtooth; the per-policy one returns
   # 0 across all 46 policies.
   #
   # PROVEN-RED: point the expr back at
@@ -763,13 +761,13 @@ tests:
   # ══ stellarindex_timescale_probe_degraded ═════════════════════════
   #
   # Monitoring of monitoring: the three alerts above read one textfile
-  # and every way its producer could fail used to be silent. Each case
+  # and every way its producer can fail would otherwise be silent. Each case
   # below pins one of those ways.
   #
   # PROVEN-RED: drop the alert (or point every arm at a metric the probe
   # does not write) and all four firing cases report 0 alerts. The
-  # producer half is proven separately — with the pre-fix
-  # `q() { ... 2>/dev/null || true; }` there is no _probe_query_ok,
+  # producer half is proven separately — with a
+  # `q() { ... 2>/dev/null || true; }` producer there is no _probe_query_ok,
   # _probe_rows or _probe_last_run_unix series to feed these at all, and
   # a failed query writes a file indistinguishable from a healthy one.
   #
@@ -1401,7 +1399,7 @@ tests:
   # The shape the 6h arm cannot see. This counter is per job, so a job
   # scheduled every T accrues at most 6h/T failures: `> 10 in 6h` needs
   # T < 36 minutes, and every compression policy runs on a 12h schedule.
-  # Measured on r1 2026-09-18, policy_compression on `trades` (job 1000)
+  # Measured on r1, policy_compression on `trades` (job 1000)
   # had failed 6 times in 7 days with "Failed to convert '1' chunks to
   # columnstore" and no rule could fire on it.
   #

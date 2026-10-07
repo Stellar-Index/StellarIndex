@@ -153,13 +153,13 @@ tests:
                 Not urgent; ticket for the next workday.
 
 
-  # ── RLT-329 (#739): the latency burn family's min-signal guard ────
+  # ── the latency burn family's min-signal guard ────────────────────
   #
   # Both cases run the SAME real (non-synthetic) traffic shape — one
   # request a minute for two hours, 0.0167 req/s, two orders of
-  # magnitude under the 5 req/s TOTAL-rate floor the guard used to
-  # carry. They differ only in how many of those requests were slow.
-  # Under the old floor NEITHER case could ever fire, however badly
+  # magnitude under a 5 req/s TOTAL-rate floor. They differ only
+  # in how many of those requests were slow. Under such a floor NEITHER
+  # case could ever fire, however badly
   # the SLO burned; that is the disarm this pair pins shut.
   #
   # Every assertion below is a `> bool` comparison, so it evaluates to

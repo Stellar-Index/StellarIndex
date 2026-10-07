@@ -10,7 +10,7 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- account_creators rollup — the "who bootstrapped the most accounts"
--- league table behind GET /v1/accounts/creators (#351).
+-- league table behind GET /v1/accounts/creators.
 --
 -- SOURCE, BELOW PROTOCOL 23. stellar.account_movements, the feed-shaped
 -- classic-movement archive (ADR-0048 D2). A `create_account` operation
@@ -33,8 +33,8 @@
 -- full (ledger, tx_hash, op_index) operation identity.
 --
 -- Reading only the classic arm ranked creators over a population that
--- ended at the boundary — 4,715,612 creations short of the tip on r1
--- 2026-09-07 (#493). The two arms clamp on opposite sides of one
+-- ended at the boundary — 4,715,612 creations short of the tip on r1.
+-- The two arms clamp on opposite sides of one
 -- constant (clickhouse.P23BoundaryLedger, pinned against
 -- classicmovements.P23StartLedger and timescale.SEP41MovementsFloorLedger
 -- by TestP23BoundaryConstantsAgree), so their union is every ledger and
@@ -42,7 +42,7 @@
 --
 -- The pairing goes THROUGH the movement rather than reading the
 -- operation's own columns because stellar.operations retains failed
--- transactions' operations by design. Measured on r1 2026-09-07 over
+-- transactions' operations by design. Measured on r1 over
 -- ledgers 63,000,000-63,010,000: of 6,266 distinct CreateAccount
 -- operations, the 5,890 in successful transactions each match exactly
 -- one transfer leg and the 376 in failed transactions match none — so
@@ -63,7 +63,7 @@
 -- two things at once whose sizes are set by different populations: the
 -- dedupe hash table, one state per creation in all of history, and the
 -- LEFT JOIN's build side, one row per account that currently exists.
--- Measured on r1 2026-09-06 the pair summed past the ops-batch class's
+-- Measured on r1 the pair summed past the ops-batch class's
 -- 8 GiB budget — 8.12 GiB in FillingRightJoinSide, with the dedupe
 -- already spilled to 32 external parts and all 10,309,146,441 movement
 -- rows read — and the endpoint served 503 for want of a board. Raising
@@ -73,12 +73,12 @@
 -- So the archive pass is WALKED, one 1M-ledger partition per statement,
 -- into stellar.account_creators_ops below, and the board's join is taken
 -- OUT of the walk and run once against that working table. Measured on
--- r1 2026-09-06 at max_threads=2: the widest classic creation window
+-- r1 at max_threads=2: the widest classic creation window
 -- costs 13.9 s / 701.17 MiB (partition 55, 1,027,707 rows) and a window
 -- with no creations 2.9 s / 11.27 MiB, against 3.31 GiB for the single
 -- join. The post-P23 arm keeps a join of its own, but one whose build
 -- side is bounded by the window and pinned rather than estimated: across
--- the seven post-P23 partitions on r1 2026-09-07 it costs 16.0-106.9 s
+-- the seven post-P23 partitions on r1 it costs 16.0-106.9 s
 -- per window at a peak of 216 MiB-1.43 GiB, for 4,715,612 creations.
 -- Peak is a function of one partition's creations plus the account
 -- population, and both are stated rather than extrapolated; the cycle
@@ -87,7 +87,7 @@
 -- Each arm is free on the windows the other owns. The boundary clamp is
 -- a predicate on the partition key of both tables, so a window wholly on
 -- the far side prunes to no parts — measured at 0 rows read and 2-4 ms
--- per arm on r1 2026-09-07. A window is still scanned once.
+-- per arm on r1. A window is still scanned once.
 --
 -- Nothing is written to a staging arm until the walk has finished, so an
 -- interrupted cycle leaves the previous cycle's board live and the
@@ -107,7 +107,7 @@
 -- different source — LedgerEntry.ext.v1.sponsoringID, which is inside
 -- the base64 entry_xdr blob on stellar.ledger_entries_current and is
 -- not projected as a column anywhere. It is deliberately absent here
--- rather than approximated; see #351.
+-- rather than approximated.
 
 -- Narrow, deduplicated projection of every account creation, written
 -- one lake partition at a time, by both arms. Not served; it exists so
@@ -192,7 +192,7 @@ ORDER BY metric;
 CREATE TABLE IF NOT EXISTS stellar.account_creators_stats_staging
 AS stellar.account_creators_stats;
 
--- ── Creation GRAPH edges (#351) ─────────────────────────────────────
+-- ── Creation GRAPH edges ─────────────────────────────────────
 --
 -- The board above answers "who created the most accounts". These two
 -- tables answer the graph question the same issue asks, in both
@@ -203,7 +203,7 @@ AS stellar.account_creators_stats;
 -- the collapse is what makes the inbound direction bounded. An account
 -- can be created more than once: CreateAccount and AccountMerge are both
 -- repeatable, and some services recycle an address continuously.
--- Measured on r1 2026-09-09 over lake partition 63 (ledgers
+-- Measured on r1 over lake partition 63 (ledgers
 -- 63,000,000-63,999,999), 41,358 of 418,016 distinct created accounts
 -- carry more than one creation row and the widest carries 29,634 — which
 -- is recycling and not duplication: a sampled 20,000-ledger slice of
@@ -232,7 +232,7 @@ AS stellar.account_creators_stats;
 -- PARTIAL archive. These two are staged and EXCHANGEd with the board, so
 -- a served read never sees a half-built graph.
 --
--- COST. The aggregation measured 3.14 GiB / 24.5 s on r1 2026-09-09 at
+-- COST. The aggregation measured 3.14 GiB / 24.5 s on r1 at
 -- max_threads=2 over the whole working table. That is BELOW the cycle's
 -- existing peak — the board's account-population join, 3.31 GiB — so the
 -- cycle's ceiling is unchanged by these steps. The headroom is a stated
