@@ -181,6 +181,18 @@ stellarindex-sla-probe \
 freshness path before enabling the timer. From a laptop this *is* an
 edge measurement (TLS, DNS, Caddy, network), which the on-host run is not.
 
+## Diagnostic: per-endpoint latency sweep
+
+To find *which* endpoint is slow (rather than prove the SLA), run
+`scripts/dev/api-latency-sweep.sh`. It hits every anonymous GET endpoint
+`ITERS` times, ranks slowest-first by p50/p95/p99 and flags anything over
+the 200 ms p95 SLO or the 1 s ceiling. `CACHE_BUST=1` exposes uncached
+cost, `JSON=1` emits a diffable array, `--spec-check` lists OpenAPI GET
+paths the sweep misses. Run it on the host (`ssh root@<host> 'bash -s' <
+scripts/dev/api-latency-sweep.sh`) for pure server compute, or with
+`API_BASE_URL` set for an edge measurement. It is a diagnostic, not a
+contract test: shape is pinned by `scripts/dev/r1-smoke.sh`.
+
 ## Textfile-collector integration
 
 `-textfile-output PATH` (wrapper: `SLA_PROBE_TEXTFILE_OUTPUT`) writes via
