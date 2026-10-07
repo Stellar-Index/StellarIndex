@@ -9,9 +9,8 @@
 #
 # Non-TTY invocation (CI, a backgrounded shell, an agent harness) MUST
 # pass --yes or --dry-run; otherwise the script exits 2 immediately,
-# before the slow verify gate. Why: on 2026-08-28 the script was run
-# from a non-TTY shell, `read` hit EOF at the confirmation prompt and
-# aborted — but the caller piped through `| tail`, which masked the
+# before the slow verify gate. Why: run from a non-TTY shell, `read` hit
+# EOF at the confirmation prompt and aborted — but the caller piped through `| tail`, which masked the
 # non-zero exit, so a "release cut" was reported with NO tag on origin.
 # Refusing early and loudly beats guessing either way.
 #
@@ -41,8 +40,8 @@
 #
 # release.yml fires on the tag push and produces the GitHub Release
 # (cross-compiled binaries + SHA256SUMS + a sigstore bundle). It does
-# NOT build or push container images — that job was dropped on
-# 2026-05-11 (.github/workflows/release.yml header). See
+# NOT build or push container images (.github/workflows/release.yml
+# header). See
 # docs/operations/release-process.md for the full runbook this script
 # implements.
 
@@ -139,7 +138,7 @@ fi
 
 # Step 3 — no terminal to answer the step-7 prompt, and no instruction.
 # Without this, `read` hits EOF, the script aborts, and any `| tail`-style
-# pipeline hides the failure (2026-08-28: "release cut", no tag on origin).
+# pipeline hides the failure ("release cut", no tag on origin).
 # --dry-run never prompts, so it is exempt. It sits after the repository
 # preconditions deliberately: a caller on the wrong branch should be told
 # about the branch, which is the thing they can act on, not about the
@@ -247,10 +246,9 @@ echo "  OK (${newest_sla_proof}, ${sla_proof_age_days}d old)"
 # the committed HEAD into a disposable checkout and runs the full verify in
 # the pinned Linux container, adding the Docker-backed integration shards
 # when the range touches the paths that need them. Bare `scripts/dev/verify.sh`
-# was the gate until 2026-09-04, which made this script unrunnable on macOS:
-# the migrations-sync self-test needs GNU tar, so the run ends
-# `VERIFY INCOMPLETE … exit 1` there even when every section passed, and a
-# release could only ever be cut from Linux. prepush resolves its own
+# is not the gate because it cannot pass on macOS: the migrations-sync
+# self-test needs GNU tar, so the run ends `VERIFY INCOMPLETE … exit 1` there
+# even when every section passed. prepush resolves its own
 # profile, so a machine without Docker still gets the native gate.
 prepush_log="$(mktemp -t cut-release-prepush.XXXXXX)"
 echo "→ Running make prepush (the push clearance; this takes ~20 minutes)..."
@@ -286,7 +284,7 @@ echo "Ready to cut release $TAG"
 echo "  branch:        $branch ($local_sha)"
 echo "  tag:           $TAG"
 # A release's CHANGELOG section runs to many KiB, so piping it into `head`
-# can EPIPE the writer under pipefail (#475). sed reads to completion.
+# can EPIPE the writer under pipefail. sed reads to completion.
 echo "  CHANGELOG:     $(printf '%s' "$changelog_section" | sed -n '1,3p' | sed 's/^/    /')"
 echo ""
 

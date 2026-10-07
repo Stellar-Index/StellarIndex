@@ -9,7 +9,7 @@
 # for the same closed bucket + same pair, ADR-0015 is broken and
 # the multi-region story is fiction.
 #
-# Pre-launch posture (F-1234 audit-2026-05-12): only R1 is
+# Pre-launch posture: only R1 is
 # deployed today; R2/R3 are tracked as future work in
 # docs/architecture/ha-plan.md §10. To skip a not-yet-deployed
 # region, set its env var empty (`R2= R3= ./verify-cross-region.sh`).
@@ -71,7 +71,7 @@ echo
 
 # Count configured regions. Single-region runs short-circuit:
 # there's nothing to compare to, but failing the script trains
-# operators to ignore it (F-1234).
+# operators to ignore it.
 CONFIGURED=0
 [ -n "$R1" ] && CONFIGURED=$((CONFIGURED + 1))
 [ -n "$R2" ] && CONFIGURED=$((CONFIGURED + 1))

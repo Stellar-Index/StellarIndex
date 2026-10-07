@@ -71,7 +71,7 @@ check() {
 # the test pair has no recent trades; /v1/oracle/prices returns
 # 404 when no oracle has reported for the asset in the window).
 # Dual-status acceptance lets the smoke still catch a 5xx regression
-# without false-failing on documented-empty windows (F-0156).
+# without false-failing on documented-empty windows.
 #
 # The jq-test runs against the response body — useful for asserting
 # the problem+json error type, not just "some 4xx". Behavioural
@@ -112,21 +112,17 @@ expect_status() {
   #
   # URL is passed through `printf '%s'` rather than expanded inline
   # so any ${path} character that looks shell-special (`-`, `:`,
-  # asset_ids with hyphens) is treated as literal. Mitigates F-0157
-  # — the `assets/AAAA-G…` behaviour-pin was reporting "curl error"
-  # because the asset-not-found resolver branch took 4-5 s on a
-  # cold cache, which crossed the original 10 s budget in only the
+  # asset_ids with hyphens) is treated as literal. The `assets/AAAA-G…`
+  # behaviour-pin once reported "curl error" because the asset-not-found
+  # resolver branch took 4-5 s on a cold cache, which crossed the original 10 s budget in only the
   # worst case. The per-check `--timeout` flag lets data-dependent
   # paths declare a more generous budget without inflating the
   # global default.
   local url
   url="$(printf '%s%s' "$API_BASE_URL" "$path")"
-  # Capture curl's EXIT CODE, not just the fact that it failed. Until
-  # 2026-09-13 every curl failure printed the same "curl error
-  # (timeout=Ns)" string, so a connection reset, a refused connect and a
-  # genuine timeout were indistinguishable in the Healthchecks alert
-  # body. The failure that was flooding the dashboard read as a timeout
-  # when nothing had shown it was one.
+  # Capture curl's EXIT CODE, not just the fact that it failed: one generic
+  # "curl error" string makes a connection reset, a refused connect and a
+  # genuine timeout indistinguishable in the Healthchecks alert body.
   curl_err="$(mktemp)"
   body="$(curl -sS -m "$per_check_timeout" -A "stellarindex-smoke/1" -w "\n%{http_code}" "$url" 2>"$curl_err")" || curl_rc=$?
   curl_rc="${curl_rc:-0}"
@@ -203,9 +199,7 @@ check "status"             "/v1/status"  -- '.data.overall'
 echo
 
 echo "  Catalogue"
-# /v1/coins + /v1/currencies removed in rc.48 (28ac6ac9 +
-# 80c57e38); every consumer moved to /v1/assets per the F-1201
-# audit-2026-05-12 migration. Smoke checks updated to match.
+# /v1/assets replaces the removed /v1/coins and /v1/currencies.
 check "assets (5)"         "/v1/assets?limit=5" -- '.data | length > 0'
 check "asset native"       "/v1/assets/native"  -- '.data.asset_id == "native"'
 if [ "$NO_PRICES" -eq 1 ]; then
@@ -230,7 +224,7 @@ else
 fi
 # /v1/ohlc returns 404 errors/no-trades on empty windows per ADR-0018.
 # The smoke runs every 5 min — a cold pair with no recent trades is
-# the documented contract, not a regression. F-0156: accept both 200
+# the documented contract, not a regression. Accept both 200
 # and 404; only 5xx (route broken) or 400 (param contract slip) fail.
 expect_status "200|404" "ohlc USDC/XLM"  "/v1/ohlc?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=native"
 check "history (last 10)"  "/v1/history?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=native&limit=10"
@@ -262,7 +256,7 @@ echo
 
 echo "  Diagnostics"
 check "cursors"            "/v1/diagnostics/cursors"
-# F-0095 / 77bcd8c2: /v1/diagnostics/ingestion now surfaces a stale
+# /v1/diagnostics/ingestion surfaces a stale
 # flag on soft-fail builds; the route must remain available.
 check "diagnostics ingestion" "/v1/diagnostics/ingestion"
 check "ledger tip"         "/v1/ledger/tip" -- '.data.latest_ledger | tonumber > 0'
@@ -320,12 +314,7 @@ expect_status 400 "markets data-vendor source" "/v1/markets?source=coingecko&lim
 # wrong on rc.37 — adding them as live `expect_status` calls now
 # would false-fail every smoke run against the unpatched binary.
 # Uncomment after rc.38 reaches r1 (signal: `/v1/version` data.version
-# == v0.5.0-rc.38). All of the behaviour below is in main. No PR/issue
-# numbers here (RSWP-108): the ones this list previously cited each
-# now resolve to an unrelated live GitHub issue, not the change that
-# shipped the behaviour — the same class of dangling citation as
-# RSWP-086/-092/-094 above. Cite a real PR/issue number when one is
-# confirmed rather than guessing a replacement.
+# == v0.5.0-rc.38). All of the behaviour below is in main.
 #
 #   /v1/coins?cursor=garbage 400
 #   /v1/markets?cursor=garbage 400

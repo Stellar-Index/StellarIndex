@@ -111,7 +111,7 @@ top="\$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 # repository and every later commit is authored by the fixture.
 #
 # That happened here: .git/config acquired user.name=t / user.email=t@t
-# on 2026-09-09 and 151 commits were authored by it before anyone
+# and 151 commits were authored by it before anyone
 # noticed, 96 of them pushed to a public repository, where they became
 # two anonymous entries in the contributor list.
 #

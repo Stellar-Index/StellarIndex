@@ -51,9 +51,8 @@ echo "$H" | grep -iE "cf-cache-status|x-cache" || echo "    (no edge-cache heade
 echo
 
 bold "2. Hot surface — short max-age"
-# Handler requires `asset=`, not `base=`. F-1229 (codex audit-2026-05-12):
-# the prior `base=native` form returned 400 invalid-query-param, so the
-# CDN policy check never reached a 200 path.
+# Handler requires `asset=`, not `base=`: `base=native` returns 400
+# invalid-query-param, so the CDN policy check would never reach a 200 path.
 H=$(curl -sIk "$HOST/v1/price?asset=native&quote=fiat:USD" 2>&1 || true)
 check "/v1/price max-age short (≤60s)" "max-age=" "$(echo "$H" | grep -i cache-control || echo MISSING)"
 echo
@@ -66,7 +65,7 @@ else
 fi
 check "/v1/account/me sends no-store" "no-store" "$(echo "$H" | grep -i cache-control || echo MISSING)"
 # sigpipe-ok: $H is a single response's header block (a few hundred bytes)
-# and the pipeline is already `|| echo ""`-tolerant (#475).
+# and the pipeline is already `|| echo ""`-tolerant.
 edge=$(echo "$H" | grep -iE "cf-cache-status|x-cache" | head -1 || echo "")
 if [ -z "$edge" ] || [[ "$edge" == *"BYPASS"* ]] || [[ "$edge" == *"DYNAMIC"* ]]; then
     green "  ✓ Edge bypasses /v1/account/* (or no edge in front)"
@@ -81,7 +80,7 @@ echo
 bold "4. SSE surface — passthrough, no buffering"
 # We don't actually consume the stream — just check the
 # response starts within 5s and the headers are right.
-# F-1229 (codex audit-2026-05-12): handler param is `asset=`,
+# The handler param is `asset=`,
 # and the SSE Cache-Control directive is `no-cache` (which lets
 # clients revalidate / not cache the bytes), not `no-store`
 # (which would forbid any persistence at all and conflict with the

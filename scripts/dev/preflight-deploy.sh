@@ -2,7 +2,7 @@
 # preflight-deploy.sh — answer, on this machine and in one run, every
 # question .github/workflows/deploy.yml is about to ask.
 #
-# Four failed deploys on 2026-09-07 were all knowable before the dispatch:
+# Four failed deploys in one day were all knowable before the dispatch:
 # two config-apply-gate reds whose surface diffs turned out to be
 # comment-only (learned twice at the cost of a failed run each; the gate
 # now answers that case itself), one six-binary set dispatched at
@@ -31,7 +31,7 @@
 #
 # The last line of output is the exact `gh workflow run deploy.yml` command
 # for that region. It never carries `-f config_acknowledged=true`: both
-# cases that flag used to cover are now cleared by machine, so what is left
+# cases that flag covered are cleared by machine, so what is left
 # is an operator asserting something no checker can read, which this script
 # has no basis to assert for them. Exit is non-zero whenever an operator
 # decision is outstanding.
@@ -367,7 +367,7 @@ done
 #
 # The baseline is computed exactly as deploy.yml's "Capture the host's live
 # version" step computes it: the LOWEST SemVer across the managed binaries,
-# with stellarindex-migrate excluded because it legitimately lags (#427).
+# with stellarindex-migrate excluded because it legitimately lags.
 rule "3. live versions on ${REGION}"
 live_pairs=()
 rollback_count=0
@@ -397,7 +397,7 @@ done"
     # earlier deploy, and deploy.yml's baseline still counts it. Scoping
     # this read to manifest_set — as section 2's per-binary table correctly
     # does for ITS purpose — silently dropped that sidecar and could report
-    # "nothing outstanding" on a range the gate itself fails (#556).
+    # "nothing outstanding" on a range the gate itself fails.
     # shellcheck disable=SC2016  # single-quoted on purpose: this is
     # evaluated by the REMOTE shell, byte-for-byte deploy.yml's own
     # baseline snippet, and must not expand locally.
@@ -502,7 +502,7 @@ changed="$(git diff --name-only "$BASELINE" "$VERSION" -- "${SURFACES[@]}")"
 # substantive half is ALREADY APPLIED on this host.
 #
 # Both judgements come from the gate (--payload / --ddl-objects) rather
-# than from a second implementation here: since 2026-09-07 the gate PASSES
+# than from a second implementation here: the gate PASSES
 # a comment-only surface itself, so a local classifier that disagreed with
 # it would mispredict the verdict this section exists to preview.
 #
@@ -550,8 +550,8 @@ else
         # Substantive. For a ClickHouse DDL diff that adds only whole new
         # statements the host can be ASKED whether the objects exist —
         # which is the difference between "already applied" and
-        # "unapplied", and the difference the 2026-09-07 acknowledgement
-        # got right only by luck. Nothing equivalent exists for a systemd
+        # "unapplied", and the difference a manual acknowledgement
+        # can get right only by luck. Nothing equivalent exists for a systemd
         # unit or an ansible template: those stay substantive.
         if objects="$(bash "$GATE" --ddl-objects "$BASELINE" "$VERSION" "$f")" && [ -n "$objects" ]; then
             if [ "$NO_HOST" -eq 0 ] && present="$(ch_objects_present "$objects")"; then
@@ -593,7 +593,7 @@ printf '%s\n' "$gate_out" | sed 's/^/      | /'
 # the object check above — so the flag has exactly one remaining meaning:
 # an operator asserting, from their own knowledge, that a surface no
 # checker can read is applied. This script has no basis to assert that on
-# their behalf, and the rule it used to apply ("all comment-only, so
+# their behalf, and the obvious rule ("all comment-only, so
 # acknowledge") is the rule that would have acknowledged v0.61.1..v0.62.0's
 # unapplied CREATE TABLE.
 if [ "$comment_only" -gt 0 ]; then

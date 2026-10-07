@@ -16,9 +16,8 @@ export INTEGRATION_SHARD_TIMEOUT="${INTEGRATION_SHARD_TIMEOUT:-${budget}m}"
 log_dir="$(mktemp -d "${TMPDIR:-/tmp}/stellarindex-integration.XXXXXX")"
 pids=()
 start="$(date +%s)"
-# The log directory survives a FAILING run. It used to be removed
-# unconditionally, so the only record of a red shard was the 160 trailing
-# lines printed below — and on this suite those are container lifecycle and
+# The log directory survives a FAILING run. Otherwise the only record of a
+# red shard is the 160 trailing lines printed below — and on this suite those are container lifecycle and
 # heavy-job chatter from tests that ran AFTER the failure, with the
 # `--- FAIL: TestX` line long scrolled past. A reader of a red gate then has
 # the fact of a failure and no name for it.
