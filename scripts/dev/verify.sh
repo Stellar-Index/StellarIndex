@@ -11,7 +11,7 @@ cd "$(dirname "$0")/../.."
 
 # ── Preconditions: five seconds, before anything expensive ───────────────
 #
-# Both failed local verify runs on 2026-09-07 died about ten minutes into a
+# Two failed local verify runs died about ten minutes into a
 # twelve-minute sequence, in sections unrelated to the change under test,
 # on a missing install: `openapi-typescript: command not found` (web/explorer
 # had no node_modules), then `tsc: command not found` (web/status had none).
@@ -105,8 +105,8 @@ fi
 # A PRESENT node_modules is not a CURRENT one. The checks above ask whether an
 # install happened, never whether it matches the lockfile in the tree — so a
 # pull that moves pnpm-lock.yaml leaves the gate running yesterday's packages
-# and saying nothing. On 2026-09-08 `package.json` declared vitest `^5.0.0`
-# (merged in #500) while `node_modules` still held **4.1.10**, so every local
+# and saying nothing. Once `package.json` declared vitest `^5.0.0`
+# while `node_modules` still held **4.1.10**, so every local
 # `make web-test` had been grading the tree under a different test runner than
 # CI installs — the same shape as the Go toolchain skew checked above, and
 # invisible for the same reason: the tool was present, just wrong.
@@ -214,7 +214,7 @@ fi
 # ── Tier 0: every check measured under five seconds, before the Go build ────
 #
 # Cost order, not topic order. Each section below runs in under five seconds
-# standalone (measured 2026-09-07 on a warm cache; the table is in
+# standalone (measured on a warm cache; the table is in
 # docs/contributing/local-verification.md), and the sections after this block
 # run from five seconds to several minutes. Nothing here changes WHAT any
 # check asserts, WHICH checks run, or the ALL CHECKS PASSED / VERIFY
@@ -264,7 +264,7 @@ echo "=== pnpm version pin self-test ===" && ./scripts/ci/lint-pnpm-version-pin-
 echo "=== Change-class computation self-test ===" && ./scripts/ci/check-change-class-test.sh
 # Refuses a Dependabot PR that rides a go/toolchain or engines/packageManager
 # bump in under a dependency-patch label — that decision is deliberate, never
-# automatic (see #495).
+# automatic.
 # Another HELPER: CI passes it the PR author login. Its self-test is the mirror.
 echo "=== Dependabot toolchain-bump guard self-test ===" && ./scripts/ci/check-dependabot-toolchain-bump-test.sh
 # govulncheck must be built with the Go version go.mod declares, or a
@@ -355,9 +355,9 @@ echo "=== Wrangler build-cache tracking tripwire self-test ===" && bash scripts/
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhouse-exporter-test.sh
-# F128 (audit-2026-09-02): the archival-node role configures ClickHouse in
-# four task files and installs it in a fifth, so a host without ClickHouse
-# used to hard-fail the whole role. Runs the role's own main.yml locally
+# The archival-node role configures ClickHouse in four task files and
+# installs it in a fifth, so a host without ClickHouse must not hard-fail
+# the whole role. Runs the role's own main.yml locally
 # (~12s, --check for the log-discipline arms) — no hosts, no ClickHouse.
 echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-clickhouse-host-gate-test.sh
 echo "=== Ansible listing-sync pubnet gate ===" && ./scripts/ci/ansible-listing-sync-gate-test.sh
@@ -407,8 +407,7 @@ echo "=== Comment history citations ===" && ./scripts/ci/lint-comments.sh
 echo "=== Comment history citations self-test ===" && ./scripts/ci/lint-comments-test.sh
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
 # on machines without a Prometheus install and catches the mis-indented-rule
-# class that otherwise only CI's promtool job flags (2026-07-06 galexie-archive
-# incident: alerts at group level → "field expr not found in type RuleGroup").
+# class that otherwise only CI's promtool job flags (alerts at group level → "field expr not found in type RuleGroup").
 echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # YAML-aware runbook guard (audit C4-1): runbook_url must be an annotation,
 # not a label, on every alert — else the Alertmanager Discord templates
@@ -416,9 +415,9 @@ echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
 # Secret-rendering ansible template tasks must set `diff: false` (or
 # no_log) so `--check --diff` never prints vault material into scrollback
-# or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
+# or the weekly drift job's CI log.
 echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
-# INV-0802: installed scripts reaching ClickHouse without a credential file
+# Installed scripts reaching ClickHouse without a credential file
 # (report-only until `default` is locked) + its self-test.
 echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-auth.py && ./scripts/ci/lint-ch-client-auth-test.sh
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
@@ -457,7 +456,7 @@ fi
 # the `openapi` job, web/explorer/src/api/types.ts in the `web/explorer`
 # job — each by regenerating and diffing. verify.sh ran none of them, so an
 # OpenAPI change that regenerated two of the three passed local gate and
-# reddened CI on the third (2026-07-25).
+# reddened CI on the third.
 #
 # Regenerating here is deliberate: unlike CI, a local run should FIX the
 # drift rather than just report it, so the operator commits the result. The
@@ -488,7 +487,7 @@ fi
 # from internal/config/config.go struct tags (`make docs-config`) but was
 # never in the diff list above, so a struct-tag removal/rename left the doc
 # describing a config block that no longer exists until a human noticed it
-# (2026-09-01, #466: the polygon-forex connector). Needs only `go run`, so —
+# (it happened to the polygon-forex connector). Needs only `go run`, so —
 # unlike the block above — it runs unconditionally, no node/npx gate.
 echo "=== Generated config reference drift ==="
 go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
@@ -512,7 +511,7 @@ fi
 #   d  everything else      ops/ansible/migration/monitoring self-tests; none of it
 #                           invokes go, invokes pnpm, or writes a tracked file
 #
-# Measured 2026-09-07 on this machine, one real run, after the doc-links
+# Measured on one machine, one real run, after the doc-links
 # self-test fix above cut its cost from 227 s to 66 s: serial total 918 s,
 # with Lint 154 s, Monitoring 146 s, Test 128 s and Doc links self-test 66 s
 # as the four largest remaining costs — no longer one section dominating,
@@ -577,8 +576,8 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
     if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
         echo "=== Showcase typecheck ===" && make web-typecheck
         echo "=== Showcase lint ==="      && make web-lint
-        # The vitest suite ran in NEITHER CI nor this gate (cold audit
-        # 2026-08-04): 209 tests across 49 files, all green and all dead —
+        # Without this the vitest suite ran in NEITHER CI nor this gate:
+        # 209 tests across 49 files, all green and all dead —
         # including safe-domain.test.ts, the isSafeHomeDomain /
         # isSafePublicImageUrl phishing + client-SSRF regression gate, and
         # the AGT-06 stale-flag regression. A refactor loosening any of
@@ -586,7 +585,7 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
         # BUILD BEFORE TEST, deliberately. nav-shell.built.test.ts asserts on
         # the static export in web/explorer/out, so with the build after it the
         # suite graded whatever `out/` a previous run happened to leave behind.
-        # On 2026-09-08 that was a five-day-old export from before /rwa existed,
+        # Once that was a five-day-old export from before /rwa existed,
         # and the test duly reported `/rwa: no rwa/index.html in the export` plus
         # three pages with an empty <main> — a stale artifact, not a regression in
         # the source. A test whose verdict depends on leftover build output is
@@ -667,8 +666,8 @@ lane_d() { # everything else
     fi
     echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
     echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
-    # Two repo-gates gates that landed (#287, #305) without their verify.sh
-    # twin — check-verify-parity was red on main for everyone until added here.
+    # Repo-gates self-tests need a verify.sh twin, or check-verify-parity
+    # goes red on main for everyone.
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
     echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
@@ -710,11 +709,11 @@ lane_d() { # everything else
     fi
     # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
     # so a new base64/XDR test fixture that trips the generic-api-key entropy
-    # heuristic passed local gate but reddened CI (2026-07-06). Graceful-skip
+    # heuristic passed local gate but reddened CI. Graceful-skip
     # when absent (mirrors promtool/govulncheck).
     #
     # TWO scans, because neither subsumes the other and running only the first
-    # is what let a leak through on 2026-07-25:
+    # is what once let a leak through:
     #
     #   --no-git  scans the WORKING TREE, including uncommitted edits. This is
     #             the one that catches a fixture before you commit it, when the
