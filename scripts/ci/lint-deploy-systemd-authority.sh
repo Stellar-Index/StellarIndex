@@ -12,9 +12,8 @@
 #     here is documentation and is NOT what runs; the .j2 is. Editing it
 #     changes nothing, which is how several of these drifted (see the
 #     drift notes in stellarindex-api.service.j2) — RestartSec, User and
-#     VERIFY_ARCHIVE_MAX_RUNTIME among them (issue #818). Being templated
-#     used to be enough to pass; now the two must also agree on every
-#     directive they share, checked by deploy-systemd-reference-diff.py.
+#     VERIFY_ARCHIVE_MAX_RUNTIME among them. The two must also agree on
+#     every directive they share, checked by deploy-systemd-reference-diff.py.
 #
 # A third state is the finding this lint exists for:
 #
@@ -82,9 +81,8 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   if grep -qxF "$b" <<<"$authoritative"; then
     continue
   fi
-  # REFERENCE: the role templates the same unit itself. Being templated
-  # used to be the whole check; now the two copies must also agree on
-  # every directive they both declare (RLT-434) — see
+  # REFERENCE: the role templates the same unit itself, and the two copies
+  # must also agree on every directive they both declare — see
   # deploy-systemd-reference-diff.py for what counts as a divergence.
   j2="$ROLE/templates/systemd/$b.j2"
   if [ -f "$j2" ]; then

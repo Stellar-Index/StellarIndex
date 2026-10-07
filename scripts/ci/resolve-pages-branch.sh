@@ -11,7 +11,7 @@
 #   preview     labelled with the dispatching ref's name; `main` is refused,
 #               because that label would publish production without the
 #               production approval gate.
-# The label reaches wrangler's command line, so it is allowlisted (F-004).
+# The label reaches wrangler's command line, so it is allowlisted.
 #
 # Env: DEPLOY_ENVIRONMENT (production|preview), GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_ENV — the last three are set by the Actions runner.

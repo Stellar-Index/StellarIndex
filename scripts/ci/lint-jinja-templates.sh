@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Parse every ansible Jinja template (*.j2) the way ansible will.
 #
-# Why this exists (r1, 2026-08-29): pgbackrest-backup.sh.j2 contained the
-# bash array-length idiom (dollar, brace, hash). In Jinja, brace-hash opens
-# a COMMENT, so the template failed to render with "Missing end of comment
-# tag" — and NOTHING in CI caught it: `ansible-playbook --syntax-check`
-# parses playbooks/roles, never template BODIES, and the wrapper's own
-# self-test runs the raw file. The nightly pgBackRest job therefore kept
-# running the pre-repo2 command on r1 for a full day after #305 "shipped".
+# Why this exists: the bash array-length idiom (dollar, brace, hash) opens
+# a Jinja COMMENT, so the template fails to render with "Missing end of
+# comment tag" and the host keeps running the previous script.
+# `ansible-playbook --syntax-check` parses playbooks/roles, never template
+# BODIES, and a wrapper's own self-test runs the raw file.
 #
 # Parse-only: no variables are resolved, so undefined vars/filters are not
 # errors here — this catches syntax the renderer can never get past.

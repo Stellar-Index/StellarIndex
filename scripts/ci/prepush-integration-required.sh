@@ -8,21 +8,16 @@
 # `needs.preflight.outputs.integration == 'true'`, i.e. on the preflight path
 # filter (mirrored in scripts/ci/check-change-class.sh). So this list is not a
 # local-only optimisation with a CI backstop — when BOTH classifiers omit a
-# path, the suite runs in no lane at all for a diff confined to it. That is
-# T424/T449: scripts/ops/fx-history-backfill's `//go:build integration` INV-3
-# regression (operator fx_quotes corrections must carry a positive derive
-# generation) compiled in the unconditional compile gate and executed nowhere.
+# path, the suite runs in no lane at all for a diff confined to it: its
+# `//go:build integration` tests compile in the unconditional gate and
+# execute nowhere.
 # This list must therefore stay a superset of the Makefile's INT_TEST_PKGS
 # directories as well as of every path that can change what the suite
 # observes. When it is narrower, a change lands locally green and CI red — or,
 # for an INT_TEST_PKGS-only directory, green everywhere while its money
-# invariant goes unchecked. The CI-red shape is exactly what
-# happened on 2026-09-04: a commit touching only internal/api/v1 changed
-# /v1/history's read to fold both stored market directions, and
-# test/integration/coverage_floor_test.go pinned the behaviour it replaced.
-# That suite stands up the real router and drives served surfaces, so a
-# handler change reaches it; the filter did not know that and skipped the
-# shards. Widening a path here costs local minutes. Omitting one costs a red
+# invariant goes unchecked. The suite stands up the real router and drives
+# served surfaces, so a handler-only change (internal/api/v1) reaches it
+# and must run the shards. Widening a path here costs local minutes. Omitting one costs a red
 # main.
 set -euo pipefail
 

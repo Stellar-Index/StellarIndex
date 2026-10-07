@@ -4,8 +4,7 @@
 #
 # VERSIONS.md exists so a decode note's file/line citations stay
 # re-verifiable against the SHA it claims. If go.mod bumps the SDK and
-# VERSIONS.md's row is left on the old tag (Q274: go.mod moved to
-# v0.7.3 while the row stayed on v0.6.0/dd844ab3), the row silently
+# VERSIONS.md's row is left on the old tag, the row silently
 # points every future reader at the wrong upstream commit while
 # claiming to be the source of truth.
 #

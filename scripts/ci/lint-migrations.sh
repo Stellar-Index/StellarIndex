@@ -49,9 +49,8 @@
 # The register is prose, so this pass checks PRESENCE, in both
 # directions, and SHAPE: a description starts with a capital, digit,
 # backtick or `**` and ends with a full stop (optionally inside `**`).
-# ~65 rows were once lifted from one wrapped header line and stopped
-# mid-sentence ("... mapping that the") or kept only a tail ("(F-1324).");
-# presence passed them all. Shape cannot check that a row is true.
+# A row lifted from one wrapped header line stops mid-sentence or keeps
+# only a tail; presence alone passes it. Shape cannot check that a row is true.
 #
 # ── money-column detail ──
 #
@@ -89,8 +88,7 @@ indent() { printf '  %s\n' "${1//$'\n'/$'\n'  }"; }
 
 # Monetary column-name stems. `_usd` matches only as a suffix of the
 # column name (value_usd, volume_usd, …) so `usda`-style codes don't
-# trip it. stroop/wei/circulating/market_cap carried over from the
-# original lint-i128.sh name set; twap/vwap/tvl/wealth added 2026-08
+# trip it. twap/vwap/tvl/wealth are included
 # (a time/volume-weighted-average PRICE and total-value-locked / net-
 # worth aggregate are money — must be NUMERIC, never float).
 #
@@ -381,7 +379,7 @@ while IFS= read -r entry; do
 done <<<"$ch_float_baseline"
 echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under ${CH_DIR}."
 
-# ── pass 5: downs never delete rows silently (#357 F1, #595) ───────
+# ── pass 5: downs never delete rows silently ───────
 # A down that narrows a CHECK must REFUSE while offending rows exist
 # (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not
 # DELETE them: a rollback past it would otherwise discard production
@@ -541,7 +539,7 @@ echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH
 # Postgres runs as one implicit transaction. An explicit COMMIT/ROLLBACK
 # ends it, so every statement after the first one runs in a fresh
 # transaction: a failure there leaves the earlier half durable and the
-# version dirty (GH #1158). BEGIN; … COMMIT; around the whole body is
+# version dirty. BEGIN; … COMMIT; around the whole body is
 # fine; anything but comments after the COMMIT is not. TXN_DIR is the
 # fixture seam for scripts/ci/lint-migrations-test.sh.
 #

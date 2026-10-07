@@ -3,10 +3,10 @@
 # pnpm version from the package.json it's about to install for
 # (`package_json_file:`), never a hardcoded `version:` input.
 #
-# T547 (audit-2026-09-18): several workflow steps pinned pnpm via
+# A workflow step that pins pnpm via
 # `version: "10"` (major-only) while the package.json they install for
 # declares an exact `packageManager: "pnpm@10.33.0"` — two independent
-# copies of the same fact that can (and did) drift apart. action-setup
+# copies of the same fact that drift apart. action-setup
 # reading `package_json_file:` makes the package.json the single source
 # of truth; there is nothing left to drift.
 #

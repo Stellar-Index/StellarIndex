@@ -61,12 +61,6 @@
 #   decision in front of a reviewer. Reviewers enforce the rule; this
 #   script guarantees they get the chance to.
 #
-#   Before 2026-09-02 the repo held the opposite claim too
-#   (scripts/ci/lint-docs.sh froze two wrong migration headers as
-#   "CANNOT BE CORRECTED") while febf720a edited nine shipped downs
-#   under this header. Both are resolved to the rule above; lint-docs.sh
-#   no longer carries an exemption list.
-#
 # Maintenance:
 #
 #   Adding (or, per the rule above, editing/removing) a migration →

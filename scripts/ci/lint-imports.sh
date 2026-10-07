@@ -10,7 +10,7 @@
 # -------------
 #
 #   A. No `internal/stellarrpc` in production ingest.
-#      Reason: stellar-rpc was removed from r1 on 2026-04-23; the
+#      Reason: stellar-rpc is not run on r1 (AGENTS.md invariant 6); the
 #      production ingest path is Galexie → ledgerstream →
 #      dispatcher → decoder. See
 #      docs/architecture/ingest-pipeline.md.

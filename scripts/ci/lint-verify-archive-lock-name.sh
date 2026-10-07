@@ -5,7 +5,7 @@
 # that first argument (C4-14 / INF-11): a manual re-run under a different
 # name doesn't share the scheduled unit's singleton lock, so an operator
 # following the runbook mid-incident can run concurrently with the timer
-# instead of being skipped with exit 75 (F153).
+# instead of being skipped with exit 75.
 #
 # Run: bash scripts/ci/lint-verify-archive-lock-name.sh
 set -uo pipefail

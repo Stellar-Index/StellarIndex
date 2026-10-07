@@ -21,9 +21,7 @@
 #     reinterpretation, narrowing, floats) and every math/big
 #     Int64/Uint64/Float64 narrowing, with //i128:ok escapes.
 #   - scripts/ci/lint-migrations.sh — the SQL side (money columns
-#     must be NUMERIC). The migration check that used to live here
-#     moved there 2026-07-05 (broader name set + lint-money:ok
-#     escapes).
+#     must be NUMERIC, with lint-money:ok escapes).
 #
 # Exit 0 clean, non-zero on any violation. Wired into `make verify`.
 set -euo pipefail

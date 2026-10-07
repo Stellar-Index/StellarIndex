@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-ch-apply-scope.sh — deploy/clickhouse/ is not a bootstrap manifest.
 #
-# ── THE DEFECT THIS EXISTS FOR (2026-09-09) ──────────────────────────────
+# ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────
 #
 # configs/ansible/roles/archival-node/tasks/08-clickhouse.yml used to copy
 # `deploy/clickhouse/*.sql` with with_fileglob and execute every file it
@@ -164,7 +164,7 @@ scope_of() { # $1 = basename → prints scope, or nothing
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 # The fresh-host object catalogue is one file per object ($tmp/fresh/<name>
-# holding its normalized statement) rather than a greppable blob: #475 —
+# holding its normalized statement) rather than a greppable blob:
 # `… | grep -q` under `set -o pipefail` is a coin flip once the producer
 # outsizes the 64 KiB pipe buffer, and tier1_schema.sql's 60 statements are
 # comfortably past that.

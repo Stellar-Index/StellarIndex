@@ -3,7 +3,7 @@
 # and any other *_FLAGS / *_ARGS / *_OPTS) must reach a DIRECT-EXEC
 # ExecStart= in bare `$VAR` form, never `${VAR}`.
 #
-# THE BUG CLASS (#1231). systemd.service(5): `$VAR` as a whole word is
+# THE BUG CLASS. systemd.service(5): `$VAR` as a whole word is
 # split on whitespace into zero or more argv entries; `${VAR}` is
 # substituted as exactly ONE entry. The EXTRA_FLAGS hatch was copied from
 # supply-snapshot, a `/bin/sh -c` unit where the shell re-splits, onto

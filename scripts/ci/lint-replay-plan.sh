@@ -8,13 +8,10 @@
 # forks: recent history has the new shape, older history does not, and
 # no gate notices because each row is individually valid.
 #
-# That is exactly what happened on 2026-08-27/28: commit e17288bd widened
-# internal/canonical/asset_fiat.go from 32 to 132 fiat codes. Live
-# ingestion began recording 4 additional currencies immediately; nobody
-# replayed history for them, and 190,228 served rows were missing for a
-# day. The gap only surfaced once a stale gate binary was upgraded and
-# started comparing against the widened set. The change was correct; the
-# omission was the plan — and a plan that lives in someone's head is not
+# Widening a canonical set (e.g. fiat codes) starts live ingestion of the
+# new members at once; without a replay their history is missing, and the
+# gap surfaces only when a gate compares against the widened set. The
+# change is correct; the omission is the plan — and a plan that lives in someone's head is not
 # a plan the next operator can read.
 #
 # This gate makes the plan ship WITH the change. Any commit range that

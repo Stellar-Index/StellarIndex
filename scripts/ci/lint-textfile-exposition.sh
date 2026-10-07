@@ -6,7 +6,7 @@
 # Every line a node_exporter textfile-collector producer writes must parse
 # as Prometheus exposition format, because one bad line makes node_exporter
 # reject the WHOLE file — and with it every unrelated family that shares
-# it (r1 2026-09-10).
+# it.
 #
 # Usage: lint-textfile-exposition.sh
 set -uo pipefail

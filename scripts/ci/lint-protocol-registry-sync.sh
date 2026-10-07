@@ -7,8 +7,7 @@
 # mirrors the NAME set so the Next.js static export knows which
 # /protocols/{name} slugs to pre-render. The two are hand-maintained and —
 # until this lint — nothing cross-checked them, so a Go-registered protocol
-# could silently have no pre-rendered explorer page (a 404), exactly the
-# sorocredit gap found 2026-07-07.
+# could silently have no pre-rendered explorer page (a 404).
 #
 # §2 DEX pages. internal/sources/external/registry.go is authoritative for
 # which sources are Class=Exchange Subclass=DEX. TWO frontend maps mirror
@@ -18,7 +17,7 @@
 #     /dexes/<source> is not pre-rendered and the venue has no page;
 #   - ALL_DEXES in dexes/DexesView.tsx is the source-filter chip row, so a
 #     missing entry means the venue cannot be filtered for.
-# sushiswap_v3 once shipped registered and serving trades with no page (#350).
+# A venue can otherwise ship registered and serving trades with no page.
 #
 # Fails if any pair of sets disagrees.
 #
