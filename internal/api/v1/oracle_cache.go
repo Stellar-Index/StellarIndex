@@ -215,7 +215,7 @@ var errOracleFillPanicked = errors.New("oracle cache: fill panicked")
 // its own deadline) only stops that caller from waiting — it must
 // not abort the in-flight fetch out from under every other caller
 // single-flighted onto the same key. Mirrors CachedHistoryReader's
-// cold path (LatestTradePerSource), the proven fix for this shape.
+// cold path (LatestTradePerSource), which handles the same shape.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,

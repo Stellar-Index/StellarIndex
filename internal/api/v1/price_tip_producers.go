@@ -84,7 +84,7 @@ const defaultMaxTipProducers = 512
 // entry lives — releasing the connection is not enough to give the slot
 // back, because the linger is exactly what the flood exploits.
 //
-// 24 is chosen against the shipped per-IP concurrent-stream cap
+// 24 is chosen against the per-IP concurrent-stream cap
 // ([config].api.max_streams_per_ip, default 20): a compliant caller can
 // stream at most 20 distinct pairs at once, so 24 admits every producer
 // it can legitimately be watching plus headroom for the linger overlap

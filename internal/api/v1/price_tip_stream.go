@@ -78,7 +78,7 @@ const tipStreamDivergenceStallInterval = time.Minute
 
 // handlePriceTipStream serves GET /v1/price/tip/stream — the SSE
 // counterpart to /v1/price/tip per ADR-0018 §"SSE stream wires onto
-// the tip surface" and the Wk-7 plan row L3.7.
+// the tip surface".
 //
 // Wire shape per connection:
 //
@@ -162,7 +162,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// during a Postgres stall would pin the handler goroutine AND its
 	// pool connection until the client disconnected, and WriteTimeout
 	// does not cancel an in-flight query. 20 such connections from one
-	// IP (the shipped per-IP cap) plus a second IP exhaust the 25-conn
+	// IP (the default per-IP cap) plus a second IP exhaust the 25-conn
 	// pool, and the held connections never self-release — an outage
 	// that outlives the hiccup that caused it.
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), tipStreamTickTimeout)
@@ -384,7 +384,7 @@ func (s *Server) runTipStreamProducer(
 	// this connection. Registered BEFORE `defer close(ch)` so that close runs FIRST
 	// (defers are LIFO): the SSE writer sees the channel close and ends the response
 	// cleanly, then this logs. Never swallow it silently — a crash turning into an
-	// invisible dropped connection is its own bug.
+	// invisible dropped connection hides the crash.
 	defer s.recoverStreamProducer("price_tip")
 	defer close(ch)
 

@@ -842,7 +842,7 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// ?window= would select between the closed-bucket surface this
 	// route serves and the aggregator's rolling VWAP — the exact
-	// surface-selecting query parameter ADR-0018 prohibits (GH-762).
+	// surface-selecting query parameter ADR-0018 prohibits.
 	// Rejected before the reader-nil check and parameter parsing below
 	// so a misconfigured deployment 400s the same way a healthy one
 	// does, rather than leaking which failure mode is active.
@@ -1118,9 +1118,8 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 // `/v1/price`'s confidence lookup. Matches the smallest window in
 // `orchestrator.DefaultWindows` (5m) — the freshest cached score.
 //
-// When the L3.1 closed-bucket-CAGG read path lands, this constant
-// can refine to the API's actual served granularity. For now 5m
-// is the right tradeoff: covered by the aggregator's default
+// 5m is the right tradeoff while price reads scan raw buckets rather
+// than a closed-bucket CAGG: covered by the aggregator's default
 // window set + hot enough that a stale score TTL's out before
 // being read.
 const confidenceLookupWindow = 5 * time.Minute
@@ -1554,8 +1553,8 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 //  2. Read-time stablecoin → fiat:USD rewrite against the operator-
 //     declared classic USD-pegs (catches the case where the
 //     aggregator's [aggregate].enable_stablecoin_fiat_proxy isn't
-//     enabled but trades.usd_pegged_classic_assets is — the same
-//     fix the chart handler ships — see chart.go's chartStablecoinFallback).
+//     enabled but trades.usd_pegged_classic_assets is — the chart
+//     handler does the same; see chart.go's chartStablecoinFallback).
 //  3. Fiat-vs-fiat cross-rate from the forex snapshot
 //     (always returns triangulated=true since the value is derived).
 //
