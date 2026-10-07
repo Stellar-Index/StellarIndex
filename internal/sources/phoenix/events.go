@@ -21,7 +21,7 @@ const SourceName = "phoenix"
 // The string spelling MATTERS — "actual received amount" has
 // embedded spaces (Q2), which means it CAN'T be encoded as an
 // ScvSymbol (identifier-only) — soroban-sdk emits it as ScvString
-// instead. Verified 2026-04-23 against mainnet: every Phoenix swap
+// instead. Verified against mainnet: every Phoenix swap
 // topic slot is ScvString, not ScvSymbol.
 const (
 	FieldSender         = "sender"
@@ -146,11 +146,10 @@ const (
 
 // ─── Reward actions ──────────────────────────────────────────────
 //
-// ROADMAP #89 residual (2026-07-10): a read-only lake topic census
-// against the gated stake-contract set found two more stake-contract
-// actions classifyAny didn't recognize. Real-lake-bytes confirmed the
-// exact field sets (ledgers 53587626 / 53588319, stake contracts
-// CBRGNWGAC25… / CAF3UJ45ZQJ…):
+// A lake topic census of the gated stake contracts found two reward
+// actions beyond bond/unbond. Real lake bytes confirm the exact field
+// sets (ledgers 53587626 / 53588319, stake contracts CBRGNWGAC25… /
+// CAF3UJ45ZQJ…):
 //
 //	withdraw_rewards   (2 events): user, reward_token
 //	distribute_rewards (1 event):  asset
@@ -160,7 +159,7 @@ const (
 // in the SAME op (event_index+1, verified on both real samples) — a
 // SAC contract event, not a stake-contract field-event, so it is NOT
 // correlated here (would require cross-decoder joins on tx_hash+
-// op_index against sep41_transfers, out of scope for this pass). The
+// op_index against sep41_transfers, which this decoder does not do). The
 // events are stored with a NULL amount rather than a misleading "0"
 // (see phoenix_stake_events.amount, migration 0098).
 //
@@ -225,33 +224,24 @@ const (
 	MainnetFactory  = "CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI"
 	MainnetMultihop = "CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G"
 
-	// XLM SAC as referenced by Phoenix's scripts. Note this is
-	// REMOVED 2026-07-26 (audit C4-012 follow-through): this constant
-	// carried "CDLZFC3SY…", which is NOT the XLM SAC on any network —
-	// it is the synthetic contract id used across test/integration
-	// fixtures. The comment above it ("Phoenix uses a different
-	// canonical form") rationalised a copy-paste error; there is
-	// exactly one native-XLM SAC per network, derivable from
-	// canonical.Asset.SacContractID() and pinned by
-	// internal/canonical/sac_test.go. The constant was never
-	// referenced outside its declaration — kept unused, it was a
-	// booby trap: the moment anything read it, XLM would stop being
-	// XLM. Use aquarius.MainnetXLMSAC (the correct CAS3J7GY… value)
-	// or canonical.SacContractID directly.
+	// Deliberately no XLM SAC constant here. "CDLZFC3SY…" is NOT the
+	// XLM SAC on any network; it is the synthetic contract id used
+	// across test/integration fixtures. There is exactly one native-XLM
+	// SAC per network, derivable from canonical.Asset.SacContractID()
+	// and pinned by internal/canonical/sac_test.go. Use
+	// aquarius.MainnetXLMSAC (CAS3J7GY…) or canonical.SacContractID.
 )
 
 // MainnetPools is the curated gated pool set (ADR-0040 §1 mechanism
 // 2 — curated-set registry). Source: the factory's `query_pools()`
 // RPC view cross-checked against lake event activity, recorded in
-// docs/protocols/phoenix.md (last verified 2026-06-12). The factory's
+// docs/protocols/phoenix.md. The factory's
 // `("create","liquidity_pool")` events ARE in the lake, from ledger
-// 51,572,026 (real captures: test/fixtures/phoenix/factory-create; this
-// comment used to say they predate it, which was false), and since F048
-// the decoder DOES self-register from them — so this list is now a
-// cold-start warm root, the same role blend's and sushiswap_v3's curated
-// tables play, not the sole trust root it was. It still matters: it
-// covers the pools whose creation event is outside any window being
-// streamed. A pool missing from BOTH this list and the factory's
+// 51,572,026 (real captures: test/fixtures/phoenix/factory-create), and
+// the decoder self-registers from them, so this list is a cold-start
+// warm root, the same role blend's and sushiswap_v3's curated tables
+// play, not the sole trust root. It still matters: it covers the pools
+// whose creation event is outside any window being streamed. A pool missing from BOTH this list and the factory's
 // in-window announcement fail-closes and surfaces as an ADR-0033
 // recognition gap (visible, never silently mis-attributed).
 var MainnetPools = []string{
@@ -266,16 +256,15 @@ var MainnetPools = []string{
 	"CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB",
 	"CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3",
 	"CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW",
-	// Added 2026-08-18 (phoenix projection-completeness gap): a legacy
-	// XYK String-schema pool the 2026-05-01 query_pools() snapshot
-	// missed. VERIFIED genuine by factory deployment — it co-occurs in
-	// the phoenix factory's pool-create transaction at ledger 51,572,101
+	// An XYK String-schema pool the query_pools() snapshot missed.
+	// VERIFIED genuine by factory deployment: it co-occurs in the
+	// phoenix factory's pool-create transaction at ledger 51,572,101
 	// (deployed together with its stake contract CDP6DT2Y…), and emits
-	// the legacy 8-event ScvString swap (23,672 field-events) +
+	// the 8-event ScvString swap (23,672 field-events) +
 	// provide/withdraw_liquidity + ("initialize","XYK LP token_*")
-	// surface. Its 455 served phoenix_liquidity rows scored expected=0
-	// under the gated re-derive until this seeding (swap activity ended
-	// ~ledger 54.5M). Evidence: r1 lake stellar.contract_events, factory
+	// surface. Without it, its 455 served phoenix_liquidity rows score
+	// expected=0 under the gated re-derive (swap activity ended ~ledger
+	// 54.5M). Evidence: r1 lake stellar.contract_events, factory
 	// CB4SVAWJ… create-tx co-occurrence.
 	"CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC",
 }
@@ -291,17 +280,16 @@ var MainnetStakeContracts = []string{
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
 	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM
 	// has none of the stake literals; it only shares the "bond" topic word.
-	// Added 2026-08-18 (phoenix projection-completeness gap): 13 genuine
-	// per-pool stake contracts the 2026-05-01 lake-activity snapshot
-	// missed. Together they landed 2,513 rows in phoenix_stake_events
-	// that the gated re-derive scored expected=0 — and several are STILL
-	// emitting near tip (e.g. CDOXQONPND… bond/unbond to ledger 64.0M),
-	// so the old gate was a LIVE drop, not just a reconcile artifact.
-	// Each emits the phoenix stake surface (bond/unbond → user/token/
-	// amount, withdraw_rewards, distribute_rewards,
-	// create_distribution_flow, ("initialize","LP Share token staking
-	// contract")). VERIFIED genuine (r1 lake stellar.contract_events,
-	// 2026-08-18):
+	// The 13 below are genuine per-pool stake contracts the lake-activity
+	// snapshot missed. Together they hold 2,513 rows in
+	// phoenix_stake_events that the gated re-derive scores expected=0
+	// without them, and several are STILL emitting near tip (e.g.
+	// CDOXQONPND… bond/unbond to ledger 64.0M), so leaving them out of
+	// the gate drops live events, not just reconcile rows. Each emits the
+	// phoenix stake surface (bond/unbond → user/token/amount,
+	// withdraw_rewards, distribute_rewards, create_distribution_flow,
+	// ("initialize","LP Share token staking contract")). VERIFIED genuine
+	// (r1 lake stellar.contract_events):
 	//   • the first 11 each co-occur in their pool's phoenix-factory
 	//     create transaction (the factory deploys pool + stake together)
 	//     — a hard on-chain deployment link, paired 1:1 with a curated
@@ -331,7 +319,7 @@ var MainnetStakeContracts = []string{
 
 // MainnetMapPools are Phoenix pools running the NEWER pool WASM whose
 // swap emits a SINGLE ScvSymbol("swap") event with an ScvMap body (all
-// 8 fields as underscore-spelled Symbol keys) instead of the legacy 8
+// 8 fields as underscore-spelled Symbol keys) instead of the older 8
 // ScvString-tuple events (Q5). Same factory + `("create",
 // "liquidity_pool")` event set; enumerated from the factory create-
 // event walk cross-checked against lake activity (docs/protocols/
@@ -340,8 +328,8 @@ var MainnetStakeContracts = []string{
 // a curated pool that upgrades from the String to the Map shape in
 // place (ingest-pipeline.md#contract-schema-evolution) is already covered — only the
 // decode dispatch depends on the topic shape, not this list.
-// CBENABXP appeared 2026-07-02 (factory "Updated Config" + create in
-// the same window).
+// CBENABXP's factory create landed in the same window as a factory
+// "Updated Config" event.
 var MainnetMapPools = []string{
 	"CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S",
 }
@@ -363,8 +351,8 @@ func MainnetGatedSet() []string {
 // computed at init via scval.MustEncodeString. Phoenix emits both
 // topic positions as Strings (not Symbols) because the pool contract
 // publishes `(str_literal, str_literal)` tuples — soroban-sdk
-// serializes string literals as ScvString. Verified against real
-// mainnet capture 2026-04-23.
+// serializes string literals as ScvString. Verified against a real
+// mainnet capture.
 var (
 	TopicSymbolSwap = scval.MustEncodeString(EventActionSwap) // topic[0]
 
@@ -379,11 +367,11 @@ var (
 )
 
 // TopicSymbolSwapMap is the topic[0] of the NEWER single-event Map-body
-// swap schema (post-2026-07-02 pools, e.g. CBENABXP…): a SINGLE
+// swap schema (pools on the newer WASM, e.g. CBENABXP…): a SINGLE
 // ScvSymbol("swap") topic (disc 0x0F) whose body is an ScvMap of every
-// swap field — distinct from the legacy 8-event ScvString("swap")
+// swap field — distinct from the older 8-event ScvString("swap")
 // schema above (disc 0x0E). The Map keys are Symbols spelled with
-// underscores ("actual_received_amount"), not the legacy spaced String
+// underscores ("actual_received_amount"), not the older spaced String
 // ("actual received amount"). Decoded by decode.go::decodeSwapMap; see
 // README Q5 and docs/architecture/ingest-pipeline.md#contract-schema-evolution (Soroban
 // pools upgrade in place and can change event SHAPE, not just fields).
@@ -432,8 +420,8 @@ var (
 
 	// Factory pool announcement — ("create","liquidity_pool"), both
 	// ScvString. Confirmed against the real lake captures under
-	// test/fixtures/phoenix/factory-create (2024-05-07 and 2026-07-02
-	// alike). Because they are Strings and not Symbols, the lake's
+	// test/fixtures/phoenix/factory-create (old and new pools alike).
+	// Because they are Strings and not Symbols, the lake's
 	// convenience column topic_0_sym is EMPTY for these rows — a lake
 	// walk keyed on it matches nothing, which is why the re-derive
 	// prefilter matches topics_xdr (internal/storage/clickhouse/
@@ -454,12 +442,11 @@ var (
 	// pool's token slots); it is recognized-but-NOT-projected — the raw
 	// event is preserved in the soroban_events landing zone (ADR-0029), same
 	// stance as the actionUnknown / 0-mainnet-occurrence admin events.
-	// Seeding the per-pool stake contracts into the gated set (2026-08-18)
-	// made these events Matches(); recognising this topic[1] in
-	// decodeInitializeEvent is what stops it erroring on them — 20 real lake
-	// events (20 ledgers, first=51,572,026) that were otherwise counted as
-	// undecodable-but-matched blind spots by the ADR-0033 projection
-	// re-derive (reconcile.go).
+	// The stake contracts are in the gated set, so these events pass
+	// Matches(); recognising this topic[1] in decodeInitializeEvent keeps it
+	// from erroring on them. Otherwise 20 real lake events (20 ledgers,
+	// first=51,572,026) would count as undecodable-but-matched blind spots
+	// in the ADR-0033 projection re-derive (reconcile.go).
 	TopicInitLPShareStaking = scval.MustEncodeString("LP Share token staking contract")
 
 	// admin (governance rotation) topic[1] variants — ("XYK Pool: ",
