@@ -83,7 +83,7 @@ func sweepCHRebuildOracle(ctx context.Context, w io.Writer, store oracleRederive
 // landed every row; an interrupted or lossy run sweeps nothing.
 func sweepProjectedRebuildOracle(ctx context.Context, w io.Writer, store oracleRederiveSweeper, source string, from, to uint32, gen int64, write bool, r ProjectedRebuildResult, runErr error, interrupted bool) error {
 	if runErr != nil || interrupted || projectedRebuildOutcome(r, nil, false) != nil {
-		return nil
+		return nil //nolint:nilerr // the caller already carries runErr; a lossy run just skips the sweep
 	}
 	return sweepOracleRederive(ctx, w, store, "projected-rebuild", source, from, to, gen, write)
 }
