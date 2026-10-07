@@ -24,16 +24,15 @@ import (
 )
 
 // TestPriceServingSeamsAreGated is a guard-coverage test for the price
-// WITHHOLDING decision (wave-D MSP cluster).
+// WITHHOLDING decision.
 //
 // The product rule is fail-closed on trust: when the substance gate judges a
 // market too thin to aggregate, or the scam gate finds the issuer
-// directory-flagged, we do not publish a price. That rule was implemented at
-// ONE reader seam (wiring.StorePriceReader, behind /v1/price) and leaked at every
+// directory-flagged, we do not publish a price. Implementing that rule at
+// ONE reader seam (wiring.StorePriceReader, behind /v1/price) leaks it at every
 // other seam reading the same closed VWAP buckets — /v1/price/at and
-// /v1/price/changes re-served the exact number /v1/price had just withheld, so
-// one extra path segment defeated both gates (MSP-01, reproduced against real
-// Postgres by the wave-D skeptic).
+// /v1/price/changes would re-serve the exact number /v1/price withheld, so
+// one extra path segment would defeat both gates.
 //
 // Fixing those two seams by hand is not the deliverable; the leak happened
 // BECAUSE the decision lived at a seam instead of a chokepoint, so the same
@@ -54,14 +53,14 @@ import (
 // a reader has to call one of those methods to serve a price at all.
 //
 // Proven red: deleting the wiring.PriceWithheld() call from storePriceAtReader.PriceAt
-// (i.e. restoring the pre-fix state) fails this test naming that method.
+// fails this test naming that method.
 //
 // SCOPE — stated because it was read as wider than it is. This scan parses
 // main.go and the binary's internal/wiring package and nothing else, so its
 // subject set is the READER seams wired in this binary. Every HTTP handler lives in internal/api/v1, which this scan
-// structurally cannot see: that is how `/v1/price?window=N` shipped serving
+// structurally cannot see: so `/v1/price?window=N` could serve
 // a directory-flagged issuer's aggregated price straight out of the VWAP
-// cache while a guard named "price serving seams are gated" passed (T669).
+// cache while a guard named "price serving seams are gated" passed.
 // The handler package's own cache seams are covered by
 // [TestV1VWAPCacheSeamsAreGated] below.
 func TestPriceServingSeamsAreGated(t *testing.T) {
@@ -257,7 +256,7 @@ func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 		}
 	}
 	// withheldBy's .Allowed plus scamWithheld's .WithheldPair and .Withheld:
-	// a scan that no longer sees them no longer sees the handler package.
+	// a scan that cannot see them cannot see the handler package.
 	if permitted < 3 {
 		t.Errorf("found %d gate-half calls inside the chokepoints across %d files, want >= 3 — the scan is broken, not the code clean",
 			permitted, len(files))
@@ -619,7 +618,7 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 // Which is precisely what `?window=300|3600|86400` did not do: it read
 // vwap:<base>:<quote>:<window> and published a directory-flagged
 // issuer's aggregated price at 200, unauthenticated, while the default
-// route on the same pair 404'd (RLT-350/T669).
+// route on the same pair 404'd.
 //
 // The rule enforced here:
 //
@@ -650,7 +649,7 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 //
 // Proven red three ways, each by reconstructing the state and running
 // this test alone: deleting the scamWithheld() call from
-// Server.handlePriceWindowed (the pre-fix state) names that handler;
+// Server.handlePriceWindowed names that handler;
 // MOVING that call below the cache read names it too; and making
 // Server.observationsHaveTriangulatedPrice keep the price it currently
 // discards names the shared helper with the whole caller chain.
@@ -1006,7 +1005,7 @@ func (r errPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, 
 // for a directory-flagged issuer says so on the wire. The reader seams
 // returned the bare sentinel, so /v1/price described a flagged issuer's
 // market as too thin and told the client to recompute the price from the
-// raw trades — the price the gate exists to refuse (#732).
+// raw trades — the price the gate exists to refuse.
 func TestReaderChokepointNamesTheScamGate(t *testing.T) {
 	const issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	flagged, err := canonical.NewClassicAsset("RIO", issuer)

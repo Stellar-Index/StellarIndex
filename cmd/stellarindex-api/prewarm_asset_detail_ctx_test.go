@@ -33,7 +33,7 @@ func (r *slowListingAssetsReader) GetNativeAssetRow(ctx context.Context) (timesc
 	return timescale.AssetRow{}, nil
 }
 
-// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins T661.
+// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins the following.
 //
 // prewarmLight's native/verified-asset prewarm batch must run under its
 // OWN fresh deadline, not the assetsReaderCtx whose 20s budget started
@@ -61,7 +61,7 @@ func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
 	// catalogueLen large enough that catalogueFillPrewarmOptions adds
-	// nothing here — this test is about T661's context budget, not T279.
+	// nothing here — this test is about the context budget, not catalogue fill.
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 
 	if probe.nativeCtxErr != nil {

@@ -21,8 +21,8 @@ import (
 // itself from the REQUEST path — 32 assets per request — so a service with no
 // consumer traffic never converges: entries expire unread and /v1/assets and
 // /v1/rwa/assets fall back to the trustline-only sum, which cannot see supply
-// held in claimable balances, LP reserves or SAC contract_data. Measured on r1
-// 2026-09-12, ~19 h after the last request, PYUSD served 3,149,454 against a
+// held in claimable balances, LP reserves or SAC contract_data. Measured on r1,
+// ~19 h after the last request, PYUSD served 3,149,454 against a
 // lake reading of 11,778,001 and XRF 21,895,149 against 118,333,629.
 //
 // The behaviour of the fill lives with the fill (see

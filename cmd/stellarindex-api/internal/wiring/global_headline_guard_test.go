@@ -44,7 +44,7 @@ func headlineReader(store headlineVWAPStore) GlobalPriceReader {
 }
 
 // The GlobalAssetView headline has no stale flag, so a bucket the guard
-// could not validate must not be served as the vwap_native headline (#677):
+// could not validate must not be served as the vwap_native headline:
 // the reader reports no data and the headline falls through to its other
 // tiers, as the point-in-time guard does for the same reason.
 func TestGlobalPriceReader_UnvalidatedBucketIsNoHeadline(t *testing.T) {

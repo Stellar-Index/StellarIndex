@@ -138,15 +138,15 @@ func (c ClickhouseChecker) Ping(ctx context.Context) error {
 // none when no address is configured, and exactly one when there is —
 // wired or not.
 //
-// The "or not" is the whole point. The checker used to be
-// appended inside the success branch of the boot dial, so a ClickHouse
+// The "or not" is the whole point. A checker
+// appended inside the success branch of the boot dial means a ClickHouse
 // that was already down when the API started published NO
 // `stellarindex_dependency_up{dependency="clickhouse"}` series at all.
 // The alert over it is `stellarindex_dependency_up == 0`, with an
-// in-file rationale deliberately rejecting absent() — so it had no
+// in-file rationale deliberately rejecting absent() — so it would have no
 // series to match, and the one state the annotation calls "the only
-// signal that it is gone" was the state with no signal. Endpoints
-// 503'd and nothing paged.
+// signal that it is gone" would be the state with no signal. Endpoints
+// would 503 and nothing would page.
 //
 // A ClickHouse still unreachable when dialLakeReadersAtBoot's window ends
 // therefore registers a checker that reports down for the process's

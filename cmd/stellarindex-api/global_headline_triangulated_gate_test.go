@@ -14,18 +14,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// The GlobalAssetView headline has THREE tiers and only the first one
-// was gated (RLT-350's "the vwap: keys are all ungated").
+// The GlobalAssetView headline has THREE tiers and all must be gated
+// (the `vwap:` keys are not exempt).
 //
 // wiring.GlobalPriceReader.LatestVWAP — tier 1, the prices_1m bucket — routes
 // through the wiring.PriceWithheld chokepoint. wiring.GlobalPriceReader.
 // LookupTriangulated — tier 3 — reads the aggregator's
-// `vwap:<base>:<quote>:<window>` key and had no gate reference at all,
+// `vwap:<base>:<quote>:<window>` key and needs the gate,
 // and tier 3 is precisely the tier a Stellar-only token reaches: its
 // literal <asset>/fiat:USD pair has no prices_1m rows, so tier 1 misses
 // by construction and the headline comes from the cache.
 //
-// That is the shape of the 2026-08-25 decision this gate was built for:
+// An ungated tier 3 is the failure this gate exists for:
 // a flagged issuer's ASSET PAGE showing a price and a market cap.
 //
 // The gate here is the scam half only, so this test pins the scam

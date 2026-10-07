@@ -283,7 +283,7 @@ func TestAPIError_ErrorsAs(t *testing.T) {
 	}
 }
 
-// TestParseRetryAfterOverflow pins the wave-D F-SDK-06 guard.
+// TestParseRetryAfterOverflow pins the Retry-After overflow guard.
 //
 // time.Duration is int64 NANOSECONDS, so a delta-seconds Retry-After
 // above ~292 years wraps. Before the guard, a hostile or misconfigured

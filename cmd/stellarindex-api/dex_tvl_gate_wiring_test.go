@@ -81,12 +81,12 @@ func TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards(t *testing.T) {
 // TestDEXTVLGateIsWiredThroughTheNilAbleBuilder is the WIRING half.
 //
 // v1.DEXTVLSources.Gate is an interface, and an interface holding a
-// non-pointer struct is never == nil however empty the struct is. The
-// wiring until 2026-09-03 assigned `dexTVLValueGate{…}` as a composite
-// literal unconditionally, so v1's nil-Gate arm — the one that keeps
-// Basis quiet about screens that did not run — was unreachable in this
-// binary, and TestDEXTVLCache_NoGateKeepsTodaysFigures over in
-// internal/api/v1 pinned a path production never took.
+// non-pointer struct is never == nil however empty the struct is. Assigning
+// `dexTVLValueGate{…}` as a composite literal unconditionally would make v1's
+// nil-Gate arm — the one that keeps Basis quiet about screens that did not
+// run — unreachable in this binary, leaving
+// TestDEXTVLCache_NoGateKeepsTodaysFigures over in internal/api/v1 pinning a
+// path production never takes.
 //
 // An AST guard rather than a behavioural one because the wiring lives
 // inside main()'s server construction, which needs a live Postgres to

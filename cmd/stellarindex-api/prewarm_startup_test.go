@@ -15,18 +15,17 @@ import (
 // loop, whose one startup-critical behaviour is that BOTH passes run
 // immediately rather than waiting for their tickers (5 min / 60 s).
 //
-// The heavy pass used to run FIRST and SEQUENTIALLY. Its sources_stats
-// query alone takes ~8s, so for tens of seconds after every restart the
-// user-facing listing keys were still cold behind it. Measured on r1
-// 2026-09-01, API up at 05:10:16:
+// A heavy pass that runs FIRST and SEQUENTIALLY is a startup defect: its
+// sources_stats query alone takes ~8s, so for tens of seconds after every
+// restart the user-facing listing keys stay cold behind it. Measured on r1,
+// API up at 05:10:16:
 //
 //	05:10:37  10025 ms  /v1/assets?include=sparkline&limit=10&order_by=…
 //	05:10:37  10026 ms  /v1/assets?limit=50
 //
 // Real users, 21s after boot, paying a cold fill for a key the prewarm
-// had not reached yet. Steady state was already healthy, so this is
-// purely a startup-window defect — and it recurs on every deploy, which
-// is what makes it worth a pinned property rather than a one-off fix.
+// had not reached yet. Steady state is healthy, so this is purely a
+// startup-window defect, and it recurs on every deploy.
 func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +42,7 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	go func() {
 		defer close(done)
 		// catalogueLen large enough that catalogueFillPrewarmOptions adds
-		// nothing here — this test is about pass ordering, not T279.
+		// nothing here — this test is about pass ordering, not catalogue fill.
 		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 	}()
 

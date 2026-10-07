@@ -8,8 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits pins GH-1074
-// on the production adapter behind /v1/account/me: a partner comped to
+// TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits pins, on the production adapter behind /v1/account/me: a partner comped to
 // 5,000/min must read 5,000 (what auth enforces on its default-minted
 // keys), and an un-comped partner 1,000 — never the 100,000 tier ceiling.
 func TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits(t *testing.T) {

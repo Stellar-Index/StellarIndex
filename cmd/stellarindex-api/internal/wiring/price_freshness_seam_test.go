@@ -9,31 +9,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Wave-D PFR-04 observed, correctly, that NOTHING in the repo exercised
-// StorePriceReader: its `now func() time.Time` and `vwapFreshness
-// time.Duration` seams — which exist for no reason other than to be
-// injected by a test — were dead, so the CS-017 staleness rule had
-// enforcement tier NONE beyond runtime.
+// StorePriceReader's `now func() time.Time` and `vwapFreshness
+// time.Duration` seams exist for no reason other than to be injected by a
+// test, so the staleness rule needs a test that drives them.
 //
-// PFR-04's FAILURE SCENARIO does not survive: it claimed the ~250k
-// dormant/delisted long tail would resume being served a months-old
-// bucket with stale=false if the CS-017 term were lost. It cannot. The
+// Losing the staleness term would not, on its own, let the ~250k
+// dormant/delisted long tail be served as a months-old
+// bucket with stale=false. The
 // substance gate runs twelve lines earlier in LatestPrice, its window
 // is trailing-24h, and a pair dormant for months yields volume=0 and
 // fails the first comparison — so the read returns ErrPriceWithheld and
 // the staleness expression is never evaluated. That gate is on by
 // default and is itself tested (internal/pricingguard/substance_test.go).
 //
-// What survives is the coverage gap itself, and this closes the part of
+// The coverage gap remains, and this closes the part of
 // it that CAN be closed here. LatestPrice is NOT unit-testable from
 // this package: StorePriceReader.S is a concrete *timescale.Store with
 // an unexported db field and no injectable constructor, so exercising
 // the read end-to-end needs the testcontainers integration harness, not
-// a fake. These tests pin the two seams the CS-017 fix actually
+// a fake. These tests pin the two seams the staleness rule
 // parameterises — the default window and the clock — so the constant
 // cannot be silently changed and the nil-fallbacks cannot rot.
 
-// TestStorePriceReaderFreshnessDefault pins the CS-017 window.
+// TestStorePriceReaderFreshnessDefault pins the freshness window.
 //
 // 15 minutes is a deliberate choice between two failure modes: well
 // above the structural 1-2 minute closed-bucket floor, so an ACTIVE
@@ -113,12 +111,11 @@ func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	r := StorePriceReader{Now: func() time.Time { return now }}
 
-	// Calls the REAL rule. This block used to re-implement the expression
-	// locally, which certified nothing: deleting the
-	// `> r.freshnessWindow()` term from LatestPrice left this test green
-	// while /v1/price resumed serving months-old buckets with
-	// stale=false — the CS-017 bug itself (wave-D PFR-04, caught by an
-	// adversarial review). The rule now lives in StorePriceReader.
+	// Calls the REAL rule. Re-implementing the expression
+	// locally would certify nothing: deleting the
+	// `> r.freshnessWindow()` term from LatestPrice would leave the test green
+	// while /v1/price served months-old buckets with stale=false. The rule
+	// lives in StorePriceReader.
 	// bucketIsStale so a unit test can reach it; LatestPrice calls the
 	// same method.
 	stale := r.bucketIsStale

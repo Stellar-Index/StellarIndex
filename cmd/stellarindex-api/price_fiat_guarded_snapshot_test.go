@@ -123,9 +123,9 @@ func getBody(t *testing.T, url string) (int, string) {
 // production /v1/price/tip handler (the one surface that converts at the
 // live snapshot; closed surfaces bind vendor fixings instead).
 //
-// It replays the 2026-08-24 Massive UZS incident. After one healthy
+// It replays a Massive UZS incident. After one healthy
 // refresh (UZS = 11,800) the live bar turns into 1820 and stays there,
-// while the ticker's dated bars keep saying ~11,790. The C2-030 band
+// while the ticker's dated bars keep saying ~11,790. The band
 // refuses 1820 on every refresh (deviation, then the history-majority
 // confirm veto). Un-fixed, the worker installed the RAW snapshot before
 // the band ran, so the tip served XLM/UZS = 0.25 × 1820 = 455 — 6.5×

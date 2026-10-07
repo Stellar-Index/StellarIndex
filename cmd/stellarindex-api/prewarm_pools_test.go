@@ -20,7 +20,7 @@ import (
 // set, so that slot had never been computed and the first visitor blocked on
 // the full trades-hypertable scan.
 //
-// Measured on r1 2026-09-03 (v0.58.0), same process, back to back:
+// Measured on r1, same process, back to back:
 //
 //	?limit=8    2.197 s   (unwarmed — what /network actually sends)
 //	?limit=5    0.0018 s  (warmed)
@@ -110,9 +110,9 @@ func (r *recordingPoolsReader) seenLimits() []int {
 	return out
 }
 
-// TestPrewarmPoolsWarmsTheLimitTheExplorerSends is the regression guard for
-// #332 F4. It asserts the CORRECTED limit set actually reaches AllPools, not
-// merely that some prewarm happened.
+// TestPrewarmPoolsWarmsTheLimitTheExplorerSends is the regression guard that
+// the limit set the explorer sends actually reaches AllPools, not merely that
+// some prewarm happened.
 func TestPrewarmPoolsWarmsTheLimitTheExplorerSends(t *testing.T) {
 	// The limit NetworkView.tsx's TopMarkets passes to usePools. Written out
 	// here rather than read from poolsPrewarmLimits so the test pins the
@@ -162,9 +162,8 @@ func TestPrewarmPoolsWarmsTheLimitTheExplorerSends(t *testing.T) {
 //     NOT nil. Passing PoolsFilter{} warms key fragment `[]` while users land
 //     on `[aquarius comet phoenix sdex soroswap]`.
 //   - Order: handlePools maps ""|"volume_24h_usd_desc" to
-//     MarketsOrderVolume24hDesc. Prewarming with MarketsOrderPair (0) was the
-//     2026-05-09 bug — /v1/pools?source=sdex took 27s against a cache that
-//     looked warm.
+//     MarketsOrderVolume24hDesc. Prewarming with MarketsOrderPair (0) made
+//     /v1/pools?source=sdex take 27s against a cache that looked warm.
 //   - Cursor: the warmed page is page one; a cursor makes it someone else's.
 func TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs(t *testing.T) {
 	rec := &recordingPoolsReader{}
