@@ -1,46 +1,15 @@
-// Package canonical defines the core types every other package in
-// Stellar Index depends on — Trade, Price, Asset, Pair, and the
-// precision-safe Amount wrapper over *big.Int.
+// Package canonical defines the types every other package depends on
+// (Trade, Price, Asset, Pair, Amount); changing their shape ripples
+// through the whole repository, so a new field needs an ADR.
 //
-// # Why this is package zero
-//
-// Every ingestion source, every aggregation result, every API response
-// passes through these types. They are the stability boundary of the
-// project: if these shapes change, the whole repository reacts.
-//
-// # Invariants
-//
-//   - Amount values are ALWAYS *big.Int. They never truncate to
-//     int64. See ADR-0003.
-//   - Asset identity is unambiguous, with seven canonical shapes:
-//     native (XLM), classic ((code, issuer) tuple), soroban
-//     (single C-address SEP-41 contract), fiat (off-chain ISO-4217
-//     code, wire form fiat:USD — ADR-0010), crypto (off-chain
-//     global ticker, wire form crypto:BTC — ADR-0014), rwa (tokenized
-//     real-world assets, wire form rwa:BENJI — ADR-0028), and raw
-//     (a verbatim, unmapped oracle symbol, wire form raw:<symbol>,
-//     record-layer only). The crypto shape is distinct from soroban:
-//     soroban requires a real on-chain C-address, crypto:BTC does
-//     not. Two different representations of the same underlying
-//     asset MUST round-trip through a single canonical form.
-//   - Pair is a unidirectional (base, quote) ordering. Pair
-//     equality is strict; Pair{A,B} != Pair{B,A}.
-//   - Timestamps are UTC; storage is Unix seconds (u64) at ledger
-//     granularity, higher precision where the upstream event
-//     supplies it.
-//
-// # Extending
-//
-// Adding a field to any of these types is a load-bearing change.
-// Propose an ADR (docs/adr/), co-ordinate with CODEOWNERS, land
-// the field + its documentation + its fixture in the same PR.
-// Never add a field and "document it later."
-//
-// # See also
-//
-//   - ADR-0003 (i128 no-truncation invariant)
-//   - ADR-0005 (monorepo, single Go module)
-//   - ADR-0010 (off-chain fiat representation)
-//   - ADR-0014 (crypto-ticker representation)
-//   - docs/architecture/domain-traps.md (SEP-41 transfer amount shapes)
+// Invariants:
+//   - Amounts are *big.Int and never truncate to int64 (ADR-0003).
+//   - An asset has exactly one canonical form, one of seven shapes:
+//     native; classic (code, issuer); soroban (an on-chain C-address);
+//     fiat:USD (ADR-0010); crypto:BTC, a ticker with no contract
+//     (ADR-0014); rwa:BENJI (ADR-0028); and raw:<symbol>, an unmapped
+//     oracle symbol kept at the record layer only.
+//   - Pair is directional: Pair{A,B} != Pair{B,A}.
+//   - Timestamps are UTC; storage keeps Unix seconds at ledger
+//     granularity, finer where the upstream event supplies it.
 package canonical
