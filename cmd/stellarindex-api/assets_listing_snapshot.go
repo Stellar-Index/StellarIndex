@@ -17,10 +17,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/assets listing snapshots — the boot seed for #459.
+// /v1/assets listing snapshots — the boot seed.
 //
-// The prewarm cannot win the startup race. Re-measured on r1 at the
-// 2026-09-03 03:50:22 restart (v0.58.0): "starting" 03:50:22.985 →
+// The prewarm cannot win the startup race. Measured on r1 at a restart:
+// "starting" 03:50:22.985 →
 // "http listening" 03:50:22.997 (+12 ms) → first /v1/assets listing
 // request at +3.5 s → first browser request at +4.0 s, answered
 // 11,658 ms later. Warming faster does not help, because the cost IS
@@ -117,7 +117,7 @@ type assetsListingSnapshot struct {
 // assetsListingSnapshots reads and writes [assetsListingSnapshot]s. A
 // nil receiver, or one with a nil client, is a no-op on both sides —
 // Redis is optional in this binary and its absence must degrade to the
-// pre-#459 cold-fill behaviour, never to an error or an empty listing.
+// cold-fill behaviour, never to an error or an empty listing.
 type assetsListingSnapshots struct {
 	rdb redis.UniversalClient
 	log *slog.Logger
