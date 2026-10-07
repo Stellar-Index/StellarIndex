@@ -51,7 +51,7 @@ type networkStatsStaleReader interface {
 //   - /v1/status.freshness.active_sources further narrows to
 //     enabled sources that have emitted an event in the last 7 days.
 //
-// The Registry holds 33 entries, 13 of them ClassExchange, so every
+// The Registry holds 33 entries, 13 of them ClassExchange, so this
 // build reports total_sources=33 and exchange_sources=13 here; the two
 // /v1/status counts depend on the region's config and traffic. The gap
 // between the two `total_sources` fields is by design (different metrics) — kept in
