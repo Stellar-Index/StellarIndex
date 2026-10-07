@@ -147,9 +147,13 @@ date (§6.2). Due dates are set at ratification unless stated.
       incident record measures `X-API-Key` use only. Open (INV-2772).
 - [ ] Complete and record the §6.6 assessment above (decision,
       reasoning, what was sent to whom). Open (INV-2772).
-- [ ] Scan Loki's retention window for logged `X-API-Key` values and
-      record the count. Open (INV-2772); the recorded scan covered
-      `email=` and `postgres://` only.
+- [x] Scan Loki's retention window for logged `X-API-Key` values and
+      record the count — **0 values**: measured 2026-10-07 over the
+      30-day retention (2026-09-07 to 2026-10-07), all jobs. One line
+      names the header, a CORS preflight's
+      `Access-Control-Request-Headers: x-api-key`, which carries no
+      value. 2026-09-02 to 2026-09-06 had aged out before the scan, so
+      it shows the store is clean, not what was readable then.
 - [ ] Ratify this postmortem: set the incident record's `postmortem:`
       front-matter field and give each open item an owner and due date
       (§6.2). Open (INV-2772).
