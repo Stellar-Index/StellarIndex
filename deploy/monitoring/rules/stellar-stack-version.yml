@@ -1,15 +1,13 @@
 ---
 # Stellar-stack (core / galexie / archivist) upstream version-lag probe.
 #
-# Two incidents in ONE week, same root cause: nothing watched whether
-# the installed Stellar toolchain lagged upstream.
-#   - 2026-07-08: mainnet Protocol 27 activated; r1's stellar-core
-#     (26.0.1) had no P27 support and froze ingest for 2.5h until
-#     upgraded.
-#   - 2026-07-09: the hand-installed galexie binary (an April build)
-#     crash-looped on the first ledger carrying CAP-0071 XDR —
-#     galexie-v27.0.0 had been published upstream a full month
-#     earlier (2026-06-10) and nobody noticed. 5+ hours of on-chain
+# Without this probe nothing watches whether the installed Stellar
+# toolchain lags upstream, and on r1 that gap has cost ingest twice:
+#   - a mainnet protocol activation reached a stellar-core with no
+#     support for it and froze ingest for 2.5h until it was upgraded;
+#   - a hand-installed galexie binary crash-looped on the first
+#     ledger carrying the new XDR, a month after the galexie release
+#     that handles it was published upstream — 5+ hours of on-chain
 #     ingest loss.
 #
 # `stellar-stack-version-probe.sh` (installed by the archival-node
@@ -37,11 +35,11 @@ groups:
         # label_replace: the probe metric carries its OWN `component` label
         # (core / galexie / archivist) and every alert in this tree sets a
         # static `component:` for alertmanager's inhibit `equal: [component, alert_family]`.
-        # Without the rename the static label overwrote the metric's and two
-        # lagging components collapsed to ONE labelset — Prometheus refused
+        # Without the rename the static label overwrites the metric's and two
+        # lagging components collapse to ONE labelset — Prometheus refuses
         # the rule ("vector contains metrics with the same labelset after
-        # applying alert labels"), so this alert could never fire (found
-        # 2026-09-02 with archivist=1 AND galexie=1 live on r1).
+        # applying alert labels"), so the alert can never fire (seen on r1
+        # with archivist=1 AND galexie=1).
         expr: label_replace(stellarindex_stellar_stack_version_lag, "stack_component", "$1", "component", "(.*)") >= 1
         for: 2d
         labels:
@@ -67,18 +65,18 @@ groups:
       - alert: stellarindex_stellar_stack_protocol_lag
         # A protocol-major lag is a time bomb with a network-scheduled
         # fuse: Stellar protocol upgrades activate on a network-wide
-        # vote, not on our schedule. galexie-v27.0.0 sat unnoticed for
-        # a MONTH (published 2026-06-10, protocol 27 activated
-        # 2026-07-08) before this detector existed. Page well before
-        # the next activation vote, not after ingest freezes/crash-loops.
+        # vote, not on our schedule, and a galexie release for the next
+        # protocol can sit unnoticed for a month before activation. Page
+        # well before the next activation vote, not after ingest
+        # freezes/crash-loops.
         # label_replace: the probe metric carries its OWN `component` label
         # (core / galexie / archivist) and every alert in this tree sets a
         # static `component:` for alertmanager's inhibit `equal: [component, alert_family]`.
-        # Without the rename the static label overwrote the metric's and two
-        # lagging components collapsed to ONE labelset — Prometheus refused
+        # Without the rename the static label overwrites the metric's and two
+        # lagging components collapse to ONE labelset — Prometheus refuses
         # the rule ("vector contains metrics with the same labelset after
-        # applying alert labels"), so this alert could never fire (found
-        # 2026-09-02 with archivist=1 AND galexie=1 live on r1).
+        # applying alert labels"), so the alert can never fire (seen on r1
+        # with archivist=1 AND galexie=1).
         expr: label_replace(stellarindex_stellar_stack_version_lag, "stack_component", "$1", "component", "(.*)") >= 2
         for: 6h
         labels:
@@ -101,9 +99,9 @@ groups:
 
       # ── The probe's own health (monitoring of monitoring) ─────────
       #
-      # The probe has published stellarindex_stellar_stack_probe_success
-      # since it was written, and until this alert existed NO RULE READ
-      # IT. A signal nobody looks at is the same blindness as no signal:
+      # The probe publishes stellarindex_stellar_stack_probe_success, and
+      # without this alert no rule reads it. A signal nobody looks at is
+      # the same blindness as no signal:
       # on a degraded run the version_lag series for the component it
       # could not classify is simply ABSENT (by design — see the probe's
       # own comments), and `>= 1` / `>= 2` over an absent series are
@@ -111,7 +109,7 @@ groups:
       # being able to answer. A GitHub API that stays rate-limited, or an
       # apt source that stops offering a candidate, blinds
       # stellarindex_stellar_stack_protocol_lag — a `page` guarding the
-      # precondition for the 2026-07-08 and 2026-07-09 ingest outages —
+      # precondition for a protocol-activation ingest outage —
       # while every dashboard reads healthy.
       #
       # The second arm is the case probe_success cannot report: the probe
@@ -232,17 +230,17 @@ groups:
       # The proactive guard above (version_lag) is the primary defence and
       # should fire first. This catches the case it structurally cannot:
       # the probe compares RELEASED upstream versions, so it cannot know the
-      # network has actually begun emitting the new XDR. Observed 2026-08-27:
-      # testnet ingested 240 Protocol-28 ledgers on a galexie that could not
-      # decode P28 — with zero errors — because the breaking arm only appears
-      # once a ledger genuinely CONTAINS parallel-execution structures. On
+      # network has actually begun emitting the new XDR. On testnet, 240
+      # Protocol-28 ledgers were ingested by a galexie that could not decode
+      # P28 — with zero errors — because the breaking arm only appears once
+      # a ledger genuinely CONTAINS parallel-execution structures. On
       # futurenet, which exercises that path, the archive backfill died at
-      # ledger 92747. Mainnet would have crossed the upgrade ledger looking
-      # perfectly healthy and then stopped at an arbitrary later ledger.
+      # ledger 92747. Mainnet would cross the upgrade ledger looking
+      # perfectly healthy and then stop at an arbitrary later ledger.
       #
       # The failure itself is SAFE (fail-closed: the component errors and
       # stops; no corrupt data is written) — but it is an ingestion outage
-      # for that component, and previously surfaced only as generic tip-lag.
+      # for that component, and otherwise surfaces only as generic tip-lag.
       # This names the cause so the responder does not have to grep journald.
       - alert: stellarindex_ledger_meta_decode_failing
         expr: stellarindex_ledger_meta_decode_failures_total > 0

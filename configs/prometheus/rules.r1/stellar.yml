@@ -1,7 +1,7 @@
 ---
 # Stellar node alerts — stellar-core, stellar-rpc, archive publishing.
 #
-# Deployment posture (2026-04-23 onward): r1 does NOT run stellar-core
+# Deployment posture: r1 does NOT run stellar-core
 # or stellar-rpc — both were removed in the FSN1 trim along with the
 # stellar-core-prometheus-exporter (see
 # `docs/operations/r1-deployment-state.md` §Services). On r1 the
@@ -20,8 +20,7 @@
 # Of the two archive alerts in this file:
 #   - stellarindex_stellar_archive_publish_fail references
 #     `stellarindex_stellar_archive_publish_errors_total`. NOTHING IN
-#     THIS CODEBASE EMITS THAT METRIC (F-1329; confirmed by grep over
-#     internal/ cmd/ scripts/ 2026-06-11) — there is no
+#     THIS CODEBASE EMITS THAT METRIC — there is no
 #     stellar-archivist publish loop wired to a Prometheus counter, so
 #     this rule is INERT regardless of deployment posture. It is
 #     listed in scripts/ci/lint-metric-refs.sh as a known-inert
@@ -31,21 +30,17 @@
 #     references `stellarindex_verify_archive_mismatches_total`, the
 #     counter the verify-archive chain/checkpoint walk increments
 #     (internal/ops/archive/verify_archive_chunks.go) per reason
-#     (chain|sequence|checkpoint). The expr pointed at
-#     `stellarindex_archive_divergence_total`, a name nothing emits,
-#     until the 2026-06-11 F-1329 repoint.
+#     (chain|sequence|checkpoint).
 #
-#     Issue #282 (2026-08-29): that repoint fixed the metric NAME but
-#     not the EXPORT PATH. The counter only ever left the process via
-#     the opt-in `-metrics-listen` endpoint, which the tier-a/tier-b
-#     units did not pass and prometheus.r1.yml has no job for — so the
-#     P1 still had no producer and a real chain break surfaced only as
-#     the severity-TICKET `stellarindex_verify_archive_unit_failed`.
-#     The units now pass `-textfile-output` and the counter reaches
-#     Prometheus through node_exporter's textfile collector
-#     (internal/ops/archive/verify_archive_textfile.go): cumulative
+#     The counter reaches Prometheus through node_exporter's textfile
+#     collector: the tier-a/tier-b units pass `-textfile-output`
+#     (internal/ops/archive/verify_archive_textfile.go), cumulative
 #     across runs, zero-seeded on all three reasons, labelled by
-#     `tier`. Covered by deploy/monitoring/rule-tests/stellar_test.yml.
+#     `tier`. The opt-in `-metrics-listen` endpoint has no job in
+#     prometheus.r1.yml, so without the textfile path the P1 has no
+#     producer and a real chain break surfaces only as the
+#     severity-TICKET `stellarindex_verify_archive_unit_failed`.
+#     Covered by deploy/monitoring/rule-tests/stellar_test.yml.
 
 groups:
   - name: stellarindex.stellar
@@ -124,13 +119,11 @@ groups:
             Not customer-visible but affects Tier-1 posture if sustained.
 
       - alert: stellarindex_stellar_archive_divergence
-        # F-1329: repointed from the never-emitted
-        # `stellarindex_archive_divergence_total` to the real counter the
-        # verify-archive walk emits. `reason` ∈ {chain|sequence|checkpoint};
+        # The counter the verify-archive walk emits. `reason` ∈ {chain|sequence|checkpoint};
         # any non-zero increase over a recent window is a hard correctness
         # signal.
         #
-        # 26h window, NOT 1h (issue #282). The producer is a NIGHTLY
+        # 26h window, NOT 1h. The producer is a NIGHTLY
         # systemd timer (verify-archive-tier-a 03:23 UTC, tier-b 04:37
         # UTC) that writes its counter once per run through the
         # node_exporter textfile collector. Against a 1h lookback the

@@ -105,16 +105,15 @@ groups:
         # call, so every left-hand series has exactly one right-hand
         # mate and Prometheus needs no matching modifier to pair them.
         #
-        # It read `> ignoring(asset) group_left() (10 *
-        # stellarindex_oracle_resolution_seconds)` until #478, and that
-        # join was not decoration. resolution_seconds is declared
+        # The join `> ignoring(asset) group_left() (10 *
+        # stellarindex_oracle_resolution_seconds)` is the obvious alternative,
+        # and it is not decoration. resolution_seconds is declared
         # {source} only while last_update_unix is {source, asset}, and a
         # vector-to-vector op with no on()/ignoring() requires IDENTICAL
-        # label sets — so without the join this alert matched nothing in
-        # production and could never fire, for any oracle, ever (wave-D
-        # ALERT-02).
+        # label sets — so against those series a bare comparison matches
+        # nothing and can never fire, for any oracle.
         #
-        # `on (source)` was never the alternative. `on` discards every
+        # `on (source)` is not the alternative either. `on` discards every
         # label outside the match group, including job/instance, so two
         # scrape targets exporting the same {source} make the right side
         # non-unique and the whole rule fails evaluation:
@@ -127,23 +126,22 @@ groups:
         # builds stellarindex_indexer by looping its host group, so a
         # second indexer host (R2, ADR-0004/ADR-0016) produces it.
         #
-        # Both traps are now absent rather than worked around — a
-        # per-(source, asset) budget needs no join at all, and
-        # job/instance match naturally because both series come from the
-        # same process. If a future budget ever lands on a different
-        # label set, fix the EMITTER; do not reintroduce a matching
-        # modifier here.
+        # A per-(source, asset) budget avoids both traps rather than working
+        # around them: it needs no join at all, and job/instance match
+        # naturally because both series come from the same process. If a
+        # budget ever lands on a different label set, fix the EMITTER; do not
+        # introduce a matching modifier here.
         #
         # The budget defaults to 10 × the source's declared resolution
         # (obs.OracleStaleBudgetMultiplier); heartbeat sources (RedStone)
         # default to heartbeat + 2 h instead. For the 10× default, an
-        # asset with no operator override alerts at the same age the
-        # former inline expression did.
+        # asset with no operator override alerts at 10 × the source's
+        # resolution.
         # Per-asset exceptions live in `[[oracle.staleness_overrides]]`,
         # because staleness is a per-ASSET property even where cadence
         # is per-source: reflector-cex crypto:DAI is a peg asset that
         # publishes only on movement and breached the 50-minute source
-        # budget on 11.6% of evaluations with nothing broken (#478).
+        # budget on 11.6% of evaluations with nothing broken.
         expr: |
           (time() - stellarindex_oracle_last_update_unix)
             > stellarindex_oracle_staleness_budget_seconds
@@ -197,9 +195,9 @@ groups:
             `divergence refresher wired` startup log line for which
             references are configured.
 
-      # CS-088: every configured reference went dark for a pair
-      # (SuccessCount==0). RefreshPair now emits outcome="no_reference"
-      # instead of masking it as "ok", so this alert can see the "silent
+      # Every configured reference went dark for a pair
+      # (SuccessCount==0). RefreshPair emits outcome="no_reference"
+      # rather than "ok", so this alert can see the "silent
       # checker" case the error-dominant alert above cannot (no_reference is
       # neither refresh_error nor ok). flags.divergence_warning freezes at its
       # last value during the outage — a live depeg would go unflagged.
@@ -254,7 +252,7 @@ groups:
             (no_vwap = every pair frozen or below min_usd_volume; nothing
             at all = the pass is not completing); see the runbook.
 
-      # GH-679: one reference failing most of its lookups. The pass-level
+      # One reference failing most of its lookups. The pass-level
       # rules above only see a pair whose EVERY reference failed; one dark
       # reference leaves each pass `ok` while it can drop pairs below
       # min_sources_for_warning (the quorum rule below). asset_unsupported
@@ -282,7 +280,7 @@ groups:
             outage. Break the failures down by `outcome` on
             stellarindex_divergence_reference_total, then the runbook.
 
-      # GH-679: a pair's refreshes all ended below min_sources_for_warning.
+      # A pair's refreshes all ended below min_sources_for_warning.
       # Below quorum the warning verdict is carried forward, never
       # re-evaluated, so a live depeg on the pair cannot warn while the
       # pass-level outcome stays `ok`. max_over_time spans ~5 refreshes
@@ -307,7 +305,7 @@ groups:
             dropped out (stellarindex_divergence_reference_total by
             outcome); see the runbook.
 
-      # GH-641: a Chainlink feed's configured decimals disagrees with the
+      # A Chainlink feed's configured decimals disagrees with the
       # AggregatorV3 proxy's on-chain decimals() view. The reader REFUSES
       # the feed until they agree (ErrPriceUnavailable), rather than scale
       # every reading wrong by 10^(configured-actual) — see
@@ -333,7 +331,7 @@ groups:
             the operator's `decimals` entry for this pair against the
             feed's actual decimals() (or omit the field to adopt it).
 
-      # GH-641: the fail-OPEN sibling — decimals() RPC calls keep
+      # The fail-OPEN sibling — decimals() RPC calls keep
       # failing, so the reader keeps serving at the last known scale
       # with no divergence signal of its own. Sustained failures mean
       # the RPC endpoint (or the feed) is unhealthy even though pricing
