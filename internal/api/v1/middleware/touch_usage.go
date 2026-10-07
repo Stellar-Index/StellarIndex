@@ -91,7 +91,7 @@ func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logge
 }
 
 // touchUsageRecord is [TouchUsage]'s post-dispatch bookkeeping, pulled
-// into its own deferred call so it still runs when the handler panics
+// into its own deferred call so it still runs when the handler panics.
 // On the non-panic path it hands the actual touch to
 // [AfterResponse], which flushes w for the client immediately and runs
 // the debounce check + touch on the shared post-response pool

@@ -336,7 +336,7 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/oracle/x_last_price",
 		// /v1/price/at, /v1/vwap and /v1/twap are the same
 		// hazard on a different surface — each calls the scam gate
-		// (writeIfScamWithheld in price_at.go/vwap.go/twap.go), so
+		// (writeIfScamWithheld in vwap.go/twap.go; lookupPriceAt in price_at.go), so
 		// "closed-bucket price data looks cacheable" does not earn them
 		// the 300 s catalogue band below. A CDN
 		// entry minted a second before a scam flag flips serves the

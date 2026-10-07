@@ -187,7 +187,7 @@ type PriceAlertsConfig struct {
 	// passes over the enabled price_alerts set. 0 falls back to the
 	// library default (30s). Validated > 0 when Enabled so an operator
 	// enabling the worker with a zero cadence fails at boot rather than
-	// reaching time.NewTicker(0) at runtime (the G19-02 trap).
+	// reaching time.NewTicker(0) at runtime.
 	IntervalSeconds int `toml:"interval_seconds" doc:"Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s)." default:"30"`
 }
 
@@ -207,7 +207,7 @@ func (pc PriceAlertsConfig) validate() error {
 // TradesConfig configures policy that runs at trade-insert time
 // (`internal/storage/timescale.Store.InsertTrade`). All fields are
 // optional — empty config preserves the off-chain-only `usd_volume`
-// behaviour that pre-dates Phase 1 of launch-readiness L2.2.
+// behaviour.
 type TradesConfig struct {
 	// USDPeggedClassicAssets is the operator's allow-list of classic
 	// credit assets (canonical "CODE-ISSUER" wire form, e.g.
@@ -1570,9 +1570,9 @@ type DashboardConfig struct {
 }
 
 // StreamingConfig configures the closed-bucket SSE producer
-// driving /v1/price/stream. Per L3.9 / launch-task-list G2: the
-// Hub-driven endpoint depends on a producer; this config tells
-// the API binary which (asset, quote) pairs to broadcast.
+// driving /v1/price/stream. The Hub-driven endpoint depends on a
+// producer; this config tells the API binary which (asset, quote)
+// pairs to broadcast.
 //
 // Static set — adding a pair requires a binary restart. Reasoning:
 // the producer is a per-pair goroutine that polls the existing
@@ -2392,7 +2392,7 @@ func Default() Config {
 			// Cadence is only consumed when AggregatorRefreshEnabled is
 			// flipped on; a non-zero default avoids time.NewTicker(0)
 			// panicking if an operator enables the worker without setting
-			// it (the validation gap behind G19-02).
+			// it.
 			AggregatorRefreshCadence:   5 * time.Minute,
 			ReserveBalancesMaxAge:      DefaultReserveBalancesMaxAge,
 			StaleComponentLedgers:      supply.DefaultStaleComponentLedgers,

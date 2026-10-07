@@ -39,7 +39,7 @@ type CORSOptions struct {
 	// [RequireSameSiteWrite] treats a plain Origin match against this
 	// list as sufficient to bypass the same-site write guard.
 	//
-	// RSEC-X1: AllowedOrigins is a public READ allow-list — a
+	// AllowedOrigins is a public READ allow-list — a
 	// status/docs subdomain that only ever reads /v1/ledger/tip has
 	// no business being trusted to drive a cookie-authenticated
 	// write. Ignored when AllowCredentials is false. Must be a
@@ -206,7 +206,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 			// Publish the operator's CredentialedOrigins so the
 			// same-site write guard (see [RequireSameSiteWrite]) can
 			// reuse the same narrower list rather than growing a
-			// second, drift-prone copy of it (RSEC-X1: this is
+			// second, drift-prone copy of it (this is
 			// deliberately NOT the full AllowedOrigins read allow-
 			// list). The policy value is built once at construction
 			// and shared by pointer, so this costs one context node
