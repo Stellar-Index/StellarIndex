@@ -242,8 +242,9 @@ func reciprocalAtScale(a canonical.Amount, decimals uint8) canonical.Amount {
 // mustSoroban / mustCrypto / mustRWA / mustFiat build a canonical
 // reference asset for the registry. Their arguments are compile-time
 // constants (the codes vetted against the ADR-0014 / ADR-0028
-// allow-lists) — an error means a typo in this file, so panic at init
-// rather than degrade silently.
+// allow-lists, the contract id from package upshift) — an error means
+// a typo in one of those constants, so panic at init rather than
+// degrade silently.
 func mustSoroban(contractID string) canonical.Asset {
 	a, err := canonical.NewSorobanAsset(contractID)
 	if err != nil {
