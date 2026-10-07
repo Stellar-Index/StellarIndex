@@ -17,7 +17,7 @@ import (
 // GET /v1/assets/{asset_id}/holders ran two ledger_entries_current FINAL
 // scans per request; the GET /v1/contracts directory ran a GROUP BY over
 // up to a year of contract_events per request, across 365 distinct
-// accepted window sizes. Both on the shared 8-connection explorer pool,
+// accepted window sizes. Both on the shared explorer pool,
 // with no credential required.
 
 // countingExplorerReader wraps the shared stub and counts the two heavy

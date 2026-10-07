@@ -18,7 +18,7 @@ import (
 )
 
 // These tests pin C3-1 (audit-2026-07-16): every explorer handler that reads
-// the shared 8-conn ClickHouse pool (ExplorerReader) MUST bound the read in a
+// the shared ClickHouse pool (ExplorerReader) MUST bound the read in a
 // request-scoped context.WithTimeout(explorerReadTimeout) so a handful of slow
 // unauthenticated requests can't hold every connection open and wedge every
 // lake-backed endpoint (the server WriteTimeout does not cancel an in-flight

@@ -26,7 +26,7 @@ var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity satu
 // is attacker-chosen on unauthenticated routes. Churning fabricated
 // G-addresses (every one shape-valid, every one a cache miss) launched one
 // detached multi-minute lake scan PER KEY with no bound across keys, all
-// contending on the 8-connection serving pool — an unauthenticated
+// contending on the shared explorer pool — an unauthenticated
 // amplification from cheap requests to unbounded expensive scans.
 //
 // The gate deliberately SKIPS on saturation rather than queueing: a
@@ -72,16 +72,13 @@ var serverKeyedClasses = map[string]bool{
 // detached tier can never consume every connection, so inline
 // request-path reads always have headroom.
 //
-// Sized against a PAGE, not a request. At 4 — half the old
-// 8-connection pool — a single cold contract page could not fill
-// itself: it fans out to five reads, so even with per-panel classes the
-// global bound refused some, and a second visitor had nothing left.
-// Explorer traffic is inherently fan-out traffic, and the previous
-// figure was below one page's width. The pool moved 8 -> 16 with it, so
-// the "detached can never take the whole pool" invariant is unchanged;
-// r1 has 20 cores and idles at ~2 concurrent ClickHouse queries, and
-// every explorer scan carries max_threads = 4, so the ceiling this
-// implies is well within the host.
+// Sized against a PAGE, not a request: a cold contract page fans out to
+// five reads, so a bound below one page's width would refuse some of its
+// own panels even with per-panel classes and leave a second visitor
+// nothing. 8 is half the 16-connection explorer pool, so detached
+// refreshes can never take the whole pool; r1 has 20 cores and idled at
+// ~2 concurrent ClickHouse queries, and every explorer scan carries
+// max_threads = 4, so the ceiling this implies is well within the host.
 const DefaultDetachedRefreshLimit = 8
 
 // NewRefreshGate returns a gate admitting at most limit concurrent

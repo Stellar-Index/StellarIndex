@@ -44,7 +44,7 @@ type Config struct {
 	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
-// HashDBConfig gates the ADR-0016 hashdb drift detector
+// HashDBConfig gates the hashdb drift detector
 // (internal/hashdb): an on-disk (ledger_seq → sha256(LCM)) record the
 // indexer appends to as it reads each ledger, plus a periodic
 // verifier that re-reads a recent window from the same bucket and
@@ -74,13 +74,13 @@ type HashDBConfig struct {
 	Path string `toml:"path" doc:"Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing." default:"/var/lib/stellarindex/hashdb.bin"`
 
 	// VerifyIntervalMinutes is the gap between periodic verify
-	// sweeps. 0 falls back to the library default (60m) rather than
+	// sweeps. 0 falls back to the indexer's default (60m) rather than
 	// reaching time.NewTicker(0) at runtime.
 	VerifyIntervalMinutes int `toml:"verify_interval_minutes" doc:"Minutes between hashdb verify sweeps. 0 = library default (60)." default:"60"`
 
 	// VerifyWindowLedgers is how many trailing ledgers each sweep
 	// re-reads from the bucket and re-verifies against hashdb. 0
-	// falls back to the library default (20000 — roughly a day of
+	// falls back to the indexer's default (20000 — roughly a day of
 	// ledger closes at ~5s/ledger). Kept well below the indexer's
 	// live-append edge (see the SafetyMargin in the verify loop) so
 	// the sweep never races an in-flight Append for the same ledger.
@@ -1145,11 +1145,10 @@ type StorageConfig struct {
 	// internal/ledgerstream's TieredDataStore. The cold tier is
 	// READ-ONLY by design — we never write back; the canonical
 	// production target is `aws-public-blockchain/v1.1/stellar/
-	// ledgers/pubnet` (the AWS Open Data Sponsorship bucket — the
-	// same source R2 reads per ADR-0016). Zero-value disables
-	// tiering and the single-source path is used
-	// (default — flip the bucket field on as part of ADR-0027
-	// §Sequencing step 3, not earlier).
+	// ledgers/pubnet` (the AWS Open Data Sponsorship bucket). Zero-value
+	// disables tiering and the single-source path is used (default — flip
+	// the bucket field on as part of ADR-0027 §Sequencing step 3, not
+	// earlier).
 	//
 	// The region is us-east-2, and us-east-1 cannot work: the SDK
 	// builds this client with UsePathStyle=true, so the REGIONAL

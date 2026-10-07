@@ -486,7 +486,7 @@ type Handler struct {
 	// across keys AND cache kinds: per-key
 	// single-flight alone leaves the key space attacker-chosen on these
 	// unauthenticated routes, so fabricated-key churn could queue one
-	// unbounded lake scan per key on the shared 8-conn pool. Resolved
+	// unbounded lake scan per key on the shared explorer pool. Resolved
 	// lazily by detachedGate() — shared with the lake reader's own
 	// account-state gate when the Reader exposes one, so the whole
 	// explorer surface has ONE bound.

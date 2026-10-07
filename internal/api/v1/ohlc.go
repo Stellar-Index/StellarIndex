@@ -496,10 +496,9 @@ func parseWindowDuration(s string) (time.Duration, error) {
 }
 
 // closedBucketWindow is the boundary granularity used by
-// [parseFromToClamped] when `to` defaults to "now". It's the smallest
-// window the aggregator's CAGG ladder will eventually expose
-// (matching `prices_30s`'s eventual chunk size); 30 s also matches
-// the Freighter ≤30 s freshness SLA.
+// [parseFromToClamped] when `to` defaults to "now". 30 s sits inside the
+// smallest bucket of the aggregator's CAGG ladder (`prices_1m`) and
+// matches the Freighter ≤30 s freshness SLA.
 //
 // Per ADR-0015, snapping the implicit "now" to this boundary is what
 // makes "all 3 regions return the same rate" a real property: a

@@ -167,8 +167,8 @@ func sharedCacheReusable(values []string) bool {
 }
 
 // ledgerDetailPath and txDetailPath match closed-ledger detail paths. A
-// ledger's own row, its transaction list and a transaction by hash are
-// IMMUTABLE once the ledger has closed, so they do not take the
+// ledger's own row, its transaction and operation lists and a transaction
+// by hash are IMMUTABLE once the ledger has closed, so they do not take the
 // conservative default's `private, no-store`, which would make the
 // explorer re-fetch a 71 KB transaction list on every visit to a ledger
 // page. Their band is deliberately modest (1 min client / 5 min CDN), not
