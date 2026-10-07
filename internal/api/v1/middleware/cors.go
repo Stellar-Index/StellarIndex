@@ -152,8 +152,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 	maxAgeStr := strconv.Itoa(maxAge)
 	allowCredentials := opts.AllowCredentials
 	// The write-guard policy is scoped to CredentialedOrigins, NOT the
-	// full read allow-list — that's the RSEC-X1 fix. See
-	// [OriginPolicy.AllowsCredentialed].
+	// full read allow-list. See [OriginPolicy.AllowsCredentialed].
 	policy := &OriginPolicy{allowed: credentialed, credentials: allowCredentials}
 
 	return func(next http.Handler) http.Handler {
@@ -189,7 +188,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				w.Header().Set("Access-Control-Expose-Headers", exposed)
 			}
 
-			// Per-request CORS observability (F-1244). One increment
+			// Per-request CORS observability. One increment
 			// per request so operators can dashboard cross-origin
 			// traffic patterns and alert when a wildcard policy
 			// starts handling real cross-origin traffic in prod.

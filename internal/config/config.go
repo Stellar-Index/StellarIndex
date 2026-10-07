@@ -52,9 +52,8 @@ type Config struct {
 // (signed-history anchor) checks can't: upstream retroactively
 // rewriting a previously-fetched ledger's bytes while keeping both
 // internal consistency and SDF's signature intact (see
-// internal/hashdb's package doc for the full "Trust model" rationale
-// and ledger 63332650 — the corrupt-upstream-object incident that
-// motivated wiring this in, 2026-07-08).
+// internal/hashdb's package doc for the full "Trust model" rationale,
+// and ledger 63332650 for a corrupt upstream object of this kind).
 //
 // Both the append side and the verify side share this ONE Enabled
 // flag deliberately: appending without ever verifying never detects
@@ -63,10 +62,8 @@ type Config struct {
 // exactly one half.
 type HashDBConfig struct {
 	// Enabled starts hashdb.Append in the indexer's live LCM read
-	// loop AND the indexer's periodic verify sweep. Off by default —
-	// this is a brand-new, first-production-exposure capability
-	// (signed off 2026-07-08); operators opt in per region once r1's
-	// rollout is clean.
+	// loop AND the indexer's periodic verify sweep. Off by default;
+	// operators opt in per region.
 	Enabled bool `toml:"enabled" doc:"Start the hashdb append-on-ingest + periodic verify sweep in the indexer. Off by default — opt in per region once proven." default:"false"`
 
 	// Path is the on-disk hashdb file. Default matches the indexer's
@@ -136,7 +133,7 @@ const (
 	maxHashDBVerifyWindowLedgers   = 200000
 )
 
-// SignupReaperConfig gates the F-1255 speculative-account reaper
+// SignupReaperConfig gates the speculative-account reaper
 // (internal/signupreaper). The reaper deletes orphan `accounts` rows
 // left behind when two concurrent /v1/auth/callback provisions raced
 // for the same just-verified email: the loser's account is Suspended
@@ -221,10 +218,9 @@ type TradesConfig struct {
 	// `trades.usd_volume` at insert time using `quote_amount /
 	// 10^7` (the Stellar classic decimal scale).
 	//
-	// Empty preserves the pre-Phase-1 default: only off-chain CEX/FX
-	// trades populate `usd_volume`, on-chain DEX trades store NULL.
-	// See `docs/operations/runbooks/`-adjacent doc + the L2.2 caveat
-	// on the volume_24h_usd OpenAPI surface.
+	// Empty means only off-chain CEX/FX trades populate `usd_volume`;
+	// on-chain DEX trades store NULL. See the lower-bound caveat on
+	// the volume_24h_usd OpenAPI surface.
 	USDPeggedClassicAssets []string `toml:"usd_pegged_classic_assets" doc:"Classic credit asset_keys (CODE-ISSUER) the operator declares as USD-pegged stablecoins. On-chain DEX trades quoted in these (or their SAC wrappers, transitive via [supply.sac_wrappers]) populate trades.usd_volume at insert time. Empty preserves the off-chain-only default." default:"[]"`
 }
 
@@ -296,7 +292,7 @@ func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset 
 // "the price of X is P" claim for a pair with an on-chain leg unless
 // the pair's trailing market clears a volume + persistence floor.
 //
-// Motivation (2026-08-04 valuation incident): on a permissionless DEX
+// Motivation: on a permissionless DEX
 // anyone can mint a token and author its entire market. The trailing-
 // baseline sanity guard can't help there — the baseline itself is
 // attacker-authored — so the only honest response for a substanceless
@@ -311,7 +307,7 @@ func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset 
 // internal/pricingguard/substance.go next to their rationale.
 type PricingGuardConfig struct {
 	// DisableSubstanceGate switches the gate off entirely (every pair
-	// serves, pre-2026-08 behaviour). An operator escape hatch for
+	// serves). An operator escape hatch for
 	// diagnosing a suspected false-withhold — not a tuning knob; to
 	// loosen the gate, lower the floors instead.
 	DisableSubstanceGate bool `toml:"disable_substance_gate" doc:"Disable the thin-market substance gate entirely (serve every pair, pre-2026-08 behaviour). Diagnostic escape hatch, not a tuning knob." default:"false"`
@@ -334,7 +330,7 @@ type PricingGuardConfig struct {
 	// FXCrossMaxAgeHours bounds the age of the forex snapshot's matched
 	// rate the /v1/price fiat-cross-rate and USD-anchored-fiat-cross
 	// fallbacks (ADR-0051) may serve. The in-memory forex Cache never
-	// expires on its own (T650), so without this bound a stalled forex
+	// expires on its own, so without this bound a stalled forex
 	// worker would keep answering forever from its last good fetch,
 	// stamped with a fresh-looking observed_at.
 	FXCrossMaxAgeHours int `toml:"fx_cross_max_age_hours" doc:"Staleness budget in hours for the forex snapshot rate backing /v1/price's fiat-cross-rate and USD-anchored-fiat-cross fallbacks; older than this is refused rather than served. Mirrors aggregate.composite_reference.fx_max_age_hours (same fx_quotes staleness profile — daily buckets that pause over market closes). 0 = pricingguard default (76)." default:"76"`
@@ -459,12 +455,12 @@ func defaultPricingGuardConfig() PricingGuardConfig {
 // startup backfill pass (Guard.Backfill) — the self-seed sweep that
 // catches a non-7-decimal Soroban token which traded and then went
 // DORMANT before the guard's periodic freshness sweep (a short, fixed
-// 20-minute window — not config-surfaced) ever observed it. Added
-// 2026-07-09 after token CC2RB… (decimals()=9) went unseeded for weeks:
-// it traded starting 2026-06-22, but the periodic sweep only enumerates
-// the trailing 20 minutes on each tick, so a token that stopped trading
-// stayed invisible until an operator hand-inserted the
-// `nonstandard_decimals_assets` row per the runbook.
+// 20-minute window — not config-surfaced) ever observed it. The
+// periodic sweep only enumerates the trailing 20 minutes on each tick,
+// so without this pass a token that stopped trading stays invisible
+// until an operator hand-inserts the `nonstandard_decimals_assets` row
+// per the runbook (token CC2RB…, decimals()=9, went unseeded for weeks
+// that way).
 type DecimalsGuardConfig struct {
 	// BackfillWindowDays bounds how many days of trade history the
 	// startup backfill pass scans for distinct Soroban-legged
@@ -497,9 +493,8 @@ func (dc DecimalsGuardConfig) validate() error {
 // envelope flag when the cached median deviation exceeds [Threshold].
 //
 // Empty config = no references = service runs but writes no
-// entries (handler keeps the flag unset). This matches the
-// pre-2026-05-01 default; the new behaviour ships CoinGecko
-// always-on (no auth required) so divergence detection actually
+// entries (handler keeps the flag unset). Default() enables
+// CoinGecko (no auth required) so divergence detection actually
 // fires out of the box.
 type DivergenceConfig struct {
 	// Threshold is the divergence percentage above which
@@ -571,8 +566,8 @@ type DivergenceSupplyConfig struct {
 	// operator flips the parent gate.
 	Dashboard DivergenceSupplyDashboardConfig `toml:"dashboard" doc:"Stellar Network Dashboard reference (dashboard.stellar.org) — authoritative XLM circulating supply, free, no auth. On by default within this block."`
 	// CoinGecko is the CoinGecko `/coins/{id}` circulating-supply
-	// reference. Off by default — the free tier has been 429-throttled
-	// since 2026-06-19; enable it once a Pro key is set.
+	// reference. Off by default — the free tier is 429-throttled;
+	// enable it once a Pro key is set.
 	CoinGecko DivergenceSupplyCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko /coins/{id} market_data.circulating_supply reference. Off by default (free tier 429-throttled since 2026-06-19; enable with a Pro key)."`
 }
 
@@ -607,7 +602,7 @@ type DivergenceOracleConfig struct {
 	// MaxAgeMinutes is the staleness ceiling: an oracle_updates
 	// observation older than this (relative to the comparison time)
 	// is rejected as reference-unavailable rather than served as a
-	// fresh reference (the CS-089 frozen-feed discipline). 0 = the
+	// fresh reference (a frozen feed must not pass as fresh). 0 = the
 	// per-oracle built-in default (Reflector 30m; Redstone/Band 26h).
 	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h)." default:"0"`
 }
@@ -619,7 +614,7 @@ type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
-	// MaxAgeMinutes is the CS-089 staleness ceiling: a /simple/price
+	// MaxAgeMinutes is the staleness ceiling: a /simple/price
 	// quote whose upstream last_updated_at is older than this (relative
 	// to the comparison time) is rejected as reference-unavailable
 	// rather than served as a fresh reference (a frozen upstream must
@@ -647,7 +642,7 @@ type ChainlinkFeedConfig struct {
 	Address  string `toml:"address" doc:"0x-prefixed mainnet feed contract address." default:""`
 	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on first use and daily; on disagreement the feed's readings are refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"0"`
 	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
-	// MaxAgeHours is the CS-089 staleness ceiling: a latestRoundData
+	// MaxAgeHours is the staleness ceiling: a latestRoundData
 	// round older than this is rejected as reference-unavailable.
 	// 0 = the default budget for the pair (see the doc tag).
 	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = the default: the built-in feed's budget for a built-in pair, 76h for any other fiat/fiat pair (FX feeds pause over market closes), else 3h. Must be >= 0." default:"0"`
@@ -767,10 +762,8 @@ type ExternalConfig struct {
 // WebSocket streamers (Binance, Kraken, Bitstamp, Coinbase). They
 // have no poll cadence to override — the connector holds an open
 // socket — so unlike [ExternalVenueConfig] this carries no
-// PollInterval field. It used to embed one; the field was accepted
-// at load and validated but read by nothing (GH-999), silently
-// discarding any operator's `poll_interval` under `[external.binance]`
-// et al.
+// PollInterval field, and a `poll_interval` under `[external.binance]`
+// et al. is an unknown key.
 type ExternalStreamerConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
 }
@@ -914,16 +907,16 @@ type OracleConfig struct {
 // OracleStalenessOverrideConfig widens (or tightens) the staleness
 // budget for exactly one (source, asset) pair.
 //
-// WHY THIS EXISTS (issue #478): `stellarindex_oracle_stale` compares
+// WHY THIS EXISTS: `stellarindex_oracle_stale` compares
 // each pair's age against `stellarindex_oracle_staleness_budget_seconds`,
 // which defaults to 10 × the source's declared resolution. Resolution
 // is a per-SOURCE fact — one contract, one relayer, one schedule — but
 // staleness is a per-ASSET one. Reflector's CEX oracle declares 300 s,
-// so every asset on it defaulted to a 50-minute budget; `crypto:DAI`
+// so every asset on it defaults to a 50-minute budget; `crypto:DAI`
 // is a peg asset that publishes only when it moves and ran 7-hour
 // gaps, breaching that budget on 11.6% of evaluations with nothing
-// broken. Loosening the source's resolution would have been a lie
-// about the oracle's cadence AND would have loosened every other asset
+// broken. Loosening the source's resolution would be a lie
+// about the oracle's cadence AND would loosen every other asset
 // on the same source.
 //
 // An override is NOT a mute. The budget is replaced, not removed, so a
@@ -953,7 +946,7 @@ type ReflectorOracleConfig struct {
 
 // RedstoneOracleConfig carries the mainnet RedStone Adapter address.
 // RedStone's 19 per-feed contracts are thin proxies that don't emit
-// events (verified 2026-04-23 via stellar.expert's contract API) —
+// events (verified via stellar.expert's contract API) —
 // all event activity is on the single Adapter, so one address is
 // the full configuration surface. See docs/discovery/oracles/redstone.md.
 type RedstoneOracleConfig struct {
@@ -991,13 +984,10 @@ type SoroswapConfig struct {
 type RegionConfig struct {
 	ID string `toml:"id" doc:"Short region identifier, lowercase (r1/r2/r3)." default:"r1"`
 	// Deployment is the tier label /v1/status reports in
-	// `region.deployment` (and the ingestion diagnostics echo). It was
-	// hardcoded "production" in cmd/stellarindex-api, so the lean
-	// test-net deployments served `"deployment": "production"` from
-	// api.testnet.stellarindex.io and the explorer's status page tagged
-	// a test net PRODUCTION (#328). Defaulting to "production" keeps
-	// pubnet's wire contract byte-identical; the test-net inventories
-	// set "testnet" / "futurenet".
+	// `region.deployment` (and the ingestion diagnostics echo). The
+	// default "production" is pubnet's wire value; the test-net
+	// inventories set "testnet" / "futurenet" so the explorer's status
+	// page does not tag a test net PRODUCTION.
 	Deployment string `toml:"deployment" doc:"Deployment tier this node reports in /v1/status's region block (production / testnet / futurenet / staging). Purely a label — nothing keys behaviour off it." default:"production"`
 }
 
@@ -1094,9 +1084,9 @@ type StorageConfig struct {
 	// apply to every connection (via a post-connect SET, the same
 	// mechanism as the API serving pool's ServingStatementTimeout —
 	// see timescale.OpenBackground). It is the SQL-side runaway
-	// backstop for REC-08 (audit-2026-08-14): before it, only the
-	// serving pool self-bounded, so a genuinely stuck indexer/aggregator
-	// query could run unbounded server-side even after the Go ctx gave up.
+	// backstop: without it only the serving pool self-bounds, so a
+	// genuinely stuck indexer/aggregator query could run unbounded
+	// server-side even after the Go ctx gives up.
 	//
 	// The default is deliberately GENEROUS (30m): it must comfortably
 	// exceed every LEGITIMATE indexer/aggregator query that does NOT set
@@ -1109,8 +1099,8 @@ type StorageConfig struct {
 	//
 	// Scope is the indexer/aggregator pools ONLY. The one-shot ops /
 	// migrate / heavy-backfill paths (stellarindex-ops, migrate) open via
-	// plain timescale.Open and stay UNBOUNDED — a global timeout there was
-	// the rejected prior fix, because it would kill legitimate multi-hour
+	// plain timescale.Open and stay UNBOUNDED — a global timeout there is
+	// rejected because it would kill legitimate multi-hour
 	// migrations, backfills, and the completeness reconcile. 0 disables it
 	// (plain Open, no session timeout), for a deployment that wants those
 	// pools unbounded too.
@@ -1127,13 +1117,12 @@ type StorageConfig struct {
 	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellarindex' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
 	// RedisClosedBucketChannel is the Redis pub/sub channel the
 	// aggregator's redispub.Publisher writes closed-bucket VWAP events
-	// to and the API's redispub.Subscriber listens on (RLT-347). Both
+	// to and the API's redispub.Subscriber listens on. Both
 	// binaries pass this straight to redispub.NewPublisher /
 	// NewSubscriber, which fall back to redispub.DefaultChannel when
-	// empty — so leaving this unset preserves today's behavior exactly.
-	// Only an operator running more than one StellarIndex deployment
+	// empty. Only an operator running more than one StellarIndex deployment
 	// against a shared Redis needs to set this, to keep the streams
-	// partitioned (redispub's doc.go already documented the channel as
+	// partitioned (redispub's doc.go documents the channel as
 	// "configurable"; this is the config key that makes it so).
 	RedisClosedBucketChannel string `toml:"redis_closed_bucket_channel" doc:"Redis pub/sub channel the aggregator publishes closed-bucket VWAP events to and the API subscribes on. Empty (default) uses redispub.DefaultChannel (stellarindex:closed-bucket:v1). Set only when multiple deployments share one Redis and need partitioned streams." default:""`
 	S3Endpoint               string `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
@@ -1144,8 +1133,8 @@ type StorageConfig struct {
 	// the credential itself — buildS3Client does os.Getenv(S3AccessKeyEnv).
 	// They deliberately have NO `env:` tag: an `env:` tag means
 	// "ApplyEnvOverrides replaces this field with the env var's VALUE", which
-	// would overwrite the name with the secret and then os.Getenv(secret)→""
-	// (audit-2026-06-14 A16-01). The default already points at the canonical
+	// would overwrite the name with the secret and then os.Getenv(secret)→"".
+	// The default already points at the canonical
 	// env var, so an operator just exports STELLARINDEX_S3_ACCESS_KEY=<key>
 	// and buildS3Client resolves it through this name.
 	S3AccessKeyEnv string `toml:"s3_access_key_env" doc:"NAME of the env var holding the S3 access key ID (the value lives in that env var, not here)." default:"STELLARINDEX_S3_ACCESS_KEY"`
@@ -1159,15 +1148,14 @@ type StorageConfig struct {
 	// production target is `aws-public-blockchain/v1.1/stellar/
 	// ledgers/pubnet` (the AWS Open Data Sponsorship bucket — the
 	// same source R2 reads per ADR-0016). Zero-value disables
-	// tiering and the legacy single-source path is used unchanged
+	// tiering and the single-source path is used
 	// (default — flip the bucket field on as part of ADR-0027
 	// §Sequencing step 3, not earlier).
 	//
-	// The region is us-east-2, NOT us-east-1 — these doc strings said
-	// us-east-1 until 2026-07-25 and that value cannot work: the SDK
+	// The region is us-east-2, and us-east-1 cannot work: the SDK
 	// builds this client with UsePathStyle=true, so the REGIONAL
 	// endpoint is required and s3.us-east-1.amazonaws.com answers 301
-	// PermanentRedirect for this bucket. Verified live 2026-07-25:
+	// PermanentRedirect for this bucket. Verified live:
 	// `curl -sI https://aws-public-blockchain.s3.amazonaws.com/` →
 	// `x-amz-bucket-region: us-east-2`; s3.us-east-2.amazonaws.com → 200.
 	//
@@ -1177,9 +1165,8 @@ type StorageConfig struct {
 	// cold client signs nothing. pipeline.NewColdDataStore resolves
 	// them; it must NOT be routed through datastore.NewDataStore,
 	// which takes credentials from the ambient AWS chain and would
-	// send local MinIO's keys (the hot tier's) to real AWS — the
-	// 2026-07-25 `InvalidAccessKeyId` incident. See that function's
-	// package note.
+	// send local MinIO's keys (the hot tier's) to real AWS, which
+	// answers `InvalidAccessKeyId`. See that function's package note.
 	S3ColdEndpoint      string `toml:"s3_cold_endpoint" doc:"Cold-tier S3 endpoint — must be the REGIONAL endpoint (the client is path-style). Empty disables tiering. Production (aws-public-blockchain): https://s3.us-east-2.amazonaws.com" default:""`
 	S3ColdRegion        string `toml:"s3_cold_region" doc:"Cold-tier S3 region. Production (aws-public-blockchain): us-east-2 (verified 2026-07-25 — us-east-1 is wrong and 301s)" default:""`
 	S3ColdBucketArchive string `toml:"s3_cold_bucket_archive" doc:"Cold-tier bucket + prefix for historical LCMs. Empty disables tiering. Production: aws-public-blockchain/v1.1/stellar/ledgers/pubnet" default:""`
@@ -1192,7 +1179,7 @@ type StorageConfig struct {
 	// lake within ~seconds of the chain (real-time, for the block explorer) vs
 	// the ~10-min ch-live-catchup timer. The sink is non-blocking (drops under
 	// CH pressure rather than stalling ingest); the catch-up timer backstops
-	// drops. ON since ADR-0041: the lake is substrate, not an add-on, so a
+	// drops. ON by default per ADR-0041: the lake is substrate, not an add-on, so a
 	// deployment that cannot run ClickHouse opts OUT here rather than in.
 	ClickHouseAddr     string `toml:"clickhouse_addr" doc:"ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink." default:"127.0.0.1:9300"`
 	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three." default:"true"`
@@ -1200,7 +1187,7 @@ type StorageConfig struct {
 	// projector reads forward events from the CH lake's contract_events instead
 	// of the Postgres soroban_events landing zone, so soroban_events can be
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is
-	// authoritative for forward events. ON since ADR-0041, matching the
+	// authoritative for forward events. ON by default per ADR-0041, matching the
 	// production topology; turn it off wherever the dual-sink is off.
 	ClickHouseProjectorSource bool `toml:"clickhouse_projector_source" doc:"Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology." default:"true"`
 
@@ -1231,8 +1218,8 @@ type StorageConfig struct {
 // ColdTieringEnabled reports whether the cold-tier read path
 // should be wired up. The flag is the presence/absence of the
 // cold-bucket field — ADR-0027 §Decision "LCM_TIER_ENABLED=false"
-// in its terms — so unset is the safe default for every
-// pre-ADR-0027 deployment.
+// in its terms — so unset is the safe default for a deployment
+// without a cold tier.
 func (s StorageConfig) ColdTieringEnabled() bool {
 	return s.S3ColdBucketArchive != ""
 }
@@ -1249,15 +1236,15 @@ type IngestionConfig struct {
 	// for [seam, ∞), in that order, when from < seam.
 	//
 	// Set to whatever galexie-append.sh passed as --start when
-	// galexie.service first started writing — for r1 today, query
-	// the running process args. 0 = no seam configured; indexer
-	// reads only galexie-live (the pre-2026-04-26 default).
+	// galexie.service first started writing — for r1, query
+	// the running process args. 0 = no seam configured (the default);
+	// indexer reads only galexie-live.
 	LiveSeamLedger uint32 `toml:"live_seam_ledger" doc:"First ledger in the live bucket. Below this, indexer reads from galexie-archive. 0 disables the archive bucket entirely." default:"0"`
 
 	// Projector is the ADR-0032 projection loop. When enabled it
 	// runs in parallel with the dispatcher's per-source sinks
-	// (Phase 3 mode); Phase 4 will flip it to be the sole writer.
-	// Off by default until rc.95 deploys + soak completes.
+	// (Phase 3 mode) unless PersistPerSource=false makes it the
+	// sole writer (Phase 4). Off by default.
 	Projector ProjectorConfig `toml:"projector" doc:"ADR-0032 projector — tails soroban_events and writes per-source rows. Phase 3 runs in parallel with the dispatcher's existing per-source sinks; Phase 4 will flip it primary."`
 }
 
@@ -1282,8 +1269,8 @@ type IngestionConfig struct {
 // Domains the projector has EARNED sole-writer status for (the
 // SoleWriter specs in internal/pipeline/source_spec.go) are exempt: pipeline.SinkModeForProjector routes
 // them through the projector alone whenever it is enabled, regardless
-// of this flag, so no value of it can drop their rows (the F-1316
-// foot-gun). See pipeline.IsSoleWriterProjected.
+// of this flag, so no value of it can drop their rows. See
+// pipeline.IsSoleWriterProjected.
 //
 // Low lag alone does not make Phase 4 safe: one lake hole stalls the
 // projector, and an aggregate whose refresh lookback is shorter than the
@@ -1370,7 +1357,7 @@ type Phase2FreezeConfig struct {
 	// The ones below decide how long the resulting freeze holds, when
 	// it re-evaluates, and what ends it. They are separate knobs
 	// because they trade against different costs: firing too readily
-	// serves a stale last-known-good price (MNY-22), while holding too
+	// serves a stale last-known-good price, while holding too
 	// briefly serves a manipulated one.
 	//
 	// Durations are minutes, not Go duration strings, to match the
@@ -1467,18 +1454,17 @@ type APIConfig struct {
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier. 0 DISABLES the authenticated tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"1000"`
 
 	// RateLimitDwell wires ratelimit.WithDwellTime for the anon/key/
-	// failed-auth buckets. GH-1131: the dwell window was documented as
-	// operator-tunable but had no config path or caller, so the #625
+	// failed-auth buckets, so the dwell window can be tuned around the
 	// stellarindex_ratelimit_fail_open alert (10-minute rule window)
-	// could not be tuned around without a rebuild. A negative value
+	// without a rebuild. A negative value
 	// disables the fail-open→fail-closed inversion.
 	RateLimitDwell time.Duration `toml:"rate_limit_dwell" doc:"Fail-open dwell window for the anon/key/failed-auth rate-limit buckets before Take starts returning ratelimit.ErrThrottleUnavailable (fail-CLOSED, 503) on sustained Redis errors. Mirrors ratelimit.DefaultDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
 
 	// MonthlyQuotaDwell wires middleware.WithMonthlyQuotaDwellTime.
-	// Mirrors RateLimitDwell for the monthly-quota gate (GH-1131).
+	// Mirrors RateLimitDwell for the monthly-quota gate.
 	MonthlyQuotaDwell time.Duration `toml:"monthly_quota_dwell" doc:"Fail-open dwell window for the monthly-quota middleware before month-to-date read errors flip it to fail-CLOSED (429 + Retry-After). Mirrors middleware.DefaultMonthlyQuotaDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
 
-	// FailedAuthRateLimitPerMin caps invalid-credential attempts (C3-5).
+	// FailedAuthRateLimitPerMin caps invalid-credential attempts.
 	// Auth runs before the main rate limiter, so a wrong API key / SEP-10
 	// token is rejected (401) before it reaches the limiter. The same cap
 	// applies independently per client IP and, in the API-key modes, per
@@ -1493,8 +1479,8 @@ type APIConfig struct {
 
 	// SingleInstance asserts the deployment runs exactly ONE API
 	// instance, unlocking the per-process Redis-less fallbacks for the
-	// auth throttles and the passkey ceremony replay guard
-	// (W1-auth-passkey-3 / auth-lt-1). Those fall back to per-PROCESS
+	// auth throttles and the passkey ceremony replay guard.
+	// Those fall back to per-PROCESS
 	// state when Redis is absent, which is correct on one instance but
 	// unsafe across several: a passkey finish-login replayed to a
 	// different instance bypasses the spent-ceremony set (session mint →
@@ -1508,7 +1494,7 @@ type APIConfig struct {
 	SingleInstance bool `toml:"single_instance" doc:"Assert this deployment runs exactly ONE API instance. Only consulted when Redis is DISABLED (storage.redis_addr empty and no sentinels): the auth throttles + passkey ceremony replay guard then fall back to per-PROCESS state, which is unsafe behind more than one instance (cross-instance ceremony replay → session mint; throttle caps multiply by replica count). With Redis absent the API refuses to start unless this is true, so a multi-instance-without-Redis topology cannot silently downgrade a session-minting path. No effect when Redis is configured. Default false (the safe assumption: assume multiple instances until told otherwise)." default:"false"`
 
 	// RequestTimeout + ServingStatementTimeout are the two layers of the
-	// unauth-DoS chokepoint fix (C3-1/C3-2/P1/R1, audit-2026-07-16). The
+	// unauthenticated-DoS chokepoint. The
 	// app-layer request deadline is the primary bound; the SQL
 	// statement_timeout is the defense-in-depth backstop for when Go-side
 	// ctx cancellation races. Keep statement_timeout LONGER than
@@ -1517,7 +1503,7 @@ type APIConfig struct {
 	ServingStatementTimeout time.Duration `toml:"serving_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the API's serving pool (via a post-connect SET), so a runaway request-path query is bounded SQL-side even if Go-side ctx cancellation races. Keep it LONGER than request_timeout so the app-layer deadline fires first (defense in depth). The indexer/aggregator pools are unaffected — their heavy batch scans set their own longer SET LOCAL statement_timeout inside a transaction, which overrides this session default. 0 disables it (plain Open, no session timeout)." default:"30s"`
 
 	// SignupRequireEmailVerification opts the deployment into
-	// the F-1218 wave 45 gate: API-key Subjects whose
+	// the email-verification gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
 	// /v1/signup origin get 403 with a Problem-JSON pointing
 	// at the verify endpoint. Default true; operators set it false
@@ -1536,14 +1522,13 @@ type APIConfig struct {
 	// heartbeat for and rolls `overall` up from. ("api" is always
 	// reported — it is the process answering the request.)
 	//
-	// #328: the list was hardcoded to indexer+aggregator, so the lean
-	// test nets — which deliberately run NO aggregator (inventory
-	// `run_aggregator: false`) — reported it forever "unknown", and the
-	// mixed known/unknown branch of the roll-up pinned overall at
-	// "degraded" permanently. A status page that is red by construction
-	// trains its readers to ignore it. Dropping a service here is an
-	// explicit operator assertion that it is not deployed; leaving the
-	// default in place keeps pubnet's behaviour byte-identical.
+	// The lean test nets deliberately run NO aggregator (inventory
+	// `run_aggregator: false`); listing it there would report it forever
+	// "unknown", and the mixed known/unknown branch of the roll-up would
+	// pin overall at "degraded" permanently. A status page that is red by
+	// construction trains its readers to ignore it. Dropping a service
+	// here is an explicit operator assertion that it is not deployed; the
+	// default (indexer + aggregator) is pubnet's set.
 	StatusServices    []string        `toml:"status_services" doc:"Background services whose heartbeats /v1/status reports and rolls up (subset of: indexer, aggregator). Drop one only on a deployment that genuinely does not run it — a service omitted here can never be reported down." default:"[\"indexer\",\"aggregator\"]"`
 	ArchiveReportPath string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
 	Dashboard         DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
@@ -1551,9 +1536,8 @@ type APIConfig struct {
 
 // DashboardConfig wires the passwordless email login flow (6-digit
 // code + magic link) + cookie sessions for the in-site customer
-// dashboard at stellarindex.io/account. (The standalone
-// app.stellarindex.io SPA was retired 2026-06-17; the dashboard now
-// lives on the explorer apex — see docs/operations/cf-pages-setup.md.)
+// dashboard at stellarindex.io/account, on the explorer apex — see
+// docs/operations/cf-pages-setup.md.
 //
 // Empty (no BaseURL or no Resend API key) leaves the auth
 // endpoints unwired; main.go logs a warn at startup and the
@@ -1611,8 +1595,8 @@ type StreamingConfig struct {
 	PollInterval time.Duration `toml:"poll_interval" doc:"Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum." default:"5s"`
 
 	// MaxStreamsPerIP caps concurrently-held SSE connections from a
-	// single client IP across every stream endpoint (C3-8 /
-	// CS-013). Without it one non-reading client can hold open (and
+	// single client IP across every stream endpoint. Without it one
+	// non-reading client can hold open (and
 	// leak, until the write deadline fires) enough connections to
 	// starve file descriptors / goroutines and deny the streams to
 	// everyone else, since the global cap alone lets one IP consume the
@@ -1624,10 +1608,9 @@ type StreamingConfig struct {
 	// across every stream endpoint, independent of MaxStreamsPerIP's
 	// per-client cap — the backstop against a flood of DISTINCT
 	// client IPs (a botnet) rather than one client holding many
-	// connections. AGT-dead-code (audit-2026-07-23): the underlying
-	// streaming.SetMaxConcurrentStreams knob has existed since CS-013
-	// but nothing called it, so every deployment silently ran the
-	// package-level hardcoded default (8192) with no operator control.
+	// connections. It is the operator control for the underlying
+	// streaming.SetMaxConcurrentStreams knob, whose package-level
+	// default is 8192.
 	MaxConcurrentStreams int64 `toml:"max_concurrent_streams" doc:"Global cap on simultaneous SSE connections across all stream endpoints, independent of the per-IP cap (guards against a flood of DISTINCT client IPs). Over the cap, a new connection is rejected with 503. <= 0 disables the global cap." default:"8192"`
 
 	// MaxTipProducers caps distinct shared tip-stream producers (one
@@ -1677,7 +1660,7 @@ type SEP10Config struct {
 //
 // Two reserve-balance sources are supported:
 //
-//  1. The LCM AccountEntry observer (Task #54, shipped) — when the
+//  1. The LCM AccountEntry observer — when the
 //     indexer has the watched reserve accounts in
 //     `account_observations`, the writer reads live balances from
 //     that table and `ReserveBalancesStroops` is unused.
@@ -1701,7 +1684,7 @@ type SupplyConfig struct {
 	// diffs this list daily against the one SDF publishes
 	// (stellar/dashboard common/lumens.js) and tickets on any
 	// missing/extra account — the 2% value cross-check alone cannot
-	// see a single account change (C4-069; internal/ops/chops).
+	// see a single account change (internal/ops/chops).
 	// It is also the accounts observer's watched set, but it is NOT a
 	// general watch list: any account added here is subtracted from
 	// circulating supply.
@@ -1730,7 +1713,7 @@ type SupplyConfig struct {
 	// fixed cadence (see [AggregatorRefreshCadence]). When false
 	// (the default), operators are expected to drive the writer
 	// via the systemd timer in deploy/systemd/supply-snapshot.timer
-	// instead. Once the LCM observer (Task #54 — shipped) covers
+	// instead. Once the LCM observer covers
 	// the live operator set, the goroutine path is preferred —
 	// snapshots refresh per-cadence rather than per-day, and the
 	// systemd timer becomes redundant.
@@ -1781,8 +1764,8 @@ type SupplyConfig struct {
 	// Empty (the default) leaves the SEP-41 supply pipeline off.
 	WatchedSEP41Contracts []string `toml:"watched_sep41_contracts" doc:"Operator-curated SEP-41 Soroban contract C-strkeys to track for Algorithm 3 supply per ADR-0023. Empty leaves the SEP-41 supply pipeline off." default:"[]"`
 
-	// FullyWrappedSACs is an operator attestation (2026-07-08
-	// decision, BACKLOG #59) that specific SAC-wrapper contracts
+	// FullyWrappedSACs is an operator attestation that specific
+	// SAC-wrapper contracts
 	// (keyed the same way as SACWrappers — SAC contract C-strkey)
 	// represent a classic asset's ENTIRE economic supply, with no
 	// meaningful classic-trustline circulation outside the SAC.
@@ -1805,12 +1788,12 @@ type SupplyConfig struct {
 	FullyWrappedSACs []string `toml:"fully_wrapped_sacs" doc:"SAC wrapper contract C-strkeys (subset of sac_wrappers' keys) the operator attests are 100% SAC-represented — no classic-trustline supply outside the SAC. Selects the strict ADR-0011 equality cross-check (supply.WrapClassFull) instead of the default subset-bound compare (supply.WrapClassPartial). Empty by default; BACKLOG #59, 2026-07-08." default:"[]"`
 
 	// StrictFreshnessRequired flips the supply Refresher into the
-	// stricter F-1236 wave-60 (codex audit-2026-05-13) posture:
+	// stricter posture:
 	// snapshots arriving with `MinComponentLedger == 0` (no
 	// freshness anchor — happens on the static-XLM fallback path
 	// or when a freshness producer transiently fails) get
 	// rejected with `OutcomeKindMissingFreshness` instead of
-	// being published. Default false preserves the legacy
+	// being published. Default false keeps the
 	// permissive interpretation. Operators flip true once every
 	// freshness producer is wired AND every reader is shown to
 	// never fail-open under steady-state load — typically post-
@@ -1843,13 +1826,10 @@ type SupplyConfig struct {
 	// means "no exclusions for this asset" (explicit opt-out of the
 	// default).
 	//
-	// CFG-11 (audit-2026-07-23): this field + MaxSupplyOverrides
-	// were dead config prior to this fix — internal/supply.Policy
-	// already implements per-asset locked sets end to end
-	// (including its own Validate()), but both aggregator call
-	// sites (buildClassicRefreshers, buildSEP41Refreshers)
-	// hardcoded supply.Policy{}, so an operator-intended
-	// treasury/vesting exclusion silently never applied.
+	// internal/supply.Policy implements per-asset locked sets end
+	// to end (including its own Validate()); both aggregator call
+	// sites (buildClassicRefreshers, buildSEP41Refreshers) build it
+	// from this field + MaxSupplyOverrides via buildSupplyPolicy.
 	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: a watched_classic_assets entry ('CODE-G...' or 'CODE:G...') or a watched_sep41_contracts C-strkey; 'XLM' and unwatched keys are rejected at startup. Members must be observed or startup fails: a classic key's contracts need a sac_wrappers entry for its SAC; a SEP-41 key needs a sac_wrappers entry mapping it to itself, or to its classic asset (a SAC), whose accounts then also need that asset in watched_classic_assets. Empty map preserves the per-algorithm default for every asset." default:"{}"`
 
 	// MaxSupplyOverrides forces max_supply for a specific asset,
@@ -1879,7 +1859,7 @@ type SupplyLockedSetConfig struct {
 // checks:
 //
 //  1. Every configured SDF reserve account is a CRC-valid G-strkey
-//     (DOM-11, audit-2026-07-23) — a typo'd address is a
+//     — a typo'd address is a
 //     config mistake, not "this account happens to have zero
 //     reserves." NOTE: this method deliberately does NOT require a
 //     matching reserve_balances_stroops entry for every account —
@@ -1891,8 +1871,7 @@ type SupplyLockedSetConfig struct {
 //     rejects at the point it's actually consulted — i.e. only when
 //     the observer path DOESN'T cover the account — so an
 //     unconditional requirement here would incorrectly block the
-//     documented observer-only deployment (a prior version of this
-//     check did exactly that).
+//     documented observer-only deployment.
 //  2. The aggregator-refresh cadence is at least 30s — tighter
 //     than that costs more than it buys (the chain hasn't
 //     advanced, the refresh writes a no-op snapshot).
@@ -1902,7 +1881,7 @@ type SupplyLockedSetConfig struct {
 //     surfaces a less-obvious error.
 //  4. Every SACWrappers asset_key is non-empty.
 //  5. Every FullyWrappedSACs entry is non-empty AND is a key of
-//     SACWrappers (BACKLOG #59, 2026-07-08) — an attestation about a
+//     SACWrappers — an attestation about a
 //     SAC id the operator hasn't even declared a wrapper mapping for
 //     is a config typo, not a real classification, and would
 //     silently no-op (buildCrossCheckRefresher only ever looks up
@@ -2136,7 +2115,7 @@ func requireWatchedSupplyKeys[V any](field string, byAsset map[string]V, watched
 
 // validateFullyWrappedSACs is check 5 of [SupplyConfig.Validate],
 // split out to keep Validate's cognitive complexity under the
-// gocognit ceiling (BACKLOG #59, 2026-07-08).
+// gocognit ceiling.
 func (sc SupplyConfig) validateFullyWrappedSACs() error {
 	for i, sacID := range sc.FullyWrappedSACs {
 		if sacID == "" {
@@ -2166,7 +2145,7 @@ type ObsConfig struct {
 	// port-collision shift (cmd/stellarindex-aggregator/main.go) reads
 	// this instead of comparing MetricsListen by value, so an operator
 	// who explicitly pins 127.0.0.1:9464 for the aggregator is honoured
-	// instead of silently overridden (GH-1130).
+	// instead of silently overridden.
 	MetricsListenSet bool    `toml:"-"`
 	LogLevel         string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
 	LogFormat        string  `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
@@ -2181,9 +2160,9 @@ type ObsConfig struct {
 // under the funlen ceiling (same reason as defaultAPIConfig /
 // defaultDivergenceConfig below). Off by default — see HashDBConfig's
 // doc. Non-zero cadence + window so an accidental Enabled=true
-// without overrides doesn't reach time.NewTicker(0) (the G19-02
-// trap). Kept in lockstep with the `default:` struct tags — see
-// TestDefault_MatchesStructTags (F-1327).
+// without overrides doesn't reach time.NewTicker(0). Kept in
+// lockstep with the `default:` struct tags — see
+// TestDefault_MatchesStructTags.
 func defaultHashDBConfig() HashDBConfig {
 	return HashDBConfig{
 		Enabled:               false,
@@ -2240,7 +2219,7 @@ func defaultAPIConfig() APIConfig {
 		RateLimitDwell:            30 * time.Second,
 		MonthlyQuotaDwell:         30 * time.Second,
 		HoldsReloadInterval:       15 * time.Second,
-		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
+		// Unauthenticated-DoS chokepoint: the app-layer request
 		// deadline (15s) is the primary bound; the serving-pool
 		// statement_timeout (30s) is the SQL-side backstop, kept longer so
 		// the app deadline fires first.
@@ -2250,11 +2229,11 @@ func defaultAPIConfig() APIConfig {
 		AllowedOrigins:          []string{},
 		CredentialedOrigins:     []string{},
 		TrustedProxyCIDRs:       []string{},
-		// F-0051: probe the public TLS leaf certs by default so silent
+		// Probe the public TLS leaf certs by default so silent
 		// Let's Encrypt renewal failures surface before expiry (the alert
 		// series only exists when this is populated).
 		TLSCertProbeHosts: []string{"api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"},
-		// F-1218: pre-launch safe default is to require email-ownership
+		// The safe default is to require email-ownership
 		// proof on signup-minted keys; operators opt out explicitly.
 		SignupRequireEmailVerification: true,
 		// Matches the archive-completeness.service REPORT_OUTPUT path;
@@ -2262,7 +2241,7 @@ func defaultAPIConfig() APIConfig {
 		// the default is harmless on hosts without the daemon.
 		ArchiveReportPath: "/var/lib/galexie/last-completeness-report.json",
 		// Pubnet runs both; the lean test-net inventories drop
-		// "aggregator" (#328).
+		// "aggregator".
 		StatusServices: []string{"indexer", "aggregator"},
 		SEP10: SEP10Config{
 			SeedEnv:       "STELLARINDEX_SEP10_SEED",
@@ -2300,7 +2279,7 @@ func defaultAPIConfig() APIConfig {
 // deprecation warning instead of a boot-fatal unknown key: a self-hosted
 // deployment's config is a copy of some past release's configs/example.toml
 // (docs/operations/self-hosting.md §4.3), so deleting a struct field would
-// otherwise turn every such upgrade into a hard outage (#890). Add an entry
+// otherwise turn every such upgrade into a hard outage. Add an entry
 // here in the same commit that removes the field; the value is a short note
 // on what replaced it, surfaced in the boot-time warning.
 var RetiredKeys = map[string]string{
@@ -2359,12 +2338,11 @@ func Default() Config {
 			// double-writing the still-un-promoted Soroban-derived
 			// sources (PersistPerSource=true) so nothing is lost while
 			// projector lag is verified. The sep41 domain is EXEMPT from
-			// this flag: it has earned sole-writer status (TASK #16b —
-			// full-history re-derive + ADR-0033 catalogue promotion), so
+			// this flag: it has earned sole-writer status (full-history
+			// re-derive + ADR-0033 catalogue promotion), so
 			// pipeline.SinkModeForProjector routes it through the
-			// projector alone whether PersistPerSource is true or false.
-			// That closes the old F-1316 foot-gun where leaving this flag
-			// at its zero-value (false) silently dropped every sep41 row.
+			// projector alone whether PersistPerSource is true or false,
+			// and no value of this flag can drop a sep41 row.
 			Projector: ProjectorConfig{
 				Enabled:          false,
 				PersistPerSource: true,
@@ -2372,8 +2350,7 @@ func Default() Config {
 		},
 		Oracle: OracleConfig{
 			// Reflector mainnet addresses are operator-supplied
-			// (Phase-1 audit left exact values TBD; see
-			// docs/discovery/oracles/reflector.md). Empty by
+			// (see docs/discovery/oracles/reflector.md). Empty by
 			// default — enabling a reflector-* source without
 			// setting its address is a startup error.
 			Reflector: ReflectorOracleConfig{},
@@ -2403,7 +2380,7 @@ func Default() Config {
 			IntervalSeconds: 30,
 		},
 		SignupReaper: SignupReaperConfig{
-			// On by default — F-1255 signup-race orphans are pure
+			// On by default — signup-race orphans are pure
 			// garbage (no user, no key). Non-zero cadence + age so the
 			// worker never reaches time.NewTicker(0) and always leaves a
 			// safety window before deleting.
@@ -2448,7 +2425,7 @@ func defaultAggregateConfig() AggregateConfig {
 		MaxHops:                      3,
 		MinRouteConfidence:           0,
 		CompositeReference: CompositeReferenceConfig{
-			// ON by default (maintainer, 2026-08-29): the mechanism is
+			// ON by default: the mechanism is
 			// fail-closed on every leg (thin, stale, wrong class)
 			// and evaluated only on single-venue buckets of the
 			// listed targets — the pairs the design doc (§3) records

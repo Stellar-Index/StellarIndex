@@ -26,7 +26,7 @@ import (
 //
 // 429 special case: a single misconfigured client (or a load
 // generator without an API key) can produce thousands of 429s per
-// second on a public origin. r1 evidence on 2026-05-04 — a 60-second
+// second on a public origin. r1 evidence — a 60-second
 // 4-worker probe run produced 343 k suppressed `systemd-journald`
 // entries before journald's own rate limiter kicked in, dropping
 // other-service messages that operators would actually want.
@@ -39,10 +39,10 @@ import (
 // Synthetic traffic at DEBUG, same argument as the 429 case above and
 // the same judgement the SLO uses ([obs.IsSyntheticRequest]). The SLA probe
 // drives ~800 requests per endpoint per run across ten endpoints every
-// 15 minutes; measured on r1 2026-09-16 that was 287,914 API entries in
+// 15 minutes; measured on r1 that was 287,914 API entries in
 // 5.4 hours — 98% of everything the journal held. With SystemMaxUse at
-// 500 MB, a MaxRetentionSec of 14 d was delivering about five hours, so
-// the morning's outage had already aged out of the journal by lunchtime.
+// 500 MB, a MaxRetentionSec of 14 d delivered about five hours, so
+// a morning's outage had aged out of the journal by lunchtime.
 // A log that cannot answer a question about yesterday is not a log.
 //
 // Only SUCCESSFUL synthetic requests are demoted. A probe seeing a 4xx
@@ -116,7 +116,7 @@ func Logger(logger *slog.Logger) Middleware {
 			// this API the query string is what decides the query plan —
 			// `/v1/assets` is one route and many plans, selected by limit,
 			// order_by and cursor — so `path` alone cannot tell an
-			// operator which request was slow. Measured on r1 2026-09-01:
+			// operator which request was slow. Measured on r1:
 			// /v1/assets?limit=100 served in 82 ms while the same limit
 			// with order_by=volume_24h_usd_desc took 1523 ms. Identical
 			// log lines, 18x apart.
@@ -180,7 +180,7 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 // Hijack on it. Without this, SSE handlers (which need
 // SetWriteDeadline(zero-Time) to dodge the global 30s WriteTimeout)
 // would see http.ErrNotSupported on every middleware-wrapped
-// connection in production. F-1228 (codex audit-2026-05-12).
+// connection in production.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }

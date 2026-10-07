@@ -39,18 +39,19 @@ const throttleTakeTimeout = 5 * time.Second
 // cannot tell a caller-cancelled call from a Redis outage — every error
 // out of the take arms its dwell clock — so a client that opens a
 // connection, sends a request and immediately RSTs, a few times a
-// second, kept `redisErrorSince` armed and `healthySince` reset for as
-// long as it cared to, and the 30 s unbroken-success streak needed to
-// disarm could never accumulate. The limiter then answered
-// ErrThrottleUnavailable and the middleware failed CLOSED with 503 for
+// second, would keep `redisErrorSince` armed and `healthySince` reset for
+// as long as it cared to, and the 30 s unbroken-success streak needed to
+// disarm could never accumulate. The limiter would then answer
+// ErrThrottleUnavailable and the middleware fail CLOSED with 503 for
 // EVERY caller sharing that bucket (the whole anonymous tier, or the
 // whole authenticated tier) while Redis was perfectly healthy: a remote
 // kill switch for the API, costing an attacker one TCP handshake per
-// tick (REL-06 F059, reverification-2026-09-18).
+// tick.
 //
 // Detaching is also the correct charge semantics, and closes the
-// mirror-image hole: an aborted request had its take error out and the
-// middleware fall OPEN, so the token was never spent. The request
+// mirror-image hole: attached, an aborted request would have its take
+// error out and the middleware fall OPEN, so the token would never be
+// spent. The request
 // consumed the connection and the dispatch either way — the same
 // reasoning [postResponseWriteTimeout]'s call site records for usage
 // counters, where not counting an aborted request is a quota-evasion
@@ -58,9 +59,9 @@ const throttleTakeTimeout = 5 * time.Second
 //
 // Detaching drops the request's DEADLINE along with its cancellation, so
 // the deadline is re-applied here. These seams run before the handler,
-// inside [RequestTimeout]; a flat 5 s per seam let the pre-handler stack
-// run past the request timeout and, stacked with the handler, past the
-// server's WriteTimeout, answering a client whose response could no
+// inside [RequestTimeout]; a flat 5 s per seam would let the pre-handler
+// stack run past the request timeout and, stacked with the handler, past
+// the server's WriteTimeout, answering a client whose response can no
 // longer be written. A deadline is server-set, never client-set, so
 // honouring it hands a client no way to arm the dwell clock.
 //
@@ -123,7 +124,7 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 	if keyFn == nil {
 		// Default key: the forge-resistant, /64-masked throttle identity
 		// (remoteIPPrefixFor — the SAME resolver the production anon path
-		// uses, F-1338 / SEC-15) rather than the raw RemoteIPFrom context
+		// uses) rather than the raw RemoteIPFrom context
 		// value. Keying on the full IPv6 /128 lets a caller rotate
 		// addresses within a single delegated /64 to mint unlimited
 		// distinct buckets and bypass the per-IP limit; masking to /64
@@ -208,8 +209,7 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 			// Dwell-time exceeded: sustained Redis outage —
 			// fail-CLOSED with 503 + Retry-After rather than
-			// disabling the rate limiter indefinitely. F-0050 /
-			// F-0150 (audit-2026-05-27).
+			// disabling the rate limiter indefinitely.
 			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
@@ -250,10 +250,10 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 // The limiter charges one token before dispatch because that is all it
 // can know there. For most routes that is the right price. It is wrong
 // for a route whose server-side work is chosen by the client: one token
-// bought a 1000-id POST /v1/price/batch — a thousand alias-looped price
+// would buy a 1000-id POST /v1/price/batch — a thousand alias-looped price
 // resolutions, sixteen at a time against a 25-connection pool — so the
-// deployed 6000/min anonymous budget was really six million resolutions
-// a minute (F035 / F046 / K009, reverification-2026-09-18). Such a
+// deployed 6000/min anonymous budget would really be six million
+// resolutions a minute. Such a
 // handler calls this AFTER it has validated the parameter and BEFORE it
 // does the work, so the budget is denominated in work rather than in
 // HTTP requests.
@@ -375,14 +375,14 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 // `cfg.API.KeyRateLimitPerMin` — the override only raises (or
 // lowers) the per-key budget, never the global default.
 //
-// Anonymous keying is the resolved client IP ALONE (F-1335). The
+// Anonymous keying is the resolved client IP ALONE. The
 // anonymous Subject.Identifier is a sha256(IP|User-Agent) hash that
 // stays useful as a log/metric label, but it MUST NOT key the
 // throttle bucket: a client can rotate its User-Agent on every
 // request to mint unlimited distinct hashes, each its own bucket,
 // trivially bypassing the per-IP anonymous floor. We key on
 // anonymousRateLimitKey(r), which resolves the client IP through the
-// trusted-proxy XFF logic (forge-resistant per F-1338) directly from
+// trusted-proxy XFF logic (forge-resistant) directly from
 // the request — independent of whether the Logger middleware has
 // populated the remote-IP context value yet.
 func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *ratelimit.Bucket) (*ratelimit.Bucket, string, int) {
@@ -417,10 +417,10 @@ func RateLimitCallerKey(r *http.Request) string {
 }
 
 // anonymousRateLimitKey derives the per-IP throttle key for an
-// anonymous caller. IP-ONLY by design (F-1335) — see
+// anonymous caller. IP-ONLY by design — see
 // [bucketKeyAndOverrideForRequest]. Uses [remoteIPPrefixFor] (the
-// forge-resistant XFF resolver, F-1338, aggregated to a /64 network
-// prefix for IPv6 per SEC-15 — see its doc) rather than [RemoteIPFrom]
+// forge-resistant XFF resolver, aggregated to a /64 network
+// prefix for IPv6 — see its doc) rather than [RemoteIPFrom]
 // so the key is populated even when the Logger middleware that
 // caches remote_ip in context hasn't run. Falls back to "anon" only
 // when no IP can be resolved at all — collapsing such requests into a
@@ -437,8 +437,8 @@ func anonymousRateLimitKey(r *http.Request) string {
 // authenticatedRateLimitKey counts every credential an account holds
 // against ONE per-minute bucket, derived by [UsageKeyForSubject] — the
 // derivation the monthly quota counts under — so the two budgets cannot
-// drift onto opposite identities again. Keyed per credential, an
-// account's per-minute ceiling multiplied by the number of keys it held
+// drift onto opposite identities. Keyed per credential, an account's
+// per-minute ceiling would multiply by the number of keys it holds
 // (a 25-key account with a 100k/min comp ran at 2.5M/min).
 func authenticatedRateLimitKey(subject auth.Subject) string {
 	return "auth:" + UsageKeyForSubject(subject)
@@ -470,7 +470,7 @@ type rlProblem struct {
 }
 
 // writeThrottleUnavailableProblem is the 503 + Retry-After response
-// for the F-0050 / F-0150 dwell-time fail-closed branch. Mirrors
+// for the dwell-time fail-closed branch. Mirrors
 // writeRateLimitProblem's shape but carries a different error-type
 // URL + status so operators reading access logs (and clients
 // parsing the type tag) can tell "you were rate-limited" apart

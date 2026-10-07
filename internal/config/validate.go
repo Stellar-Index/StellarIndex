@@ -84,10 +84,9 @@ func (c Config) Validate() error {
 	if err := c.Anomaly.validate(); err != nil {
 		return err
 	}
-	// CFG-05 (audit-2026-07-23): the [divergence] section was never
-	// wired into Validate() at all, so refresh_interval_seconds<=0
-	// reached time.NewTicker(0) at aggregator startup and panicked —
-	// the same failure mode G19-02 already fixed for c.Supply above.
+	// Unvalidated, the [divergence] section's refresh_interval_seconds<=0
+	// would reach time.NewTicker(0) at aggregator startup and panic —
+	// the same failure mode the c.Supply check below guards.
 	if err := c.Divergence.validate(); err != nil {
 		return err
 	}
@@ -106,9 +105,9 @@ func (c Config) Validate() error {
 	if err := c.Obs.validate(); err != nil {
 		return err
 	}
-	// G19-02: Supply.Validate() was never wired here, so enabling the
-	// in-aggregator supply worker without a cadence reached
-	// time.NewTicker(0) at runtime. It's a no-op for the default
+	// Without Supply.Validate() here, enabling the in-aggregator supply
+	// worker without a cadence would reach time.NewTicker(0) at
+	// runtime. It's a no-op for the default
 	// (disabled) config and only enforces the <30s-cadence + reserve-set
 	// invariants when the operator opts in.
 	if err := c.Supply.Validate(); err != nil {
@@ -220,13 +219,13 @@ func (s StellarConfig) validate() error {
 		}
 		seen[key] = i
 	}
-	// CFG-05 (audit-2026-07-23): history_archive_url backs the
+	// history_archive_url backs the
 	// backfill-catchup archive read path and has a mandatory
 	// non-empty default (unlike the optional core_http_endpoint) —
 	// treat it as required, and apply the same scheme-check its
-	// sibling URL fields (rpc_endpoints, core_http_endpoint) already
+	// sibling URL fields (rpc_endpoints, core_http_endpoint)
 	// get. Bare url.Parse accepts scheme-less and even empty strings,
-	// which let a malformed archive URL reach the archive client
+	// which would let a malformed archive URL reach the archive client
 	// unnoticed until the first backfill request failed.
 	if s.HistoryArchiveURL == "" {
 		return fmt.Errorf("%w: stellar.history_archive_url required", ErrInvalidConfig)
@@ -235,7 +234,7 @@ func (s StellarConfig) validate() error {
 		return fmt.Errorf("%w: stellar.history_archive_url %q must be a full URL",
 			ErrInvalidConfig, s.HistoryArchiveURL)
 	}
-	// Network/archive mismatch guard (audit 2026-08-26): the PUBNET archive
+	// Network/archive mismatch guard: the PUBNET archive
 	// (core-live) must never be paired with a test-net `network`, or a
 	// testnet/futurenet node would ingest PUBNET checkpoints into a test-net
 	// store — silent cross-network corruption, and config validation is the
@@ -346,8 +345,7 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	// pair is therefore never a sane state: pipeline.NewColdDataStore
 	// would have to guess whether the operator meant "anonymous" or
 	// "static creds", and guessing "anonymous" on a private bucket is
-	// the exact silent-degradation shape the 2026-07-25 cold-tier
-	// incident was made of. Reject at load time instead.
+	// a silent degradation. Reject at load time instead.
 	if (s.S3ColdAccessKeyEnv == "") != (s.S3ColdSecretKeyEnv == "") {
 		return fmt.Errorf("%w: storage.s3_cold_access_key_env (%s) and storage.s3_cold_secret_key_env (%s) must "+
 			"be set together — leave BOTH empty for anonymous reads (public buckets), or name BOTH env vars for "+
@@ -377,7 +375,7 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 				ErrInvalidConfig)
 		}
 	}
-	// ClickHouse feed-switch dependency (ADR-0041 feed-switch, C3-20): the
+	// ClickHouse feed-switch dependency (ADR-0041 feed-switch): the
 	// projector reads forward events from the CH lake's contract_events,
 	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink
 	// must be on. projector_source=true with live_sink=false silently
@@ -394,7 +392,7 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 // A config-validation failure is FATAL at boot: the message goes to
 // stderr, systemd hands it to journald, promtail ships it to Loki on
 // the 720h retention, and anyone with Grafana read access can then read
-// it — the same log store the edge access-log leak (#346 F2) put
+// it — the same log store an edge access-log leak can put
 // credentials into, reached from the other side.
 //
 // So the rule for every branch below is: echo the offending VALUE only
@@ -639,7 +637,7 @@ func (a AggregateConfig) validate() error {
 	// can never fire again — so an operator who follows the field's own
 	// godoc ("raise the cap if that counter fires sustainedly") would see
 	// the ~48%-of-windows truncation rate measured on r1 drop to a
-	// reported 0% with nothing actually fixed (cold audit 2026-08-04).
+	// reported 0% with nothing actually fixed.
 	// tradesInRangeCeiling mirrors timescale.MaxTradesInRangeLimit.
 	// Duplicated as a literal because internal/config is a leaf package
 	// and must not import a storage adapter; timescale's own
@@ -688,11 +686,10 @@ func (a AggregateConfig) validate() error {
 }
 
 // validate checks the AnomalyConfig's Phase 2 thresholds plus the
-// Thresholds / Classifications map shapes. CFG-05 (audit-2026-07-23):
-// Thresholds/Classifications used to be validated only at consumer
-// time by silently falling through to the loose ClassDefault
-// thresholds — so a typo'd class name (e.g. "stablecoins") in EITHER
-// map applied the wrong (looser) thresholds to that class/asset with
+// Thresholds / Classifications map shapes. Consumers silently fall
+// through to the loose ClassDefault thresholds on an unknown class,
+// so a typo'd class name (e.g. "stablecoins") in EITHER
+// map would apply the wrong (looser) thresholds to that class/asset with
 // no error anywhere, defeating the anomaly-freeze safety net for
 // exactly the assets an operator thought they'd tightened. Rejecting
 // unknown class names at config-load time closes that gap.
@@ -778,12 +775,11 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 			ErrInvalidConfig, p.UnfreezeBuckets)
 	}
 	// Hysteresis, the invariant this whole lifecycle exists to
-	// restore: no bucket may satisfy BOTH the freeze condition and the
+	// guarantee: no bucket may satisfy BOTH the freeze condition and the
 	// auto-unfreeze condition. If one can, a signal sitting near the
 	// trigger flaps the pair frozen and unfrozen bucket after bucket —
 	// publishing, each time it unfreezes, exactly the value the freeze
-	// just refused. That was the pre-lifecycle behaviour and it must
-	// not be reachable by config.
+	// just refused. That must not be reachable by config.
 	//
 	// The z axis is what carries the disjointness, and it is the ONLY
 	// axis that has to. The confidence bands deliberately DO overlap
@@ -812,8 +808,8 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 // feeds time.NewTicker(interval) directly in
 // runSupplyDivergenceRefresh (cmd/stellarindex-aggregator/main.go)
 // with no downstream clamp, so <=0 panics the aggregator at startup
-// — the identical NewTicker(0) failure mode G19-02 already fixed for
-// SupplyConfig.AggregatorRefreshCadence.
+// — the identical NewTicker(0) failure mode SupplyConfig.Validate
+// guards for AggregatorRefreshCadence.
 func (d DivergenceConfig) validate() error {
 	for _, u := range []struct{ field, value string }{
 		{"divergence.coingecko.base_url", d.CoinGecko.BaseURL},
@@ -1089,7 +1085,7 @@ func (a APIConfig) validate() error {
 				ErrInvalidConfig, i, raw, err)
 		}
 	}
-	// CFG-05 (audit-2026-07-23): request_timeout is documented as the
+	// request_timeout is documented as the
 	// PRIMARY bound and serving_statement_timeout as the SQL-side
 	// backstop, which only works as defense-in-depth when the
 	// statement timeout is the longer of the two (so the app-layer
@@ -1118,11 +1114,11 @@ func (a APIConfig) validate() error {
 			"own timeout response becomes unreachable",
 			ErrInvalidConfig, a.RequestTimeout, APIMaxHandlerBudget)
 	}
-	// #328: an unknown name in status_services is a service that can
+	// An unknown name in status_services is a service that can
 	// never be reported down — /v1/status would look for a heartbeat
 	// key Prometheus never publishes and hold `overall` at degraded
-	// forever, which reads exactly like the bug this list exists to
-	// fix. Reject the typo at boot rather than serve a permanently
+	// forever, which reads exactly like the stuck status this list exists
+	// to prevent. Reject the typo at boot rather than serve a permanently
 	// mis-rolled status page.
 	for i, raw := range a.StatusServices {
 		switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -1198,7 +1194,7 @@ var (
 	// envVarNameShapePattern matches the general shape of an
 	// UPPER_SNAKE_CASE identifier — what a "holds the NAME of an env
 	// var" field (s3_access_key_env, s3_secret_key_env) should look
-	// like. Catches the inverse CFG-03 mistake: a literal secret (or
+	// like. Catches the inverse mistake: a literal secret (or
 	// anything else) shipped where a name was expected.
 	envVarNameShapePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 

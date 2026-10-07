@@ -70,7 +70,7 @@ func CacheControl(next http.Handler) http.Handler {
 // false, only `max-age` (client tier) is emitted on cacheable
 // routes — appropriate for deployments without a CDN in front.
 // `private, no-store` and `private, no-cache, must-revalidate`
-// directives are unaffected (they were never CDN-cacheable).
+// directives are unaffected (they are never CDN-cacheable).
 func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,11 +177,11 @@ func sharedCacheReusable(values []string) bool {
 // are emitted on cacheable routes. When false, only `max-age`
 // (client tier) survives — operators without a CDN in front of
 // the API set this so a CDN they don't have can't cache anything.
-// Closed-ledger detail paths (#332 F3, 2026-09-02). A ledger's own row, its
-// transaction list and a transaction by hash are IMMUTABLE once the ledger
-// has closed, yet they fell through to the conservative default and were
-// served `private, no-store` — the explorer re-fetched a 71 KB transaction
-// list on every visit to a ledger page. The band below is deliberately
+// Closed-ledger detail paths. A ledger's own row, its transaction list and
+// a transaction by hash are IMMUTABLE once the ledger has closed, so they do
+// not take the conservative default's `private, no-store`, which would make
+// the explorer re-fetch a 71 KB transaction list on every visit to a ledger
+// page. The band below is deliberately
 // modest (1 min client / 5 min CDN), not a year: policyForPath knows
 // nothing about the tip, and a ledger a few seconds old can be served
 // before every downstream projection for it has landed, so a long TTL
@@ -191,7 +191,7 @@ var (
 	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
 	txDetailPath     = regexp.MustCompile(`^/v1/tx/[0-9a-fA-F]{64}$`)
 	// protocolTVLPath is the per-pool DEX TVL drill-down
-	// (/v1/protocols/{name}/tvl, #338) — one segment for the protocol
+	// (/v1/protocols/{name}/tvl) — one segment for the protocol
 	// name, nothing after /tvl, so the directory row and detail routes
 	// beside it keep the handler-set policy they already have.
 	protocolTVLPath = regexp.MustCompile(`^/v1/protocols/[^/]+/tvl$`)
@@ -204,13 +204,13 @@ var (
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx
-// surface (#332 F3, 2026-09-02). ok=false means "not one of mine — fall
-// through to the main switch".
+// surface. ok=false means "not one of mine — fall through to the main
+// switch".
 //
 //   - A ledger's own row, its transaction/operation list and a transaction by
-//     hash are IMMUTABLE once the ledger closes, yet they fell through to the
-//     conservative default and were served `private, no-store` — the explorer
-//     re-fetched a 71 KB transaction list on every visit to a ledger page. The
+//     hash are IMMUTABLE once the ledger closes; the conservative default's
+//     `private, no-store` would make the explorer re-fetch a 71 KB transaction
+//     list on every visit to a ledger page. The
 //     band is deliberately modest (1 min client / 5 min CDN), not a year:
 //     policyForPath knows nothing about the tip, and a ledger a few seconds
 //     old can be served before every downstream projection for it has
@@ -219,11 +219,11 @@ var (
 //   - /v1/ledgers (the list) moves every ~5 s and /v1/network/throughput
 //     already has a server-side cache; both get the status-like short band.
 //
-//   - /v1/operations joins them (#332 F2, 2026-09-03). It is /v1/ledgers'
+//   - /v1/operations joins them. It is /v1/ledgers'
 //     sibling listing — the network-wide operations directory, advancing once
 //     per ledger — and it too already has a server-side cache (opsDirCache,
-//     10 s TTL + stale-while-revalidate). It was never adjudicated, so it fell
-//     to the conservative default and shipped `private, no-store`: an 18 KB
+//     10 s TTL + stale-while-revalidate). The conservative default would ship
+//     it `private, no-store`: an 18 KB
 //     body that no client and no CDN could reuse for even one ledger. Nothing
 //     in it is per-user or auth-tied.
 //
@@ -233,10 +233,8 @@ var (
 //     rather than by the TTL (measured on r1: an `as_of` 93 s behind after a
 //     quiet window). A 300 s edge TTL would compound that real staleness.
 //
-//   - /v1/contracts joins them on the same evidence. #332 F3 named it and
-//     the F3 fix did not reach it: live on 2026-09-03 it still answered
-//     `private, no-store` while its sibling /v1/ledgers answered the short
-//     band. It is the contracts directory, fronted by the same
+//   - /v1/contracts joins them on the same evidence. It is the contracts
+//     directory, fronted by the same
 //     stale-while-revalidate server cache (recentContractsCached), and
 //     nothing in it is per-user or auth-tied. The EXACT-path match matters:
 //     /v1/contracts/{id} is a different surface and keeps its own
@@ -263,9 +261,9 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	case path == "/v1/ledgers", path == "/v1/ledgers/at", path == "/v1/network/throughput",
 		path == "/v1/operations", path == "/v1/contracts",
 		contractDetailPath.MatchString(path),
-		// Network-stats strip (#1070): a 30s SWR cache carrying
+		// Network-stats strip: a 30s SWR cache carrying
 		// latest_ledger, which advances every ~5s — the 300s catalogue
-		// band it sat in was 10x its own cache lifetime. Joins its
+		// band would be 10x its own cache lifetime. Joins its
 		// /v1/network/throughput sibling in the short band instead.
 		path == "/v1/network/stats":
 		if cdnEnabled {
@@ -287,7 +285,7 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 // A shared TTL of d adds d to the worst-case age of `observed_at`,
 // makes the per-request `as_of` lie by up to d, and extends by d the
 // window in which a pre-freeze price is served with `frozen=false`
-// after a phase-2 freeze fires. The old s-maxage=60 was not provable
+// after a phase-2 freeze fires. An s-maxage of 60 is not provable
 // on any of the three: it can serve a bucket a full bucket behind
 // origin (age <= 210 s, past the 150 s probe bound) and stale
 // `frozen` / `confidence` for two 30 s aggregator ticks.
@@ -301,11 +299,11 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 //
 // /v1/oracle/latest joins them: it is a "latest observation per
 // source" surface with NO closed-bucket contract and no staleness
-// flag, and it sat in the 300 s catalogue band purely because of the
-// `/v1/oracle/` prefix arm below. #344.
+// flag; only the `/v1/oracle/` prefix arm below would put it in the
+// 300 s catalogue band.
 //
-// The other three SEP-40 passthrough endpoints share the same defect
-// and the same fix: /v1/oracle/lastprice and /v1/oracle/x_last_price
+// The other three SEP-40 passthrough endpoints share the same hazard
+// and the same band: /v1/oracle/lastprice and /v1/oracle/x_last_price
 // are both "last observed price" surfaces with the identical
 // no-closed-bucket-contract nature as /v1/oracle/latest, and
 // /v1/oracle/prices is itself a closed-bucket surface (it excludes
@@ -315,8 +313,8 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 //
 // SLOPriceRoutes names every route above so
 // TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the actual
-// set instead of a hand-typed copy — #820: the copy silently omitted the
-// three SEP-40 passthroughs after they were carved out here.
+// set instead of a hand-typed copy, which can silently omit a route
+// carved out here.
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",
@@ -336,11 +334,11 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/oracle/lastprice",
 		path == "/v1/oracle/prices",
 		path == "/v1/oracle/x_last_price",
-		// #820 follow-up: /v1/price/at, /v1/vwap and /v1/twap are the same
+		// /v1/price/at, /v1/vwap and /v1/twap are the same
 		// hazard on a different surface — each calls the scam gate
-		// (writeIfScamWithheld in price_at.go/vwap.go/twap.go) and, until
-		// this carve-out, sat in the 300 s catalogue band below by nothing
-		// more than "closed-bucket price data looks cacheable". A CDN
+		// (writeIfScamWithheld in price_at.go/vwap.go/twap.go), so
+		// "closed-bucket price data looks cacheable" does not earn them
+		// the 300 s catalogue band below. A CDN
 		// entry minted a second before a scam flag flips serves the
 		// pre-freeze price for up to 300 s after the flip, while the
 		// origin's own withheld 404 is `no-store`. The short band bounds
@@ -358,7 +356,7 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 	// ─── Current asset / pool state — short cache ───────────────
 	case path == "/v1/assets",
 		strings.HasPrefix(path, "/v1/assets/"),
-		// Tokenized real-world assets (#352). Its membership set is
+		// Tokenized real-world assets. Its membership set is
 		// rebuilt on a 10-minute in-process cadence, but every number
 		// on it comes from the same catalogue read /v1/assets serves,
 		// so it takes the same band as /v1/assets rather than the
@@ -390,14 +388,14 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// contract's storage in the lake (ADR-0039), the same nature as
 		// /v1/pools/reserves.
 		lendingReservesPath.MatchString(path),
-		// The non-Stellar half of the /v1/assets catalogue (LC-001): same
+		// The non-Stellar half of the /v1/assets catalogue: same
 		// wire shape and the same live valuations, so the same band.
 		path == "/v1/external/assets",
 		strings.HasPrefix(path, "/v1/external/assets/"),
-		// Routers registry + routed-via 24h rollup (#1070). Wired to the raw
+		// Routers registry + routed-via 24h rollup. Wired to the raw
 		// store with no in-process cache and the attribution sweeper keeps
 		// it fresh on a 1-min cadence — a 60s edge entry (not the 300s
-		// catalogue band it sat in) is what stays inside that cadence.
+		// catalogue band) is what stays inside that cadence.
 		path == "/v1/aggregators":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60", true
@@ -416,7 +414,7 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 }
 
 func policyForPath(path string, cdnEnabled bool) string {
-	// Closed-ledger detail + the two fast-moving explorer reads (#332 F3)
+	// Closed-ledger detail + the two fast-moving explorer reads
 	// live in their own helper so this switch stays under the gocyclo
 	// ceiling; see ledgerPolicy for the rationale on each band.
 	if p, ok := ledgerPolicy(path, cdnEnabled); ok {
@@ -425,7 +423,7 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// The two SHORT bands: closed-bucket price surfaces (5s shared) and
 	// current asset/pool state (60s shared). Lifted out of the switch to
 	// stay under the gocyclo ceiling; see shortBandPolicy for why 5s and
-	// not 60s on the price side (#344).
+	// not 60s on the price side.
 	if p, ok := shortBandPolicy(path, cdnEnabled); ok {
 		return p
 	}
@@ -460,15 +458,13 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		return "private, no-store", true
 
 	// ─── Magic-link auth + dashboard — same trust class as SEP-10
-	// F-1225 (audit-2026-05-12): /v1/auth/{login,callback,logout}
-	// + /v1/dashboard/keys* fell through to the no-match branch
-	// (no Cache-Control set), so a CDN in front of the API could
-	// have cached /v1/auth/callback's session-cookie response and
-	// re-issued it to subsequent requests. /v1/signup is also a
-	// credential / state-changing surface that must never cache.
-	// /v1/methodology, /v1/incidents.atom and /v1/price/stream got
-	// explicit arms below at the same time. Routes that still reach
-	// the default are listed, with a reason each, in the test's
+	// /v1/auth/{login,callback,logout} + /v1/dashboard/keys* get an
+	// explicit arm rather than the no-match branch: a CDN in front
+	// of the API could otherwise cache /v1/auth/callback's
+	// session-cookie response and re-issue it to subsequent
+	// requests. /v1/signup is also a credential / state-changing
+	// surface that must never cache. Routes that reach the default
+	// are listed, with a reason each, in the test's
 	// defaultPolicyAllowlist.
 	case strings.HasPrefix(path, "/v1/auth/"),
 		strings.HasPrefix(path, "/v1/dashboard/"),
@@ -481,8 +477,8 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	case strings.HasPrefix(path, "/v1/price/stream"):
 		return "no-store", true
 
-	// ─── Public-but-policy-opinionated paths that lacked an
-	// explicit case before F-1225. Methodology page is mostly
+	// ─── Public-but-policy-opinionated paths with an explicit
+	// case. Methodology page is mostly
 	// static prose; the atom feed is poll-cadence content.
 	case path == "/v1/methodology":
 		if cdnEnabled {
@@ -539,8 +535,8 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	// trailing-edge boundary advances; s-maxage=300 caps how long
 	// a CDN entry can lag the boundary.
 	case strings.HasPrefix(path, "/v1/history"),
-		// /v1/price/at, /v1/vwap and /v1/twap moved to shortBandPolicy
-		// (#820 follow-up) — each is a scam-gated price surface and must
+		// /v1/price/at, /v1/vwap and /v1/twap are in shortBandPolicy
+		// — each is a scam-gated price surface and must
 		// not outlive a withhold flip in a shared cache the way an
 		// immutable OHLC bucket safely can.
 		path == "/v1/ohlc",
@@ -577,13 +573,13 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		// Accounts analytics — 30-min rollup snapshot; the public
 		// catalogue band is well inside its real cadence.
 		path == "/v1/accounts/stats",
-		// Account-creator league table (#351) — a rollup snapshot on the
+		// Account-creator league table — a rollup snapshot on the
 		// same cadence, and network-wide aggregate reference data rather
 		// than per-account state, so it takes the public band its
 		// /v1/accounts/* siblings deliberately do not. Exact path only:
 		// anything deeper falls through to private, no-store.
 		path == "/v1/accounts/creators",
-		// Sponsor league table (#351) — same rollup cadence and the same
+		// Sponsor league table — same rollup cadence and the same
 		// aggregate-reference-data reasoning as its creator sibling.
 		path == "/v1/accounts/sponsors",
 		// Curated address labels — resynced from upstream at most
@@ -596,7 +592,7 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		// change-summary worker; 60s edge cache stays well inside
 		// that boundary, and 5 min s-maxage matches.
 		strings.HasPrefix(path, "/v1/changes/"),
-		// RWA value-over-time (#352). Deliberately the LONGER band its
+		// RWA value-over-time. Deliberately the LONGER band its
 		// /v1/rwa/assets sibling does not take: that surface carries
 		// live valuations whose CDN entry must not outlive them, while
 		// this one is a DAILY series assembled behind a 10-minute TTL
@@ -617,11 +613,9 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	// /v1/accounts/{g}/operations, /v1/accounts/{g}/movements
 	// (ADR-0048 D5), /v1/accounts/{g}/positions, /v1/accounts/{g}/trades,
 	// /v1/accounts/{g}/activity, /v1/accounts/{g}/graph and
-	// /v1/accounts/{g}/graph/history (#351)
-	// never had an explicit case here — they've always
-	// fallen through to the conservative default below. Made EXPLICIT
-	// (still private, no-store, no behavior change) when D5 added
-	// /movements, so a future reviewer can see the account-surface
+	// /v1/accounts/{g}/graph/history take the conservative
+	// default's private, no-store, but EXPLICITLY, so a reviewer
+	// can see the account-surface
 	// policy is a deliberate match to /v1/account/* (singular,
 	// auth-tied) rather than an oversight: per-account listings are
 	// keyset-paginated over the current lake tip, and an address is a

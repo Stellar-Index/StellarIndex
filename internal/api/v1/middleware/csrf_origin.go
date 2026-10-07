@@ -54,16 +54,16 @@ func OriginPolicyFrom(ctx context.Context) (*OriginPolicy, bool) {
 // allow-listed origin, per the OWASP CSRF Prevention Cheat Sheet's
 // "Verifying Origin With Standard Headers" defence.
 //
-// C3-031 / C3-057 (audit-2026-07-23): the dashboard's cookie-authed
-// mutation surface had NO CSRF defence beyond `SameSite=Lax` on the
-// session cookie. Lax stops a cross-SITE POST from carrying the
+// `SameSite=Lax` on the session cookie is not, on its own, a CSRF
+// defence for the dashboard's cookie-authed mutation surface. Lax
+// stops a cross-SITE POST from carrying the
 // cookie, which is real protection — but it is a *site*-level
 // control, so it does nothing about a sibling origin under the same
 // registrable domain (any `*.stellarindex.io` host, e.g. a
 // customer-content or preview subdomain, is same-site), and nothing
 // about the un-authenticated state-changing routes that MINT a
 // session rather than consume one (`/v1/auth/login`,
-// `/v1/auth/verify-code` — the login-CSRF pair to C3-030). This
+// `/v1/auth/verify-code` — login CSRF). This
 // guard closes both: the `Origin` must be the API's own origin or
 // one the operator explicitly allow-listed for CORS.
 //
