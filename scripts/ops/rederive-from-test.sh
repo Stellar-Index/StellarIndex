@@ -50,14 +50,16 @@ echo "${LAKE_TIP:-2500000}"
 STUB
 # Records "<subcommand> <from> <to|-> <source|->". ch-backfill can fail one
 # window (FAIL_FROM), hang on one (HANG_FROM, pid to HANG_PID) or report how
-# many ch-backfills are in flight at once (RUNNING_DIR).
+# many ch-backfills are in flight at once (RUNNING_DIR). Like the real
+# binary, seed-entry-counts refuses a run that states no mode.
 cat > "$TMP/bin/fake-ops" <<'STUB'
 #!/usr/bin/env bash
-cmd=$1; shift; from=; to=; src=
+cmd=$1; shift; from=; to=; src=; mode=
 while [ $# -gt 0 ]; do
-  case "$1" in -from) from=$2; shift 2 ;; -to) to=$2; shift 2 ;; -source) src=$2; shift 2 ;; *) shift ;; esac
+  case "$1" in -from) from=$2; shift 2 ;; -to) to=$2; shift 2 ;; -source) src=$2; shift 2 ;; -write|-dry-run) mode=$1; shift ;; *) shift ;; esac
 done
 echo "$cmd ${from:--} ${to:--} ${src:--}" >> "$OPS_LOG"
+[ "$cmd" = seed-entry-counts ] && [ -z "$mode" ] && exit 2
 if [ "$cmd" = ch-backfill ]; then
   if [ "$from" = "${HANG_FROM:-none}" ]; then echo "$$" > "$HANG_PID"; while :; do /bin/sleep 0.1; done; fi
   [ "$from" = "${FAIL_FROM:-none}" ] && exit 7

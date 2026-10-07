@@ -200,7 +200,7 @@ func (r scriptRun) ofKind(kind string, needWrite, preflight bool) []scriptCall {
 		if c.kind != kind {
 			continue
 		}
-		if kind == "OPS" && (c.has("-write") != needWrite || c.has("-preflight") != preflight) {
+		if kind == "OPS" && (c.has("-write") != needWrite || c.has("-preflight") != preflight || c.isCAGGRefresh()) {
 			continue
 		}
 		out = append(out, c)

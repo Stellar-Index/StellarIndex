@@ -54,10 +54,11 @@ type tradesCAGGRefreshArgs struct {
 	from, to uint32
 	force    bool
 	size     bool
+	write    bool
 }
 
 func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
-	fs := flag.NewFlagSet(tradesCAGGRefreshVerb, flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet(tradesCAGGRefreshVerb)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger of the rewritten range (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger of the rewritten range (inclusive, required)")
@@ -88,7 +89,11 @@ func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
 	if *from == 0 || *to < *from || *to > uint(^uint32(0)) {
 		return tradesCAGGRefreshArgs{}, fmt.Errorf("-from and -to are required, with 0 < -from <= -to <= %d", ^uint32(0))
 	}
-	return tradesCAGGRefreshArgs{cfgPath: *cfgPath, from: uint32(*from), to: uint32(*to), force: *force}, nil
+	// ch-rebuild-projected.sh reads exit 0 as "aggregates rebuilt".
+	if err := gate.RequireStatedMode(); err != nil {
+		return tradesCAGGRefreshArgs{}, err
+	}
+	return tradesCAGGRefreshArgs{cfgPath: *cfgPath, from: uint32(*from), to: uint32(*to), force: *force, write: gate.Enabled()}, nil
 }
 
 func tradesCAGGRefresh(args []string) error {
@@ -109,6 +114,9 @@ func tradesCAGGRefresh(args []string) error {
 	defer func() { _ = store.Close() }()
 	if a.size {
 		return sizeTradesCAGGBacklog(ctx, store, time.Now(), os.Stdout)
+	}
+	if !opsutil.PrintWriteBanner(a.write) {
+		return previewTradesCAGGRefresh(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
 	}
 	return refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
 }
@@ -255,7 +263,7 @@ func printTradesCAGGCatchUp(ctx context.Context, s tradesCAGGSizer, out io.Write
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "%s hull=%s ledgers=[%d,%d] catch-up: -force=false -from %d -to %d\n",
+	_, err = fmt.Fprintf(out, "%s hull=%s ledgers=[%d,%d] catch-up: -force=false -from %d -to %d -write\n",
 		tradesCAGGPendingPrefix, hullStr, fromLedger, toLedger, fromLedger, toLedger)
 	return err
 }
@@ -317,27 +325,13 @@ func refuseTwapsBelowPrices1mFloor(ctx context.Context, s tradesCAGGStore, plan 
 // it succeeds only once prices_1m agrees with `trades` over sampled
 // windows of the span ([checkTradesPrices1mDrift]).
 func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) error {
-	tsFrom, tsTo, err := s.LedgerRangeToTimeRange(ctx, from, to)
-	if errors.Is(err, timescale.ErrNotFound) {
-		return fmt.Errorf("no trades in ledgers [%d,%d], so the time span to refresh is unknown; if this range was rewritten, refresh the trades continuous aggregates over it by hand", from, to)
-	}
+	tsFrom, tsTo, plan, err := planTradesCAGGRefresh(ctx, s, from, to, force, now, out)
 	if err != nil {
-		return fmt.Errorf("time span of ledgers [%d,%d]: %w", from, to, err)
+		return err
 	}
 	armed, err := s.Prices1mRetentionArmed(ctx)
 	if err != nil {
 		return err
-	}
-	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
-		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
-	})
-	if !force {
-		if err := refuseTwapsBelowPrices1mFloor(ctx, s, plan, from, to); err != nil {
-			return err
-		}
-		if err := refuseUncoveredTwapReads(ctx, s, plan, from, to, now, out); err != nil {
-			return err
-		}
 	}
 	for _, st := range plan {
 		st.Force = st.Force && force
@@ -354,6 +348,46 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 	_, err = fmt.Fprintf(out, "%s [%d,%d] ts=[%s,%s] views=%d forced=%t drift-windows=%d\n", tradesCAGGRefreshedPrefix,
 		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(timescale.TradesCAGGs), force, checked)
 	return err
+}
+
+// planTradesCAGGRefresh resolves [from, to] to its trades' time span and
+// the refresh steps over it, applying a non-forced run's refusals.
+func planTradesCAGGRefresh(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) (time.Time, time.Time, []timescale.CAGGRefreshStep, error) {
+	tsFrom, tsTo, err := s.LedgerRangeToTimeRange(ctx, from, to)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("no trades in ledgers [%d,%d], so the time span to refresh is unknown; if this range was rewritten, refresh the trades continuous aggregates over it by hand", from, to)
+	}
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("time span of ledgers [%d,%d]: %w", from, to, err)
+	}
+	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
+	})
+	if !force {
+		if err := refuseTwapsBelowPrices1mFloor(ctx, s, plan, from, to); err != nil {
+			return time.Time{}, time.Time{}, nil, err
+		}
+		if err := refuseUncoveredTwapReads(ctx, s, plan, from, to, now, out); err != nil {
+			return time.Time{}, time.Time{}, nil, err
+		}
+	}
+	return tsFrom, tsTo, plan, nil
+}
+
+// previewTradesCAGGRefresh prints the steps a -write run would take and
+// refreshes nothing.
+func previewTradesCAGGRefresh(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) error {
+	_, _, plan, err := planTradesCAGGRefresh(ctx, s, from, to, force, now, out)
+	if err != nil {
+		return err
+	}
+	for _, st := range plan {
+		if _, err := fmt.Fprintf(out, "trades-cagg-refresh: would refresh %s [%s,%s) forced=%t\n", st.View,
+			st.From.UTC().Format(time.RFC3339), st.To.UTC().Format(time.RFC3339), st.Force && force); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // tradesCAGGRefreshWindow widens [from, to] by half the view's MinWindow

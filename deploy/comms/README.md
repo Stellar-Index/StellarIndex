@@ -27,7 +27,7 @@ a blank page.
   status-page corpus; F-1211, 2026-05-13 — earlier prose pointed
   at retired external-issue IDs). Author the Markdown file per
   [`runbooks/sev-status-page-update.md`](../../docs/operations/runbooks/sev-status-page-update.md);
-  `stellarindex-ops emit-incident --slug <slug>` fires the
+  `stellarindex-ops emit-incident -slug <slug> -event <sev1|resolved> -write` fires the
   customer-webhook fan-out from the same source.
 - **`{{tag}}`** — the CalVer release tag (e.g. `2026.07.15.1`).
 - **`{{utc_time}}`** — RFC-3339 UTC timestamp; e.g.

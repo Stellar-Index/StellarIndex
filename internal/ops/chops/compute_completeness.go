@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
@@ -145,7 +145,7 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 // source is still evaluated, and the run exits non-zero naming each failure
 // (evaluateEachSource).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
-	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("compute-completeness")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	toFlag := fs.Uint("to", 0, "Tip ledger (inclusive); 0 = resolve from the live ledgerstream cursor. A frozen cursor is refused either way unless -allow-frozen-cursor is set")
 	allowFrozenCursor := fs.Bool("allow-frozen-cursor", false, "Stamp a verdict even though the ledgerstream cursor is provably behind the network (operator override; requires -to)")
@@ -180,11 +180,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if perr := validatePassFlags(*pass, *only, *fromLedger, *skipSubstrate, *skipRecognition); perr != nil {
 		return fmt.Errorf("compute-completeness: %w", perr)
 	}
+	// The completeness timers read exit 0 as "verdicts published".
+	if err := gate.RequireStatedMode(); err != nil {
+		return err
+	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
 		return err
 	}
+	write := gate.Banner()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
@@ -434,7 +439,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// per-source loop so a pass that runs out of time still publishes it. An
 	// upsert error does not stop the loop; it is joined into the run's error.
 	var recSnapErr error
-	if !*skipRecognition {
+	if !*skipRecognition && !write {
+		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d (dry-run: not stored)\n", len(unattributed))
+	} else if !*skipRecognition {
 		// The census is what /v1/coverage publishes as typed numbers on its
 		// `recognition` audit axis: the distinct-contract count says how
 		// concentrated the unattributed shapes are, not just how many.
@@ -644,7 +651,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// A blind re-derive earns no ground either. Its zero
 			// delta is an artifact of both sides dropping the same rows,
 			// so recording the floor would enshrine an unverified range.
-			if delta == 0 && len(floorLoss) == 0 && !blind.Any() {
+			if write && delta == 0 && len(floorLoss) == 0 && !blind.Any() {
 				if ferr := recordFloors(ctx, store, src, scopes, servedMins); ferr != nil {
 					return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
 				}
@@ -712,7 +719,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if len(detail) == 0 {
 			detail = append(detail, "complete: substrate + recognition + projection verified to tip")
 		}
-		pub, pubErr := publishSourceVerdict(ctx, store, timescale.CompletenessSnapshot{
+		snap := timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
 			LakeComplete:             lakeComplete,
@@ -724,7 +731,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			ProjectionEvidencedAt:    evidencedAt,
 			SubstrateOK:              substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
-		}, dirtyWin, dirtyCleared)
+		}
+		if !write {
+			fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s) (dry-run: not stored)\n",
+				src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, snap.Detail)
+			return nil
+		}
+		pub, pubErr := publishSourceVerdict(ctx, store, snap, dirtyWin, dirtyCleared)
 		if pubErr != nil {
 			return fmt.Errorf("%s: publish verdict: %w", src.name, pubErr)
 		}
@@ -744,7 +757,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// On a non-pubnet network, stale rows for pubnet-only sources would keep the verdict
 	// red by construction — clear them. Only canonical names sourcenet
 	// itself classifies as not applicable are ever passed.
-	if na := sourcenet.NotApplicableOn(cfg.Stellar.Network); len(na) > 0 {
+	if na := sourcenet.NotApplicableOn(cfg.Stellar.Network); write && len(na) > 0 {
 		names := make([]string, 0, len(na))
 		for _, e := range na {
 			names = append(names, e.Source)

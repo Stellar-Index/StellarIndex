@@ -271,16 +271,19 @@ func TestParseTradesCAGGRefreshArgs(t *testing.T) {
 	}{
 		{
 			"default is forced",
-			[]string{"-config", "c", "-from", "1", "-to", "2"},
-			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2, force: true},
+			[]string{"-config", "c", "-from", "1", "-to", "2", "-write"},
+			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2, force: true, write: true},
 			"",
 		},
 		{
 			"non-forced",
-			[]string{"-config", "c", "-from", "1", "-to", "2", "-force=false"},
-			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2},
+			[]string{"-config", "c", "-from", "1", "-to", "2", "-force=false", "-write"},
+			tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2, write: true},
 			"",
 		},
+		{"dry run", []string{"-config", "c", "-from", "1", "-to", "2", "-dry-run"}, tradesCAGGRefreshArgs{cfgPath: "c", from: 1, to: 2, force: true}, ""},
+		{"no mode", []string{"-config", "c", "-from", "1", "-to", "2"}, tradesCAGGRefreshArgs{}, "state the mode"},
+		{"size is read-only", []string{"-config", "c", "-size", "-write"}, tradesCAGGRefreshArgs{}, "takes only -config, not -write"},
 		{"size", []string{"-config", "c", "-size"}, tradesCAGGRefreshArgs{cfgPath: "c", size: true}, ""},
 		{"size takes no range", []string{"-config", "c", "-size", "-from", "1"}, tradesCAGGRefreshArgs{}, "takes only -config, not -from"},
 		{"size takes no force", []string{"-config", "c", "-size", "-force=false"}, tradesCAGGRefreshArgs{}, "takes only -config, not -force"},
@@ -450,7 +453,7 @@ func TestSizeTradesCAGGBacklog(t *testing.T) {
 		"trades-cagg-refresh: pending prices_1m ranges=2 span=2h0m0s from=2025-03-12T00:00:00Z to=2025-03-13T00:00:00Z open-ended=2 source-log=0",
 		"trades-cagg-refresh: pending prices_1d ranges=1 span=24h0m0s from=2025-03-11T00:00:00Z to=2025-03-12T00:00:00Z open-ended=2 source-log=1",
 		"trades-cagg-refresh: pending twap_1d ranges=0 span=0s from=- to=- open-ended=0 source-log=0",
-		"trades-cagg-refresh: pending hull=[2025-03-11T00:00:00Z,2025-03-15T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000",
+		"trades-cagg-refresh: pending hull=[2025-03-11T00:00:00Z,2025-03-15T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000 -write",
 	} {
 		if !slices.Contains(lines, want) {
 			t.Errorf("missing line %q in:\n%s", want, out.String())
@@ -536,7 +539,7 @@ func TestSizeTradesCAGGBacklog_RangesBelowPrices1mFloor(t *testing.T) {
 		"trades-cagg-refresh: pending twap_1d below-floor from=2025-03-01T00:00:00Z to=2025-03-11T12:00:00Z: starts before " +
 			"2025-03-11T12:00:00Z, where twap windows reach below prices_1m's earliest bucket 2025-03-10T00:00:00Z, so -force=false " +
 			"refuses it; refresh it with -force=true\n",
-		"trades-cagg-refresh: pending hull=[2025-03-11T12:00:00Z,2025-03-21T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000\n",
+		"trades-cagg-refresh: pending hull=[2025-03-11T12:00:00Z,2025-03-21T00:00:00Z] ledgers=[61000000,61500000] catch-up: -force=false -from 61000000 -to 61500000 -write\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
@@ -655,5 +658,25 @@ func TestSubtractRanges(t *testing.T) {
 	got := subtractRanges(rs, [][2]time.Time{m(2, 3), m(7, 12), m(20, 25), m(29, 40)})
 	if want := [][2]time.Time{m(0, 2), m(3, 7), m(12, 20), m(25, 29)}; !slices.Equal(got, want) {
 		t.Errorf("subtractRanges = %v, want %v", got, want)
+	}
+}
+
+// Without -write the plan is printed and no aggregate is refreshed.
+func TestPreviewTradesCAGGRefresh_RefreshesNothing(t *testing.T) {
+	f := &fakeTradesCAGGStore{
+		from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
+		to:   time.Date(2025, 5, 14, 12, 0, 0, 0, time.UTC),
+	}
+	var out bytes.Buffer
+	if err := previewTradesCAGGRefresh(context.Background(), f, 61_000_000, 61_999_999, true, testCAGGNow, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.refreshed) != 0 {
+		t.Fatalf("preview refreshed %v", f.refreshed)
+	}
+	for _, c := range timescale.TradesCAGGs {
+		if !strings.Contains(out.String(), "would refresh "+c.Name+" ") {
+			t.Errorf("preview does not name %s:\n%s", c.Name, out.String())
+		}
 	}
 }

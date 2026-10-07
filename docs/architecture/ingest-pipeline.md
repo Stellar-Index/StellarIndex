@@ -206,7 +206,7 @@ that bound the DELETE:
    (`ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window`)
    so the ADR-0033 verdict cannot certify it;
 5. follow any window whose `trades` changed with
-   `stellarindex-ops trades-cagg-refresh -from LO -to HI` (tracked in
+   `stellarindex-ops trades-cagg-refresh -from LO -to HI -write` (tracked in
    `$STALE` until it succeeds).
 
 `stellarindex-ops ch-reproject` re-derives a range from the lake and

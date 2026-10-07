@@ -562,7 +562,7 @@ ssh r1 'sudo -u postgres psql stellarindex -c "
 | `incident.sev1` / `incident.resolved` | incident markdown under `deploy/comms/` |
 | `price.alert` | `price_alerts` (emitted by `internal/pricealerts/worker.go`, which enqueues directly, not via `Fanout`; its series are pre-seeded and will not move until it is migrated onto `Fanout`) |
 
-3. Re-emit: incidents via `stellarindex-ops emit-incident -slug <slug> -event <sev1|resolved>` (exits non-zero if the fan-out loses anything; zero exit confirms). Freeze/divergence have no re-emit command: contact the customer directly if they depend on them. The `emit-incident` process is short-lived and never scraped; it returns the error to the shell.
+3. Re-emit: incidents via `stellarindex-ops emit-incident -slug <slug> -event <sev1|resolved> -write` (exits non-zero if the fan-out loses anything; zero exit confirms). Freeze/divergence have no re-emit command: contact the customer directly if they depend on them. The `emit-incident` process is short-lived and never scraped; it returns the error to the shell.
 4. `invalid_payload`: a code bug; find the call site from the log line and fix the marshalling.
 
 **Do NOT:** treat this as covered by the delivery alerts (they watch a table this failure never wrote to); make the fan-out blocking (it would stall the price pipeline on a webhook-store blip; the error return exists to be logged and counted).

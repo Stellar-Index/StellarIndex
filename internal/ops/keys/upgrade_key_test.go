@@ -35,3 +35,19 @@ func TestUpgradeKey_HelpMatchesParser(t *testing.T) {
 		t.Errorf("negative -rate-limit-per-min must be refused, got: %v", negErr)
 	}
 }
+
+func TestUpgradeKey_WritesOnlyWithWriteFlag(t *testing.T) {
+	base := []string{"-config", "c.toml", "-key-id", "kid_x", "-rate-limit-per-min", "5000", "-reason", "r", "-actor", "alice"}
+	for _, tc := range []struct {
+		extra []string
+		write bool
+	}{{nil, false}, {[]string{"-dry-run"}, false}, {[]string{"-write"}, true}} {
+		opts, err := parseUpgradeKeyFlags(append(append([]string{}, base...), tc.extra...))
+		if err != nil {
+			t.Fatalf("%v: %v", tc.extra, err)
+		}
+		if opts.write != tc.write {
+			t.Errorf("%v: write = %v, want %v", tc.extra, opts.write, tc.write)
+		}
+	}
+}

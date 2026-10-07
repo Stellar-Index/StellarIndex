@@ -190,5 +190,5 @@ for src in ${SOURCES[@]+"${SOURCES[@]}"}; do
   # No -to: projected-rebuild then stops at the live projector's cursor.
   stage "projected.$src" "$OPS" projected-rebuild -config "$CONFIG" -source "$src" -from "$FROM" -workers "$WORKERS" -write
 done
-stage entry-counts "$OPS" seed-entry-counts -config "$CONFIG"
+stage entry-counts "$OPS" seed-entry-counts -config "$CONFIG" -write
 log "REDERIVE_COMPLETE [$FROM,$TO]"

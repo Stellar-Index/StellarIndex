@@ -18,6 +18,7 @@ import (
 type upgradeKeyOpts struct {
 	cfgPath, keyID, actor, reason string
 	rateLimit                     int
+	write                         bool
 }
 
 // keyRebudgeter is the slice of *auth.RedisAPIKeyStore upgrade-key uses.
@@ -37,7 +38,10 @@ type keyRebudgeter interface {
 //	  -config /etc/stellarindex.toml \
 //	  -key-id kid_515c8d94191f4e93 \
 //	  -rate-limit-per-min 10000 \
-//	  -reason 'partner contract 2026-09'
+//	  -reason 'partner contract renewal' \
+//	  -write
+//
+// Without -write it prints the change and touches nothing.
 //
 // Every change lands a "key.ratelimit.update" audit_log row (actor,
 // reason, old and new budget); a change whose row cannot be written is
@@ -77,27 +81,50 @@ func Upgrade(args []string) error {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis ping: %w", err)
 	}
+	store := auth.NewRedisAPIKeyStore(rdb)
+	if !opsutil.PrintWriteBanner(opts.write) {
+		return keyLookupErr(opts.keyID, previewUpgradeKey(ctx, store, opts))
+	}
 	audit, closeAudit, err := openKeyAudit(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
 		return err
 	}
 	defer closeAudit()
 
-	rec, err := runUpgradeKey(ctx, auth.NewRedisAPIKeyStore(rdb), audit, opts)
+	rec, err := runUpgradeKey(ctx, store, audit, opts)
 	if err != nil {
-		if errors.Is(err, auth.ErrKeyNotFound) {
-			return fmt.Errorf("key_id %q not found in Redis (typo? or this deployment's apikey hash list is empty)", opts.keyID)
-		}
-		return err
+		return keyLookupErr(opts.keyID, err)
 	}
 	printUpgradedKey(rec)
 	return nil
 }
 
+// previewUpgradeKey prints the change upgrade-key would make, reading the
+// key but writing neither its budget nor audit_log.
+func previewUpgradeKey(ctx context.Context, store keyRebudgeter, opts upgradeKeyOpts) error {
+	prev, err := store.GetByKeyID(ctx, opts.keyID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Would change key %s (%s) from %d/min to %d/min.\n",
+		prev.KeyID, prev.Identifier, prev.RateLimitPerMin, opts.rateLimit)
+	return nil
+}
+
+func keyLookupErr(keyID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		return fmt.Errorf("key_id %q not found in Redis (typo? or this deployment's apikey hash list is empty)", keyID)
+	}
+	return err
+}
+
 // parseUpgradeKeyFlags parses and validates upgrade-key's argv without
 // touching config, Redis or Postgres.
 func parseUpgradeKeyFlags(args []string) (upgradeKeyOpts, error) {
-	fs := flag.NewFlagSet("upgrade-key", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("upgrade-key")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	keyID := fs.String("key-id", "", "KeyID of the API key to upgrade (kid_… prefix). Get this from /v1/account/me or the signup response (required)")
 	rateLimit := fs.Int("rate-limit-per-min", 0,
@@ -138,7 +165,7 @@ func parseUpgradeKeyFlags(args []string) (upgradeKeyOpts, error) {
 	if err != nil {
 		return upgradeKeyOpts{}, err
 	}
-	return upgradeKeyOpts{cfgPath: *cfgPath, keyID: *keyID, actor: a, reason: *reason, rateLimit: *rateLimit}, nil
+	return upgradeKeyOpts{cfgPath: *cfgPath, keyID: *keyID, actor: a, reason: *reason, rateLimit: *rateLimit, write: gate.Enabled()}, nil
 }
 
 // runUpgradeKey re-budgets the key and records it in audit_log. A change

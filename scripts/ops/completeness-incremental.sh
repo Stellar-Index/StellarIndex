@@ -16,7 +16,7 @@
 # Not installed on r1 (the deployed job is the daily compute-completeness
 # timer from the archival-node role); run it by hand. A full genesis→tip sweep (catches the rarer
 # case where OLD data changed underneath us) is a separate periodic/manual run:
-#   stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch
+#   stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -write
 set -uo pipefail
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
@@ -50,7 +50,7 @@ FROM=$("${PSQL[@]}" "SELECT COALESCE(min(watermark),0) FROM completeness_snapsho
 FROM=${FROM:-0}
 echo "$(date -u +%FT%TZ) completeness: incremental verify from=${FROM} (0=full)"
 
-nice -n 15 ionice -c2 -n7 "$OPS" compute-completeness -config "$CFG" -ch -from "$FROM"
+nice -n 15 ionice -c2 -n7 "$OPS" compute-completeness -config "$CFG" -ch -from "$FROM" -write
 rc=$?
 if [ "$rc" -ne 0 ]; then
 	echo "$(date -u +%FT%TZ) completeness: verify command failed rc=$rc" >&2

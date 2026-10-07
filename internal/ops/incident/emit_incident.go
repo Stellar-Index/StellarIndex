@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
@@ -134,13 +134,18 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 //	stellarindex-ops emit-incident \
 //	  -config /etc/stellarindex.toml \
 //	  -slug 2026-05-12-redis-blip \
-//	  -event sev1
+//	  -event sev1 \
+//	  -write
+//
+// -dry-run instead counts the subscribers and enqueues nothing. A run that
+// passes neither is refused, so a runbook line written before -write existed
+// fails instead of silently telling no one.
 //
 // `-event` accepts `sev1` and `resolved` as ergonomic aliases for
 // the wire-level event names `incident.sev1` and
 // `incident.resolved`.
 func Emit(args []string) error {
-	fs := flag.NewFlagSet("emit-incident", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("emit-incident")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	slug := fs.String("slug", "",
 		"Incident slug — matches the filename in internal/incidents/data/ minus .md (required)")
@@ -164,6 +169,9 @@ func Emit(args []string) error {
 		eventType = platform.WebhookEventIncidentResolved
 	default:
 		return fmt.Errorf("-event must be `sev1` or `resolved` (got %q)", *event)
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return err
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -219,6 +227,11 @@ func Emit(args []string) error {
 	subs, err := store.ListWebhooksSubscribedTo(ctx, eventType)
 	if err != nil {
 		return fmt.Errorf("list subscribers: %w", err)
+	}
+	if !gate.Banner() {
+		fmt.Fprintf(os.Stderr, "emit-incident: event=%s slug=%s subscribers=%d — would enqueue one delivery each\n",
+			eventType, *slug, len(subs))
+		return nil
 	}
 
 	res, err := fanout.PublishOnce(ctx, eventType, incidentEventKey(found, eventType), payload)

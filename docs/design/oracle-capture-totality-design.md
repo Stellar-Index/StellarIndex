@@ -146,9 +146,9 @@ stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
 stellarindex-ops ch-rebuild -config … -contract-calls -contracts <BAND_STANDARD_REFERENCE_C> -from <G_band> -to <TIP> -write
   # catalogue says 60_000_000, per_source_gaps.go says 50_842_736 — REQUIRES-LIVE-VERIFY:
   #   psql -c "SELECT min(ledger) FROM oracle_updates WHERE source='band'"
-stellarindex-ops seed-entry-counts -config …
+stellarindex-ops seed-entry-counts -config … -write
 psql: SELECT refresh_continuous_aggregate('oracle_prices_<grain>', <from_ts>, <to_ts>)  -- seven grains, per 0040 header
-stellarindex-ops compute-completeness -config … -ch -pass
+stellarindex-ops compute-completeness -config … -ch -pass -write
 ```
 
 REQUIRES-LIVE-VERIFY before the full range: time a one-ledger rebuild and inspect `timescaledb_information.chunks` compression for `oracle_updates` — in-place promotion of raw rows later touches compressed segments keyed by asset.

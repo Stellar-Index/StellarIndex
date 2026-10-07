@@ -393,7 +393,7 @@ stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
 #    CALLs that commit one by one, so no lock on prices_1m is held for the run.
 /usr/local/sbin/run-heavy-job.sh trades-cagg-catchup \
   stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
-    -force=false -from <from> -to <to>
+    -force=false -from <from> -to <to> -write
 
 # 3. Verify: re-run -size; every view should show ranges=0 outside the policies'
 #    own trailing windows.
