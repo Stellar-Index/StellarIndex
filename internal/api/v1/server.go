@@ -303,7 +303,7 @@ type Server struct {
 	// Prewarmed SWR cache for the per-source contract_count on
 	// GET /v1/protocols. The registry-empty roster is a served-tier
 	// `SELECT DISTINCT … LIMIT 5000` scan, and the route is unauthenticated,
-	// so scanning per protocol on every origin miss was a DoS surface (W1.3).
+	// so scanning per protocol on every origin miss would be a DoS surface.
 	// Zero value ready — see protocol_roster_cache.go.
 	protocolRosterCache rosterCache
 	// Per-server TTL + single-flight cache for the broad-coverage
@@ -490,11 +490,12 @@ type Server struct {
 	// supply), applyAssetExtensionFields. Drift-safe by construction:
 	// the cached entry IS what the handler produces.
 	//
-	// Pre-cache benchmark (rc.63 internal localhost on r1): ~700-900ms
-	// warm. The 7-reader fan-out caches (CachedAssetsReader SWR) are
-	// hot from prewarmCaches + selfPrewarmAssetEndpoints, so the
-	// remaining cost is in the F2 chain. Wrapping each F2 reader is
-	// 4 new wrapper types; the response-level cache is one type.
+	// Uncached, a warm build measured ~700-900ms on r1 (internal
+	// localhost). The 7-reader fan-out caches (CachedAssetsReader SWR)
+	// are hot from prewarmCaches + selfPrewarmAssetEndpoints, so the
+	// remaining cost is in the supply/market-cap readers behind
+	// applyF2Fields. Wrapping each of them takes 4 wrapper types; the
+	// response-level cache is one type.
 	//
 	// Nil-safe: a nil cache short-circuits every method to no-op +
 	// miss. ttl=0 has the same effect at config layer.
@@ -516,9 +517,9 @@ type Server struct {
 	// ingestionSnapshot caches a fully-built IngestionDiagnostics
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
-	// /v1/diagnostics/ingestion sub-millisecond when populated
-	// (4d6e7ac4f). Nil before the first refresh fires; handler falls back
-	// to inline-build (the legacy 200-500ms path) in that case.
+	// /v1/diagnostics/ingestion sub-millisecond when populated. Nil
+	// before the first refresh fires; the handler then builds inline,
+	// which costs 200-500ms.
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
 	// publicRoutes records every route mounted via handlePublic; Handler
@@ -784,12 +785,12 @@ type Options struct {
 	// stream). Reader-backed paths gate inside the readers. Production impl internal/pricingguard.ScamGate.
 	Scam PriceScamGate
 
-	// Supply, when non-nil, populates the F2 fields
+	// Supply, when non-nil, populates the supply fields
 	// (total_supply, circulating_supply, max_supply, market_cap_usd,
 	// fdv_usd, supply_basis) on /v1/assets/{id} per ADR-0011.
 	// Production wiring: a thin adapter around timescale.Store.LatestSupply.
-	// Nil means "F2 fields unavailable" — the asset-detail body still
-	// serves; F2 fields stay null. A non-nil reader still depends on
+	// Nil means "supply fields unavailable" — the asset-detail body still
+	// serves; those fields stay null. A non-nil reader still depends on
 	// some other process populating asset_supply_history; this repo
 	// snapshot only wires the read path.
 	Supply SupplyLooker
@@ -915,11 +916,10 @@ type Options struct {
 
 	// AssetsReader, when non-nil, supplies the asset-catalogue overlay
 	// the /v1/assets handlers fan out across (price / volume /
-	// market_cap / sparkline / ATH / top_markets). The standalone
-	// /v1/coins HTTP route was removed in rc.48; this seam stays
-	// because every /v1/assets row sources the same data through
-	// it. Production wiring is timescale.Store directly (implements
-	// ListAssetsExt). Nil makes the affected /v1/assets fields 503.
+	// market_cap / sparkline / ATH / top_markets); every /v1/assets
+	// row sources that data through this seam. Production wiring is
+	// timescale.Store directly (implements ListAssetsExt). Nil makes the
+	// affected /v1/assets fields 503.
 	AssetsReader AssetsReader
 
 	// TransitivePricer, when non-nil, supplies a one-hop USD price for
@@ -1083,9 +1083,8 @@ type Options struct {
 
 	// Currencies, when non-nil, supplies the world fiat-currency
 	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
-	// fallback. The standalone /v1/currencies route was removed in
-	// rc.48; this seam stays because /v1/assets and /v1/chart both
-	// consume the same snapshot. Leave nil to fall back to empty
+	// fallback; /v1/assets and /v1/chart both consume the same
+	// snapshot through this seam. Leave nil to fall back to empty
 	// currencies state.
 	Currencies CurrenciesReader
 
@@ -1142,8 +1141,8 @@ type Options struct {
 	// (blend money-market, blend backstop, phoenix stake, defindex
 	// vault shares, sorocredit, aquarius gauge). timescale.Store
 	// satisfies it. Nil 503s the endpoint. Venue human labels reuse
-	// ProtocolPoolTokens (below) — the same reader the a9f2e301c protocol-
-	// roster pair-label work already wired.
+	// ProtocolPoolTokens (below) — the same reader the protocol roster's
+	// pair labels use.
 	Positions explorerpkg.PositionsReader
 
 	// AccountTrades, when non-nil, backs GET /v1/accounts/{g}/trades —
@@ -1202,7 +1201,7 @@ type Options struct {
 	// middleware (rate-limit, request logger) and handlers can
 	// read via [auth.SubjectFrom]. Typically constructed via
 	// middleware.Auth(middleware.AuthOptions{Mode: cfg.API.AuthMode, …}).
-	// Leave nil for legacy "no auth, anonymous-only" behaviour;
+	// Leave nil for "no auth, anonymous-only" behaviour;
 	// the rate-limit middleware then keys on RemoteIP only.
 	Auth middleware.Middleware
 
@@ -1222,9 +1221,9 @@ type Options struct {
 	// already on the request context (full order: middleware/doc.go). Typically constructed via
 	// middleware.RateLimitBySubject(anonBucket, authBucket, ...)
 	// so the per-tier limits (api.anon_rate_limit_per_min vs
-	// api.key_rate_limit_per_min) actually take effect; the older
-	// single-bucket middleware.RateLimit shape is kept for tests
-	// but production wiring uses the by-subject form. See
+	// api.key_rate_limit_per_min) actually take effect; the
+	// single-bucket middleware.RateLimit shape serves tests, and
+	// production wiring uses the by-subject form. See
 	// cmd/stellarindex-api/main.go for the canonical wire-up.
 	RateLimit middleware.Middleware
 
@@ -1549,7 +1548,8 @@ func New(opts Options) *Server {
 		// page polls /v1/assets/native every 30s) pays the full cold-rebuild
 		// cost and inflates API p95/p99.
 		// 120s = one full prewarm interval of headroom; matches the
-		// sibling F2-path caches (1–2 min TTL, same 60s prewarm).
+		// sibling supply/market-cap reader caches (1–2 min TTL, same 60s
+		// prewarm).
 		// Underlying data updates per-minute at fastest; 120s staleness
 		// still fits the ADR-0015 closed-bucket-only contract. Drift-safe
 		// by construction — the cached entry IS what the handler

@@ -1223,9 +1223,8 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 // at the end, which is what lets the summary total be the exact sum of
 // the per-row strings a reader can add up by hand.
 //
-// The scale is the ASSET's own decimals, never a constant. A market cap
-// computed against a hardcoded 7 was a real defect, and it is not a
-// display defect on this path either: a 6-decimal token valued at 7
+// The scale is the ASSET's own decimals, never a constant. A wrong scale
+// is not a display error on this path: a 6-decimal token valued at 7
 // publishes a tenth of the real figure and an 18-decimal one publishes
 // a hundred billion times it. Contract-issued members make that live
 // rather than theoretical, since a SEP-41 token declares its own scale.

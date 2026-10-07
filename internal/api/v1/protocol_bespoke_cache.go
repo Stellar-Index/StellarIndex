@@ -185,9 +185,9 @@ func (c *bespokeCache) refreshGate() *clickhouse.RefreshGate {
 
 // refreshBespoke kicks ONE detached bespoke build for key (returning the
 // live flight when one is already up) and returns it to optionally wait
-// on. Detached on purpose: bound to the rebuild's remaining budget the
-// battery died at the deadline and the block was dropped from the page —
-// the incident this cache exists for.
+// on. Detached on purpose: a build bound to the caller's remaining budget
+// lets the battery die at the deadline and drops the block from the page,
+// which is the failure this cache exists to prevent.
 func (s *Server) refreshBespoke(key, source, category string, windowDays int) *bespokeFlight {
 	fl, owner := s.protocolBespokeCache.begin(key)
 	if !owner {

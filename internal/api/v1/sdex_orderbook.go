@@ -95,8 +95,8 @@ type SDEXOfferBookReader interface {
 	LoadLiveOffers(ctx context.Context) ([]clickhouse.LiveOffer, uint32, error)
 	OfferChangesSince(ctx context.Context, fromLedger uint32) ([]clickhouse.OfferChange, uint32, error)
 	// OfferRemovedAt reports which refs have a `removed` change row at
-	// their own winning ledger — the version-tie zombie probe (see the
-	// clickhouse implementation for the full defect narrative).
+	// their own winning ledger — the version-tie zombie probe (the
+	// clickhouse implementation's doc explains the tie).
 	OfferRemovedAt(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error)
 }
 

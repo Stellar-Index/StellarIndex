@@ -270,11 +270,11 @@ var verificationPageDocs = map[string]string{
 
 // withVerificationPages stamps each entry's verification-page path from
 // its name, so writing docs/protocols/<name>.md is all it takes to link
-// a protocol's write-up. Deriving it is the fix for a second, silent
-// edit site: the pages for ten protocols — sdex, comet, cctp, rozo,
-// band, redstone, the three Reflector feeds and the router — existed in
-// the tree while /v1/protocols reported verification_page: null, because
-// per-row literals here were only ever added for six.
+// a protocol's write-up. Deriving it removes a second, silent edit site:
+// per-row literals here were written for only six protocols, so the
+// pages for ten more — sdex, comet, cctp, rozo, band, redstone, the three
+// Reflector feeds and the router — sat in the tree while /v1/protocols
+// reported verification_page: null.
 func withVerificationPages(reg []ProtocolMeta) []ProtocolMeta {
 	for i := range reg {
 		doc, ok := verificationPageDocs[reg[i].Name]

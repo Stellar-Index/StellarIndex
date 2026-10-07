@@ -53,12 +53,12 @@ const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestatio
 
 // rwaFunnelClassicUnmeasured corrects the sentence above when the
 // classic arm was not walked: no issuer-bound attestation reader is
-// wired. The correction is the one the other two arms have carried
-// since they were added, missing on the only arm the basis sentence is
-// actually written about — its stages then read zero, and a narrowing
-// of zeros asserts that no issuer on this network attests to a
-// real-world asset, which is the strongest claim this surface can make
-// and would be made out of a scan that never ran.
+// wired. The other two arms carry the same correction, and this arm is
+// the one the basis sentence is actually written about. Without the
+// correction its stages read zero, and a narrowing of zeros asserts that
+// no issuer on this network attests to a real-world asset, which is the
+// strongest claim this surface can make and would be made out of a scan
+// that never ran.
 //
 // A WIRED scan that did not answer is a different state and never
 // reaches here: that rebuild is refused at the cache, the last good

@@ -200,12 +200,12 @@ type RWAFunnel struct {
 	// Balanced is true — the two are one statement in two forms and
 	// cannot disagree.
 	//
-	// Every reason in it was already being computed: each census
-	// publishes a Check() that returns the invariant it broke, and each
-	// adjacent stage pair reports the arithmetic that failed. All of it
-	// was reduced to a boolean at this boundary and the sentences went
-	// to a log, so a reader was told the accounting does not close and
-	// given no way to find out what did not close. Semicolon-separated
+	// Every reason in it comes from a check that already runs: each
+	// census publishes a Check() that returns the invariant it broke, and
+	// each adjacent stage pair reports the arithmetic that failed.
+	// Carrying those sentences here, instead of reducing them to a
+	// boolean and a log line, tells a reader what did not close and not
+	// only that the accounting does not. Semicolon-separated
 	// when more than one check failed, because they are independent and
 	// the first is not necessarily the cause of the rest.
 	Imbalance string `json:"imbalance,omitempty"`
@@ -356,8 +356,7 @@ type RWAFunnelStage struct {
 	// WITHIN an arm and never across the boundary between them. Without
 	// this field a reader would try to subtract the last classic stage
 	// from the first contract one and find no relation, which is exactly
-	// the misreading the per-stage `unit` was added to prevent one level
-	// down.
+	// the misreading the per-stage `unit` prevents one level down.
 	Arm string `json:"arm"`
 	// Stage names the population.
 	Stage string `json:"stage"`
@@ -1402,11 +1401,11 @@ const rwaMembershipBudget = 2 * time.Minute
 // entries) plus the curated-directory walk, and whichever request
 // happened to find the ten-minute entry expired paid all ~11.5 s of it
 // inline. With no more than one page load per TTL window, that is
-// roughly one visitor in ten meeting a twelve-second page. It is the
-// same defect, with the same fix, as the SEP-1 logo map in
-// [Server.readSep1Images].
+// roughly one visitor in ten meeting a twelve-second page. The SEP-1 logo
+// map in [Server.readSep1Images] is served the same way for the same
+// reason.
 //
-// The ONE case that still waits is a cache that has never been filled.
+// The ONE case that waits is a cache that has never been filled.
 // An empty set there is not a stale answer, it is the false statement
 // that no real-world asset exists on Stellar — so a cold process waits
 // for its first build rather than publishing that. [Server.PrewarmRWA]
@@ -1927,8 +1926,8 @@ func (s *Server) rwaListingRows(
 		}
 		// A full page means the issuer has more classic assets than one
 		// read covers, so a member in the unread tail would disappear
-		// from the set with nothing to show for it. The cap has always
-		// been documented as reported; until now it was not.
+		// from the set with nothing to show for it. The cap is documented
+		// as reported, so the truncation is counted here.
 		if len(rows) >= rwaAssetsPerIssuer {
 			join.pagesTruncated++
 		}
@@ -2090,8 +2089,8 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale, carried from the listing row. The
 			// reference valuation divides by it, and a constant in its
-			// place would be the hardcoded-decimals defect the
-			// market-cap path already had to fix, in a new coordinate.
+			// place would misprice every asset whose scale differs (see
+			// [rwaReferenceValueUSD]).
 			Decimals:     rwaDecimalsOf(d),
 			Volume24hUSD: d.VolumeUSD24h,
 		}

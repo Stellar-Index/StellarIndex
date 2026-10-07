@@ -261,7 +261,7 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	// authenticate and no reaper matches. The mirror is keyed by the SAME
 	// plaintext so one secret validates on either backend, and carries an
 	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
-	// allkeys-lru keyspace without bound (W1-flow-register-2).
+	// allkeys-lru keyspace without bound.
 	if s.APIKeyBudgets.RedisMirror != nil {
 		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
 		if err != nil {

@@ -60,7 +60,7 @@ type StatusResponse struct {
 	// ambiguous: a failed Alertmanager query zeroes them, which is
 	// byte-identical to "no alerts firing". A public banner reading
 	// active_count via `?? 0` would then publish "0 active alerts"
-	// while alerting is blind (v1-launch-plan W1.1). The tri-state
+	// while alerting is blind. The tri-state
 	// disambiguates on the wire:
 	//   - "ok":       query succeeded, no alerts firing.
 	//   - "degraded": query succeeded, one or more alerts firing
@@ -115,7 +115,7 @@ const (
 // backend, which surfaces as inc being the zero value alongside a
 // nil err — handled by the caller setting "unknown" directly) must
 // NOT be published as an all-clear: err != nil is "unknown", not
-// "ok". See [StatusResponse.IncidentsStatus] (W1.1).
+// "ok". See [StatusResponse.IncidentsStatus].
 func incidentsStatusFor(inc StatusIncidents, err error) string {
 	switch {
 	case err != nil:
@@ -145,10 +145,10 @@ type StatusLatency struct {
 	WindowSecs int     `json:"window_secs"`
 
 	// Targets are echoed so the status page renders the same numbers the
-	// roll-up judges against. If they lived only as literals in
-	// StatusPageClient.tsx, the page could draw red SLO bars underneath a
-	// green "All systems operational" banner: the frontend would know the
-	// targets and the roll-up would not.
+	// roll-up judges against. With the targets held only as literals in
+	// StatusPageClient.tsx, the page drew two red SLO bars underneath a
+	// green "All systems operational" banner: the frontend knew the
+	// targets and the roll-up did not.
 	P95TargetMs float64 `json:"p95_target_ms"`
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
@@ -332,8 +332,8 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 // configured sources and connectors, and the `massive` FX worker
 // (internal/sources/external/forex) publishes its own from the API
 // binary, so an API-hosted source counts in both numbers exactly as an
-// indexer-hosted one does. Until the worker did, the feed was counted on
-// NEITHER side, so the headline read one low on both. Both queries count
+// indexer-hosted one does. A feed with no gauge is counted on NEITHER
+// side, and the headline reads one low on both. Both queries count
 // series, which assumes one scrape target per source — true on r1 (one
 // indexer, one API process); a second scraped API replica would count
 // `massive` twice. deploy/monitoring/rule-tests/status-source-counts_test.yml
@@ -658,20 +658,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// reader, who sees `degraded` and reasonably concludes the indexer is
 	// sick.
 	//
-	// That is not hypothetical. Diagnosed on BOTH test nets: each reports
-	// `overall: degraded` permanently while every unit is active, because
-	// neither runs Prometheus (`:9090` unreachable, unit not installed), so
-	// PrometheusStatusBackend.Heartbeats always errors. On r1 the backend
-	// works and this path never shows.
+	// A deployment whose Prometheus is unreachable (`:9090` down or not
+	// installed) takes this path on every request: Heartbeats errors, and
+	// the page reports `overall: degraded` while every unit is active.
 	//
 	// The conservatism is deliberate and correct — refusing to claim "ok"
-	// when nothing is known beats a false all-clear. What is missing is the
-	// REASON. `incidents_status` is the precedent for saying it; an
-	// equivalent `services_status` ("ok" / "unavailable") would let a lean
+	// when nothing is known beats a false all-clear. What the wire lacks is
+	// the REASON. `incidents_status` is the precedent for saying it; an
+	// equivalent `services_status` ("ok" / "unavailable") would let such a
 	// deployment report honestly instead of looking sick. That is an
 	// additive wire change on a public surface, so it is a decision rather
-	// than a cleanup: either add the field, or give the test nets a metrics
-	// backend. Recorded here so the next person does not re-diagnose it.
+	// than a cleanup.
 	if hbErr != nil {
 		hb = nil
 	}
@@ -691,7 +688,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Incidents block: publish the tri-state explicitly. On a failed
 	// Alertmanager query we leave the counts at their zero value but
 	// mark the block "unknown" so a downstream `?? 0` chain cannot
-	// render "0 active alerts" while alerting is blind (W1.1).
+	// render "0 active alerts" while alerting is blind.
 	if incErr == nil {
 		out.Incidents = incidents
 	}

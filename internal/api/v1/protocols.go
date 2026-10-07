@@ -18,8 +18,8 @@ import (
 // /v1/protocols/{name} detail. Past it the entry is NOT dropped: it is
 // served STALE (flags.stale + analytics.status="stale") while a detached
 // single-flight rebuild runs — an already-built page must never blank
-// back to a cold 503 (under replay load an on-demand build can die at
-// the request ceiling and the page would lose its visual suites).
+// back to a cold 503 (measured under replay load, every on-demand build
+// died at the request ceiling and pages lost their visual suites).
 // 20 minutes pairs with the prewarm sweep in cmd/stellarindex-api (a
 // full registry × windows sweep measured ~3–6 min of build work; the
 // worker re-sweeps 10 min after each sweep ends, so entries are
@@ -59,8 +59,8 @@ func (s *Server) protoDetailInitLocked() {
 //     built page is never blanked by a slow/failing rebuild.
 //   - never built → wait for the detached single-flight build up to the
 //     caller's deadline. The build itself is NOT bound to that deadline
-//     (builds bound to request contexts die under replay load and the
-//     cache never fills), so a request that
+//     (measured under replay load, builds bound to request contexts
+//     died and the cache never filled), so a request that
 //     times out 503s but the build completes and the retry lands warm.
 //
 // The key is the full request-shape key from protocolDetailCacheKey —
@@ -393,7 +393,7 @@ type ProtocolStatsReader interface {
 }
 
 // SoroswapPairsReader exposes the soroswap_pairs registry — Soroswap's
-// equivalent of protocol_contracts (its pair set is older than the unified
+// equivalent of protocol_contracts (its pair set lives outside the unified
 // registry and carries token identities the decoder needs). Production
 // wiring is timescale.Store.LoadSoroswapPairRegistry. Nil reader →
 // the soroswap contract list/count serves empty.
@@ -706,7 +706,7 @@ type ProtocolDetailView struct {
 // (protocol_roster_cache.go): the registry-empty sources' roster is a
 // `SELECT DISTINCT … LIMIT 5000` served-tier scan, and this route is
 // unauthenticated + edge-cache-maskable, so scanning per protocol on
-// every origin miss was a DoS surface (W1.3). The cache is prewarmed
+// every origin miss would be a DoS surface. The cache is prewarmed
 // and stale-while-revalidate, so a request serves a last-good count and
 // at most one background refresh runs per source per TTL regardless of
 // request rate. When a source's roster read FAILS and no last-good count
@@ -923,8 +923,7 @@ func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 //
 // The block comes from the last-good cache (protocol_bespoke_cache.go), so a
 // build whose own battery is slow, failing, or starved keeps serving the
-// previous block instead of dropping the page's visual suite — the §2.6b
-// failure. Returns:
+// previous block instead of dropping the page's visual suite. Returns:
 //
 //   - ok: a block (or a legitimate "this category has none") was attached.
 //     false ⇒ no reader wired, or the FIRST-EVER build for this key failed /
@@ -994,7 +993,7 @@ func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]Proto
 // rather than swallowing it. protocolRoster wraps it for the detail path's
 // degrade-to-empty contract; the roster-count cache uses it directly so a
 // failed read omits the source from the directory instead of publishing a
-// fake contract_count: 0 (W1.3 honesty).
+// fake contract_count: 0.
 func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, error) {
 	rows, err := s.protocolContractsErr(ctx, meta.Name)
 	if err != nil {
@@ -1043,7 +1042,7 @@ func (s *Server) countedContractTotal(ctx context.Context, meta ProtocolMeta) (i
 // rosterCountErr returns the contract_count for meta: the counted TRUE total
 // where one exists, else the length of the enumerated roster. Errors surface
 // (the directory omits the source and names it in coverage_note rather than
-// publishing a fabricated zero — W1.3 honesty).
+// publishing a fabricated zero).
 func (s *Server) rosterCountErr(ctx context.Context, meta ProtocolMeta) (int, error) {
 	n, ok, err := s.countedContractTotal(ctx, meta)
 	if err != nil {
@@ -1343,14 +1342,13 @@ var _ protocolLedgerAtCloseTimeReader = (*clickhouse.ExplorerReader)(nil)
 
 // protocolWindowFloor derives the raw readers' ledger cutoff AND the fast
 // reader's day-grain cutoff from ONE close_time boundary: tip's close_time
-// minus protocolActivityWindowDays days. Before this fix the two were
-// derived independently from a ledger-count multiple of the theoretical
-// 17,280/day cadence (protocolActivityWindowLedgers = 90*17280): pubnet's
-// observed cadence is ~14,950-15,300/day, so that ledger count actually
-// spans ~101-104 days while the response still publishes
-// activity_window_days: 90 — the same class of bug already fixed for
-// NetworkThroughput (see explorer_reader.go's
-// ledgersPerDayPruningEstimate doc). Falls back to the old approximation
+// minus protocolActivityWindowDays days. A ledger-count multiple of the
+// theoretical 17,280/day cadence (protocolActivityWindowLedgers =
+// 90*17280) does not work: pubnet's observed cadence is
+// ~14,950-15,300/day, so that ledger count spans ~101-104 days while the
+// response publishes activity_window_days: 90. explorer_reader.go's
+// ledgersPerDayPruningEstimate doc covers the same trap for
+// NetworkThroughput. Falls back to the ledger-count approximation only
 // when the reader can't resolve close_time (production always can).
 func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedger uint32, sinceDay time.Time) {
 	fallback := uint32(1) // whole chain inside the window
@@ -1547,7 +1545,7 @@ func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name st
 
 // soroswapContractsErr projects the soroswap_pairs registry into the
 // unified contract shape (pair strkey as the instance, token pair
-// attached, no factory column — the pairs table is older than ADR-0035),
+// attached, no factory column — the pairs table does not record one),
 // surfacing a read error rather than swallowing it. Nil reader → a
 // genuine empty roster (not an error).
 func (s *Server) soroswapContractsErr(ctx context.Context) ([]ProtocolContractView, error) {

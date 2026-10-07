@@ -12,8 +12,9 @@ import (
 
 // handleSignupRetired answers every method on /v1/signup and
 // /v1/signup/verify with the same 410. It deliberately reads neither the
-// body nor the email: the old 201-vs-409 split was an email-existence
-// oracle, so no unauthenticated response may depend on request content.
+// body nor the email: answering 201 for a new email and 409 for a known
+// one is an email-existence oracle, so no unauthenticated response may
+// depend on request content.
 func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/endpoint-retired",
@@ -23,9 +24,8 @@ func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 
 // SignupIPThrottle is the v1 boundary for the per-IP signup
 // rate-limit. Production wires a Redis-backed token bucket with
-// a tight cap (default 5/hour); nil disables the check entirely
-// (legacy behaviour, relies only on the global rate-limit
-// middleware).
+// a tight cap (default 5/hour); nil disables the check entirely,
+// leaving only the global rate-limit middleware.
 //
 // Designed as a separate seam from the global rate limit so a
 // future deployment can swap in a stricter / different policy
