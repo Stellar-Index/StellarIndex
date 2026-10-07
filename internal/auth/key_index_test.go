@@ -173,7 +173,7 @@ func sameKeyIDs(got []string, want ...string) bool {
 // state: the binary is deployed, the Redis ACL template that admits
 // `apikey-index:*` has not been applied. Issuance must not go down,
 // and — the half that matters — a key minted in this state must be
-// listable and REVOCABLE, both now and after the ACL is applied.
+// listable and REVOCABLE, both before and after the ACL is applied.
 func TestKeyIndex_ACLDenied_IssuanceAndRevocationStillWork(t *testing.T) {
 	f := newKeyIndexFixture(t)
 	ctx := context.Background()

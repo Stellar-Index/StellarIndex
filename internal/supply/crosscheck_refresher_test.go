@@ -178,12 +178,11 @@ func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign is the
-// direct regression test for the 2026-07-08 fix (BACKLOG #59): a pair
+// TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign pins that a pair
 // with the default (partial-wrap) class where classic total vastly
-// exceeds SAC total — the AQUA shape (Alg-2 ≈ 86.4B, Alg-3 ≈ 0) that
-// produced 8 standing false positives under the old equality compare
-// — must land Within with zero divergence, NOT Over.
+// exceeds SAC total — the AQUA shape (Alg-2 ≈ 86.4B, Alg-3 ≈ 0), a
+// false positive under an equality compare — lands Within with zero
+// divergence, NOT Over.
 func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -192,8 +191,7 @@ func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) 
 	}}
 	emitter := &captureEmitter{}
 	r, _ := supply.NewCrossCheckRefresher(
-		// WrapClass intentionally left unset — this is the pre-fix
-		// operator config shape; the fix is safe by default.
+		// WrapClass intentionally left unset — the default must be safe.
 		[]supply.CrossCheckPair{{ClassicKey: "AQUA:G...", SACKey: "CAQUASAC"}},
 		reader, emitter, newSilentLogger(),
 	)
@@ -215,8 +213,7 @@ func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) 
 // TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic — the genuine
 // violation direction for a partial-wrap pair: SAC total exceeding
 // classic total is impossible under correct accounting and MUST still
-// fire an Over outcome (2026-07-08 decision: "a genuine
-// escrow != minted violation must still fire").
+// fire an Over outcome (a genuine escrow != minted violation).
 func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -230,8 +227,8 @@ func TestCrossCheckRefresher_PartialWrapOverMintIsDiagnostic(t *testing.T) {
 		reader, emitter, newSilentLogger(),
 	)
 	got := r.Tick(context.Background())
-	// 2026-08-05: over-mint is diagnostic-only (the BLND/PHO
-	// false-positive class) — the outcome stays within-tolerance and
+	// Over-mint is diagnostic-only (the BLND/PHO false-positive
+	// class) — the outcome stays within-tolerance and
 	// the gap is carried on OverMintStroops, not the paging gauge.
 	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
 		t.Fatalf("Tick: got %#v, want one Within (over-mint diagnostic)", got)
@@ -331,8 +328,7 @@ func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 	)
 	got := r.Tick(context.Background())
 	// Still COMPARED at the ledger-tolerance boundary (that is what
-	// this test pins); the over-mint result itself is diagnostic-only
-	// since 2026-08-05.
+	// this test pins); the over-mint result itself is diagnostic-only.
 	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
 		t.Fatalf("Tick: got %#v, want one Within — the boundary gap is still comparable", got)
 	}
@@ -344,8 +340,7 @@ func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
 // TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch — an operator-
 // attested [supply.WrapClassFull] pair keeps the ORIGINAL ADR-0011
 // equality semantics: classic exceeding sac by more than tolerance
-// still fires, exactly as the pre-fix behaviour did. This is the "so
-// fully-wrapped tokens still alert" half of the 2026-07-08 decision.
+// still fires, so fully-wrapped tokens still alert.
 func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -369,9 +364,8 @@ func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires is the leg-2
-// regression test (GH-1207): since the 2026-08-05 leg-1 downgrade to
-// diagnostic-only, leg 2 (classic.SACWrappedStroops ≤ sac.TotalSupply)
+// TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires pins leg 2:
+// since leg 1 is diagnostic-only, leg 2 (classic.SACWrappedStroops ≤ sac.TotalSupply)
 // is the ONLY direction that can raise
 // stellarindex_supply_cross_check_divergence_stroops, yet every other
 // partial-wrap fixture in this file leaves SACWrappedStroops nil, so

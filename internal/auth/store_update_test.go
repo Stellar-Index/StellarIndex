@@ -111,12 +111,12 @@ func TestUpdateRateLimit_RejectsEmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestUpdateRateLimit_PreservesMirroredKeyTTL is the Q186 regression: a
+// TestUpdateRateLimit_PreservesMirroredKeyTTL pins the TTL: a
 // register-mirrored record is written with the sliding idle TTL
 // (MirroredKeyIdleTTL) so an abandoned open-registration key ages out of
-// Redis. Pre-fix, the read-modify-write did `SET ... 0`, which clears any
-// existing TTL — so the FIRST rate-limit change on such a key silently
-// turned it permanent, defeating the idle-expiry bound entirely.
+// Redis. A read-modify-write of `SET ... 0` clears any existing TTL — the
+// FIRST rate-limit change on such a key would silently turn it
+// permanent, defeating the idle-expiry bound entirely.
 func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
 	store, mr, _ := newTestStore(t)
 	ctx := context.Background()

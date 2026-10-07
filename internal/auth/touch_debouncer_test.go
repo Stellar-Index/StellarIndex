@@ -12,7 +12,6 @@ import (
 // TestRedisTouchDebouncer_FirstWinsRestSkip — first call in the
 // window returns true; subsequent calls within the TTL return
 // false; after the TTL elapses the next caller wins again.
-// F-1226 wave 39 (codex audit-2026-05-12).
 func TestRedisTouchDebouncer_FirstWinsRestSkip(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

@@ -11,8 +11,7 @@ import (
 
 // TestMarkEmailVerified_HappyPath — flips a freshly-minted
 // key's EmailVerifiedAt to the supplied timestamp and the
-// updated record round-trips through a subsequent SCAN. F-1218
-// wave 45 (codex audit-2026-05-12).
+// updated record round-trips through a subsequent SCAN.
 func TestMarkEmailVerified_HappyPath(t *testing.T) {
 	store, _, now := newTestStore(t)
 	ctx := context.Background()
@@ -93,12 +92,12 @@ func TestMarkEmailVerified_RejectsEmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestMarkEmailVerified_PreservesMirroredKeyTTL is the Q186 regression:
+// TestMarkEmailVerified_PreservesMirroredKeyTTL pins the TTL:
 // the /v1/signup/verify handler calls this on a register-mirrored key,
-// which is written with the sliding idle TTL (MirroredKeyIdleTTL). Pre-fix
-// the write-back did `SET ... 0`, clearing that TTL — so the customer's
-// FIRST click on the verification link turned their open-registration key
-// permanent, defeating the idle-expiry bound.
+// which is written with the sliding idle TTL (MirroredKeyIdleTTL). A
+// write-back of `SET ... 0` would clear that TTL — the customer's
+// FIRST click on the verification link would turn their open-registration
+// key permanent, defeating the idle-expiry bound.
 func TestMarkEmailVerified_PreservesMirroredKeyTTL(t *testing.T) {
 	store, mr, _ := newTestStore(t)
 	ctx := context.Background()

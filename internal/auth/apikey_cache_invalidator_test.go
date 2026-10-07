@@ -14,7 +14,7 @@ import (
 )
 
 // TestNewKeyCacheInvalidatorForBackend pins which backends get a
-// key-cache invalidator at all (findings F056 / K050 / Q145).
+// key-cache invalidator at all.
 //
 // `apikey:<hash>` is a rebuildable cache entry only under
 // auth_backend=postgres. Under every other value — the shipped default

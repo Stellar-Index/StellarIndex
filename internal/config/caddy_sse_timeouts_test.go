@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// ─── Proxy timeouts vs the SSE heartbeat (GH #886) ──────────────────
+// ─── Proxy timeouts vs the SSE heartbeat ─────────────────────────
 //
 // An idle SSE stream stays alive only because the API writes a
 // `:keepalive` comment every streaming.DefaultHeartbeatInterval. That

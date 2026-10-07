@@ -31,7 +31,7 @@ import (
 // The suffix is the challenge TRANSACTION's canonical hash (see
 // [challengeTxHash]), never a digest of the caller-supplied XDR string:
 // the same transaction has many valid spellings, and keying on the
-// spelling let one redemption be replayed by re-encoding it (CON-05).
+// spelling would let one redemption be replayed by re-encoding it.
 // The key stays under the `sep10:seen:` prefix the Redis ACL allow-list
 // (configs/ansible/roles/redis-sentinel/templates/users.acl.j2) grants.
 //

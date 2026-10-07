@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// GH-1147: the mint clamp bounded scopes but not rate_limit_per_min, so a
-// scope-narrowed operator could mint 100,000/min keys. GH-1146: the clamp
-// lived only in two HTTP handlers; the store now enforces it for every
-// request that names its minter.
+// The mint clamp must bound rate_limit_per_min as well as scopes, or a
+// scope-narrowed operator could mint 100,000/min keys. The store enforces
+// it for every request that names its minter, not only in HTTP handlers.
 func TestClampToMinter_RateLimit(t *testing.T) {
 	cases := []struct {
 		name    string

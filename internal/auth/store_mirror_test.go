@@ -14,17 +14,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestCreateWithSecret_RoundTripsThroughTheValidator is the audit
-// 2026-08-13 F1/F11 regression, and the ONE test that would have
-// caught both this defect and the v0.32.0 one before it.
+// TestCreateWithSecret_RoundTripsThroughTheValidator is the end-to-end
+// check that the mirrored record carries every gate.
 //
-// Every prior test proved a component: the handler's Postgres row was
-// right, and the mirror received the right STRUCT. Neither could see
-// that the record the DEPLOYED validator reads had no monthly quota —
-// so /v1/register advertised a 1,000,000/month cap on keys that were
-// completely unmetered in production. This drives the real store into
-// the real validator and asserts on the Subject the middleware
-// actually consumes.
+// Component tests prove the handler's Postgres row is right and the
+// mirror received the right STRUCT, but cannot see that the record the
+// DEPLOYED validator reads lacks a monthly quota — /v1/register would
+// advertise a 1,000,000/month cap on completely unmetered keys. This
+// drives the real store into the real validator and asserts on the
+// Subject the middleware actually consumes.
 func TestCreateWithSecret_RoundTripsThroughTheValidator(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -56,8 +54,7 @@ func TestCreateWithSecret_RoundTripsThroughTheValidator(t *testing.T) {
 	// Assert against LITERALS, never against `want`'s own fields: an
 	// input-vs-output comparison passes when both sides are the zero
 	// value, which is precisely the bug (a dropped field reads as 0 on
-	// both sides). The tautological version of this test would have
-	// shipped the defect it exists to catch.
+	// both sides).
 	if sub.MonthlyQuota != 1_000_000 {
 		t.Errorf("MonthlyQuota = %d, want 1000000 — a quota of 0 means UNMETERED (the middleware short-circuits at <= 0) on a surface that advertises a cap",
 			sub.MonthlyQuota)
@@ -95,12 +92,12 @@ func gatedManagementRow(expiresAt time.Time) platform.APIKey {
 	}
 }
 
-// TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow pins GH-1318:
+// TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow pins that
 // the mirror is the seam for writing a Postgres-minted key into the Redis
-// validator store, so it must carry every gate on the management row. The
-// old MirroredKey had no field for scopes, expiry, IP/referer allowlists or
-// permission entries and hardcoded PermissionsAll=true, so a gated key came
-// back as an unrestricted one.
+// validator store, so it must carry every gate on the management row. A
+// MirroredKey without fields for scopes, expiry, IP/referer allowlists or
+// permission entries, or with PermissionsAll hardcoded true, would hand a
+// gated key back as an unrestricted one.
 func TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

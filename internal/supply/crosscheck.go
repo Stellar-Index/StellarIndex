@@ -18,7 +18,7 @@ import (
 // asset; see the CAVEAT on [CrossCheck]: a partially-wrapped classic
 // asset legitimately diverges by ~its whole supply, so this 1-stroop
 // bound produces false alerts there. [WrapClass] / [CrossCheckForClass]
-// is the fix: this constant is the tolerance for BOTH comparison
+// handle that case; this constant is the tolerance for BOTH comparison
 // shapes.
 var CrossCheckTolerance = big.NewInt(1)
 

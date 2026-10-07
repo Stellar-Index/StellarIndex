@@ -6,7 +6,7 @@ import "testing"
 // stellar-rpc / SDK code paths to compute transaction hashes.
 // Validate() catches unknown network names at startup, so the
 // fallback empty-string return is unreachable in practice — but
-// the test pins it to surface a regression in case validation
+// the test pins it to surface a failure in case validation
 // ever drifts.
 
 func TestStellarConfig_Passphrase(t *testing.T) {

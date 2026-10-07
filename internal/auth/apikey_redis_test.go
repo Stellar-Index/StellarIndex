@@ -260,18 +260,16 @@ func TestNewRedisAPIKeyValidator_PanicsOnNil(t *testing.T) {
 	_ = NewRedisAPIKeyValidator(nil)
 }
 
-// TestRedisAPIKey_LookupMapsMonthlyQuota is the regression test for the
-// cold audit of 2026-08-04.
+// TestRedisAPIKey_LookupMapsMonthlyQuota pins that Lookup copies
+// MonthlyQuota onto the Subject.
 //
-// MonthlyQuota is persisted on APIKeyRecord, documented in this file as
-// "the per-key monthly request cap the runtime quota middleware
-// enforces", and mapped by the Postgres validator — but Lookup never
-// copied it onto the Subject. middleware.MonthlyQuota short-circuits on
-// `subject.MonthlyQuota <= 0`, so on the default (redis) backend, which
-// is what r1 runs, the cap was dead for every key: a metered key seeded
-// with a quota was never metered, never 429'd, and nothing logged or
-// alerted. Exactly the F-1226 bug class already fixed once for the
-// permission fields, which this field was left out of.
+// MonthlyQuota is persisted on APIKeyRecord ("the per-key monthly
+// request cap the runtime quota middleware enforces") and mapped by the
+// Postgres validator. middleware.MonthlyQuota short-circuits on
+// `subject.MonthlyQuota <= 0`, so if Lookup skipped it, on the default
+// (redis) backend, which is what r1 runs, the cap would be dead for
+// every key: a metered key would never be metered or 429'd, and nothing
+// would log or alert. Same bug class as dropping the permission fields.
 func TestRedisAPIKey_LookupMapsMonthlyQuota(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_test_quota", APIKeyRecord{
@@ -323,10 +321,10 @@ func fullSubject(t *testing.T) Subject {
 }
 
 // TestPostgresValidator_CacheRoundTripCarriesEverySubjectField pins
-// GH-1321: the Postgres validator's read-through cache must hand back the
-// Subject it was given, field for field. The cache-store used to rebuild
-// the record by hand and dropped EmailVerifiedAt, so a verified signup
-// customer served from a cache hit read as permanently unverified.
+// that the Postgres validator's read-through cache hands back the
+// Subject it was given, field for field. Rebuilding the record by hand
+// can drop EmailVerifiedAt, so a verified signup customer served from a
+// cache hit would read as permanently unverified.
 func TestPostgresValidator_CacheRoundTripCarriesEverySubjectField(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
