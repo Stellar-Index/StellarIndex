@@ -141,8 +141,8 @@ func TestServedBaselineValidated_EmptyBaselineUnvalidatedButStillServed(t *testi
 		}
 		// Half 2 — but UNVALIDATED: the companion signal must be false, so
 		// the caller marks it stale/low-confidence rather than confident.
-		// (Pre-fix this signal did not exist and the accept above was
-		// served with stale=false — the fail-open defect.)
+		// (Without this signal the accept above would be served with
+		// stale=false — the fail-open defect.)
 		if ServedBaselineValidated(empty) {
 			t.Fatalf("empty baseline must report UNVALIDATED (low-confidence); got validated=true — the fail-open defect")
 		}
@@ -250,7 +250,7 @@ func TestRobustBand_ContainsCentreAndRatioBounds(t *testing.T) {
 }
 
 func TestRobustBand_ThinHistoryWiderFiniteBand(t *testing.T) {
-	// Finding M11(b): a thin baseline (1..guardMinSamples-1 usable
+	// A thin baseline (1..guardMinSamples-1 usable
 	// buckets) yields a WIDER but finite ratio-only band
 	// [centre/10, centre*10] — not fail-open, not the tight R=3.
 	trailing := repeatRat(t, "1.0", guardMinSamples-1)

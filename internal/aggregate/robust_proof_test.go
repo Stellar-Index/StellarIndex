@@ -21,9 +21,9 @@ func mkAggRow(source string, priceScaled int64, decimals uint8) canonical.Oracle
 }
 
 // TestComputeGlobalPrice_AggregatorRejectsDivergentSource is the
-// finding-M8 proof: the global Tier-2 headline averaged the aggregator
-// sources with a PLAIN MEAN, so a single 2x-off print dragged the
-// served price ~33%. Post-fix a median+MAD filter drops the divergent
+// divergent-source proof: averaging the global Tier-2 headline's aggregator
+// sources with a PLAIN MEAN lets a single 2x-off print drag the
+// served price ~33%. A median+MAD filter drops the divergent
 // print and serves the consensus of the two agreeing sources.
 func TestComputeGlobalPrice_AggregatorRejectsDivergentSource(t *testing.T) {
 	reader := &stubGlobalReader{}
@@ -41,8 +41,8 @@ func TestComputeGlobalPrice_AggregatorRejectsDivergentSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeGlobalPrice: %v", err)
 	}
-	// Plain mean (pre-fix) = (100.00 + 100.20 + 200.00)/3 = 133.40 — one
-	// bad print moving the headline ~33%. Robust (post-fix) =
+	// Plain mean = (100.00 + 100.20 + 200.00)/3 = 133.40 — one
+	// bad print moving the headline ~33%. Robust =
 	// (100.00 + 100.20)/2 = 100.10.
 	if res.Price != "100.10000000000000" {
 		t.Fatalf("served price = %q, want 100.10000000000000 (consensus of the two agreeing sources, not the 133.40 inflated mean)", res.Price)
@@ -52,10 +52,9 @@ func TestComputeGlobalPrice_AggregatorRejectsDivergentSource(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_Catches5xManipulation is the finding-M11(a)
-// proof: the serve-time guard only rejected >=10x deviations, so a 5x
-// pump was served. Post-fix (ratio bound tightened 10x -> 3x) it is
-// held, while a realistic large-but-real move inside the bound is
+// TestGuardServedVWAP_Catches5xManipulation is the 5x-pump
+// proof: a serve-time guard rejecting only >=10x deviations serves a 5x
+// pump. With the ratio bound at 3x it is held, while a realistic large-but-real move inside the bound is
 // still served.
 func TestGuardServedVWAP_Catches5xManipulation(t *testing.T) {
 	// A realistic liquid history: ~1% bucket-to-bucket noise around 100
@@ -73,9 +72,9 @@ func TestGuardServedVWAP_Catches5xManipulation(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the finding-M11(b)
+// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the thin-history
 // proof: with fewer than guardMinSamples trailing buckets the guard
-// failed FULLY OPEN — any manipulation passed. Post-fix a thin (but
+// must not fail FULLY OPEN, passing any manipulation. A thin (but
 // non-empty) baseline falls back to a wider-but-FINITE 10x band, so
 // gross manipulation is still caught; only a truly empty baseline
 // fails open.
@@ -95,9 +94,9 @@ func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
 	}
 }
 
-// TestRobustCentreScale_EmptyValsDoesNotPanic pins the RLT-263 latent
+// TestRobustCentreScale_EmptyValsDoesNotPanic pins a latent
 // panic: medianRat(nil) returns nil (its own documented defensive
-// behaviour), and robustCentreScale used to pass that nil straight into
+// behaviour), and robustCentreScale without a guard would pass that nil straight into
 // madRat -> big.Rat.Sub as the subtrahend with no guard of its own,
 // which panics on a nil-pointer dereference rather than returning the
 // same "nothing to judge" nil, nil every other empty-input path here

@@ -13,7 +13,7 @@ import (
 
 // TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated — the operator
 // force-unfreezes an escalated pair and the anomaly is still live. The
-// override used to zero the state, so the re-fire was a fresh 10-minute hold
+// override must not zero the state: the re-fire would be a fresh 10-minute hold
 // with extensions_used=0 that would not page again for two hours.
 func TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated(t *testing.T) {
 	f := newFreezeFixture(t)

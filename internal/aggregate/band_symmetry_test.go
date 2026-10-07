@@ -14,7 +14,7 @@ import (
 // [aggregate.GuardServedVWAP] and the oracle-aggregator band
 // (rejectAggregatorOutliers; its served-price test is global_band_symmetry_test.go).
 //
-// Every robust band in this package used to be ADDITIVE in price space
+// An ADDITIVE robust band in price space
 // (`|p − centre| > K·scale`), which is one-sided-blind by construction:
 // a price can only be `centre` below the centre, so once `K·scale`
 // reaches the centre NO downward print — a 5× crash, a decimal-shift
@@ -35,8 +35,8 @@ import (
 // print and once with its mirror-image pump; both must be rejected and
 // the served VWAP must be the clean window's, in both directions.
 //
-// Pre-fix the crash print survived (window relative MAD 25 % ⇒ additive
-// lower edge −90.9) and dragged the served VWAP from 105 to 87.5.
+// An additive band lets the crash print survive (window relative MAD
+// 25 % ⇒ additive lower edge −90.9) and drag the served VWAP from 105 to 87.5.
 func TestFilterOutliers_DownAndUpOutliersBothDropped(t *testing.T) {
 	// Base window: a genuinely dispersed pair (~1.25× step between
 	// prints, relative MAD 25 %). Base amount 1 ⇒ price = quote.
@@ -100,8 +100,8 @@ func TestFilterOutliers_SymmetricWindowFullyKept(t *testing.T) {
 // PUBLISHED-VWAP path (orchestrator.go's FilterOutliersLocal). Its
 // reference set folds the WINDOW reference in first and keeps the
 // SMALLEST score across references, so the window's wide, unclamped band
-// decides a print no local reference vouches for — and pre-fix that band
-// had no lower edge at all on a dispersed window, so the crash print was
+// decides a print no local reference vouches for — and an additive band
+// has no lower edge at all on a dispersed window, so the crash print is
 // published into the VWAP.
 func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 	base := []int64{64, 80, 100, 125, 156}
@@ -126,8 +126,8 @@ func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 }
 
 // TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline is the
-// serving-guard half (F039/RLT-391). A trailing baseline with 10 %
-// relative MAD used to push the guard's additive lower edge to −48.26,
+// serving-guard half. A trailing baseline with 10 %
+// relative MAD pushes an additive guard's lower edge to −48.26,
 // from where EVERY non-negative candidate — 0 included — was served
 // verbatim as a confident price, while the mirror-image pump was still
 // caught.

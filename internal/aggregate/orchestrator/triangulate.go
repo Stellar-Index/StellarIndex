@@ -121,7 +121,7 @@ func (o *Orchestrator) tickClock() time.Time {
 
 // chainLegStatus is the per-chain result of resolving that chain's legs
 // while building the window's edge graph: whether a leg was frozen this
-// tick (so an unreachable target inherits the freeze, MNY-22), whether a
+// tick (so an unreachable target inherits the freeze), whether a
 // leg hard-failed (Redis/parse — the target can't be trusted this tick),
 // and whether a configured leg was DRY (missing_leg) so any route the
 // router still finds to the target is a SUBSTITUTE path (a reroute), not
@@ -152,8 +152,8 @@ type chainLegStatus struct {
 // from [newEdgeQuote].
 //
 // This applies ONLY to FX legs (isFXLeg). A cached NON-FX leg uses the
-// conservative [cachedLegConfidence] instead (L1): before the fix EVERY
-// cached leg entered at 1.0, so a stale cached crypto leg could never be a
+// conservative [cachedLegConfidence] instead: if EVERY
+// cached leg entered at 1.0, a stale cached crypto leg could never be a
 // route's weakest link.
 const legEdgeConfidence = 1.0
 
@@ -237,7 +237,7 @@ func (o *Orchestrator) resolveChainLegs(
 			// Leg absent this tick — leave it out of the graph. The router
 			// may still reach the target via an alternative route, or
 			// report the target unreachable (missing_leg) below. Record the
-			// substitution so [routeTarget] can gate + flag any reroute (R3)
+			// substitution so [routeTarget] can gate + flag any reroute
 			// rather than let a thin substitute path silently overwrite the
 			// direct price.
 			st.legDry = true
@@ -256,8 +256,8 @@ func (o *Orchestrator) resolveChainLegs(
 // backward-compatible with the static path: a single-route target
 // publishes "ok" (or "missing_leg" when its leg is dry, which the
 // triangulation-chains-dry alert reads); an unreachable target whose leg
-// was frozen inherits the freeze ("frozen_leg", MNY-22). "low_confidence"
-// covers both "no route clears min_route_confidence" AND (R3) "a
+// was frozen inherits the freeze ("frozen_leg"). "low_confidence"
+// covers both "no route clears min_route_confidence" AND "a
 // leg-substitution reroute did not clear [aggregate.RouteTrustFloor]": in both
 // the composite is flagged but NOT published over the direct price.
 // "proxy_pivot" does the same when a priced leg's stablecoin-proxy prints
@@ -302,7 +302,7 @@ func (o *Orchestrator) routeTarget(
 	switch {
 	case errors.Is(err, aggregate.ErrNoRoute):
 		// Unreachable. A frozen leg of THIS chain makes it a freeze
-		// inheritance (MNY-22): the target keeps serving its LKG and
+		// inheritance: the target keeps serving its LKG and
 		// carries flags.frozen. Otherwise the legs are simply dry/absent —
 		// the missing_leg the chains-dry alert watches.
 		//
@@ -331,8 +331,8 @@ func (o *Orchestrator) routeTarget(
 	// A leg was DRY, or a leg FROZE this tick and the router reached the
 	// target by walking AROUND it (st.frozen with a route found, not
 	// ErrNoRoute) — either way the composite came from a SUBSTITUTE path, so
-	// it is gated on the route trust floor and flagged Rerouted the same way
-	// (H2). A frozen leg's LKG was declined upstream; a reroute around it must
+	// it is gated on the route trust floor and flagged Rerouted the same way.
+	// A frozen leg's LKG was declined upstream; a reroute around it must
 	// not silently republish at max trust any more than a dry-leg reroute may.
 	rerouted := st.legDry || st.frozen
 
@@ -341,7 +341,7 @@ func (o *Orchestrator) routeTarget(
 	// composite (the marker says frozen — overwriting the value contradicts
 	// it). Leave the LKG serving, flag the meta for Step 3, and record no
 	// corroboration. Reuses the frozen_leg outcome: "we refused to publish a
-	// derived price because [the target] was frozen" (H2).
+	// derived price because [the target] was frozen".
 	if o.frozenLeg(chain.Target, window) {
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
 			ServedRouteCount:   servedRouteCount,
@@ -356,14 +356,14 @@ func (o *Orchestrator) routeTarget(
 
 	if lowConf || (rerouted && !aggregate.ClearsRouteTrustFloor(combinedConf)) {
 		// Either every route runs through a dust/thin edge below
-		// min_route_confidence, OR this is a leg-substitution reroute (R3)
+		// min_route_confidence, OR this is a leg-substitution reroute
 		// whose best route does not clear the sane reroute floor. In both
 		// cases: do NOT overwrite the direct price (requirement (b)); carry
 		// the flags for Step 3 and leave the direct value serving. Nothing
 		// is recorded as corroboration, so the freeze falls back to the
 		// direct source count.
 		if rerouted && !lowConf {
-			// Observability (R3b): a thin substitute was BLOCKED from
+			// Observability: a thin substitute was BLOCKED from
 			// displacing the direct price — surface which leg dried so it is
 			// not a silent behaviour change.
 			o.logger.Info("triangulation: leg-substitution reroute below floor — direct price serves",
@@ -396,7 +396,7 @@ func (o *Orchestrator) routeTarget(
 // cache key (served instead of the target's held direct print for the
 // tick, provenance stamped, and streamed), records it as this tick's corroboration for the next tick,
 // and carries its quality flags for Step 3. rerouted marks a publish that
-// came from a leg-substitution path (R3) — it cleared the route trust floor
+// came from a leg-substitution path — it cleared the route trust floor
 // so it publishes, but the substitution is flagged for observability.
 func (o *Orchestrator) publishComposite(
 	ctx context.Context,
@@ -409,7 +409,7 @@ func (o *Orchestrator) publishComposite(
 ) string {
 	value := formatRatFixed(composite, 12)
 
-	// R-1 belt-and-suspenders: never overwrite the served direct price
+	// Belt-and-suspenders: never overwrite the served direct price
 	// with a rendering that reparses to a non-positive price for a
 	// strictly-positive composite. formatRatFixed now renders
 	// magnitude-relative precision so this cannot fire for any value
@@ -444,7 +444,7 @@ func (o *Orchestrator) publishComposite(
 		return "parse_error"
 	}
 
-	// R-2: the value never lands without its qualifiers (the quality-flags
+	// The value never lands without its qualifiers (the quality-flags
 	// meta, the triangulated-provenance marker the API sets
 	// flags.triangulated from, and the observed-at stamp it serves as
 	// observed_at). One MULTI/EXEC: a reader sees the previous state or
@@ -594,7 +594,7 @@ type compositeMeta struct {
 	// served composite — the highest-confidence tier's size after its own
 	// outlier omission (aggregate.CombineRoutes' servedRouteCount). PathCount
 	// below is the unrelated, and possibly disjoint, post-omission survivor
-	// count of the FULL gated route set (GH-1022): a thin divergent majority
+	// count of the FULL gated route set: a thin divergent majority
 	// can survive median-relative omission into PathCount while the served
 	// value came from a single top-confidence outlier route ServedRouteCount
 	// names. Read PathCount as "surviving route population", never as "how
@@ -610,7 +610,7 @@ type compositeMeta struct {
 	LowConfidence      bool    `json:"low_confidence"`
 	Diverged           bool    `json:"diverged"`
 	// Rerouted marks a composite whose route(s) substituted around a DRY
-	// configured chain leg (R3). true means the documented direct chain
+	// configured chain leg. true means the documented direct chain
 	// could not resolve and the router walked an alternative path; when it
 	// also failed the route trust floor the composite was NOT published over
 	// the direct price (LowConfidence is set too). Lets Step 3 / the API
@@ -719,7 +719,7 @@ func (o *Orchestrator) withPivotComposition(chain TriangulationChain, window tim
 // target, low-confidence / below-floor reroute) — there the meta is the
 // only artefact and a miss just leaves the untouched direct value
 // without flags. The value-overwriting path writes the meta in the same
-// MULTI/EXEC as the value it qualifies instead ([publishComposite], R-2).
+// MULTI/EXEC as the value it qualifies instead ([publishComposite]).
 // TTL matches the VWAP key so the flags can't outlive the price they
 // describe.
 func (o *Orchestrator) writeCompositeMeta(
@@ -847,7 +847,7 @@ func fxLegProvenance(leg canonical.Pair) []string {
 
 // outcomeFrozenLeg is the [obs.AggregatorTriangulationsTotal] label
 // for "a leg of this chain was frozen this tick, so the chain did not
-// publish" (MNY-22).
+// publish".
 const outcomeFrozenLeg = "frozen_leg"
 
 // outcomeFrozenLegDirectServed is the [obs.AggregatorTriangulationsTotal]
@@ -867,7 +867,7 @@ const outcomeStaleLeg = "stale_leg"
 // legPriceFromCache reads a leg's freshly-cached VWAP. Used for non-
 // FX legs and for FX legs when the snap path produced ErrNoFXQuote.
 //
-// Refuses (MNY-22) when the leg was frozen earlier in this same tick.
+// Refuses when the leg was frozen earlier in this same tick.
 // A freeze means "we do not trust this pair's newest bucket, keep
 // serving its last-known-good and flag it" — and the freeze path
 // deliberately leaves that LKG in the cache (keepFrozenVWAPAlive).
@@ -917,7 +917,7 @@ func (o *Orchestrator) legPriceFromCache(
 			"raw", raw)
 		return nil, "parse_error"
 	}
-	// R-1 belt-and-suspenders: a leg VWAP that parses to a non-positive
+	// Belt-and-suspenders: a leg VWAP that parses to a non-positive
 	// price (e.g. a legacy "0.000000000000" written before the
 	// magnitude-relative render, or any future zero-reparsing string)
 	// must NOT enter the edge graph — aggregate.BuildEdges rejects a
@@ -938,7 +938,7 @@ func (o *Orchestrator) legPriceFromCache(
 
 // inheritLegFreeze applies the direct-pair freeze semantics to a
 // triangulated TARGET whose chain could not publish because a leg was
-// frozen this tick (MNY-22).
+// frozen this tick.
 //
 // It mirrors [Orchestrator.engageFreeze] deliberately, because the
 // consumer-visible situation is the same one: we are declining to

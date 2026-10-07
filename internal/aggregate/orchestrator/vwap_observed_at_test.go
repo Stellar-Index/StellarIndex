@@ -6,7 +6,7 @@ import (
 )
 
 // TestFreezeKeepsTheHeldValuesObservationStamp pins the writer half of
-// RLT-357. The API stamps observed_at on a VWAP-cache serve from the
+// the observed_at contract. The API stamps observed_at on a VWAP-cache serve from the
 // value's `:observed_at` sibling, so every publish must write it with the
 // value, and a freeze — which keeps the value alive for its hold without
 // rewriting it — must keep the stamp alive for exactly as long, still

@@ -175,7 +175,7 @@ func addTradeSeeds(f *testing.F) {
 	f.Add(seedTradeBytes(100, 200))
 	f.Add(seedTradeBytes(100, 200, 100, 300, 0, 5, 100, -1))
 	f.Add(seedTradeBytes(100, 200, 100, 0, 7, 9))
-	// M5 masking case and the MNY-22 zero-MAD case.
+	// M5 masking case and the zero-MAD case.
 	f.Add(seedTradeBytes(1, 100, 1, 100, 1, 100, 1, 100, 1, 200))
 	f.Add(seedTradeBytes(100, 10000, 100, 10000, 100, 10000, 100, 10001))
 	// A crash print and a fat-finger print against a tight cluster.

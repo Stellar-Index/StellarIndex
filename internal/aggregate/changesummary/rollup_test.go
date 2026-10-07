@@ -181,8 +181,8 @@ func TestComputeStreak_Up(t *testing.T) {
 }
 
 // TestComputeSummary_ATLSkipsZero — a zero (or unparseable) point
-// mid-series must NOT corrupt ATL. Regression for G14-02: the old
-// `|| atlValue == 0` reset turned [100,5,0,90] into ATL=90.
+// mid-series must NOT corrupt ATL. A
+// `|| atlValue == 0` reset turns [100,5,0,90] into ATL=90.
 func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := []TimedValue{
@@ -263,7 +263,7 @@ func TestComputeSummary_ExtremesKeepRealMovesAndShortSeries(t *testing.T) {
 	}
 }
 
-// TestComputeSummary_PreservesFullPrecision — GH #602: a price with more
+// TestComputeSummary_PreservesFullPrecision — a price with more
 // significant digits than float64 can carry must round-trip byte-for-byte
 // into CurrentValue/ATHValue/ATLValue. A ParseFloat round-trip (the old
 // behaviour) destroys everything past the 17th digit.
@@ -289,7 +289,7 @@ func TestComputeSummary_PreservesFullPrecision(t *testing.T) {
 
 // TestComputeAcceleration — direction-agnostic momentum. A steepening
 // downtrend must read "increasing" (momentum building), not "decreasing".
-// Regression for G14-01: signed comparison inverted for negative deltas.
+// Regression: a signed comparison inverts negative deltas.
 func TestComputeAcceleration(t *testing.T) {
 	base := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	// build constructs a series from per-step values starting at v0.

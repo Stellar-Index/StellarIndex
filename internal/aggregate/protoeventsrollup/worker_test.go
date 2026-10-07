@@ -29,7 +29,7 @@ func TestNew_NilRefresher(t *testing.T) {
 }
 
 // TestRefresh_Metrics proves the paired counter + histogram advance on
-// both the ok and refresh_error paths (wave-100 obstest convention).
+// both the ok and refresh_error paths (obstest convention).
 func TestRefresh_Metrics(t *testing.T) {
 	ctx := context.Background()
 

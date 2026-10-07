@@ -247,7 +247,7 @@ func TestCompute_BootstrapCapWithNoBaselineSentinel(t *testing.T) {
 	}
 }
 
-// ─── R-003 (audit-2026-07-23, COR-14): the combiner is the
+// ─── The combiner is the
 // NORMALISED weighted geometric mean ───────────────────────────────
 
 // TestCompute_IsNormalisedGeometricMeanNotBareProduct pins the
@@ -255,7 +255,7 @@ func TestCompute_BootstrapCapWithNoBaselineSentinel(t *testing.T) {
 //
 //	confidence = prod(factor_i ^ weight_i) ^ (1 / sum(weights))
 //
-// The ADR's R-003 amendment records the code as authoritative, so
+// The ADR's combiner amendment records the code as authoritative, so
 // this is the test that keeps it that way. A future "fix" that makes
 // the code match the ADR's *truncated* formula (a bare product) fails
 // here with a ~0.44 gap — and would ship a silent, unannounced change
@@ -289,8 +289,8 @@ func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 
 	// 2. Concrete corrected value, so this test pins a number rather
 	//    than a tautology against whatever the code happens to do.
-	//    Recomputed 2026-07-25 when liquidityCeilingUSD moved $100K →
-	//    $1M: the $50K bucket's liquidity factor drops from
+	//    With liquidityCeilingUSD at $1M rather than $100K, the
+	//    $50K bucket's liquidity factor drops from
 	//    ln(50)/ln(100) = 0.84949 to ln(50)/ln(1000) = 0.56632, which is
 	//    the whole of the change here.
 	const wantConfidence = 0.81103334478800171 // prod = 0.28459827331540849
@@ -393,7 +393,7 @@ func TestDefaultWeights(t *testing.T) {
 		}
 	}
 	// Half weight IS the "a derived path is not an independent venue"
-	// discount (2026-07-25). Raising it to 1.0 would let a composite
+	// discount. Raising it to 1.0 would let a composite
 	// corroborate as strongly as an independent external reference.
 	if w.TriangulationAgreement != 0.5 {
 		t.Errorf("DefaultWeights.TriangulationAgreement = %v, want 0.5 — the "+
@@ -404,7 +404,7 @@ func TestDefaultWeights(t *testing.T) {
 // TestCompute_CrossOracleAgreementDecomposition — ADR-0019 Phase 3:
 // the served decomposition carries the cross-oracle checked flag +
 // agreement count so consumers can distinguish "neutral because
-// unverified" from "neutral because mildly diverging" (the CS-087
+// unverified" from "neutral because mildly diverging" (the
 // DivergenceChecked discipline applied to the confidence surface).
 // The combined score itself is unchanged by the agreement count —
 // the ADR's cross_oracle_factor input is divergence-from-median.
@@ -511,15 +511,15 @@ func TestCompute_AgreementCountDoesNotChangeScore(t *testing.T) {
 	}
 }
 
-// TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore (COR-14) — a pair
+// TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore — a pair
 // this index cannot value in USD (every non-USD-quoted pair) must still
 // score on the factors that WERE measured. Passing 0 for it instead of
 // the sentinel drove the geometric mean to exactly 0, so the served
 // confidence carried no information and the Phase 2 freeze's
 // `confidence < 0.10` leg was pinned true for those pairs.
 //
-// Proven red against the pre-fix LiquidityFactor (negative → 0): the
-// unmeasured score came back 0, failing both the ">0" and the
+// Proven red against a LiquidityFactor mapping negative → 0: the
+// unmeasured score comes back 0, failing both the ">0" and the
 // "≈ measured-mid-band" assertions below.
 func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	in := healthyInputs()
@@ -537,10 +537,9 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	// mid-band MEASURED liquidity — i.e. the neutral factor is the only
 	// difference, nothing else silently changed.
 	//
-	// The collision volume is the curve's GEOMETRIC midpoint, which the
-	// 2026-07-25 ceiling change moved from $10,000 (the production
-	// min_usd_volume floor — the worst possible place for it) to
-	// ≈ $31,622.78. LiquidityUnmeasuredFactor deliberately stayed at
+	// The collision volume is the curve's GEOMETRIC midpoint, ≈ $31,622.78
+	// (under a $100K ceiling it would sit at $10,000, the production
+	// min_usd_volume floor — the worst possible place for it). LiquidityUnmeasuredFactor deliberately stays at
 	// 0.5 rather than tracking the curve; see its doc comment for why
 	// following it down to 0.333 would have made the 8 non-USD-quoted
 	// pairs freeze more readily for a reason that says nothing about
@@ -701,8 +700,8 @@ func TestCompute_TriangulationNeverTouchesSourceCount(t *testing.T) {
 	}
 }
 
-// TestCompute_zeroWeightOnZeroFactorIsNotNaN is the regression test for
-// the cold audit of 2026-08-04.
+// TestCompute_zeroWeightOnZeroFactorIsNotNaN is a NaN
+// regression test.
 //
 // safeLog(0) is -Inf and IEEE-754 says -Inf * 0 = NaN, so a factor of
 // exactly 0 carrying a weight of exactly 0 collapsed the entire score:
@@ -733,7 +732,7 @@ func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
 	}
 }
 
-// ─── RLT-260: the bootstrap gate is a DENSITY threshold ──────────
+// ─── The bootstrap gate is a DENSITY threshold ──────────
 
 // TestCompute_BootstrapCapReleasesAtDensityThreshold pins the shipped
 // release point of the bootstrap cap as a NUMBER, both sides of it.
@@ -741,8 +740,8 @@ func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
 // [Inputs.BaselineAgeDays] carries days-equivalent of 1-minute bucket
 // DENSITY, and a 30-day window holds at most 43,200 of those buckets —
 // so a gate at 30.0 days-equivalent demands a literally perfect
-// window and, before RLT-260, was never satisfied by anything: the
-// cap was unconditional and every asset's served confidence was
+// window and is never satisfied by anything: the
+// cap would be unconditional and every asset's served confidence
 // pinned at 0.5. The gate is 28.5 days-equivalent (95% of the
 // window). Buckets accrue at no more than 1,440 a day, so clearing it
 // still implies at least 28.5 calendar days of observed history —

@@ -151,7 +151,7 @@ func TestFilterOutliers_IdenticalPricesAllKept(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_MADCatchesMaskedOutlier is the finding-M5 proof:
+// TestFilterOutliers_MADCatchesMaskedOutlier is the masked-outlier proof:
 // on a SMALL window the single-pass mean/σ filter is masking-vulnerable
 // and rejects nothing, whereas the median+MAD filter catches the
 // injected outlier.
@@ -179,7 +179,7 @@ func TestFilterOutliers_MADCatchesMaskedOutlier(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_ZeroMADKeepsHonestDispersion is the MNY-22
+// TestFilterOutliers_ZeroMADKeepsHonestDispersion is the zero-MAD
 // regression, asserted on the SERVED VALUE (the VWAP the filter feeds).
 //
 // A trade-count majority at one exact price — four fills against the
@@ -210,7 +210,7 @@ func TestFilterOutliers_ZeroMADKeepsHonestDispersion(t *testing.T) {
 }
 
 // TestFilterOutliers_ZeroMADStillDropsFatFinger pins the other half of
-// the MNY-22 fix: relaxing the zero-MAD band must NOT reopen the M5
+// the zero-MAD fix: relaxing the zero-MAD band must NOT reopen the M5
 // masking hole, and must not degenerate into a no-op. A print well
 // outside the relative floor is still rejected.
 func TestFilterOutliers_ZeroMADStillDropsFatFinger(t *testing.T) {

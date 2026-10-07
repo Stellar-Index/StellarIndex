@@ -72,7 +72,7 @@ func probeFreezes(t *testing.T, series []baseline.TimedVWAP, wantOutcome baselin
 }
 
 // A thin pair that can publish must keep a Phase 2 guard under the notional
-// floor (#1108 review). 200 organic $3 minutes a day for 30 days, then two
+// floor. 200 organic $3 minutes a day for 30 days, then two
 // $5,000 minutes at 5x on the last day ($10,000 clears the 24h publish
 // floor): the persisted baseline stays under the bootstrap gate and the 5x
 // print fires the freeze.
@@ -117,7 +117,7 @@ func TestNotionalFloor_SubBarPairFallsBackToPerMinuteFreeze(t *testing.T) {
 	probeFreezes(t, series, baseline.OutcomeOKPerMinuteFallback)
 }
 
-// The fallback must not bring back #1108's cap lift: $0.0004 of dust every
+// The fallback must not lift the cap: $0.0004 of dust every
 // minute for 30 days ($17.28, two bars) trains the per-minute freeze stats,
 // but the density stays that of the bars, so the cap holds.
 func TestNotionalFloor_DustFallbackKeepsCap(t *testing.T) {

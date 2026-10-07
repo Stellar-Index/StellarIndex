@@ -40,7 +40,7 @@ func rq(base, quote canonical.Asset, num, den int64, conf float64) aggregate.Quo
 	}
 }
 
-// rqp is [rq] plus a data-provenance list (RLT-278): the underlying row(s)
+// rqp is [rq] plus a data-provenance list: the underlying row(s)
 // (e.g. an fx_quotes ticker) the quote's price was actually computed from,
 // beyond its nominal pair.
 func rqp(base, quote canonical.Asset, num, den int64, conf float64, provenance ...string) aggregate.Quote {
@@ -247,7 +247,7 @@ func TestRouter_OutlierRejection(t *testing.T) {
 	}
 }
 
-// GH-1022: the served composite and pathCount can come from DISJOINT route
+// The served composite and pathCount can come from DISJOINT route
 // sets. A high-confidence route (0.9, price 1.0) and two agreeing
 // lower-confidence routes (0.5, price 0.5 each) — highestConfidencePrice
 // serves the 0.9 route's 1.0 alone (servedRouteCount=1), but that route is a
@@ -589,7 +589,7 @@ func TestRouteConfidence_Empty(t *testing.T) {
 	}
 }
 
-// ── corroboration integrity (R1/R2) ─────────────────────────────────
+// ── corroboration integrity ─────────────────────────────────
 //
 // The corroboration count CombineRoutes returns is the number fed to the
 // anomaly-freeze source_count leg. It must count only INDEPENDENT +
@@ -667,7 +667,7 @@ func TestRouter_CorroborationRequiresTightAgreement(t *testing.T) {
 	// Both routes are co-equal top confidence (0.9) but 15% apart — the
 	// bimodal/co-equal case. The served composite is a value a route ACTUALLY
 	// produced (the lower cluster, 100), NOT the unproduced midpoint 107.5 an
-	// averaging median would blend across two disagreeing routes (H1).
+	// averaging median would blend across two disagreeing routes.
 	eqRat(t, composite, big.NewRat(100, 1), "served member = a produced value, not the blended midpoint")
 }
 
@@ -742,7 +742,7 @@ func TestRouter_CorroborationEdgeDisjointAgreeing(t *testing.T) {
 	}
 }
 
-// RLT-278: USD/GBP and EUR/GBP are nominally different pairs (edge-disjoint
+// USD/GBP and EUR/GBP are nominally different pairs (edge-disjoint
 // under raw {From,To} identity) but both fiat crosses are snapped from a
 // SHARED underlying fx_quotes GBP row, so the two routes are not
 // independent evidence — corroborationCount must stay at 1, not jump to 2.
@@ -842,7 +842,7 @@ func TestRouter_ServesHighestConfidenceRoute(t *testing.T) {
 	eqRat(t, movedComposite, big.NewRat(3, 5), "served price unmoved by thin-route manipulation")
 }
 
-// ── serving anchor (H1) ─────────────────────────────────────────────
+// ── serving anchor ─────────────────────────────────────────────
 
 // H1 (a): a deep, high-confidence route must set the served price even when
 // a thin low-confidence MAJORITY would evict it as a price-median outlier. At
@@ -886,7 +886,7 @@ func TestRouter_DeepRouteProtectedFromThinMajority(t *testing.T) {
 
 // H1 (b): two genuinely co-equal top-confidence routes that DISAGREE (two
 // clusters >40% apart) must serve a price ONE cluster actually produced, not
-// the averaged midpoint. Before the fix medianRat blended them into an
+// the averaged midpoint. A blending medianRat would serve an
 // unproduced value.
 func TestRouter_BimodalCoEqualServesProducedValue(t *testing.T) {
 	edges := mustEdges(t,
@@ -907,7 +907,7 @@ func TestRouter_BimodalCoEqualServesProducedValue(t *testing.T) {
 	}
 }
 
-// ── corroboration confidence floor (M2) ─────────────────────────────
+// ── corroboration confidence floor ─────────────────────────────
 
 // M2: a thin route (weakest-link confidence below the corroboration floor)
 // that agrees tightly AND is edge-disjoint must NOT raise the corroboration
@@ -939,7 +939,7 @@ func TestRouter_CorroborationRequiresConfidenceFloor(t *testing.T) {
 	}
 }
 
-// GH-1026: the corroboration floor is strictly above the bootstrap cap. Every
+// The corroboration floor is strictly above the bootstrap cap. Every
 // unscored edge, cache-only leg and still-bootstrapping pair carries exactly
 // the cap, so two edge-disjoint, exactly-agreeing routes built only from such
 // edges must not corroborate; one hair above the cap they do.
@@ -974,7 +974,7 @@ func TestRouter_BootstrapCapRoutesDoNotCorroborate(t *testing.T) {
 	}
 }
 
-// ── reverse-oriented market dedup (M3) ──────────────────────────────
+// ── reverse-oriented market dedup ──────────────────────────────
 
 // M3: a market quoted in BOTH orientations (XLM/OBSCURE and OBSCURE/XLM) is
 // ONE physical market. The dedup must yield the same edge set + route set as
@@ -1010,9 +1010,9 @@ func TestBuildEdges_DedupsReverseOrientedMarket(t *testing.T) {
 
 // ── non-finite confidence guard (L5) ────────────────────────────────
 
-// L5: a quote whose confidence is NaN must not panic the router. Pre-fix the
-// NaN propagated through RouteConfidence → maxConfidence, never matched
-// `== best`, emptied the served top tier and panicked the median. Post-fix
+// A quote whose confidence is NaN must not panic the router. Unclamped, the
+// NaN propagates through RouteConfidence → maxConfidence, never matches
+// `== best`, empties the served top tier and panics the median. Instead
 // the confidence is clamped to 0 (fail-closed) and a sensible price is served.
 func TestRouter_NonFiniteConfidenceNoPanic(t *testing.T) {
 	edges := mustEdges(t,

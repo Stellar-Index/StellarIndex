@@ -106,7 +106,7 @@ func TestFiatProxy_NonCryptoAssetsReturnFalse(t *testing.T) {
 	}
 }
 
-// TestIsFiatProxyFor — R-008 (audit 2026-07-23). The aggregator's
+// TestIsFiatProxyFor: the aggregator's
 // USD-volume accounting asks "is this quote leg dollar-denominated?"
 // and MUST answer yes for the abstract USD-pegged stablecoin tickers
 // the proxy expansion fetches under. The predicate reads the same
@@ -165,7 +165,7 @@ func TestIsFiatProxyFor(t *testing.T) {
 // USD peg set the expansion path fetches: every ticker FiatBackers
 // enumerates for "USD" must be recognised as USD-denominated by the
 // volume accounting, or that leg's dollars vanish at the
-// MinUSDVolume floor (R-008).
+// MinUSDVolume floor.
 func TestIsFiatProxyFor_CoversEveryUSDBacker(t *testing.T) {
 	backers := FiatBackers("USD")
 	if len(backers) == 0 {

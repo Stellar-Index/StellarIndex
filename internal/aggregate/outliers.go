@@ -11,7 +11,7 @@ import (
 // median + MAD (median absolute deviation) guard rather than a
 // single-pass mean/standard-deviation.
 //
-// Why MAD, not mean/σ (finding M5): the published-VWAP path fed the
+// Why MAD, not mean/σ: the published-VWAP path fed the
 // orchestrator through a single-pass mean/σ filter, which is
 // MASKING-vulnerable — a few extreme prints inflate σ enough that the
 // outliers escape their own rejection — and for windows below ~18
@@ -53,7 +53,7 @@ import (
 //   - MAD == 0 (a strict majority of prices identical — a routine
 //     shape when a bucket's fills all hit the same resting order, and
 //     the steady state of a pegged pair) no longer collapses the band
-//     to a point (MNY-22). The σ-equivalent scale falls back to
+//     to a point. The σ-equivalent scale falls back to
 //     [zeroScaleRelFloor]·centre, giving a ±2% band at the default
 //     sigma=4: a 100.01 alongside four 100s survives, while the
 //     masking case the M5 finding cites ([100,100,100,100,200]) is

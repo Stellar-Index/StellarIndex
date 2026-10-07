@@ -541,9 +541,8 @@ func TestTick_OutlierFilter_ZeroSigmaIsOff(t *testing.T) {
 }
 
 func TestTick_OutlierDropCarriesConfiguredPairLabel(t *testing.T) {
-	// The 2026-08-14 outlier_storm (a single-issuer token farm spamming
-	// SDEX) needed ad-hoc SQL to attribute because class/outlier drops
-	// carried no pair. The counter must attribute each drop to the
+	// An outlier_storm (a single-issuer token farm spamming SDEX) needs
+	// ad-hoc SQL to attribute if class/outlier drops carry no pair. The counter must attribute each drop to the
 	// CONFIGURED target pair whose refresh discarded it — the label the
 	// runbook's topk-by-pair diagnosis reads.
 	now := time.Now()
@@ -601,7 +600,7 @@ func TestTick_EmitsPrometheusMetrics(t *testing.T) {
 
 	beforeOK := testutil.ToFloat64(obs.AggregatorTicksTotal.WithLabelValues("ok"))
 	beforeWrites := testutil.ToFloat64(obs.AggregatorVWAPWritesTotal)
-	// The drop counters carry the CONFIGURED target pair (the 2026-08-14
+	// The drop counters carry the CONFIGURED target pair (the
 	// outlier_storm attribution gap) — assert under the exact label the
 	// alert runbook's topk-by-pair diagnosis reads.
 	pairLabel := xlmUsdtPair(t).String()
@@ -1044,7 +1043,7 @@ func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 		t.Errorf("decision passed to Mark wasn't frozen: %+v", m.decision)
 	}
 
-	// F-1228 (audit-2026-05-12): the frozenValue arg must carry
+	// The frozenValue arg must carry
 	// the LKG VWAP we're freezing on (the prior bucket's
 	// formatRatFixed value). prevVWAPs is preset to big.NewRat(1, 1)
 	// → 12-decimal formatted form is "1.000000000000".
@@ -1060,16 +1059,16 @@ func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 			o.prevVWAPs[stateKey].FloatString(6))
 	}
 
-	// F-1345 (G13-03): the LKG VWAP key was pre-Set with a 1-minute
+	// The LKG VWAP key was pre-Set with a 1-minute
 	// TTL; the freeze must have re-armed it to the freeze marker's own
 	// lifetime so the value survives as long as flags.frozen is set.
-	// Without the fix the key keeps its original (shorter) TTL and can
+	// Otherwise the key keeps its original (shorter) TTL and can
 	// expire out of Redis mid-freeze, leaving the API with
 	// frozen=true and no value to serve.
 	//
 	// The bound is the ADR-0019 hold + silence grace, NOT the flat
-	// cachekeys.FreezeTTL this asserted until the freeze lifecycle
-	// landed. A 5-minute cap here would re-open F-1345 one order of
+	// cachekeys.FreezeTTL. A 5-minute cap here would re-open the
+	// evaporating-LKG bug one order of
 	// magnitude later: the LKG would evaporate 5 minutes into a hold
 	// that runs for 10 (uncorroborated first hold — Phase 1 carries
 	// no corroboration signal) or 30 minutes.
@@ -1088,8 +1087,8 @@ func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 	}
 }
 
-// TestTick_AnomalyFreeze_RefreshesLKGTTL pins F-1345 (G13-03) on its
-// own: a freeze fires when the cached LKG value's remaining TTL is
+// TestTick_AnomalyFreeze_RefreshesLKGTTL pins the LKG TTL
+// re-arm on its own: a freeze fires when the cached LKG value's remaining TTL is
 // already short. The freeze must extend the key's TTL to
 // cachekeys.FreezeTTL so a freeze that outlasts the original window
 // doesn't leave the API serving frozen=true with an evicted value.
@@ -1151,7 +1150,7 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 	}
 }
 
-// TestKeepFrozenVWAPAlive_ExtendsCompositeQualifiers pins GH-1292: a
+// TestKeepFrozenVWAPAlive_ExtendsCompositeQualifiers: a
 // frozen composite's provenance marker and quality-flags meta must outlive
 // the ordinary VWAP TTL together with its value, or five minutes into a
 // hold the API serves the LKG as a direct VWAP with flags.triangulated
@@ -1324,9 +1323,8 @@ func TestDistinctSourceCount(t *testing.T) {
 // usdVolumeForPairPerTrade (valuation) and dropForMinUSDVolume
 // (MinUSDVolume applicability) delegate to. fiat:USD is always
 // valuable; classic/Soroban quotes are valuable ONLY when on the
-// operator's respective peg list (Guard 1, 2026-07-10 — before this,
-// classic/Soroban pegs were recognised for valuation but NEVER
-// consulted by the applicability gate, which checked fiat:USD only).
+// operator's respective peg list (Guard 1 — the applicability gate consults the
+// classic/Soroban peg lists, not fiat:USD alone).
 // Non-USD fiat and un-pegged classic/Soroban/crypto/RWA quotes are
 // unvaluable by this package (no live price lookup here).
 func TestUSDQuoteDecimals(t *testing.T) {
@@ -1368,14 +1366,12 @@ func TestUSDQuoteDecimals(t *testing.T) {
 	}{
 		{"fiat:USD always valuable", usd, 8, true},
 		{"fiat:EUR unvaluable (non-USD fiat)", eur, 0, false},
-		// R-008 (audit 2026-07-23): the abstract USD-pegged tickers
-		// ARE valuable at the off-chain 1e8 convention. This case
-		// asserted (0, false) until 2026-07-24 — which is precisely
-		// the defect: the stablecoin-proxy expansion fetches
-		// `BASE/crypto:USDT` and every dollar on that leg was scored
+		// The abstract USD-pegged tickers ARE valuable at the off-chain
+		// 1e8 convention. Expecting (0, false) here is precisely the
+		// defect: the stablecoin-proxy expansion fetches
+		// `BASE/crypto:USDT` and every dollar on that leg would score
 		// as $0 against MinUSDVolume. Not a loosened expectation: the
-		// floor now SEES that volume, so it gates strictly more pairs
-		// than before (see TestTick_MinUSDVolumeFilter_StablecoinProxyLegs).
+		// floor SEES that volume, so it gates strictly more pairs (see TestTick_MinUSDVolumeFilter_StablecoinProxyLegs).
 		{"crypto:USDT valuable (abstract USD peg, off-chain 1e8)", usdt, 8, true},
 		{"crypto:USDC valuable (abstract USD peg)", usdc, 8, true},
 		{"crypto:DAI valuable (abstract USD peg)", dai, 8, true},
@@ -1412,7 +1408,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	// Trade from exchangeratesapi (FX class, registered IncludeInVWAP=true).
 	// FX pollers stamp amounts at 1e6, not the CEX 1e8 — the registry
 	// declares AmountDecimals:6 and the gate honours it per trade
-	// (MNY-05), so callers below express `q` in 1e6 units.
+	//, so callers below express `q` in 1e6 units.
 	mkFXTrade := func(q *big.Int, ts time.Time) canonical.Trade {
 		return canonical.Trade{
 			Source:      "exchangeratesapi",
@@ -1526,11 +1522,10 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		}
 	})
 
-	// F-1213 (codex audit-2026-05-12) regression: classic USD-pegged
-	// proxy trades are at 7-decimal scale, not the off-chain 1e8
-	// uniform. Pre-fix, the gate divided every QuoteAmount by 1e8 —
-	// a $10k classic-USDC window summed to $1k and was dropped under
-	// MinUSDVolume=10000. Post-fix, fetchForTarget computes the USD
+	// Regression: classic USD-pegged proxy trades are at 7-decimal
+	// scale, not the off-chain 1e8 uniform. A gate dividing every
+	// QuoteAmount by 1e8 sums a $10k classic-USDC window to $1k and
+	// drops it under MinUSDVolume=10000. fetchForTarget computes the USD
 	// volume against per-source-pair decimals, and dropForMinUSDVolume
 	// honours that pre-computed total.
 	t.Run("classic USD-pegged proxy: $10k publishes under min=10000", func(t *testing.T) {
@@ -1644,7 +1639,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		}
 	})
 
-	// F-1260 (codex audit-2026-05-12) regression: class filter
+	// Regression: class filter
 	// gutting most of a window must not let the few survivors ride
 	// in on the pre-filter total.
 	//
@@ -1653,10 +1648,10 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	// an UNKNOWN source ($100k, dropped by filterForVWAP because
 	// the registry's fail-closed default is IncludeInVWAP=false).
 	// Pre-filter total = $101k; survivor total = $1k. Threshold
-	// $10k: pre-fix the gate would clear (and publish a VWAP from
-	// the $1k survivor); post-fix the gate must reject.
+	// $10k: a gate on the pre-filter total would clear (and publish a
+	// VWAP from the $1k survivor); the gate must reject.
 	//
-	// Each side is expressed at ITS OWN source's scale (MNY-05): the FX
+	// Each side is expressed at ITS OWN source's scale: the FX
 	// survivor at 1e6, the unknown source at the 1e8 registry fallback.
 	t.Run("class filter gutted window: drops despite pre-filter clearing threshold", func(t *testing.T) {
 		survivor := canonical.Trade{
@@ -1708,8 +1703,8 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	})
 }
 
-// TestTick_MinUSDVolumeFilter_StablecoinProxyLegs — R-008 (audit
-// 2026-07-23) regression. With EnableStablecoinFiatProxy on, a
+// TestTick_MinUSDVolumeFilter_StablecoinProxyLegs — stablecoin-proxy
+// valuation regression. With EnableStablecoinFiatProxy on, a
 // fiat:USD target is fetched as `XLM/fiat:USD` PLUS one abstract
 // stablecoin backer pair per peg (`XLM/crypto:USDT`, …). Per-trade
 // USD values are computed against the SOURCE pair's quote BEFORE the
@@ -1790,8 +1785,8 @@ func TestTick_MinUSDVolumeFilter_StablecoinProxyLegs(t *testing.T) {
 	})
 
 	t.Run("mixed window: stablecoin leg counts toward the floor", func(t *testing.T) {
-		// $6k direct fiat:USD + $6k USDT = $12k. Pre-fix only the
-		// $6k direct leg counted, so the window was dropped despite
+		// $6k direct fiat:USD + $6k USDT = $12k. Counting only the
+		// $6k direct leg would drop the window despite
 		// carrying $12k of real dollar volume.
 		orch, mr := newOrch(t, map[string][]canonical.Trade{
 			"crypto:XLM/fiat:USD": {directUSDTrade(
@@ -1850,17 +1845,17 @@ func TestTick_MinUSDVolumeFilter_StablecoinProxyLegs(t *testing.T) {
 }
 
 // TestTick_MinUSDVolumeFilter_DirectStablecoinQuotedTarget pins the
-// SECOND consequence of R-008's classification change, so it can't be
+// SECOND consequence of valuing abstract USD pegs, so it can't be
 // mistaken for an accident: a target pair configured directly against
 // an abstract stablecoin quote (`crypto:XLM/crypto:USDT`, no proxy
-// expansion) used to be UNVALUABLE, which made it exempt from the
-// MinUSDVolume floor entirely — it served VWAP at any volume, and
-// unlike the classic/Soroban unvaluable branch it didn't even WARN
-// (that branch only fires for on-chain quote types). Now the quote is
+// expansion) would otherwise be UNVALUABLE, exempt from the
+// MinUSDVolume floor entirely — serving VWAP at any volume, and
+// unlike the classic/Soroban unvaluable branch not even WARNing
+// (that branch only fires for on-chain quote types). The quote is
 // valuable, so the floor applies and a dust window is refused.
 //
 // This is a deliberate TIGHTENING, in the same direction as Guard 1
-// (2026-07-10) for Soroban/classic quotes: a USDT-quoted window is
+// for Soroban/classic quotes: a USDT-quoted window is
 // dollar-denominated, so the anti-manipulation floor belongs on it.
 // No pair shipped in cmd/stellarindex-aggregator's defaultPairs() or
 // any checked-in TOML is stablecoin-quoted today (all are
@@ -1902,10 +1897,10 @@ func TestTick_MinUSDVolumeFilter_DirectStablecoinQuotedTarget(t *testing.T) {
 	}
 }
 
-// TestTick_MinUSDVolumeFilter_SorobanQuotedPair — Guard 1 (2026-07-10):
-// before this fix, a DIRECTLY-configured Soroban-quoted target pair
-// (e.g. "native/<SAC-USDC>") served VWAP completely unguarded — the
-// applicability check only recognised fiat:USD. These cases prove
+// TestTick_MinUSDVolumeFilter_SorobanQuotedPair — Guard 1:
+// a DIRECTLY-configured Soroban-quoted target pair
+// (e.g. "native/<SAC-USDC>") must not serve VWAP unguarded, as an
+// applicability check recognising only fiat:USD would allow. These cases prove
 // the floor now applies once the SAC's underlying classic asset is on
 // USDPeggedClassicAssets and the SAC contract itself is resolved into
 // USDPeggedSorobanAssets (mirroring how cmd/stellarindex-aggregator's
@@ -1996,8 +1991,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 		// Same dust-level trade as the "sub-floor" case above, but the
 		// orchestrator has no USDPeggedSorobanAssets entry for this SAC
 		// — no recognised USD peg, so the floor cannot be verified.
-		// 2026-08-04 (valuation incident): this branch is now
-		// FAIL-CLOSED — an unvaluable on-chain quote is exactly the
+		// This branch is FAIL-CLOSED — an unvaluable on-chain quote is exactly the
 		// shape a mint-and-dust attacker produces, so the window is
 		// dropped, observably (WARN + both counters). The operator
 		// un-blacks a legitimate pair by declaring its peg.
@@ -2035,7 +2029,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 	})
 }
 
-// TestFilterForVWAP_ExcludesSoroswapRouter — Guard 2 (2026-07-10):
+// TestFilterForVWAP_ExcludesSoroswapRouter — Guard 2:
 // soroswap_router rows mix realized + limit values in AmountIn/Out
 // and must NEVER be priced. This is already double-guarded
 // structurally, so this test proves the guard rather than adding a
@@ -2047,8 +2041,8 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 //     soroswap-router row therefore never exists in the `trades`
 //     table that internal/storage/timescale.Store.TradesInRange (the
 //     orchestrator's sole VWAP input query) selects from. Verified by
-//     code reading (internal/pipeline/sink.go case soroswap_router.Event,
-//     2026-07-10) — there's no unit-testable SQL surface for "this
+//     code reading (internal/pipeline/sink.go case soroswap_router.Event)
+//     — there's no unit-testable SQL surface for "this
 //     table is never joined into that one" without a live Postgres.
 //  2. Even if a future regression ever got a Source="soroswap-router"
 //     row into `trades`, external.Registry classifies "soroswap-router"
@@ -2056,7 +2050,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 //     so filterForVWAP already drops it — this is what the test below
 //     exercises directly.
 //
-// ROADMAP #11 (2026-07-10): the sub-invocation walk (call_path /
+// The sub-invocation walk (call_path /
 // call_depth / call_kind, migration 0101) rides the SAME single-table
 // sink case — sub-invocation-captured router rows add NO new path into
 // `trades`, so both guards above cover them unchanged. Sub-invocation
@@ -2260,8 +2254,8 @@ func TestTick_StreamPublisher_ErrorDoesNotPropagate(t *testing.T) {
 	}
 }
 
-// TestTick_StreamPublisher_ObservedAtTruncatedToMinute is the RLT-344
-// regression: the ADR-0015 / openapi price/stream contract promises
+// TestTick_StreamPublisher_ObservedAtTruncatedToMinute is the
+// observed_at truncation regression: the ADR-0015 / openapi price/stream contract promises
 // byte-identical closed-bucket payloads across every subscriber on the
 // same (asset, quote, window) — including cross-region — which raw tick
 // wall-clock cannot honour (per-instance scheduling jitter). observed_at
@@ -2300,8 +2294,8 @@ func TestTick_StreamPublisher_ObservedAtTruncatedToMinute(t *testing.T) {
 	}
 }
 
-// TestComputeNormalizedVWAP_MixesOnChainAndCEXScale is the RLT-119 /
-// GH #604 regression: a window mixing on-chain (sdex, 7dp) and CEX
+// TestComputeNormalizedVWAP_MixesOnChainAndCEXScale is the mixed-scale
+// regression: a window mixing on-chain (sdex, 7dp) and CEX
 // (binance, 8dp) trades of equal real volume must weight them equally.
 // Without aggregate.NormalizeAmountScale wired in, the raw Σquote/Σbase
 // sum over-weights the finer-scaled CEX leg 10× and produces 13/110
@@ -2335,20 +2329,18 @@ func TestComputeNormalizedVWAP_MixesOnChainAndCEXScale(t *testing.T) {
 	}
 }
 
-// TestTick_AnomalyWarn_EmitsMetric pins the COR-09 / AGT-06 fix: an
+// TestTick_AnomalyWarn_EmitsMetric: an
 // ActionWarn decision must leave an observable trace.
 //
-// Before this, evaluateAndMaybeFreeze returned the Action and the caller
-// discarded it on the non-freeze path (`_ = action`), so a bucket that
+// If the caller discarded the Action on the non-freeze path, a bucket that
 // deviated past warn_pct — loud enough to call out, not loud enough to
-// freeze — produced NOTHING: no metric, no log, no wire flag. The operator's
-// `warn_pct` knob was fully tunable and completely inert, while four doc
-// comments claimed it set flags.divergence_warning.
+// freeze — would produce NOTHING: no metric, no log, no wire flag, and the
+// operator's `warn_pct` knob would be inert.
 //
 // The warn is deliberately operator-side only. It does NOT set
 // flags.divergence_warning: that flag belongs to the cross-reference
 // divergence service and is meaningful only alongside
-// flags.divergence_checked (CS-087), and an anomaly warn runs no
+// flags.divergence_checked, and an anomaly warn runs no
 // cross-reference check.
 //
 // Thresholds here are Warn 1% / Freeze 2% (newAnomalyChecker), so a 1.5%
@@ -2395,7 +2387,7 @@ func TestTick_AnomalyWarn_EmitsMetric(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeForPairPerTrade_PerSourceDecimals (MNY-05) — the
+// TestUSDVolumeForPairPerTrade_PerSourceDecimals — the
 // MinUSDVolume manipulation gate must value each trade at ITS OWN
 // source's declared amount scale, not at one hardcoded per-pair
 // constant.
@@ -2417,8 +2409,8 @@ func TestTick_AnomalyWarn_EmitsMetric(t *testing.T) {
 // the registry, so deferring to it there would understate a real peg
 // 10× for one unregistered venue.
 //
-// Proven red pre-fix: the FX case reported $100.00 instead of $10,000
-// and the mixed case $30,100.00 instead of $40,000.
+// Proven red against a uniform 1e8 scale: the FX case reports $100.00
+// instead of $10,000 and the mixed case $30,100.00 instead of $40,000.
 func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usd, _ := canonical.NewFiatAsset("USD")

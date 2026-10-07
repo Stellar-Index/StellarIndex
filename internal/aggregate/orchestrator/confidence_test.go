@@ -248,7 +248,7 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 	// ADR-0019 Phase 3 agreement transparency: the cached result's
 	// AgreementCount flows into the served decomposition, and the
 	// checked flag disambiguates neutral-because-unchecked from
-	// neutral-because-diverging (CS-087 discipline).
+	// neutral-because-diverging (the DivergenceChecked discipline).
 	if noCache.Factors.CrossOracleChecked {
 		t.Error("no-cache CrossOracleChecked = true, want false")
 	}
@@ -324,7 +324,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 			s.Factors.CrossOracle, wantNeutral)
 	}
 	// Below the trust floor the signal is UNCHECKED — the agreement
-	// count must not leak through either (CS-087: a single
+	// count must not leak through either (a single
 	// responder's corroboration is not a multi-source verdict).
 	if s.Factors.CrossOracleChecked {
 		t.Error("CrossOracleChecked = true below trust floor, want false")
@@ -334,7 +334,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	}
 }
 
-// TestConfidence_DivergenceMinSourcesFromConfig — GH-1046: the
+// TestConfidence_DivergenceMinSourcesFromConfig: the
 // confidence step's cross-oracle trust floor must follow
 // Config.DivergenceMinSources, not a hardcoded 2. A cached result with
 // SuccessCount=2 clears the package default (2) but must be ignored
@@ -589,16 +589,15 @@ func TestConfidence_BaselineMissingDoesNotBlockVWAP(t *testing.T) {
 	}
 }
 
-// TestApproxUSDVolume_CEXQuoteIsEightDecimals (M13) — bucket USD volume
+// TestApproxUSDVolume_CEXQuoteIsEightDecimals — bucket USD volume
 // must scale each quote amount by its SOURCE's smallest-unit decimals,
 // not a fixed 1e7. A CEX quote is 8dp (externalAmountDecimals = 8), so
-// the pre-fix fixed-1e7 divisor overstated it 10×. Because
+// a fixed-1e7 divisor overstates it 10×. Because
 // LiquidityFactor is log-linear inside its band, that 10× swings the
 // factor by exactly ln(10)/ln(ceiling/floor) — one third of the full
-// [0,1] range on today's [1e3, 1e6] band (it was one HALF on the
-// [1e3, 1e5] band that shipped until 2026-07-25, where the inflated
-// figure also saturated at 1.0). A material distortion either way, not
-// the "insensitive" error the old comment claimed.
+// [0,1] range on today's [1e3, 1e6] band (one HALF on a
+// [1e3, 1e5] band, where the inflated figure also saturates at 1.0).
+// A material distortion either way, not an "insensitive" error.
 func TestApproxUSDVolume_CEXQuoteIsEightDecimals(t *testing.T) {
 	pair := xlmUSDPair(t)
 	ts := time.Now().UTC()
@@ -632,7 +631,7 @@ func TestApproxUSDVolume_CEXQuoteIsEightDecimals(t *testing.T) {
 	}
 }
 
-// TestApproxUSDVolume_PerSourceDecimals (M13) — resolution is
+// TestApproxUSDVolume_PerSourceDecimals — resolution is
 // per-source: an 8dp CEX quote and a 6dp FX quote of the same $30k each
 // both read as $30k, summing to $60k. A single fixed divisor could not
 // value both correctly.
@@ -649,7 +648,7 @@ func TestApproxUSDVolume_PerSourceDecimals(t *testing.T) {
 	}
 }
 
-// TestApproxUSDVolume_OnChainSourcesAreSevenDecimals (MNY-05) closes the
+// TestApproxUSDVolume_OnChainSourcesAreSevenDecimals closes the
 // third decimal class. The two tests above cover 8dp CEX and 6dp FX; the
 // on-chain DEXes are 7dp and were the ones actually getting it wrong.
 //
@@ -703,7 +702,7 @@ func TestApproxUSDVolume_OnChainSourcesAreSevenDecimals(t *testing.T) {
 	})
 }
 
-// TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero (COR-14) pins the
+// TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero pins the
 // production side of the sentinel: XLM/EUR carries real EUR volume that
 // this package cannot convert to dollars without a live FX rate, so it
 // must report "unmeasured", not "$0 of liquidity".
@@ -715,8 +714,8 @@ func TestApproxUSDVolume_OnChainSourcesAreSevenDecimals(t *testing.T) {
 // and pinned `confidence < 0.10`, one of the three legs the Phase 2
 // freeze ANDs together, permanently true for them.
 //
-// Proven red pre-fix: approxUSDVolume returned 0.00 and the scored
-// confidence came back 0.
+// Proven red against an approxUSDVolume returning 0.00: the scored
+// confidence comes back 0.
 func TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero(t *testing.T) {
 	xlm, err := canonical.ParseAsset("native")
 	if err != nil {
@@ -767,7 +766,7 @@ func TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero(t *testing.T) {
 	}
 }
 
-// ─── RLT-260: the bootstrap cap's density gate must be reachable ──
+// ─── The bootstrap cap's density gate must be reachable ──
 
 // minuteSeries builds a 1-minute-aligned (vwap, bucket_end) series
 // covering the 30 days ending at `now`, keeping only the minutes for
@@ -828,11 +827,11 @@ func uncappedGeoMean(f confidence.Factors) float64 {
 // exactly 30.0 days-equivalent and must NOT be capped at the
 // bootstrap ceiling.
 //
-// Before RLT-260 this was unreachable by construction: N counts
+// With a threshold of 30 this is unreachable by construction: N counts
 // bucket-to-bucket RETURNS, so a full 43,200-bucket window yields
 // 43,199 of them and N/1440 = 29.99931 — under every threshold in the
-// package, forever. The cap was therefore unconditional and every
-// asset's served confidence was pinned at 0.5.
+// package, forever. The cap would be unconditional and every
+// asset's served confidence pinned at 0.5.
 func TestBaselineAgeDays_MaximalDensityReleasesBootstrapCap(t *testing.T) {
 	now := time.Now().UTC()
 	multi := baseline.NewMultiBaseline(baseline.SplitByLookback(minuteSeries(now, nil), now))
@@ -891,8 +890,8 @@ func TestBaselineAgeDays_ProductionDensityReleasesBootstrapCap(t *testing.T) {
 	}
 }
 
-// TestBaselineAgeDays_SparseMaturePairStaysCapped — the W8.8
-// (audit-2026-08-14) decision, pinned: the signal is sample DENSITY,
+// TestBaselineAgeDays_SparseMaturePairStaysCapped — the density
+// decision, pinned: the signal is sample DENSITY,
 // not calendar age. A pair that has existed for the whole 30-day
 // window but trades in only 200 minutes a day rests on a thin
 // baseline and MUST stay capped. Relaxing the gate far enough to
@@ -984,7 +983,7 @@ func TestPhase2_FreezeReasonNamesTheAttributingWindow(t *testing.T) {
 	}
 }
 
-// TestFreezeHold_ConfidenceSurvivesEveryWindowOfTheHold pins GH-925:
+// TestFreezeHold_ConfidenceSurvivesEveryWindowOfTheHold:
 // ADR-0019 promises a confidence on every published price, frozen
 // included. The score cached with the last-known-good bucket describes the
 // value the hold serves, so it must outlive the window-length TTL it was

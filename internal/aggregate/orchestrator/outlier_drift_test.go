@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Regression for the 2026-08-28 outlier-trim drift artifact (r1:
+// Regression for the outlier-trim drift artifact (r1:
 // `stellarindex_aggregator_outlier_storm` for hours + an
 // `anomaly_freeze_engaged` on crypto:XLM/fiat:GBP after Kraken stepped
 // 0.1337 → 0.1364, a GENUINE +2% that matched the XLM/USD × GBP/USD

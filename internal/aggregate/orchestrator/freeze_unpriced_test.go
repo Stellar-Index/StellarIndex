@@ -52,10 +52,10 @@ func (f *freezeFixture) advance(t *testing.T, d time.Duration) {
 
 // TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive — a frozen window
 // whose buckets go empty or fall under MinUSDVolume must keep advancing its
-// lifecycle. Those buckets used to return before the lifecycle step, so
-// nothing refreshed the marker or the durable ladder; hold + grace later both
-// had lapsed, the next priced bucket read the absence as the operator
-// override, released with mode="operator" and published the manipulated
+// lifecycle. If those buckets returned before the lifecycle step,
+// nothing would refresh the marker or the durable ladder; once hold + grace
+// lapsed, the next priced bucket would read the absence as the operator
+// override, release with mode="operator" and publish the manipulated
 // print the freeze was withholding.
 func TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive(t *testing.T) {
 	cases := []struct {

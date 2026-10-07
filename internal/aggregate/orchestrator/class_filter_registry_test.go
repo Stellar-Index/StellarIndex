@@ -17,7 +17,7 @@ var noVenueRow = map[string]string{
 // Without one, filterForVWAP fail-closes it through external.Lookup while
 // the prices_* CAGGs, which group every `trades` row, count it: the same
 // trades would be excluded from the aggregator's VWAP and included in the
-// served one (GH #604).
+// served one.
 func TestKnownSourcesHaveARegistryClass(t *testing.T) {
 	for name := range config.KnownSources {
 		if _, exempt := noVenueRow[name]; exempt {

@@ -32,7 +32,7 @@ const defaultDivergenceMinSources = 2
 // sentinel — safer to neutralise the factor than to score a single
 // reference's hiccup as a multi-source signal.
 //
-// Sourced from Config.DivergenceMinSources (GH-1046) — previously a
+// Sourced from Config.DivergenceMinSources — previously a
 // hardcoded const, independent of the operator's
 // `divergence.min_sources_for_warning`. Raising that knob moved the
 // worker's own WarningFired gate and the API's divergence_checked
@@ -204,14 +204,14 @@ func (o *Orchestrator) computeConfidence(
 	// it stays engaged until the drift ages out of all three windows
 	// (see the paragraph above and [baseline.Baseline.DriftZScore]).
 	//
-	// Until COR-14 that widening was worse still, because the
-	// confidence leg of the 3-signal AND was pinned true for a large
-	// population by construction: approxUSDVolume returned 0 for every
+	// Without the unmeasured-liquidity sentinel that widening is worse
+	// still, because the confidence leg of the 3-signal AND is pinned true for a large
+	// population by construction: approxUSDVolume returns 0 for every
 	// non-USD-quoted pair, LiquidityFactor(0) is 0, and one zero factor
-	// drives the geometric mean to 0 — so the `confidence < threshold` leg held
+	// drives the geometric mean to 0 — so the `confidence < threshold` leg holds
 	// there regardless of every other input, and 8 of the 12 pairs in
-	// defaultPairs() are non-USD-quoted. That leg is live again now
-	// that an unvaluable pair passes the [confidence.LiquidityUnmeasured]
+	// defaultPairs() are non-USD-quoted. That leg is live because an
+	// unvaluable pair passes the [confidence.LiquidityUnmeasured]
 	// sentinel instead, but the latching argument above stands on its
 	// own and drift stays out of the freeze path.
 	return confidenceComputation{
@@ -367,7 +367,7 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 // — sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
 //
 // For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured]
-// — NOT 0 (COR-14). Zero is a measurement ("this bucket carried no
+// — NOT 0. Zero is a measurement ("this bucket carried no
 // dollars"), and a zero LiquidityFactor drives the geometric mean to
 // zero, so returning it for every pair we simply cannot value in USD
 // served a permanently-0 confidence for 8 of the 12 pairs in

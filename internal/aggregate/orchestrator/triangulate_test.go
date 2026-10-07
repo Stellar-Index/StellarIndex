@@ -497,7 +497,7 @@ func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
 	}
 }
 
-// TestTriangulate_FrozenLegDoesNotPublishDerivedPrice (MNY-22) — a
+// TestTriangulate_FrozenLegDoesNotPublishDerivedPrice — a
 // freeze must not be launderable through triangulation.
 //
 // When Phase 1 or Phase 2 refuses to publish a pair, the orchestrator
@@ -513,8 +513,8 @@ func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
 // target's own prior value alive, and marks the target frozen so the
 // derived pair tells the same truth as the leg it descends from.
 //
-// Proven red pre-fix: the target key was written with "0.900000000000"
-// (the frozen 1.00 leg × the 0.90 leg) and Mark was called once (the
+// Proven red without the guard: the target key is written with "0.900000000000"
+// (the frozen 1.00 leg × the 0.90 leg) and Mark is called once (the
 // leg only) instead of twice.
 func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
 	ctx := context.Background()
@@ -537,7 +537,7 @@ func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
 	})
 
 	// Leg 1 holds its last-known-good $1.00 (what the freeze preserves);
-	// leg 2 is a healthy 0.90. Pre-fix the chain published 1.00 × 0.90.
+	// leg 2 is a healthy 0.90. Unguarded, the chain publishes 1.00 × 0.90.
 	leg1Key := cachekeys.VWAP(leg1.Base, leg1.Quote, window).String()
 	leg2Key := cachekeys.VWAP(leg2.Base, leg2.Quote, window).String()
 	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
@@ -599,7 +599,7 @@ func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
 }
 
 // TestTriangulate_HealthyLegStillPublishes is the other half of the
-// MNY-22 guard: the freeze check must be scoped to the pairs actually
+// frozen-leg guard: the freeze check must be scoped to the pairs actually
 // frozen this tick, not a blanket refusal that black-holes every
 // chained pair.
 func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
@@ -632,7 +632,7 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	}
 }
 
-// TestRecordComposite_PublishesRouteCorroborationGauge (GH-1023): the
+// TestRecordComposite_PublishesRouteCorroborationGauge: the
 // router corroboration count behind the last published composite is
 // exported per (pair, window) — previously it lived only in the
 // in-process lastComposites map, so the audit trail carried no series
@@ -780,7 +780,7 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 	}
 
 	// 4. AnomalyFreezeEngagedTotal increments exactly once, for leg1's
-	// own freeze. Before the fix, inheritLegFreeze fired a SECOND
+	// own freeze. inheritLegFreeze must not fire a SECOND
 	// increment (same class, since target shares leg1's Base asset) for
 	// a target that was never frozen.
 	afterEngaged := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(anomaly.ClassStablecoin)))
@@ -796,7 +796,7 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 // uncapped it cleared the reroute + corroboration gates (both 0.5) that
 // a scored edge only ties — so edges with no z-score, no liquidity
 // measure and no cross-oracle check were the ones setting composites
-// and widening the freeze's source-count leg (cold audit 2026-08-03).
+// and widening the freeze's source-count leg.
 func TestEdgeConfidence_UnscoredFallbackCannotOutrankAScoredEdge(t *testing.T) {
 	t.Parallel()
 

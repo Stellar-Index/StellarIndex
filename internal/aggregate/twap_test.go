@@ -159,8 +159,8 @@ func TestTWAP_NonPositiveFinalDurationClamps(t *testing.T) {
 	}
 }
 
-// TestTWAP_farFutureWindowEndCannotProduceNegativePrice is the
-// regression test for the cold audit of 2026-08-04.
+// TestTWAP_farFutureWindowEndCannotProduceNegativePrice is a
+// saturation regression test.
 //
 // totalNanos was an int64 of nanoseconds. time.Time.Sub SATURATES at
 // MaxInt64 (~292.47 years), so a far-future windowEnd produced a
@@ -168,7 +168,7 @@ func TestTWAP_NonPositiveFinalDurationClamps(t *testing.T) {
 // NEGATIVE — the final division then flipped the sign of the published
 // price. The guard tested only for zero, so the negative sailed through.
 //
-// Reproduced against production before the fix:
+// Reproduced against production:
 //
 //	/v1/twap?base=native&quote=fiat:USD&from=2026-08-01&to=9999-12-31
 //	-> 200 {"price":"-0.1702543997","flags":{"stale":false}}
@@ -216,7 +216,7 @@ func twapPathologicalTrades(n int) []canonical.Trade {
 
 // TestTWAP_PathologicalInputStaysLinear pins the CPU-exhaustion class shut.
 //
-// The accumulator used to be a big.Rat, whose denominator grows as the LCM
+// A big.Rat accumulator's denominator grows as the LCM
 // of every trade's base amount. At the /v1/twap handler's own maxTrades
 // cap of 10000 that cost 60.6s of pure CPU for one unauthenticated request
 // (measured 7.47 CPU-seconds against production, and journalctl already
@@ -226,7 +226,7 @@ func twapPathologicalTrades(n int) []canonical.Trade {
 //
 // The bound here is deliberately loose — this asserts the COMPLEXITY CLASS,
 // not a latency SLO. Anything still quadratic blows a 10s budget by ~6x on
-// the pre-fix code while the linear version lands in single-digit ms.
+// a big.Rat accumulator while the linear version lands in single-digit ms.
 func TestTWAP_PathologicalInputStaysLinear(t *testing.T) {
 	const handlerMaxTrades = 10_000
 	trades := twapPathologicalTrades(handlerMaxTrades)
@@ -265,7 +265,7 @@ func TestTWAP_FixedPointMatchesExactRational(t *testing.T) {
 	}
 
 	// Exact reference: Σ(quote_i/base_i × Δt_i) / Σ(Δt_i) in big.Rat,
-	// the pre-fix algorithm, computed here at a size where it is cheap.
+	// the big.Rat algorithm, computed here at a size where it is cheap.
 	want := new(big.Rat)
 	totalNanos := new(big.Int)
 	for i := range trades {

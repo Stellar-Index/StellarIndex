@@ -17,7 +17,7 @@ import "math"
 //
 // It is NOT the number [applyBootstrapCap] compares against: no
 // calendar age reaches this package. [Inputs.BaselineAgeDays] carries
-// bucket DENSITY expressed in days-equivalent (COR-14, W8.8), so the
+// bucket DENSITY expressed in days-equivalent, so the
 // cap gates on [BootstrapDensityDays].
 const (
 	BootstrapDays          = 30.0
@@ -99,7 +99,7 @@ type Inputs struct {
 	// bucket carried no USD volume", which zeroes [LiquidityFactor]
 	// and — the geometric mean being dominated by any zero factor —
 	// the whole score. Pass the sentinel rather than 0 for an
-	// unpriceable pair (COR-14).
+	// unpriceable pair.
 	LiquidityUSD float64
 
 	// CrossOracleDivergencePct — % absolute deviation between our
@@ -133,7 +133,7 @@ type Inputs struct {
 	// sentinel shape reads as "checked, and the composite agrees
 	// perfectly" — full credit, awarded to every caller that never heard
 	// of this field. Fail-open is the wrong default for a corroboration
-	// signal, and it is the same category of defect as COR-14 (a
+	// signal, and it is the same category of defect as unmeasured liquidity (a
 	// measured 0 that was really "not measured"). An explicit flag makes
 	// omission read as ignorance instead of as evidence.
 	TriangulationChecked bool
@@ -164,7 +164,7 @@ type Inputs struct {
 	TriangulationDivergencePct float64
 
 	// BaselineAgeDays — days-equivalent of baseline DENSITY, not
-	// calendar age (COR-14). The only production caller
+	// calendar age. The only production caller
 	// (orchestrator.baselineAgeDays) passes (Day30.N + 1) / 1440 — the
 	// count of 1-minute buckets behind the 30d window's returns,
 	// expressed in days-worth-of-buckets; a pair that trades in 200

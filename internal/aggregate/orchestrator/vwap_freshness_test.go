@@ -81,7 +81,7 @@ func TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace(t *testing.T) {
 
 // TestTick_ShortWindowVWAP_KeepsItsWindowTTL — the bound only ever
 // TIGHTENS. The 5 m window is already inside the grace and must keep
-// its own window as the TTL, unchanged from the pre-fix behaviour.
+// its own window as the TTL.
 func TestTick_ShortWindowVWAP_KeepsItsWindowTTL(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	cache, mr := newTestRedis(t)

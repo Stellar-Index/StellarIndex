@@ -7,14 +7,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// MNY-22 direction-symmetry regression for the ORACLE-AGGREGATOR tier
-// (finding K004, seventh site — the sibling bands in outliers.go,
+// Direction-symmetry regression for the ORACLE-AGGREGATOR tier
+// (the seventh band site — the sibling bands in outliers.go,
 // outliers_local.go and served_guard.go are covered by
 // band_symmetry_test.go).
 //
-// [rejectAggregatorOutliers] used to score a source ADDITIVELY in price
-// space — `|p − centre| > K·(1.4826·MAD)` with K = [aggregatorMADFactor]
-// = 5 — which is one-sided-blind by construction: a source can only ever
+// An additive band — scoring a source ADDITIVELY in price
+// space, `|p − centre| > K·(1.4826·MAD)` with K = [aggregatorMADFactor]
+// = 5 — is one-sided-blind by construction: a source can only ever
 // be `centre` below the centre, so once K·scale reaches the centre the
 // band's lower edge is non-positive and NO downward print can be
 // rejected, while the mirror-image up-move still is. That happens at a

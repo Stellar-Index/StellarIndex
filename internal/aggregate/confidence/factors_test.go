@@ -102,11 +102,11 @@ func TestDiversityFactor(t *testing.T) {
 // TestLiquidityFactor_AnchorPoints pins the curve's endpoints and the
 // two interior volumes that matter operationally: the production
 // `min_usd_volume` publish floor ($10K) and the measured p50 bucket
-// volume of the index's deepest pair (BTC/USD, $123,678 as of
-// 2026-07-25).
+// volume of the index's deepest pair (BTC/USD, $123,678 when
+// measured).
 //
-// Proven red against the pre-2026-07-25 $100K ceiling: that curve
-// returned 1.0 at $100K and at $123,678 — the deepest pair's MEDIAN
+// Proven red against a $100K ceiling: that curve
+// returns 1.0 at $100K and at $123,678 — the deepest pair's MEDIAN
 // bucket saturated the factor, so it carried no information across the
 // whole top half of its own population and $100K of wash volume bought
 // the same full credit as $10M of real depth.
@@ -135,8 +135,7 @@ func TestLiquidityFactor_AnchorPoints(t *testing.T) {
 func TestLiquidityFactor_LogShape(t *testing.T) {
 	// The factor is a log-interpolation, so its 0.5 point is the
 	// GEOMETRIC midpoint of [floor, ceiling] — sqrt(1e3 × 1e6) ≈
-	// $31,622.78 since the 2026-07-25 ceiling change (it was $10K when
-	// the ceiling was $100K).
+	// $31,622.78 ($10K under a $100K ceiling).
 	midpoint := math.Sqrt(1_000.0 * 1_000_000.0)
 	if got := confidence.LiquidityFactor(midpoint); !near(got, 0.5, 1e-12) {
 		t.Errorf("LiquidityFactor(%.2f) = %v, want 0.5 (geometric midpoint of the band)", midpoint, got)
@@ -151,8 +150,8 @@ func TestLiquidityFactor_LogShape(t *testing.T) {
 // TestLiquidityFactor_GuardsBadInputs — NaN is a caller bug, not a
 // sentinel, and must not poison the geometric mean. A MEASURED zero
 // stays 0: "we looked and there is nothing here" is a real signal.
-// (Negative inputs moved to TestLiquidityFactor_UnmeasuredIsNeutral
-// when COR-14 made them the explicit "unmeasured" sentinel.)
+// (Negative inputs are the "unmeasured" sentinel, covered by
+// TestLiquidityFactor_UnmeasuredIsNeutral.)
 func TestLiquidityFactor_GuardsBadInputs(t *testing.T) {
 	for _, in := range []float64{math.NaN(), 0.0} {
 		got := confidence.LiquidityFactor(in)
@@ -162,13 +161,13 @@ func TestLiquidityFactor_GuardsBadInputs(t *testing.T) {
 	}
 }
 
-// TestLiquidityFactor_UnmeasuredIsNeutral (COR-14) — the negative
+// TestLiquidityFactor_UnmeasuredIsNeutral — the negative
 // sentinel means "we could not value this pair in USD at all", which
 // is not a finding about the pair's liquidity and must NOT zero the
 // factor (and with it, the whole geometric mean).
 //
-// Proven red against the pre-fix factor, which returned 0 for every
-// negative input: each case reported 0 instead of 0.5.
+// Proven red against a factor returning 0 for every
+// negative input: each case reports 0 instead of 0.5.
 func TestLiquidityFactor_UnmeasuredIsNeutral(t *testing.T) {
 	for _, in := range []float64{confidence.LiquidityUnmeasured, -1.0, -0.5, math.Inf(-1)} {
 		got := confidence.LiquidityFactor(in)

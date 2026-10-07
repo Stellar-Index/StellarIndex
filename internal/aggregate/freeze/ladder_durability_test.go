@@ -180,7 +180,7 @@ func TestWriter_LadderSurvivesRedisFlush(t *testing.T) {
 // `stellarindex-ops freeze-unfreeze` does both halves: it clears the Redis
 // marker AND stamps recovered_at on the open freeze_events row. After that
 // there is no OPEN durable row, so the pair must read ABSENT even though
-// the ladder it used to carry was escalated — otherwise a human could not
+// its last ladder was escalated — otherwise a human could not
 // end a freeze that by construction never ends on its own.
 func TestWriter_OperatorUnfreezeStillSticks(t *testing.T) {
 	mr, rdb := newRedis(t)

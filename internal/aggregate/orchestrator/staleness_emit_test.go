@@ -11,7 +11,7 @@ import (
 )
 
 // TestEmitStalenessGauges_growsAcrossTicks asserts the documented
-// contract from F-1306: a pair that has never had a successful VWAP
+// contract: a pair that has never had a successful VWAP
 // write should see its staleness gauge grow on every tick. The first
 // emit seeds lastWriteAt to "now" (so the metric is present but not
 // pageing immediately), and subsequent emits compute now - first-seen.
@@ -66,12 +66,12 @@ func TestEmitStalenessGauges_growsAcrossTicks(t *testing.T) {
 // `native` pair or the `crypto:XLM` pair iterates first, both labels
 // surface the freshest staleness across the two forms.
 //
-// Pre-fix, the mirror code wrote the *current* pair's stale value to
-// the other label as a side-effect, so iteration order picked the
-// winner. If `native` was fresh (SDEX writing) and `crypto:XLM` was
-// stale (no CEX), the metric for both reported native's 0 OR
-// crypto:XLM's high value, depending on which appeared last in
-// cfg.Pairs. Post-fix, both labels carry MIN(native_stale, ticker_stale).
+// Mirror code writing the *current* pair's stale value to
+// the other label as a side-effect lets iteration order pick the
+// winner. If `native` is fresh (SDEX writing) and `crypto:XLM` is
+// stale (no CEX), the metric for both reports native's 0 OR
+// crypto:XLM's high value, depending on which appears last in
+// cfg.Pairs. Instead, both labels carry MIN(native_stale, ticker_stale).
 func TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent(t *testing.T) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

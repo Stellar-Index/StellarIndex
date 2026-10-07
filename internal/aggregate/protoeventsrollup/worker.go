@@ -81,7 +81,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // refresh runs one census-and-upsert pass, recording the paired
-// outcome counter + latency histogram (the wave-88/89/90/91 worker
+// outcome counter + latency histogram (the worker
 // convention).
 func (w *Worker) refresh(ctx context.Context) {
 	start := time.Now()

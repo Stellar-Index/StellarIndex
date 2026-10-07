@@ -379,8 +379,7 @@ func TestDefaultThresholds_AreValid(t *testing.T) {
 // switch over Action anywhere, hence no compiler or lint pressure. This
 // asserts that an unrecognised Action refuses to publish, which is the
 // recoverable direction: refusing serves the last-known-good, whereas
-// publishing puts a wrong price on the wire and in the cache (cold audit
-// 2026-08-04).
+// publishing puts a wrong price on the wire and in the cache.
 func TestDecision_PublishesIsExhaustive(t *testing.T) {
 	for _, tc := range []struct {
 		action anomaly.Action

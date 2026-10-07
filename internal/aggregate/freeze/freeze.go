@@ -1028,14 +1028,14 @@ func windowLabel(window time.Duration) string {
 //
 // # Why the marker alone is not the authority
 //
-// This used to return (State{}, false, nil) on any missing marker, with the
-// documented reasoning that "a missing marker under a live freeze is a
+// Returning (State{}, false, nil) on any missing marker rests on the
+// reasoning that "a missing marker under a live freeze is a
 // deliberate signal, not a lost write". Redis falsifies that: it is a cache,
 // deployed without persistence and flushed during incidents. A flush
-// therefore did not merely forget the ladder — it read as an operator
-// override, so the next tick RELEASED every live freeze, and a pair that had
+// would therefore not merely forget the ladder — it would read as an operator
+// override, so the next tick would RELEASE every live freeze, and a pair that had
 // climbed the whole 2-hour ladder to ESCALATED ("stays active until manual
-// unfreeze") silently republished the price a P1 alert had already put in
+// unfreeze") would silently republish the price a P1 alert had already put in
 // front of a human.
 //
 // So a missing marker is now disambiguated against the durable record:

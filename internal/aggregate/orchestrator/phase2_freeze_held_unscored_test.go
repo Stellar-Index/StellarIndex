@@ -17,7 +17,7 @@ import (
 // lands on an unscored bucket ([freeze.TransitionHeldUnscored]) must
 // be visible: a dedicated counter increments so a sustained run (a
 // stuck scorer) is distinguishable from the silent, Debug-only
-// default arm it used to fall into alongside every unrecognised
+// default arm it would otherwise fall into alongside every unrecognised
 // transition.
 func TestLogFreezeTransition_HeldUnscored_IsCounted(t *testing.T) {
 	o := &Orchestrator{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}

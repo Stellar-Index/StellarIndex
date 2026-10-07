@@ -9,7 +9,7 @@ import (
 
 // TestPolicy_RefireAfterOverrideResumesTheLadder — an override ends a
 // freeze, but a pair still anomalous after it is not a fresh first hold. An
-// escalated ladder the operator force-unfroze used to come back 30 s later as
+// escalated ladder the operator force-unfroze must not come back 30 s later as
 // a 10-minute hold with ExtensionsUsed=0, silent on the escalation counter for
 // another two hours.
 func TestPolicy_RefireAfterOverrideResumesTheLadder(t *testing.T) {

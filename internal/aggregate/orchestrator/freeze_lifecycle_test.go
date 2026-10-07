@@ -197,7 +197,7 @@ func seedDivergenceCache(t *testing.T, cache Cache, pair canonical.Pair, res div
 // LKG, never the refused candidate), Median is where the references
 // are, and DivergencePct relates the two. The release gate
 // (releaseCorroborated) reads only Median and compares it against the
-// FRESH candidate itself — that asymmetry is the 2026-08-24
+// FRESH candidate itself — that asymmetry is the
 // corroborated-release repair.
 func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.CachedResult {
 	pct := 0.0
@@ -272,8 +272,8 @@ func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 	f := newFreezeFixture(t)
 	// References agree with the LKG throughout, so the return TO the LKG
-	// is corroborated and may earn the streak (2026-08-24: an
-	// uncorroboratable calm bucket no longer counts — see
+	// is corroborated and may earn the streak (an
+	// uncorroboratable calm bucket does not count — see
 	// Signal.ReleaseCorroborated).
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
@@ -318,7 +318,7 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("auto"))
 
 	// References agree with the LKG: the release candidate (back at the
-	// LKG) is corroborated, which the streak requires since 2026-08-24.
+	// LKG) is corroborated, which the streak requires.
 	// The lens also makes the freeze itself corroborated → the full
 	// 30-minute ADR hold.
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
@@ -361,7 +361,7 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 }
 
 // TestFreezeLifecycle_NoLensMeansNoAutoRelease — the uncorroboratable
-// half of the 2026-08-24 corroborated-release repair. A pair with NO
+// half of the corroborated-release repair. A pair with NO
 // corroborating lens (no cross-oracle divergence entry, no
 // triangulation chain) cannot prove that a calm, healthy-looking level
 // is the market rather than a parked manipulation — the shadow
@@ -410,8 +410,8 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 // it neither bounded the freeze nor ever told an operator that one
 // had been running for two hours.
 //
-// 2026-08-24 (frozenPrevVWAPs + corroborated release): a HELD level is
-// per-tick CALM (z=0), so the z leg alone no longer distinguishes
+// With frozenPrevVWAPs + corroborated release, a HELD level is
+// per-tick CALM (z=0), so the z leg alone does not distinguish
 // "attacker holds the manip" from "market settled at a new level". The
 // discrimination is the release gate: the streak counts only buckets
 // whose FRESH candidate a corroborating lens agrees with
@@ -434,7 +434,7 @@ func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	// The REACHABLE mid-freeze lens state: references at the LKG,
 	// compared against the served LKG → agreement. (Seeding the
 	// candidate-vs-references divergence here would be the inverted-
-	// evidence mistake the 2026-08-24 panel rejected: mid-freeze the
+	// evidence mistake: mid-freeze the
 	// worker never sees the refused candidate.)
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
@@ -550,7 +550,7 @@ func TestFreezeLifecycle_CorroborationScalesInitialHold(t *testing.T) {
 // last-known-good value must survive at least as long. A 5-minute
 // marker on a 30-minute hold is how a freeze silently ends early
 // under a stalled aggregator; a 5-minute LKG under a 30-minute freeze
-// is F-1345 all over again (frozen=true with nothing to serve).
+// is frozen=true with nothing to serve).
 func TestFreezeLifecycle_MarkerTTLCoversTheHold(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -881,9 +881,9 @@ func newTwoWindowFreeze(t *testing.T) (
 //
 // The attack shape: manipulate a pair so BOTH the 5m and 1h windows
 // freeze; recover the 5m print (short window earns its auto-unfreeze)
-// while parking the 1h price high. Pre-fix, the 5m release's Clear
-// deletes the pair-global marker and the still-frozen 1h window then
-// publishes the manipulated price unflagged.
+// while parking the 1h price high. A pair-global Clear on the 5m release
+// would delete the pair-global marker and the still-frozen 1h window would then
+// publish the manipulated price unflagged.
 func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T) {
 	orch, marker, feed, tick, served, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
 	shortKey := pair.String() + ":" + shortWindow.String()
@@ -1042,7 +1042,7 @@ const bandQuoteAmount = 127_305_000_000 // 0.127305, +2.5% vs the 0.1242 LKG
 // W3-freeze-3 regression: a Phase 1 freeze must still RELEASE once the
 // pair returns to statistical health, and must not stay frozen forever.
 //
-// The stuck condition (pre-fix): Phase 1's class-deviation is measured
+// The stuck condition (without frozenPrevVWAPs): Phase 1's class-deviation is measured
 // against prevVWAPs, the last-known-good comparator, which is held FIXED
 // for the whole hold (frozen buckets skip the prevVWAPs update). So once
 // the manipulation ends and the price settles at a residual level still
@@ -1092,8 +1092,7 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 		t.Fatalf("seed LKG: %v", err)
 	}
 	// References sit at the residual band level the market settles at, so
-	// the release candidate is corroborated (required for the streak
-	// since 2026-08-24) — a 2.5% residual is well inside every real
+	// the release candidate is corroborated (required for the streak) — a 2.5% residual is well inside every real
 	// reference's agreement band.
 	seedDivergenceCache(t, rdb, pair, agreeingLens(pair, 0.1242, 0.127305))
 
@@ -1171,17 +1170,17 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel is the 2026-08-24
+// TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel is the
 // XLM/GBP ratchet regression. The sibling auto-unfreeze test releases by
-// feeding the price BACK to its pre-freeze value — which is why the ratchet
-// survived it: mid-freeze buckets used to score against the PINNED
-// pre-freeze prevVWAP, so z measured total-drift-since-freeze and the
-// ADR's "two calm buckets" release was only reachable if the market
+// feeding the price BACK to its pre-freeze value — which cannot catch the
+// ratchet: mid-freeze buckets scored against the PINNED pre-freeze
+// prevVWAP make z measure total-drift-since-freeze, and the ADR's
+// "two calm buckets" release is then only reachable if the market
 // round-tripped. Here the market settles at a NEW level (~6% above LKG,
 // far outside 3×MAD of the freeze-time price) and simply stays there:
 // per ADR-0019's intent ("is the market calm NOW") that MUST release.
-// Pre-fix this test spins through the extension ladder instead
-// (frozenPrevVWAPs is the fix: refused buckets score per-tick returns
+// Without frozenPrevVWAPs this test spins through the extension ladder
+// instead (frozenPrevVWAPs: refused buckets score per-tick returns
 // against the previous refused bucket's fresh VWAP).
 func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	// $13,170 at 1e7 → price 0.1317: +6.04% from LKG's 0.1242 — z ≈ 60 on

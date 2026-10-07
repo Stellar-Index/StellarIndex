@@ -92,7 +92,7 @@ const LiquidityUnmeasured = -1.0
 // the aggregator's default set, which are exactly the thin, single-
 // source pairs where a false freeze is most likely and most damaging
 // (a false freeze serves a stale last-known-good price — its own money
-// bug, see MNY-22). Dropping their only substitute factor by a third
+// bug). Dropping their only substitute factor by a third
 // would lower their confidence for a reason that says nothing about
 // them, pushing the Phase 2 confidence leg true more readily for the
 // worst-suited population. 0.5 survives as what it always primarily
@@ -103,7 +103,7 @@ const LiquidityUnmeasured = -1.0
 // The consequence for consumers is a GOOD one and is the reason
 // [Factors.LiquidityMeasured] exists: 0.5 no longer collides with the
 // factor value of a real bucket at the publish floor, so the two
-// states are further apart on the wire than they used to be. Read the
+// states are far apart on the wire. Read the
 // flag anyway — 0.5 is still reachable by a measured ≈ $31.6K bucket.
 const LiquidityUnmeasuredFactor = 0.5
 
@@ -211,7 +211,7 @@ func DiversityFactor(classCount int) float64 {
 // log-interpolation between the floor and ceiling.
 //
 // A NEGATIVE volume is the [LiquidityUnmeasured] sentinel and returns
-// the neutral [LiquidityUnmeasuredFactor] (COR-14). Zero and any
+// the neutral [LiquidityUnmeasuredFactor]. Zero and any
 // measured volume at or below the floor still return 0: "we looked and
 // there is almost nothing here" is a real, confidence-destroying
 // signal — it is the leg that lets the Phase 2 freeze fire on a thin
@@ -318,7 +318,7 @@ func TriangulationAgreementFactor(divergencePct float64) float64 {
 // factor. 0 → 0.5 (bootstrap penalty per ADR-0019 §"Bootstrap
 // policy"); 30 → 1.0; linear in between.
 //
-// The input is sample density, not calendar age (COR-14) — see
+// The input is sample density, not calendar age — see
 // [Inputs.BaselineAgeDays]. A sparsely-traded pair therefore sits low
 // on this factor indefinitely, which is the intended reading: its
 // median/MAD rest on few observations however long it has existed.
@@ -327,9 +327,8 @@ func TriangulationAgreementFactor(divergencePct float64) float64 {
 // returns 0.5 — the same bootstrap value as zero history, because
 // "not trained" and "barely trained" deserve the same treatment. NaN
 // returns 0.5 for the same reason rather than poisoning the
-// geometric mean. (This used to be justified as tolerating a
-// "clock-skew-induced negative age"; no wall clock is involved in
-// this input at all.)
+// geometric mean. (No wall clock is involved in this input, so
+// a negative value is not clock skew.)
 func BaselineQualityFactor(daysHistory float64) float64 {
 	if math.IsNaN(daysHistory) || daysHistory < 0 {
 		return 0.5

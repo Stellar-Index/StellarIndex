@@ -19,7 +19,7 @@ func firing(at time.Time) freeze.Signal {
 // healthy is a bucket that meets the ADR-0019 auto-unfreeze
 // condition: confidence strictly above 0.30 AND z strictly below 3.0,
 // with a corroborating lens agreeing with the release candidate
-// (2026-08-24: calm alone earns no streak — a held manipulation is
+// (calm alone earns no streak — a held manipulation is
 // calm too, so release additionally requires ReleaseCorroborated).
 func healthy(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 0.4, ReleaseCorroborated: true}
@@ -312,7 +312,7 @@ func TestPolicy_EscalatedFreezeNeverAutoUnfreezes(t *testing.T) {
 	}
 }
 
-// TestPolicy_UncorroboratedCalmNeverEarnsAStreak — the 2026-08-24
+// TestPolicy_UncorroboratedCalmNeverEarnsAStreak — the
 // corroborated-release gate at the policy layer. Buckets that clear
 // both calm legs (confidence, z) but carry no lens agreement with the
 // release candidate must never advance the streak: under the per-tick
@@ -412,8 +412,8 @@ func TestPolicy_OperatorTuning(t *testing.T) {
 }
 
 // TestPolicy_UnscoredExpiryDoesNotBurnTheLadder — the restart-
-// rehydration trap (live occurrence: crypto:XLM/fiat:GBP 24h,
-// 2026-08-05): during the ~30-minute post-restart confidence
+// rehydration trap (live occurrence: crypto:XLM/fiat:GBP 24h):
+// during the ~30-minute post-restart confidence
 // bootstrap every bucket is UNSCORED, so a rehydrated freeze could
 // never accumulate an unfreeze streak while its expiries still burned
 // extensions — it marched to ESCALATED without one scored
@@ -424,7 +424,7 @@ func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
 
 	// Ten hold expiries in a row, all unscored (a bootstrap window far
-	// longer than the whole pre-fix ladder): no extension consumed, no
+	// longer than a whole fixed ladder): no extension consumed, no
 	// escalation, still frozen throughout.
 	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Second)
 	for i := 1; i <= 10; i++ {

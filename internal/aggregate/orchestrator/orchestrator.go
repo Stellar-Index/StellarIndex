@@ -551,11 +551,10 @@ type Config struct {
 	// trusts it (see confidence.go's lookupCrossOracle). Must equal
 	// `cfg.Divergence.MinSourcesForWarning` — the same quorum the
 	// divergence worker gates WarningFired on and the API's
-	// divergenceAdapter gates `divergence_checked` on (GH-1046: these
-	// were three independent copies, one of them a hardcoded const,
-	// and raising the operator knob alone let the freeze's
-	// corroboration and release paths keep trusting a quorum the API
-	// had stopped publishing). <= 0 takes
+	// divergenceAdapter gates `divergence_checked` on (three independent
+	// copies would drift: raising the operator knob alone would let the
+	// freeze's corroboration and release paths keep trusting a quorum
+	// the API had stopped publishing). <= 0 takes
 	// [defaultDivergenceMinSources], matching divergence.NewService's
 	// own fallback for an unset value.
 	DivergenceMinSources int
@@ -742,7 +741,7 @@ type decidedBucket struct {
 	// the volume floor).
 	published *publishedBucket
 	// frozen records that the bucket was refused by a freeze, so a
-	// replaying tick keeps the leg out of triangulation (MNY-22).
+	// replaying tick keeps the leg out of triangulation.
 	frozen       bool
 	compositeRef *compositeReference
 }
@@ -889,7 +888,7 @@ type Orchestrator struct {
 	// refused to publish because Phase 1 or Phase 2 froze them. The
 	// triangulation pass reads it so a chain does not silently
 	// re-publish a frozen leg's last-known-good value as a fresh
-	// derived price (MNY-22) — see [Orchestrator.legPriceFromCache].
+	// derived price — see [Orchestrator.legPriceFromCache].
 	//
 	// Rebuilt at the top of every [Tick], and written only from the
 	// freeze step — so it is NOT the whole answer to "is this leg
@@ -1866,7 +1865,7 @@ func amountScaleDecimalsFor(source string) int {
 // markFrozenThisTick records that (pair, window) was refused
 // publication by a freeze on this tick, so
 // [Orchestrator.legPriceFromCache] can refuse to feed its
-// last-known-good value into a triangulated chain (MNY-22).
+// last-known-good value into a triangulated chain.
 //
 // Called from the freeze paths themselves — [Orchestrator.markPhase2Freeze]
 // and [Orchestrator.evaluateAndMaybeFreeze] — rather than from their
@@ -1893,9 +1892,8 @@ func (o *Orchestrator) markFrozenThisTick(pair canonical.Pair, window time.Durat
 // pair in that state is in nobody's per-tick set, while its hold runs on
 // and its last-known-good value is still in Redis because the freeze
 // deliberately kept it there ([Orchestrator.keepFrozenVWAPAlive]).
-// Reading that value as a leg laundered it into a derived price with no
-// frozen flag (MNY-22, one tick later than the case the per-tick set
-// closes).
+// Reading that value as a leg would launder it into a derived price with
+// no frozen flag, one tick later than the case the per-tick set closes.
 //
 // Bounded by the hold plus the marker grace, which is exactly how long the
 // freeze keeps the marker and the LKG alive. An in-memory ladder that is
@@ -2290,7 +2288,7 @@ func usdQuoteDecimalsForTrade(quote canonical.Asset, source string, classicUSDPe
 // The 8 on tiers 1-2 is a per-PAIR default, not the per-trade truth:
 // the off-chain convention splits 8 (CEX) vs 6 (FX pollers), so the
 // valuation path resolves it per trade from the emitting source's
-// registry declaration — see [usdQuoteDecimalsForTrade] (MNY-05). This
+// registry declaration — see [usdQuoteDecimalsForTrade]. This
 // function answers the pair-level question ("is this quote a USD
 // surface at all"), which is source-independent.
 //  3. A classic Stellar credit on `classicUSDPegs` — decimals 7
@@ -2618,7 +2616,7 @@ const formatRatMaxScale = 60
 // mandates. Rolling a tiny fixed-precision formatter keeps the
 // rounding behaviour explicit.
 //
-// R-1: the fixed scale is a FLOOR, not a hard cap. A strictly-positive
+// The fixed scale is a FLOOR, not a hard cap. A strictly-positive
 // rational whose first significant digit falls beyond `decimals` places
 // (e.g. a high-supply token priced in BTC at <1e-12) would truncate to
 // "0.000…0", reparse to zero via big.Rat.SetString, and be served as
@@ -2669,7 +2667,7 @@ func zeroes(n int) string {
 // digits there (so normal-magnitude prices keep byte-identical output),
 // but for a smaller strictly-positive magnitude it EXTENDS the scale to
 // keep [formatRatSigDigits] significant digits — so a tiny price neither
-// truncates to a "0.000…0" string that reparses to zero (R-1) nor loses
+// truncates to a "0.000…0" string that reparses to zero nor loses
 // up to half its value to a one-digit render.
 //
 // Deliberately float-free (ADR-0003): a log10 to find the magnitude is

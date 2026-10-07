@@ -75,9 +75,9 @@ func liveTrades(pair canonical.Pair, ts time.Time) []canonical.Trade {
 // The scenario the finding describes: one base is configured against
 // several quotes; one quote's feed goes dark while another keeps
 // publishing. `stellarindex_price_staleness_seconds` is the ONLY input
-// to the `stellarindex_api_price_stale` alert, and it used to be keyed
-// by base alone — so every publish of the live quote reset the one
-// timestamp the dead quote was judged by, and the gauge read 0 for an
+// to the `stellarindex_api_price_stale` alert, so it must not be keyed
+// by base alone — every publish of the live quote would reset the one
+// timestamp the dead quote is judged by, and the gauge would read 0 for an
 // asset whose other quote had served nothing for ten minutes.
 //
 // BTC is used (not XLM) so the native ↔ crypto:XLM dual-form merge is
