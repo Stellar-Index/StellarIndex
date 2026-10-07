@@ -9,7 +9,7 @@
 # and runs the cheapest first. Nothing here asserts anything the full gate
 # does not; it only moves the moment a failure surfaces.
 #
-# Why, in numbers from 2026-09-07: `lint-shell-sigpipe.sh` runs in 2.7 s on
+# Why, in numbers: `lint-shell-sigpipe.sh` runs in 2.7 s on
 # its own and fired at line 632 of a 637-line `make prepush` log, after about
 # ten minutes of Go build, doc lints and web typechecks that had nothing to
 # do with the one-line shell edit under test. Four prepush attempts on one
@@ -58,10 +58,8 @@
 #                            comments in the diff; 0.6 s).
 #   *.md                     lint-doc-links, scoped to the changed files
 #                            (source scan only — link targets still resolve
-#                            against the whole tree; ~0.1-0.3 s/file). It
-#                            used to cost ~22 s regardless of arguments,
-#                            because it took none; scripts/ci/lint_doc_links.py
-#                            now accepts a file list. doc-pinned-tests runs the
+#                            against the whole tree; ~0.1-0.3 s/file;
+#                            ~22 s unscoped). doc-pinned-tests runs the
 #                            Go tests that name a changed .md (CI skips them
 #                            on docs-only PRs). lint-docs still takes
 #                            no file list and stays deferred to
@@ -303,8 +301,8 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do add_step "bash -n" "" bash -n "$f";
 # "the workflow half of the gate would be vacuous" — the right answer for a
 # whole-tree run, and a false red on an innocent pre-commit edit to
 # api-docs.yml, which is exactly such a file today. A directory root cannot
-# go vacuous here (22 workflows, 84 pipefail blocks), costs 0.44 s measured
-# 2026-09-10, and if it ever did the red would be the same invariant CI
+# go vacuous here (22 workflows, 84 pipefail blocks), costs 0.44 s measured,
+# and if it ever did the red would be the same invariant CI
 # asserts.
 #
 # Until this row the pre-commit path was blind to the workflow half: a commit
@@ -357,9 +355,8 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "goimports" "" format_clean goimports "$go_bin/goimports" -l -local "$go_module" "${go_files[@]}"
 fi
 
-# 2b. Markdown: lint-doc-links now takes a file list (previously it always
-#     rescanned all 607 files regardless of arguments, ~22 s, so it lived
-#     only in scripts/dev/verify.sh). Scoping narrows what gets SCANNED as a
+# 2b. Markdown: lint-doc-links takes a file list (a full rescan of every
+#     file costs ~22 s). Scoping narrows what gets SCANNED as a
 #     link SOURCE; link TARGETS — existence, the gitignore check, anchor
 #     lookups — still resolve against the whole tree exactly as in the
 #     no-argument form, so this catches the same defects on the changed
@@ -382,7 +379,7 @@ if [ "${#wf_files[@]}" -gt 0 ]; then
     # lint-shell-sigpipe above, and the same live false red. Handed a single
     # workflow with no `uses:` lines the gate exits 1 with "the gate would be
     # vacuous", which is right for a whole-tree run and wrong for an innocent
-    # pre-commit edit. Reproduced on main 2026-09-10:
+    # pre-commit edit. Reproduced on main:
     #   $ scripts/dev/lint-changed.sh -- .github/workflows/orphan-branches.yml
     #   lint-actions-pinning: FAIL — no `uses:` lines across 1 workflow file(s)
     # orphan-branches.yml has zero `uses:`, so committing a change to it was
@@ -460,7 +457,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     # list: scoped to the changed files it would exit 2 ("refusing to pass
     # vacuously") on a diff that only touches generated or vendored Go —
     # the same false-red shape the lint-actions-pinning note above records.
-    # Whole-tree costs 0.55 s over 2,058 files, measured 2026-09-10.
+    # Whole-tree costs 0.55 s over 2,058 files, measured.
     add_step "lint-go-typographic-quotes" "whole tree (0.55 s; scoping it could go vacuous on a generated-only diff)" \
         python3 "$ci_dir/lint-go-typographic-quotes.py"
     add_step "lint-unbounded-latest-row" "whole tree (takes no file list)" \
@@ -500,11 +497,9 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     fi
 fi
 
-# 7b. Prometheus alert rules. A 16-file diff touching 14 rule YAMLs used to
-#     select exactly ONE lint here (lint-doc-links, for its two .md files):
-#     none of the six gates that actually judge such a diff was wired to the
-#     type, so the first thing to grade an alert-rule change was verify.sh.
-#     The four below cost about 2.1 s together, measured 2026-09-08:
+# 7b. Prometheus alert rules. Without this block an alert-rule diff selects
+#     none of the six gates that judge it, and the first thing to grade it
+#     is verify.sh. The four below cost about 2.1 s together, measured:
 #     lint-rule-equivalence 0.11 s, lint-alerts-catalog 0.40 s,
 #     lint-runbook-annotations 0.41 s, lint-rule-structure 1.18 s.
 #     The other two are deferred by cost, not by relevance — see below.
@@ -532,7 +527,7 @@ if [ "${#ansible_files[@]}" -gt 0 ]; then
     # Duplicate mapping keys. Cheap (<1 s whole-tree) and it catches a class
     # no other gate here can see: YAML keeps the LAST occurrence of a key, so
     # a second `pre_tasks:` reads in review as an added block while silently
-    # deleting the first. That happened on 2026-09-08 and removed a
+    # deleting the first. That once removed a
     # playbook's OS guard for days, through several applies.
     add_step "lint-yaml-duplicate-keys" "" python3 "$ci_dir/lint-yaml-duplicate-keys.py"
 fi
@@ -550,8 +545,8 @@ if [ "${#lake_files[@]}" -gt 0 ]; then
 fi
 
 # 8b. The ClickHouse fresh-host apply set. deploy/clickhouse/ holds one
-#     founding DDL and fifteen operator artifacts; the role used to glob and
-#     run all of them on every fresh test-net provision.
+#     founding DDL and fifteen operator artifacts; only the founding DDL may
+#     run on a fresh test-net provision.
 if [ "${#ch_files[@]}" -gt 0 ]; then
     add_step "lint-ch-apply-scope" "whole tree; ${#ch_files[@]} changed file(s) sit on the fresh-host/operator boundary" "$ci_dir/lint-ch-apply-scope.sh"
 fi
