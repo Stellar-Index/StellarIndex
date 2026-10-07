@@ -7,7 +7,7 @@
 # must classify as "skip the integration shards" and an
 # internal/storage diff must classify as "do not skip" — get the second
 # one wrong and the shard matrix (the only real coverage for the
-# 2026-07-01 sponsors/markets/blend regression class) silently stops
+# sponsors/markets/blend regression class) silently stops
 # running on the changes that need it most.
 #
 # Run: bash scripts/ci/check-change-class-test.sh
@@ -80,8 +80,8 @@ expect "go.mod triggers integration" 0
 # The other INT_TEST_PKGS directories. A package the Docker suite BUILDS but
 # whose directory no classifier names has its `//go:build integration` tests
 # compiled by the unconditional compile gate and executed by nothing for a
-# diff confined to it — T424/T449 (the scripts/ops/fx-history-backfill INV-3
-# money invariant), F-1334 (cmd/stellarindex-ops) and W6-tst-1
+# diff confined to it — scripts/ops/fx-history-backfill (the money
+# invariant), cmd/stellarindex-ops and W6-tst-1
 # (internal/ops/archive) were that same hole, found one package at a time.
 
 run integration "scripts/ops/fx-history-backfill/main.go"

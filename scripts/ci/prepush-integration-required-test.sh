@@ -70,10 +70,10 @@ harness="$(git -C "$tmp" rev-parse HEAD)"
 
 # The remaining INT_TEST_PKGS directories (Makefile:INT_TEST_PKGS). The suite
 # BUILDS AND RUNS these packages, so a change confined to one can break an
-# integration-tagged test — and until T424/T449 neither this classifier nor
+# integration-tagged test — and once neither this classifier nor
 # ci.yml's preflight filter named them, so such a diff ran the suite in NO
 # lane. scripts/ops/fx-history-backfill/generation_test.go is the case that
-# matters: it pins an INV-3 money invariant (an operator fx_quotes correction
+# matters: it pins a money invariant (an operator fx_quotes correction
 # must be stamped with a positive derive generation, or the next gen-0 worker
 # refresh silently reverts it).
 prev="$harness"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-deploy-protection-test.sh — fixture tests for the deploy
-# approval gate assertion (deploy-approval-gate, audit-2026-07-23) and
+# approval gate assertion and
 # for assert-deploy-gate.sh, the wrapper every credential-holding job
 # calls.
 #
@@ -63,7 +63,7 @@ expect() {
 }
 
 # The shape the r1 environment actually had when the audit ran
-# (gh api repos/Stellar-Index/StellarIndex/environments, 2026-07-24).
+# (gh api repos/Stellar-Index/StellarIndex/environments).
 run '{"name":"r1","protection_rules":[]}' r1
 expect 'no protection rules at all → fail closed' 1 'gate MISSING'
 

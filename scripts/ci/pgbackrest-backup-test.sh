@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pgbackrest-backup-test.sh — fixture tests for the nightly pgBackRest
 # wrapper the archival-node role installs as
-# /usr/local/bin/pgbackrest-backup.sh (2026-08-29, repo2 = S3 live on r1).
+# /usr/local/bin/pgbackrest-backup.sh (repo2 = S3 live on r1).
 #
 # The wrapper is the role template
 # configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2.
@@ -20,7 +20,7 @@
 #      repo1's last_success is carried forward from the previous run
 #      (not dropped), repo2's is fresh;
 #   3. single-repo conf → the command is BYTE-IDENTICAL to the
-#      pre-2026-08-29 wrapper (no --repo);
+#      older wrapper (no --repo);
 #   4. Sunday → --type=full; any other day → --type=diff;
 #   5. no secret from pgbackrest.conf reaches argv or stdout/stderr.
 #
@@ -172,7 +172,7 @@ if [[ $RC -eq 42 ]]; then ok "both fail → rc non-zero"; else bad "rc $RC"; fi
 
 # ─── 6. the carry-forward is validated, not just tested for emptiness ──
 #
-# THE DEFECT (2026-09-10 class, pre-existing). last_success_unix is read
+# THE DEFECT (pre-existing). last_success_unix is read
 # back out of the wrapper's OWN previous pgbackrest_backup.prom and was
 # guarded only by `[ -z … ]`. Emptiness is the one corruption that test
 # catches: a NON-empty bad value — a truncated write, a partially

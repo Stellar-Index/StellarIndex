@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-metric-refs-test.sh — fixtures for the F-1329 dead-alert guard.
+# lint-metric-refs-test.sh — fixtures for the dead-alert guard.
 #
 # The load-bearing case (W8.15): a metric NAMED ONLY IN A COMMENT must
 # not count as "emitted". Before the fix, is_emitted() did a plain
@@ -208,7 +208,7 @@ run
 expect_present 'a metric named only in a Go block comment stays dead' 'stellarindex_fixture_blockcomment_total'
 expect_absent 'a /* inside a Go string does not open a comment' 'stellarindex_fixture_afterglob_total'
 
-# 6. Producer -> alert direction (advisory, T456). A metric emitted with
+# 6. Producer -> alert direction (advisory). A metric emitted with
 # a real Name: literal but referenced by NO rule expr must be reported
 # as UNALERTED, without affecting the pass/fail exit status. Uses its
 # own clean fixture tree (steps 1-5 already carry real DEAD-REFs, which

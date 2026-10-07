@@ -3,7 +3,7 @@
 # pin-parity gate (scripts/ci/lint-sdk-version-pin.sh).
 #
 # Proves the gate CATCHES a VERSIONS.md tag that has fallen behind
-# go.mod (Q274: VERSIONS.md stayed on v0.6.0 after go.mod moved to
+# go.mod (VERSIONS.md stayed on v0.6.0 after go.mod moved to
 # v0.7.3), PASSES when they agree, and FAILS closed on missing inputs
 # rather than passing vacuously.
 #
@@ -52,7 +52,7 @@ mk_versions() { # mk_versions <path> <tag>
 MD
 }
 
-# ── stale row: go.mod moved on, VERSIONS.md didn't (Q274's shape) ────
+# ── stale row: go.mod moved on, VERSIONS.md didn't ───────────────
 mk_gomod "$TMP/stale.mod" "v0.7.3"
 mk_versions "$TMP/stale.md" "v0.6.0"
 check "VERSIONS.md behind go.mod -> FAIL" 1 "$TMP/stale.mod" "$TMP/stale.md"

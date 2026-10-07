@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-baseline-test.sh — deploy.yml's config-apply-gate BASELINE step
-# must refuse to guess (#427).
+# must refuse to guess.
 #
 # The baseline is the version live on the host; the gate diffs the config
 # surfaces between it and the deploying tag. Two ways that went wrong:
@@ -8,7 +8,7 @@
 #   1. A FAILED READ warned and fell back to "the previous release tag by
 #      ancestry", which on a multi-release catch-up means the gate diffs
 #      <prev>..<version> — usually nothing — and passes. Both test-net
-#      deploys on 2026-09-02 did exactly this (ProxyJump identity, #434)
+#      deploys did exactly this (ProxyJump identity)
 #      across five releases that touched 9-11 gated files, and the gate
 #      went green. A read failure must now FAIL the step.
 #   2. stellarindex-migrate is the oldest sidecar by design (it gates no

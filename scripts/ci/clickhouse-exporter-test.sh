@@ -2,7 +2,7 @@
 # clickhouse-exporter-test.sh — the ClickHouse Prometheus endpoint, end to
 # end through the pieces that have to agree.
 #
-# WHY THIS EXISTS (r1, 2026-09-03): ClickHouse serves its own /metrics —
+# WHY THIS EXISTS (r1): ClickHouse serves its own /metrics —
 # there is no exporter package — but the stock config.xml ships the entire
 # `<prometheus>` block INSIDE AN XML COMMENT. On r1 that meant nothing
 # listening on 9363 and zero `ClickHouse*` series in Prometheus, so the
@@ -212,7 +212,7 @@ else
 fi
 
 # A scrape job on a port nothing serves is the same dead layer as an alert
-# on a metric nothing emits (F-1329). The port must sit INSIDE the
+# on a metric nothing emits. The port must sit INSIDE the
 # `clickhouse` job's block — from its `job_name:` line to the next
 # `job_name:` — not merely somewhere in the file, or a clickhouse job on
 # the wrong port beside any other job on 9363 would pass. Exact job name:

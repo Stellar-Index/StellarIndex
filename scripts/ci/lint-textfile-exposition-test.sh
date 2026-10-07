@@ -2,7 +2,7 @@
 # lint-textfile-exposition-test.sh — fixtures for the textfile-exposition
 # gate. A gate nobody has seen red is not a gate.
 #
-# THE LOAD-BEARING CASE is the first one below: the r1 2026-09-10 probe,
+# THE LOAD-BEARING CASE is the first one below: the r1 probe,
 # reproduced as it was written before b96982c22. It ran
 #
 #     q "SET statement_timeout = '10s';
@@ -35,7 +35,7 @@
 # WRITES shell scripts, so `${count:-0}` and `$kind` must reach them
 # unexpanded. Expanding here would test the gate against a rendered line
 # instead of the template it actually reads — which is the same mistake,
-# in miniature, that let 2026-09-10 ship green.
+# in miniature, that once let it ship green.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -95,7 +95,7 @@ says() {
   if grep -qF -- "$2" <<<"$OUT"; then ok "$1"; else bad "$1 (diagnostic did not mention '$2')"; fi
 }
 
-# ─── 1. the r1 2026-09-10 probe, pre-fix and post-fix ────────────────
+# ─── 1. the r1 probe, pre-fix and post-fix ────────────────
 #
 # Both variants below are byte-faithful excerpts of the shipped probe: the
 # same q() helper, the same psql invocation, the same read loop. Only the

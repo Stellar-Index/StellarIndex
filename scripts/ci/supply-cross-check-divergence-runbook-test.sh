@@ -2,7 +2,7 @@
 # supply-cross-check-divergence-runbook-test.sh — proves the
 # mandatory re-seed commands in
 # docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence actually
-# EXECUTE against the shipped run-heavy-job.sh wrapper (F155).
+# EXECUTE against the shipped run-heavy-job.sh wrapper.
 #
 # The wrapper's contract (configs/ansible/roles/archival-node/tasks/
 # 14-stellarindex-services.yml, the /usr/local/sbin/run-heavy-job.sh
@@ -12,7 +12,7 @@
 # passes the ops binary name (`stellarindex-ops`) as NAME instead of
 # a job label pushes the binary's first subcommand word (`supply`)
 # into the exec position — `run-heavy-job: line N: exec: supply: not
-# found` (exit 127), exactly as F155 describes, under time pressure
+# found` (exit 127) under time pressure
 # on a supply-correctness incident.
 #
 # This test extracts BOTH the real wrapper (from the ansible task,

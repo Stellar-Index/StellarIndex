@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # render-sla-proof-test.sh — fixture tests for the SLA proof renderer
-# (scripts/ci/render-sla-proof.sh). Issue #378.
+# (scripts/ci/render-sla-proof.sh).
 #
 # The defect: the weekly k6 run had no way to leave anything durable
 # behind. Its export and its run summary both age out, and the only thing
@@ -170,7 +170,7 @@ printf 'this is not json {' > "$TMP/corrupt.json"
 
 # ── Refusals: nothing may be written ────────────────────────────────────
 # Each case below must leave the output directory EMPTY. A renderer that
-# writes a partial report on bad input recreates #378's false-evidence
+# writes a partial report on bad input recreates the false-evidence
 # artifact under a new name.
 refused_writes_nothing() { # refused_writes_nothing <name>
   local found
@@ -359,7 +359,7 @@ else
 fi
 
 # ── The Result table must agree with k6's own threshold verdict ─────────
-# RLT-054 / GH #563: p95 lands exactly on the 200 ms limit. The scenario's
+# p95 lands exactly on the 200 ms limit. The scenario's
 # threshold is strict ("p(95)<200"), so k6 records it as BREACHED. The
 # Result table's own PASS/FAIL must say the same thing the "Thresholds
 # declared by the scenario" table says for the same run — a renderer

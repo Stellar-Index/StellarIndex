@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# audit-remediation-operator-actions-test.sh — pins the CS-097 entry in
+# audit-remediation-operator-actions-test.sh — pins the repo-ruleset entry in
 # docs/operations/audit-remediation-operator-actions.md to what the live
-# repo actually has (RLT-378).
+# repo actually has.
 #
-# The doc claimed `- [x] ... DONE 2026-07-02 via two repo rulesets`, but
+# The doc claimed `- [x] ... DONE via two repo rulesets`, but
 # `gh api repos/Stellar-Index/StellarIndex/branches/main/protection` 404s
 # and `gh api .../rulesets` returns `[]` — no protection exists. The
 # lint-actions-pinning.sh header made the same false claim about

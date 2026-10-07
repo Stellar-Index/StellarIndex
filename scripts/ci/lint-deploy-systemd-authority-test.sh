@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # lint-deploy-systemd-authority-test.sh — fixture tests for the
-# reference-vs-template content check (RLT-434).
+# reference-vs-template content check.
 #
 # Being templated used to be the whole REFERENCE test: any .j2 sharing a
 # unit's filename made the gate skip it, no matter what either file
 # said. The load-bearing case below is a reference copy and its .j2
 # twin that share one directive (RestartSec) with two different
 # values — the exact shape RestartSec/User/VERIFY_ARCHIVE_MAX_RUNTIME
-# drifted in for real (issue #818) — and asserts the gate now fails on
+# drifted in for real — and asserts the gate now fails on
 # it, undeclared, and passes once it's declared in DIVERGENCES.
 #
 # Run: bash scripts/ci/lint-deploy-systemd-authority-test.sh

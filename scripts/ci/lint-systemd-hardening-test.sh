@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-systemd-hardening-test.sh — fixture tests for lint-systemd-hardening.sh.
 #
-# The load-bearing cases are the two unit shapes issue #617 found in the
+# The load-bearing cases are the two unit shapes found in the
 # real role: pgbackrest-backup (a User= and no sandbox at all) and
 # node-healthcheck (a sandbox and no User=, so root by omission), plus the
 # pgbackrest timer's zone-less 02:00. Each must fail undeclared.
@@ -66,7 +66,7 @@ printf '[Timer]\nOnCalendar=*-*-* 03:00:00 UTC\n' > "$UNITS/example.timer.j2"
 run
 expect 'a fully hardened unit and a UTC timer pass' 0 'OK'
 
-# ── 1. pgbackrest-backup's pre-#617 shape: User=, no sandbox ─────────
+# ── 1. pgbackrest-backup's old shape: User=, no sandbox ─────────────────────
 cat > "$UNITS/backup.service.j2" <<'EOF'
 [Service]
 Type=oneshot
@@ -80,7 +80,7 @@ expect 'a unit with no sandbox directives fails' 1 'backup.service.j2 does not s
 expect 'every missing baseline directive is named' 1 'does not set ProtectControlGroups'
 rm "$UNITS/backup.service.j2"
 
-# ── 2. node-healthcheck's pre-#617 shape: sandbox, no User= ──────────
+# ── 2. node-healthcheck's old shape: sandbox, no User= ───────────────────────
 hardened | grep -v '^User=' > "$UNITS/probe.service.j2"
 run
 expect 'a unit that runs as root by omission fails' 1 'probe.service.j2 does not set User'

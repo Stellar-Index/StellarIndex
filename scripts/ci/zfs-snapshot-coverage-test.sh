@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # zfs-snapshot-coverage-test.sh — WHICH datasets the rolling-snapshot job
-# actually covers (NS03, audit-2026-09-02).
+# actually covers.
 #
 # scripts/ci/zfs-snapshot-test.sh pins how the job BEHAVES on the datasets
 # it is given. Nothing pinned WHICH ones it is given, and that is where the
 # hole was: the list was `data/clickhouse:3 data/postgres:7` — the two
 # tiers that are DERIVED from the Galexie LCM archive — while the archive
-# itself (`data/minio`, measured 2.64 TB on r1 2026-09-19) had zero
+# itself (`data/minio`, measured 2.64 TB on r1) had zero
 # snapshots and, pgBackRest's Postgres-only repo2 aside, no off-host copy
 # either. Protecting the derivatives and not the source is the wrong way
 # round: an `mc rm --recursive` against the wrong prefix had nothing to
@@ -199,7 +199,7 @@ if [ -n "$RENDERED" ]; then
   # Order-insensitive: the rendered file and the built-in default must
   # describe the same {dataset: retention} map, not the same string.
   # awk 'NF' drops the empty fields a trailing separator leaves behind; it
-  # reads to EOF, so no early-exit consumer under pipefail (#475).
+  # reads to EOF, so no early-exit consumer under pipefail.
   norm() { printf '%s\n' "$1" | tr ' ' '\n' | awk 'NF' | sort | tr '\n' ' '; }
   script_list=""
   i=1

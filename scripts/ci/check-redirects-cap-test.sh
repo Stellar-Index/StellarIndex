@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-redirects-cap-test.sh — fixture tests for
-# scripts/ci/check-redirects-cap.sh (T335).
+# scripts/ci/check-redirects-cap.sh.
 #
 # Run: bash scripts/ci/check-redirects-cap-test.sh
 set -uo pipefail
@@ -38,7 +38,7 @@ gen_rules 100 > "$TMP/at-cap.txt"
 OUT="$(bash "$CHECK" "$TMP/at-cap.txt" 100 2>&1)"; RC=$?
 expect 'exactly 100 rules, cap 100 → OK' 0
 
-# One over the cap: DRIFT. This is the regression T335 exists to catch —
+# One over the cap: DRIFT. This is the regression this gate exists to catch —
 # on the unfixed repo there is no script at all, so this is the proof
 # the check actually fires past the cap rather than always passing.
 gen_rules 101 > "$TMP/over-cap.txt"

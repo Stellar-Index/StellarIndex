@@ -7,7 +7,7 @@
 #   N=$(journalctl -u galexie … 2>/dev/null | grep -c "Skipping catchup" || true)
 # `grep -c` prints 0 and exits 1 when nothing matches — the HEALTHY
 # outcome — so the `|| true` was load-bearing, and it swallowed the
-# journal read's failure with it. Measured on r1 2026-09-05, a healthy
+# journal read's failure with it. Measured on r1, a healthy
 # read, a unit name that does not exist, a journal that could not be
 # opened and a missing journalctl binary all produced N=0 and exit 0.
 # The consumer, stellarindex_galexie_catchup_refused, is severity
@@ -41,6 +41,7 @@
 # systemd, no journal and no write outside $TMPDIR.
 #
 # Run: bash scripts/ci/galexie-catchup-probe-test.sh
+# shellcheck disable=SC2015,SC2012 # ok() never fails; ls -l reads one fixture file
 set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -89,7 +90,7 @@ chmod +x "$PROBE"
 # ─── stubs ──────────────────────────────────────────────────────────
 #
 # journalctl stub, driven by $SCENARIO. The line counts mirror what r1
-# actually produces: twelve consecutive 5-minute buckets on 2026-09-05
+# actually produces: twelve consecutive 5-minute buckets on r1
 # returned 364-409 lines, so `healthy` emits 364.
 mkdir -p "$TMP/bin" "$TMP/textfile"
 cat > "$TMP/bin/journalctl" <<'SH'
@@ -117,7 +118,7 @@ case "${SCENARIO:-healthy}" in
     exit 1 ;;
   renamed_unit)
     # `journalctl -u <unit that does not exist>` exits 0 and prints
-    # nothing. Confirmed on r1 2026-09-05.
+    # nothing. Confirmed on r1.
     exit 0 ;;
   no_binary)
     # Models journalctl missing from PATH: bash's own 127.
