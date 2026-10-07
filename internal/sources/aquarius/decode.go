@@ -529,7 +529,6 @@ func decodeSetProtocolFee(sv scval.ScVal, fe *FeeEvent) error {
 // cannot recover it: ledger 63,698,651 has two same-tx claims with
 // different topic[1] tokens and near-identical amounts, so per-pool sums
 // without the token mix token scales.
-
 func decodeClaimFee(e *events.Event, sv scval.ScVal, fe *FeeEvent) error {
 	vec, err := scval.AsVec(sv)
 	if err != nil {

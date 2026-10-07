@@ -220,7 +220,6 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		// Every kind Matches() gates in is handled explicitly above. A
 		// kind that reaches here matched the identity gate but has no
 		// decode arm — fail closed (ADR-0035) instead of forcing
-
 		// it through decodeTrade: a trade-shaped topic on an unhandled
 		// kind would otherwise be silently misattributed as a real
 		// trade rather than surfacing as a visible gap.

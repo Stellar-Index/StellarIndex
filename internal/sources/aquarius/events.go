@@ -225,7 +225,7 @@ const EventAddPool = "add_pool"
 // MainnetPools is the curated gated pool set (ADR-0040).
 // Derivation, verified against the r1 lake AND the protocol's own
 // registry API:
-
+//
 //   - the 332 distinct pool addresses announced by MainnetRouter's
 //     add_pool events in the lake (338 events, ledgers
 //     52,728,530 → 63,308,393), and

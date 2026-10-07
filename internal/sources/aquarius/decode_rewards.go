@@ -502,7 +502,7 @@ func decodeRewardsGaugeAdd(e *events.Event, closedAt time.Time) (RewardsEvent, e
 // companion to the pool-side `set_rewards_config` (decodeSetRewardsConfig).
 // It is the rewards family's 12th kind because it directly duplicates
 // set_rewards_config's (amount, expires_at) pair per pool.
-
+//
 //	topics: [Symbol("config_rewards"), Vec[Address, Address]]  (topic_count=2)
 //	body:   Vec[Address(pool), U128(amount), U64(expires_at)]
 //

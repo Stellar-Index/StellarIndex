@@ -329,7 +329,6 @@ func decodeDisableEmergencyMode(e *events.Event, closedAt time.Time) (AdminEvent
 //	body:   Vec[Bool]  (length 1)
 //
 // Verified against r1 lake bytes: 100% router-scoped (all
-
 // 31 lifetime events are on the canonical router — confirmed via a
 // full-history, router-scoped count); every sampled body value is
 // `true`. Target is the pool's new gauge reward-token address.

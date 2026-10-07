@@ -264,7 +264,6 @@ type FeeEvent struct {
 	// claimed token's contract address, carried in topic[1] (the body
 	// Vec has no token; every sampled event has an ScvAddress at
 	// topic[1], and two same-tx claims of
-
 	// DIFFERENT tokens prove per-pool amounts are meaningless without
 	// it — summing them adds USDC-scale and XLM-scale integers).
 	Recipient string
