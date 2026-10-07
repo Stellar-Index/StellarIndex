@@ -162,11 +162,6 @@ export const CURRENT_NETWORK_ID: NetworkId = ((): NetworkId => {
 
 export const CURRENT_NETWORK: NetworkInfo = NETWORKS_BY_ID[CURRENT_NETWORK_ID];
 
-/** The networks OTHER than the one this explorer serves (for the switcher). */
-export const OTHER_NETWORKS: NetworkInfo[] = NETWORKS.filter(
-  (n) => n.id !== CURRENT_NETWORK_ID,
-);
-
 /**
  * Absolute stellar.expert URL for an entity on THIS network, or null when
  * stellar.expert has no explorer for it (futurenet). Callers must handle
