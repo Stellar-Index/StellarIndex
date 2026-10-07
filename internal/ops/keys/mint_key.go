@@ -20,15 +20,14 @@ import (
 // text documents ("kebab-case slug, e.g. customer-acme-corp"):
 // lowercase alphanumeric segments joined by single hyphens.
 //
-// input-validation (audit-2026-07-23): -identifier previously only
-// checked non-empty — store.Create (internal/auth/store.go) does
-// the same. Today the only caller is a trusted operator running this
-// CLI by hand, so an out-of-shape value is low-risk; but any future
-// HTTP-handler reuse of the SAME auth.RedisAPIKeyStore.Create path
-// would make Identifier attacker-influenced rather than
-// operator-typed. Enforcing the documented shape here — at the CLI's
-// input boundary — closes the gap for this call site now, before
-// that reuse happens.
+// Without it -identifier is checked only for non-empty, which is all
+// store.Create (internal/auth/store.go) checks. Today the only caller
+// is a trusted operator running this CLI by hand, so an out-of-shape
+// value is low-risk; but any future HTTP-handler reuse of the SAME
+// auth.RedisAPIKeyStore.Create path would make Identifier
+// attacker-influenced rather than operator-typed. Enforcing the
+// documented shape here — at the CLI's input boundary — closes the gap
+// for this call site now, before that reuse happens.
 var mintKeyIdentifierPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 const (

@@ -6,11 +6,11 @@
 // resolution, customer-webhook delivery + registration). It is a stdlib-only
 // leaf package so any layer can import it.
 //
-// It exists because the block-list logic was previously copy-pasted into three
-// packages with DIVERGENT coverage (CS-008): metadata/sep1.go blocked
-// 192.0.0.0/24 (Oracle Cloud metadata 192.0.0.192) + 198.18.0.0/15, but the
-// two webhook guards did not — so an Oracle-hosted deployment could be made to
-// dial its own metadata endpoint via a customer webhook. IsBlockedIP is the
+// It is one package because per-call-site copies drift: when three packages
+// each carried the block-list logic, metadata/sep1.go blocked 192.0.0.0/24
+// (Oracle Cloud metadata 192.0.0.192) + 198.18.0.0/15, but the two webhook
+// guards did not — so an Oracle-hosted deployment could be made to dial its
+// own metadata endpoint via a customer webhook. IsBlockedIP is the
 // UNION of every range any call site ever checked; add a range here once and
 // every guard gets it.
 package nettools
@@ -38,7 +38,7 @@ import (
 //     IsLinkLocalUnicast / IsPrivate do NOT unwrap the NAT64 prefix (only
 //     the ::ffff:0:0/96 IPv4-mapped form), so without these entries every
 //     v4 range above is bypassable by translating it — whenever a NAT64
-//     gateway is on the egress path (C3-110, audit-2026-07-23).
+//     gateway is on the egress path.
 //   - 2002::/16      — RFC 3056 6to4. Bits 16..48 EMBED a v4 address, so
 //     `2002:a9fe:a9fe::` is 169.254.169.254, `2002:7f00:1::` is 127.0.0.1.
 //     First byte is 0x20, so Go's IsPrivate / IsLinkLocal* don't flag it —

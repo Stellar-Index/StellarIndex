@@ -69,7 +69,7 @@ func (c *Client) WithBase(base string) *Client {
 // ISO-4217) → rate (1 USD = N target currency).
 type DayRates struct {
 	Date time.Time
-	//floatmoney:ok known debt (#600) — same float-chain class as timescale.FXQuote.RateUSD (fx_quotes.go): fetchAndPersist (scripts/ops/fx-history-backfill/main.go) ranges this map straight into FXQuote.RateUSD without converting
+	//floatmoney:ok known debt — same float-chain class as timescale.FXQuote.RateUSD (fx_quotes.go): fetchAndPersist (scripts/ops/fx-history-backfill/main.go) ranges this map straight into FXQuote.RateUSD without converting
 	Rates map[string]float64
 }
 
@@ -93,7 +93,7 @@ func (c *Client) RangeUSDRates(ctx context.Context, from, to time.Time) ([]DayRa
 		Base  string `json:"base"`
 		Start string `json:"start_date"`
 		End   string `json:"end_date"`
-		//floatmoney:ok known debt (#600) — raw Frankfurter JSON decode boundary (date -> ticker -> rate document); reshaped into DayRates.Rates a few lines below, same chain as that field's marker, not stored as-is
+		//floatmoney:ok known debt — raw Frankfurter JSON decode boundary (date -> ticker -> rate document); reshaped into DayRates.Rates a few lines below, same chain as that field's marker, not stored as-is
 		Rates map[string]map[string]float64 `json:"rates"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -150,11 +150,11 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 		if rerr != nil {
 			// Only a CLEAN io.EOF ends the body normally. A mid-stream
 			// truncation surfaces as io.ErrUnexpectedEOF ("unexpected EOF"),
-			// whose string also contains "EOF" — the old substring match
-			// treated a dropped connection as a complete body and returned
-			// the partial buffer (W6-go-2). errors.Is(rerr, io.EOF) is false
-			// for io.ErrUnexpectedEOF, so a truncated response now propagates
-			// as an error instead of a silently-short JSON document.
+			// whose string also contains "EOF" — a substring match would
+			// treat a dropped connection as a complete body and return the
+			// partial buffer. errors.Is(rerr, io.EOF) is false for
+			// io.ErrUnexpectedEOF, so a truncated response propagates as an
+			// error instead of a silently-short JSON document.
 			if errors.Is(rerr, io.EOF) {
 				break
 			}

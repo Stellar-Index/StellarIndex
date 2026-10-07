@@ -7,7 +7,7 @@
 // account; routes 401 on a missing session, 403 when the role can't
 // manage alerts. Wire shape is bare JSON, not the v1 envelope — the
 // dashboard surface is session-scoped and intentionally bypasses the
-// envelope (docs/reference/api-design.md §4.1, F-1235).
+// envelope (docs/reference/api-design.md §4.1).
 //
 // Read path:
 //

@@ -4,18 +4,19 @@
 // It exists because an unrecovered panic in ANY goroutine terminates the
 // whole Go process — it is not confined to the goroutine that panicked —
 // so each binary carries an AST guard test asserting that every `go`
-// statement in its main.go defers a recovery helper. Those tests used to
-// be per-binary copies that only understood the `go func(){…}()` form:
+// statement in its main.go defers a recovery helper. A per-binary copy
+// of that test that understands only the `go func(){…}()` form is blind
+// to the second form below:
 //
 //	go func() { defer worker.Recover(logger, "x"); loop(ctx) }()   // seen
 //	go loop(ctx)                                                   // INVISIBLE
 //
 // The second form is the one that bites, because it looks tidier. At the
 // time this package was written the stellarindex-api binary started four
-// workers that way and its guard test could not see a single one of them
-// (#368 M1). This package resolves a named callee to its declaration —
-// same package (any file), or another package of the SAME MODULE, whose
-// source is located from go.mod and parsed — and checks the guard there.
+// workers that way and its guard test could not see a single one of them.
+// This package resolves a named callee to its declaration — same package
+// (any file), or another package of the SAME MODULE, whose source is
+// located from go.mod and parsed — and checks the guard there.
 //
 // Resolution is syntactic (go/parser only, no type checker and no
 // golang.org/x/tools dependency), so it cannot resolve everything. That
@@ -244,7 +245,7 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	return sites, nil
 }
 
-// recurseIntoCallee is guardscan's answer to #558: a `go` statement whose
+// recurseIntoCallee covers nested goroutines: a `go` statement whose
 // callee resolves to a declaration is checked for whether IT recovers, but
 // that declaration may itself start further goroutines — in another file
 // of the same package, or in an imported package — that this scanner would
