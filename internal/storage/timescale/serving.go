@@ -13,16 +13,16 @@ import (
 // OpenServing is [Open] with a session-level `statement_timeout` applied
 // to every connection in the pool. The API serving binary uses it so a
 // runaway request-path query is bounded SQL-side even if Go-side context
-// cancellation races (R1, audit-2026-07-16 — the systemic root behind
-// the P1/C3-1/C3-2 unauth-DoS: no pool-level statement_timeout on the
-// serving pool). It is the defense-in-depth backstop UNDER the app-layer
-// per-request context deadline, which is the primary bound.
+// cancellation races; without a pool-level statement_timeout, an
+// unauthenticated client could hold serving backends indefinitely. It is
+// the defense-in-depth backstop UNDER the app-layer per-request context
+// deadline, which is the primary bound.
 //
 // The indexer/aggregator pools get their own generous session backstop
-// via [OpenBackground] (REC-08); the one-shot ops/migrate/heavy-backfill
-// pools stay unbounded on plain [Open]. In every bounded pool the heavy
-// batch scans (per_source_gaps, source_coverage, row_counts, …) set their
-// own longer `SET LOCAL statement_timeout` inside a transaction, which
+// via [OpenBackground]; the one-shot ops/migrate/heavy-backfill pools
+// stay unbounded on plain [Open]. In every bounded pool the heavy batch
+// scans (per_source_gaps, source_coverage, row_counts, …) set their own
+// longer `SET LOCAL statement_timeout` inside a transaction, which
 // overrides the session default for exactly those statements. A plain
 // request-path read (no explicit SET LOCAL) inherits this session default
 // and is bounded by it.
@@ -32,8 +32,8 @@ import (
 // post-connect mechanism).
 //
 // The serving pool ADDITIONALLY runs `SET plan_cache_mode =
-// force_custom_plan` on every connection (2026-08-24, the /v1/price p95
-// tail): the request path's raw-trades fallback (TradesInRange) is a
+// force_custom_plan` on every connection, for the /v1/price p95 tail:
+// the request path's raw-trades fallback (TradesInRange) is a
 // parameterised query over the trades hypertable, and Postgres's
 // prepared-statement logic flips it to a GENERIC plan after five
 // executions. Building that generic plan means planning across every
@@ -61,10 +61,10 @@ func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration
 
 // OpenBackground is [Open] with a session-level `statement_timeout` applied
 // to every connection in the pool, for the long-running INDEXER and
-// AGGREGATOR binaries. It is the SQL-side runaway backstop for REC-08
-// (audit-2026-08-14): before it, only the serving pool self-bounded
-// (OpenServing), so a genuinely stuck indexer/aggregator query kept running
-// server-side even after the Go-side ctx was cancelled.
+// AGGREGATOR binaries. It is the SQL-side runaway backstop: without it,
+// only the serving pool self-bounds (OpenServing), so a genuinely stuck
+// indexer/aggregator query would keep running server-side even after the
+// Go-side ctx was cancelled.
 //
 // The bound is deliberately GENEROUS (see StorageConfig.BackgroundStatementTimeout)
 // so it only ever kills a true runaway. The heavy batch scans
@@ -77,7 +77,7 @@ func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration
 // constructor so the two call-sites read their own intent (DoS backstop vs
 // runaway backstop) and draw their timeout from their own config field. The
 // one-shot ops/migrate/heavy-backfill paths keep using plain [Open]
-// (unbounded) — a global timeout there was the rejected prior fix.
+// (unbounded); a global timeout there is deliberately not applied.
 //
 // statementTimeout <= 0 falls back to plain [Open] (no session timeout).
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {

@@ -76,9 +76,9 @@ type Sep1BoundCurrency struct {
 // from outside it: how large was the population, and which stage
 // removed it. Both stages that swallow silently are represented here
 // ([Sep1BoundCensus.IssuersPayloadUnreadable] and
-// [Sep1BoundCensus.IssuersDeclaringNothing]); a scan that dropped a
-// whole population through one of them used to look identical to a
-// network where nothing qualified.
+// [Sep1BoundCensus.IssuersDeclaringNothing]); without them, a scan that
+// dropped a whole population through either stage would look identical
+// to a network where nothing qualified.
 //
 // The arithmetic closes, and [Sep1BoundCensus.Check] proves it:
 //
@@ -111,14 +111,14 @@ type Sep1BoundCensus struct {
 	// the predicate [Store.IssuerSep1Unreachable] serves per asset.
 	//
 	// It exists because the difference IssuersWithHomeDomain -
-	// IssuersWithPayload was read as "never fetched" and published as
-	// an operator's backlog. Measured on production 2026-09-12 that
-	// difference was 40,838 issuers, of which exactly ONE had never
-	// been attempted: the rest were dead, parked or non-SEP-1 domains
-	// that an overnight drain had already reached. Nothing here records
-	// WHY a reached domain served nothing — 404, dead DNS, a TLS
-	// failure and an undecodable document are one bucket — so the count
-	// says only that the fetch ran and produced no payload.
+	// IssuersWithPayload reads as "never fetched", an operator's
+	// backlog, and it is not. Measured on production, that difference
+	// was 40,838 issuers, of which exactly ONE had never been attempted:
+	// the rest were dead, parked or non-SEP-1 domains that an overnight
+	// drain had already reached. Nothing here records WHY a reached
+	// domain served nothing — 404, dead DNS, a TLS failure and an
+	// undecodable document are one bucket — so the count says only that
+	// the fetch ran and produced no payload.
 	IssuersFetchedWithoutPayload int
 	// IssuersPayloadStale counts payloads not fetched within
 	// [Sep1AttestationMaxAge], or of unknown fetch time. They are not
@@ -126,7 +126,6 @@ type Sep1BoundCensus struct {
 	// attests to what its last document said.
 	IssuersPayloadStale int
 	// IssuersPayloadUnreadable counts payloads that would not decode.
-	// Previously a bare `return nil, 0`.
 	IssuersPayloadUnreadable int
 	// IssuersDeclaringNothing counts payloads that decoded but carry no
 	// [[CURRENCIES]] entry at all.

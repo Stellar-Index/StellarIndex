@@ -11,15 +11,15 @@ import (
 // (migration 0125): the ledger window a `stellarindex-ops projector-replay`
 // rewound over that no completeness run has re-verified clean yet.
 //
-// It exists to close the carried-claim invalidation gap (2026-07-31): the
-// daily compute-completeness driver reconciles each source only from its
-// prior watermark to tip and CARRIES the prior clean projection claim for
-// the older prefix (projectionClaim rule 3 / INV-5). That carry is sound
-// only while the served tier below the watermark is immutable — and a
+// It exists to close the carried-claim invalidation gap: the daily
+// compute-completeness driver reconciles each source only from its prior
+// watermark to tip and CARRIES the prior clean projection claim for the
+// older prefix (projectionClaim rule 3). That carry is sound only while
+// the served tier below the watermark is immutable — and a
 // projector-replay rewind rewrites exactly that region. Without a durable
 // record of the rewind, the rewritten range stays certified by a claim
-// whose evidence the replay just invalidated (how the 19,366 over-projected
-// cctp rows of the 07-30 replay escaped the verifier).
+// whose evidence the replay just invalidated (how 19,366 over-projected
+// cctp rows from one replay escaped the verifier).
 type ProjectionDirtyWindow struct {
 	Source string
 	// From is the replay's rewind target (inclusive) — the first ledger
@@ -41,15 +41,15 @@ type ProjectionDirtyWindow struct {
 // are not interchangeable to every reader:
 //
 //   - `projector-replay` RE-WINDS the live projector cursor, so the lag its
-//     window covers is an INTENDED lag (issue #325).
+//     window covers is an INTENDED lag.
 //   - `projected-rebuild -write` never touches the live cursor, and its
 //     recorded range may legally sit AT it (`-to` defaults to the live
 //     cursor) or ABOVE it (`-allow-live-overlap` bypasses the one-writer
-//     guard entirely — exercised on r1 2026-07-27).
+//     guard entirely — exercised on r1).
 //   - `ch-rebuild -record-dirty-window`, driven by
 //     scripts/ops/ch-rebuild-projected.sh when a clean-slate window was
 //     DELETEd and its re-derive did not complete: the range is not merely
-//     rewritten, it is EMPTY until the recovery run finishes (F075).
+//     rewritten, it is EMPTY until the recovery run finishes.
 //   - `ch-rebuild -write` rewrites the range from the lake, recorded before
 //     its first write. Like projected-rebuild it never touches the cursor.
 //   - `backfill` and `backfill-router -write` rewrite NON-projected served
@@ -62,7 +62,7 @@ type ProjectionDirtyWindow struct {
 // The constructors and the predicate below are the ONE place the format
 // lives, so a reader can tell them apart without matching a free-form
 // string in three packages. The prefixes reproduce byte-for-byte what the
-// shipped binaries have written since migration 0125, so rows ALREADY in
+// released binaries have written since migration 0125, so rows ALREADY in
 // the table classify correctly (pinned by
 // TestProjectionDirtyWindowReasonIsStableAcrossReleases).
 const (
@@ -92,7 +92,7 @@ func ProjectedRebuildReason(from, to uint32) string {
 // not (yet) re-derive. Distinct from ProjectedRebuildReason because the
 // served tier here is EMPTY over [from,to], not merely rewritten: until a
 // completeness verdict re-reconciles the range, /v1/coverage would carry
-// its prior clean claim over a hole (F075).
+// its prior clean claim over a hole.
 func CHRebuildEmptiedReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildEmptiedPrefix, from, to)
 }
@@ -113,12 +113,11 @@ func BackfillWriteReason(from, to uint32) string {
 // `projector-replay` — the only writer that rewinds the live projector
 // cursor, and therefore the only one whose window can EXPLAIN lag.
 //
-// Read by the projector's replay-window watcher (issue #325): a
-// `projected-rebuild` window must never raise
-// stellarindex_projector_replay_window_active, because its range routinely
-// covers the live cursor's own position and would then hold the lag
-// ticket suppressed while the source is HELD — exactly the state the
-// ticket exists to catch.
+// Read by the projector's replay-window watcher: a `projected-rebuild`
+// window must never raise stellarindex_projector_replay_window_active,
+// because its range routinely covers the live cursor's own position and
+// would then hold the lag ticket suppressed while the source is HELD —
+// exactly the state the ticket exists to catch.
 //
 // Unknown/empty reasons answer false: the flag's only power is to SUPPRESS
 // an alert, so anything unrecognised must leave it armed.

@@ -12,17 +12,17 @@ import (
 
 // CopyMergeSEP41Transfers bulk-loads rows via the COPY protocol into a
 // temp table, then merges with the same generation-guarded corrective
-// upsert as the per-row path (InsertSEP41TransferBatch). Built for the
-// 2026-07-05 full-history re-derive: multi-row INSERTs topped out
-// near ~4 batches/s (every 12k-placeholder statement pays full
-// parse/plan), which priced a ~700M-row rebuild in days. COPY + merge
-// moves the same rows at bulk-load speed while carrying the row path's
-// INV-3 semantics: derive_generation is COPY'd per row and the merge is
-// the gen-guarded DO UPDATE, so a re-derive at a higher-or-equal
-// generation corrects a wrong value in place and a stale lower-generation
-// replay can never revert it (migration 0110). The old col lists omitted
-// derive_generation — so bulk-loaded rows defaulted to generation 0 — and
-// merged DO NOTHING, silently dropping the correction (TV-1/TV-3).
+// upsert as the per-row path (InsertSEP41TransferBatch). Built for
+// full-history re-derives: multi-row INSERTs topped out near ~4
+// batches/s (every 12k-placeholder statement pays full parse/plan),
+// which priced a ~700M-row rebuild in days. COPY + merge moves the same
+// rows at bulk-load speed while carrying the row path's semantics:
+// derive_generation is COPY'd per row and the merge is the gen-guarded
+// DO UPDATE, so a re-derive at a higher-or-equal generation corrects a
+// wrong value in place and a stale lower-generation replay can never
+// revert it (migration 0110). Omitting derive_generation from the
+// column lists would default bulk-loaded rows to generation 0, and a
+// DO NOTHING merge would silently drop the correction.
 func (s *Store) CopyMergeSEP41Transfers(ctx context.Context, rows []SEP41TransferRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -69,10 +69,10 @@ func (s *Store) CopyMergeSEP41Transfers(ctx context.Context, rows []SEP41Transfe
 }
 
 // CopyMergeSEP41SupplyEvents is the sep41_supply_events sibling. It carries
-// the same INV-3 generation-guarded corrective-upsert semantics as the
-// per-row InsertSEP41SupplyEvent: derive_generation is COPY'd per row and
-// the merge is the gen-guarded DO UPDATE (migration 0110), not the old
-// generation-0 DO NOTHING (TV-1/TV-3).
+// the same generation-guarded corrective-upsert semantics as the per-row
+// InsertSEP41SupplyEvent: derive_generation is COPY'd per row and the
+// merge is the gen-guarded DO UPDATE (migration 0110), not a
+// generation-0 DO NOTHING.
 func (s *Store) CopyMergeSEP41SupplyEvents(ctx context.Context, rows []SEP41SupplyEvent) error {
 	if len(rows) == 0 {
 		return nil
@@ -105,13 +105,13 @@ func (s *Store) CopyMergeSEP41SupplyEvents(ctx context.Context, rows []SEP41Supp
 }
 
 // copyMerge streams rows into an ON COMMIT DROP temp table shaped like
-// target, then INSERT..SELECT..ON CONFLICT DO UPDATE (the INV-3
-// generation-guarded corrective upsert), in one txn. The temp table drops
-// the hypertable's constraints/indexes, so COPY streams at wire speed; the
-// merge pays index cost once per row like any insert, without per-statement
-// parse overhead. updateCols are the non-conflict value columns the merge
-// corrects on conflict (derive_generation must be among them so the guard
-// column advances).
+// target, then INSERT..SELECT..ON CONFLICT DO UPDATE (the generation-guarded
+// corrective upsert), in one txn. The temp table drops the hypertable's
+// constraints/indexes, so COPY streams at wire speed; the merge pays index
+// cost once per row like any insert, without per-statement parse overhead.
+// updateCols are the non-conflict value columns the merge corrects on
+// conflict (derive_generation must be among them so the guard column
+// advances).
 //
 // The COPY itself runs through pgx's native CopyFrom (the binary COPY
 // protocol) rather than database/sql's per-row statement Exec: the pgx
@@ -167,7 +167,7 @@ func copyMergeOnConn(ctx context.Context, pgxConn *pgx.Conn, target string, cols
 }
 
 // copyMergeUpsertSQL builds the INSERT..SELECT..ON CONFLICT DO UPDATE that
-// promotes COPY'd temp-table rows into target with the same INV-3
+// promotes COPY'd temp-table rows into target with the same
 // generation-guarded corrective-upsert semantics as the per-row writers
 // (sep41_transfers.go / sep41_supply_events.go): a re-derive at a
 // higher-or-equal derive_generation UPDATEs the value columns in place; a

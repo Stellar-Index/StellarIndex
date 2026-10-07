@@ -25,7 +25,7 @@ import (
 // *big.Int → string per ADR-0003). Path is the hop sequence of
 // raw token C-strkeys (≥ 2 by router precondition).
 //
-// CAVEAT (audit DOM-1): these hold the router call's two i128 args as
+// CAVEAT: these hold the router call's two i128 args as
 // DECLARED — they are NOT both realized amounts. Exactly one side is
 // exact/realized and the other is a caller-declared slippage BOUND:
 // for swap_exact_tokens_for_tokens, amount_out is amount_out_min (a
@@ -57,14 +57,14 @@ type SoroswapRouterSwap struct {
 	// swaps in one op (aggregator / batch) while deduping auth-tree duplicates.
 	CallSig string
 
-	// CallPath / CallDepth / CallKind (migration 0101, ROADMAP #11) record
-	// WHERE in the tx's Soroban auth tree the router call was observed:
-	// CallPath is the ordered contract C-strkey chain from the top-level
-	// invocation down to the router (always ends in ContractID), CallDepth
-	// = len(CallPath)-1, CallKind is 'top_level' | 'sub_invocation'.
-	// An empty CallKind writes SQL NULLs for all three (the pre-ROADMAP #11 legacy
-	// row shape) — set all three together or none; the migration's CHECK
-	// rejects partial combinations.
+	// CallPath / CallDepth / CallKind (migration 0101) record WHERE in the
+	// tx's Soroban auth tree the router call was observed: CallPath is the
+	// ordered contract C-strkey chain from the top-level invocation down to
+	// the router (always ends in ContractID), CallDepth = len(CallPath)-1,
+	// CallKind is 'top_level' | 'sub_invocation'. An empty CallKind writes
+	// SQL NULLs for all three (the row shape from before migration 0101) —
+	// set all three together or none; the migration's CHECK rejects partial
+	// combinations.
 	CallPath  []string
 	CallDepth int
 	CallKind  string
@@ -116,10 +116,10 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		}
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the swap amounts (amount_in / amount_out) or the
 	// other decoded columns lands in place when its generation is >= the
-	// stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
+	// stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO soroswap_router_swaps (
             ledger, ledger_close_time, tx_hash, op_index,

@@ -100,14 +100,14 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 // USDC-denominated flow volumes, daily series, and per-domain tables.
 //
 // Amount scales are per-bridge and DIFFERENT — both ground-truthed
-// 2026-07-30 against the USDC SAC leg of a real tx (the external-scaling
-// trap class, AGENTS.md):
+// against the USDC SAC leg of a real tx (the external-scaling trap
+// class, AGENTS.md):
 //   - cctp_events.amount is CANONICAL 6-decimal USDC (event 172,719,938 vs
 //     SAC mint 1,727,199,380 — exactly 10× — matching the on-chain
 //     token_decimal_config {canonical:6, local:7} fixture) — EXCEPT
 //     mint_and_forward, which restates its op's mint_and_withdraw amount at
-//     the LOCAL 7-decimal scale (always exactly 10×, all 13,651 pairs on
-//     r1 2026-07-30) and is therefore excluded from flow sums entirely
+//     the LOCAL 7-decimal scale (exactly 10× on all 13,651 pairs measured
+//     on r1) and is therefore excluded from flow sums entirely
 //     (see protocol_bespoke_cctp.go);
 //   - rozo_events.amount is LOCAL 7-decimal SAC stroops (event and SAC
 //     transfer byte-identical: 2,500,000).
@@ -148,13 +148,13 @@ const completeDayCutoffSQL = `date_trunc('day', now())`
 
 // completeDaysOnly returns a WHERE-clause fragment (leading " AND ") that
 // excludes the current, still-accumulating day from a DAILY-grain series —
-// the UXP-16 "phantom cliff" class (audit 2026-07-31): today's partial
-// bucket renders as a plummeting final point on every daily chart,
-// indistinguishable from a real activity collapse. Empty at the 24h
-// window, whose HOURLY grain keeps its live edge (a partial current hour
-// reads as "now", not as a cliff). col is a code-owned column name, never
-// request input. Applies to the POINT-producing scan only — top-N ranking
-// CTEs may keep the live day (selection, not display).
+// the "phantom cliff" class: today's partial bucket renders as a plummeting
+// final point on every daily chart, indistinguishable from a real activity
+// collapse. Empty at the 24h window, whose HOURLY grain keeps its live edge
+// (a partial current hour reads as "now", not as a cliff). col is a
+// code-owned column name, never request input. Applies to the
+// POINT-producing scan only — top-N ranking CTEs may keep the live day
+// (selection, not display).
 func completeDaysOnly(windowDays int, col string) string {
 	if windowDays == 1 {
 		return ""
@@ -281,8 +281,7 @@ func (s *Store) dexSourceAugments(ctx context.Context, blk *BespokeBlock, source
 // contributes 0" honesty on the volume side).
 //
 // Empty-safe: a no-op when no reserves have been captured, so the block
-// renders cleanly with just the volume KPIs (r1 captures no reserves until
-// the reserves decoder deploys).
+// renders cleanly with just the volume KPIs.
 func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	pools, err := s.LatestAquariusReserves(ctx, windowDays)
 	if err != nil {
@@ -357,9 +356,8 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 }
 
 // aquariusRewardsBlocks augments the Aquarius DEX block with the rewards-
-// gauge / governance surface added in v0.12 (aquarius_rewards_events,
-// migration 0099; aquarius_admin, migration 0100) — full-history
-// backfilled on r1 (7.3M+ events) but previously served nowhere. Adds:
+// gauge / governance surface (aquarius_rewards_events, migration 0099;
+// aquarius_admin, migration 0100). Adds:
 //
 //   - lifetime + windowed KPIs: total rewards-gauge events (lifetime), 30d
 //     claim_reward count/distinct claimants (+ volume when a single reward
@@ -534,13 +532,13 @@ func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) 
 //
 // Depth here is a WINDOW net flow (added − removed over the window), NOT an
 // absolute reserve or USD TVL — Comet emits no post-state reserve snapshot
-// and has no published price. Comet is now contract-identity gated (curated
-// one-pool allowlist, 2026-07-08 — CS-026 closed): the decoder's Matches()
-// requires the emitting contract to be in comet.MainnetGatedSet, so a
-// look-alike Balancer-v1 deployment can no longer land NEW rows here. Rows
-// captured before the gate shipped were written by the prior topic-only-
-// match decoder and are not retroactively re-verified, so historical rows
-// may predate the gate. Both caveats are appended as Notes.
+// and has no published price. Comet is contract-identity gated (curated
+// one-pool allowlist): the decoder's Matches() requires the emitting
+// contract to be in comet.MainnetGatedSet, so a look-alike Balancer-v1
+// deployment cannot land NEW rows here. Rows captured before the gate were
+// written by a topic-only-match decoder and are not retroactively
+// re-verified, so historical rows may predate the gate. Both caveats are
+// appended as Notes.
 //
 // Empty-safe: a no-op when no liquidity events were captured, so the block
 // renders cleanly with just the volume KPIs.
@@ -611,9 +609,8 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 // Depth here is a WINDOW net flow (provide − withdraw over the window), NOT
 // an absolute reserve or USD TVL — Phoenix pool events carry the moved
 // amounts, not post-state reserves, and Phoenix has no published price.
-// Phoenix IS contract-identity gated (the curated-set gate, 2026-07-02 —
-// earlier than Comet's 2026-07-08 gate), so unlike Comet there is no
-// historical-rows-may-predate-the-gate caveat here.
+// Phoenix IS contract-identity gated (curated set, gated before Comet), so
+// unlike Comet it needs no historical-rows-may-predate-the-gate caveat.
 //
 // Empty-safe: a no-op when no liquidity events were captured, so the block
 // renders cleanly with just the volume KPIs.
@@ -782,13 +779,13 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 // net-position table, the per-pool activity table, and the daily
 // position-event series.
 //
-// COUNT-first (audit 2026-07-31, aligning with the bespoke_lending.go
-// visual-suite rationale): blend_positions rows mix many tokens at
-// per-asset decimals with no USD valuation at this layer, so the old
-// headline "Net supplied/borrowed" KPIs — token_amount summed ACROSS
-// assets — and the per-pool cross-asset sums + their "Util %" ratio were
-// meaningless numbers with authoritative labels. Amount sums survive only
-// where scoped to a single asset (the per-asset table).
+// COUNT-first (the bespoke_lending.go visual-suite rationale):
+// blend_positions rows mix many tokens at per-asset decimals with no
+// USD valuation at this layer, so a headline "Net supplied/borrowed"
+// KPI — token_amount summed ACROSS assets — or per-pool cross-asset
+// sums with a "Util %" ratio would be meaningless numbers with
+// authoritative labels. Amount sums survive only where scoped to a
+// single asset (the per-asset table).
 func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	var users, flashLoans string
 	err := s.db.QueryRowContext(ctx, `

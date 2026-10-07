@@ -41,7 +41,7 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 	// ORDER BY on the DISTINCT queries below makes the LIMIT
 	// deterministic: without it, which (pool, token) pairs survive a
 	// limit overflow is plan-dependent — a pool could silently lose part
-	// of its token set with no error (review 2026-07-08, finding 4).
+	// of its token set with no error.
 	case "comet":
 		return s.groupedPoolTokens(ctx, "comet", `
 			SELECT DISTINCT contract_id, token

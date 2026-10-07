@@ -9,9 +9,8 @@ import (
 )
 
 // SACBalanceSeedSource discriminates which ClickHouse reader produced a
-// [SACBalanceSeedProvenance] row (migration 0102). See
-// docs/architecture/supply-pipeline.md "Dormant contract-held SAC
-// balances" for the full incident 2026-07-06 background.
+// [SACBalanceSeedProvenance] row (migration 0102). Background:
+// docs/architecture/supply-pipeline.md "Dormant contract-held SAC balances".
 type SACBalanceSeedSource string
 
 const (

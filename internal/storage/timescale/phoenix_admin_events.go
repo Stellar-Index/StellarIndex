@@ -34,7 +34,7 @@ type PhoenixAdminEvent struct {
 
 // InsertPhoenixAdmin lands one admin-rotation event, idempotent on the
 // (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK
-// with the INV-3 generation-guarded corrective upsert (migration 0110).
+// with the generation-guarded corrective upsert (migration 0110).
 //
 // Defensive: rejects an empty Pool / TxHash, a zero LedgerCloseTime, and
 // an AdminAction outside the closed set.

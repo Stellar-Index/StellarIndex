@@ -18,13 +18,12 @@ import (
 // An UPDATE into a COMPRESSED Timescale chunk is serviced by
 // decompressing it inside the transaction, and none of the restamp's
 // join clauses can become a scan key on a `segmentby` / `orderby`
-// column, so what gets decompressed is the WHOLE chunk. Measured on
-// production 2026-09-03 running `usd-volume-restamp -tier xlm-base
-// -write` over [2026-01-01, 2026-07-21]: all 90 `trades` chunks in the
-// window were compressed (policy: compress_after 7 days), one 2,000-row
-// batch took over 14 minutes, and the run sustained ~1,574 rows/min
-// against a 28.6M-row write set — a 12-day job. The dry run is
-// read-only and never showed it.
+// column, so what gets decompressed is the WHOLE chunk. Measured on r1
+// running `usd-volume-restamp -tier xlm-base -write` over a ~6.7-month
+// window: all 90 `trades` chunks in the window were compressed (policy:
+// compress_after 7 days), one 2,000-row batch took over 14 minutes, and
+// the run sustained ~1,574 rows/min against a 28.6M-row write set — a
+// 12-day job. The dry run is read-only and never showed it.
 //
 // Escaping that needs BOTH halves. This file is one of them; the other
 // is the statement's own `ts` bound, without which the UPDATE names the
@@ -147,14 +146,14 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 
 // ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
-// PRODUCTION INCIDENT 2026-09-10, 00:12–00:31 UTC (r1). A deploy restarted
-// stellarindex-aggregator; its cold-start VWAP alias-map aggregation
-// spilled to disk (wait_event = IO/BufFileRead) and held AccessShareLock
-// on `trades` for 18+ minutes. A `usd-volume-restamp -chunks` run was
-// mid-window and its decompress_chunk asked for AccessExclusiveLock on a
-// chunk of that hypertable. It could not have it, so it QUEUED — and a
-// pending exclusive request is not a private wait: PostgreSQL puts every
-// LATER request for that object behind it, however trivial and however
+// THE MEASURED CASE (r1). A deploy restarted stellarindex-aggregator;
+// its cold-start VWAP alias-map aggregation spilled to disk (wait_event
+// = IO/BufFileRead) and held AccessShareLock on `trades` for 18+
+// minutes. A `usd-volume-restamp -chunks` run was mid-window and its
+// decompress_chunk asked for AccessExclusiveLock on a chunk of that
+// hypertable. It could not have it, so it QUEUED — and a pending
+// exclusive request is not a private wait: PostgreSQL puts every LATER
+// request for that object behind it, however trivial and however
 // compatible with the lock actually held. The measured pile-up:
 //
 //	decompress_chunk (restamp)      blocked 1,984 s
@@ -170,8 +169,7 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 // SELECT was cancelled by hand. Seven aggregator restarts in the preceding
 // 14 hours did NOT jam, so a restart is not the trigger: the COLLISION of
 // a heavy cold-start read with a restamp's decompress/compress phase is,
-// and it recurs for as long as r1 is kept saturated with restamps while
-// deploys continue.
+// and it can recur whenever restamps run beside deploys.
 //
 // WHAT THE 5 s BOUND COVERS. `SET LOCAL lock_timeout` covers EVERY lock
 // request in the attempt's transaction, not only the first. On TimescaleDB
@@ -234,7 +232,7 @@ var (
 	// 15 s request timeout and the exporter's 30 s scrape timeout, and four
 	// orders of magnitude above what taking an uncontended lock costs.
 	//
-	// drain: the 2026-09-10 convoy drained in under 20 s once its head was
+	// drain: the measured convoy drained in under 20 s once its head was
 	// removed; 15 s of clear air per 5 s of asking keeps the drain ahead
 	// of the ask.
 	//
@@ -354,8 +352,8 @@ func (t *lockTally) String() string {
 // own transaction with every lock request bounded at p.wait, retrying
 // for as long as the ONLY thing that failed was a lock request and the
 // policy allows it. Any other error is returned on the spot — a retry
-// loop that swallowed, say, an out-of-disk compress would be a worse bug
-// than the one this fixes. `live` is the caller's own context: once it is
+// loop that swallowed, say, an out-of-disk compress would be worse than
+// the lock convoy it avoids. `live` is the caller's own context: once it is
 // done, no retry that would repeat work starts.
 func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
 	clk := s.lockClock

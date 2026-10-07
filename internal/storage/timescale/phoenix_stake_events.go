@@ -21,10 +21,9 @@ const (
 	PhoenixBond   PhoenixStakeAction = "bond"
 	PhoenixUnbond PhoenixStakeAction = "unbond"
 	// PhoenixWithdrawRewards / PhoenixDistributeRewards — the stake
-	// contract's reward-claim surface (ROADMAP #89 residual, migration
-	// 0097). Neither carries an amount on the wire (see
-	// internal/sources/phoenix/events.go); distribute_rewards is
-	// pool-wide and carries no user either.
+	// contract's reward-claim surface (migration 0097). Neither carries
+	// an amount on the wire (see internal/sources/phoenix/events.go);
+	// distribute_rewards is pool-wide and carries no user either.
 	PhoenixWithdrawRewards   PhoenixStakeAction = "withdraw_rewards"
 	PhoenixDistributeRewards PhoenixStakeAction = "distribute_rewards"
 	// Stake-contract lifecycle (migration 0195): a reward flow opened for
@@ -87,7 +86,7 @@ type PhoenixStakeEvent struct {
 	OpIndex       uint32
 	// EventIndex is the first field-event's in-op index — the per-event
 	// discriminator added to the phoenix_stake_events PK by migration
-	// 0060 (F-1324) so two bonds/unbonds in one op don't collide.
+	// 0060 so two bonds/unbonds in one op don't collide.
 	EventIndex uint32
 	Action     PhoenixStakeAction
 	User       string
@@ -97,14 +96,13 @@ type PhoenixStakeEvent struct {
 
 // InsertPhoenixStakeEvent appends one phoenix_stake_events row,
 // idempotent on the (ledger_close_time, stake_contract, ledger,
-// tx_hash, op_index, action, event_index) PK (event_index added by
-// migration 0060 / F-1324 so two bonds/unbonds in one op don't
-// collide). Re-running the indexer over the same range or replaying a
-// backfill writes the same rows. The upsert is generation-guarded DO
-// UPDATE (INV-3), NOT the DO NOTHING this comment used to claim: a
-// replay at the SAME generation is still a no-op, but a re-derive at a
-// higher generation now lands its correction instead of being
-// discarded.
+// tx_hash, op_index, action, event_index) PK (event_index, from
+// migration 0060, keeps two bonds/unbonds in one op from colliding).
+// Re-running the indexer over the same range or replaying a
+// backfill writes the same rows. The upsert is a generation-guarded
+// DO UPDATE, not DO NOTHING: a replay at the SAME generation is a
+// no-op, but a re-derive at a higher generation lands its
+// correction instead of being discarded.
 //
 // Defensive: rejects empty StakeContract / TxHash and an invalid Action
 // before touching the DB. User is required unless the action is
@@ -134,10 +132,10 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 			e.StakeContract, e.TxHash)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the staked `amount` (or user_addr / lp_token)
 	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it. Replaces the old DO NOTHING no-op.
+	// replay can never revert it.
 	const q = `
         INSERT INTO phoenix_stake_events (
             stake_contract, ledger, ledger_close_time, tx_hash, op_index,

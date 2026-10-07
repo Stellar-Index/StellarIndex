@@ -10,11 +10,11 @@ import (
 // every served protocol table, each leg labelled with the logical
 // source name the API's protocol registry uses.
 //
-// Since the 2026-07-06 latency fix (78dff337b) this no longer runs inline on
-// the request path — the aggregator's protoeventsrollup worker runs it
-// on a slow cadence via [Store.RefreshProtocolEventCounts] and folds
-// the result into the protocol_events_24h rollup (migration 0086), and
-// the handler reads that keyed-on-PK table via CountRecentEventsBySource.
+// It runs off the request path: the aggregator's protoeventsrollup
+// worker runs it on a slow cadence via [Store.RefreshProtocolEventCounts]
+// and folds the result into the protocol_events_24h rollup (migration
+// 0086), and the handler reads that keyed-on-PK table via
+// CountRecentEventsBySource.
 //
 // Legs and their timestamp columns (verified against migrations/):
 //
@@ -157,17 +157,16 @@ const readProtocolEventsRollup = `SELECT source, events_24h FROM protocol_events
 
 // CountRecentEventsBySource returns the trailing-24h decoded-event
 // count per logical source name, read from the protocol_events_24h
-// rollup (migration 0086, 78dff337b). Multi-table sources (blend, phoenix,
+// rollup (migration 0086). Multi-table sources (blend, phoenix,
 // comet, soroswap) are summed across their tables by the worker, so
 // the caller gets one number per source. The map also carries trades'
 // off-chain sources (binance, kraken, …); protocol-scoped callers
 // simply ignore the extra keys.
 //
-// Before the 2026-07-06 latency fix this ran `countRecentEventsQuery`
-// — a UNION ALL count(*) over ~17 hypertables — inline per request;
-// it is now a keyed-on-PK read. Empty rollup (aggregator worker has
-// not run yet) → empty map → every protocol reads 0 (safe
-// degradation, same posture as change_summary_5m).
+// This is a keyed-on-PK read; `countRecentEventsQuery`, a UNION ALL
+// count(*) over ~17 hypertables, runs only in the worker. Empty rollup
+// (aggregator worker has not run yet) → empty map → every protocol
+// reads 0 (safe degradation, same posture as change_summary_5m).
 func (s *Store) CountRecentEventsBySource(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx, readProtocolEventsRollup)
 	if err != nil {

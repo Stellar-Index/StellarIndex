@@ -43,7 +43,7 @@ type RozoEvent struct {
 	OpIndex    uint32
 	// EventIndex is the position of this event within its operation's
 	// contract-event list — the migration-0112 PK discriminator that keeps
-	// two same-type events emitted by one op from collapsing (C2-13a).
+	// two same-type events emitted by one op from collapsing.
 	EventIndex  uint32
 	ObservedAt  time.Time
 	EventType   RozoEventType
@@ -64,8 +64,8 @@ type RozoEvent struct {
 // (contract_id, ledger, tx_hash, op_index, event_type, ts) PK.
 // Re-running the indexer or a backfill over the same range writes
 // the same rows; ON CONFLICT DO UPDATE guarded by derive_generation
-// (INV-3 / migration 0110) corrects the row in place on a higher-or-
-// equal-generation replay and no-ops a stale lower-generation one.
+// (migration 0110) corrects the row in place on a higher-or-equal-
+// generation replay and no-ops a stale lower-generation one.
 //
 // Defensive: rejects empty ContractID / TxHash / Destination, an
 // invalid EventType, and an empty Amount (the column is NOT NULL)
@@ -87,14 +87,14 @@ func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 		return fmt.Errorf("timescale: InsertRozoEvent: Amount is empty (contract=%s tx=%s)", e.ContractID, e.TxHash)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the payment `amount` (or destination / from /
-	// memo / token) lands in place when its generation is >= the stored one;
-	// a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
-	// event_index ($13) is in the INSERT column list AND the ON CONFLICT
-	// target (migration 0112, C2-13a): two same-type events emitted by one
-	// op differ only in event_index, so it MUST be part of the conflict key
-	// or the second row collapses onto the first.
+	// Generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the payment `amount` (or destination /
+	// from / memo / token) lands in place when its generation is >= the
+	// stored one; a live gen-0 replay can never revert it. event_index
+	// ($13) is in the INSERT column list AND the ON CONFLICT target
+	// (migration 0112): two same-type events emitted by one op differ
+	// only in event_index, so it MUST be part of the conflict key or
+	// the second row collapses onto the first.
 	const q = `
         INSERT INTO rozo_events (
             contract_id, ledger, tx_hash, op_index, ts,

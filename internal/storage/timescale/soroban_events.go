@@ -60,7 +60,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 
 	// Build the multi-row VALUES clause + arg slice. 16 columns ×
 	// N rows. topics_xdr (migration 0114) carries the COMPLETE ordered
-	// topic list; topic_0..3 stay populated for back-compat (C2-11).
+	// topic list; topic_0..3 stay populated for back-compat.
 	const cols = 16
 	var sb strings.Builder
 	sb.WriteString(`
@@ -88,7 +88,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 		r := &rows[i]
 		// A nil [][]byte encodes (via pgx) to SQL NULL, which
 		// the NOT NULL topics_xdr column (migration 0114) rejects. A
-		// row built without the full list (e.g. a legacy topic_0..3-only
+		// row built without the full list (e.g. an older topic_0..3-only
 		// constructor) writes an empty '{}' array instead, so the reader
 		// falls back to topic_0..3; the live Capture path always
 		// populates TopicsXDR (>=1 topic).
@@ -338,18 +338,18 @@ type LedgerGap struct {
 // "is the data we should have actually in the table" (reality).
 //
 // The two diverge under failure modes the cursor inventory can't
-// see — the F-0020 cascade-window soroban_events writer halt being
-// the canonical example: cursors recorded "advanced past this
-// ledger" but the writer's sink had back-pressured to a stop, so
-// no rows landed. The honest signal of that failure is the gap in
-// distinct-ledger coverage, not the cursor record.
+// see — a cascade-window soroban_events writer halt is the
+// canonical example: cursors record "advanced past this ledger" but
+// the writer's sink has back-pressured to a stop, so no rows land.
+// The honest signal of that failure is the gap in distinct-ledger
+// coverage, not the cursor record.
 //
 // minGapSize filters out the expected event-free gaps (Soroban
 // activity is dense but not gap-free — many blocks emit no events).
 // Operator-facing usage typically sets minGapSize to ~1000 to
 // surface only structurally-significant gaps (a few seconds of
 // no-Soroban-activity at the network level is common; ~1.5 h of
-// it is the F-0020 cascade signature).
+// it is a writer-halt cascade's signature).
 //
 // Implementation uses the LAG() window-function pattern: order
 // distinct ledgers, compare each row to its predecessor, emit a

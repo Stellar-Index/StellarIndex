@@ -113,13 +113,13 @@ const pricelessTradeLegs = `(
 // on every Soroban AMM (aquarius, soroswap, phoenix, comet,
 // sushiswap_v3) the resting side is the POOL — a venue every trade of
 // that market shares, not an independent economic actor — so those rows
-// carry a taker and a NULL maker (r1 2026-09-19: 100% of the rows of
+// carry a taker and a NULL maker (measured on r1: 100% of the rows of
 // all five AMM sources, 27.8k in 24h). Requiring both columns non-NULL
 // in the numerator while the vol7d denominator took every row measured
 // the two over DIFFERENT populations: the share of an AMM-only asset
 // was 0 by construction, so the wash exclusion could never fire for it
 // and a farm painting volume on an AMM self-selected straight into the
-// alert (r1 2026-09-19: two AMM-only assets above the $10k popularity
+// alert (measured on r1: two AMM-only assets above the $10k popularity
 // floor at 0.95 / 0.9999 single-taker concentration, both reading 0).
 // The key therefore DEGENERATES to the one known account when a side is
 // unknown — for an AMM, "one wallet swapping back and forth through the
@@ -132,8 +132,8 @@ const pricelessTradeLegs = `(
 // silently suppressing a gap it cannot measure. attributed_vol_share
 // reports how much of the asset's volume the share was measured over.
 //
-// COST: widening the population costs this leg ~14s on r1 (EXPLAIN
-// ANALYZE 2026-09-19: 6.6s -> 20.7s over the same 7d scan). The rows
+// COST: widening the population cost this leg ~14s on r1 (EXPLAIN
+// ANALYZE measured 6.6s -> 20.7s over the same 7d scan). The rows
 // read are unchanged; the planner declines to parallelise the wider
 // aggregate. That keeps a full sweep around 70s, well inside
 // DefaultSweepTimeout (5 min) and the 10-minute cadence.
@@ -256,8 +256,8 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 // GROUP BY asset_id over prices_1m (SUM(volume_usd), COUNT(DISTINCT
 // bucket), MIN/MAX(bucket)): the same three floors one_hop's `priced` CTE
 // applies below. priced_direct shares this HAVING clause so its "is this
-// asset priced?" answer cannot drift from one_hop's — a single unqualified
-// prices_1m row used to count directly without it (GH-942).
+// asset priced?" answer cannot drift from one_hop's — without it a single
+// unqualified prices_1m row would count as directly priced.
 const substanceFloorHaving = `SUM(volume_usd) >= 1000                                   -- pricingguard DefaultSubstanceMinVolumeUSD
      AND COUNT(DISTINCT bucket) >= 20                          -- pricingguard DefaultSubstanceMinBuckets
      AND EXTRACT(EPOCH FROM (MAX(bucket) - MIN(bucket))) >= 21600 -- pricingguard DefaultSubstanceMinSpan (6h)`

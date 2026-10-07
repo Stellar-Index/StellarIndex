@@ -36,34 +36,32 @@ type Store struct {
 	// usdVolumeFXResolver, when non-nil, is consulted by
 	// [InsertTrade] AFTER [usdVolumeQuoteSpec] has rejected the
 	// trade — i.e. the on-chain quote isn't on the operator's
-	// USD-pegged list, so Phase 1 returns NULL. [InsertTrade] first
-	// asks the resolver for the QUOTE asset's USD rate (typically
-	// sourced from the aggregator's `<asset>/<USD>` VWAP) and
-	// multiplies through quote_amount to land a non-NULL
-	// `usd_volume` per L2.2 Phase 2; when that also declines (the
-	// quote is a pure-Soroban SEP-41 token with no USD-pegged
-	// market), it asks the SAME resolver for XLM's own USD rate and
-	// multiplies through base_amount instead — the L7.6 XLM-base
-	// anchor, for pools that store TOKEN-in-XLM as base=XLM,
-	// quote=TOKEN. See [tradeUSDVolumeViaFX] /
-	// [usdVolumeViaXLMBaseAnchor].
+	// USD-pegged list, so the quote-spec tier returns NULL.
+	// [InsertTrade] first asks the resolver for the QUOTE asset's USD
+	// rate (typically sourced from the aggregator's `<asset>/<USD>`
+	// VWAP) and multiplies through quote_amount to land a non-NULL
+	// `usd_volume`; when that also declines (the quote is a
+	// pure-Soroban SEP-41 token with no USD-pegged market), it asks the
+	// SAME resolver for XLM's own USD rate and multiplies through
+	// base_amount instead — the XLM-base anchor, for pools that store
+	// TOKEN-in-XLM as base=XLM, quote=TOKEN. See [tradeUSDVolumeViaFX]
+	// / [usdVolumeViaXLMBaseAnchor].
 	//
-	// Nil keeps the L2.2 Phase 1 behaviour exactly: only off-chain
+	// Nil keeps the quote-spec tier's behaviour exactly: only off-chain
 	// CEX/FX + operator-allow-listed on-chain DEX trades get a
 	// non-NULL `usd_volume`. Set via [SetUSDVolumeFXResolver] after
 	// [Open]; safe to leave unset for tests, ops binary, and any
-	// deployment that hasn't enabled Phase 2.
+	// deployment that hasn't enabled the FX resolver.
 	usdVolumeFXResolver USDVolumeFXResolver
 
 	// deriveGeneration is the re-derive generation stamped into the
 	// `derive_generation` column (migration 0109) by every row the
 	// derived-value writers — [InsertTrade], [BatchInsertTrades],
 	// [InsertOracleUpdate], [InsertSupply] — write. It is the schema
-	// half of the INV-3 re-derive-trap fix (audit-2026-07-16 M1): those
-	// writers now DO UPDATE the value columns in place on conflict
-	// (guarded by `derive_generation <= EXCLUDED.derive_generation`)
-	// instead of the old `DO NOTHING` no-op, so a corrected re-derive
-	// lands without a destructive DELETE + re-backfill.
+	// half of the re-derive guard: those writers DO UPDATE the value
+	// columns in place on conflict (guarded by `derive_generation <=
+	// EXCLUDED.derive_generation`) rather than DO NOTHING, so a corrected
+	// re-derive lands without a destructive DELETE + re-backfill.
 	//
 	// It defaults to 0 — the LIVE-ingest generation. A re-derive entry
 	// point (stellarindex-ops backfill / ch-rebuild / projected-rebuild /
@@ -78,24 +76,22 @@ type Store struct {
 	// no-pegs deployment installs none but still counts). It is the signal
 	// [Store.reDeriveNullVolumeGuard] uses to fail trade writes closed when a re-derive
 	// entry point stamps a generation but forgets to enter USD-volume-resolution
-	// mode (A-CRIT-1). Set only by InstallUSDVolumeResolution.
+	// mode. Set only by InstallUSDVolumeResolution.
 	usdVolumeResolutionInstalled bool
 
 	// assetRegistryDedupe is this Store's cache of (asset_id →
 	// last successful classic_assets upsert time). The next trade
 	// for the same asset within `assetRegistryDedupeTTL` skips the
 	// DB round-trip; trades outside the window upsert again so
-	// `last_seen_*` + `observation_count` advance. F-1243 (codex
-	// audit-2026-05-12).
+	// `last_seen_*` + `observation_count` advance.
 	//
 	// Per-Store (one DB), not per-process: asset_id is only unique
-	// within a database, and a process-wide map let a second Store
-	// over a different DB inherit "already upserted" for rows that
-	// DB never received (2026-08-28 TestAssetsReader flake). Store-
-	// lifetime is otherwise intentional: the indexer restarts often
-	// enough to re-touch rows, the upsert is idempotent, and the TTL
-	// bounds the worst-case load — a cross-process cache would be
-	// over-engineering.
+	// within a database, and a process-wide map would let a second Store
+	// over a different DB inherit "already upserted" for rows that DB
+	// never received. Store-lifetime is otherwise intentional: the
+	// indexer restarts often enough to re-touch rows, the upsert is
+	// idempotent, and the TTL bounds the worst-case load — a
+	// cross-process cache would be over-engineering.
 	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
 
 	// assetRegistryMinLedger is the lowest first ledger upserted per asset
@@ -109,11 +105,11 @@ type Store struct {
 	issuerRegistryDedupe sync.Map // key: g_strkey (string) → struct{}
 
 	// classicWatermark memoizes the classic-supply observer watermark
-	// read by [Store.MinClassicComponentLedger] (CS-102). The watermark
-	// is a property of the four OBSERVERS, not of any one asset, so it
-	// is identical for every asset in a refresh tick — recomputing it
-	// per asset made a 48-asset tick take minutes (four MAX(ledger)
-	// scans across every hypertable chunk, 48 times over).
+	// read by [Store.MinClassicComponentLedger]. The watermark is a
+	// property of the four OBSERVERS, not of any one asset, so it is
+	// identical for every asset in a refresh tick — recomputing it per
+	// asset made a 48-asset tick take minutes (four MAX(ledger) scans
+	// across every hypertable chunk, 48 times over).
 	//
 	// Cached for [classicWatermarkTTL], which is far shorter than the
 	// 1000-ledger (~85 min) staleness threshold it feeds, so the cache
@@ -132,17 +128,16 @@ type Store struct {
 // on-chain trades. Safe to call once at startup; not safe to call
 // concurrently with InsertTrade.
 //
-// nil clears the spec — InsertTrade reverts to off-chain-only
-// behaviour (the L2.2 pre-Phase-1 default).
+// nil clears the spec — InsertTrade reverts to off-chain-only behaviour.
 func (s *Store) SetUSDVolumeQuoteSpec(spec *USDVolumeQuoteSpec) {
 	s.usdVolumeQuoteSpec = spec
 }
 
-// SetUSDVolumeFXResolver installs the FX-resolver path for
-// L2.2 Phase 2 on-chain USD-volume coverage. nil clears it.
+// SetUSDVolumeFXResolver installs the FX-resolver path for on-chain
+// USD-volume coverage. nil clears it.
 //
 // Safe to call once at startup; not safe to call concurrently with
-// InsertTrade. The resolver is consulted only when Phase 1
+// InsertTrade. The resolver is consulted only when the quote-spec tier
 // (USDVolumeQuoteSpec) declines the trade — see [tradeUSDVolume].
 func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 	s.usdVolumeFXResolver = r
@@ -156,8 +151,7 @@ func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 // guard (`derive_generation <= EXCLUDED.derive_generation`) and can never
 // be reverted by a live gen-0 replay. The ops re-derive entry points pass
 // time.Now().Unix() — always positive and monotonic across runs, so a
-// later re-derive supersedes an earlier one. This is the INV-3 re-derive-
-// trap fix (audit-2026-07-16 M1).
+// later re-derive supersedes an earlier one.
 //
 // Safe to call once at startup; not safe to call concurrently with the
 // writers.
@@ -167,18 +161,16 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 
 // reDeriveNullVolumeGuard fails the trade-write choke point CLOSED when the store
 // is in re-derive mode (deriveGeneration > 0) but the USD-volume resolvers were
-// never installed. A-CRIT-1 (audit-2026-07-24): a positive generation makes every
-// written trade WIN the ON CONFLICT guard, so InsertTrade/BatchInsertTrades assign
-// `usd_volume = EXCLUDED.usd_volume`; with no resolver installed, tradeUSDVolume
-// returns nil for every on-chain DEX / FX-priced trade, silently overwriting the
-// correct stored usd_volume with NULL — and because the row now carries a high
-// generation, a later live gen-0 replay can NEVER restore it. Two ops entry points
-// (projected-rebuild and the main on-chain backfill) shipped exactly this
-// destructive combination. Rather than trust every present and future re-derive
-// tool to remember InstallUSDVolumeResolution, this makes the combination
-// unrepresentable: any trade write in re-derive mode without resolvers fails loudly
-// at the first row. Live ingest (generation == 0) and non-trade re-derives (which
-// never call InsertTrade/BatchInsertTrades) are unaffected.
+// never installed. A positive generation makes every written trade WIN the ON
+// CONFLICT guard, so InsertTrade/BatchInsertTrades assign `usd_volume =
+// EXCLUDED.usd_volume`; with no resolver installed, tradeUSDVolume returns nil
+// for every on-chain DEX / FX-priced trade, silently overwriting the correct
+// stored usd_volume with NULL — and because the row now carries a high
+// generation, a later live gen-0 replay can NEVER restore it. Rather than trust
+// every re-derive tool, present and future, to call InstallUSDVolumeResolution,
+// this makes the combination unrepresentable: any trade write in re-derive mode
+// without resolvers fails loudly at the first row. Live ingest (generation == 0)
+// and non-trade re-derives (no InsertTrade/BatchInsertTrades call) are unaffected.
 // It is deliberately PRECISE rather than blanket: it fires only when this
 // trade's usd_volume actually resolved to NULL *and* resolution was never
 // wired. A blanket "re-derive without Install ⇒ refuse" is wrong, because
@@ -222,9 +214,8 @@ func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*strin
 }
 
 // Pool-tuning constants. Exposed so [store_test.go] can assert
-// configurePool actually set them, and so operators reading the
-// audit register (F-0151) can see the live values without grepping
-// the function body.
+// configurePool actually set them, and so operators can see the live
+// values without grepping the function body.
 //
 // See [configurePool] for the rationale on each value.
 const (
@@ -237,12 +228,11 @@ const (
 	PoolMaxIdleConns = 5
 	// PoolConnMaxLifetime is the full re-dial ceiling — every conn
 	// is retired this often regardless of liveness. This is the
-	// resilience net behind F-0151: the 2026-05-26 cascade left
-	// dead conns in the pool for ~14 h after the underlying
-	// postgres@15-main crashed and recovered, because nothing
-	// forced them to refresh. 30 min beats Patroni's typical
-	// rolling-restart interval AND bounds the longest cascade-gap
-	// to that interval.
+	// resilience net: without it, dead conns stayed in the pool for
+	// ~14 h after the underlying postgres@15-main crashed and
+	// recovered, because nothing forced them to refresh. 30 min beats
+	// Patroni's typical rolling-restart interval AND bounds the longest
+	// cascade-gap to that interval.
 	PoolConnMaxLifetime = 30 * time.Minute
 	// PoolConnMaxIdleTime bounds the window where an idle conn the
 	// DB-side has already killed (pg_terminate_backend, firewall
@@ -256,11 +246,10 @@ const (
 // opened *sql.DB. Extracted so [store_test.go] can verify the
 // settings without booting a real postgres.
 //
-// F-0151 (2026-05-27 audit) drove the explicit constant naming +
-// extraction: the previous inline magic-numbers shipped correct
-// values but were invisible to anything except a reader of this
-// file, so a future refactor could silently drop them and the
-// connection-pool resilience would regress unnoticed.
+// The constants are named and extracted because inline magic numbers
+// are invisible to anything except a reader of this file, so a future
+// refactor could silently drop them and the connection-pool
+// resilience would regress unnoticed.
 func configurePool(db *sql.DB) {
 	db.SetMaxOpenConns(PoolMaxOpenConns)
 	db.SetMaxIdleConns(PoolMaxIdleConns)
@@ -273,9 +262,8 @@ func configurePool(db *sql.DB) {
 //
 // Pool tuning is applied via [configurePool] — see those constants
 // for the per-setting rationale. Net effect: every conn is retired
-// at most every [PoolConnMaxLifetime], which is the resilience
-// safety-net behind F-0151 (the 2026-05-26 cascade left dead
-// conns in the pool for ~14 h after postgres@15-main recovered).
+// at most every [PoolConnMaxLifetime], the safety net against dead
+// conns lingering in the pool after postgres crashes and recovers.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := sessionConnConfig(dsn)
 	if err != nil {

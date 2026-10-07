@@ -26,8 +26,8 @@ type TopicSample struct {
 
 // distinctTopicSampleWindow bounds how far back (wall-clock) the cheap
 // PHASE-1 scan looks for a representative event per (contract_id,
-// topic_0_sym) shape. Mirrors the 2026-07-06 gap-detector IO-saturation
-// fix (computeGapScanWindow, gap_detector.go): recognition only needs
+// topic_0_sym) shape. Mirrors the gap detector's trailing-window bound
+// (computeGapScanWindow, gap_detector.go): recognition only needs
 // ONE example event per shape to test against a decoder's Matches() —
 // an event from yesterday recognizes exactly as well as one from years
 // ago — so scanning the FULL requested [from,to] range (which, for
@@ -35,10 +35,9 @@ type TopicSample struct {
 // to pick one representative row per shape is pure wasted IO.
 //
 // Once sep41_transfers' CAP-67 unified-event firehose reached
-// full-history depth (2026-07-11 truncate+re-derive), an operator's
-// non-`-ch` `compute-completeness` run walked the old unbounded query
-// for 2h before being cancelled — the same failure mode the gap
-// detector hit against the SAME table's growth on 2026-07-06.
+// full-history depth, a non-`-ch` `compute-completeness` run over an
+// unbounded scan here ran 2h before being cancelled — the failure mode
+// the gap detector hit against the SAME table's growth.
 //
 // Deep, full-Soroban-era-history recognition coverage is NOT this
 // window's job: the `-ch` ClickHouse recognition path
@@ -67,10 +66,10 @@ const distinctTopicSampleWindow = 30 * 24 * time.Hour
 // bloom-pruned fallback recovers any shape whose only activity predates
 // the window — without ever reading the wide XDR/body columns across
 // full history (that wide-column full-history read, not row count
-// alone, is what made the old query take 2h once soroban_events reached
-// 357GB / ~3.56B rows — see r1 EXPLAIN evidence in the fix's commit).
+// alone, is what took an unbounded query 2h with soroban_events at
+// 357GB / ~3.56B rows on r1).
 //
-// COVERAGE LIMIT (DOC-06). This Postgres path is NOT a complete
+// COVERAGE LIMIT. This Postgres path is NOT a complete
 // recognition audit, in TWO ways a caller must not conflate with
 // "no gaps found":
 //
@@ -117,17 +116,17 @@ func (s *Store) distinctSorobanTopicSamplesAt(ctx context.Context, from, to uint
 	// stopped emitting, or a rare historic shape the trailing window
 	// missed. Reads ONLY the narrow composite index
 	// (soroban_events_contract_topic_idx: contract_id, topic_0_sym),
-	// never the wide XDR/body columns — r1's planner (2026-07-11, 357GB
-	// / ~3.56B rows) confirms an Index Only Scan per uncompressed chunk
+	// never the wide XDR/body columns — r1's planner (at 357GB / ~3.56B
+	// rows) confirmed an Index Only Scan per uncompressed chunk
 	// and a bloom-filter-pruned Custom Scan (ColumnarScan) per compressed
 	// chunk (TimescaleDB's per-segment min/max + bloom metadata), NOT a
 	// heap fetch of any wide column. This is still O(rows) — Postgres
 	// has no native loose/skip-scan strategy to make it O(distinct
 	// shapes) — but each row costs a narrow columnar/index read instead
-	// of a wide-XDR heap fetch, which is what actually drove the old
-	// query's 2h runtime; the row COUNT this phase touches doesn't grow
-	// with the sep41 CAP-67 firehose's per-row byte size, only its row
-	// count, so it grows far more slowly than the original bug. Non-
+	// of a wide-XDR heap fetch, which is what drove the 2h runtime of
+	// an unbounded wide-column scan; the row COUNT this phase touches
+	// doesn't grow with the sep41 CAP-67 firehose's per-row byte size,
+	// only its row count, so it grows far more slowly than that scan. Non-
 	// Symbol/String topic[0] shapes (Row.Topic0Sym == "") are NOT
 	// recovered by this phase — that partial index excludes NULL
 	// topic_0_sym by construction, and such shapes are rare enough (an
@@ -270,11 +269,11 @@ const distinctSorobanContractTopicPairsQuery = `
 // topic_0_sym IS NOT NULL via an Index Only Scan (uncompressed chunks)
 // or a bloom-filter-pruned Custom Scan / ColumnarScan (compressed
 // chunks) — never the heap's wide XDR/body columns. Confirmed against
-// r1 (2026-07-11, 357GB / ~3.56B rows): still touches every row's
+// r1 (at 357GB / ~3.56B rows): still touches every row's
 // narrow (contract_id, topic_0_sym) pair — Postgres has no native
 // skip-scan to make this O(distinct shapes) instead — but each row
 // costs a narrow read, not a wide-column heap fetch, so it stays far
-// cheaper than the original bug even once a single pair's row count
+// cheaper than a wide-column scan even once a single pair's row count
 // reaches the hundreds of millions (the sep41 CAP-67 firehose).
 func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]string, error) {
 	rows, err := s.db.QueryContext(ctx, distinctSorobanContractTopicPairsQuery)
@@ -303,16 +302,15 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 // (contract_id, topic_0_sym) — the composite index's exact columns —
 // and LIMIT 1 with no ORDER BY, so Postgres can stop at the first
 // matching index entry instead of sorting the pair's full row set.
-// NOTE (2026-07-11, second verdict timeout): the original PHASE 3 query
-// bundled an EXACT per-pair count/min/max aggregate alongside the LIMIT 1
-// fetch. For a DORMANT pair with a large historical footprint (e.g. an old
-// mint topic with millions of ancient rows), that aggregate scans the
-// pair's entire row set — one such pair ate the whole verdict's 2h budget.
+// NOTE: this query carries NO per-pair count/min/max aggregate. For a
+// DORMANT pair with a large historical footprint (e.g. an old mint topic
+// with millions of ancient rows), such an aggregate scans the pair's
+// entire row set — one such pair ate a whole verdict's 2h budget.
 // Recognition only needs the EXAMPLE ROW (is this shape handled by a
-// decoder?); the count/span are informational. The aggregate is gone:
-// fallback-sampled pairs report Count = -1 ("not measured — dormant
-// pair"), and each fallback fetch runs under its own short deadline so a
-// pathological pair degrades to a logged skip instead of a run abort.
+// decoder?); the count/span are informational. So fallback-sampled
+// pairs report Count = -1 ("not measured — dormant pair"), and each
+// fallback fetch runs under its own short deadline so a pathological
+// pair degrades to a logged skip instead of a run abort.
 const oneSorobanTopicSampleQuery = `
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
@@ -334,7 +332,7 @@ const oneSorobanTopicSampleTimeout = 90 * time.Second
 // pairs Phase 1's trailing window didn't already cover, so this pays
 // the O(matching rows) cost of the pair's own aggregate at most once
 // per audit run, for the minority of shapes that are currently
-// dormant — never for every shape on every run (the original bug).
+// dormant — never for every shape on every run.
 // ok=false when the pair has no rows within [from,to] (Phase 2 is not
 // range-scoped, so a pair discovered there can legitimately fall
 // entirely outside the caller's requested range).
@@ -394,12 +392,12 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 // pairTimeoutSkip reports whether a PHASE 3 per-pair fetch failed because
 // ITS OWN deadline (pairCtx, oneSorobanTopicSampleTimeout) expired, as
 // opposed to the caller's ctx being canceled or a genuine query error — and
-// logs it. #802: the comment above claimed this degraded to "a logged
-// skip", but nothing was ever logged, so this shape then produced no
-// recognition gap with zero trace of why — and a dormant, rarely-emitted
-// shape (exactly the class the recognition audit exists to catch) is the
-// one most likely to hit this timeout. Split out of oneSorobanTopicSample
-// so the classification is unit-testable without a live query.
+// logs it, so a "logged skip" really is logged. Without the log, the
+// shape would yield no recognition gap and no trace of why — and a
+// dormant, rarely-emitted shape (exactly the class the recognition audit
+// exists to catch) is the one most likely to hit this timeout. Split out
+// of oneSorobanTopicSample so the classification is unit-testable
+// without a live query.
 func pairTimeoutSkip(pairCtx, ctx context.Context, contractID, topic0Sym string, from, to uint32) bool {
 	if pairCtx.Err() == nil || ctx.Err() != nil {
 		return false
