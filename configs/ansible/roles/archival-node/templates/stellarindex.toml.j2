@@ -19,7 +19,7 @@
 id   = "{{ region_id }}"
 name = "{{ region_name }}"
 home_domain = "{{ home_domain }}"
-# Tier label echoed by /v1/status region.deployment (#328). Purely a
+# Tier label echoed by /v1/status region.deployment. Purely a
 # label — nothing keys behaviour off it.
 deployment = "{{ region_deployment | default('production') }}"
 
@@ -56,9 +56,8 @@ s3_access_key_env  = "STELLARINDEX_S3_ACCESS_KEY"
 s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 
 # ClickHouse raw lake (ADR-0034) + dual-sink durability (ADR-0041,
-# defaults TRUE since v0.7.0). The template predated the pivot — a
-# render without these silently degraded the indexer to Postgres-only
-# (2026-07-03 drift audit).
+# default TRUE). A render without these silently degrades the indexer to
+# Postgres-only.
 clickhouse_addr             = "{{ stellarindex_clickhouse_addr | default('127.0.0.1:9300') }}"
 clickhouse_live_sink        = {{ stellarindex_clickhouse_live_sink | default(true) | to_json }}
 clickhouse_projector_source = {{ stellarindex_clickhouse_projector_source | default(true) | to_json }}
@@ -91,7 +90,7 @@ enabled_sources       = {{ (stellarindex_enabled_sources if run_aggregator | def
 backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 
 [ingestion.projector]
-# ADR-0031/0032 one-writer projector — enabled everywhere since rc.97.
+# ADR-0031/0032 one-writer projector, enabled everywhere.
 # persist_per_source = false (Phase 4) is refused at indexer start until
 # every CAGG's refresh start_offset covers the projector's stall bound
 # (pipeline.VerifySoleWriterCAGGCoverage); low projector lag is not enough.
@@ -142,28 +141,26 @@ reason         = "DAI is a peg asset: Reflector's CEX feed republishes it only w
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
-# Aggregator + trades — added 2026-05-04 to fix the headline-product
-# 404. Pre-fix: vwap_writes_total stuck at 0, /v1/price?asset=native
-# &quote=fiat:USD returned 404 because the aggregator was querying
-# XLM/fiat:USD verbatim (no abstract trades) and the dominant XLM/USD
-# volume on Stellar is quoted in classic Circle USDC, which is
-# intentionally not in the abstract stablecoin map. Per commit a5cb70575 the
-# aggregator now reads usd_pegged_classic_assets from this config
-# and appends classic source pairs to USD-target expansions.
+# Aggregator + trades. The dominant XLM/USD volume on Stellar is quoted
+# in classic Circle USDC, which is intentionally not in the abstract
+# stablecoin map — so the aggregator reads usd_pegged_classic_assets
+# from this config and appends classic source pairs to USD-target
+# expansions. Without it /v1/price?asset=native&quote=fiat:USD has no
+# trades to price and 404s.
 # ──────────────────────────────────────────────────────────────────
 [aggregate]
 enable_stablecoin_fiat_proxy = true
 min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-manipulation + confidence). Re-enabled 2026-07-01: the CEX connectors landed and flow live volume (binance/coinbase/kraken/bitstamp, millions of trades), so fiat:USD pairs clear $10k/window easily while thin/manipulable pairs are gated. (Was 0 during the on-chain-only bootstrap.)
 
-# Graph-router cross-rate knobs (Step 2, 2026-08). The triangulation
+# Graph-router cross-rate knobs. The triangulation
 # targets below are priced by the graph router (internal/aggregate/
 # router.go) over the edge set built from this tick's priced-pair VWAPs
 # plus the resolved chain legs. A target reachable by ONE route (the
-# current config, one chain per target) behaves exactly like the old
-# static single-chain multiply.
+# current config, one chain per target) behaves exactly like a static
+# single-chain multiply.
 #
 # Route corroboration NEVER counts as a second source. ADR-0019 (amendment
-# 2026-07-25 §2) forbids it: routes through our own graph re-use our own
+# §2) forbids it: routes through our own graph re-use our own
 # legs, so counting them would disarm the freeze's `source_count <= 1` leg on
 # exactly the thin single-venue pairs chains exist for. Both freeze phases
 # read the distinct-venue count only; path_count is the serving multiplicity.
@@ -177,35 +174,29 @@ min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-m
 # fiat/fiat leg (EUR/GBP): the FX snap derives it from the same fx_quotes USD
 # rows as USD/GBP, so one data row would read as two independent routes.
 #
-# 2026-08-29 amendment: see the §10.1 note above `[[aggregate.triangulations]]`
-# below — for the two allow-listed targets (crypto:XLM/fiat:GBP and
+# Exception (§10.1, see the note above `[[aggregate.triangulations]]`
+# below): for the two allow-listed targets (crypto:XLM/fiat:GBP and
 # crypto:XLM/fiat:EUR) a composite REFERENCE built on the CURRENT bucket can
 # SUPPRESS a phase-2 fire (`corroboration_basis=composite`), binary-default ON.
-# So "runs the signed freeze-and-auto-release posture" above is no longer the
-# whole story for those two: a suppression in the logs is the amendment
-# working, not a bug.
+# A suppression in the logs for those two is that exception working, not a
+# bug.
 max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
 min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
 
 # ──────────────────────────────────────────────────────────────────
-# Composite (triangulated) rates — added 2026-07-25.
+# Composite (triangulated) rates.
 #
-# The triangulation machinery has shipped since rc.27 and had NEVER
-# run: `aggregate.triangulations` was empty in every layer of the
-# config (binary default, config.Default(), this template), so all
-# four outcomes of stellarindex_aggregator_triangulations_total sat at
-# exactly 0 on r1. The chains below are the first ones configured.
-#
-# Why these four pairs. Measured on the live index 2026-07-25, share
-# of minutes served from a SINGLE source: XLM/GBP 100%, XLM/EUR 87.5%,
+# Why these four pairs: measured on the live index, the share of minutes
+# served from a SINGLE source was XLM/GBP 100%, XLM/EUR 87.5%,
 # ETH/GBP 43.7%, BTC/GBP 25.7% — against XLM/USD and BTC/USD at 0.0%.
 # The non-USD legs of the default coverage set are thin because the
 # venues that quote them are few, not because the underlying assets are
 # illiquid; every one of them is reachable through a USD pivot that is
 # deep and multi-venue. Each chain below prices its target as
-# (crypto/USD) × (USD/fiat), so a pair that had one venue's opinion now
-# also has one routed through the pair's deepest market plus the
-# institutional FX feed.
+# (crypto/USD) × (USD/fiat), so a pair with one venue's opinion also has
+# one routed through the pair's deepest market plus the institutional
+# FX feed. With no chains configured, every outcome of
+# stellarindex_aggregator_triangulations_total stays at exactly 0.
 #
 # Leg supply — the operational prerequisite. The crypto/USD legs come
 # from the aggregator's own freshly-cached VWAPs (all three are in the
@@ -228,7 +219,7 @@ min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behav
 # fiat/fiat pair, and every chain reports outcome="missing_leg" while
 # the direct price keeps serving untouched.
 #
-# Ordering effect worth knowing before the first apply: the chain pass
+# Ordering effect worth knowing: the chain pass
 # runs AFTER the per-pair refresh and writes the TARGET's own VWAP cache
 # key, so for these four pairs the composite REPLACES the direct print in
 # that key for the tick (cachekeys.VWAPProvenance set to `triangulated`).
@@ -239,19 +230,19 @@ min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behav
 # closed 1m trade bucket, so while the pair trades it serves the direct
 # price, unflagged. The composite in the key is the intent for pairs this
 # thin, and the direct price is still recomputed from trades
-# every tick — it feeds the anomaly/freeze chain and now also the
+# every tick — it feeds the anomaly/freeze chain and the
 # confidence score's composite-agreement factor. Set
 # `triangulation_enabled = false` to kill the whole pass without
 # editing this table.
 #
-# 2026-08-29 (design doc §10.1): the XLM/EUR and XLM/GBP chains are ALSO
+# Design doc §10.1: the XLM/EUR and XLM/GBP chains are ALSO
 # the composite REFERENCE the phase-2 freeze consults on a single-venue
 # bucket of those targets ([aggregate.composite_reference], binary
 # default ON for exactly those two — no config apply needed). The
 # reference is rebuilt on the CURRENT bucket from this tick's XLM/USD
 # publish (>= 2 real venues) x a fresh massive FX snap (<= 76h, never an
 # oracle); agreement within 75 bps suppresses a freeze, anything else
-# freezes exactly as before. It never enters VWAP and never raises
+# freezes as usual. It never enters VWAP and never raises
 # source_count. Set `[aggregate.composite_reference] enabled = false`
 # to restore the pure freeze-and-auto-release posture.
 [[aggregate.triangulations]]
@@ -280,35 +271,33 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
-# Pricing guard — declared fiat pegs (2026-08-24).
-# Operator-approved: "I am happy to link AUDD to AUD and thus to 1
-# Australian dollar in US dollars" (and AUDR to AUDD). Evidence: the
-# only substantive AUDD market is the 1:1 AUDD↔AUDR settlement
-# corridor — $4.8M/30d at exactly 1.000000 on SDEX (2026-08-24
-# census) — while its USD-quoted books are inconsistent bot dust
-# ($0.78–$0.85 implied vs the real AUD ≈ $0.655), correctly withheld
-# by the substance gate. Each entry fills the asset's listing/detail
-# price_usd from the declared peg × the AUD/USD rate we already
-# serve (fx_quotes), stamped price_basis="declared_peg" on the wire;
-# a market-derived price is never overwritten and a stale FX rate
+# Pricing guard — declared fiat pegs, operator-approved
+# ("I am happy to link AUDD to AUD and thus to 1 Australian dollar in
+# US dollars", and AUDR to AUDD). Evidence: the only substantive AUDD
+# market is the 1:1 AUDD↔AUDR settlement corridor (~$4.8M/30d at
+# exactly 1.000000 on SDEX), while its USD-quoted books are inconsistent
+# bot dust ($0.78–$0.85 implied vs the real AUD ≈ $0.655), correctly
+# withheld by the substance gate. Each entry fills the asset's
+# listing/detail price_usd from the declared peg × the AUD/USD rate we
+# already serve (fx_quotes), stamped price_basis="declared_peg" on the
+# wire; a market-derived price is never overwritten and a stale FX rate
 # does not fill.
 # ──────────────────────────────────────────────────────────────────
 [pricing_guard]
 {% if run_aggregator | default(true) | bool %}
 
   [pricing_guard.fiat_pegged_classic_assets]
-  # AUDD — AUD Digital, declared 1:1 AUD (operator approval 2026-08-24).
+  # AUDD — AUD Digital, declared 1:1 AUD (operator-approved).
   "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
   # AUDR — pegged to AUD transitively through the AUDD↔AUDR 1:1
-  # settlement corridor ($4.8M/30d at exactly 1.000000 on SDEX,
-  # 2026-08-24 census) + the same operator approval.
+  # settlement corridor (~$4.8M/30d at exactly 1.000000 on SDEX) + the
+  # same operator approval.
   "AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL" = "AUD"
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
-# External — off-chain CEX/FX/aggregator connectors.
-# Added 2026-05-05 to close the crypto:XLM/fiat:USD 404 + provide
-# CEX coverage. Free venues only on r1 today (no API
+# External — off-chain CEX/FX/aggregator connectors: CEX coverage
+# and the crypto:XLM/fiat:USD price. Free venues only on r1 (no API
 # keys provisioned for the paid FX/aggregator tier).
 # ──────────────────────────────────────────────────────────────────
 {% if run_aggregator | default(true) | bool %}
@@ -356,14 +345,14 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
-# API — added 2026-05-05 to trust the Caddy loopback proxy.
+# API — trust the Caddy loopback proxy.
 # Caddy listens on :80 + :443, terminates TLS, proxies to localhost:3000
 # with X-Forwarded-{For,Proto,Host} set. Trusting 127.0.0.1/32 makes
 # the API honour those headers (so request logs show the real client IP
 # instead of 127.0.0.1, and rate-limiting buckets per real client).
 # listen_addr defaults to 127.0.0.1:3000 (loopback only) — on r1 Caddy is
 # the public surface and runs ON the box, so a public 0.0.0.0 bind is an
-# unnecessary surface (audit-2026-07-23 INF-19). The test-net VMs run Caddy
+# unnecessary surface. The test-net VMs run Caddy
 # on the KVM HOST and reach the API over the private NAT, so they set
 # stellarindex_api_listen_addr=0.0.0.0:3000 (+ open 3000 to internal_cidrs);
 # the VM has no public route, so 0.0.0.0 is still host-NAT-only there.
@@ -381,7 +370,7 @@ allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "ht
 # cross-origin requests to /v1/account/*; valid only beside the explicit
 # allowed_origins list above (the API panics at boot beside ["*"]).
 allow_credentials = true
-# RSEC-X1 (audit-2026-09-18): allowed_origins above is a public READ
+# allowed_origins above is a public READ
 # allow-list (status./docs. only ever read /v1/ledger/tip; testnet./
 # futurenet. are the cross-network tip-switcher). None of those need a
 # cookie riding cross-origin, and none should be trusted to bypass the
@@ -390,7 +379,7 @@ allow_credentials = true
 # is in-site ([api.dashboard] base_url), so that is the site origin and its
 # www twin. List only hosts this deployment serves.
 credentialed_origins = ["https://stellarindex.io", "https://www.stellarindex.io"]
-# AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
+# Verification-gated signup stays OFF
 # until a verified-sender domain is set up end-to-end.
 signup_require_email_verification = false
 
@@ -402,7 +391,7 @@ prometheus_url = "http://localhost:9090"
 # Background services whose heartbeats /v1/status reports and rolls
 # `overall` up from. The lean test nets run no aggregator
 # (run_aggregator=false), so listing it there would hold overall at
-# "degraded" forever on a healthy deployment (#328). Omitting a service
+# "degraded" forever on a healthy deployment. Omitting a service
 # here means it can never be reported DOWN — only drop one that is
 # genuinely not installed.
 status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true) | bool else '"indexer"' }}]
@@ -446,24 +435,22 @@ verify_window_ledgers   = 20000
 
 # ──────────────────────────────────────────────────────────────────
 # [supply] — operator-curated registries.
-# Added 2026-05-07: SAC wrapper resolution map. Sources verified
+# SAC wrapper resolution map. Sources verified
 # via api.stellar.expert/explorer/public/contract/<C-strkey>.
 # Drives:
-#   - /v1/sac-wrappers wire endpoint (rc.27+)
+#   - /v1/sac-wrappers wire endpoint
 #   - SAC-balance observer's watched-contract filter
 #   - aggregator's USD-volume computation for Soroban DEX trades
 #     (Soroswap/Phoenix/Aquarius/Comet emit C-strkeys at the wire,
 #     not the underlying CODE-ISSUER classic asset key).
 
-# F-1266 (audit-2026-05-12): F2 fields on /v1/assets were NULL
-# because watched_classic_assets was unset. Populated with the
-# Stellar-native verified currencies mirroring
-# internal/currency/data/seed.yaml. Next aggregator restart
-# starts populating market_cap_usd / fdv_usd / circulating_supply
-# / total_supply / max_supply for these.
+# watched_classic_assets drives the F2 fields on /v1/assets
+# (market_cap_usd / fdv_usd / circulating_supply / total_supply /
+# max_supply); unset, they are NULL. Populated with the Stellar-native
+# verified currencies mirroring internal/currency/data/seed.yaml.
 [supply]
 # aggregator_refresh_enabled starts the supply-refresh goroutine
-# path (2026-05-14). It emits the success metric even when no rows
+# path. It emits the success metric even when no rows
 # match (no_metadata basis); without it
 # stellarindex_aggregator_supply_refresh_never_initialized fires
 # permanently. Cadence default = 5m.
@@ -549,7 +536,7 @@ reserve_balances_max_age = "{{ stellarindex_reserve_balances_max_age }}"
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────
-# [divergence.chainlink] — added 2026-05-08. HTTP cross-check
+# [divergence.chainlink] — HTTP cross-check
 # against Chainlink mainnet feeds. Fetches AggregatorV3.latestAnswer
 # via Cloudflare's public ETH RPC. Off-chain reference only — does
 # not contribute to VWAP. Pair format mirrors canonical.Pair.String().
@@ -584,23 +571,10 @@ enabled = true
 [divergence.supply]
 enabled = {{ 'true' if stellarindex_divergence_supply_enabled | default(false) | bool else 'false' }}
 
-# 2026-05-14 — Phase 2 freeze stop-gap.
-# crypto:BTC/fiat:EUR has source_count=1 structurally (only one
-# CEX publishes BTC/EUR). Phase 2 fires every bucket because the
-# 3-signal AND (low confidence + high z + low source_count) is
-# always satisfied. stellarindex_anomaly_freeze_sustained was
-# page-firing for hours with no customer impact (FreezeWriter is
-# nil; counter increments but no Redis marker is written). z=100
-# is effectively-disabled — real anomalies (z > 100) are
-# physically impossible without a market move that would also
-# trigger Phase 1. Revisit once baselines mature post-backfill.
+# Phase 2 freeze threshold (ADR-0019).
 [anomaly.phase2]
-# RESTORED to ADR-0019's 5.0 on 2026-07-26: the 2026-05-14 stop-gap
-# (z=100, i.e. never fire) existed because firing without a duration/
-# extension/unfreeze lifecycle was unsafe — a freeze could flap or run
-# unbounded. The lifecycle landed (freeze/lifecycle.go, corroboration-
-# scaled holds, 2-bucket hysteresis release, x4 extension ladder, P1
-# escalation), which is precisely what makes z>5 affordable. Applies on
-# the next ansible render + aggregator deploy, both in the operator
-# batch.
+# ADR-0019's 5.0. Firing is safe because the freeze lifecycle
+# (freeze/lifecycle.go: corroboration-scaled holds, 2-bucket hysteresis
+# release, x4 extension ladder, P1 escalation) bounds every freeze;
+# without it a freeze could flap or run unbounded.
 z_score_min_freeze = {{ stellarindex_phase2_z_min_freeze | default(5.0) }}
