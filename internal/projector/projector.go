@@ -1113,8 +1113,8 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 //     violate), and shedding the window's whole backlog on cycle one would
 //     make that an instant, unbounded, near-silent loss.
 //   - UNCLASSIFIED sink failures → held like a transient one, but only for a
-//     bounded number of consecutive cycles; then quarantined. Each
-//     Soroban-derived domain has exactly ONE writer (ADR-0031), so without
+//     bounded number of consecutive cycles; then quarantined. A sole-writer
+//     domain such as sep41 has no second writer (ADR-0032), so without
 //     the budget a row nobody can classify — a store validation error such
 //     as a negative SEP-41 transfer amount — would halt the entire domain
 //     forever from a single hostile or malformed on-chain value.
@@ -1592,8 +1592,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// but a shipped decoder REGRESSION breaks a whole CLASS of valid events the
 	// same way (the projector runs the SAME decoders as ingest; the phoenix
 	// 5,161-orphaned-swap class), silently draining them from the served tier
-	// while the cursor sails to tip. Reported "ok", such a cycle would show
-	// runs_total a clean run over dropped rows, and no run-level signal would
+	// while the cursor sails to tip. Reported "ok", such a cycle would make
+	// runs_total show a clean run over dropped rows, and no run-level signal would
 	// distinguish the loss. Mark a decode-dropping cycle "decode_degraded" so
 	// it is NOT counted clean; the per-source decode_error RATE alert
 	// (stellarindex_projector_decode_error_rate_high in projector.yml) is what

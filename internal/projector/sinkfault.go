@@ -85,10 +85,10 @@ const heldRowLogEvery = 20
 // bucket, so any DETERMINISTIC failure the classifier did not recognise — a
 // pre-SQL store validation error such as `InsertSEP41TransferBatch: row 0
 // transfer negative Amount -1`, or an `OracleUpdate.Validate` rejection —
-// would hold the per-source cursor forever. With one writer per
-// Soroban-derived domain (ADR-0031) there is no second writer to make
-// progress, so one hostile or malformed on-chain value would halt the whole
-// domain, silently, visible only as growing lag.
+// would hold the per-source cursor forever. A sole-writer domain such as
+// sep41 (ADR-0032) has no second writer to make progress, so one hostile or
+// malformed on-chain value would halt the whole domain, silently, visible
+// only as growing lag.
 type sinkDisposition int
 
 const (
