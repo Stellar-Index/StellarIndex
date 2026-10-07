@@ -734,7 +734,11 @@ Subcommands:
                           -contract-calls the event-less router/band sources;
                           -sep41 the watched SEP-41 supply/transfer sources
                           (see docs/operations/sep41-mint-recovery.md). Reads
-                          the lake; idempotent ON CONFLICT writes.
+                          the lake; idempotent ON CONFLICT writes. After a
+                          -contract-calls -write run, deletes each band
+                          oracle_updates row in range left at an older
+                          generation beside a row this run wrote with a
+                          different ts (dry run: prints the count).
 
                           -bulk-trades (with -write) swaps the TRADE writer
                           for the backfill-only bulk path: it proves the
@@ -917,6 +921,11 @@ Subcommands:
                           persist. A held window or dropped trade exits
                           non-zero and writes last_exit_ok=0 to the
                           -heartbeat textfile (stellarindex_ops_job_run_failed).
+                          After a complete -write run of a reflector or
+                          redstone source, deletes each oracle_updates
+                          row in range left at an older generation
+                          beside a row this run wrote with a different
+                          ts (dry run: prints the count).
                           Prints per-topic emitted counts on
                           completion for an operator eyeball-check
                           against the census tables — the ADR-0033

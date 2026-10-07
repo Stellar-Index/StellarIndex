@@ -275,6 +275,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if rerr := resetSEP41RollupAfterRebuild(ctx, os.Stderr, store, *sourceName, write); rerr != nil {
 		runErr, interrupted = errors.Join(runErr, rerr), false
 	}
+	runErr = errors.Join(runErr, sweepProjectedRebuildOracle(ctx, os.Stderr, store, *sourceName, fromLedger, toLedger, store.DeriveGeneration(), write, result, runErr, interrupted))
 	return finishProjectedRebuild(hb, result, runErr, interrupted)
 }
 
