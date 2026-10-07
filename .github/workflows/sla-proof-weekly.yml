@@ -445,7 +445,7 @@ jobs:
         # an artifact named after a run that measured nothing, asserting a
         # pass, is worse than no artifact.
         if: always() && steps.proof.outputs.proof_path != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: sla-probe-extract-${{ github.run_id }}
           path: ${{ env.EXTRACT_DIR }}/
