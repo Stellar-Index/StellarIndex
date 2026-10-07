@@ -505,8 +505,8 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// The median leg alone masks symmetric disagreement — two
 	// references at ±8% put the median exactly on our price, so
 	// DivergencePct ≈ 0 and the warning would stay silent while NO
-	// reference actually corroborated us. AgreementCount, also a
-	// confidence-score input, captures precisely that.
+	// reference actually corroborated us. AgreementCount, which the
+	// confidence score reports without weighting, captures precisely that.
 	//
 	// The leg is "AgreementCount == 0" (no responding reference
 	// corroborates us), NOT "any reference disagrees": with three or
