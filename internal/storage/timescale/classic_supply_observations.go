@@ -23,7 +23,7 @@ import (
 // smaller position) can never overwrite it, while a re-seed (equal sentinel)
 // stays corrective under the `<=` guard. The live dispatcher counter cannot
 // reach this value (it would require 4.3e9 entry-changes in one ledger), so
-// there is no live/seed ambiguity. See migration 0111 (audit-2026-07-16 C2-6).
+// there is no live/seed ambiguity. See migration 0111.
 const SeedIntraLedgerSeq = uint32(math.MaxUint32)
 
 // observationWalkVersion is stamped as walk_version on every observation row
@@ -43,7 +43,7 @@ type TrustlineObservation struct {
 	IsRemoval  bool
 
 	// IntraLedgerSeq is the within-ledger position of the change that
-	// produced this row (audit-2026-07-16 C2-6). Guards the last-writer-wins
+	// produced this row. Guards the last-writer-wins
 	// upsert so an out-of-order PersistEvents worker can't persist a stale
 	// intra-ledger balance. Zero for the first change in a ledger; ops seeds
 	// use SeedIntraLedgerSeq.
@@ -69,7 +69,7 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 		return fmt.Errorf("timescale: InsertTrustlineObservation: Balance is nil (account=%s asset=%s)", o.AccountID, o.AssetKey)
 	}
 	// intra_ledger_seq-guarded upsert: a later intra-ledger change wins
-	// regardless of parallel-worker commit order (audit-2026-07-16 C2-6).
+	// regardless of parallel-worker commit order.
 	const q = `
         INSERT INTO trustline_observations (
             account_id, asset_key, ledger, observed_at,
@@ -131,7 +131,7 @@ type ClaimableObservation struct {
 	IsRemoval   bool
 
 	// IntraLedgerSeq — within-ledger change position; guards the upsert
-	// (audit-2026-07-16 C2-6). See TrustlineObservation.IntraLedgerSeq.
+	// See TrustlineObservation.IntraLedgerSeq.
 	IntraLedgerSeq uint32
 }
 
@@ -147,7 +147,7 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertClaimableObservation: Balance is nil (cb=%s)", o.ClaimableID)
 	}
-	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6). The conflict
+	// intra_ledger_seq-guarded upsert. The conflict
 	// tail is shared with InsertClaimableObservationBatch so the ops seed and
 	// the live observer write through identical semantics.
 	const q = `
@@ -193,7 +193,7 @@ const claimableObservationUpsert = ` ON CONFLICT (claimable_id, ledger, observed
 // Postgres rejects a single ON CONFLICT DO UPDATE statement that presents the
 // same conflict key twice ("cannot affect row a second time"), so intra-batch
 // duplicates are collapsed last-wins before the statement is built — the same
-// discipline InsertSEP41TransferBatch follows (INV-3 / migration 0110).
+// discipline InsertSEP41TransferBatch follows (migration 0110).
 func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []ClaimableObservation) error {
 	if len(rows) == 0 {
 		return nil
@@ -272,7 +272,7 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 	return out
 }
 
-// ─── Read-path tie-break (2026-07-28) ───────────────────────────────
+// ─── Read-path tie-break ───────────────────────────────
 // Every DISTINCT ON reader below orders by `ledger DESC, walk_version
 // DESC, intra_ledger_seq DESC`, NOT ledger alone. Two rows can share a
 // (key, ledger): an ops seed stamps [SeedIntraLedgerSeq] (MaxUint32,
@@ -372,7 +372,7 @@ type LPReserveObservation struct {
 	IsRemoval  bool
 
 	// IntraLedgerSeq — within-ledger change position; guards the upsert
-	// (audit-2026-07-16 C2-6). See TrustlineObservation.IntraLedgerSeq.
+	// See TrustlineObservation.IntraLedgerSeq.
 	IntraLedgerSeq uint32
 }
 
@@ -389,7 +389,7 @@ func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertLPReserveObservation: Balance is nil (pool=%s asset=%s)", o.PoolID, o.AssetKey)
 	}
-	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6).
+	// intra_ledger_seq-guarded upsert.
 	const q = `
         INSERT INTO lp_reserve_observations (
             pool_id, asset_key, ledger, observed_at,
@@ -447,7 +447,7 @@ type SACBalanceObservation struct {
 	// IntraLedgerSeq — within-ledger change position; guards the upsert so
 	// when a single (contract, holder) changes multiple times in one ledger
 	// the FINAL change wins rather than whichever out-of-order worker
-	// committed last (audit-2026-07-16 C2-6). See
+	// committed last. See
 	// TrustlineObservation.IntraLedgerSeq.
 	IntraLedgerSeq uint32
 }
@@ -470,7 +470,7 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 	}
 	// intra_ledger_seq-guarded upsert: the FINAL intra-ledger change to this
 	// (contract, holder) wins regardless of parallel-worker commit order —
-	// the wrong-supply-component fix (audit-2026-07-16 C2-6).
+	// the wrong-supply-component fix.
 	const q = `
         INSERT INTO sac_balance_observations (
             contract_id, asset_key, holder, ledger, observed_at,
@@ -523,9 +523,8 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
 // given ledger, regardless of is_removal — i.e. whether the asset has
 // a genuine SAC-balance reading at all, as distinct from
 // SumSACBalancesAtOrBefore's COALESCE(sum(...), 0), which cannot tell
-// "summed to zero from real rows" apart from "no rows found" (RLT-248:
-// the CS-087 escrow-bound gate in CrossCheckSubsetBound read the
-// latter as the former and was never actually unchecked).
+// "summed to zero from real rows" apart from "no rows found" (the
+// escrow-bound gate in CrossCheckSubsetBound needs that distinction).
 func (s *Store) SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error) {
 	const q = `
         SELECT EXISTS (
@@ -630,13 +629,13 @@ func scanSum(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, 
 // classic-supply component OBSERVERS has progressed, scoped to
 // ledgers at-or-before `asOfLedger`. Used by the supply Refresher to
 // detect snapshots whose component observations lag the snapshot
-// ledger by more than a threshold. F-1236 (codex audit-2026-05-12).
+// ledger by more than a threshold.
 //
 // Each component contributes its observer WATERMARK — MAX(ledger)
 // across ALL assets in that table — and the function returns the MIN
 // of those four watermarks.
 //
-// CS-102 (2026-07-28): the watermark is deliberately global, NOT
+// The watermark is deliberately global, NOT
 // per-asset. These four observers are event-driven: they write a row
 // only when a balance actually CHANGES. So a per-asset MAX(ledger)
 // answers "when did this asset last see activity in this component",

@@ -27,8 +27,7 @@ import (
 //
 // Phase 1 scope (launch-readiness L2.2 phase 1): USD-pegged
 // stablecoins only, classic-decimal (7) only. This struct stays
-// USD-only — the orthogonal Phase 2 path (F-1268
-// audit-2026-05-12) lives in [VWAPUSDFXResolver] and covers
+// USD-only — the orthogonal Phase 2 path lives in [VWAPUSDFXResolver] and covers
 // non-USD pegs (EUR / MXN / etc.) by looking up
 // `<quote>/<USD-peg>` in prices_1m at the trade's timestamp.
 // SEP-41 tokens with non-classic decimals (rare on Stellar today)

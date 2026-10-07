@@ -21,9 +21,8 @@ import (
 // (typically Circle USDC, Stellar USDT, AnchorUSD) — treating the
 // peg as exactly $1.
 //
-// L2.2 Phase 2 / F-1268 (audit-2026-05-12). Pre-Phase-2:
-// on-chain trades whose quote asset wasn't already in the
-// operator's USD-pegged list contributed 0 to volume_24h_usd.
+// Without it, on-chain trades whose quote asset isn't in the
+// operator's USD-pegged list contribute 0 to volume_24h_usd.
 // This resolver closes the gap by looking up `<quote>/<USD-peg>`
 // at the trade's timestamp; if a recent VWAP exists, the trade
 // inherits the USD value through that chain.
@@ -35,7 +34,7 @@ import (
 // key matches the CAGG's resolution — finer-grained caching adds
 // no precision but multiplies misses.
 //
-// Three resolution routes, tried in this order (2026-07-22 — see
+// Three resolution routes, tried in this order (see
 // docs/operations/usd-volume-coverage-plan.md for the measurements
 // that motivated the last two):
 //
@@ -124,9 +123,9 @@ type VWAPUSDFXResolver struct {
 
 // fxCacheSweepThreshold bounds the resolver's in-memory cache. The
 // key space is (asset, 1-minute bucket) including negative results,
-// and nothing evicted entries before audit-2026-06-11 G11-05, so a
+// and without eviction a
 // long-running backfill (every historical minute × every traded
-// asset) grew the map without bound on the trade-insert hot path.
+// asset) would grow the map without bound on the trade-insert hot path.
 // When the map exceeds this many entries, storeCache opportunistically
 // sweeps everything past its TTL before inserting. The TTL (default
 // 5 min) already makes stale entries dead weight, so the sweep only
@@ -178,13 +177,6 @@ type VWAPUSDFXResolverOptions struct {
 	// source's per-minute cadence guarantees near-zero lag). Set
 	// to 0 (the zero value) to inherit the default 1h. Set to a
 	// positive duration to override the default.
-	//
-	// F-1251 (codex audit-2026-05-12): pre-fix the docstring
-	// said "Set to 0 to disable" but the constructor's
-	// `if opts.Freshness == 0 { opts.Freshness = time.Hour }`
-	// silently turned a 0 into the 1h default, so callers who
-	// thought they'd disabled freshness were still enforcing it.
-	// The negative-disable convention removes the ambiguity.
 	Freshness time.Duration
 
 	// BridgeFreshness — max staleness for the tier-3b XLM bridge leg.
@@ -211,7 +203,7 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	if store == nil {
 		return nil, errors.New("timescale: VWAPUSDFXResolver: store is required")
 	}
-	// F-1251: 0 → default 1h; negative → disabled (sentinel 0
+	// 0 → default 1h; negative → disabled (sentinel 0
 	// inside the resolver so the runtime check below can stay
 	// `freshness > 0`); positive → use as-is.
 	switch {
@@ -375,7 +367,7 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
 		return "", false, nil
 	}
-	// F-1251 (codex audit-2026-05-12): Postgres NUMERIC::text
+	// Postgres NUMERIC::text
 	// preserves the column's full scale, so a VWAP that's
 	// arithmetically `1.085` arrives here as
 	// `1.085000000000000000000`. Trim the trailing zeros (and
@@ -607,18 +599,12 @@ func (r *VWAPUSDFXResolver) usdPriceForFiat(ctx context.Context, asset canonical
 
 // fresh reports whether a rate observed at `observedAt` is recent
 // enough to price a trade at `at`, under the given window. A
-// non-positive window disables the check (the F-1251 negative-disable
+// non-positive window disables the check (the negative-disable
 // sentinel).
 //
-// F-1251 (codex audit-2026-05-12): staleness is measured against the
-// TRADE timestamp `at`, not wall-clock. Pre-fix the comparison used
-// `r.clock().Sub(observedAt)`, which rejected every historical /
-// backfill trade older than the window even when a contemporaneous FX
-// anchor existed (the trade ran at T, the anchor was at T-30m, both an
-// hour ago — fine in trade-time but the old check saw it as "anchor is
-// 1h30m stale by my wall-clock"). Now: at-time freshness, so
-// historical replay and backfill correctly inherit a peer-aligned USD
-// rate.
+// Staleness is measured against the TRADE timestamp `at`, not wall-clock,
+// so historical replay and backfill inherit a contemporaneous FX anchor
+// that a wall-clock check would reject as stale.
 func (r *VWAPUSDFXResolver) fresh(observedAt, at time.Time, window time.Duration) bool {
 	if window <= 0 {
 		return true
@@ -664,7 +650,7 @@ func (r *VWAPUSDFXResolver) storeCache(key fxCacheKey, entry fxCacheEntry) {
 // text representation. `1.085000` → `1.085`; `1.000000` → `1`;
 // `42` (no decimal) → `42`; `0.000` → `0`. Caller-friendly
 // canonical form so downstream consumers don't need to be
-// scale-aware. F-1251 (codex audit-2026-05-12).
+// scale-aware.
 func trimNumericText(s string) string {
 	if !strings.ContainsRune(s, '.') {
 		return s
@@ -1056,7 +1042,7 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 // quantisation error. See [directLegMinQuoteVolume] for why the
 // discriminator is the QUOTE-side notional and not `volume_usd`.
 //
-// Lower bucket bound (audit-2026-06-11 G11-06): when freshness is
+// Lower bucket bound: when freshness is
 // enforced (>0), USDPriceAt rejects any row whose bucket is older
 // than `at - freshness`, so a miss within the window is the only
 // useful result. Without a lower bound the index scan walks
@@ -1115,7 +1101,7 @@ func directLegQuery(bounded bool) string {
 // onto a store in one call: the operator's [USDVolumeQuoteSpec]
 // (tier 2 — declared USD-pegged classics + their SAC wrappers) and the
 // [VWAPUSDFXResolver] (tiers 3/4 — FX-anchored multiplication, and
-// since 2026-07-22 fiat quotes via fx_quotes).
+// fiat quotes via fx_quotes).
 //
 // It exists because wiring these separately drifted. Every process that
 // writes trades must install BOTH, but the two calls lived in three

@@ -18,7 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Off-chain amount scaling is NOT uniform (AGENTS.md; CS-040): CEX and
+// Off-chain amount scaling is NOT uniform (AGENTS.md): CEX and
 // reference-aggregator sources stamp amounts at 10^8, but the FX pollers
 // (ecb / exchangeratesapi / massive) stamp 10^6. The
 // per-source authority is external.Registry's AmountDecimals, read via
@@ -35,7 +35,7 @@ import (
 // propagate so the caller can surface them in metrics; the trade
 // still inserts, just with `usd_volume` left NULL.
 //
-// Production wiring (F-1268 audit-2026-05-12 — landed):
+// Production wiring:
 // [VWAPUSDFXResolver] queries `prices_1m` for `<asset>/<peg>`
 // per configured peg, caches per-(asset, 1-minute bucket), and
 // expires entries past a freshness ceiling. Wired in
@@ -63,7 +63,7 @@ type USDVolumeFXResolver interface {
 //  1. Off-chain CEX/FX source AND quote is fiat:USD or a
 //     USD-pegged stablecoin per `aggregate.FiatProxy`
 //     (USDC/USDT/DAI/PYUSD/USDP). Decimals: the source's registered
-//     AmountScaleDecimals (8 for CEX, 6 for the FX pollers — CS-040).
+//     AmountScaleDecimals (8 for CEX, 6 for the FX pollers).
 //
 //  2. On-chain DEX source AND `quoteSpec` recognises the quote
 //     asset as USD-pegged (operator-declared classic credits +
@@ -180,7 +180,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	// one trade to set token/XLM, and every later trade against that
 	// token is valued by multiplying through it.
 	//
-	// Measured on r1 2026-08-04, one sdex row: base 5 XLM (the only real
+	// Measured on r1, one sdex row: base 5 XLM (the only real
 	// value in the trade) traded for 49,999,980 units of a classic asset
 	// whose code impersonates XLM. Tier 3b read that issuer's own 1:1
 	// self-trade as the rate and stored
@@ -227,7 +227,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 // quote asset, so a `USDC/TOKEN`-oriented market — where the
 // dollar leg is the base — fell through every tier even though its
 // USD value was sitting right there in base_amount. Measured at
-// 43,277 unpriced on-chain trades on 2026-07-17 alone.
+// 43,277 unpriced on-chain trades in one day.
 //
 //	usd_volume = base_amount / 10^decimals
 //
@@ -239,7 +239,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 // It also supersedes a quote-side FX estimate where both could fire
 // (e.g. USDC/XLM, previously valued as quote_amount x XLM/USD).
 // That is deliberate and a correctness win: measured across 111,617
-// such trades on 2026-07-17 the two routes agreed to 0.69% on average
+// such trades in one day the two routes agreed to 0.69% on average
 // but diverged by up to 134.92%, and the divergence is the VWAP
 // route's error — thin-market and dust-contaminated buckets — not the
 // dollar amount's. A re-derive corrects those rows in place via the
@@ -296,7 +296,7 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 	var decimals int
 	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
-		// Per-source registered scale (CS-040): CEXes stamp 1e8, the FX
+		// Per-source registered scale: CEXes stamp 1e8, the FX
 		// pollers stamp 1e6 — assuming 8 valued FX trades 100× low/high.
 		decimals = md.AmountScaleDecimals()
 	case external.SubclassDEX:
@@ -319,13 +319,13 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 	return &rendered, nil
 }
 
-// boundUSDVolume is the one bound every ESTIMATED on-chain tier shares
-// (F044 / K045). `candidate` is a USD value resting on a resolver rate
+// boundUSDVolume is the one bound every ESTIMATED on-chain tier shares.
+// `candidate` is a USD value resting on a resolver rate
 // for one leg of a DEX trade; `other` / `otherAmount` name the leg it
 // does NOT rest on. Returns the value to store, or nil to refuse the
 // print (usd_volume left NULL).
 //
-// LEG CROSS-CHECK (fake-XMR incident 2026-08-11, task #32): a resolver
+// LEG CROSS-CHECK: a resolver
 // rate for an on-chain token is usually tier 3b's <token>/XLM x XLM/USD
 // bridge, and the token leg of that bridge is WRITABLE by anyone willing
 // to pay bridgeLegMinUSDVolume — an attacker planted INDUSX/XLM at 3,395
@@ -502,7 +502,7 @@ func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass 
 	q := new(big.Rat).SetFrac(base, scaleDenominator(stellarClassicDecimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
 	// A non-XLM anchor's rate is the same poisonable tier-3b bridge the
-	// quote-side FX tier reads, so it takes the same bound (F044 / K045):
+	// quote-side FX tier reads, so it takes the same bound:
 	// the base leg used to store it verbatim, which re-opened the $182M
 	// fake-print class for anyone who planted <base>/XLM and swapped
 	// against a never-priced quote. XLM is exempt, and must stay so: its
@@ -702,7 +702,7 @@ func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r
 // cross-checks the two legs and stores the SMALLER when they diverge by
 // more than [usdLegAgreementFactor]. That cross-check defends a value
 // resting on a token leg an attacker can author (the tier-3b bridge, the
-// 2026-08-11 $182M fake print). Here the value rests on XLM — the
+// $182M fake print). Here the value rests on XLM — the
 // bridge's own anchor, and the one leg of a Stellar pair nobody can
 // author — so admitting the token leg could only DRAG the number down to
 // a rate the counterparty wrote. The mirror tier therefore stops at the
@@ -726,7 +726,7 @@ func mirrorTradeLegs(t canonical.Trade) canonical.Trade {
 // non-USD fiat currency: `quote_amount / 10^<source scale> x <fiat>/USD
 // at ts`, through [tradeUSDVolumeViaFX] — the same function
 // [Store.InsertTrade] reaches for such a row today, with the source's own
-// registered amount scale (CS-040) and the resolver's fx_quotes-backed
+// registered amount scale and the resolver's fx_quotes-backed
 // fiat rate.
 //
 // The gates here are the ones that make the DEX-only halves of
@@ -809,7 +809,7 @@ const stellarClassicDecimals = 7
 // leg (tier 2b), Phase 2 (any remaining trade with a quote-side
 // FX-resolver hit → tier 3), and L7.6 (a remaining pure-Soroban
 // SEP-41 quote whose trade's BASE asset is XLM and resolves via the
-// same FX resolver → tier 4). Since 2026-07-22 tier 3 also prices
+// same FX resolver → tier 4). Tier 3 also prices
 // fiat quotes from fx_quotes, which is what covers non-USD-quoted
 // CEX pairs (BTC/EUR, ETH/GBP, …).
 //
@@ -832,9 +832,9 @@ func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) b
 func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) (int, bool) {
 	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
-		// Off-chain — the SOURCE's registered amount scale (CS-040:
-		// CEXes stamp 1e8 but the FX pollers stamp 1e6, so the old
-		// hard-coded 8 was a latent 100× error for FX trades), peg via
+		// Off-chain — the SOURCE's registered amount scale (CEXes stamp
+		// 1e8 but the FX pollers stamp 1e6, so a hard-coded 8 is a 100×
+		// error for FX trades), peg via
 		// the crypto-ticker FiatProxy.
 		if !quoteIsUSDOrUSDPegged(asset) {
 			return 0, false
@@ -922,7 +922,7 @@ func quoteIsUSDOrUSDPegged(a canonical.Asset) bool {
 var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 
 // isDexUnitRatioTrade reports whether a LANDED trade is the signature
-// of the 2026-07-07 Phoenix decoder incident: an on-chain DEX trade
+// of a decoder field-mapping bug: an on-chain DEX trade
 // whose base_amount exactly equals its quote_amount (both nonzero) —
 // i.e. the decoder is reporting a 1:1 price, which a field-mapping
 // bug can produce silently while ADR-0033 completeness checks (which
@@ -1025,9 +1025,8 @@ func (s *Store) usdLabel(t canonical.Trade, v *string) string {
 // op_index+ts). Other errors propagate.
 //
 // Conflict semantics are ON CONFLICT DO UPDATE, guarded by
-// `trades.derive_generation <= EXCLUDED.derive_generation` (INV-3,
-// migration 0109) — NOT DO NOTHING (AGT-08: the docs here said
-// DO NOTHING long after the SQL changed). A conflicting write from an
+// `trades.derive_generation <= EXCLUDED.derive_generation` (migration
+// 0109) — NOT DO NOTHING. A conflicting write from an
 // equal-or-higher generation therefore OVERWRITES the stored value
 // columns, `usd_volume` among them; a lower-generation write is
 // refused by the guard and leaves the row untouched. That overwrite is
@@ -1059,7 +1058,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	//   1. Upsert the trade (idempotent-corrective on its PK). On
 	//      conflict we DO UPDATE every value column plus derive_generation,
 	//      guarded by `trades.derive_generation <= EXCLUDED.derive_generation`
-	//      (migration 0109 / INV-3): a re-derive with a higher-or-equal
+	//      (migration 0109): a re-derive with a higher-or-equal
 	//      generation lands its correction in place, while a lower
 	//      generation (e.g. a live gen-0 replay) can never revert a
 	//      correction. This replaces the old `DO NOTHING`, which silently
@@ -1154,13 +1153,10 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	}
 	obs.TradeInsertOutcomeTotal.WithLabelValues(t.Source, outcome).Inc()
 
-	// F-1243 (codex audit-2026-05-13) second half: skip the
-	// registry hook when no row landed (rowsInserted = 0 — the
+	// Skip the registry hook when no row landed (rowsInserted = 0 — the
 	// conflicting row lost the derive_generation guard on the
-	// `ON CONFLICT ... DO UPDATE`). The wave-47 TTL fix
-	// already addressed the freeze; this guard fixes the
-	// observation_count drift on backfill replays / process
-	// restarts that re-encounter already-stored trades.
+	// `ON CONFLICT ... DO UPDATE`), or backfill replays and process
+	// restarts that re-encounter stored trades drift observation_count.
 	if rowsInserted == 0 {
 		return nil
 	}
@@ -1173,7 +1169,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// godoc + stellarindex_ingestion_duplicate_flood alert.
 	obs.SourceLastInsertUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 
-	// Unit-ratio sentinel (2026-07-07 Phoenix incident) — see
+	// Unit-ratio sentinel — see
 	// isDexUnitRatioTrade's godoc for why this is gated on "landed"
 	// (not every attempt): a replay/backfill re-encountering an
 	// already-stored bad trade must not re-inflate the alert.
@@ -1189,8 +1185,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 		if regErr := s.registerClassicAssetSeen(ctx, side, t.Ledger, t.Timestamp); regErr != nil {
 			// Soft-fail: the trade row is committed; a registry-side
 			// problem must not sink the hot path. Stay quiet at info
-			// level, but DON'T swallow silently (audit-2026-06-11
-			// G11-08). registerClassicAssetSeen is dedupe-cached, so
+			// level, but DON'T swallow silently.
+			// registerClassicAssetSeen is dedupe-cached, so
 			// this naturally fires at most once per (asset,issuer) per
 			// process — already rate-limited. Debug level keeps the
 			// steady state silent while leaving a breadcrumb when an
@@ -1393,7 +1389,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	// of the single-row variant in InsertTrade.
 	//
 	// The outer SELECT's `unit_ratio` column mirrors isDexUnitRatioTrade
-	// (2026-07-07 Phoenix incident sentinel) as a FILTER over the SAME
+	// as a FILTER over the SAME
 	// `ins` rows the outcome-metric count uses — cheap (no extra I/O,
 	// the RETURNING set is already materialized) and exact: it counts
 	// only rows that actually landed, matching InsertTrade's landed-only
@@ -1468,9 +1464,8 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 }
 
 // BatchInsertTrades writes trades with one multi-row upsert per
-// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows. Live-r1
-// incident 2026-06-01: per-INSERT roundtrip latency capped indexer
-// throughput at ~5 inserts/sec despite postgres-side capacity > 9000/sec
+// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows.
+// Per-INSERT roundtrip latency caps indexer throughput at ~5 inserts/sec despite postgres-side capacity > 9000/sec
 // (verified by raw psql loop). Batching collapses N roundtrips into one
 // per sub-batch, lifting throughput by roughly the batch factor.
 //
@@ -1519,10 +1514,8 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
-	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
-	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
-	// storm — ~15 deadlocks/5min, 40P01 2-/3-way ShareLock cycles between
-	// concurrent batch inserts). PersistWorkers fans a single event
+	// Deterministic PK order WITHIN the batch, or concurrent batch inserts
+	// deadlock (40P01 2-/3-way ShareLock cycles). PersistWorkers fans a single event
 	// channel out to 8 goroutines with NO sharding by source/symbol (see
 	// persistWorker in internal/pipeline/sink.go), so any two workers can
 	// end up holding batches with overlapping trades.PK rows — most
@@ -1532,20 +1525,12 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// CONFLICT statements that touch the same keys in different orders
 	// take row locks in different orders — a textbook AB/BA deadlock.
 	//
-	// The 2026-07-05 fix sorted by (source, ledger, tx_hash, op_index) —
-	// FOUR of the FIVE columns in the actual `ON CONFLICT (source,
-	// ledger, tx_hash, op_index, ts)` target. `ts` was left out, so rows
-	// that tie on those four columns fall back on `sort.Slice`'s
-	// unspecified (non-stable) tie order, which is a function of each
-	// batch's original element order — not guaranteed equal across two
-	// different workers' batches. That reopens exactly the AB/BA window
-	// the sort was meant to close. Sorting by the FULL conflict key
-	// (adding `ts` as the final tiebreaker) gives every writer, in every
-	// caller of BatchInsertTrades, one total, tie-free lock-acquisition
-	// order — implemented here, inside the batch builder, so ALL
-	// callers (the indexer's persistWorker drain, the external retry
-	// buffer, `stellarindex-ops ch-rebuild`) get the fix automatically
-	// rather than each having to remember to pre-sort. The per-row
+	// Sorting by the FULL conflict key, `ts` included, gives every writer
+	// one total, tie-free lock-acquisition order; a partial key leaves ties
+	// to `sort.Slice`'s unspecified order and reopens the AB/BA window.
+	// It lives in the batch builder so every caller (the indexer's
+	// persistWorker drain, the external retry buffer, `stellarindex-ops
+	// ch-rebuild`) gets it without pre-sorting. The per-row
 	// isolate-on-non-infra-error fallback in
 	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
 	// belt-and-braces for whatever this doesn't catch.
@@ -1556,10 +1541,9 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	sortTradesByConflictKey(storable)
 
 	// Collapse intra-batch PK duplicates BEFORE building the statement.
-	// The INV-3 fix (migration 0109) turns the batch `ON CONFLICT` into a
-	// DO UPDATE, and Postgres rejects a single INSERT..ON CONFLICT DO
-	// UPDATE that presents the same conflict key twice ("cannot affect
-	// row a second time") — which the old DO NOTHING silently absorbed. A
+	// The batch `ON CONFLICT` is a DO UPDATE (migration 0109), and Postgres
+	// rejects a single INSERT..ON CONFLICT DO UPDATE that presents the same
+	// conflict key twice ("cannot affect row a second time"). A
 	// CEX WS reconnect can redeliver the same exchange trade into one
 	// worker's batch (see the deadlock note above), so dedupe adjacent
 	// equal keys here (input is already conflict-key sorted), keeping the
@@ -1569,11 +1553,9 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	insertRows := dedupeSortedTradesByConflictKey(storable)
 
 	// Postgres' extended protocol caps one statement at 65,535 bind
-	// parameters; at 13 per row that is 5,041 rows, and a 100,000-row batch
-	// (the bulk backfill's fallback size) failed outright — "extended
-	// protocol limited to 65535 parameters" — and dropped to one INSERT per
-	// row, which is why a 40k-ledger SDEX re-derive chunk took five hours on
-	// 2026-09-13. The batch is sent in parameter-safe sub-batches and the
+	// parameters; at 13 per row that is 5,041 rows, so a 100,000-row batch
+	// (the bulk backfill's fallback size) fails outright and drops to one
+	// INSERT per row. The batch is sent in parameter-safe sub-batches and the
 	// outcome of every COMMITTED sub-batch is tallied, so the metrics and the
 	// registry hook cover exactly the rows that landed, even when a later
 	// sub-batch fails (see the godoc).
@@ -1671,7 +1653,7 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	// the asset up; but the LIVE indexer ingests trades EXCLUSIVELY through
 	// this batch path (persistWorker → BatchInsertTrades), so classic_assets
 	// / issuers permanently under-populated for batch-ingested assets. We
-	// register only genuinely-inserted rows (matching InsertTrade's F-1243
+	// register only genuinely-inserted rows (matching InsertTrade's
 	// duplicate-replay guard), deduped to the distinct assets in this batch,
 	// each over the lowest..highest ledger we saw. Soft-fail + dedupe-cached, exactly
 	// like the single-row path — a registry write can't sink the committed
@@ -1945,10 +1927,9 @@ func offChainSourcesArg() string {
 // # This read carries no time bound, deliberately
 //
 // It is the last unbounded per-key walk of `trades` on a request path,
-// and it stays that way. Re-derived 2026-09-09 against the sibling
-// finding raised while [Store.HasAsset]'s unbounded arm was fixed, and
-// written down here because the shape invites the same conclusion every
-// time somebody greps for it.
+// and it stays that way. Written down here because the shape invites
+// the same conclusion as [Store.HasAsset]'s unbounded arm every time
+// somebody greps for it.
 //
 //  1. It is not the HasAsset shape. That one bound `base_asset = $1 OR
 //     quote_asset = $1`. `trades` is compressed with
@@ -1961,25 +1942,22 @@ func offChainSourcesArg() string {
 //     not, is an index SEEK. Same table, same absence of a time bound,
 //     different cost class. [TestRawTradeReadsSpanBothStoredDirections]
 //     pins the arms that make it so.
-//  2. Measured, not asserted. On r1 2026-08-03: 49 ms (native/fiat:USD),
-//     289 ms (heaviest pair), 47 ms to prove a novel pair EMPTY — the
-//     full-history walk, the worst case, over every chunk. The note in
-//     internal/api/v1/history_cache.go records those numbers as an
-//     explicit retraction of an earlier "probes every chunk — multiple
-//     seconds" claim that was off by ~1000x. EXPLAIN on r1 2026-09-05,
-//     when the second arm landed, put the cost at exactly 2x with the
-//     skip scan surviving on both arms.
+//  2. Measured, not asserted. On r1: 49 ms (native/fiat:USD), 289 ms
+//     (heaviest pair), 47 ms to prove a novel pair EMPTY — the
+//     full-history walk, the worst case, over every chunk. EXPLAIN puts
+//     the second arm's cost at exactly 2x with the skip scan surviving
+//     on both arms.
 //  3. No window preserves the answer. This surface reports the last
 //     trade seen from each source; `ts >= now() - W` turns that into
 //     "…within W", so a market whose last trade predates W reports
 //     NOTHING where it reported a real trade. Unlike HasAsset — which
 //     could answer XLM's existence from first principles and does
-//     ([Store.HasAsset], fixed 2026-09-09 for exactly this reason) —
+//     ([Store.HasAsset]) —
 //     there is no first-principles answer to "what traded last": the
 //     answer IS the unbounded question. The cost lands on the quiet
 //     networks, which is where it is invisible in testing: futurenet
-//     had ZERO XLM trades in a 14-day window on 2026-09-09 while
-//     testnet had 2,030 in the same window.
+//     has had ZERO XLM trades in a 14-day window while testnet had
+//     2,030 in the same window.
 //
 // So the affordability comes from the segmentby prefix and the answer's
 // completeness comes from the absence of a window; changing either
@@ -2155,7 +2133,7 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // Both directions, because a market has no stored direction of its own
 // (see the block above [Store.LatestTradesForPair]) and this read feeds
 // aggregates: /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip
-// and the aggregator orchestrator. Measured on r1 2026-09-05, one hour
+// and the aggregator orchestrator. Measured on r1, one hour
 // of native/USDC-GA5Z…: 2957 rows stored one way round and 2794 the
 // other, so the served window held 51.4% of the market's prints — and
 // a biased 51.4%, since the decoder sets base = soldAsset and the
@@ -2199,7 +2177,7 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // damage: the scan does not widen AND the orchestrator's truncation
 // detector (len(t) >= cfg.MaxTradesPerWindow) can never fire again, so
 // the ~48%-of-windows truncation rate measured on r1 would read as 0%
-// while nothing had actually changed (cold audit 2026-08-04).
+// while nothing had actually changed.
 // MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps
 // its limit to. Exported so config validation can refuse a
 // max_trades_per_window above it rather than let an operator raise a
@@ -2221,7 +2199,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	// previous `ORDER BY ts ASC LIMIT` kept the OLDEST `limit` rows, so a
 	// busy 1h/24h VWAP was computed from a stale slice that began at the
 	// window start and stopped ~limit trades later, never reaching the
-	// present (F-1319). Callers still receive ascending order; only which
+	// present. Callers still receive ascending order; only which
 	// rows survive truncation changed (newest, not oldest).
 	const q = `
         (SELECT source, ledger, tx_hash, op_index, ts,
@@ -2517,7 +2495,7 @@ func (s *Store) FXQuoteAtOrBefore(
 	// rate; the alternative was an entry in [directionExempt] saying a
 	// price-serving read may stay blind, which is what that list exists
 	// to refuse. The legacy `trades` arm holds no FX rows on r1 today
-	// (checked 2026-09-05, both FX sources, 400 days, zero rows), so
+	// (both FX sources, 400 days, zero rows), so
 	// this widens a dormant path rather than a hot one.
 	const q = `
         (SELECT source, ts, base_asset, base_amount, quote_amount
@@ -2591,10 +2569,8 @@ func (s *Store) CountTrades(ctx context.Context) (int64, error) {
 
 // sortTradesByConflictKey orders a batch by the FULL trades PK — every
 // column in `ON CONFLICT (source, ledger, tx_hash, op_index, ts)` — so
-// every writer acquires row locks in one global, tie-free order (the
-// 2026-07-05 deadlock-storm fix, extended 2026-07-08 to include `ts`
-// after that four-column version left ties to `sort.Slice`'s
-// unspecified order; see BatchInsertTrades).
+// every writer acquires row locks in one global, tie-free order (see
+// BatchInsertTrades).
 func sortTradesByConflictKey(trades []canonical.Trade) {
 	sort.Slice(trades, func(i, j int) bool {
 		a, b := &trades[i], &trades[j]
@@ -2629,10 +2605,9 @@ func sameTradeConflictKey(a, b *canonical.Trade) bool {
 
 // dedupeSortedTradesByConflictKey collapses adjacent PK-duplicate rows in
 // a conflict-key-sorted batch, keeping the LAST copy of each run (the
-// latest redelivery). It exists because the INV-3 batch upsert (migration
+// latest redelivery). It exists because the batch upsert (migration
 // 0109) uses ON CONFLICT DO UPDATE, which Postgres rejects when one
-// statement presents the same conflict key twice; the old DO NOTHING
-// tolerated it. Input MUST be sorted by sortTradesByConflictKey so equal
+// statement presents the same conflict key twice. Input MUST be sorted by sortTradesByConflictKey so equal
 // keys are adjacent.
 //
 // Copy-on-write: the common case (no intra-batch duplicate) returns the

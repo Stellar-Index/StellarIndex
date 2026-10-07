@@ -28,17 +28,12 @@ func TestLPReserveInsertCitesObserverTask(t *testing.T) {
 	}
 }
 
-// The markets-listing perf fix cited its PR number (#20), which no
-// longer resolves to that PR after the history rewrite; the fix commit
-// cc4ed08ae is the reference the provenance can be recovered from.
+// PR #20 no longer resolves after the history rewrite; provenance lives in git.
 func TestMarketsListingHasNoDanglingIssueReference(t *testing.T) {
 	text := readPackageSource(t, "markets.go")
 	for _, stale := range []string{"(#20)", "#20 perf"} {
 		if strings.Contains(text, stale) {
-			t.Errorf("markets.go still cites %q; cite fix commit cc4ed08ae instead", stale)
+			t.Errorf("markets.go still cites %q, which no longer resolves", stale)
 		}
-	}
-	if got := strings.Count(text, "cc4ed08ae"); got < 2 {
-		t.Errorf("markets.go cites fix commit cc4ed08ae %d time(s); want it in both the root-cause and the 24h-scan notes", got)
 	}
 }
