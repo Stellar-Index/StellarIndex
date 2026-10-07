@@ -101,3 +101,30 @@ func TestMatchFoldsSpellingsAndSAC(t *testing.T) {
 		}
 	}
 }
+
+// An in-place rewrite truncates before it writes; the watcher must not read
+// that zero-byte moment as "no holds".
+func TestWatchKeepsHoldsOnZeroByteFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "holds.toml")
+	if err := os.WriteFile(path, []byte("[[hold]]\nasset = \"native\"\nreason = \"r\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var held atomic.Int32
+	held.Store(-1)
+	go Watch(ctx, path, 5*time.Millisecond, func(l []Hold) { held.Store(int32(len(l))) }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for deadline := time.Now().Add(2 * time.Second); held.Load() != 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("initial hold never applied")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := held.Load(); n != 1 {
+		t.Fatalf("zero-byte file applied %d holds, want the previous 1", n)
+	}
+}

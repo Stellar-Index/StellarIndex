@@ -588,7 +588,7 @@ trusted_proxy_cidrs      = []
 # (asset, contract_id, ledger_from, ledger_to, reason; all set selectors
 # must match) that flag matching supply, balance and holder responses
 # `flags.under_review`. Re-read every interval; a missing file means no
-# holds, an invalid one keeps the previous list. Empty path disables it.
+# holds, an invalid or zero-byte one keeps the previous list. Empty path disables it.
 # holds_file = "/etc/stellarindex/holds.toml"
 # holds_reload_interval = "15s"
 

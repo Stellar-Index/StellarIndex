@@ -158,8 +158,8 @@ func Match(holds []Hold, sub Subject) (Hold, bool) {
 const DefaultReloadInterval = 15 * time.Second
 
 // Watch polls path every interval and hands each successfully parsed list
-// to apply. A missing file means no holds; an unreadable or invalid file
-// keeps the previous list, so a bad edit cannot silently lift a hold.
+// to apply. A missing file means no holds; an unreadable, invalid or
+// zero-byte file keeps the previous list, so a bad edit cannot silently lift a hold.
 // Blocks until ctx is done.
 func Watch(ctx context.Context, path string, interval time.Duration, apply func([]Hold), logger *slog.Logger) {
 	var last []byte
@@ -170,6 +170,10 @@ func Watch(ctx context.Context, path string, interval time.Duration, apply func(
 			doc = []byte{}
 		case err != nil:
 			logger.Warn("holds: read failed, keeping previous list", "path", path, "err", err)
+			return
+		case len(doc) == 0 && len(last) > 0:
+			// An in-place rewrite truncates first; deleting the file is how to lift every hold.
+			logger.Warn("holds: empty file, keeping previous list", "path", path)
 			return
 		}
 		if last != nil && bytes.Equal(doc, last) {
