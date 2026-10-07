@@ -61,7 +61,7 @@ func TestFiatCodedAnchorKeepsItsValuation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseAsset: %v", err)
 			}
-			s := &Server{verifiedCurrencies: cat, minMarketCapVolumeUSD: 1000}
+			s := &Server{Options: Options{VerifiedCurrencies: cat, MinMarketCapVolumeUSD: 1000}}
 			price := "1.00"
 			detail := AssetDetail{
 				AssetID:  asset.String(),

@@ -1,6 +1,7 @@
 package coinbase
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -47,12 +48,12 @@ func TestCoinbaseCandleToTrade_zeroVolumeRejected(t *testing.T) {
 	// Volume=0 is treated as missing — it would translate into a
 	// zero-amount Trade that breaks downstream VWAP weighting.
 	row := coinbaseCandle{
-		1.7e9,   // time
-		0.17500, // low
-		0.17600, // high
-		0.17582, // open
-		0.17582, // close
-		0.0,     // volume = 0 → reject
+		json.Number("1700000000"), // time
+		json.Number("0.17500"),    // low
+		json.Number("0.17600"),    // high
+		json.Number("0.17582"),    // open
+		json.Number("0.17582"),    // close
+		json.Number("0.0"),        // volume = 0 → reject
 	}
 	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
 	if err == nil {
@@ -66,12 +67,12 @@ func TestCoinbaseCandleToTrade_zeroVolumeRejected(t *testing.T) {
 func TestCoinbaseCandleToTrade_missingVolumeRejected(t *testing.T) {
 	// volume slot is the wrong type — volumeFloat returns ok=false.
 	row := coinbaseCandle{
-		1.7e9, 0.17500, 0.17600, 0.17582, 0.17582,
-		"100.0", // string, not float64 — volumeFloat rejects
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"), json.Number("0.17582"),
+		"100.0", // string, not a JSON number — volumeStr rejects
 	}
 	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
 	if err == nil {
-		t.Error("expected error for non-float volume, got nil")
+		t.Error("expected error for non-number volume, got nil")
 	}
 }
 
@@ -80,9 +81,9 @@ func TestCoinbaseCandleToTrade_zeroCloseRejected(t *testing.T) {
 	// amount Trade that downstream callers would mistake for a
 	// free trade.
 	row := coinbaseCandle{
-		1.7e9, 0.17500, 0.17600, 0.17582,
-		0.0,   // close = 0 → reject
-		100.0, // volume
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"),
+		json.Number("0.0"),   // close = 0 → reject
+		json.Number("100.0"), // volume
 	}
 	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
 	if err == nil {
@@ -95,12 +96,12 @@ func TestCoinbaseCandleToTrade_zeroCloseRejected(t *testing.T) {
 
 func TestCoinbaseCandleToTrade_missingCloseRejected(t *testing.T) {
 	row := coinbaseCandle{
-		1.7e9, 0.17500, 0.17600, 0.17582,
-		"0.18", // string, not float64
-		100.0,
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"),
+		"0.18", // string, not a JSON number
+		json.Number("100.0"),
 	}
 	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
 	if err == nil {
-		t.Error("expected error for non-float close, got nil")
+		t.Error("expected error for non-number close, got nil")
 	}
 }

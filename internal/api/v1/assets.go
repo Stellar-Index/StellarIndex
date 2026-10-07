@@ -72,10 +72,10 @@ var _ Sep1FetchStateReader = (*timescale.Store)(nil)
 // regression logs loudly at boot instead of only showing up as a wrong
 // wire value nobody traced back here.
 func warnIfSep1CacheLacksFetchState(s *Server, logger *slog.Logger) {
-	if s.sep1Cache == nil {
+	if s.Sep1Cache == nil {
 		return
 	}
-	if _, ok := s.sep1Cache.(Sep1FetchStateReader); !ok {
+	if _, ok := s.Sep1Cache.(Sep1FetchStateReader); !ok {
 		logger.Warn("sep1 overlay: wired Sep1Cache does not implement Sep1FetchStateReader; " +
 			"every issuer will report sep1_status=not_fetched instead of unreachable")
 	}
@@ -704,7 +704,7 @@ func detailFromAsset(a canonical.Asset) AssetDetail {
 // assets is the AssetReader registered at server construction.
 // May be nil during the /v1/assets scaffolding phase — handlers
 // degrade gracefully to "feature unavailable" 503 when unset.
-func (s *Server) assetReaderOrNil() AssetReader { return s.assets }
+func (s *Server) assetReaderOrNil() AssetReader { return s.Assets }
 
 // ─── Handlers ─────────────────────────────────────────────────────
 
@@ -1151,7 +1151,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 
 	// Price the request by the plan it selected — after validation, so a
 	// 400 costs the base token only, and before any path reads.
-	if !middleware.ChargeRateLimit(w, r, assetListCost(filters, orderBy.order, assetClass, s.assetsReader != nil)) {
+	if !middleware.ChargeRateLimit(w, r, assetListCost(filters, orderBy.order, assetClass, s.AssetsReader != nil)) {
 		return
 	}
 
@@ -1177,7 +1177,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// each row the price / volume / change / sparkline / ATH fields
 	// (R-018 finish — assets-unification endgame). Falls through to
 	// the lean AssetReader path when no AssetsReader is configured.
-	if s.assetsReader != nil {
+	if s.AssetsReader != nil {
 		s.handleAssetListFromAssets(w, r, filters, cursor, limit, orderBy.order)
 		return
 	}
@@ -1505,7 +1505,7 @@ var (
 // can consult the same reader with the same preference order, rather
 // than growing a second, drifting notion of which supply is better.
 func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.SupplyObservation {
-	sr, ok := s.assetsReader.(preciseSupplyReader)
+	sr, ok := s.AssetsReader.(preciseSupplyReader)
 	if !ok {
 		return nil
 	}
@@ -1574,7 +1574,7 @@ func (s *Server) fillRowMarketCap(
 	// 0 here, and XLM is definitionally liquid — it must never be
 	// dust-suppressed now that an unmeasured count (0) can suppress.
 	if row.AssetID != "native" &&
-		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
 		stampCirculatingSupply(row, circ, basis)
 		return
@@ -1587,7 +1587,7 @@ func (s *Server) fillRowMarketCap(
 	// it is a test of the CLAIM, not of the inputs, which is exactly why
 	// the absolute floor above cannot stand in for it.
 	if row.AssetID != "native" &&
-		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
 		stampCirculatingSupply(row, circ, basis)
 		return
@@ -1629,7 +1629,7 @@ func (s *Server) fillRowMarketCap(
 // makes on the detail path, and applies the SAME lockstep refusal on
 // disagreement — see that function's doc for the full outcome table.
 func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail) {
-	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(row.AssetID)
+	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if hasConfirmed {
 		row.Decimals = confirmed
 	}
@@ -1691,7 +1691,7 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 // Under admitThin (the listing's `include_thin=true`) a measured-thin row
 // keeps price_usd flagged thin_market instead; its pills still go.
 func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail, admitThin bool) (unmeasured bool) {
-	if s.substance == nil {
+	if s.Substance == nil {
 		return false
 	}
 	for i := range rows {
@@ -1752,7 +1752,7 @@ func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset)
 // assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
 // not the listing, counted under its own `surface`.
 func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
-	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, surface)
+	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, surface)
 	return allowed
 }
 
@@ -1765,9 +1765,9 @@ func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, s
 // is known only after the peg fill and scam suppression.
 func (s *Server) listingSubstanceVerdict(ctx context.Context, asset canonical.Asset, admitThin bool) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
 	if admitThin {
-		return pricingguard.AssetSubstanceVerdictThinServed(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
+		return pricingguard.AssetSubstanceVerdictThinServed(ctx, s.Substance, asset, s.USDPeggedClassics, "listing")
 	}
-	allowed, measured = pricingguard.AssetSubstanceVerdict(ctx, s.substance, asset, s.usdPeggedClassics, "listing")
+	allowed, measured = pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, "listing")
 	return allowed, measured, pricingguard.FloorNone
 }
 
@@ -1816,7 +1816,7 @@ const declaredPegFXMaxAge = 7 * 24 * time.Hour
 //     fill itself never fabricates history.
 func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
 	refs := s.globalMarketRefs(ctx, rows)
-	if len(s.fiatPeggedClassics) == 0 && refs == nil {
+	if len(s.FiatPeggedClassics) == 0 && refs == nil {
 		return
 	}
 	now := time.Now()
@@ -1851,10 +1851,10 @@ func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, mem
 
 // fillFixedPegPrice is the declared fiat peg × FX fill.
 func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
-	if len(s.fiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) {
+	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) {
 		return
 	}
-	fiat, ok := s.fiatPeggedClassics[row.AssetID]
+	fiat, ok := s.FiatPeggedClassics[row.AssetID]
 	if !ok {
 		return
 	}
@@ -1958,7 +1958,7 @@ type classicSupplyReader interface {
 // degrade to the precise supply set only. Serves the last good map on a
 // refresh error until it is classicSupplyMaxAge old, then nothing.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	er, ok := s.explorer.(classicSupplyReader)
+	er, ok := s.Explorer.(classicSupplyReader)
 	if !ok {
 		return nil
 	}
@@ -2389,7 +2389,7 @@ var _ sep1ImagesReader = (*timescale.Store)(nil)
 // Returns nil when no reader exposing AllSep1Images is wired (test stubs
 // / overlay disabled).
 func (s *Server) cachedSep1Images(ctx context.Context) map[string]string {
-	reader, ok := s.sep1Cache.(sep1ImagesReader)
+	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
 		return nil
 	}
@@ -2497,7 +2497,7 @@ func (s *Server) endSep1ImagesFlight(done chan struct{}) {
 // Best-effort, like every other prewarm: no reader, no capability, or a
 // failed scan each leave the cache exactly as it was.
 func (s *Server) PrewarmSep1Images(ctx context.Context) {
-	reader, ok := s.sep1Cache.(sep1ImagesReader)
+	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
 		return
 	}
@@ -2689,14 +2689,14 @@ func (s *Server) handleAssetListFromCatalogue(
 	class string, filters assetListFilters, limit int, cursor string,
 ) {
 	flags := Flags{FiltersIgnored: filters.ignored()}
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
 	// StellarIssued (not Browseable): /v1/assets is Stellar-only post-split
 	// (LC-001), so asset_class=fiat yields nothing here (fiat lives on
 	// /v1/external/assets); stablecoin/crypto yield only Stellar-issued rows.
-	matched := filterCatalogueByClass(s.verifiedCurrencies.StellarIssued(), currency.AssetClass(class))
+	matched := filterCatalogueByClass(s.VerifiedCurrencies.StellarIssued(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := s.projectCatalogueRows(r.Context(), matched, caps)
 	s.writeCataloguePage(w, r, rows, limit, cursor, flags)
@@ -2725,11 +2725,11 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Every external row is priced by an off-chain feed no test net runs.
-	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
+	if s.VerifiedCurrencies == nil || !s.servesPubnetReference() {
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return
 	}
-	entries := s.verifiedCurrencies.External()
+	entries := s.VerifiedCurrencies.External()
 	class := normaliseAssetClass(r.URL.Query().Get("asset_class"))
 	if !validAssetClass(class) {
 		writeProblem(w, r,
@@ -2953,7 +2953,7 @@ func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetai
 // adopted from the view only when the row doesn't already have one (fiat
 // rows are pre-filled by the catalogue market-cap path).
 func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDetail) {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return
 	}
 	priceCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -2962,7 +2962,7 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 		if page[i].PriceUSD != nil {
 			return
 		}
-		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
+		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
 			return
 		}
@@ -2997,14 +2997,14 @@ func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedC
 // and the CODE-ISSUER detail (fail closed), so a dust market cannot price a
 // catalogue row that /v1/price and the detail page withhold.
 func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
-	if s.assetsReader == nil || assetID == "" {
+	if s.AssetsReader == nil || assetID == "" {
 		return nil
 	}
-	row, err := s.assetsReader.GetAssetByAssetID(ctx, assetID)
+	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
 	if err != nil || row.PriceUSD == nil {
 		return nil
 	}
-	if s.substance != nil {
+	if s.Substance != nil {
 		asset, err := canonical.ParseAsset(assetID)
 		if err != nil || !s.listingPriceAllowed(ctx, asset) {
 			return nil
@@ -3183,7 +3183,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
 ) {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		// No catalogue → skip directly to classic phase.
 		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
@@ -3195,7 +3195,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Narrow BEFORE the market-cap fan-out: an entry the caller filtered
 	// out would otherwise cost a supply + FX read to compute a cap for a
 	// row that can never be served.
-	entries := filterCatalogueEntries(s.verifiedCurrencies.StellarIssued(), filters)
+	entries := filterCatalogueEntries(s.VerifiedCurrencies.StellarIssued(), filters)
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	// q= filter over the catalogue phase (S-011). The classic phase
@@ -3322,7 +3322,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	if !typeMatchesListingSpine(filters.typ) {
 		return []AssetDetail{}, "", false, true
 	}
-	if s.assetsReader == nil {
+	if s.AssetsReader == nil {
 		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return nil, "", false, false
@@ -3365,7 +3365,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	// Overfetch-by-one (same shape as handleAssetListFromAssets) to
 	// drive the cursor advance.
 	opts.Limit = limit + AssetsListOverfetchBy
-	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
+	rows, err := s.AssetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
 			return nil, "", false, false
@@ -3578,7 +3578,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// Trust anchor is the lake instance's StellarAsset executable
 	// (only stellar-core mints it); belt-and-braces, the classic
 	// asset must re-derive to the queried address.
-	if parsed.Type == canonical.AssetSoroban && s.explorer != nil {
+	if parsed.Type == canonical.AssetSoroban && s.Explorer != nil {
 		if classic, ok := s.resolveSACToClassic(r.Context(), parsed.ContractID); ok {
 			parsed = classic
 		}
@@ -3650,7 +3650,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 
 	// SEP-1 overlay — reads the cached payload `sep1-refresh` cron
 	// persisted in `issuers.sep1_payload`. NO live HTTPS fetch.
-	if s.sep1Cache != nil {
+	if s.Sep1Cache != nil {
 		s.applySep1Overlay(ctx, &detail, parsed)
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
@@ -3837,7 +3837,7 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // response depends on. detail.Decimals is the supply divisor for
 // market_cap_usd / fdv_usd, while the USD price those multiply was
 // normalised through the `nonstandard_decimals_assets` projection
-// (s.nonstandardDecimals, via aggregate.ResolveDecimals in
+// (s.NonstandardDecimals, via aggregate.ResolveDecimals in
 // lookupUSDPriceWithSources). The projection is a materialised view of the
 // same lake reading for the non-7 subset, maintained by the aggregator's
 // decimals-guard, so the invariant is: projection row present ⇔ lake
@@ -3874,7 +3874,7 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	if a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
 	}
-	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(a.ContractID)
+	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(a.ContractID)
 	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, a.ContractID)
 	if !lakeKnown {
 		if hasConfirmed {
@@ -3910,12 +3910,12 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 // documented default applies. Callers must not publish a scale-dependent
 // figure on a failed read.
 func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool, err error) {
-	if s.tokenDecimals == nil {
+	if s.TokenDecimals == nil {
 		return 0, false, nil
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
+	d, found, err := s.TokenDecimals.TokenDecimals(dctx, contractID)
 	if err != nil {
 		s.logger.Warn("token decimals read failed; scale unresolved", "contract_id", contractID, "err", err)
 		return 0, false, err
@@ -3937,7 +3937,7 @@ func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (deci
 // that have an ISO ticker on hand but not the friendly slug.
 // Slug match wins over ticker match if both resolve.
 func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw string) bool {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return false
 	}
 	vc := s.lookupCatalogue(raw)
@@ -4009,9 +4009,9 @@ func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.
 	// handlers, `assetsReader` for the F2 listing paths); the binaries
 	// wire the same store adapter behind both, but a test — or a future
 	// deployment — may wire only one. Probe both.
-	res, ok := s.assets.(classicSlugResolver)
+	res, ok := s.Assets.(classicSlugResolver)
 	if !ok {
-		res, ok = s.assetsReader.(classicSlugResolver)
+		res, ok = s.AssetsReader.(classicSlugResolver)
 	}
 	if !ok {
 		return canonical.Asset{}, false
@@ -4035,13 +4035,13 @@ func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.
 // lookupCatalogue resolves a slug OR ticker to a verified currency (slug wins),
 // case-insensitive. Returns nil when neither matches.
 func (s *Server) lookupCatalogue(raw string) *currency.VerifiedCurrency {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return nil
 	}
-	if vc, ok := s.verifiedCurrencies.LookupBySlug(raw); ok {
+	if vc, ok := s.VerifiedCurrencies.LookupBySlug(raw); ok {
 		return vc
 	}
-	if vc, ok := s.verifiedCurrencies.LookupByTicker(raw); ok {
+	if vc, ok := s.VerifiedCurrencies.LookupByTicker(raw); ok {
 		return vc
 	}
 	return nil
@@ -4056,7 +4056,7 @@ func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) 
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/asset-not-found",
 			"Asset not found", http.StatusNotFound,
-			fmt.Sprintf("external assets are not served on network %s", s.network))
+			fmt.Sprintf("external assets are not served on network %s", s.Network))
 		return
 	}
 	vc := s.lookupCatalogue(raw)
@@ -4084,10 +4084,10 @@ func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asse
 	flags := Flags{}
 	// The catalogue's verified issuers are pubnet accounts; on a test net
 	// every look-alike stamp would point at an asset that does not exist.
-	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.verifiedCurrencies) {
+	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.VerifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
-	applyFiatCodeAnchorNote(detail, asset, s.verifiedCurrencies)
+	applyFiatCodeAnchorNote(detail, asset, s.VerifiedCurrencies)
 	return flags
 }
 
@@ -4131,14 +4131,14 @@ func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *cu
 // the unified listing carry no issuer (type=global) and are skipped —
 // they ARE the verified identities.
 func (s *Server) stampListingCollisions(rows []AssetDetail) {
-	if s.verifiedCurrencies == nil || !s.servesPubnetReference() {
+	if s.VerifiedCurrencies == nil || !s.servesPubnetReference() {
 		return
 	}
 	for i := range rows {
 		if rows[i].Issuer == nil || *rows[i].Issuer == "" || rows[i].Code == "" {
 			continue
 		}
-		if _, collision := s.verifiedCurrencies.StellarCollision(rows[i].Code, *rows[i].Issuer); collision {
+		if _, collision := s.VerifiedCurrencies.StellarCollision(rows[i].Code, *rows[i].Issuer); collision {
 			rows[i].UnverifiedTickerCollision = true
 		}
 	}
@@ -4312,7 +4312,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 	// rather than silently accepted (GH-582).
 	homeDomainDegraded := s.backfillHomeDomain(r.Context(), &detail)
 
-	if s.sep1Cache != nil {
+	if s.Sep1Cache != nil {
 		s.applySep1Overlay(r.Context(), &detail, parsed)
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
@@ -4373,7 +4373,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 // the pre-2026-09-16 answer and is the conservative direction: it claims
 // nothing about the issuer.
 func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) string {
-	rd, ok := s.sep1Cache.(Sep1FetchStateReader)
+	rd, ok := s.Sep1Cache.(Sep1FetchStateReader)
 	if !ok {
 		return "not_fetched"
 	}
@@ -4396,7 +4396,7 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		detail.Sep1Status = "not_applicable"
 		return
 	}
-	sep, err := s.sep1Cache.GetIssuerSep1Cached(ctx, asset.Issuer)
+	sep, err := s.Sep1Cache.GetIssuerSep1Cached(ctx, asset.Issuer)
 	if err != nil {
 		s.logger.Debug("sep1 cached lookup failed", "asset_id", asset.String(),
 			"issuer", asset.Issuer, "err", err)
@@ -4592,7 +4592,7 @@ func isSafeImageURL(s string) bool {
 // can never redirect pricing (defence-in-depth on top of the
 // StellarAsset-executable trust anchor).
 func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (canonical.Asset, bool) {
-	name, found, err := s.explorer.SACClassicAssetName(ctx, contractID)
+	name, found, err := s.Explorer.SACClassicAssetName(ctx, contractID)
 	if err != nil || !found {
 		return canonical.Asset{}, false
 	}
@@ -4654,7 +4654,7 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 // AssetsReader listing), so it must stay safe on a page that mixes
 // catalogue and classic rows.
 func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetail) {
-	if s.assetsReader == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
+	if s.AssetsReader == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
 		return
 	}
 	// Series asset_id → the page rows that render it. A catalogue row and
@@ -4680,7 +4680,7 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 	if len(ids) == 0 {
 		return
 	}
-	hist, err := s.assetsReader.GetAssetsPriceHistory7dBatch(r.Context(), ids)
+	hist, err := s.AssetsReader.GetAssetsPriceHistory7dBatch(r.Context(), ids)
 	if err != nil {
 		s.logger.Warn("sparkline7d batch", "err", err)
 		return
@@ -4760,7 +4760,7 @@ func (s *Server) sparkline7dToWire(assetID string, pts []timescale.AssetPricePoi
 func (s *Server) normalizeCatalogueReadUSDByID(value, assetID string) (string, bool) {
 	asset, err := canonical.ParseAsset(assetID)
 	if err != nil {
-		if _, flagged := s.nonstandardDecimals.Lookup(assetID); flagged {
+		if _, flagged := s.NonstandardDecimals.Lookup(assetID); flagged {
 			return "", false
 		}
 		return value, true
@@ -4787,7 +4787,7 @@ func (s *Server) normalizeCatalogueReadUSDByID(value, assetID string) (string, b
 //
 // Byte-identical, with no parse, for an asset with no confirmed row.
 func (s *Server) normalizeCatalogueReadUSD(value string, asset canonical.Asset) (string, bool) {
-	scaleUp := aggregate.ResolveDecimals(s.nonstandardDecimals, asset) - aggregate.StandardDecimals
+	scaleUp := aggregate.ResolveDecimals(s.NonstandardDecimals, asset) - aggregate.StandardDecimals
 	roundedAfter := scaleUp > 0 && decimalFractionPlaces(value) >= catalogueUSDRoundDigits+scaleUp
 	return s.normalizeCatalogueUSD(value, asset, !roundedAfter)
 }
@@ -4842,7 +4842,7 @@ func (s *Server) seriesAssetIDForRow(d *AssetDetail) string {
 	if d.Type != assetTypeGlobal {
 		return d.AssetID
 	}
-	vc, ok := s.verifiedCurrencies.LookupBySlug(d.Slug)
+	vc, ok := s.VerifiedCurrencies.LookupBySlug(d.Slug)
 	if !ok {
 		return ""
 	}
@@ -4874,12 +4874,12 @@ func hasPricedPoint(pts []timescale.AssetPricePoint) bool {
 // two ranks and slightly different prices, nothing marking them as
 // the same entity).
 func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		return rows
 	}
 	out := rows[:0]
 	for _, row := range rows {
-		if _, dup := s.verifiedCurrencies.LookupByStellarAssetID(row.AssetID); dup {
+		if _, dup := s.VerifiedCurrencies.LookupByStellarAssetID(row.AssetID); dup {
 			continue
 		}
 		out = append(out, row)
@@ -4947,7 +4947,7 @@ func (s *Server) foldAliasTwins(rows []AssetDetail) ([]AssetDetail, map[string]s
 // path. The listing's ORDER is still per-arm volume: re-ranking needs the
 // fold inside the spine's keyset, which this does not attempt.
 func (s *Server) restoreOffPageContractArms(ctx context.Context, rows []AssetDetail, merged map[string]struct{}) {
-	if s.assetsReader == nil {
+	if s.AssetsReader == nil {
 		return
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -5062,14 +5062,14 @@ func maxFractionDigits(a, b string) int {
 // unmeasured reports that the substance gate withheld a twin it could not
 // measure, so the caller stamps flags.stale as the classic phase does.
 func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail, filters assetListFilters) (unmeasured bool) {
-	if s.assetsReader == nil {
+	if s.AssetsReader == nil {
 		return false
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	var anyUnmeasured atomic.Bool
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
-		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
+		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
 			return
 		}
@@ -5191,7 +5191,7 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 		if _, done := skip[alias.String()]; done {
 			continue
 		}
-		row, err := s.assetsReader.GetAssetByAssetID(ctx, alias.String())
+		row, err := s.AssetsReader.GetAssetByAssetID(ctx, alias.String())
 		if err != nil {
 			continue
 		}
@@ -5217,7 +5217,7 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 // the OpenAPI spec.
 func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.AssetRow {
 	if assetID == "native" {
-		row, err := s.assetsReader.GetNativeAssetRow(ctx)
+		row, err := s.AssetsReader.GetNativeAssetRow(ctx)
 		if err != nil {
 			return nil
 		}
@@ -5227,7 +5227,7 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *times
 	if dashIx < 0 {
 		return nil
 	}
-	rows, err := s.assetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
+	rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
 		Limit:  50,
 		Issuer: assetID[dashIx+1:],
 		Order:  timescale.AssetsOrderVolume24hUSDDesc,

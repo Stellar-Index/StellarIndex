@@ -186,7 +186,7 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) rwaContractBuil
 	// names; the second arm's whole recognition rests on it.
 	listing := s.rwaListingSnapshot(ctx)
 
-	if s.rwaContracts == nil {
+	if s.RWAContracts == nil {
 		// The directory arm is unwired, which says nothing about the
 		// listing arm — they draw on different readers. The second arm
 		// still runs, over a population that is a table in this
@@ -240,7 +240,7 @@ func (s *Server) buildRWADirectoryMembership(
 ) (rwaContractCensus, []rwaContractMember, map[string]struct{}) {
 	var census rwaContractCensus
 	tags := rwa.ContractRecognitionTags()
-	entries, dirCensus, err := s.rwaContracts.DirectoryRecognisedContracts(ctx, tags)
+	entries, dirCensus, err := s.RWAContracts.DirectoryRecognisedContracts(ctx, tags)
 	if err != nil {
 		// Fail CLOSED for this arm, the same way the classic arm fails
 		// closed when the directory cannot answer. The directory IS the
@@ -389,10 +389,10 @@ func (s *Server) buildRWAListingMembership(
 // An unavailable reader or a token with no usable metadata yields "",
 // which fails C4's oracle arm — never an error, and never a guess.
 func (s *Server) rwaContractSymbol(ctx context.Context, contractID string) string {
-	if s.tokenSymbol == nil {
+	if s.TokenSymbol == nil {
 		return ""
 	}
-	sym, ok, err := s.tokenSymbol.TokenSymbol(ctx, contractID)
+	sym, ok, err := s.TokenSymbol.TokenSymbol(ctx, contractID)
 	if err != nil || !ok {
 		return ""
 	}
@@ -403,7 +403,7 @@ func (s *Server) rwaContractSymbol(ctx context.Context, contractID string) strin
 // holds no token for. Best-effort: a failed read costs the names, never
 // the response, and the exact count still comes from the census.
 func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaUnreachedEntity {
-	rows, err := s.rwaContracts.DirectoryRecognisedIssuersWithoutAsset(ctx, tags, rwaUnreachedSampleCap)
+	rows, err := s.RWAContracts.DirectoryRecognisedIssuersWithoutAsset(ctx, tags, rwaUnreachedSampleCap)
 	if err != nil {
 		s.logger.Warn("rwa contract membership: unreached entity scan failed", "err", err)
 		return nil
@@ -468,7 +468,7 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
-	if len(members) == 0 || s.contractCatalogue == nil {
+	if len(members) == 0 || s.ContractCatalogue == nil {
 		return map[string]AssetDetail{}, 0, false, nil
 	}
 	ids := make([]string, 0, len(members))
@@ -477,7 +477,7 @@ func (s *Server) rwaContractListingRows(
 	}
 	sort.Strings(ids)
 
-	rows, err := s.contractCatalogue.ContractCatalogueRows(ctx, ids)
+	rows, err := s.ContractCatalogue.ContractCatalogueRows(ctx, ids)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -566,14 +566,14 @@ func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 ) (resolved map[string]struct{}, cut bool) {
 	resolved = make(map[string]struct{}, len(rows))
-	if s.tokenDecimals == nil {
+	if s.TokenDecimals == nil {
 		return resolved, false
 	}
 	for i := range rows {
 		if _, ok := src[rows[i].AssetID]; !ok {
 			continue
 		}
-		d, ok, err := s.tokenDecimals.TokenDecimals(ctx, rows[i].AssetID)
+		d, ok, err := s.TokenDecimals.TokenDecimals(ctx, rows[i].AssetID)
 		if err != nil && ctx.Err() != nil {
 			return resolved, true
 		}
@@ -610,7 +610,7 @@ func (s *Server) fillContractMarketCaps(
 	scaled map[string]struct{},
 ) (cut bool) {
 	refuseUnscaledContractCaps(rows, scaled)
-	if s.tokenSupply == nil {
+	if s.TokenSupply == nil {
 		return false
 	}
 	for i := range rows {
@@ -662,7 +662,7 @@ func (s *Server) applyContractMarketCap(
 	if row.PriceUSD == nil {
 		return
 	}
-	if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
+	if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
 		return
 	}
@@ -674,7 +674,7 @@ func (s *Server) applyContractMarketCap(
 	if mc == "" {
 		return
 	}
-	if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+	if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
 		return
 	}
@@ -694,7 +694,7 @@ func (s *Server) applyContractMarketCap(
 // times its capitalisation. The reference valuation is untouched — an
 // oracle quotes a whole-token price, which the lake scale is right for.
 func (s *Server) contractPriceScaleDisagrees(row *AssetDetail) bool {
-	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(row.AssetID)
+	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if (hasConfirmed && confirmed == row.Decimals) ||
 		(!hasConfirmed && row.Decimals == aggregate.StandardDecimals) {
 		return false
@@ -742,7 +742,7 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 func (s *Server) contractSupplyReading(
 	ctx context.Context, assetID string,
 ) (string, supply.Basis, bool) {
-	sup, err := s.tokenSupply.TokenSupply(ctx, assetID)
+	sup, err := s.TokenSupply.TokenSupply(ctx, assetID)
 	if err != nil || sup.Total == nil || sup.Incomplete {
 		return "", "", false
 	}
@@ -784,10 +784,10 @@ func (s *Server) contractSupplyReading(
 // replace one unfounded zero with another, which is the entire defect this
 // path exists to remove.
 func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
-	if s.storageSupply == nil {
+	if s.ContractStorageSupply == nil {
 		return "", false
 	}
-	st, err := s.storageSupply.ContractStorageSupply(ctx, contractID)
+	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
 	if err != nil {
 		// A SAC is the expected refusal here — every classic asset's derived
 		// contract reaches this reader and is turned away structurally — so
@@ -811,14 +811,14 @@ func (s *Server) contractStorageCirculating(ctx context.Context, contractID stri
 // nothing on a page that publishes no valuation for contracts and costs
 // everything on one that does.
 func (s *Server) fillContractDirectoryTags(ctx context.Context, rows []AssetDetail) {
-	if s.directory == nil || len(rows) == 0 {
+	if s.Directory == nil || len(rows) == 0 {
 		return
 	}
 	addrs := make([]string, 0, len(rows))
 	for i := range rows {
 		addrs = append(addrs, rows[i].AssetID)
 	}
-	found, err := s.directory.DirectoryEntriesByAddresses(ctx, addrs)
+	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, addrs)
 	if err != nil {
 		s.logger.Warn("rwa contract directory batch lookup failed — withholding pricing",
 			"n", len(addrs), "err", err)

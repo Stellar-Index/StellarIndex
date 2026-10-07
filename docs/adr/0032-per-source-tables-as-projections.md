@@ -41,6 +41,7 @@ Per-source tables for Soroban-derived data are projections of the raw event reco
 - Projected tables lag the raw record by the projector's cycle time. Price endpoints do not read them on a sub-second path.
 - While `persist_per_source = true`, a promoted-later source is double-written. Idempotent inserts absorb the overlap.
 - The projector is an always-on component whose wedge shows up as lag, not as an error.
+- Sole-writer sources are the specs with `SoleWriter: true` in `internal/pipeline/source_spec.go`. `rozo` joined `sep41` in #2567 (2026-10), so the Decision and Invariant text above naming only `sep41` is the original rollout state, and `IsProjectedEvent` is now a lookup derived from the registry's `Projector` field. The two tests named in the Invariant are now `TestSpec_SoleWriterSubsetOfProjected` and `TestSinkModeForProjector_SoleWriterInvariant` (`internal/pipeline/sole_writer_test.go`).
 
 ## Evidence
 

@@ -73,14 +73,14 @@ func directoryAddress(d *AssetDetail) string {
 
 // applyIssuerDirectoryTags resolves the single detail-page issuer.
 func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDetail) {
-	if s.directory == nil || detail == nil {
+	if s.Directory == nil || detail == nil {
 		return
 	}
 	addr := directoryAddress(detail)
 	if addr == "" {
 		return
 	}
-	e, ok, err := s.directory.DirectoryEntryByAddress(ctx, addr)
+	e, ok, err := s.Directory.DirectoryEntryByAddress(ctx, addr)
 	if err != nil {
 		s.logger.Warn("asset issuer directory lookup failed — withholding pricing",
 			"address", addr, "err", err)
@@ -97,7 +97,7 @@ func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDeta
 // in ONE batch query (no N+1), then stamps each row. Rows with no
 // directoryAddress (native / catalogue-global) are skipped.
 func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail) {
-	if s.directory == nil || len(rows) == 0 {
+	if s.Directory == nil || len(rows) == 0 {
 		return
 	}
 	seen := make(map[string]struct{}, len(rows))
@@ -116,7 +116,7 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 	if len(addrs) == 0 {
 		return
 	}
-	found, err := s.directory.DirectoryEntriesByAddresses(ctx, addrs)
+	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, addrs)
 	if err != nil {
 		s.logger.Warn("asset listing directory batch lookup failed — withholding pricing",
 			"n", len(addrs), "err", err)

@@ -197,12 +197,12 @@ func TestCoinbaseCandleToTrade_LHOC_Ordering(t *testing.T) {
 	// Synthesise a candle with a clear low vs close gap so mis-
 	// ordering surfaces as a price divergence. Close = 100, Low = 50.
 	c := coinbaseCandle{
-		float64(1745000000), // time
-		50.0,                // low (slot 1)
-		100.0,               // high (slot 2)
-		90.0,                // open (slot 3)
-		100.0,               // close (slot 4 — should drive price)
-		10.0,                // volume
+		json.Number("1745000000"), // time
+		json.Number("50.0"),       // low (slot 1)
+		json.Number("100.0"),      // high (slot 2)
+		json.Number("90.0"),       // open (slot 3)
+		json.Number("100.0"),      // close (slot 4 — should drive price)
+		json.Number("10.0"),       // volume
 	}
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usd, _ := canonical.NewFiatAsset("USD")
@@ -218,5 +218,144 @@ func TestCoinbaseCandleToTrade_LHOC_Ordering(t *testing.T) {
 		t.Errorf("QuoteAmount = %s want %s (close=100 × vol=10). "+
 			"If this failed with quote ≈ 5e10, LHOC ordering is being read as OHLC (low instead of close).",
 			trade.QuoteAmount, wantQuote)
+	}
+}
+
+// TestCoinbaseCandles_exactAbove2Pow53 serves a candle whose volume and
+// close carry more significant digits than a float64 holds (2^53 + 1
+// and beyond); every digit down to 10^-8 must reach the trade.
+func TestCoinbaseCandles_exactAbove2Pow53(t *testing.T) {
+	const body = `[[1745000000, 0.5, 1.5, 0.9, 1.23456789, 9007199254740993.12345678]]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	candles, err := fetchCoinbaseCandles(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatalf("fetchCoinbaseCandles: %v", err)
+	}
+	if len(candles) != 1 {
+		t.Fatalf("got %d candles, want 1", len(candles))
+	}
+	trade, err := coinbaseCandleToTrade(candles[0], "XLM-USD", makePair(t), 3600)
+	if err != nil {
+		t.Fatalf("coinbaseCandleToTrade: %v", err)
+	}
+	wantBase, _ := new(big.Int).SetString("900719925474099312345678", 10)
+	if trade.BaseAmount.BigInt().Cmp(wantBase) != 0 {
+		t.Errorf("BaseAmount = %s, want %s (volume lost digits through float64)", trade.BaseAmount, wantBase)
+	}
+	// quote = base × close / 10^8, truncated, all in big.Int.
+	wantQuote := new(big.Int).Mul(wantBase, big.NewInt(123456789))
+	wantQuote.Quo(wantQuote, big.NewInt(100_000_000))
+	if trade.QuoteAmount.BigInt().Cmp(wantQuote) != 0 {
+		t.Errorf("QuoteAmount = %s, want %s", trade.QuoteAmount, wantQuote)
+	}
+}
+
+// TestCoinbaseCandleToTrade_priceIsCloseWithinRange pins the documented
+// close-pricing contract: the venue publishes no VWAP, so the synthetic
+// trade's price is the close, which must sit inside [low, high].
+func TestCoinbaseCandleToTrade_priceIsCloseWithinRange(t *testing.T) {
+	c := coinbaseCandle{
+		json.Number("1745000000"),
+		json.Number("0.10"), // low
+		json.Number("0.20"), // high
+		json.Number("0.11"), // open
+		json.Number("0.19"), // close
+		json.Number("1000"), // volume
+	}
+	trade, err := coinbaseCandleToTrade(c, "XLM-USD", makePair(t), 3600)
+	if err != nil {
+		t.Fatalf("coinbaseCandleToTrade: %v", err)
+	}
+	price := new(big.Rat).SetFrac(trade.QuoteAmount.BigInt(), trade.BaseAmount.BigInt())
+	if want := big.NewRat(19, 100); price.Cmp(want) != 0 {
+		t.Errorf("price = %s, want close %s", price.FloatString(8), want.FloatString(8))
+	}
+	if price.Cmp(big.NewRat(10, 100)) < 0 || price.Cmp(big.NewRat(20, 100)) > 0 {
+		t.Errorf("price %s outside candle range [0.10, 0.20]", price.FloatString(8))
+	}
+}
+
+func TestCandleNumberToScaled(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"1e-05", "1000"},
+		{"5e-07", "50"},
+		{"2.5e-07", "25"},
+		{"1.5E+2", "15000000000"},
+		{"0.17582", "17582000"},
+		{"0.123456789", "12345678"}, // truncates past 8 dp like DecimalStringToScaledInt
+		{"9007199254740993.12345678", "900719925474099312345678"},
+	}
+	for _, tc := range cases {
+		got, err := candleNumberToScaled(tc.in)
+		if err != nil {
+			t.Errorf("candleNumberToScaled(%q): %v", tc.in, err)
+			continue
+		}
+		if got.String() != tc.want {
+			t.Errorf("candleNumberToScaled(%q) = %s, want %s", tc.in, got, tc.want)
+		}
+	}
+	for _, bad := range []string{"1e999999999", "1e-999999999", "1e900000", "1e-900000", "1e41", "abc", ""} {
+		if _, err := candleNumberToScaled(bad); err == nil {
+			t.Errorf("candleNumberToScaled(%q) = nil error, want refusal", bad)
+		}
+	}
+}
+
+// TestCoinbaseCandles_exponentForms serves the exponent forms Coinbase
+// emits for tiny values; each candle must still become an exact trade.
+func TestCoinbaseCandles_exponentForms(t *testing.T) {
+	const body = `[[1745007200, 0.1, 0.2, 0.1, 0.15, 1e-05],` +
+		`[1745003600, 0.1, 0.2, 0.1, 0.15, 5e-07],` +
+		`[1745000000, 1e-07, 3e-07, 2e-07, 2.5e-07, 1000]]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	candles, err := fetchCoinbaseCandles(context.Background(), srv.URL, nil)
+	if err != nil {
+		t.Fatalf("fetchCoinbaseCandles: %v", err)
+	}
+	far := time.Unix(1_800_000_000, 0)
+	trades, err := coinbaseCandlesToTrades(candles, "XLM-USD", makePair(t), 3600, far, far)
+	if err != nil {
+		t.Fatalf("coinbaseCandlesToTrades: %v", err)
+	}
+	want := [][2]string{
+		{"100000000000", "25000"}, // 1000 @ 2.5e-07
+		{"50", "7"},               // 5e-07 @ 0.15, truncated
+		{"1000", "150"},           // 1e-05 @ 0.15
+	}
+	if len(trades) != len(want) {
+		t.Fatalf("got %d trades, want %d", len(trades), len(want))
+	}
+	for i, w := range want {
+		if trades[i].BaseAmount.String() != w[0] || trades[i].QuoteAmount.String() != w[1] {
+			t.Errorf("trade %d = (%s, %s), want (%s, %s)", i, trades[i].BaseAmount, trades[i].QuoteAmount, w[0], w[1])
+		}
+	}
+}
+
+// TestCoinbaseCandlesToTrades_malformedCandleFailsPage: an unparseable
+// candle must fail the page rather than shrink the backfilled range.
+func TestCoinbaseCandlesToTrades_malformedCandleFailsPage(t *testing.T) {
+	far := time.Unix(1_800_000_000, 0)
+	page := []coinbaseCandle{
+		{json.Number("1745003600"), json.Number("0.1"), json.Number("0.2"), json.Number("0.1"), "0.15", json.Number("10")},
+		{json.Number("1745000000"), json.Number("0.1"), json.Number("0.2"), json.Number("0.1"), json.Number("0.15"), json.Number("10")},
+	}
+	if trades, err := coinbaseCandlesToTrades(page, "XLM-USD", makePair(t), 3600, far, far); err == nil {
+		t.Fatalf("got %d trades and nil error, want an error naming the malformed candle", len(trades))
+	}
+	empty := []coinbaseCandle{{json.Number("1745000000"), json.Number("0.1"), json.Number("0.2"), json.Number("0.1"), json.Number("0.15"), json.Number("0")}}
+	if trades, err := coinbaseCandlesToTrades(empty, "XLM-USD", makePair(t), 3600, far, far); err != nil || len(trades) != 0 {
+		t.Errorf("zero-volume candle = (%d trades, %v), want a silent skip", len(trades), err)
 	}
 }

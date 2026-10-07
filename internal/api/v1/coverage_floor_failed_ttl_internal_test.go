@@ -43,9 +43,9 @@ func TestCoverageFloor_FailedProbeUsesShortTTL(t *testing.T) {
 	}
 
 	s := &Server{
-		logger:              slog.Default(),
-		coverageFloorReader: erroringCoverageFloorReader{},
-		coverageFloorCache:  &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
+		Options:            Options{CoverageFloor: erroringCoverageFloorReader{}},
+		logger:             slog.Default(),
+		coverageFloorCache: &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
 	}
 
 	before := time.Now().UTC()

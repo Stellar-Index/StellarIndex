@@ -39,6 +39,7 @@ const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const ROUTES = [
   { name: 'ledgers', cls: 'lookup', w: 6, url: () => `${baseUrl}/ledgers?limit=20` },
   { name: 'ledger-detail', cls: 'lookup', w: 6, url: (d) => `${baseUrl}/ledgers/${pick(d.seqs)}` },
+  { name: 'ledger-at', cls: 'lookup', w: 2, url: (d) => `${baseUrl}/ledgers/at?ts=${encodeURIComponent(pick(d.closeTimes))}` },
   { name: 'ledger-transactions', cls: 'lookup', w: 5, url: (d) => `${baseUrl}/ledgers/${pick(d.seqs)}/transactions?limit=50` },
   { name: 'ledger-operations', cls: 'lookup', w: 2, url: (d) => `${baseUrl}/ledgers/${pick(d.seqs)}/operations?limit=50` },
   { name: 'operations', cls: 'lookup', w: 2, url: () => `${baseUrl}/operations?limit=50` },
@@ -131,6 +132,7 @@ export function setup() {
   const ranked = (getData('/accounts?limit=20').accounts || []).map((a) => a.account_id);
   return {
     seqs,
+    closeTimes: nonEmpty('ledger close times', ledgers.map((l) => l.close_time)),
     hashes: nonEmpty('transactions', hashes),
     contracts: nonEmpty('contracts', contracts),
     accounts: [SAMPLE_ISSUER].concat(ranked),

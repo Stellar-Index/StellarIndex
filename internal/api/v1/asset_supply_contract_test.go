@@ -72,7 +72,7 @@ func TestResolveSupplyContractID_IgnoresSacWrapperOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{sacWrappers: map[string]string{xlmSAC: colonForm}}
+	srv := &Server{Options: Options{SACWrappers: map[string]string{xlmSAC: colonForm}}}
 
 	got, ok := srv.resolveSupplyContractID(wireForm)
 	if !ok {
@@ -167,10 +167,8 @@ func TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark(t *testing.T) {
 				t.Fatalf("fixture AsOfLedger = %d, want %d", st.out.AsOfLedger, lastMoved)
 			}
 			srv := &Server{
-				tokenSupply:         &fakeTokenSupply{supply: zeroFlows()},
-				storageSupply:       st,
-				lakeWatermarkReader: tc.wm,
-				logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Options: Options{TokenSupply: &fakeTokenSupply{supply: zeroFlows()}, ContractStorageSupply: st, LakeWatermark: tc.wm},
+				logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /v1/assets/{asset_id}/supply", srv.handleAssetSupply)

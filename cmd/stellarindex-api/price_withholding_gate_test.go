@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -28,7 +29,7 @@ import (
 // The product rule is fail-closed on trust: when the substance gate judges a
 // market too thin to aggregate, or the scam gate finds the issuer
 // directory-flagged, we do not publish a price. That rule was implemented at
-// ONE reader seam (storePriceReader, behind /v1/price) and leaked at every
+// ONE reader seam (wiring.StorePriceReader, behind /v1/price) and leaked at every
 // other seam reading the same closed VWAP buckets — /v1/price/at and
 // /v1/price/changes re-served the exact number /v1/price had just withheld, so
 // one extra path segment defeated both gates (MSP-01, reproduced against real
@@ -38,7 +39,7 @@ import (
 // BECAUSE the decision lived at a seam instead of a chokepoint, so the same
 // thing recurs the next time someone adds a reader. This test derives the
 // price-serving seam set from the source and fails when one of them does not
-// route through priceWithheld() — i.e. it fails for the seam that does not
+// route through wiring.PriceWithheld() — i.e. it fails for the seam that does not
 // exist yet.
 //
 // Why an AST guard rather than a behavioural test: a behavioural test can only
@@ -52,12 +53,12 @@ import (
 // forget it") was not true. Matching on the store call is what makes it true:
 // a reader has to call one of those methods to serve a price at all.
 //
-// Proven red: deleting the priceWithheld() call from storePriceAtReader.PriceAt
+// Proven red: deleting the wiring.PriceWithheld() call from storePriceAtReader.PriceAt
 // (i.e. restoring the pre-fix state) fails this test naming that method.
 //
 // SCOPE — stated because it was read as wider than it is. This scan parses
-// main.go and nothing else, so its subject set is the READER seams wired in
-// this binary. Every HTTP handler lives in internal/api/v1, which this scan
+// main.go and the binary's internal/wiring package and nothing else, so its
+// subject set is the READER seams wired in this binary. Every HTTP handler lives in internal/api/v1, which this scan
 // structurally cannot see: that is how `/v1/price?window=N` shipped serving
 // a directory-flagged issuer's aggregated price straight out of the VWAP
 // cache while a guard named "price serving seams are gated" passed (T669).
@@ -65,50 +66,56 @@ import (
 // [TestV1VWAPCacheSeamsAreGated] below.
 func TestPriceServingSeamsAreGated(t *testing.T) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
 
 	// Methods that legitimately read a closed bucket WITHOUT consulting
-	// the chokepoint, each with the reason it is safe. An exemption is a
-	// deliberate, reviewed decision — not a way to silence this test.
+	// the chokepoint, each with the reason it is safe, keyed "dir:Type.Method".
+	// An exemption is a deliberate, reviewed decision — not a way to
+	// silence this test.
 	exempt := map[string]string{
-		"storePriceReader.RecentClosedVWAP1mExists": "existence probe: returns a bool, never a price or a bucket value",
-		"storeChange24hReader.USDPrice24hAgo": "gated upstream — populateChange24h early-returns unless the GATED " +
+		wiringDir + ":StorePriceReader.RecentClosedVWAP1mExists": "existence probe: returns a bool, never a price or a bucket value",
+		".:storeChange24hReader.USDPrice24hAgo": "gated upstream — populateChange24h early-returns unless the GATED " +
 			"lookupUSDPrice succeeds first, and scam suppression nulls the change pills regardless",
 	}
 
 	var ungated []string
-	seams := 0
-	ast.Inspect(f, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+	seams := map[string]int{}
+	for _, sf := range readerSeamFiles(t) {
+		f, err := parser.ParseFile(fset, sf.path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", sf.path, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			fn, ok := n.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				return true
+			}
+			if !readsClosedVWAP(fn) {
+				return true
+			}
+			seams[sf.dir]++
+			name := sf.dir + ":" + receiverTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
+			if _, ok := exempt[name]; ok {
+				return true
+			}
+			if !callsPriceWithheld(fn, sf.dir) {
+				ungated = append(ungated, name)
+			}
 			return true
-		}
-		if !readsClosedVWAP(fn) {
-			return true
-		}
-		seams++
-		name := receiverTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
-		if _, ok := exempt[name]; ok {
-			return true
-		}
-		if !callsPriceWithheld(fn) {
-			ungated = append(ungated, name)
-		}
-		return true
-	})
+		})
+	}
 
 	// A guard whose subject set is empty passes forever. If the scan
-	// stops finding seams, the scan is broken — not the code clean.
-	if seams == 0 {
-		t.Fatal("found no closed-VWAP read seams in main.go — the scan is broken, " +
-			"and a guard that checks nothing passes forever")
+	// stops finding seams in either source, the scan is broken — not the
+	// code clean.
+	for _, dir := range []string{".", wiringDir} {
+		if seams[dir] == 0 {
+			t.Fatalf("found no closed-VWAP read seams in %s — the scan is broken, "+
+				"and a guard that checks nothing passes forever", dir)
+		}
 	}
 	for _, name := range ungated {
 		t.Errorf("price-serving seam %s reads a closed VWAP bucket without calling "+
-			"priceWithheld() — whatever route reaches it would publish a price the "+
+			"wiring.PriceWithheld() — whatever route reaches it would publish a price the "+
 			"gate refuses (a directory-flagged issuer, or a market too thin to "+
 			"aggregate). Route it through the chokepoint, or add it to `exempt` "+
 			"with the reason it cannot serve a gated value.", name)
@@ -120,19 +127,13 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 // governs. Matching on the STORE CALL rather than a hand-listed set of
 // method names is what makes this guard cover a seam that does not exist
 // yet: a new reader has to call one of these to serve a price at all.
+// Any reference counts, not only a call: a method value
+// (f := r.S.LatestClosedVWAP1mForPair; f(...)) reads the same bucket.
 func readsClosedVWAP(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		// r.s.LatestClosedVWAP1mForPair(...), g.s.ClosedVWAPAtOrBefore(...), …
-		if inner, ok := sel.X.(*ast.SelectorExpr); !ok || inner.Sel.Name != "s" {
 			return true
 		}
 		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
@@ -155,20 +156,38 @@ func receiverTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// callsPriceWithheld reports whether fn's body contains a call to the
-// withholding chokepoint.
-func callsPriceWithheld(fn *ast.FuncDecl) bool {
+// wiringDir is the binary's adapter package, home of the PriceWithheld
+// chokepoint, relative to this package's directory.
+const wiringDir = "internal/wiring"
+
+// readerSeamFiles is every non-test file holding this binary's price reader
+// seams: main.go and the wiring package.
+func readerSeamFiles(t *testing.T) []gateSpellingFile {
+	t.Helper()
+	return append([]gateSpellingFile{{dir: ".", path: "main.go"}}, apiSourceFiles(t, wiringDir)...)
+}
+
+// callsPriceWithheld reports whether fn's body calls the withholding
+// chokepoint: PriceWithheld inside the wiring package, wiring.PriceWithheld
+// from main.go. A same-named function anywhere else is not the chokepoint.
+func callsPriceWithheld(fn *ast.FuncDecl, dir string) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "priceWithheld" {
-			found = true
-			return false
+		switch f := call.Fun.(type) {
+		case *ast.Ident:
+			if dir == wiringDir && f.Name == "PriceWithheld" {
+				found = true
+			}
+		case *ast.SelectorExpr:
+			if pkg, ok := f.X.(*ast.Ident); ok && dir != wiringDir && pkg.Name == "wiring" && f.Sel.Name == "PriceWithheld" {
+				found = true
+			}
 		}
-		return true
+		return !found
 	})
 	return found
 }
@@ -184,7 +203,7 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 		t.Fatalf("build fiat:USD: %v", err)
 	}
 	// Nil gates: allow (disabled guard keeps prior behaviour).
-	if priceWithheld(context.Background(), nil, nil, canonical.NativeAsset(), usd, "price_read") != pricingguard.NotWithheld {
+	if wiring.PriceWithheld(context.Background(), nil, nil, canonical.NativeAsset(), usd, "price_read") != pricingguard.NotWithheld {
 		t.Error("nil gates must allow — a disabled [pricing_guard] must not withhold every price")
 	}
 }
@@ -195,9 +214,9 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // TestPriceServingSeamsAreGated above answers "does every serving seam
 // consult the gates AT ALL". It cannot answer "does each seam consult
 // BOTH gates on EVERY branch", because a method with two arms satisfies
-// it as soon as ONE arm calls priceWithheld().
+// it as soon as ONE arm calls wiring.PriceWithheld().
 //
-// That is exactly the MSP-07 shape. storePriceReader.LatestPrice has a
+// That is exactly the MSP-07 shape. wiring.StorePriceReader.LatestPrice has a
 // closed-VWAP arm and a last-trade arm; the last-trade arm originally
 // spelled out `!r.substance.Allowed(...)` and consulted the SCAM gate
 // not at all. An operator setting disable_substance_gate=true to
@@ -214,16 +233,16 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // name the whole time.
 //
 // The rule: a gate HALF's decision method may be named only inside a
-// chokepoint — priceWithheld() here, and in the handler package
+// chokepoint — wiring.PriceWithheld() here, and in the handler package
 // withheldBy() (the fold) and scamWithheld() (the pair question it
 // asks). Every other call site is a second spelling that can drift out
-// of step. The scan covers main.go AND every non-test file under
-// internal/api: a guard bound to main.go could not see the handler
+// of step. The scan covers main.go, the wiring package AND every non-test
+// file under internal/api: a guard bound to main.go could not see the handler
 // package, so /v1/price/stream's hand-written gate was invisible to the
 // very test its comment cited as its drift guard.
 func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
-	files := []gateSpellingFile{{dir: ".", path: "main.go"}}
+	files := readerSeamFiles(t)
 	files = append(files, apiSourceFiles(t, apiTreeDir)...)
 	permitted := 0
 	for _, sf := range files {
@@ -255,18 +274,78 @@ func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
 		{"uncounted measurement in a handler", v1ChokepointDir, `func (s *Server) h() { _ = s.substance.Measure(ctx, a, b) }`},
 		{"renamed local", v1ChokepointDir, `func (s *Server) h() bool { g := s.substance; return g.AllowedAt(ctx, a, b, at, "x") }`},
 		{"chokepoint name in another package", "../../internal/api/streaming", `func withheldBy() bool { return sub.Allowed(ctx, a, b, "x") }`},
-		{"main.go outside priceWithheld", ".", `func (r storePriceReader) f() bool { return r.substance.Allowed(ctx, a, b, "x") }`},
+		{"main.go outside PriceWithheld", ".", `func (r storePriceAtReader) f() bool { return r.substance.Allowed(ctx, a, b, "x") }`},
+		{"wiring outside PriceWithheld", wiringDir, `func (r StorePriceReader) f() bool { return r.Substance.Allowed(ctx, a, b, "x") }`},
+		{"chokepoint name in main.go", ".", `func PriceWithheld() bool { return sub.Allowed(ctx, a, b, "x") }`},
+		{"method value of a gate half", v1ChokepointDir, `func (s *Server) h() bool { f := s.substance.Allowed; return f(ctx, a, b, "x") }`},
+		{"gate half passed as a value", wiringDir, `func (r StorePriceReader) f() bool { return apply(r.Scam.WithheldPair) }`},
+		{"method value through a renamed local", v1ChokepointDir, `func (s *Server) h() bool { g := s.scam; f := g.Withheld; return f(ctx, a, "x") }`},
+	}
+	violations := func(dir, src string) int {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "planted.go", "package p\n"+src, 0)
+		if err != nil {
+			t.Fatalf("parse %q: %v", src, err)
+		}
+		v, _ := gateSpellingViolations(fset, dir, f)
+		return len(v)
 	}
 	for _, sh := range shapes {
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, "planted.go", "package p\n"+sh.src, 0)
-		if err != nil {
-			t.Fatalf("%s: %v", sh.name, err)
-		}
-		if v, _ := gateSpellingViolations(fset, sh.dir, f); len(v) != 1 {
-			t.Errorf("%s: got %d violations, want 1", sh.name, len(v))
+		if n := violations(sh.dir, sh.src); n != 1 {
+			t.Errorf("%s: got %d violations, want 1", sh.name, n)
 		}
 	}
+	// A rate-limit result's Allowed field shares the half's name but is no gate.
+	if n := violations(v1ChokepointDir, `func f() bool { res := take(); return res.Allowed }`); n != 0 {
+		t.Errorf("field read on a non-gate value: got %d violations, want 0", n)
+	}
+}
+
+// TestStoreReadScansCatchMethodValues pins that both store-read scans see a
+// method value, not only a call: f := r.S.LatestClosedVWAP1mForPair; f(...)
+// serves the same bucket, and a call-only match let it through ungated.
+func TestStoreReadScansCatchMethodValues(t *testing.T) {
+	cases := []struct {
+		name, src string
+		want      bool
+	}{
+		{"direct call", `func (r R) f() { r.S.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"method value", `func (r R) f() { g := r.S.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
+		{"method passed as an argument", `func (r R) f() { apply(r.s.ClosedVWAPAtOrBefore) }`, true},
+		{"store alias", `func (r R) f() { st := r.S; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
+		{"unrelated store read", `func (r R) f() { r.S.LatestTrade(ctx, a, b) }`, false},
+	}
+	for _, c := range cases {
+		if got := readsClosedVWAP(plantedFunc(t, c.src)); got != c.want {
+			t.Errorf("readsClosedVWAP %s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	sc := &v1Scan{reads: map[string]bool{"Lookup": true}}
+	for _, src := range []string{
+		`func (s *Server) h() { s.triangulated.Lookup(a, b) }`,
+		`func (s *Server) h() { f := s.triangulated.Lookup; f(a, b) }`,
+		`func (s *Server) h() { c := s.triangulated; c.Lookup(a, b) }`,
+		`func (s *Server) h() { var c = s.triangulated; f := c.Lookup; f(a, b) }`,
+		`func (s *Server) h(l TriangulatedPriceLooker) { l.Lookup(a, b) }`,
+	} {
+		if sc.earliestRead(&v1Func{decl: plantedFunc(t, src)}) == token.NoPos {
+			t.Errorf("earliestRead missed the cache read in %q", src)
+		}
+	}
+	// A package function that shares the method's name is not the cache.
+	if sc.earliestRead(&v1Func{decl: plantedFunc(t, `func (s *Server) h() { dns.Lookup(a, b) }`)}) != token.NoPos {
+		t.Error("earliestRead counted a package-qualified call as a cache read")
+	}
+}
+
+func plantedFunc(t *testing.T, src string) *ast.FuncDecl {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+src, 0)
+	if err != nil {
+		t.Fatalf("parse %q: %v", src, err)
+	}
+	return f.Decls[0].(*ast.FuncDecl)
 }
 
 // apiTreeDir is every handler package the API binary serves from.
@@ -285,7 +364,7 @@ var gateHalfMethods = map[string]bool{
 }
 
 var gateChokepoints = map[string]bool{
-	".:priceWithheld":                 true,
+	wiringDir + ":PriceWithheld":      true,
 	v1ChokepointDir + ":withheldBy":   true,
 	v1ChokepointDir + ":scamWithheld": true,
 }
@@ -311,8 +390,15 @@ func apiSourceFiles(t *testing.T, root string) []gateSpellingFile {
 	return out
 }
 
+// gateHolderNames are the field names a SubstanceGate or ScamGate is held
+// under in the scanned packages.
+var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
+
 // gateSpellingViolations reports every gate-half call in f outside a
-// chokepoint, and counts the ones inside.
+// chokepoint, and counts the ones inside. A method value taken from a gate
+// (f := s.substance.Allowed; f(...)) is a call deferred, so it counts too.
+// Non-call references are matched only on a gate holder because the half
+// names are generic: rate-limit results carry a plain Allowed field.
 func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (violations []string, permitted int) {
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -320,13 +406,14 @@ func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (viola
 			continue
 		}
 		exempt := gateChokepoints[dir+":"+fn.Name.Name]
+		calls := selectorCallees(fn.Body)
+		aliases := gateAliases(fn.Body)
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || !gateHalfMethods[sel.Sel.Name] {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !gateHalfMethods[sel.Sel.Name] {
+			if !calls[sel] && !isGateHolder(sel.X, aliases) {
 				return true
 			}
 			if exempt {
@@ -334,14 +421,71 @@ func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (viola
 				return true
 			}
 			violations = append(violations, fmt.Sprintf("%s: calls a gate half directly (%s) at %s — route it through "+
-				"priceWithheld() (cmd/stellarindex-api) or withheldBy() (internal/api/v1). A hand-written call site "+
+				"wiring.PriceWithheld() (cmd/stellarindex-api/internal/wiring) or withheldBy() (internal/api/v1). A hand-written call site "+
 				"can consult one gate and forget the other, which is exactly how the last-trade arm came to honour "+
 				"the thin-market floor but not the scam decision.",
-				enclosingName(fn), exprString(sel), fset.Position(call.Pos())))
+				enclosingName(fn), exprString(sel), fset.Position(sel.Pos())))
 			return true
 		})
 	}
 	return violations, permitted
+}
+
+// selectorCallees returns every selector body calls directly (x.M(...)).
+func selectorCallees(body *ast.BlockStmt) map[*ast.SelectorExpr]bool {
+	calls := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				calls[sel] = true
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// gateAliases returns the locals body binds to a gate holder (g := s.substance).
+func gateAliases(body *ast.BlockStmt) map[string]bool {
+	aliases := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		var lhs []*ast.Ident
+		var rhs []ast.Expr
+		switch st := n.(type) {
+		case *ast.AssignStmt:
+			for _, e := range st.Lhs {
+				id, _ := e.(*ast.Ident)
+				lhs = append(lhs, id)
+			}
+			rhs = st.Rhs
+		case *ast.ValueSpec:
+			lhs, rhs = st.Names, st.Values
+		}
+		if len(lhs) != len(rhs) {
+			return true
+		}
+		for i, id := range lhs {
+			if id != nil && isGateHolder(rhs[i], nil) {
+				aliases[id.Name] = true
+			}
+		}
+		return true
+	})
+	return aliases
+}
+
+// isGateHolder reports whether expr names a gate: a holder field
+// (s.substance, r.Scam), a bare holder parameter, or a local alias of one.
+func isGateHolder(expr ast.Expr, aliases map[string]bool) bool {
+	switch x := expr.(type) {
+	case *ast.SelectorExpr:
+		return gateHolderNames[x.Sel.Name]
+	case *ast.Ident:
+		return gateHolderNames[x.Name] || aliases[x.Name]
+	case *ast.ParenExpr:
+		return isGateHolder(x.X, aliases)
+	}
+	return false
 }
 
 func enclosingName(fn *ast.FuncDecl) string {
@@ -425,7 +569,7 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	dir := &flaggingScamDirectory{flagged: map[string]bool{issuer: true}}
 	gate := pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})
 
-	if priceWithheld(ctx, nil, gate, sac, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
+	if wiring.PriceWithheld(ctx, nil, gate, sac, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
 		t.Error("the SAC spelling of a flagged classic issuance must be withheld on " +
 			"/v1/price — the wrapper is the same asset, so the contract id must not " +
 			"be a second, ungated way to ask for the price")
@@ -435,14 +579,14 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 			"the resolution, not the status, is what is being pinned", dir.asked, issuer)
 	}
 	// The classic spelling is unchanged.
-	if priceWithheld(ctx, nil, gate, classic, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
+	if wiring.PriceWithheld(ctx, nil, gate, classic, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
 		t.Error("the classic spelling must still be withheld")
 	}
 
 	// Blast radius: an unflagged wrapped asset keeps serving.
 	cleanDir := &flaggingScamDirectory{flagged: map[string]bool{}}
 	cleanGate := pricingguard.NewScamGate(cleanDir, pricingguard.ScamGateOptions{})
-	if priceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") != pricingguard.NotWithheld {
+	if wiring.PriceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") != pricingguard.NotWithheld {
 		t.Error("a wrapped asset the directory has not flagged must keep serving")
 	}
 }
@@ -464,7 +608,7 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 // Why a second guard rather than a wider first one. The withholding
 // decision is spelled once per package because the two packages hold
 // different halves of it: cmd/stellarindex-api owns the READER
-// chokepoint (priceWithheld, consulted inside the store readers), and
+// chokepoint (wiring.PriceWithheld, consulted inside the store readers), and
 // internal/api/v1 owns the HANDLER chokepoint (scamWithheld, plus the
 // ErrPriceWithheld verdict those readers propagate). A handler that
 // answers out of the aggregator's VWAP cache passes through neither
@@ -490,7 +634,7 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 //     checked transitively and position-wise, or from a caller that
 //     discards the price — an existence probe serving a bool is not a
 //     price surface, the same exemption the main.go scan grants
-//     storePriceReader.RecentClosedVWAP1mExists, except PROVEN here from
+//     wiring.StorePriceReader.RecentClosedVWAP1mExists, except PROVEN here from
 //     the call site's blank assignment instead of asserted in a list.
 //
 // What this guard does NOT prove, said plainly so it is not read as
@@ -658,29 +802,84 @@ func (sc *v1Scan) recordCalls(fn *v1Func) {
 }
 
 // earliestRead returns the position of fn's first cache read, or
-// token.NoPos when fn never reads the cache.
+// token.NoPos when fn never reads the cache. A method value taken from the
+// cache is a read: it is the price-serving call, just deferred.
 func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
 	first := token.NoPos
+	locals := declaredNames(fn.decl)
 	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || !sc.reads[sel.Sel.Name] {
 			return true
 		}
-		// A field read (s.triangulated.Lookup…), never a package
-		// function that happens to share the name.
-		if _, ok := sel.X.(*ast.SelectorExpr); !ok {
+		// A bare identifier must be one fn declares (c := s.triangulated;
+		// c.Lookup…); any other is taken as a package qualifier, so a
+		// package function sharing the name is not a read.
+		if id, ok := sel.X.(*ast.Ident); ok && !locals[id.Name] {
 			return true
 		}
-		if first == token.NoPos || call.Pos() < first {
-			first = call.Pos()
+		if first == token.NoPos || sel.Pos() < first {
+			first = sel.Pos()
 		}
 		return true
 	})
 	return first
+}
+
+// declaredNames returns every name fn binds: receiver, parameters,
+// results (its own and its closures'), and locals.
+func declaredNames(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	for _, id := range fieldNames(fn.Recv) {
+		out[id.Name] = true
+	}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		for _, id := range boundIdents(n) {
+			out[id.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// boundIdents returns the names n declares.
+func boundIdents(n ast.Node) []*ast.Ident {
+	switch d := n.(type) {
+	case *ast.FuncType:
+		return append(fieldNames(d.Params), fieldNames(d.Results)...)
+	case *ast.ValueSpec:
+		return d.Names
+	case *ast.AssignStmt:
+		if d.Tok == token.DEFINE {
+			return identsOf(d.Lhs...)
+		}
+	case *ast.RangeStmt:
+		if d.Tok == token.DEFINE {
+			return identsOf(d.Key, d.Value)
+		}
+	}
+	return nil
+}
+
+func fieldNames(fl *ast.FieldList) []*ast.Ident {
+	if fl == nil {
+		return nil
+	}
+	var out []*ast.Ident
+	for _, f := range fl.List {
+		out = append(out, f.Names...)
+	}
+	return out
+}
+
+func identsOf(exprs ...ast.Expr) []*ast.Ident {
+	var out []*ast.Ident
+	for _, e := range exprs {
+		if id, ok := e.(*ast.Ident); ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (sc *v1Scan) cacheSeams() []*v1Func {

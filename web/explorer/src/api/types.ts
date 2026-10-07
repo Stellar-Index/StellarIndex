@@ -4788,6 +4788,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledgers/at": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The ledger closed at or before a timestamp.
+         * @description Resolves a timestamp to the ledger the network had closed at that
+         *     instant: the highest-sequence ledger whose `close_time` is at or
+         *     before `ts`, in the same shape as `/v1/ledgers/{seq}`.
+         *
+         *     - **Ties:** a ledger closed exactly at `ts` is returned. Close times
+         *       strictly increase, so no two ledgers share one.
+         *     - **Between closes:** the earlier ledger is returned, never the
+         *       next one. Close times are whole seconds; sub-second `ts` is honoured,
+         *       so a `ts` less than one second after the tip's close returns the tip.
+         *     - **Gaps:** the answer is served only when it is proven from the
+         *       lake, meaning that ledger and its successor (unless it is the tip)
+         *       are both captured. A lake gap elsewhere does not affect the answer;
+         *       when the answer is inside a gap or is the ledger just before one,
+         *       the response is 404, never a neighbouring ledger.
+         *
+         *     404 when `ts` is before the first captured ledger, one second or more
+         *     after the ingest tip's close time (a ledger not yet captured may still
+         *     close at or before it), or the answer is inside or just before a gap.
+         *     The lookup is a binary search on the ledger sequence: at most ~35
+         *     probes per request, each one sort-key read on a complete lake. A probe
+         *     that lands in a lake gap wider than 5,000 ledgers re-reads over
+         *     geometrically wider windows, which can add up to ~10 queries to that
+         *     probe.
+         */
+        get: operations["getLedgerAt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledgers/{seq}": {
         parameters: {
             query?: never;
@@ -4906,6 +4948,13 @@ export interface paths {
          *
          *     A `ledger` query parameter is refused with 400: one ledger's
          *     operations are `GET /v1/ledgers/{seq}/operations` (ADR-0018).
+         *
+         *     `?type=` restricts the listing to one or more operation types. The
+         *     lake cannot index by type, so each filtered page scans at most 5,000
+         *     ledgers below its anchor (the tip, or the cursor). A filtered page can
+         *     therefore hold FEWER than `limit` operations, or none, and still carry
+         *     `next_cursor`: keep paging until `next_cursor` is absent. Filtered
+         *     pages omit `op_type_stats`.
          */
         get: operations["listOperations"];
         put?: never;
@@ -24091,6 +24140,45 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getLedgerAt: {
+        parameters: {
+            query: {
+                /**
+                 * @description RFC 3339 (`2024-06-01T12:00:00Z`; percent-encode a `+` offset
+                 *     as `%2B`) or non-negative unix seconds (`1717243200`). Anything
+                 *     else is a 400.
+                 * @example 2026-07-03T22:37:01Z
+                 */
+                ts: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ledger header of the ledger closed at or before `ts`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: components["schemas"]["Ledger"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description No captured ledger provably closed at or before `ts`: before the first captured ledger, one second or more after the tip's close, or the answer is inside or just before a lake gap. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getLedger: {
         parameters: {
             query?: never;
@@ -24392,6 +24480,13 @@ export interface operations {
             query?: {
                 /** @description Opaque keyset cursor for the next older page. */
                 cursor?: string;
+                /**
+                 * @description Operation types to keep, comma-separated and/or repeated
+                 *     (e.g. `type=payment,path_payment_strict_send`). Each must be a
+                 *     snake_case type as served in `operations[].type`; any other value
+                 *     is a 400.
+                 */
+                type?: ("create_account" | "payment" | "path_payment_strict_receive" | "path_payment_strict_send" | "manage_sell_offer" | "manage_buy_offer" | "create_passive_sell_offer" | "set_options" | "change_trust" | "allow_trust" | "account_merge" | "inflation" | "manage_data" | "bump_sequence" | "create_claimable_balance" | "claim_claimable_balance" | "begin_sponsoring_future_reserves" | "end_sponsoring_future_reserves" | "revoke_sponsorship" | "clawback" | "clawback_claimable_balance" | "set_trust_line_flags" | "liquidity_pool_deposit" | "liquidity_pool_withdraw" | "invoke_host_function" | "extend_footprint_ttl" | "restore_footprint")[];
                 /** @description Page size: default 50, cap 200 (400 above). */
                 limit?: number;
             };
@@ -24448,9 +24543,9 @@ export interface operations {
                             /** @description Always 0: the directory spans ledgers. */
                             ledger?: number;
                             operations?: components["schemas"]["Operation"][];
-                            /** @description Opaque cursor for the next older page; absent on the last page. */
+                            /** @description Opaque cursor for the next older page; absent on the last page. With `type`, present on a short or empty page until the scan reaches genesis. */
                             next_cursor?: string;
-                            /** @description First page only: per-op-type counts over the trailing ~24h. */
+                            /** @description First unfiltered page only: per-op-type counts over the trailing ~24h. */
                             op_type_stats?: {
                                 type?: string;
                                 /** Format: int64 */

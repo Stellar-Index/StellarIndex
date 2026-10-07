@@ -4,7 +4,11 @@
 package canonical_test
 
 import (
+	"slices"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -115,5 +119,45 @@ func TestInstallNetwork_TestnetAliasFamilyUsesTestnetSAC(t *testing.T) {
 		if s == canonical.XLMSacContractID {
 			t.Errorf("testnet XLM family contains the pubnet SAC: %v", got)
 		}
+	}
+}
+
+// TestInstallNetworkPassphrase_AliasBaselineFollowsNetwork: with only the
+// passphrase installed (no config registry), every alias projection the SQL
+// read paths bind must carry the testnet XLM SAC, never the pubnet one.
+func TestInstallNetworkPassphrase_AliasBaselineFollowsNetwork(t *testing.T) {
+	t.Cleanup(func() { canonical.InstallNetworkPassphrase("") })
+	canonical.InstallAliasRegistry(nil)
+	canonical.InstallNetworkPassphrase(testnetPassphrase)
+
+	raw, err := xdr.MustNewNativeAsset().ContractID(testnetPassphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac := strkey.MustEncode(strkey.VersionByteContract, raw[:])
+	if sac == canonical.XLMSacContractID {
+		t.Fatal("SDK derived the pubnet SAC for the testnet passphrase")
+	}
+
+	want := []string{"native", "crypto:XLM", sac}
+	if got := canonical.AssetAliasStrings(canonical.NativeAsset()); !slices.Equal(got, want) {
+		t.Errorf("AssetAliasStrings(native) = %v, want %v", got, want)
+	}
+	var nilReg *canonical.AliasRegistry
+	if got := nilReg.AliasStrings(canonical.NativeAsset()); !slices.Equal(got, want) {
+		t.Errorf("nil registry AliasStrings(native) = %v, want %v", got, want)
+	}
+	if got := canonical.CanonicalAsset(canonical.Asset{Type: canonical.AssetSoroban, ContractID: sac}); got.String() != "native" {
+		t.Errorf("CanonicalAsset(testnet SAC) = %s, want native", got)
+	}
+	forms := canonical.AllAliasForms()
+	if forms[sac] != "native" {
+		t.Errorf("AllAliasForms()[testnet SAC] = %q, want native", forms[sac])
+	}
+	if _, ok := forms[canonical.XLMSacContractID]; ok {
+		t.Errorf("AllAliasForms() still folds the pubnet SAC on testnet: %v", forms)
+	}
+	if got := canonical.NativeSACContractID(); got != sac {
+		t.Errorf("NativeSACContractID() = %q, want %q", got, sac)
 	}
 }

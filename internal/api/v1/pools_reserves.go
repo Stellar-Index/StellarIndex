@@ -107,11 +107,11 @@ type PoolDepthSide struct {
 // Consistency surface: current contract state (tip-adjacent, per-pool
 // as_of_ledger stamps the exact state ledger) — not closed-bucket.
 func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
-	if s.explorer == nil {
+	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
 		return
 	}
-	if s.soroswapPairs == nil {
+	if s.SoroswapPairs == nil {
 		writeJSON(w, []PoolReservesRow{}, Flags{})
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	states, err := s.explorer.SoroswapPairReserves(ctx, pairs)
+	states, err := s.Explorer.SoroswapPairReserves(ctx, pairs)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -263,7 +263,7 @@ func parsePoolAssetFilter(w http.ResponseWriter, r *http.Request) (*poolAssetFil
 // optional single-pool or asset filter. ok=false after a problem+json
 // write (registry failure, or an unregistered pool → honest 404).
 func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r *http.Request, poolFilter string, assetFilter *poolAssetFilter) ([]string, bool) {
-	registry, err := s.soroswapPairs.LoadSoroswapPairRegistry(ctx)
+	registry, err := s.SoroswapPairs.LoadSoroswapPairRegistry(ctx)
 	if err != nil {
 		if !clientAborted(r, err) {
 			s.logger.Error("LoadSoroswapPairRegistry failed", "err", err)
@@ -309,7 +309,7 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 	for t := range tokenSet {
 		tokens = append(tokens, t)
 	}
-	displays, err := s.explorer.TokenDisplays(ctx, tokens)
+	displays, err := s.Explorer.TokenDisplays(ctx, tokens)
 	if err != nil {
 		s.logger.Warn("TokenDisplays failed — serving reserves without mid prices this request", "err", err)
 		return nil, false

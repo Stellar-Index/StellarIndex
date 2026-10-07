@@ -30,7 +30,7 @@ func (p *panicOnceListings) ListingDirectoryByAddress(context.Context) (
 // re-reads instead of being served the pre-panic snapshot for a full TTL.
 func TestAssetListingSnapshot_PanickingReadIsNotCached(t *testing.T) {
 	rd := &panicOnceListings{}
-	s := &Server{listings: rd, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	s := &Server{Options: Options{Listings: rd}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	func() {
 		defer func() {

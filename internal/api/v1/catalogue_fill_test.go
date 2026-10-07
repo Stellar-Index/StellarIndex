@@ -49,7 +49,7 @@ func TestCatalogueStatsUseListingReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{assetsReader: &listingOnlyAssets{}, verifiedCurrencies: cat}
+	s := &Server{Options: Options{AssetsReader: &listingOnlyAssets{}, VerifiedCurrencies: cat}}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 	s.fillCatalogueStatsForPage(req.Context(), page, assetListFilters{})

@@ -583,3 +583,28 @@ func TestKrakenBackfill_RESTPairIsAltname(t *testing.T) {
 		t.Errorf("REST pair param = %q, want XLMUSD (no WS slash)", got)
 	}
 }
+
+func TestKrakenBackfill_UnparseableCandleFailsPage(t *testing.T) {
+	const startSec = int64(1_745_000_000)
+	const hourSec = int64(3_600)
+	for name, mutate := range map[string]func(krakenCandle){
+		"bad volume":    func(c krakenCandle) { c[6] = "not-a-number" },
+		"bad vwap":      func(c krakenCandle) { c[5] = "1.2.3" },
+		"bad open time": func(c krakenCandle) { c[0] = "oops" },
+	} {
+		candles := synthesiseKrakenCandles(4, startSec, hourSec)
+		mutate(candles[1])
+		srv := newTestKrakenREST(t, "XLMUSD", candles, startSec+3*hourSec)
+		pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		s := NewStreamer(map[string]canonical.Pair{"XLMUSD": pair})
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(startSec, 0), time.Unix(startSec+10*hourSec, 0), time.Hour)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%s: got %d trades and no error, want a failed page", name, len(trades))
+		}
+	}
+}

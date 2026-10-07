@@ -126,27 +126,25 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		// caller's actual requested start; detect the gap there.
 		var depthErr error
 		if firstPage {
-			if earliestTs, ok := candles[0].openTimeSec(); ok && earliestTs > requestedSinceSec+intervalSec {
-				depthErr = fmt.Errorf("kraken.Backfill: %w: requested from %s but the venue's earliest available candle is %s",
-					ErrDepthExceeded,
-					time.Unix(requestedSinceSec, 0).UTC().Format(time.RFC3339),
-					time.Unix(earliestTs, 0).UTC().Format(time.RFC3339))
-			}
+			depthErr = checkServingHorizon(candles[0], requestedSinceSec, intervalSec)
 			firstPage = false
 		}
 
 		for _, c := range candles {
 			openTs, ok := c.openTimeSec()
 			if !ok {
-				continue
+				return out, fmt.Errorf("kraken.Backfill: candle %v: missing open time", c)
 			}
 			// Kraken's last row is the still-open frame; candles are ascending.
 			if !scale.CandleClosed(time.Unix(openTs+intervalSec, 0), to, now) {
 				break
 			}
 			closeTs := openTs + intervalSec - 1
-			trade, err := krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
+			trade, skip, err := convertCandle(c, symbol, pair, closeTs, granularity)
 			if err != nil {
+				return out, fmt.Errorf("kraken.Backfill: candle %v: %w", c, err)
+			}
+			if skip {
 				continue
 			}
 			out = append(out, trade)
@@ -168,6 +166,29 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		}
 	}
 	return out, nil
+}
+
+// checkServingHorizon returns ErrDepthExceeded when the first candle opens
+// later than the requested start by more than one interval.
+func checkServingHorizon(first krakenCandle, requestedSinceSec, intervalSec int64) error {
+	earliestTs, ok := first.openTimeSec()
+	if !ok || earliestTs <= requestedSinceSec+intervalSec {
+		return nil
+	}
+	return fmt.Errorf("kraken.Backfill: %w: requested from %s but the venue's earliest available candle is %s",
+		ErrDepthExceeded,
+		time.Unix(requestedSinceSec, 0).UTC().Format(time.RFC3339),
+		time.Unix(earliestTs, 0).UTC().Format(time.RFC3339))
+}
+
+// convertCandle reports skip=true for zero-volume and dust candles, which
+// are expected; any other conversion failure is returned as an error.
+func convertCandle(c krakenCandle, symbol string, pair canonical.Pair, closeTs int64, granularity time.Duration) (trade canonical.Trade, skip bool, err error) {
+	trade, err = krakenCandleToTrade(c, symbol, pair, closeTs, granularity)
+	if errors.Is(err, errZeroVolume) || errors.Is(err, ErrDustTrade) {
+		return trade, true, nil
+	}
+	return trade, false, err
 }
 
 // restBase returns the REST URL. When Endpoint is a ws:// URL (the
@@ -270,6 +291,9 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 	return candles, last, nil
 }
 
+// errZeroVolume marks an empty candle, an expected skip.
+var errZeroVolume = errors.New("zero volume")
+
 // krakenCandleToTrade synthesises a canonical.Trade from a Kraken
 // candle. Price is the candle's VWAP (authoritative for the
 // bucket); quote amount is computed as price × base volume.
@@ -292,7 +316,7 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", volStr, err)
 	}
 	if base.Sign() == 0 {
-		return canonical.Trade{}, fmt.Errorf("zero volume")
+		return canonical.Trade{}, errZeroVolume
 	}
 	price, err := scale.DecimalStringToScaledInt(vwapStr, externalAmountDecimals)
 	if err != nil {

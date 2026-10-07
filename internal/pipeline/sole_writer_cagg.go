@@ -23,7 +23,7 @@ const ProjectorStallBound = 15 * time.Minute
 // ErrSoleWriterCAGGWindow is returned by [VerifySoleWriterCAGGCoverage]
 // when a continuous aggregate would not re-aggregate rows the projector
 // writes late.
-var ErrSoleWriterCAGGWindow = errors.New("persist_per_source = false (ADR-0032 Phase 4) would stop feeding continuous aggregates: " +
+var ErrSoleWriterCAGGWindow = errors.New("rows only the projector writes would miss continuous aggregates: " +
 	"their refresh start_offset is shorter than the projector's stall bound " + ProjectorStallBound.String())
 
 // CAGGWindowReader lists continuous-aggregate refresh windows;
@@ -32,30 +32,39 @@ type CAGGWindowReader interface {
 	CAGGRefreshWindows(ctx context.Context) ([]timescale.CAGGRefreshWindow, error)
 }
 
-// VerifySoleWriterCAGGCoverage is the pre-flip gate for
-// [SinkModeSkipProjected]. In every other mode the dispatcher still writes
-// DEX trades and oracle updates live, so the aggregates are fed on time
-// and this returns nil. In Phase 4 the projector is their only writer and
-// it can deliver rows up to [ProjectorStallBound] late; an aggregate whose
-// refresh lookback is shorter never materializes them. Low projector lag
-// does not prove the flip safe — a single lake hole does the damage — so
-// the indexer refuses Phase 4 until every aggregate's lookback covers the
-// bound. Every aggregate is checked, not a list of projector-written
-// tables, so a new one cannot slip past a stale list; one with no refresh
-// policy, or a database reporting none at all, also fails.
+// VerifySoleWriterCAGGCoverage refuses a sink mode in which the projector
+// is the only writer of a table some continuous aggregate reads with a
+// refresh lookback shorter than [ProjectorStallBound]: the projector can
+// deliver rows that late, and the policy never materializes them. Low
+// projector lag does not prove a mode safe — a single lake hole does the
+// damage.
+//
+// In Phase 4 ([SinkModeSkipProjected]) every aggregate is checked, not a
+// list of projector-written tables, so a new one cannot slip past a stale
+// list. In Phase 3 ([SinkModeSkipSoleWriter]) the dispatcher still writes
+// the other projected sources live, so only aggregates over a
+// [ProjectorSpec.SoleWriter] source's tables are checked. A missing
+// refresh policy, or a database reporting no aggregates at all, also fails.
 func VerifySoleWriterCAGGCoverage(ctx context.Context, r CAGGWindowReader, mode SinkMode) error {
-	if mode != SinkModeSkipProjected {
+	tables, all, err := soleWrittenTables(mode)
+	if err != nil {
+		return err
+	}
+	if !all && len(tables) == 0 {
 		return nil
 	}
 	windows, err := r.CAGGRefreshWindows(ctx)
 	if err != nil {
-		return fmt.Errorf("phase-4 cagg coverage: %w", err)
+		return fmt.Errorf("sole-writer cagg coverage: %w", err)
 	}
 	if len(windows) == 0 {
 		return fmt.Errorf("%w: the database reports no continuous aggregates, so coverage is unproven", ErrSoleWriterCAGGWindow)
 	}
 	var short []string
 	for _, w := range windows {
+		if !all && w.Hypertable != "" && !tables[w.Hypertable] {
+			continue
+		}
 		switch {
 		case !w.HasPolicy:
 			short = append(short, w.View+" (no refresh policy)")
@@ -68,4 +77,34 @@ func VerifySoleWriterCAGGCoverage(ctx context.Context, r CAGGWindowReader, mode 
 		return fmt.Errorf("%w: %s", ErrSoleWriterCAGGWindow, strings.Join(short, ", "))
 	}
 	return nil
+}
+
+// soleWrittenTables returns the tables only the projector writes under
+// mode: in Phase 3, those the gap-detector targets name for each
+// SoleWriter source. all is true in Phase 4, where every table is.
+func soleWrittenTables(mode SinkMode) (tables map[string]bool, all bool, err error) {
+	switch mode {
+	case SinkModeSkipProjected:
+		return nil, true, nil
+	case SinkModeSkipSoleWriter:
+	default:
+		return nil, false, nil
+	}
+	tables = map[string]bool{}
+	for i := range specs {
+		if p := specs[i].Projector; p == nil || !p.SoleWriter {
+			continue
+		}
+		found := false
+		for _, t := range timescale.DefaultGapDetectorTargets {
+			if t.SourceNetKey() == specs[i].Name {
+				tables[t.Table], found = true, true
+			}
+		}
+		if !found {
+			return nil, false, fmt.Errorf("%w: sole-writer source %s has no gap-detector target naming its tables, so coverage is unproven",
+				ErrSoleWriterCAGGWindow, specs[i].Name)
+		}
+	}
+	return tables, false, nil
 }

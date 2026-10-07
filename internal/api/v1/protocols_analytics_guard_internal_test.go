@@ -50,7 +50,7 @@ func TestProtoDetailRefresh_FastFailKeepsGoodEntry(t *testing.T) {
 
 	// The SWR read path serves the kept entry STALE (it kicks another
 	// degraded rebuild, which again must not displace it).
-	view, stale, ok := srv.cachedProtocolDetail(context.Background(), key, degradedBuild)
+	view, _, stale, ok := srv.cachedProtocolDetail(context.Background(), key, degradedBuild)
 	if !ok || !stale {
 		t.Fatalf("cachedProtocolDetail = stale %v ok %v, want stale serve of the kept entry", stale, ok)
 	}
@@ -480,6 +480,27 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 type closeTimeActivityStub struct {
 	prewarmActivityStub
 	tip uint32
+	// [holeLo, holeHi] is a lake gap when holeHi > 0.
+	holeLo, holeHi uint32
+}
+
+func (s closeTimeActivityStub) inHole(seq uint32) bool {
+	return s.holeHi > 0 && seq >= s.holeLo && seq <= s.holeHi
+}
+
+// RecentLedgers returns the tip, or the newest held ledger below `before`.
+func (s closeTimeActivityStub) RecentLedgers(_ context.Context, _ int, before uint32) ([]clickhouse.LedgerHeader, error) {
+	seq := s.tip
+	if before > 0 {
+		seq = min(before-1, s.tip)
+	}
+	if s.inHole(seq) {
+		seq = s.holeLo - 1
+	}
+	if seq == 0 {
+		return nil, nil
+	}
+	return []clickhouse.LedgerHeader{{Seq: seq, CloseTime: protocolWindowCloseTime(seq)}}, nil
 }
 
 var (
@@ -496,7 +517,7 @@ func (s closeTimeActivityStub) LakeTipLedger(context.Context) (uint32, error) {
 }
 
 func (s closeTimeActivityStub) LedgerBySeq(_ context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error) {
-	if seq == 0 || seq > s.tip {
+	if seq == 0 || seq > s.tip || s.inHole(seq) {
 		return clickhouse.LedgerHeader{}, false, nil
 	}
 	return clickhouse.LedgerHeader{Seq: seq, CloseTime: protocolWindowCloseTime(seq)}, true, nil
@@ -525,6 +546,21 @@ func TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount(t *testing.T) {
 	wantDay := protocolWindowCloseTime(tip).AddDate(0, 0, -protocolActivityWindowDays)
 	if !sinceDay.Equal(wantDay) {
 		t.Fatalf("sinceDay = %v, want %v (fast-path cutoff must share the same close_time boundary)", sinceDay, wantDay)
+	}
+}
+
+// A lake gap between the window boundary and the tip lies on the floor
+// search's path but far from its answer: the floor must still be exact.
+func TestProtocolWindowFloor_GapFarFromBoundary(t *testing.T) {
+	const tip = uint32(10_000_000)
+	stub := closeTimeActivityStub{tip: tip, holeLo: 8_750_000, holeHi: 9_000_000}
+	srv := New(Options{ProtocolActivity: stub})
+
+	since, _ := srv.protocolWindowFloor(context.Background(), tip)
+
+	// 90 days at the stub's 6s cadence is exactly 1,296,000 ledgers.
+	if want := tip - 1_296_000; since != want {
+		t.Fatalf("sinceLedger = %d, want %d (hole [%d, %d])", since, want, stub.holeLo, stub.holeHi)
 	}
 }
 

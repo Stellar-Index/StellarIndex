@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -76,8 +77,8 @@ const (
 
 	// SinkModeSkipSoleWriter skips ONLY the events whose domain the
 	// projector has EARNED sole-writer status for (see
-	// [IsSoleWriterProjected]) — currently just the sep41 domain
-	// (F-1316 / TASK #16b). It's the Phase-3 parallel mode for every
+	// [IsSoleWriterProjected]): the specs with [ProjectorSpec.SoleWriter]
+	// set. It's the Phase-3 parallel mode for every
 	// OTHER projected source (those still double-write for the
 	// duplicate-absorbing ON CONFLICT soak) while the promoted
 	// sole-writer domains are owned by the projector outright — so
@@ -94,14 +95,14 @@ const (
 // mode from the projector config booleans. Extracted here (rather than
 // inlined in cmd/stellarindex-indexer) so the foot-gun-closure
 // invariant is unit-testable: for EVERY combination of these two
-// booleans, a sep41 event is written exactly once (see
-// TestSinkModeForProjector_Sep41SoleWriterInvariant).
+// booleans, a sole-writer source's event is written exactly once (see
+// TestSinkModeForProjector_SoleWriterInvariant).
 //
 //   - projector disabled → SinkModeAll: the events-goroutine is the
 //     ONLY writer, so it must persist every class (including sep41).
 //   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
 //     Phase-3 parallel for un-promoted sources, but the projector owns
-//     the sole-writer domains (sep41) outright — the events-goroutine
+//     the sole-writer domains outright — the events-goroutine
 //     skips them so they are never double-written and never at risk of
 //     the flag being flipped.
 //   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
@@ -599,77 +600,21 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 	}
 }
 
-// IsProjectedEvent reports whether the ADR-0032 projector handles
-// `ev`. Phase 4+ the dispatcher's events-goroutine skips these so
-// the projector owns the write outright. Non-projected events
-// (sdex, external CEX/FX, band, supply observers) continue through
-// the events-goroutine because they don't flow through
-// soroban_events.
-//
-// MUST stay in lockstep with `internal/projector/registry.go`
-// `buildSource` — every consumer.Event a registered source can emit
-// must return true here. Guarded by lockstep_ast_test.go
-// (TestLockstep_RegistrySourcesFullyWired), which AST-walks this
-// switch, the registry cases, and every projected source package's
-// consumer.Event implementations — a missed wiring edit fails CI
-// instead of silently dropping rows (F-1316 class). A prior version
-// of this comment cited an "ADR-0030 lint guard" that never existed.
+// IsProjectedEvent reports whether the ADR-0032 projector writes ev:
+// its type is listed by a [SourceSpec] with a Projector. Phase 4+ the
+// dispatcher's events goroutine skips these. Everything else (sdex,
+// external CEX/FX, band, soroswap_router, supply observers) is written
+// only by the events goroutine.
 func IsProjectedEvent(ev consumer.Event) bool {
-	switch ev.(type) {
-	case soroswap.TradeEvent, soroswap.SkimEvent, soroswap.LiquidityEvent,
-		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
-		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
-		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent, phoenix.AdminEvent,
-		comet.TradeEvent, comet.LiquidityEvent,
-		sushiswap_v3.TradeEvent, sushiswap_v3.PositionEvent,
-		reflector.UpdateEvent, redstone.UpdateEvent,
-		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
-		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
-		blend_backstop.Event,
-		blend_emitter.DistributeEvent, blend_emitter.DropEvent, blend_emitter.SwapConfigEvent,
-		cctp.Event, rozo.Event,
-		sorocredit.Event,
-		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent, defindex.AdminEvent,
-		upshift.Event, spectra.Event,
-		sep41_supply.Event, sep41_transfers.Event:
-		return true
-	default:
-		// sdex.TradeEvent, external.TradeEvent, external.UpdateEvent,
-		// band.UpdateEvent, soroswap_router.Event (log-only), supply
-		// observers (accounts / trustlines / claimable_balances /
-		// liquidity_pools / sac_balances) — all out of scope for the
-		// projector per ADR-0032.
-		return false
-	}
+	return eventRoles[reflect.TypeOf(ev)].projected
 }
 
-// IsSoleWriterProjected reports whether the projector has EARNED
-// sole-writer status for ev's domain — i.e. the domain is fully
-// re-derived and its projection is verified by the default ADR-0033
-// reconcile catalogue, so the projector owns the write outright even
-// in Phase-3 parallel mode and the dispatcher's events-goroutine must
-// skip it REGARDLESS of the `PersistPerSource` flag. This closes the
-// F-1316 config foot-gun: the sep41 domain's write path no longer
-// depends on a flag whose zero-value (false) once silently dropped
-// all sep41 rows.
-//
-// The set is deliberately narrow — a strict SUBSET of
-// [IsProjectedEvent] (guarded by TestSoleWriter_SubsetOfProjected).
-// A source is added here only after its full-history re-derive lands
-// AND it enters the compute-completeness catalogue
-// (internal/ops/chops/reconciliation_catalogue.go), so an
-// undetected projector regression can't silently lose rows the
-// dispatcher used to double-write. Today that is only the sep41
-// domain (TASK #16b, 2026-07-06 re-derive + f457f2a4 catalogue
-// promotion); every other projected source stays in Phase-3 parallel
-// (double-write) until it too is promoted.
+// IsSoleWriterProjected reports whether the projector owns ev's write
+// even in Phase-3 parallel mode ([ProjectorSpec.SoleWriter]), so the
+// events goroutine skips it whatever PersistPerSource says. A subset of
+// [IsProjectedEvent] by construction.
 func IsSoleWriterProjected(ev consumer.Event) bool {
-	switch ev.(type) {
-	case sep41_supply.Event, sep41_transfers.Event:
-		return true
-	default:
-		return false
-	}
+	return eventRoles[reflect.TypeOf(ev)].soleWriter
 }
 
 // drainBufferedEvents writes any remaining buffered events using a

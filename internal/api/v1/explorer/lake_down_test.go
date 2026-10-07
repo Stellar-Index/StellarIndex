@@ -43,6 +43,10 @@ func (downReader) OperationsByLedger(context.Context, uint32, int) ([]clickhouse
 	return nil, errLakeDown
 }
 
+func (downReader) RecentOperationsOfType(context.Context, int, clickhouse.ExplorerCursor, []string) (clickhouse.OpTypePage, error) {
+	return clickhouse.OpTypePage{}, errLakeDown
+}
+
 func (downReader) RecentOperations(context.Context, int, clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
 	return nil, errLakeDown
 }
@@ -252,6 +256,7 @@ func lakeDownCases() []lakeDownCase {
 	return []lakeDownCase{
 		{"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList},
 		{"LedgerDetail", "/v1/ledgers/42", map[string]string{"seq": "42"}, (*Handler).LedgerDetail},
+		{"LedgerAt", "/v1/ledgers/at?ts=1700000000", nil, (*Handler).LedgerAt},
 		{"LedgerTransactions", "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, (*Handler).LedgerTransactions},
 		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
 		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},

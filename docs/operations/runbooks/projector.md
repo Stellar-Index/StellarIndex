@@ -9,7 +9,7 @@ severity: P3
 
 Rule file: `configs/prometheus/rules.r1/projector.yml` (same rules as `deploy/monitoring/rules/projector.yml`), `component: projector`. All alerts are `severity: ticket` (P3) except `stellarindex_projector_i128_overflow`, which is `page` (SEV-1). Implementation: `internal/projector/`; design: ADR-0032 (per-source tables as projections), ADR-0029 (soroban_events landing zone, the legacy raw store), ADR-0034 #10 / ADR-0041 (ClickHouse `contract_events` feed switch).
 
-Why P3: under Phase-3 parallel mode the dispatcher's per-source sink is still primary for most sources, so `lag_high` and `error_rate_high` are mostly visibility-only; `row_quarantined`, `decode_error_rate_high`, `wedged` and the other row/decode alerts below can lose or freeze served data. **Exception: `sep41`.** Since F-1316 the indexer runs `SinkModeSkipSoleWriter`: the projector is the SOLE writer for the sep41 domain, so trouble there is real, customer-visible data lag, and "disable the projector" is not a safe lever for it (it stops the only writer). Re-promote the family to P2 once `[ingestion.persist_per_source]=false` (Phase 4, `SinkModeSkipProjected`); flipping the writer is unsafe while lag is unbounded.
+Why P3: under Phase-3 parallel mode the dispatcher's per-source sink is still primary for most sources, so `lag_high` and `error_rate_high` are mostly visibility-only; `row_quarantined`, `decode_error_rate_high`, `wedged` and the other row/decode alerts below can lose or freeze served data. **Exception: `sep41` and `rozo`.** The indexer runs `SinkModeSkipSoleWriter`: the projector is the SOLE writer for every source whose spec sets `SoleWriter` (`internal/pipeline/source_spec.go`; today the sep41 pair and rozo), so trouble there is real, customer-visible data lag, and "disable the projector" is not a safe lever for it (it stops the only writer). Re-promote the family to P2 once `[ingestion.persist_per_source]=false` (Phase 4, `SinkModeSkipProjected`); flipping the writer is unsafe while lag is unbounded.
 
 **Where the projector reads from.** By default it tails the ClickHouse Tier-1 lake's `contract_events`: `storage.clickhouse_projector_source` defaults to **true** (it requires `clickhouse_live_sink`). Postgres `soroban_events` is the legacy fallback, used only when that flag is off. Both paths share the same `ingestion_cursors` rows and the same lag gauge. Confirm which this host is on:
 
@@ -55,7 +55,7 @@ ssh root@136.243.90.96 'psql -U stellarindex -d stellarindex -c \
 
 Trips: `max by (source) (stellarindex_projector_lag_ledgers) > 256` for `10m`, `unless max by (source) (stellarindex_projector_replay_window_active) == 1`. Typical MTTR 30 min.
 
-Impact: per-source projection tables (`trades`, `blend_*`, `phoenix_*`, `cctp_events`, ...) increasingly diverge from the authoritative event store. For the sole-writer sep41 domain that is served-data lag; for other sources in Phase 3 the dispatcher's sink still writes, so customer-facing rows are unaffected.
+Impact: per-source projection tables (`trades`, `blend_*`, `phoenix_*`, `cctp_events`, ...) increasingly diverge from the authoritative event store. For the sole-writer sources (sep41, rozo) that is served-data lag; for other sources in Phase 3 the dispatcher's sink still writes, so customer-facing rows are unaffected.
 
 Symptoms:
 

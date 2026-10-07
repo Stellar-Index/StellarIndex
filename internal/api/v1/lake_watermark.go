@@ -81,7 +81,7 @@ const (
 // read a watermark waits, and then only for the shorter of its own deadline
 // and lakeWatermarkColdWait.
 func (s *Server) lakeWatermark(ctx context.Context) (ledger uint32, stale bool, ok bool) {
-	if s.lakeWatermarkReader == nil {
+	if s.LakeWatermark == nil {
 		return 0, false, false
 	}
 	l, closedAt, fresh, mayRead := s.lakeWatermarkCached()
@@ -150,7 +150,7 @@ func (s *Server) refreshLakeWatermark() <-chan singleflight.Result {
 		defer worker.Recover(s.logger, "api-lake-watermark-refresh")
 		ctx, cancel := context.WithTimeout(context.Background(), lakeWatermarkRefreshTimeout)
 		defer cancel()
-		l, closedAt, err := s.lakeWatermarkReader.LakeWatermark(ctx)
+		l, closedAt, err := s.LakeWatermark.LakeWatermark(ctx)
 		s.lakeWMMu.Lock()
 		defer s.lakeWMMu.Unlock()
 		if err != nil {

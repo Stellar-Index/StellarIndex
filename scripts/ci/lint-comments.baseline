@@ -69,7 +69,6 @@ cmd/stellarindex-api/main.go	#985
 cmd/stellarindex-api/main.go	2026-05-09
 cmd/stellarindex-api/main.go	2026-05-10
 cmd/stellarindex-api/main.go	2026-05-10
-cmd/stellarindex-api/main.go	2026-05-12
 cmd/stellarindex-api/main.go	2026-05-13
 cmd/stellarindex-api/main.go	2026-05-13
 cmd/stellarindex-api/main.go	2026-05-20
@@ -77,7 +76,6 @@ cmd/stellarindex-api/main.go	2026-05-20
 cmd/stellarindex-api/main.go	2026-05-29
 cmd/stellarindex-api/main.go	2026-06-14
 cmd/stellarindex-api/main.go	2026-06-14
-cmd/stellarindex-api/main.go	2026-07-06
 cmd/stellarindex-api/main.go	2026-07-07
 cmd/stellarindex-api/main.go	2026-07-08
 cmd/stellarindex-api/main.go	2026-07-16
@@ -100,18 +98,15 @@ cmd/stellarindex-api/main.go	2026-07-23
 cmd/stellarindex-api/main.go	2026-07-23
 cmd/stellarindex-api/main.go	2026-07-23
 cmd/stellarindex-api/main.go	2026-07-23
-cmd/stellarindex-api/main.go	2026-07-23
 cmd/stellarindex-api/main.go	2026-07-29
 cmd/stellarindex-api/main.go	2026-07-31
 cmd/stellarindex-api/main.go	2026-07-31
 cmd/stellarindex-api/main.go	2026-07-31
 cmd/stellarindex-api/main.go	2026-08-03
 cmd/stellarindex-api/main.go	2026-08-04
-cmd/stellarindex-api/main.go	2026-08-04
 cmd/stellarindex-api/main.go	2026-08-13
 cmd/stellarindex-api/main.go	2026-08-13
 cmd/stellarindex-api/main.go	2026-08-14
-cmd/stellarindex-api/main.go	2026-08-25
 cmd/stellarindex-api/main.go	2026-08-27
 cmd/stellarindex-api/main.go	2026-09-01
 cmd/stellarindex-api/main.go	2026-09-01
@@ -124,15 +119,10 @@ cmd/stellarindex-api/main.go	2026-09-15
 cmd/stellarindex-api/main.go	2026-09-15
 cmd/stellarindex-api/main.go	2026-09-17
 cmd/stellarindex-api/main.go	2026-09-25
-cmd/stellarindex-api/main.go	CS-017
-cmd/stellarindex-api/main.go	CS-017
-cmd/stellarindex-api/main.go	CS-017
-cmd/stellarindex-api/main.go	CS-017
 cmd/stellarindex-api/main.go	F-0008
 cmd/stellarindex-api/main.go	F-0009
 cmd/stellarindex-api/main.go	F-0011
 cmd/stellarindex-api/main.go	F-0013
-cmd/stellarindex-api/main.go	F-0020
 cmd/stellarindex-api/main.go	F-0039
 cmd/stellarindex-api/main.go	F-0051
 cmd/stellarindex-api/main.go	F-1218
@@ -152,7 +142,6 @@ cmd/stellarindex-api/main.go	F-1255
 cmd/stellarindex-api/main.go	F-1255
 cmd/stellarindex-api/main.go	F-1258
 cmd/stellarindex-api/main.go	F-1258
-cmd/stellarindex-api/main.go	F-1258
 cmd/stellarindex-api/main.go	F-1270
 cmd/stellarindex-api/main.go	F-1270
 cmd/stellarindex-api/main.go	F-1270
@@ -162,9 +151,7 @@ cmd/stellarindex-api/main.go	F-1350
 cmd/stellarindex-api/main.go	F010
 cmd/stellarindex-api/main.go	F010
 cmd/stellarindex-api/main.go	F010
-cmd/stellarindex-api/main.go	F013
 cmd/stellarindex-api/main.go	F031
-cmd/stellarindex-api/main.go	F122
 cmd/stellarindex-api/main.go	LC-001
 cmd/stellarindex-api/main.go	PR 2
 cmd/stellarindex-api/main.go	Pre-2026
@@ -173,7 +160,6 @@ cmd/stellarindex-api/main.go	Pre-2026
 cmd/stellarindex-api/main.go	Q146
 cmd/stellarindex-api/main.go	RLT-287
 cmd/stellarindex-api/main.go	RLT-321
-cmd/stellarindex-api/main.go	T038
 cmd/stellarindex-api/main.go	T038
 cmd/stellarindex-api/main.go	T279
 cmd/stellarindex-api/main.go	T650
@@ -1868,10 +1854,6 @@ internal/pipeline/datastore.go	#371
 internal/pipeline/datastore.go	2026-05-26
 internal/pipeline/datastore.go	2026-07-25
 internal/pipeline/dispatcher.go	#478
-internal/pipeline/dispatcher.go	2026-06-15
-internal/pipeline/dispatcher.go	2026-08-03
-internal/pipeline/dispatcher.go	2026-08-03
-internal/pipeline/dispatcher.go	F-0021
 internal/pipeline/gated_registry.go	2026-07-05
 internal/pipeline/gated_registry.go	2026-07-08
 internal/pipeline/gated_registry.go	2026-08-25
@@ -1888,7 +1870,6 @@ internal/pipeline/sink.go	#368
 internal/pipeline/sink.go	2026-06-01
 internal/pipeline/sink.go	2026-06-01
 internal/pipeline/sink.go	2026-06-01
-internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
 internal/pipeline/sink.go	2026-07-06
@@ -1911,9 +1892,6 @@ internal/pipeline/sink.go	2026-07-24
 internal/pipeline/sink.go	2026-08-03
 internal/pipeline/sink.go	2026-08-03
 internal/pipeline/sink.go	F-0021
-internal/pipeline/sink.go	F-1316
-internal/pipeline/sink.go	F-1316
-internal/pipeline/sink.go	F-1316
 internal/pipeline/sink.go	F-1318
 internal/pipeline/sink.go	F-1318
 internal/pipeline/sink.go	F-1318
@@ -2017,10 +1995,6 @@ internal/projector/projector.go	RLT-131
 internal/projector/projector.go	RLT-132
 internal/projector/projector.go	RLT-132
 internal/projector/projector.go	RLT-132
-internal/projector/registry.go	2026-07-27
-internal/projector/registry.go	F-1316
-internal/projector/registry.go	F-1316
-internal/projector/registry.go	Q018
 internal/projector/sinkfault.go	2026-07-23
 internal/projector/sinkfault.go	2026-07-23
 internal/projector/sinkfault.go	INV-4

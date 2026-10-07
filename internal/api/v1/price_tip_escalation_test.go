@@ -41,7 +41,7 @@ func (h *escalationHistoryStub) TradesInRange(_ context.Context, pair canonical.
 // store price (which live-sampled at ~90s staleness).
 func TestComputeTip_EscalatesBeforeClosedBucket(t *testing.T) {
 	h := &escalationHistoryStub{tradeAge: 20 * time.Second}
-	s := &Server{history: h}
+	s := &Server{Options: Options{History: h}}
 	pairAsset := canonical.NativeAsset()
 	quote, _ := canonical.ParseAsset("fiat:USD")
 

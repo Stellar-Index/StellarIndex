@@ -158,8 +158,8 @@ const methodologyVersion = "1.0"
 //
 // R-023 in `docs/review-2026-05-10.md`.
 func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
-	pegs := make([]MethodologyStablecoinPeg, 0, len(s.usdPeggedClassics))
-	for _, peg := range s.usdPeggedClassics {
+	pegs := make([]MethodologyStablecoinPeg, 0, len(s.USDPeggedClassics))
+	for _, peg := range s.USDPeggedClassics {
 		pegs = append(pegs, MethodologyStablecoinPeg{
 			AssetID: peg.String(),
 			PegsTo:  canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}.String(),

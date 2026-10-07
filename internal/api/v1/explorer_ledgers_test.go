@@ -82,8 +82,17 @@ type stubExplorerReader struct {
 	err              error
 }
 
-func (s *stubExplorerReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
-	return s.ledgers, s.err
+// RecentLedgers returns the listed ledgers, or for a `before` read the
+// synthesized ledger just below it (the window-floor search's probe).
+func (s *stubExplorerReader) RecentLedgers(ctx context.Context, _ int, before uint32) ([]clickhouse.LedgerHeader, error) {
+	if before == 0 || s.err != nil {
+		return s.ledgers, s.err
+	}
+	l, found, err := s.LedgerBySeq(ctx, before-1)
+	if !found {
+		return nil, err
+	}
+	return []clickhouse.LedgerHeader{l}, err
 }
 
 func (s *stubExplorerReader) LedgerBySeq(_ context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error) {
@@ -122,6 +131,10 @@ func (s *stubExplorerReader) LedgerTransactions(_ context.Context, _ uint32, _ i
 
 func (s *stubExplorerReader) OperationsByLedger(_ context.Context, _ uint32, _ int) ([]clickhouse.OpRow, error) {
 	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) RecentOperationsOfType(_ context.Context, _ int, _ clickhouse.ExplorerCursor, _ []string) (clickhouse.OpTypePage, error) {
+	return clickhouse.OpTypePage{Rows: s.ops}, s.err
 }
 
 func (s *stubExplorerReader) RecentOperations(_ context.Context, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {

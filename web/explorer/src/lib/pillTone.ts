@@ -41,11 +41,6 @@ const PILL_TONE_CLASS: Record<PillTone, string> = {
 // `?? 'bg-surface-subtle text-ink-body'` fallbacks the per-view maps used.
 const PILL_TONE_FALLBACK = 'bg-surface-subtle text-ink-body';
 
-/** Background + text classes for a pill tone (adaptive, dark-surface safe). */
-export function pillToneClass(tone: PillTone): string {
-  return PILL_TONE_CLASS[tone];
-}
-
 // Data-source / venue name → tone. Shared by every table that chips a source
 // (/dexes, /exchanges, /oracles); each view reads only the keys it renders, so
 // the union here is harmless. Assignments are DISTINCT within any one view's

@@ -164,3 +164,12 @@ func (s *statefulTagger) TagTradesSigner(_ context.Context, _, _ time.Time, tags
 	}
 	return n, nil
 }
+
+// TestSignerSweepLookback_CoversProjectorStall keeps the sweep window wider
+// than the latest a projector-only trade can land plus one tick, so a trades
+// source promoted to sole writer still gets its signer.
+func TestSignerSweepLookback_CoversProjectorStall(t *testing.T) {
+	if need := ProjectorStallBound + signerSweepInterval; signerSweepLookback < need {
+		t.Errorf("signerSweepLookback = %s, must be at least %s (ProjectorStallBound + one sweep interval)", signerSweepLookback, need)
+	}
+}

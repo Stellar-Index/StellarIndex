@@ -188,7 +188,7 @@ func (s *Server) createRegisteredAccount(
 			s.logger.Error("register: slug entropy read failed", "err", err)
 			break
 		}
-		acct, err := s.registerAccounts.Create(r.Context(), platform.Account{
+		acct, err := s.RegisterAccounts.Create(r.Context(), platform.Account{
 			Name:         req.Name,
 			Slug:         slug,
 			BillingEmail: req.Email,
@@ -262,12 +262,12 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	// plaintext so one secret validates on either backend, and carries an
 	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
 	// allkeys-lru keyspace without bound (W1-flow-register-2).
-	if s.apiKeyBudgets.RedisMirror != nil {
+	if s.APIKeyBudgets.RedisMirror != nil {
 		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
 		if err != nil {
 			return "", platform.APIKey{}, fmt.Errorf("mirror api key to validator store: %w", err)
 		}
-		if err := s.apiKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
+		if err := s.APIKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
 			Plaintext: plaintext,
 			Record:    mirrored,
 		}); err != nil {
@@ -277,7 +277,7 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		}
 	}
 
-	out, err := s.apiKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
+	out, err := s.APIKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
 	if err != nil {
 		// The credential is already live in the validator store but its
 		// durable management row failed to commit — a credential with no
@@ -292,9 +292,9 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		// just failed on it), so rolling back on the SAME dead context
 		// guarantees the rollback also fails, leaving a live credential
 		// for the mirror's full idle TTL.
-		if s.apiKeyBudgets.RedisMirror != nil {
+		if s.APIKeyBudgets.RedisMirror != nil {
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil && !errors.Is(rbErr, auth.ErrKeyNotFound) {
+			if rbErr := s.APIKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil && !errors.Is(rbErr, auth.ErrKeyNotFound) {
 				s.logger.Error("register: mirror rollback after management-row create failed",
 					"err", rbErr, "account_id", acct.ID, "key_id", rec.ID)
 			}
@@ -321,13 +321,13 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 // short-deadline context so a request whose own deadline was consumed by
 // the failing mirror/key write can still quarantine the row.
 func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID, cause error) {
-	if s.registerAccounts == nil {
+	if s.RegisterAccounts == nil {
 		return
 	}
 	reason := signupreaper.SignupRaceReasonPrefix + " register orphan: first credential never reached the validator store"
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := s.registerAccounts.Suspend(sctx, accountID, reason); err != nil {
+	if err := s.RegisterAccounts.Suspend(sctx, accountID, reason); err != nil {
 		s.logger.Error("register: failed to suspend orphan account for reaper reclaim",
 			"err", err, "account_id", accountID, "orphan_cause", cause)
 		return
@@ -362,7 +362,7 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 		return registerRequest{}, false
 	}
 
-	if s.registerAccounts == nil || s.apiKeyBudgets.Platform == nil {
+	if s.RegisterAccounts == nil || s.APIKeyBudgets.Platform == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,

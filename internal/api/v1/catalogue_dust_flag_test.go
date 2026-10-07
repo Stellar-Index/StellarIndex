@@ -66,9 +66,7 @@ func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{
-		assetsReader:          &dustTwinAssets{},
-		verifiedCurrencies:    cat,
-		minMarketCapVolumeUSD: 1000,
+		Options: Options{AssetsReader: &dustTwinAssets{}, VerifiedCurrencies: cat, MinMarketCapVolumeUSD: 1000},
 	}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
 

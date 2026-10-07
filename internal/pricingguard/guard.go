@@ -14,20 +14,20 @@
 // print in the served minute would otherwise be served verbatim, with
 // stale=false and no volume floor. The raw-bucket consumers are:
 //
-//   - /v1/price               (cmd/stellarindex-api storePriceReader.LatestPrice)
-//   - /v1/assets/{slug}        (cmd/stellarindex-api globalPriceReader.LatestVWAP, GlobalAssetView headline)
+//   - /v1/price               (cmd/stellarindex-api/internal/wiring StorePriceReader.LatestPrice)
+//   - /v1/assets/{slug}        (cmd/stellarindex-api/internal/wiring GlobalPriceReader.LatestVWAP, GlobalAssetView headline)
 //   - the price-alert evaluator (cmd/stellarindex-aggregator priceAlertVWAPReader.LatestVWAP)
 //   - /v1/price/at + /v1/price/changes (cmd/stellarindex-api
 //     storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt] — the
 //     point-in-time ladder's 1m rung)
-//   - the SEP-40 prices() series (cmd/stellarindex-api
-//     storePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
+//   - the SEP-40 prices() series (cmd/stellarindex-api/internal/wiring
+//     StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
 //   - /v1/assets change_24h_pct's 24h-ago anchor (cmd/stellarindex-api
 //     storeChange24hReader.USDPrice24hAgo, via [GuardServedVWAP1mAt])
 //
 // Each entry is a WIRED call site, not an intention.
 // TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails when a
-// function under cmd/ calls a raw prices_1m store read without calling a
+// function under cmd/ (or a cmd/*/internal package) calls a raw prices_1m store read without calling a
 // guard entry point, or is missing from this list.
 //
 // This package hosts the WIRING that turns the pure robust-band decision

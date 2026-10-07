@@ -24,7 +24,7 @@ func TestLakeWatermark_ThresholdPin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{lakeWatermarkReader: &stubWatermark{ledger: 100, closedAt: time.Now().Add(-tc.lag)}}
+			s := &Server{Options: Options{LakeWatermark: &stubWatermark{ledger: 100, closedAt: time.Now().Add(-tc.lag)}}}
 			ledger, stale, ok := s.lakeWatermark(context.Background())
 			if !ok || ledger != 100 {
 				t.Fatalf("watermark = (%d, ok=%v), want (100, true)", ledger, ok)
@@ -44,7 +44,7 @@ func TestLakeWatermark_NilReader(t *testing.T) {
 }
 
 func TestLakeWatermark_EmptyLake(t *testing.T) {
-	s := &Server{lakeWatermarkReader: &stubWatermark{ledger: 0, closedAt: time.Time{}}}
+	s := &Server{Options: Options{LakeWatermark: &stubWatermark{ledger: 0, closedAt: time.Time{}}}}
 	if _, _, ok := s.lakeWatermark(context.Background()); ok {
 		t.Fatal("ledger 0 (empty lake) should report no watermark")
 	}
@@ -55,7 +55,7 @@ func TestLakeWatermark_EmptyLake(t *testing.T) {
 // ContiguousWatermark/max() the lake per request).
 func TestLakeWatermark_CachedWithinTTL(t *testing.T) {
 	wm := &stubWatermark{ledger: 100, closedAt: time.Now()}
-	s := &Server{lakeWatermarkReader: wm}
+	s := &Server{Options: Options{LakeWatermark: wm}}
 	for i := 0; i < 5; i++ {
 		if _, _, ok := s.lakeWatermark(context.Background()); !ok {
 			t.Fatalf("call %d: watermark unexpectedly missing", i)
@@ -71,7 +71,7 @@ func TestLakeWatermark_CachedWithinTTL(t *testing.T) {
 // stale semantics) instead of dropping the field.
 func TestLakeWatermark_ServesPreviousOnRefreshError(t *testing.T) {
 	wm := &stubWatermark{ledger: 100, closedAt: time.Now()}
-	s := &Server{lakeWatermarkReader: wm, logger: slog.Default()}
+	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}
 	if _, _, ok := s.lakeWatermark(context.Background()); !ok {
 		t.Fatal("first read should succeed")
 	}

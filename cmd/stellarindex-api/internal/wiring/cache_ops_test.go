@@ -1,0 +1,123 @@
+package wiring
+
+import (
+	"context"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/redis/go-redis/v9"
+
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+)
+
+type stubAssets struct{ v1.AssetReader }
+
+func (stubAssets) ListAssets(context.Context, string, int) ([]v1.AssetDetail, string, error) {
+	return []v1.AssetDetail{{AssetID: "native"}}, "", nil
+}
+
+type stubMarkets struct{ v1.MarketsReader }
+
+func (stubMarkets) DistinctPairsExt(context.Context, string, int, timescale.MarketsOrder) ([]v1.Market, string, error) {
+	return []v1.Market{}, "", nil
+}
+
+func cacheOps(cache, op, result string) float64 {
+	return testutil.ToFloat64(obs.APICacheOpsTotal.WithLabelValues(cache, op, result))
+}
+
+func TestRedisListCachesEmitCacheOps(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	log := slog.New(slog.DiscardHandler)
+	ctx := context.Background()
+
+	cases := []struct {
+		name, cache, op string
+		call            func() error
+	}{
+		{"assets", "assets_redis", "list_assets", func() error {
+			_, _, err := CachedAssetReader{Inner: stubAssets{}, RDB: rdb, Log: log}.ListAssets(ctx, "", 10)
+			return err
+		}},
+		{"markets", "markets_redis", "distinct_pairs", func() error {
+			_, _, err := CachedMarketsReader{Inner: stubMarkets{}, RDB: rdb, Log: log}.DistinctPairsExt(ctx, "", 10, timescale.MarketsOrderVolume24hDesc)
+			return err
+		}},
+		{"oracle", "oracle_redis", "latest", func() error {
+			_, _, err := CachedOracleReader{Inner: &countingOracleReader{}, RDB: rdb, Log: log}.LatestOracleUpdatesForAssetsAt(ctx, []canonical.Asset{canonical.NativeAsset()}, "")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			miss, hit, errs := cacheOps(tc.cache, tc.op, "miss"), cacheOps(tc.cache, tc.op, "hit"), cacheOps(tc.cache, tc.op, "error")
+			if err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if got := cacheOps(tc.cache, tc.op, "miss"); got != miss+1 {
+				t.Fatalf("miss = %v, want %v", got, miss+1)
+			}
+			if err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if got := cacheOps(tc.cache, tc.op, "hit"); got != hit+1 {
+				t.Fatalf("hit = %v, want %v", got, hit+1)
+			}
+			mr.SetError("boom")
+			defer mr.SetError("")
+			if err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if got := cacheOps(tc.cache, tc.op, "error"); got != errs+1 {
+				t.Fatalf("error = %v, want %v", got, errs+1)
+			}
+		})
+	}
+}
+
+func TestRedisCompositeMetaEmitsCacheOps(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	l := RedisTriangulatedLooker{RDB: rdb}
+	n := canonical.NativeAsset()
+	const cache, op = "prices_redis", "composite_meta"
+
+	miss := cacheOps(cache, op, "miss")
+	if _, ok, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err != nil || ok {
+		t.Fatalf("miss lookup: ok=%v err=%v", ok, err)
+	}
+	if got := cacheOps(cache, op, "miss"); got != miss+1 {
+		t.Fatalf("miss = %v, want %v", got, miss+1)
+	}
+
+	if err := rdb.Set(ctx, cachekeys.VWAPCompositeMeta(n, n, time.Minute).String(), "{}", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	hit := cacheOps(cache, op, "hit")
+	if _, ok, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err != nil || !ok {
+		t.Fatalf("hit lookup: ok=%v err=%v", ok, err)
+	}
+	if got := cacheOps(cache, op, "hit"); got != hit+1 {
+		t.Fatalf("hit = %v, want %v", got, hit+1)
+	}
+
+	errs := cacheOps(cache, op, "error")
+	mr.SetError("boom")
+	if _, _, err := l.LookupCompositeMeta(ctx, n, n, time.Minute); err == nil {
+		t.Fatal("want error")
+	}
+	if got := cacheOps(cache, op, "error"); got != errs+1 {
+		t.Fatalf("error = %v, want %v", got, errs+1)
+	}
+}

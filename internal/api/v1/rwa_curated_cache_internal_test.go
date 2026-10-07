@@ -31,8 +31,8 @@ func (b *blockingRWACuratedReader) LatestCuratedPublished(context.Context, strin
 
 func rwaCuratedCacheTestServer(reader RWACuratedDirectoryReader) *Server {
 	return &Server{
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		rwaCurated: reader,
+		Options: Options{RWACurated: reader},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

@@ -270,8 +270,8 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 // (the on-chain truth); only the convenience Price field is corrected, exactly
 // as /v1/history and /v1/observations agree.
 func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Trade, base, quote canonical.Asset) {
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, quote)
 	if baseDec == quoteDec {
 		return
 	}
@@ -328,7 +328,7 @@ func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryRe
 //   - to:   now
 //   - limit: 1000 (server clamps to ≤ 10000)
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + range/limit defaults are linear; splitting fragments the request lifecycle
-	reader := s.history
+	reader := s.History
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/history-unavailable",
@@ -465,7 +465,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// dex-nonstandard-decimals forward normalization of the Price field
 	// (M2). tradeRowFrom's Price is the raw quote_amount/base_amount ratio;
 	// normalizeTradeRowPrices corrects it against the `nonstandard_decimals_assets`
-	// guard table (s.nonstandardDecimals) — the SAME source /v1/vwap and the
+	// guard table (s.NonstandardDecimals) — the SAME source /v1/vwap and the
 	// main /v1/price use, NOT the broader live-contract baseDec/quoteDec stamped
 	// above for the BaseDecimals/QuoteDecimals metadata (those two resolvers can
 	// legitimately disagree, and mixing them would make Price disagree with what
@@ -820,7 +820,7 @@ func sinceInceptionCost(gran string) int {
 // buckets yet — distinct from 404 since the asset itself may be
 // known but just hasn't accrued bucketed history.
 func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + grain-default + clamp logic are linear; splitting fragments the request lifecycle
-	if s.history == nil {
+	if s.History == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/history-unavailable",
 			"History serving not configured", http.StatusServiceUnavailable,
@@ -910,7 +910,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	// measured on /v1/chart. One definition cannot drift from itself.
 	// A window unbounded below is never narrowed, so the walk passes no bounds here.
 	read := func(rc context.Context, p canonical.Pair, _, _ time.Time, limit int) ([]HistoryPoint, error) {
-		return s.history.HistoryPoints(rc, p, gran, limit)
+		return s.History.HistoryPoints(rc, p, gran, limit)
 	}
 	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {

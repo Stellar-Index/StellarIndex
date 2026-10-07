@@ -39,7 +39,7 @@ func TestFillIssuerDirectoryTags_ReadFailureWithholdsAndBlocksListingValuation(t
 
 	// Instrument check: with a directory that answers "not listed", the
 	// arm does publish for this row, so a nil below means the refusal.
-	srv.directory = fixedDirectory{}
+	srv.Directory = fixedDirectory{}
 	control := []AssetDetail{tlvDustSuppressedRow(tlvUSDT0Asset, "1.0001", tlvUSDT0TrustlineSupply)}
 	issuer := tduUSDT0Issuer
 	control[0].Issuer = &issuer
@@ -50,7 +50,7 @@ func TestFillIssuerDirectoryTags_ReadFailureWithholdsAndBlocksListingValuation(t
 			"(price=%v valuation=%+v)", control[0].PriceUSD, control[0].ListingValuation)
 	}
 
-	srv.directory = failingDirectory{}
+	srv.Directory = failingDirectory{}
 	rows := []AssetDetail{tlvDustSuppressedRow(tlvUSDT0Asset, "1.0001", tlvUSDT0TrustlineSupply)}
 	rows[0].Issuer = &issuer
 	srv.fillIssuerDirectoryTags(t.Context(), rows)
@@ -119,12 +119,12 @@ func TestRWAContractListingRows_DirectoryReadFailureWithholds(t *testing.T) {
 	listed := func(dir explorerpkg.DirectoryReader) AssetDetail {
 		t.Helper()
 		srv := New(Options{Directory: dir})
-		srv.assetsReader = &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
+		srv.AssetsReader = &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
 			sorobanContract: {CirculatingSupply: "10000000000", Basis: "sep41_lake_flows"},
 		}}
-		srv.contractCatalogue = capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}
-		srv.tokenSupply = capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}
-		srv.tokenDecimals = fixedTokenDecimals(7)
+		srv.ContractCatalogue = capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}
+		srv.TokenSupply = capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}
+		srv.TokenDecimals = fixedTokenDecimals(7)
 		out, _, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
 		if err != nil {
 			t.Fatal(err)

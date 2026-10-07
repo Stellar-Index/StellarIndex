@@ -57,6 +57,7 @@ clickhouse-client --port 9300 -q "SELECT name, type FROM system.disks"   # si_la
 - **Already running** — a full of the lake runs ~2 days at the default
   100 MiB/s cap (`ch_lake_backup_max_bandwidth`). The script refuses to
   start a second backup beside it; wait for it.
+- **Exit 75** — a deferred run: a heavy job holds the lock, nothing was backed up and the last real success stamp is kept; the stale alert covers a prolonged deferral.
 - **Exit 2** — the backup succeeded but an old chain could not be removed
   (logged as `PRUNE FAILED`). It stays on record and the next full retries;
   remove it by hand if the bucket's quota is the issue:

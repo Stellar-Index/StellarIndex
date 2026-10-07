@@ -57,7 +57,7 @@ type LiveSinkOptions struct {
 // The ch-live-catchup timer heals holes — but ONLY if it gap-scans below
 // CH_max, not just extends the tip (a tip-only [CH_max+1,tip] catch-up can never
 // re-fill a hole the sink already wrote past). The real-time projector
-// (ADR-0034 #10) does NOT trust the lake to be hole-free: it reads
+// (ADR-0041 feed-switch) does NOT trust the lake to be hole-free: it reads
 // contract_events only up to ContiguousWatermark — the highest ledger with no
 // hole below it — so an unhealed drop stalls the projector at the hole rather
 // than silently losing the dropped ledger's events.

@@ -3,29 +3,30 @@
 
 package pipeline
 
-// This file is the REAL lockstep guard the IsProjectedEvent comment
-// used to attribute to a (never-built) "ADR-0030 lint". Five sites
-// must agree for a source's data to flow (ADR-0031/0032):
+// Three sites must agree for a source's data to flow (ADR-0031/0032):
 //
+//   source_spec.go           — one SourceSpec per source: projected
+//                              membership, projector and dispatcher wiring
 //   sink.go HandleEvent      — persist arm per consumer.Event type
-//   sink.go IsProjectedEvent — projected-event membership
 //   sink.go tradeFromEvent   — trade-shaped fast path
-//   projector/registry.go    — buildSource case per projected source
-//   pipeline/dispatcher.go   — BuildDispatcher decoder registration
 //
 // Drift between them is SILENT DATA LOSS (F-1316: the projector
 // wrote zero sep41_transfers rows because one list was missed).
-// These tests parse the actual switch statements + source packages
-// with go/ast and cross-check, so adding an event type or source
-// without completing the wiring fails CI instead of dropping rows.
+// These tests read the specs, parse the sink's switch statements and
+// the source packages with go/ast, and cross-check, so adding an event
+// type or source without completing the wiring fails CI instead of
+// dropping rows.
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -218,21 +219,6 @@ func bodyCallsPersist(stmts []ast.Stmt) bool {
 	return found
 }
 
-// importPathByIdent maps local package idents (soroswap, blend_backstop,
-// …) to their import paths, from a file's import block.
-func importPathByIdent(f *ast.File) map[string]string {
-	out := map[string]string{}
-	for _, imp := range f.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		ident := path[strings.LastIndex(path, "/")+1:]
-		if imp.Name != nil {
-			ident = imp.Name.Name
-		}
-		out[ident] = path
-	}
-	return out
-}
-
 // eventTypesInPackage enumerates the exported types in a package dir
 // that implement consumer.Event (detected by an `EventKind() string`
 // method — the interface's distinctive member).
@@ -271,40 +257,6 @@ func repoDir(parts ...string) string {
 	return filepath.Join(append([]string{"..", ".."}, parts...)...)
 }
 
-// registryCasePackages extracts the package idents used in
-// buildSource's `case <pkg>.SourceName:` clauses.
-func registryCasePackages(t *testing.T) (pkgs map[string]bool, imports map[string]string) {
-	t.Helper()
-	fset := token.NewFileSet()
-	f := parseFile(t, fset, repoDir("internal", "projector", "registry.go"))
-	fn := funcDecl(t, f, "buildSource")
-	pkgs = map[string]bool{}
-	ast.Inspect(fn, func(n ast.Node) bool {
-		sw, ok := n.(*ast.SwitchStmt)
-		if !ok {
-			return true
-		}
-		for _, stmt := range sw.Body.List {
-			cc, ok := stmt.(*ast.CaseClause)
-			if !ok {
-				continue
-			}
-			for _, expr := range cc.List {
-				if sel, ok := expr.(*ast.SelectorExpr); ok {
-					if pkg, ok := sel.X.(*ast.Ident); ok {
-						pkgs[pkg.Name] = true
-					}
-				}
-			}
-		}
-		return false
-	})
-	if len(pkgs) == 0 {
-		t.Fatal("no case packages found in buildSource")
-	}
-	return pkgs, importPathByIdent(f)
-}
-
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -314,8 +266,8 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// TestLockstep_ProjectedEventsHavePersistArms — every type
-// IsProjectedEvent claims must have a HandleEvent persist arm, and
+// TestLockstep_ProjectedEventsHavePersistArms — every type a
+// projected SourceSpec lists must have a HandleEvent persist arm, and
 // every tradeFromEvent fast-path type must too. A projected event
 // without a persist arm reaches the projector and is dropped by
 // HandleEvent's default (silent loss).
@@ -330,16 +282,16 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	handleFn := funcDecl(t, sink, "handleEvent")
 	handle := caseTypeNames(t, handleFn)
 	persists := caseBodyPersists(t, handleFn)
-	projected := caseTypeNames(t, funcDecl(t, sink, "IsProjectedEvent"))
+	projected := specEventNames(true)
 	trades := caseTypeNames(t, funcDecl(t, sink, "tradeFromEvent"))
 
 	for _, typ := range sortedKeys(projected) {
 		if !handle[typ] {
-			t.Errorf("IsProjectedEvent lists %s but HandleEvent has no persist arm — projected rows for it are silently dropped", typ)
+			t.Errorf("a projected SourceSpec lists %s but HandleEvent has no persist arm — projected rows for it are silently dropped", typ)
 			continue
 		}
 		if !persists[typ] {
-			t.Errorf("IsProjectedEvent lists %s and HandleEvent has a case for it, but the case body never calls a persist helper or store method — the arm drops the event instead of writing it (F-1316 class)", typ)
+			t.Errorf("a projected SourceSpec lists %s and HandleEvent has a case for it, but the case body never calls a persist helper or store method — the arm drops the event instead of writing it (F-1316 class)", typ)
 		}
 	}
 	for _, typ := range sortedKeys(trades) {
@@ -358,76 +310,118 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	}
 }
 
-// TestLockstep_RegistrySourcesFullyWired — the F-1316 guard. For
-// every source package registered in projector buildSource:
-//   - every consumer.Event type that package defines must appear in
-//     IsProjectedEvent (or carry a notProjectedEvents entry), else
-//     Phase-4 ingest drops its rows silently;
-//   - and IsProjectedEvent must not reference types that no longer
-//     exist in the package (stale entry after a rename).
-func TestLockstep_RegistrySourcesFullyWired(t *testing.T) {
-	fset := token.NewFileSet()
-	sink := parseFile(t, fset, "sink.go")
-	projected := caseTypeNames(t, funcDecl(t, sink, "IsProjectedEvent"))
-
-	regPkgs, regImports := registryCasePackages(t)
-
-	// Package ident → set of event type names IsProjectedEvent knows.
-	projByPkg := map[string]map[string]bool{}
-	for full := range projected {
-		parts := strings.SplitN(full, ".", 2)
-		if projByPkg[parts[0]] == nil {
-			projByPkg[parts[0]] = map[string]bool{}
+// specEventNames names the event types the specs list ("pkg.Type",
+// keyed by package dir basename as sink.go imports them): the projected
+// ones when projected is true, the dispatcher-written ones otherwise.
+func specEventNames(projected bool) map[string]bool {
+	out := map[string]bool{}
+	for i := range specs {
+		if (specs[i].Projector != nil) != projected {
+			continue
 		}
-		projByPkg[parts[0]][parts[1]] = true
+		for _, ev := range specs[i].Events {
+			typ := reflect.TypeOf(ev)
+			out[path.Base(typ.PkgPath())+"."+typ.Name()] = true
+		}
 	}
+	return out
+}
 
+// unlistedEventError explains why full, a consumer.Event type defined in a
+// package some SourceSpec draws events from, is not wired, or returns "".
+// In a projected package only a projected spec or a notProjectedEvents
+// entry clears it: a non-projected listing there is the same silent
+// Phase-4 drop the allowlist exists to make a conscious decision.
+func unlistedEventError(full string, projectedPkg bool, projected, dispatched map[string]bool, allow map[string]string) string {
+	if projected[full] {
+		return ""
+	}
+	if !projectedPkg {
+		if dispatched[full] {
+			return ""
+		}
+		return fmt.Sprintf("%s implements consumer.Event but no SourceSpec lists it. Add it to the spec's Events", full)
+	}
+	if _, ok := allow[full]; ok {
+		return ""
+	}
+	return fmt.Sprintf("%s implements consumer.Event in a PROJECTED source package but no projected SourceSpec lists it — Phase-4 ingest silently drops it (F-1316 class). Add it to the projected spec's Events, or register it in notProjectedEvents with a reason", full)
+}
+
+// TestLockstep_SpecsListEveryEventType guards against silent drops. For every
+// package a SourceSpec draws events from, every consumer.Event type the
+// package defines must be listed by a spec; in a projected package, by a
+// projected spec or a notProjectedEvents entry. Each spec must list at least
+// one event and have a decoder for every writer it claims.
+func checkSpecShape(t *testing.T, s *SourceSpec) {
+	t.Helper()
+	if len(s.Events) == 0 {
+		t.Errorf("spec %s lists no event types", s.Name)
+	}
+	if s.NewDecoder == nil && s.Dispatch == nil {
+		t.Errorf("spec %s has no decoder for the dispatcher", s.Name)
+	}
+	if s.Projector != nil && s.NewDecoder == nil && s.Projector.NewDecoder == nil {
+		t.Errorf("spec %s is projected but has no decoder for the projector", s.Name)
+	}
+}
+
+func TestLockstep_SpecsListEveryEventType(t *testing.T) {
+	projected, dispatched := specEventNames(true), specEventNames(false)
+	pkgDirs := map[string]bool{}       // import path -> projected
+	projectedPkgs := map[string]bool{} // package basename, for stale allowlist entries
 	const modPrefix = "github.com/Stellar-Index/StellarIndex/"
-
-	for _, pkg := range sortedKeys(regPkgs) {
-		impPath, ok := regImports[pkg]
-		if !ok {
-			t.Errorf("registry package %q has no import mapping", pkg)
-			continue
-		}
-		dir := repoDir(filepath.FromSlash(strings.TrimPrefix(impPath, modPrefix)))
-		evTypes := eventTypesInPackage(t, dir)
-		if len(evTypes) == 0 {
-			t.Errorf("projected source package %s defines no consumer.Event types — registry entry stale?", pkg)
-			continue
-		}
-		for _, typ := range sortedKeys(evTypes) {
-			full := pkg + "." + typ
-			if projByPkg[pkg][typ] {
-				continue
-			}
-			if _, allowed := notProjectedEvents[full]; allowed {
-				continue
-			}
-			t.Errorf("%s implements consumer.Event in a PROJECTED source package but is missing from IsProjectedEvent — Phase-4 ingest will silently drop it (F-1316 class). Add it there (and a HandleEvent arm), or register it in notProjectedEvents with a reason", full)
-		}
-		// Reverse: stale IsProjectedEvent entries.
-		for typ := range projByPkg[pkg] {
-			if !evTypes[typ] {
-				t.Errorf("IsProjectedEvent lists %s.%s but the package defines no such consumer.Event type — stale entry", pkg, typ)
-			}
+	for i := range specs {
+		s := &specs[i]
+		checkSpecShape(t, s)
+		for _, ev := range s.Events {
+			imp := reflect.TypeOf(ev).PkgPath()
+			pkgDirs[imp] = pkgDirs[imp] || s.Projector != nil
 		}
 	}
-
-	// Every package IsProjectedEvent references must be a registered
-	// projector source (else its events are skipped by the sink but
-	// NO projector writes them — total loss).
-	for pkg := range projByPkg {
-		if !regPkgs[pkg] {
-			t.Errorf("IsProjectedEvent references package %q which has no buildSource case in projector/registry.go — its events are skipped by the sink AND never projected", pkg)
+	for _, imp := range sortedKeys(pkgDirs) {
+		pkg := path.Base(imp)
+		dir := repoDir(filepath.FromSlash(strings.TrimPrefix(imp, modPrefix)))
+		for _, typ := range sortedKeys(eventTypesInPackage(t, dir)) {
+			if msg := unlistedEventError(pkg+"."+typ, pkgDirs[imp], projected, dispatched, notProjectedEvents); msg != "" {
+				t.Error(msg)
+			}
+		}
+		if pkgDirs[imp] {
+			projectedPkgs[pkg] = true
 		}
 	}
-
-	// Stale allowlist entries.
 	for full := range notProjectedEvents {
-		pkg := strings.SplitN(full, ".", 2)[0]
-		if !regPkgs[pkg] {
-			t.Errorf("notProjectedEvents entry %q references a package that is not a projected source — stale entry", full)
+		if projected[full] {
+			t.Errorf("notProjectedEvents entry %q is listed by a projected spec — stale entry", full)
+		}
+		if !projectedPkgs[strings.SplitN(full, ".", 2)[0]] {
+			t.Errorf("notProjectedEvents entry %q names no projected source package — stale entry", full)
+		}
+	}
+}
+
+// TestUnlistedEventError_ProjectedPackageNeedsProjectedSpec pins the
+// allowlist's strength: a projected package's type listed only by a
+// non-projected spec still needs a notProjectedEvents entry.
+func TestUnlistedEventError_ProjectedPackageNeedsProjectedSpec(t *testing.T) {
+	projected := map[string]bool{"p.Projected": true}
+	dispatched := map[string]bool{"p.Dispatched": true, "d.Dispatched": true}
+	allow := map[string]string{"p.Allowed": "reason"}
+	for _, tc := range []struct {
+		full         string
+		projectedPkg bool
+		ok           bool
+	}{
+		{"p.Projected", true, true},
+		{"p.Allowed", true, true},
+		{"p.Dispatched", true, false},
+		{"p.Unlisted", true, false},
+		{"d.Dispatched", false, true},
+		{"d.Unlisted", false, false},
+	} {
+		if got := unlistedEventError(tc.full, tc.projectedPkg, projected, dispatched, allow) == ""; got != tc.ok {
+			t.Errorf("%s (projected package %v): cleared = %v, want %v", tc.full, tc.projectedPkg, got, tc.ok)
 		}
 	}
 }

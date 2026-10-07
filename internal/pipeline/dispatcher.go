@@ -25,87 +25,26 @@ package pipeline
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/accounts"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
-	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
-	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/liquidity_pools"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sac_balances"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
-	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
-	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
-	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
-	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
-
-// SorobanSourceNames lists every source name BuildDispatcher's switch
-// accepts whose decoder lands in the soroban_events catch-all (ADR-0029)
-// — i.e. every case except sdex.SourceName, which routes to opDecoders
-// and the classic trades table instead. Single source of truth for
-// "is this a Soroban-era decoder": internal/ops/ingest's resume-stalled
-// gate uses it to pick soroban_events vs trades[source='sdex'] gap
-// scans, so a case added here without a matching entry here leaves
-// that source's stalled backfill cursors mis-gated (CA2-A19-correct-3).
-// Keep in lockstep with BuildDispatcher's switch.
-var SorobanSourceNames = []string{
-	soroswap.SourceName,
-	aquarius.SourceName,
-	phoenix.SourceName,
-	comet.SourceName,
-	sushiswap_v3.SourceName,
-	upshift.SourceName,
-	spectra.SourceName,
-	reflector.SourceDEX,
-	reflector.SourceCEX,
-	reflector.SourceFX,
-	redstone.SourceName,
-	band.SourceName,
-	soroswap_router.SourceName,
-	defindex.SourceName,
-	blend.SourceName,
-	blend_backstop.SourceName,
-	blend_emitter.SourceName,
-	cctp.SourceName,
-	rozo.SourceName,
-	sorocredit.SourceName,
-}
 
 // BuildDispatcher constructs a dispatcher with decoders registered
 // for every name in `names`. Returns an error on unknown names or
 // when an oracle source is requested without its required contract
 // ID populated in `oracle`.
 //
-// Source name → decoder kind mapping:
-//
-//   - soroswap / aquarius / phoenix / comet — event Decoder
-//   - reflector-{dex,cex,fx} / redstone     — event Decoder (oracle)
-//   - band                                  — ContractCallDecoder
-//     (Band's Soroban contract emits zero events; we observe the
-//     relay() InvokeContract call instead — see AGENTS.md "Band's
-//     Soroban contract emits zero events")
-//   - sdex                                  — OpDecoder (classic
-//     pre-Soroban; we read ManageOffer ops, not events)
+// Each name is wired per its [SourceSpec]; watched (sep41) specs are
+// never enabled by name, see [RegisterSupplyEventDecoders].
 //
 // soroswapOpts is forwarded to soroswap.NewDecoder when soroswap is
 // in `names`. The indexer + backfill chunks pass:
@@ -122,168 +61,28 @@ var SorobanSourceNames = []string{
 // Empty soroswapOpts is fine for tests / contexts that don't need
 // persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
 // instead and ignores postgres entirely).
-func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo,funlen // linear case-table, splitting hurts readability
+func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
 	// Oracle-staleness policy (issue #478) is installed BEFORE any
 	// decoder is built, so the first update a source persists already
 	// publishes the right budget. Overrides go in unconditionally —
 	// they are keyed by (source, asset) and a row naming a source this
 	// replica does not run simply never matches a series, which is
 	// cheaper than reasoning about which replica owns which asset.
-	// Per-source DEFAULTS are declared alongside each decoder below,
-	// so a source that is not enabled here publishes neither a
-	// resolution nor a budget.
+	// Per-source DEFAULTS are declared by each spec's OnDispatch, so a
+	// source that is not enabled here publishes neither a resolution
+	// nor a budget.
 	obs.SetOracleStalenessOverrides(oracleStalenessOverrides(oracle))
 
-	var decoders []dispatcher.Decoder
-	var opDecoders []dispatcher.OpDecoder
-	var callDecoders []dispatcher.ContractCallDecoder
+	a := BuildArgs{Oracle: oracle, Gated: gated, SoroswapOpts: soroswapOpts}
+	disp := dispatcher.New()
 	for _, name := range names {
-		switch strings.ToLower(strings.TrimSpace(name)) {
-		case soroswap.SourceName:
-			decoders = append(decoders, soroswap.NewDecoder(soroswapOpts...))
-		case aquarius.SourceName:
-			decoders = append(decoders, aquarius.NewDecoder(gated[aquarius.SourceName]...))
-		case phoenix.SourceName:
-			decoders = append(decoders, phoenix.NewDecoder(gated[phoenix.SourceName]...))
-		case comet.SourceName:
-			decoders = append(decoders, comet.NewDecoder(gated[comet.SourceName]...))
-		case sushiswap_v3.SourceName:
-			decoders = append(decoders, sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...))
-		case upshift.SourceName:
-			decoders = append(decoders, upshift.NewDecoder(gated[upshift.SourceName]...))
-		case spectra.SourceName:
-			decoders = append(decoders, spectra.NewDecoder(gated[spectra.SourceName]...))
-		case reflector.SourceDEX:
-			if oracle.Reflector.DEXContract == "" {
-				return nil, fmt.Errorf(
-					"source %q enabled but oracle.reflector.dex_contract is empty",
-					name)
-			}
-			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract,
-					reflector.WithDecoderDecimals(oracle.Reflector.DEXDecimals)))
-			obs.DeclareOracleResolution(reflector.SourceDEX, reflector.DefaultResolutionSeconds)
-		case reflector.SourceCEX:
-			if oracle.Reflector.CEXContract == "" {
-				return nil, fmt.Errorf(
-					"source %q enabled but oracle.reflector.cex_contract is empty",
-					name)
-			}
-			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract,
-					reflector.WithDecoderDecimals(oracle.Reflector.CEXDecimals)))
-			obs.DeclareOracleResolution(reflector.SourceCEX, reflector.DefaultResolutionSeconds)
-		case reflector.SourceFX:
-			if oracle.Reflector.FXContract == "" {
-				return nil, fmt.Errorf(
-					"source %q enabled but oracle.reflector.fx_contract is empty",
-					name)
-			}
-			decoders = append(decoders,
-				reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract,
-					reflector.WithDecoderDecimals(oracle.Reflector.FXDecimals)))
-			obs.DeclareOracleResolution(reflector.SourceFX, reflector.DefaultResolutionSeconds)
-		case redstone.SourceName:
-			if oracle.Redstone.AdapterContract == "" {
-				return nil, fmt.Errorf(
-					"source %q enabled but oracle.redstone.adapter_contract is empty",
-					name)
-			}
-			decoders = append(decoders,
-				redstone.NewDecoder(oracle.Redstone.AdapterContract))
-			obs.DeclareOracleHeartbeat(redstone.SourceName, redstone.DefaultResolutionSeconds)
-		case band.SourceName:
-			if oracle.Band.StandardReferenceContract == "" {
-				return nil, fmt.Errorf(
-					"source %q enabled but oracle.band.standard_reference_contract is empty",
-					name)
-			}
-			callDecoders = append(callDecoders,
-				band.NewDecoder(oracle.Band.StandardReferenceContract))
-			obs.DeclareOracleResolution(band.SourceName, band.DefaultResolutionSeconds)
-		case soroswap_router.SourceName:
-			// Soroswap router emits no events itself — its swap_*
-			// functions delegate to per-pair contracts which DO
-			// emit events (handled by the sister soroswap source).
-			// We hook the router's InvokeContract call directly via
-			// ContractCallDecoder, same pattern as Band.
-			callDecoders = append(callDecoders,
-				soroswap_router.NewDecoder(soroswap_router.MainnetRouter))
-		case defindex.SourceName:
-			// DeFindex vault wrappers (`DeFindexVault`) + Blend
-			// strategy contracts (`BlendStrategy`). Event-based
-			// Decoder gated on the curated evidence-verified contract
-			// set (ADR-0035/0040 — the namespaced topics alone are
-			// still forgeable; see docs/protocols/defindex.md).
-			decoders = append(decoders, defindex.NewDecoder(gated[defindex.SourceName]...))
-		case sdex.SourceName:
-			opDecoders = append(opDecoders, sdex.NewDecoder())
-		case blend.SourceName:
-			// Blend gates Matches() on contract identity (ADR-0035):
-			// `deploy` only from the Pool Factory, every other event only
-			// from a factory-deployed pool. The pool registry is warmed
-			// from protocol_contracts via gated[blend]. When a caller
-			// passes no gate (e.g. stellarindex-ops backfill) the
-			// registry is EMPTY and blend matches nothing above its
-			// factory deploys — note this is a silent no-op, NOT
-			// "output that would be dropped anyway" as this comment
-			// previously claimed; that caller persists with
-			// SinkModeAll, which discards nothing (cold audit
-			// 2026-08-03).
-			decoders = append(decoders, blend.NewDecoder(gated[blend.SourceName]...))
-		case blend_backstop.SourceName:
-			// Blend Backstop — stateless topic Decoder gated on the two
-			// known backstop contracts (V1 + V2). Its symbols OVERLAP
-			// with Blend pool events, so the contract gate (not the
-			// topic) disambiguates. Schemas lake-reverse-engineered
-			// 2026-06-15, pending Blend-team confirmation — live-capture
-			// only. See internal/sources/blend_backstop/README.md.
-			decoders = append(decoders, blend_backstop.NewDecoder())
-		case blend_emitter.SourceName:
-			// Blend Emitter — protocol-emissions plumbing (distribute
-			// / drop / q_swap / swap), gated on contract identity
-			// (ADR-0035/0040): its `distribute` topic COLLIDES with
-			// blend_backstop's own `distribute` event (different body
-			// shape, same symbol — see
-			// internal/sources/blend_emitter/README.md). The pool
-			// registry is warmed from protocol_contracts via
-			// gated[blend_emitter]. An unwarmed caller (e.g.
-			// stellarindex-ops backfill) keeps only the in-code curated
-			// set and silently drops anything registered since — the
-			// output is NOT "dropped by IsProjectedEvent anyway", since
-			// that caller uses SinkModeAll (cold audit 2026-08-03).
-			decoders = append(decoders, blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...))
-		case cctp.SourceName:
-			// Circle CCTP v2 — stateless topic Decoder, gated on the
-			// three known CCTP contracts (deposit_for_burn /
-			// mint_and_withdraw / message_sent / message_received).
-			// Class=ClassBridge: bridge flow, never VWAP. See
-			// internal/sources/cctp/README.md.
-			decoders = append(decoders, cctp.NewDecoder())
-		case rozo.SourceName:
-			// Rozo v1 Payment — stateless topic Decoder, gated on the
-			// three known Rozo v1 contracts (payment / flush).
-			// Class=ClassBridge: bridge flow, never VWAP. See
-			// internal/sources/rozo/README.md.
-			decoders = append(decoders, rozo.NewDecoder())
-		case sorocredit.SourceName:
-			// sorocredit — an unbranded consumer-USDC credit / CDP
-			// protocol. Event Decoder gated on a SINGLE trust-root main
-			// contract (+ its announced Collateral-<uuid> children) —
-			// ADR-0035. Class=ClassLending, never VWAP. Its "Liquidation"
-			// events are SCHEDULED SETTLEMENTS, not distress — see
-			// internal/sources/sorocredit/README.md.
-			decoders = append(decoders, sorocredit.NewDecoder())
-		default:
+		spec, ok := SpecByName(name)
+		if !ok || spec.Watched {
 			return nil, fmt.Errorf("unknown source %q in ingestion.enabled_sources — check internal/sources/", name)
 		}
-	}
-	disp := dispatcher.New(decoders...)
-	for _, od := range opDecoders {
-		disp.AddOpDecoder(od)
-	}
-	for _, ccd := range callDecoders {
-		disp.AddContractCallDecoder(ccd)
+		if err := spec.addToDispatcher(disp, a); err != nil {
+			return nil, err
+		}
 	}
 	return disp, nil
 }
@@ -418,43 +217,26 @@ func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyC
 	return registered, nil
 }
 
-// RegisterSupplyEventDecoders attaches event-stream Soroban decoders
-// for the supply pipeline. Currently registers exactly one — the
-// sep41_supply Algorithm 3 mint/burn/clawback decoder — but the
-// shape mirrors [RegisterSupplyEntryDecoders] so a future per-asset
-// event observer slots in cleanly.
-//
-// Closes the L2.12a six-observer wiring sweep alongside
-// [RegisterSupplyEntryDecoders]. Without this call, the
-// `sep41_supply_events` hypertable stays empty and Algorithm 3
-// returns zero for every SEP-41 contract regardless of whether
-// `[supply] watched_sep41_contracts` is set.
-//
-// Design rule: same as the entry-decoder helper — empty watched-set
-// → observer skipped, no behaviour change for non-opted-in
-// deployments.
+// RegisterSupplyEventDecoders adds the dispatcher's copy of every
+// [SourceSpec.Watched] source (sep41_supply, then sep41_transfers; their
+// topic[0] sets are disjoint) built from supply.watched_sep41_contracts.
+// An empty watched set registers nothing. Returns the registered names.
 func RegisterSupplyEventDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig) ([]string, error) {
 	var registered []string
-	if len(sup.WatchedSEP41Contracts) > 0 {
-		dec, err := sep41supply.NewDecoder(sup.WatchedSEP41Contracts)
+	a := BuildArgs{WatchedSEP41: sup.WatchedSEP41Contracts}
+	for i := range specs {
+		if !specs[i].Watched {
+			continue
+		}
+		dec, err := specs[i].NewDecoder(a)
 		if err != nil {
-			return nil, fmt.Errorf("sep41_supply decoder: %w", err)
+			return nil, fmt.Errorf("%s decoder: %w", specs[i].Name, err)
+		}
+		if dec == nil {
+			continue
 		}
 		disp.AddDecoder(dec)
-		registered = append(registered, sep41supply.SourceName)
-
-		// sep41_transfers — F-0021 closure (audit-2026-05-26).
-		// Same watched-set as sep41_supply; the two decoders'
-		// topic[0] symbols are disjoint (this one handles
-		// transfer/approve/set_admin/set_authorized; the supply
-		// observer handles mint/burn/clawback) so each event is
-		// matched by exactly one of them.
-		tdec, terr := sep41transfers.NewDecoder(sup.WatchedSEP41Contracts)
-		if terr != nil {
-			return nil, fmt.Errorf("sep41_transfers decoder: %w", terr)
-		}
-		disp.AddDecoder(tdec)
-		registered = append(registered, sep41transfers.SourceName)
+		registered = append(registered, specs[i].Name)
 	}
 	return registered, nil
 }

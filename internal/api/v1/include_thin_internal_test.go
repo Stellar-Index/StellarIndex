@@ -180,7 +180,7 @@ func TestListingAdmitsThinFlaggedAndCountsOnServe(t *testing.T) {
 	deep := "AQUA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 	thin := "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 	nulled := "NULL-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
-	s := &Server{substance: &stubListingGate{allow: map[string]bool{deep + "|native": true}}}
+	s := &Server{Options: Options{Substance: &stubListingGate{allow: map[string]bool{deep + "|native": true}}}}
 	p1, p2, p3, ch := "0.001", "0.13", "0.20", "+1.00"
 	rows := []AssetDetail{
 		{AssetID: deep, PriceUSD: &p1, Change24hPct: &ch},
@@ -215,7 +215,7 @@ func TestDeclaredPegBeatsThinListingPrice(t *testing.T) {
 		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSDText: "1.5267", InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
-	s.substance = &stubListingGate{allow: map[string]bool{}}
+	s.Substance = &stubListingGate{allow: map[string]bool{}}
 	dust := "0.80"
 	rows := []AssetDetail{{AssetID: pegTestAUDD, PriceUSD: &dust}}
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestThinPriceDerivesNoValuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{verifiedCurrencies: cat}
+	s := &Server{Options: Options{VerifiedCurrencies: cat}}
 	anchor := AssetDetail{AssetID: "SHX-GDSTRSHXHGJ7ZIVRBXEYE5Q74XUVCUSEKEBR7UCHEUUEK72N7I7KJ6JH", PriceUSD: &price}
 	if s.listingValuationCandidate(&anchor) || anchor.ListingValuation == nil ||
 		anchor.ListingValuation.Status != ListingValuationMarketPriceObserved {

@@ -72,7 +72,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	}
 	defer release()
 
-	if s.history == nil {
+	if s.History == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/observations-unavailable",
 			"Observations serving not configured", http.StatusServiceUnavailable,
@@ -187,7 +187,7 @@ func (s *Server) computeObservations(
 	var wg sync.WaitGroup
 	for i, ap := range aliasPairs {
 		wg.Go(func() {
-			results[i], errs[i] = s.history.LatestTradePerSource(scanCtx, ap, source)
+			results[i], errs[i] = s.History.LatestTradePerSource(scanCtx, ap, source)
 			if errs[i] != nil {
 				cancel()
 			}
@@ -331,7 +331,7 @@ func (s *Server) runObservationsStreamProducer(
 // tick, BY DESIGN and for the same reason as the request handler: this
 // is the raw per-source surface, so there is no aggregation contract to
 // fall short of and no aggregated value for the base-level
-// cross-reference verdict to vouch for. s.divergence is never consulted
+// cross-reference verdict to vouch for. s.Divergence is never consulted
 // here. See the FRESHNESS CONTRACT block in handleObservations; pinned
 // by TestObservationsStream_DivergenceCheckedStructurallyFalse.
 func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {

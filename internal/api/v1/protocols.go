@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -69,17 +70,17 @@ func (s *Server) protoDetailInitLocked() {
 // live on Server, lazy-init'd) so it never leaks across test instances.
 // ok=false only when the caller's context is cancelled (or the build
 // produced no cacheable entry) on the cold path.
-func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, stale, ok bool) {
+func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, at time.Time, stale, ok bool) {
 	s.protoDetailMu.Lock()
 	s.protoDetailInitLocked()
 	if e, has := s.protoDetailCache[key]; has {
 		if time.Since(e.at) < protocolDetailTTL {
 			s.protoDetailMu.Unlock()
-			return e.view, false, true
+			return e.view, e.at, false, true
 		}
 		s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — the rebuild must outlive this request (see protoDetailRefreshLocked)
 		s.protoDetailMu.Unlock()
-		return e.view, true, true
+		return e.view, e.at, true, true
 	}
 	done := s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	s.protoDetailMu.Unlock()
@@ -88,9 +89,9 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 		s.protoDetailMu.Lock()
 		e, has := s.protoDetailCache[key]
 		s.protoDetailMu.Unlock()
-		return e.view, false, has
+		return e.view, e.at, false, has
 	case <-ctx.Done():
-		return ProtocolDetailView{}, false, false
+		return ProtocolDetailView{}, time.Time{}, false, false
 	}
 }
 
@@ -821,7 +822,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// name-only key would let a ?days=7 hit serve the cached 90d view (or
 	// vice versa). The no-param default builds the same key as an explicit
 	// days=90, so the common path stays a single cached entry.
-	view, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
+	view, builtAt, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
 	if !ok {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/protocol-detail-timeout",
@@ -845,7 +846,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// verdictsStale alone is a fresh read of an old audit verdict and stays
 	// cacheable.
 	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
-	writeJSON(w, view, Flags{Stale: staleFlag, Degraded: degraded})
+	// as_of is the build time, so a re-served entry replays byte-identical.
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(builtAt.UTC()), Flags: Flags{Stale: staleFlag, Degraded: degraded}})
 }
 
 // protocolDetailBuilder returns the one build closure both the request
@@ -1027,7 +1029,7 @@ func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolCo
 // keeps the same honesty contract a failed roster read has — an unreadable
 // count is not a zero.
 func (s *Server) countedContractTotal(ctx context.Context, meta ProtocolMeta) (int, bool, error) {
-	counter, has := s.protocolContractsReader.(protocolContractCounter)
+	counter, has := s.ProtocolContracts.(protocolContractCounter)
 	if !has {
 		return 0, false, nil
 	}
@@ -1091,7 +1093,7 @@ func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, ros
 // can mark the view's analytics status "unavailable" instead of letting
 // the absent fields read as real zeros.
 func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) bool {
-	if s.protocolActivity == nil {
+	if s.ProtocolActivity == nil {
 		return false
 	}
 	ids := protocolContractIDs(view.Contracts, meta.Factories)
@@ -1105,7 +1107,7 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// skips the analytics entirely (degrade honestly, don't serve a
 	// mislabeled window — a zero tip would make the fast path's day cutoff
 	// collapse to yesterday while still claiming ActivityWindowDays).
-	tip, err := s.protocolActivity.LakeTipLedger(ctx)
+	tip, err := s.ProtocolActivity.LakeTipLedger(ctx)
 	if err != nil {
 		s.logger.Warn("protocol activity tip read failed", "err", err)
 		return false
@@ -1229,13 +1231,13 @@ func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string
 		s.logger.Warn("fast series/breakdown would split across windows; raw fallback for both",
 			"source", name, "series_err", sErr, "breakdown_err", bErr)
 	}
-	series, sErr := s.protocolActivity.ProtocolDailyActivity(ctx, ids, plan.sinceLedger)
+	series, sErr := s.ProtocolActivity.ProtocolDailyActivity(ctx, ids, plan.sinceLedger)
 	if sErr != nil {
 		s.logger.Warn("protocol daily activity failed", "source", name, "err", sErr)
 	} else {
 		applyProtocolSeries(view, series)
 	}
-	breakdown, bErr := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, plan.sinceLedger)
+	breakdown, bErr := s.ProtocolActivity.ProtocolEventBreakdown(ctx, ids, plan.sinceLedger)
 	if bErr != nil {
 		s.logger.Warn("protocol event breakdown failed", "source", name, "err", bErr)
 	} else {
@@ -1287,7 +1289,7 @@ func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, 
 		}
 		s.logger.Warn("fast contract activity failed; raw fallback", "source", name, "err", err)
 	}
-	act, err := s.protocolActivity.ProtocolContractActivity(ctx, ids, plan.sinceLedger)
+	act, err := s.ProtocolActivity.ProtocolContractActivity(ctx, ids, plan.sinceLedger)
 	if err != nil {
 		s.logger.Warn("protocol contract activity failed", "source", name, "err", err)
 		return false
@@ -1331,11 +1333,16 @@ func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protoc
 // protocolLedgerAtCloseTimeReader is the optional capability behind an
 // accurate window boundary (CA2-A06-correct-1): a ProtocolActivityReader
 // that can resolve a ledger sequence's close_time. *clickhouse.ExplorerReader
-// (the production wiring) satisfies it via LedgerBySeq; a reader that
-// doesn't degrades to the theoretical-cadence approximation below.
+// (the production wiring) satisfies it; a reader that doesn't degrades to
+// the theoretical-cadence approximation below.
 type protocolLedgerAtCloseTimeReader interface {
+	explorer.LedgerPager
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
 }
+
+// The capability is an optional type assertion, so a production reader that
+// drifted out of it would silently serve the approximation instead.
+var _ protocolLedgerAtCloseTimeReader = (*clickhouse.ExplorerReader)(nil)
 
 // protocolWindowFloor derives the raw readers' ledger cutoff AND the fast
 // reader's day-grain cutoff from ONE close_time boundary: tip's close_time
@@ -1353,7 +1360,7 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 	if tip > protocolActivityWindowLedgers {
 		fallback = tip - protocolActivityWindowLedgers
 	}
-	closeTimeReader, ok := s.protocolActivity.(protocolLedgerAtCloseTimeReader)
+	closeTimeReader, ok := s.ProtocolActivity.(protocolLedgerAtCloseTimeReader)
 	if !ok {
 		return fallback, protocolSinceDay(fallback, tip)
 	}
@@ -1362,7 +1369,8 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 		return fallback, protocolSinceDay(fallback, tip)
 	}
 	boundary := tipHdr.CloseTime.UTC().AddDate(0, 0, -protocolActivityWindowDays)
-	since, err := ledgerSeqAtCloseTime(ctx, closeTimeReader, tip, boundary)
+	// Close times are whole seconds, so "at or after boundary" is "after boundary-1s".
+	since, err := explorer.FirstCapturedClosedAfter(ctx, closeTimeReader, tip, boundary.Add(-time.Second))
 	if err != nil {
 		return fallback, protocolSinceDay(fallback, tip)
 	}
@@ -1370,30 +1378,6 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 		since = 1
 	}
 	return since, boundary
-}
-
-// ledgerSeqAtCloseTime binary-searches [0, tipSeq] for the smallest ledger
-// sequence whose close_time is at or after boundary. Ledger sequences are
-// contiguous genesis→tip and close_time is monotonic in sequence, so this
-// converges in O(log2(tipSeq)) point lookups regardless of the chain's
-// actual close cadence — the same technique
-// internal/api/v1/explorer/contracts_list.go's windowFloorLedger uses for
-// the sibling /v1/contracts window (CA2-A03-correct-0).
-func ledgerSeqAtCloseTime(ctx context.Context, r protocolLedgerAtCloseTimeReader, tipSeq uint32, boundary time.Time) (uint32, error) {
-	lo, hi := uint32(0), tipSeq
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		hdr, found, err := r.LedgerBySeq(ctx, mid)
-		if err != nil {
-			return 0, err
-		}
-		if !found || hdr.CloseTime.Before(boundary) {
-			lo = mid + 1
-			continue
-		}
-		hi = mid
-	}
-	return lo, nil
 }
 
 // buildProtocolView projects one registry entry + the dynamic joins
@@ -1429,10 +1413,10 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 // (the tvl field stays absent everywhere) when the cache isn't wired
 // or hasn't completed its first background refresh.
 func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
-	if s.dexTVL == nil {
+	if s.DEXTVL == nil {
 		return nil
 	}
-	snap, _ := s.dexTVL.Snapshot()
+	snap, _ := s.DEXTVL.Snapshot()
 	return snap
 }
 
@@ -1445,10 +1429,10 @@ func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
 // its first background refresh — the same degradation contract as
 // every other dynamic join on this directory.
 func (s *Server) protocolTVLsAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView) {
-	if s.dexTVL == nil {
+	if s.DEXTVL == nil {
 		return nil, nil
 	}
-	snap, total, _ := s.dexTVL.SnapshotAndTotal()
+	snap, total, _ := s.DEXTVL.SnapshotAndTotal()
 	return snap, total
 }
 
@@ -1467,10 +1451,10 @@ func attachProtocolTVL(view *ProtocolView, tvls map[string]ProtocolTVLView) {
 // and is not a degradation the detail path's analytics.status should
 // report; a query error is, so the caller can fold it in.
 func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool) {
-	if s.protocolStats == nil {
+	if s.ProtocolStats == nil {
 		return nil, true
 	}
-	counts, err := s.protocolStats.CountRecentEventsBySource(ctx)
+	counts, err := s.ProtocolStats.CountRecentEventsBySource(ctx)
 	if err != nil {
 		s.logger.Warn("protocols events_24h read failed", "err", err)
 		return nil, false
@@ -1490,7 +1474,7 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 // about (nil reader or a failed read), true only when a successful
 // read's own verdicts are stale.
 func (s *Server) protocolVerdicts(ctx context.Context) (verdicts map[string]timescale.CompletenessSnapshot, ok, stale bool) {
-	if s.completenessReader == nil {
+	if s.CompletenessReader == nil {
 		return nil, true, false
 	}
 	snaps, verdictsStale, err := s.completenessVerdicts(ctx)
@@ -1516,10 +1500,10 @@ func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]Proto
 	if name == "soroswap" {
 		return s.soroswapContractsErr(ctx)
 	}
-	if s.protocolContractsReader == nil {
+	if s.ProtocolContracts == nil {
 		return []ProtocolContractView{}, nil
 	}
-	rows, err := s.protocolContractsReader.ListProtocolContracts(ctx, name)
+	rows, err := s.ProtocolContracts.ListProtocolContracts(ctx, name)
 	if err != nil {
 		s.logger.Warn("protocols contract registry read failed", "source", name, "err", err)
 		return nil, err
@@ -1553,7 +1537,7 @@ func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]Proto
 // `SELECT DISTINCT … LIMIT 5000` served-tier scan the roster-count cache
 // exists to keep off the unauthenticated request path (W1.3).
 func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
-	ids, err := s.protocolContractsReader.ListSourceContractsFromProjection(ctx, name)
+	ids, err := s.ProtocolContracts.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {
 		s.logger.Warn("protocols projection roster read failed", "source", name, "err", err)
 		return nil, err
@@ -1571,10 +1555,10 @@ func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name st
 // surfacing a read error rather than swallowing it. Nil reader → a
 // genuine empty roster (not an error).
 func (s *Server) soroswapContractsErr(ctx context.Context) ([]ProtocolContractView, error) {
-	if s.soroswapPairs == nil {
+	if s.SoroswapPairs == nil {
 		return []ProtocolContractView{}, nil
 	}
-	pairs, err := s.soroswapPairs.LoadSoroswapPairRegistry(ctx)
+	pairs, err := s.SoroswapPairs.LoadSoroswapPairRegistry(ctx)
 	if err != nil {
 		s.logger.Warn("protocols soroswap pair registry read failed", "err", err)
 		return nil, err
@@ -1610,7 +1594,7 @@ func protocolSinceDay(sinceLedger, tip uint32) time.Time {
 // sync.Once is the wrong primitive here). A non-definitive answer
 // degrades THIS call to the raw readers and re-probes next time.
 func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
-	fast, ok := s.protocolActivity.(protocolFastActivityReader)
+	fast, ok := s.ProtocolActivity.(protocolFastActivityReader)
 	if !ok {
 		return nil
 	}

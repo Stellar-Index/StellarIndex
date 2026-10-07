@@ -229,46 +229,16 @@ func (c closedBucketChecker) Ping(ctx context.Context) error {
 //
 // Thread-safe.
 type Server struct {
-	logger           *slog.Logger
-	network          string
-	checks           []ReadyChecker
-	assets           AssetReader
-	prices           PriceReader
-	history          HistoryReader
-	markets          MarketsReader
-	oracle           OracleReader
-	sep1Cache        Sep1CachedReader
-	accounts         AccountStore
-	accountKeyQuota  int
-	platformAccounts PlatformAccountStore
-	platformUsers    AccountSessionRevoker
-	registerAccounts RegisterAccountCreator
-	apiKeyBudgets    APIKeyBudgetStores
-	statusNotices    StatusNoticeStore
-	audit            AuditSink
-	signupIPThrottle SignupIPThrottle
-	divergence       DivergenceLooker
-	freeze           FrozenLooker
-	substance        PriceSubstanceGate
-	transitive       TransitivePricer
-	scam             PriceScamGate
-	supply           SupplyLooker
-	tokenSupply      TokenSupplyReader
-	storageSupply    ContractStorageSupplyReader
-	tokenDecimals    TokenDecimalsReader
-	tokenSymbol      TokenSymbolReader
-	rwaContracts     RWADirectoryContractReader
-	rwaListings      RWAListingDirectoryReader
-	listings         AssetListingDirectoryReader
-	rwaCurated       RWACuratedDirectoryReader
-	rwaCuratedSnap   rwaCuratedCache
+	// Options is the construction-time wiring as supplied to [New]; the
+	// fields below it are state derived from it.
+	Options
+	logger         *slog.Logger
+	rwaCuratedSnap rwaCuratedCache
 	// assetListings memoises one read of the listing directory for the
 	// /v1/assets listing-priced valuation arm — see
 	// asset_listing_valuation.go. Not shared with rwaListings' snapshot:
 	// that one serves contract rows only and is rebuilt per RWA request.
-	assetListings       assetListingCache
-	contractCatalogue   ContractCatalogueReader
-	lakeWatermarkReader LakeWatermarkReader
+	assetListings assetListingCache
 	// holds is the operator under-review list (SetHolds).
 	holds atomic.Pointer[[]holds.Hold]
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
@@ -309,26 +279,12 @@ type Server struct {
 	// after every TTL lapse paid the scan inline and the rest queued).
 	// nativeLPFillMu collapses concurrent COLD fills onto one scan;
 	// nativeLPRefreshing admits one detached rescan at a time.
-	nativeLPMu              sync.Mutex
-	nativeLPCached          []LiquidityPoolReservesRow
-	nativeLPAll             []clickhouse.NativeLiquidityPoolState
-	nativeLPFetched         time.Time
-	nativeLPFillMu          sync.Mutex
-	nativeLPRefreshing      atomic.Bool
-	volume                  VolumeReader
-	change24h               Change24hReader
-	priceAt                 PriceAtReader
-	changesum               ChangeSummaryReader
-	assetsReader            AssetsReader
-	issuers                 IssuersReader
-	sep41Transfers          SEP41TransfersReader
-	cursors                 CursorsReader
-	coverageReader          SourceCoverageReader
-	completenessReader      CompletenessReader
-	auditedSources          []string
-	protocolContractsReader ProtocolContractsReader
-	protocolStats           ProtocolStatsReader
-	protocolActivity        ProtocolActivityReader
+	nativeLPMu         sync.Mutex
+	nativeLPCached     []LiquidityPoolReservesRow
+	nativeLPAll        []clickhouse.NativeLiquidityPoolState
+	nativeLPFetched    time.Time
+	nativeLPFillMu     sync.Mutex
+	nativeLPRefreshing atomic.Bool
 	// protocolFast{Mu,Settled,OK} cache the daily-pre-aggregation probe —
 	// but only once it produced a DEFINITIVE answer (see fastActivity).
 	// Deliberately NOT a sync.Once: Once would latch a transient first-probe
@@ -336,10 +292,7 @@ type Server struct {
 	protocolFastMu      sync.Mutex
 	protocolFastSettled bool
 	protocolFastOK      bool
-	protocolBespoke     ProtocolBespokeReader
 	protocolPoolTokens  ProtocolPoolTokensReader
-	dexTVL              *DEXTVLCache
-	sdexOrderBook       *SDEXOrderBookCache
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex
@@ -436,10 +389,6 @@ type Server struct {
 	rwaHistCache  *rwaValueHistory
 	rwaHistAt     time.Time
 	rwaHistFlight chan struct{}
-	// oracleHistory backs the price leg of that series. Held apart from
-	// `oracle`, which is the live-snapshot seam; see
-	// [RWAOracleHistoryReader].
-	oracleHistory RWAOracleHistoryReader
 	// The RWA premium-over-time assembly (/v1/rwa/premium). Its own
 	// cache rather than a field on the value history: the two share a
 	// membership and a reference leg but not a market leg, and one
@@ -448,58 +397,17 @@ type Server struct {
 	rwaPremCache  *rwaPremiumHistory
 	rwaPremAt     time.Time
 	rwaPremFlight chan struct{}
-	// rwaPremiumSubstance is the operator-configured thin-market floor
-	// (the SAME [pricingguard.SubstanceGate] policy /v1/price serves
-	// against), used to derive rwaPremiumDayFloor. Zero value falls
-	// back to the pricingguard package defaults — see
-	// [rwaPremiumDayFloorFor].
-	rwaPremiumSubstance pricingguard.SubstancePolicy
-	// marketHistory backs the market leg of that series — the observed
-	// daily dollar VWAP the oracle's NAV is measured against. See
-	// [RWAMarketHistoryReader].
-	marketHistory RWAMarketHistoryReader
-	soroswapPairs SoroswapPairsReader
 
 	// contractIndex caches contract → protocol for the cohort view's
 	// contract labels; see contract_protocol_index.go.
-	contractIndex          contractProtocolIndex
-	networkStats           NetworkStatsReader
-	aggregators            AggregatorsReader
-	marketSources          MarketSourceReader
-	sourcesStats           SourcesStatsReader
-	lending                LendingReader
-	mev                    MEVReader
-	anomalies              AnomalyReader
-	divergences            DivergenceReader
-	divergenceThresholdPct float64
-	//floatmoney:ok same non-money config-threshold class as Options.MinMarketCapVolumeUSD below — copied from there in New, compared via big.NewFloat, never a stored/served amount
-	minMarketCapVolumeUSD float64
-	//floatmoney:ok same non-money config-threshold class as Options.MaxMarketCapVolumeRatio below
-	maxMarketCapVolumeRatio float64
-	currencies              CurrenciesReader
+	contractIndex contractProtocolIndex
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// refuse to serve it (T650). See fxCrossStale's doc comment.
 	fxCrossMaxAge time.Duration
-	// fiatBasisDisabled turns off [Server.preferUSDAnchoredBasis].
-	fiatBasisDisabled bool
 	// fxFixings binds closed-bucket FX legs; nil leaves those crosses unserved.
-	fxFixings        *fxFixingCache
-	explorer         ExplorerReader
-	issuerAuthFlags  IssuerAuthFlagsReader
-	staticHomeDomain func(ctx context.Context, issuer string) (string, bool)
-	explorerHandler  *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
-	// directory resolves curated third-party issuer labels
-	// (account_directory, migration 0136) for the additive
-	// issuer_directory_* fields on /v1/assets + /v1/assets/{id}.
-	// Same reader the explorer handler + GET /v1/directory use; nil
-	// omits the fields. DISPLAY-ONLY — never feeds pricing/verification.
-	directory explorerpkg.DirectoryReader
-	// volumeCharacter rolls the per-asset trailing-window account-structure
-	// signals + derived volume_character on /v1/assets/{id} (design §2).
-	// Nil omits the fields. ANALYTICS-only — never feeds pricing/verification
-	// and never re-ranks (that is §4).
-	volumeCharacter VolumeCharacterReader
+	fxFixings       *fxFixingCache
+	explorerHandler *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 
 	// readyz single-flight cache (inventory #26) — see handleReadyz.
 	// readyzFlight is non-nil while a round is being computed; waiters
@@ -513,26 +421,12 @@ type Server struct {
 
 	// livez/lake single-flight cache (#310) — see handleLivezLake.
 	// livezLakeFlight mirrors readyzFlight (GH-587).
-	livezLakeMu          sync.Mutex
-	livezLakeAt          time.Time
-	livezLakeCode        int
-	livezLakeBody        []byte
-	livezLakeFlight      chan struct{}
-	fxHistory            FXHistoryReader
-	sessionPeeker        SessionPeeker
-	incidents            []incidents.Incident
-	sep10                auth.SEP10Validator
-	cors                 middleware.Middleware
-	auth                 middleware.Middleware
-	keyPolicy            middleware.Middleware
-	rateLimit            middleware.Middleware
-	monthlyQuota         middleware.Middleware
-	touchUsage           middleware.Middleware
-	requireEmailVerified middleware.Middleware
-	usageTracker         middleware.Middleware
-	usageReader          UsageReader
-	usageRollupReader    UsageRollupReader
-	hub                  *streaming.Hub
+	livezLakeMu     sync.Mutex
+	livezLakeAt     time.Time
+	livezLakeCode   int
+	livezLakeBody   []byte
+	livezLakeFlight chan struct{}
+	incidents       []incidents.Incident
 	// streamDrain is the server-shutdown broadcast every SSE writer on
 	// this Server watches alongside its request context. Created here
 	// rather than taken from Options because it is not a deployment
@@ -559,56 +453,18 @@ type Server struct {
 	// tipDivergenceBudgetFor overrides [tipStreamDivergenceBudget] when
 	// > 0 (tests).
 	tipDivergenceBudgetFor time.Duration
-	confidence             ConfidenceLooker
-	triangulated           TriangulatedPriceLooker
-	cdnEnabled             bool
-	statusBackend          StatusBackend
 	backupMetrics          backupMetricsSource
 	backups                backupsCache
-	archiveReportPath      string
 	regionName             string
 	regionDeployment       string
 	statusServices         []string
-	dashboardAuth          DashboardAuthMounter
-	dashboardKeys          DashboardAuthMounter
-	dashboardWebhooks      DashboardAuthMounter
-	dashboardPriceAlerts   DashboardAuthMounter
-	sessionAuth            middleware.Middleware
-	// verifiedCurrencies is the loaded *currency.Catalogue — the
-	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
-	// network identities. Powers the `unverified_warning` body +
-	// flags.unverified_ticker_collision attachment on /v1/assets/{id}
-	// (R-018 Phase 1.1). Nil-safe: applyUnverifiedWarning returns
-	// false when the catalogue isn't wired, leaving every response
-	// without the warning surface — that's the same behaviour as
-	// pre-1.1.
-	verifiedCurrencies *currency.Catalogue
 	// sacReserveAssets maps a Stellar-Asset-Contract (SAC) contract
 	// C-strkey → the canonical classic/native asset it wraps, built
 	// lazily from verifiedCurrencies (ADR-0039 lending TVL: a Blend
 	// reserve's underlying is the asset's SAC, so we price via this).
-	sacReserveAssets map[string]string
-	sacReserveOnce   sync.Once
-	// backfillCoverage backs /v1/diagnostics/ingestion's coverage section; nil omits it.
-	backfillCoverage *CoverageCache
-	// usdVolumePricing backs /v1/coverage's usd_volume_pricing; nil renders null.
-	usdVolumePricing *UsdVolumePricingCache
-	// coverageFloorReader + coverageFloorCache back the empty-window
-	// coverage signal on /v1/ohlc, /v1/history, /v1/chart and
-	// /v1/price/at. Nil reader = no signal at all: those surfaces keep
-	// serving exactly what they serve now, minus `coverage_from` and
-	// `flags.outside_coverage`. See [CoverageFloorReader].
-	coverageFloorReader CoverageFloorReader
-	coverageFloorCache  *coverageFloorCache
-	// nonstandardDecimals backs the read-time dex-nonstandard-decimals
-	// forward normalization (docs/operations/runbooks/
-	// dex.md): every price-shaped serving path
-	// resolves per-leg decimals through it (aggregate.ResolveDecimals)
-	// and scales the finished ratio via aggregate.AdjustPrice. Nil
-	// disables normalization entirely — every asset resolves to the
-	// 7dp default and all prices serve raw, the pre-guard behaviour.
-	// See [NonstandardDecimalsCache].
-	nonstandardDecimals *NonstandardDecimalsCache
+	sacReserveAssets   map[string]string
+	sacReserveOnce     sync.Once
+	coverageFloorCache *coverageFloorCache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
 	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
 	// Nil-safe: handleGlobalAsset returns a view without the price
@@ -617,19 +473,6 @@ type Server struct {
 	// into the Stellar network's deep_link for per-asset pricing.
 	globalPrice     aggregate.GlobalPriceReader
 	globalPriceOpts aggregate.GlobalPriceOptions
-	// sacWrappers is the operator-config map of Stellar-Asset-Contract
-	// C-strkey → supply.AssetKey form ("CODE:ISSUER", colon — or a bare
-	// contract id self-map for a pure SEP-41 token; see config.go's
-	// SACWrappers doc). Surfaced on /v1/sac-wrappers so the explorer can
-	// resolve raw Soroban contract addresses (which
-	// Soroswap/Phoenix/Aquarius/Comet emit as base/quote in their swap
-	// events) back to readable asset symbols. Nil means "operator hasn't
-	// configured the map" — the endpoint serves an empty object.
-	sacWrappers map[string]string
-	// networkPassphrase is the Stellar network passphrase, used to derive
-	// deterministic SAC contract ids for known assets (isKnownSAC). Empty
-	// disables the computed-SAC half of the check (sac_wrappers still apply).
-	networkPassphrase string
 	// knownSACs is the cached union of sac_wrappers + computed SAC ids
 	// (native + verified catalogue), built once via knownSACsOnce.
 	knownSACsOnce sync.Once
@@ -663,16 +506,6 @@ type Server struct {
 	// assetListCache is the response-level cache for the default
 	// /v1/assets listing; see [assetListResponseCache].
 	assetListCache *assetListResponseCache
-	// usdPeggedClassics is the operator's allow-list of classic
-	// credit assets they declare as USD-pegged stablecoins.
-	// Mirrors trades.usd_pegged_classic_assets from config. Used
-	// at chart-fallback time: when /v1/chart is asked for X/fiat:USD
-	// and the literal pair has zero points (because we don't store
-	// synthetic XLM/USD in prices_1m — the proxy is applied at
-	// query time), the chart handler retries against X/<peg> for
-	// each entry until one returns data, marking the response
-	// `triangulated: true` for transparency.
-	usdPeggedClassics []canonical.Asset
 	// pegDeclaredAt is when this deployment adopted the operator's peg
 	// declarations (usdPeggedClassics plus the aggregate.FiatProxy
 	// stablecoin table): [Options.PegDeclaredAt] when set, else the
@@ -684,14 +517,6 @@ type Server struct {
 	// it was adopted — see that function for what stamping the clock
 	// instead published, and for the restart semantics.
 	pegDeclaredAt time.Time
-	// fiatPeggedClassics maps a classic asset_id to the fiat currency
-	// the OPERATOR declares it 1:1-pegged to (pricing_guard.
-	// fiat_pegged_classic_assets). Drives the declared-peg price fill
-	// on the asset listing + detail surfaces: a configured row whose
-	// price_usd is nil AFTER the substance gate ran gets price_usd =
-	// current fiat→USD FX rate, stamped price_basis="declared_peg".
-	// See [Server.fillDeclaredPegPrice] for the ordering invariant.
-	fiatPeggedClassics map[string]canonical.Asset
 	// ingestionSnapshot caches a fully-built IngestionDiagnostics
 	// computed every ~15s by a background goroutine launched via
 	// [Server.StartIngestionSnapshotRefresh]. Powers
@@ -1709,119 +1534,24 @@ type Options struct {
 }
 
 // New constructs a Server and mounts all v1 routes.
-func New(opts Options) *Server { //nolint:funlen // pure field-mapping constructor — one line per Options field; splitting the wiring into helpers would scatter it and gains nothing.
+func New(opts Options) *Server {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:                  logger,
-		network:                 opts.Network,
-		checks:                  opts.ReadyChecks,
-		assets:                  opts.Assets,
-		prices:                  opts.Prices,
-		history:                 opts.History,
-		coverageFloorReader:     opts.CoverageFloor,
-		coverageFloorCache:      &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
-		markets:                 opts.Markets,
-		oracle:                  opts.Oracle,
-		oracleHistory:           opts.OracleHistory,
-		marketHistory:           opts.MarketHistory,
-		rwaPremiumSubstance:     opts.RWAPremiumSubstance,
-		sep1Cache:               opts.Sep1Cache,
-		accounts:                opts.Accounts,
-		accountKeyQuota:         opts.AccountKeyQuota,
-		platformAccounts:        opts.PlatformAccounts,
-		platformUsers:           opts.PlatformUsers,
-		registerAccounts:        opts.RegisterAccounts,
-		apiKeyBudgets:           opts.APIKeyBudgets,
-		statusNotices:           opts.StatusNotices,
-		signupIPThrottle:        opts.SignupIPThrottle,
-		divergence:              opts.Divergence,
-		freeze:                  opts.Freeze,
-		substance:               opts.Substance,
-		transitive:              opts.TransitivePricer,
-		scam:                    opts.Scam,
-		supply:                  opts.Supply,
-		tokenSupply:             opts.TokenSupply,
-		storageSupply:           opts.ContractStorageSupply,
-		tokenDecimals:           opts.TokenDecimals,
-		tokenSymbol:             opts.TokenSymbol,
-		rwaContracts:            opts.RWAContracts,
-		rwaListings:             opts.RWAListings,
-		rwaCurated:              opts.RWACurated,
-		listings:                opts.Listings,
-		contractCatalogue:       opts.ContractCatalogue,
-		lakeWatermarkReader:     opts.LakeWatermark,
-		volume:                  opts.Volume,
-		change24h:               opts.Change24h,
-		priceAt:                 opts.PriceAt,
-		changesum:               opts.ChangeSummary,
-		assetsReader:            opts.AssetsReader,
-		issuers:                 opts.Issuers,
-		sep41Transfers:          opts.SEP41Transfers,
-		cursors:                 opts.Cursors,
-		coverageReader:          opts.CoverageReader,
-		networkStats:            opts.NetworkStats,
-		aggregators:             opts.Aggregators,
-		marketSources:           opts.MarketSources,
-		sourcesStats:            opts.SourcesStats,
-		lending:                 opts.Lending,
-		mev:                     opts.MEV,
-		anomalies:               opts.Anomalies,
-		divergences:             opts.Divergences,
-		divergenceThresholdPct:  opts.DivergenceThresholdPct,
-		minMarketCapVolumeUSD:   opts.MinMarketCapVolumeUSD,
-		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
-		currencies:              opts.Currencies,
-		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
-		fiatBasisDisabled:       opts.DisableFiatBasis,
-		fxFixings:               newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
-		explorer:                opts.Explorer,
-		issuerAuthFlags:         opts.IssuerAuthFlags,
-		staticHomeDomain:        opts.StaticHomeDomain,
-		directory:               opts.Directory,
-		volumeCharacter:         opts.VolumeCharacter,
-		fxHistory:               opts.FXHistory,
-		sessionPeeker:           opts.SessionPeeker,
-		audit:                   opts.Audit,
-		sep10:                   opts.SEP10,
-		cors:                    opts.CORS,
-		auth:                    opts.Auth,
-		keyPolicy:               opts.KeyPolicy,
-		rateLimit:               opts.RateLimit,
-		monthlyQuota:            opts.MonthlyQuota,
-		touchUsage:              opts.TouchUsage,
-		requireEmailVerified:    opts.RequireEmailVerified,
-		usageTracker:            opts.UsageTracker,
-		usageReader:             opts.UsageReader,
-		usageRollupReader:       opts.UsageRollupReader,
-		hub:                     opts.Hub,
-		streamDrain:             streaming.NewDrain(),
-		confidence:              opts.Confidence,
-		triangulated:            opts.Triangulated,
-		cdnEnabled:              opts.CDNEnabled,
-		statusBackend:           opts.StatusBackend,
-		backupMetrics:           backupMetricsFor(opts),
-		archiveReportPath:       opts.ArchiveReportPath,
-		regionName:              valueOr(opts.RegionName, "unknown"),
-		regionDeployment:        valueOr(opts.RegionDeployment, "production"),
-		statusServices:          statusServicesOr(opts.StatusServices),
-		dashboardAuth:           opts.DashboardAuth,
-		dashboardKeys:           opts.DashboardKeys,
-		dashboardWebhooks:       opts.DashboardWebhooks,
-		dashboardPriceAlerts:    opts.DashboardPriceAlerts,
-		sessionAuth:             opts.SessionAuth,
-		verifiedCurrencies:      opts.VerifiedCurrencies,
-		backfillCoverage:        opts.BackfillCoverage,
-		usdVolumePricing:        opts.UsdVolumePricing,
-		nonstandardDecimals:     opts.NonstandardDecimals,
-		globalPrice:             newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
-		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:             opts.SACWrappers,
-		networkPassphrase:       opts.NetworkPassphrase,
-		usdPeggedClassics:       opts.USDPeggedClassics,
-		fiatPeggedClassics:      opts.FiatPeggedClassics,
+		Options:            opts,
+		logger:             logger,
+		coverageFloorCache: &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
+		fxCrossMaxAge:      fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
+		fxFixings:          newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
+		streamDrain:        streaming.NewDrain(),
+		backupMetrics:      backupMetricsFor(opts),
+		regionName:         valueOr(opts.RegionName, "unknown"),
+		regionDeployment:   valueOr(opts.RegionDeployment, "production"),
+		statusServices:     statusServicesOr(opts.StatusServices),
+		globalPrice:        newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
+		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds
@@ -1851,31 +1581,18 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 	return s
 }
 
-// applyProtocolOptions copies the Protocols-pillar reader options
-// (/v1/protocols*, /v1/coverage joins) onto the server. Split from New
-// for funlen — same rationale as loadIncidents; keep the group
-// together so the pillar's wiring stays a single auditable block.
+// applyProtocolOptions builds the Protocols-pillar state derived from
+// Options (the pool-tokens cache wrapper). Split from New for funlen.
 func applyProtocolOptions(s *Server, opts Options) {
-	s.completenessReader = opts.CompletenessReader
-	s.auditedSources = opts.AuditedSources
-	s.protocolContractsReader = opts.ProtocolContracts
-	s.protocolStats = opts.ProtocolStats
-	s.protocolActivity = opts.ProtocolActivity
-	s.protocolBespoke = opts.ProtocolBespoke
 	if opts.ProtocolPoolTokens != nil {
 		s.protocolPoolTokens = newPoolTokensCache(opts.ProtocolPoolTokens)
 	}
-	s.dexTVL = opts.DEXTVL
-	s.sdexOrderBook = opts.SDEXOrderBook
-	s.soroswapPairs = opts.SoroswapPairs
 }
 
 // loadIncidents loads + caches the embedded incident corpus once at
 // startup; the data is small (a few markdown files) and ships with
 // the binary, so re-parsing per-request is wasted work. New incident
-// posts ship with a redeploy. Split from New for funlen (the Options
-// → Server field copy is the bulk of New and must stay a single
-// auditable literal).
+// posts ship with a redeploy. Split from New for funlen.
 func loadIncidents(s *Server, logger *slog.Logger) {
 	if loaded, err := incidents.Load(logger); err != nil {
 		logger.Warn("incidents: load failed; /v1/incidents returns empty",
@@ -2111,10 +1828,10 @@ func (s *Server) middlewareStack() []stackEntry {
 		// run so writeJSON / writeProblem responses inherit the
 		// directive. Handlers may override (Etag flows, immutable
 		// historical buckets) by setting Cache-Control themselves.
-		// CDN-tier `s-maxage` is gated on s.cdnEnabled so deployments
+		// CDN-tier `s-maxage` is gated on s.CDNEnabled so deployments
 		// without a CDN don't emit a directive a CDN they don't run
 		// could later honour.
-		{"CacheControl", middleware.CacheControlWithCDN(s.cdnEnabled)},
+		{"CacheControl", middleware.CacheControlWithCDN(s.CDNEnabled)},
 		// Convert Go's default text/plain 404 / 405 from the mux into
 		// problem+json so unknown paths and method mismatches use the
 		// same wire shape as the rest of our error surface. Sits AFTER
@@ -2122,8 +1839,8 @@ func (s *Server) middlewareStack() []stackEntry {
 		// directive a regular handler-side response would.
 		{"Envelope404", middleware.Envelope404},
 	}
-	if s.cors != nil {
-		stack = append(stack, stackEntry{"CORS", s.cors})
+	if s.CORS != nil {
+		stack = append(stack, stackEntry{"CORS", s.CORS})
 	}
 	// 308-redirect trailing-slash paths to their no-slash form
 	// (e.g. /v1/assets/native/ → /v1/assets/native). Every v1
@@ -2187,21 +1904,21 @@ func (s *Server) middlewareStack() []stackEntry {
 	// per-tier limits see the authenticated Subject in context).
 	// publicRoutes.Mark sits directly outside it so routes mounted via
 	// handlePublic are credential-optional under every auth_mode.
-	if s.auth != nil {
-		stack = append(stack, stackEntry{"PublicRoutes", s.publicRoutes.Mark()}, stackEntry{"Auth", s.auth})
+	if s.Auth != nil {
+		stack = append(stack, stackEntry{"PublicRoutes", s.publicRoutes.Mark()}, stackEntry{"Auth", s.Auth})
 	}
 	// KeyPolicy runs after Auth (so the Subject is on context) but
 	// before RateLimit (so a policy-denied 403 never spends a
 	// rate-limit token). F-1226 (codex audit-2026-05-12).
-	if s.keyPolicy != nil {
-		stack = append(stack, stackEntry{"KeyPolicy", s.keyPolicy})
+	if s.KeyPolicy != nil {
+		stack = append(stack, stackEntry{"KeyPolicy", s.KeyPolicy})
 	}
 	// RequireEmailVerified runs after KeyPolicy (same "Subject
 	// already resolved" precondition) and BEFORE rate-limit (so
 	// an unverified-key 403 doesn't spend a per-minute token).
 	// Opt-in per deployment via cfg.API.SignupRequireEmailVerification.
-	if s.requireEmailVerified != nil {
-		stack = append(stack, stackEntry{"RequireEmailVerified", s.requireEmailVerified})
+	if s.RequireEmailVerified != nil {
+		stack = append(stack, stackEntry{"RequireEmailVerified", s.RequireEmailVerified})
 	}
 	// Usage tracker runs OUTSIDE both quota and rate-limit so it
 	// observes BOTH kinds of 429 rejection and records them under the
@@ -2217,18 +1934,18 @@ func (s *Server) middlewareStack() []stackEntry {
 	// cannot feed back into the quota it was denied by, and neither a
 	// throttled request nor an outage on our side eats billing quota.
 	// Best-effort; failures log at debug and never block.
-	if s.usageTracker != nil {
-		stack = append(stack, stackEntry{"UsageTracker", s.usageTracker})
+	if s.UsageTracker != nil {
+		stack = append(stack, stackEntry{"UsageTracker", s.UsageTracker})
 	}
 	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
 	// on context) but BEFORE rate-limit (so a quota-rejected
 	// request doesn't also spend a per-minute token). F-1226
 	// (codex audit-2026-05-12).
-	if s.monthlyQuota != nil {
-		stack = append(stack, stackEntry{"MonthlyQuota", s.monthlyQuota})
+	if s.MonthlyQuota != nil {
+		stack = append(stack, stackEntry{"MonthlyQuota", s.MonthlyQuota})
 	}
-	if s.rateLimit != nil {
-		stack = append(stack, stackEntry{"RateLimit", s.rateLimit})
+	if s.RateLimit != nil {
+		stack = append(stack, stackEntry{"RateLimit", s.RateLimit})
 	}
 	// TouchUsage runs INSIDE rate-limit (and after the usage
 	// tracker for ordering symmetry) so a denied (429) request
@@ -2236,8 +1953,8 @@ func (s *Server) middlewareStack() []stackEntry {
 	// rejected attempt. Wraps next.ServeHTTP — the actual touch
 	// fires post-handler with a SETNX debounce so per-request
 	// cost is bounded. F-1226 (codex audit-2026-05-12) wave 39.
-	if s.touchUsage != nil {
-		stack = append(stack, stackEntry{"TouchUsage", s.touchUsage})
+	if s.TouchUsage != nil {
+		stack = append(stack, stackEntry{"TouchUsage", s.TouchUsage})
 	}
 	// Session resolver runs INSIDE rate-limit so the per-account
 	// rate limit could observe the dashboard subject in the future
@@ -2245,8 +1962,8 @@ func (s *Server) middlewareStack() []stackEntry {
 	// makes Postgres canonical, dashboard sessions can carry tier
 	// info too). Either way the cookie is parsed once per request
 	// and the result stays attached for the rest of the chain.
-	if s.sessionAuth != nil {
-		stack = append(stack, stackEntry{"SessionAuth", s.sessionAuth})
+	if s.SessionAuth != nil {
+		stack = append(stack, stackEntry{"SessionAuth", s.SessionAuth})
 	}
 	// Inside UsageTracker/TouchUsage: their AfterResponse flush would spill it untagged.
 	stack = append(stack, stackEntry{"ETag", middleware.ETag})
@@ -2403,6 +2120,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Handler implementations live in internal/api/v1/explorer (D1 M1-7
 	// extraction); this is still the sole place they're mounted.
 	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
+	s.mux.HandleFunc("GET /v1/ledgers/at", s.explorerHandler.LedgerAt)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.explorerHandler.LedgerTransactions)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}/operations", s.explorerHandler.LedgerOperations)
@@ -2699,25 +2417,25 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// when main.go wired a non-nil DashboardAuth (gated on Postgres
 	// reachable + cfg.API.Dashboard.BaseURL non-empty); otherwise
 	// the routes don't exist and ServeMux returns the standard 404.
-	if s.dashboardAuth != nil {
-		s.dashboardAuth.Mount(s.mux, s.publicRoutes)
+	if s.DashboardAuth != nil {
+		s.DashboardAuth.Mount(s.mux, s.publicRoutes)
 	}
 
 	// Dashboard key-management routes — gated internally on the
 	// session cookie planted by DashboardAuth's middleware. Mount
 	// only when main.go wired Postgres for the platform stores.
-	if s.dashboardKeys != nil {
-		s.dashboardKeys.Mount(s.mux, s.publicRoutes)
+	if s.DashboardKeys != nil {
+		s.DashboardKeys.Mount(s.mux, s.publicRoutes)
 	}
 	// Dashboard webhook-management routes (F-1270). Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
-	if s.dashboardWebhooks != nil {
-		s.dashboardWebhooks.Mount(s.mux, s.publicRoutes)
+	if s.DashboardWebhooks != nil {
+		s.DashboardWebhooks.Mount(s.mux, s.publicRoutes)
 	}
 	// Dashboard price-alert-management routes. Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
-	if s.dashboardPriceAlerts != nil {
-		s.dashboardPriceAlerts.Mount(s.mux, s.publicRoutes)
+	if s.DashboardPriceAlerts != nil {
+		s.DashboardPriceAlerts.Mount(s.mux, s.publicRoutes)
 	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
@@ -2943,10 +2661,10 @@ func (s *Server) computeReadyz() (int, []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	results := make([]checkResult, len(s.checks))
-	criticalFlags := make([]bool, len(s.checks))
+	results := make([]checkResult, len(s.ReadyChecks))
+	criticalFlags := make([]bool, len(s.ReadyChecks))
 	var wg sync.WaitGroup
-	for i, c := range s.checks {
+	for i, c := range s.ReadyChecks {
 		wg.Add(1)
 		criticalFlags[i] = c.Critical()
 		go func(i int, c ReadyChecker) {
@@ -3179,7 +2897,7 @@ func (s *Server) computeLivezLake() (int, []byte) {
 		}
 		return status, b
 	}
-	for _, c := range s.checks {
+	for _, c := range s.ReadyChecks {
 		if c.Name() != "clickhouse" {
 			continue
 		}

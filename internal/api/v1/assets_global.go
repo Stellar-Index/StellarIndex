@@ -179,7 +179,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	// unlike [populateFiatView]'s reference-rate path, this tier had no
 	// gate of its own, so a scam-flagged issuer or a dust-thin market
 	// withheld everywhere else could still headline here.
-	if withheldBy(ctx, s.substance, s.scam, base, quote, "global_asset") != pricingguard.NotWithheld {
+	if withheldBy(ctx, s.Substance, s.Scam, base, quote, "global_asset") != pricingguard.NotWithheld {
 		return view
 	}
 
@@ -211,7 +211,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 // observation time. No-op when the price is already set, no per-asset reader is
 // wired, or the catalogue entry has no Stellar issuance.
 func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
-	if view.PriceUSD != nil || s.assetsReader == nil {
+	if view.PriceUSD != nil || s.AssetsReader == nil {
 		return view
 	}
 	se := vc.StellarEntry()
@@ -342,9 +342,9 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
 	// Path 1: fx_quotes.
-	if s.fxHistory != nil {
+	if s.FXHistory != nil {
 		now := time.Now().UTC()
-		points, err := s.fxHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
+		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
 		if err == nil && len(points) > 0 {
 			// oldest→newest; take the most recent usable point. The
 			// served price is the stored NUMERIC text, never the float.
@@ -358,7 +358,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		}
 	}
 	// Path 2: PriceReader fallback.
-	if s.prices == nil {
+	if s.Prices == nil {
 		return "", time.Time{}, nil, false
 	}
 	base, err := canonical.NewFiatAsset(ticker)
@@ -369,7 +369,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	if err != nil {
 		return "", time.Time{}, nil, false
 	}
-	snap, srcs, _, err := s.prices.LatestPrice(ctx, base, quote)
+	snap, srcs, _, err := s.Prices.LatestPrice(ctx, base, quote)
 	if err != nil {
 		return "", time.Time{}, nil, false
 	}
@@ -516,14 +516,14 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []VerifiedCurrencyListItem{}, Flags{})
 		return
 	}
-	if s.verifiedCurrencies == nil {
+	if s.VerifiedCurrencies == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/verified-currencies-unavailable",
 			"Verified-currency catalogue not wired", http.StatusServiceUnavailable,
 			"This deployment hasn't loaded the verified-currency catalogue.")
 		return
 	}
-	entries := s.verifiedCurrencies.Browseable()
+	entries := s.VerifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
 	s.attachFiatMarketCaps(r.Context(), entries, out)
 	s.attachVerifiedImages(r.Context(), entries, out)
@@ -536,7 +536,7 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 // reads only the sep1_payload cache (no live HTTPS), best-effort per
 // row. The same isSafeImageURL gate as the detail overlay applies.
 func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
-	if s.sep1Cache == nil {
+	if s.Sep1Cache == nil {
 		return
 	}
 	for i, vc := range entries {
@@ -548,7 +548,7 @@ func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.V
 		if err != nil {
 			continue
 		}
-		sep, err := s.sep1Cache.GetIssuerSep1Cached(ctx, se.Issuer)
+		sep, err := s.Sep1Cache.GetIssuerSep1Cached(ctx, se.Issuer)
 		if err != nil || sep == nil || sep.OutlivedDomain {
 			continue
 		}
@@ -589,12 +589,12 @@ func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []Verifie
 //
 // COR-14: fiatMarketCapUSD tries fxHistory FIRST and only falls back
 // to PriceReader (or skips it entirely for the USD ticker itself) —
-// so gating the whole fan-out on `s.prices == nil` alone skipped every
+// so gating the whole fan-out on `s.Prices == nil` alone skipped every
 // fiat market cap on a deployment that wired fxHistory but not
 // PriceReader, even though fiatMarketCapUSD would have served them
 // fine from fxHistory or the USD shortcut.
 func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
-	if s.prices == nil && s.fxHistory == nil {
+	if s.Prices == nil && s.FXHistory == nil {
 		return
 	}
 	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {

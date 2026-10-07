@@ -8,6 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -16,8 +17,8 @@ import (
 // The GlobalAssetView headline has THREE tiers and only the first one
 // was gated (RLT-350's "the vwap: keys are all ungated").
 //
-// globalPriceReader.LatestVWAP — tier 1, the prices_1m bucket — routes
-// through the priceWithheld chokepoint. globalPriceReader.
+// wiring.GlobalPriceReader.LatestVWAP — tier 1, the prices_1m bucket — routes
+// through the wiring.PriceWithheld chokepoint. wiring.GlobalPriceReader.
 // LookupTriangulated — tier 3 — reads the aggregator's
 // `vwap:<base>:<quote>:<window>` key and had no gate reference at all,
 // and tier 3 is precisely the tier a Stellar-only token reaches: its
@@ -41,7 +42,7 @@ const headlineFlaggedIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P
 // returns a reader wired to a directory that flags `flagged`.
 func headlineCacheFixture(
 	t *testing.T, base, quote canonical.Asset, window time.Duration, value string, flagged map[string]bool,
-) (globalPriceReader, *flaggingScamDirectory) {
+) (wiring.GlobalPriceReader, *flaggingScamDirectory) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -64,9 +65,9 @@ func headlineCacheFixture(
 	}
 
 	dir := &flaggingScamDirectory{flagged: flagged}
-	return globalPriceReader{
-		tri:  redisTriangulatedLooker{rdb: rdb},
-		scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	return wiring.GlobalPriceReader{
+		Tri:  wiring.RedisTriangulatedLooker{RDB: rdb},
+		Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
 	}, dir
 }
 

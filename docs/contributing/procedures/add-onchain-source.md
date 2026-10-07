@@ -29,7 +29,7 @@ decision, and the machine checks. Template package:
    dispatch on topic[0] symbol (see
    docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 
-## 1. The package (six files) + wiring (six edits)
+## 1. The package (six files) + wiring (five edits)
 
 Files: `README.md`, `events.go`, `decode.go`, `consumer.go`,
 `dispatcher_adapter.go` (the seam production actually calls),
@@ -38,11 +38,10 @@ Files: `README.md`, `events.go`, `decode.go`, `consumer.go`,
 
 Wiring edits — miss one and the source silently emits nothing:
 1. `internal/config` KnownSources
-2. `internal/pipeline/dispatcher.go` BuildDispatcher
+2. `internal/pipeline/source_spec.go` (one `SourceSpec`; set `Projector` if projected)
 3. `internal/pipeline/sink.go` HandleEvent (persist arm)
-4. `internal/pipeline/sink.go` IsProjectedEvent
-5. `internal/projector/registry.go` buildSource
-6. `internal/sources/external/registry.go` Metadata
+4. `internal/pipeline/sink.go` tradeFromEvent (trade sources)
+5. `internal/sources/external/registry.go` Metadata
 (+ a `reconSource` entry in
 `internal/ops/chops/reconciliation_catalogue.go` so the ADR-0033
 verdict covers it, + migration for the table — see
@@ -51,7 +50,7 @@ docs/contributing/add-migration.md.)
 ## 2. Machine checks (the point of this skill)
 
 ```sh
-go test -run TestLockstep ./internal/pipeline/        # catches missed wiring edits 3/4/5 (F-1316 class)
+go test -run TestLockstep ./internal/pipeline/        # catches missed wiring edits 2/3/4
 go test -run 'ReconciliationCatalogue' ./internal/ops/chops/   # catalogue promotion + genesis mirror (4 tests; the old cmd/ path matched ZERO and printed ok)
 go test ./internal/sources/<name>/ ./internal/pipeline/ ./internal/projector/
 go run ./scripts/ci/lint-pk-discriminators            # new table's PK has a per-event discriminator
@@ -66,8 +65,9 @@ topic shape must NOT match (this is the gate working).
 - Amounts: `scval.AsAmountFromI128/U128` → `canonical.Amount` —
   `int64(parts.Lo)` is rejected in review every time (ADR-0003).
 - A projected source with no cursor row starts at its `Source.Genesis`
-  (set in `internal/projector/registry.go::buildSource` from the
-  package's verified first-event ledger), raised to the lake floor.
+  (set in the spec's `ProjectorSpec.Genesis` in
+  `internal/pipeline/source_spec.go` from the package's verified
+  first-event ledger), raised to the lake floor.
   Without one it crawls empty history from the lake floor at ~200
   ledgers/s (blend_backstop lesson); `TestProjectedSourcesDeclareGenesis`
   fails until you declare it or list the source as a lake-floor crawler.

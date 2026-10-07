@@ -65,8 +65,8 @@ func (f *fakeAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 func TestAnomalies_FiringCountIsNotPageCapped(t *testing.T) {
 	const firing = 1337 // well past the 500 page cap
 	s := &Server{
-		anomalies: &fakeAnomalyReader{firing: firing},
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Anomalies: &fakeAnomalyReader{firing: firing}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	rec := httptest.NewRecorder()

@@ -442,3 +442,25 @@ func TestBackfillTxHash_EightByteSymbolKeepsFullCloseTime(t *testing.T) {
 
 // Shut up unused-import warnings when fmt isn't used in other paths.
 var _ = fmt.Sprintf
+
+func TestBackfill_UnparseableCandleFailsPage(t *testing.T) {
+	const startMs = int64(1_745_000_000_000)
+	const hourMs = int64(3_600_000)
+	for name, mutate := range map[string]func(kline){
+		"bad base volume":  func(k kline) { k[5] = "not-a-number" },
+		"bad quote volume": func(k kline) { k[7] = "1.2.3" },
+		"bad open time":    func(k kline) { k[0] = "oops" },
+	} {
+		k := synthesiseKlines(3, startMs, hourMs)
+		mutate(k[1])
+		srv := newTestREST(t, [][]kline{k, {}})
+		s := NewStreamer(mustPairMapBF(t))
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), mustPair(t),
+			time.UnixMilli(startMs).UTC(), time.UnixMilli(startMs+5*hourMs).UTC(), time.Hour)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%s: got %d trades and no error, want a failed page", name, len(trades))
+		}
+	}
+}

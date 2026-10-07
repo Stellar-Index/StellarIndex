@@ -12,6 +12,7 @@ import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
+import { isNativeXlmSac } from '@/lib/asset-label';
 import {
   type Envelope,
   type ContractResp,
@@ -846,11 +847,9 @@ function InteractionsPanel({ id }: { id: string }) {
                     {(e.contract_id ?? '').slice(-6)}
                   </Link>
                   {(() => {
-                    const wrapped =
-                      e.contract_id ===
-                      'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
-                        ? 'native'
-                        : sacMap?.[e.contract_id ?? ''];
+                    const wrapped = isNativeXlmSac(e.contract_id)
+                      ? 'native'
+                      : sacMap?.[e.contract_id ?? ''];
                     if (!wrapped) return null;
                     const code =
                       wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];

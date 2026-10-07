@@ -76,7 +76,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// can't degrade and there's nothing meaningful to serve. The
 	// rolling-window path needs HistoryReader but we'll degrade
 	// gracefully when only one of them is wired.
-	if s.prices == nil {
+	if s.Prices == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
@@ -200,13 +200,13 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Asked about BOTH legs, via [scamWithheld], because the withholding
 	// decision is a property of the MARKET rather than of whichever leg
 	// the client named first. This line used to read
-	// `s.scam.Withheld(ctx, asset, "tip")` and claim that keying on the
+	// `s.Scam.Withheld(ctx, asset, "tip")` and claim that keying on the
 	// base "covers every quote": it did the opposite — the tip of
 	// `?asset=native&quote=<FLAGGED>` is the flagged market's own price
 	// inverted, and it was served at 200, unauthenticated, live, off the
 	// flagged issuer's own trades, while `?asset=<FLAGGED>` 404'd
 	// (F002/K001). One call, both legs, folded inside pricingguard.
-	if w := withheldBy(ctx, s.substance, s.scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
+	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}
 	// Which alias combinations the window merges, and which it holds back
@@ -255,7 +255,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// as handlePrice does, so /v1/price/tip?asset=native resolves a
 	// fresh crypto:XLM observation rather than missing it on the
 	// literal form.
-	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
+	snap, sources, _, err := s.readPriceWithAliases(ctx, s.Prices, asset, quote)
 	if err == nil {
 		// dex-nonstandard-decimals forward normalization (M2): this
 		// closed-bucket / last-trade fallback returns the RAW asset/quote ratio,
@@ -417,7 +417,7 @@ func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical
 // would make a transient hypertable hiccup turn the entire tip
 // surface red even when the fallback is healthy.
 func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
-	if s.history == nil || len(pairs) == 0 {
+	if s.History == nil || len(pairs) == 0 {
 		return PriceSnapshot{}, nil, false
 	}
 	now := time.Now().UTC()
@@ -436,7 +436,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	// passes whichever set this read is for.
 	var trades []canonical.Trade
 	for _, pair := range pairs {
-		tr, err := s.history.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
+		tr, err := s.History.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
 		if err != nil {
 			// Don't log under a cancelled ctx — that's just the client
 			// disconnecting (or, on the stream path, the per-tick scope
@@ -479,8 +479,8 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	// OHLC single-bar, so normalizing is safe). No-op for any pair with
 	// no confirmed non-7-decimals leg.
 	price = aggregate.AdjustPrice(price,
-		aggregate.ResolveDecimals(s.nonstandardDecimals, asset),
-		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
+		aggregate.ResolveDecimals(s.NonstandardDecimals, asset),
+		aggregate.ResolveDecimals(s.NonstandardDecimals, quote))
 
 	sources := distinctTradeSources(trades)
 	return PriceSnapshot{

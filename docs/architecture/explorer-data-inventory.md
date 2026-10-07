@@ -136,8 +136,8 @@ The account page is the lifetime authority on an account (programme INV-2128; co
 `GET /v1/mev` over `mev_events` (§9.5), worker `internal/aggregate/mev/`. Candidates, not verdicts. Rule (INV-1090, discarded as already honoured): never promote MEV to the home page or top of a page until the p95 false-positive rate is under 5%; today `/mev` is a separate page with link cards only.
 
 ### 7.21 Network (`/network`)
-Serves `GET /v1/network/stats`, `/v1/network/throughput`, `/v1/ledger/tip`, `/v1/ledger/stream`, `/v1/ledgers`, `/v1/ledgers/{seq}` (+ `/transactions`, `/operations`), `/v1/operations`.
-Gaps: `/v1/network/{fee-market,peg-health,source-diversity,...}` (§10) and `/v1/ledgers/at?ts=`; a planned `network_meta_5m` observer would back fee-market and active-addresses.
+Serves `GET /v1/network/stats`, `/v1/network/throughput`, `/v1/ledger/tip`, `/v1/ledger/stream`, `/v1/ledgers`, `/v1/ledgers/{seq}` (+ `/transactions`, `/operations`), `/v1/ledgers/at?ts=` (the ledger closed at or before ts), `/v1/operations` (optional `?type=` filter).
+Gaps: `/v1/network/{fee-market,peg-health,source-diversity,...}` (§10); a planned `network_meta_5m` observer would back fee-market and active-addresses.
 Phasing: the PG served tier holds the recent window, the CH lake everything to genesis. N1 = point lookups plus recent-window browsing; N2 = history-scale browse and filter (INV-1093, blocked, post-launch). A range not yet servable says so, never fakes it.
 
 ### 7.22 Diagnostics (`/diagnostics`)
@@ -154,7 +154,7 @@ Not part of the public-data surface: keys, usage, settings, price alerts, webhoo
 
 ## 8. Time machine (not built)
 
-`as_of_ledger` in responses is the lake watermark freshness stamp (ADR-0041), not a point-in-time query; no `timepin` helper exists in `internal/api/v1/`. If built: one `pinTime(ctx, asOfLedger)` helper every handler inherits (lint-enforced), `as_of` resolved to a ledger via `/v1/ledgers/at?ts=` (gap); point and range reads use the closed bucket containing ledger N, lists filter `first_seen_ledger <= N`. Why not now: it multiplies every handler's test surface, and users may confuse live with historical. Open post-v1 (§18 q6).
+`as_of_ledger` in responses is the lake watermark freshness stamp (ADR-0041), not a point-in-time query; no `timepin` helper exists in `internal/api/v1/`. If built: one `pinTime(ctx, asOfLedger)` helper every handler inherits (lint-enforced), `as_of` resolved to a ledger via `/v1/ledgers/at?ts=`; point and range reads use the closed bucket containing ledger N, lists filter `first_seen_ledger <= N`. Why not now: it multiplies every handler's test surface, and users may confuse live with historical. Open post-v1 (§18 q6).
 
 ## 9. Schema
 
@@ -194,7 +194,7 @@ Always empty; the stats were moved onto a `prices_1m` UNION CTE (commit `2f06533
 
 Renamed: coins to `/v1/assets*`; `/v1/orderbook` to `/v1/sdex/orderbook`; `/v1/divergences*` to `/v1/divergence*`; WASM history to `/v1/contracts/{id}/wasm`, `/code-history`; `/v1/oracles` to `/v1/oracle/streams`; `/v1/routers` to `/v1/aggregators`.
 
-Not in the spec: the rest of the plan's endpoint families `/v1/tvl[/flow]`, `/volatility`, `/spread`, `/slippage`, `/price/{base}/{quote}/sources|why`, `/pairs/{base}/{quote}/...`, `/markets/heatmap`, `/sources/{name}/...`, `/protocols/{slug}/...`, `/contracts/{id}/{storage-transitions,events,invocations,resources}`, `/wasm/{hash}/...`, `/contracts/wasm-upgrades`, `/issuers/{g}/...`, `/anchors/*`, `/tx/{hash}/{trades,events,changes}`, `/accounts/{g}/flow`, `/path-payments/*`, `/ledgers/at`, `/anomalies/*`, `/mev/*`, `/network/*`, `/diagnostics/{pulse,decoders,archive-completeness,cross-region,wasm-coverage,slo}`, `/oracles/*`, `/discovered`, `/coins/{slug}/...` (detail per page in §7). Each is a gap, not a decision to skip, unless §18 says so. Add none without a consumer; an absent endpoint's panel says so, never fakes data.
+Not in the spec: the rest of the plan's endpoint families `/v1/tvl[/flow]`, `/volatility`, `/spread`, `/slippage`, `/price/{base}/{quote}/sources|why`, `/pairs/{base}/{quote}/...`, `/markets/heatmap`, `/sources/{name}/...`, `/protocols/{slug}/...`, `/contracts/{id}/{storage-transitions,events,invocations,resources}`, `/wasm/{hash}/...`, `/contracts/wasm-upgrades`, `/issuers/{g}/...`, `/anchors/*`, `/tx/{hash}/{trades,events,changes}`, `/accounts/{g}/flow`, `/path-payments/*`, `/anomalies/*`, `/mev/*`, `/network/*`, `/diagnostics/{pulse,decoders,archive-completeness,cross-region,wasm-coverage,slo}`, `/oracles/*`, `/discovered`, `/coins/{slug}/...` (detail per page in §7). Each is a gap, not a decision to skip, unless §18 says so. Add none without a consumer; an absent endpoint's panel says so, never fakes data.
 
 Streams: Last-Event-ID resume exists on the SSE streams. Embeds are frontend routes, not endpoints.
 

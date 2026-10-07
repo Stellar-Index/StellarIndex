@@ -365,7 +365,7 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 		Quote:       rwaHistoryQuote.String(),
 		Points:      []RWAHistoryPoint{},
 	}
-	if s.assetsReader == nil || s.oracleHistory == nil {
+	if s.AssetsReader == nil || s.OracleHistory == nil {
 		writeRWASeriesUnavailable(w, r, rwaHistoryBasisUnavailable)
 		return
 	}
@@ -842,10 +842,10 @@ type rwaSupplyLevel struct {
 func (s *Server) rwaHistorySupplyLevels(
 	ctx context.Context, cands []rwaHistoryCandidate, excluded map[string]int,
 ) (map[string][]rwaSupplyLevel, bool) {
-	if s.tokenSupply == nil {
+	if s.TokenSupply == nil {
 		return nil, false
 	}
-	rd, ok := s.tokenSupply.(rwaSupplyFlowHistoryReader)
+	rd, ok := s.TokenSupply.(rwaSupplyFlowHistoryReader)
 	if !ok {
 		return nil, false
 	}
@@ -941,7 +941,7 @@ func (s *Server) rwaHistoryPrices(
 	// of its own: a level reaches the series only through a price day,
 	// and today's flows must still feed rwaCumulateSupply's negative check.
 	to := rwaClosedDayCeiling(time.Now())
-	rows, err := s.oracleHistory.DailyOraclePrices(ctx, assets, rwaHistoryQuote, time.Time{}, to)
+	rows, err := s.OracleHistory.DailyOraclePrices(ctx, assets, rwaHistoryQuote, time.Time{}, to)
 	if err != nil {
 		s.logger.Warn("rwa history: oracle day-bucket read failed", "err", err)
 		return nil, false

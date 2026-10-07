@@ -168,11 +168,11 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 func (s *Server) listAssetsExtAt(
 	ctx context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, time.Time, bool, error) {
-	if at, ok := s.assetsReader.(interface {
+	if at, ok := s.AssetsReader.(interface {
 		ListAssetsExtAt(context.Context, timescale.ListAssetsOptions) ([]timescale.AssetRow, time.Time, bool, error)
 	}); ok {
 		return at.ListAssetsExtAt(ctx, opts)
 	}
-	rows, err := s.assetsReader.ListAssetsExt(ctx, opts)
+	rows, err := s.AssetsReader.ListAssetsExt(ctx, opts)
 	return rows, time.Time{}, false, err
 }

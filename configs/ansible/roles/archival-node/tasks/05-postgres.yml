@@ -229,7 +229,9 @@
     filename: timescaledb
 
 # No unattended-upgrades blacklist needed: 12-hardening.yml allows only the
-# distro -security origin, so the packagecloud repo never auto-upgrades.
+# distro -security origin, so neither this repo nor PGDG auto-upgrades. A
+# distro library fix (libc6) still leaves Postgres needing a restart; that
+# waits for maintenance because needrestart is list-only (12-hardening.yml).
 # Downgrade is deliberately not allowed: a host already newer than the pin
 # fails loudly instead of mismatching its installed extension version.
 - name: Install TimescaleDB for Postgres {{ postgres_version }}

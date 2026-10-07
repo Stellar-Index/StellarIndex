@@ -92,7 +92,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 			"/v1/admin/keys is restricted to operator-tier credentials; customer keys mint their own via POST /v1/account/keys")
 		return
 	}
-	if s.accounts == nil {
+	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
@@ -145,7 +145,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		req.RateLimitPerMin = subject.RateLimitPerMin
 	}
 
-	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
+	rec, plaintext, err := s.Accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
 		MintedBy:        &subject,
 		Identifier:      req.Identifier,
 		Label:           req.Label,
@@ -232,7 +232,7 @@ func (s *Server) clampMintToCaller(
 // Returns [auth.ErrKeyNotFound] when NEITHER leg revoked anything, so
 // a caller never reports a typo'd identifier or key id as a revoke.
 func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
-	err := s.accounts.RevokeKeyByID(ctx, identifier, keyID)
+	err := s.Accounts.RevokeKeyByID(ctx, identifier, keyID)
 	revoked := err == nil
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		err = nil
@@ -262,11 +262,11 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 // prove ownership all return [platform.ErrNotFound] without revoking
 // (fail closed, no enumeration oracle); nil means a row was revoked.
 func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
-	keys := s.apiKeyBudgets.Platform
+	keys := s.APIKeyBudgets.Platform
 	if keys == nil {
 		return platform.ErrNotFound
 	}
-	if s.platformAccounts == nil {
+	if s.PlatformAccounts == nil {
 		s.logger.Warn("revoke: postgres key store wired without an account store; management row left untouched",
 			"identifier", identifier, "key_id", keyID)
 		return platform.ErrNotFound
@@ -275,7 +275,7 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 	if err != nil {
 		return err
 	}
-	owner, err := s.platformAccounts.Get(ctx, k.AccountID)
+	owner, err := s.PlatformAccounts.Get(ctx, k.AccountID)
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.accounts == nil {
+	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
@@ -382,7 +382,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) recordAdminKeyRevokeAudit(
 	r *http.Request, actor auth.Subject, identifier, keyID, reason string,
 ) {
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	meta, err := json.Marshal(map[string]any{
@@ -408,7 +408,7 @@ func (s *Server) recordAdminKeyRevokeAudit(
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		// C3-067: the revoke already happened; the audit row did not. Count
 		// it so the hole in the trail is observable, not just logged.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_revoke").Inc()
@@ -504,14 +504,14 @@ func (s *Server) requireMintAccountExists(w http.ResponseWriter, r *http.Request
 	if slug == "" {
 		return true
 	}
-	if s.platformAccounts == nil {
+	if s.PlatformAccounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment cannot verify platform accounts, so it cannot mint acct:<slug> keys")
 		return false
 	}
-	_, err := s.platformAccounts.GetBySlug(r.Context(), slug)
+	_, err := s.PlatformAccounts.GetBySlug(r.Context(), slug)
 	switch {
 	case err == nil:
 		return true
@@ -538,7 +538,7 @@ func (s *Server) requireMintAccountExists(w http.ResponseWriter, r *http.Request
 func (s *Server) recordAdminKeyMintAudit(
 	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, minted auth.APIKeyRecord, reason string,
 ) {
-	if s.audit == nil {
+	if s.Audit == nil {
 		return
 	}
 	mintedKeyID := minted.KeyID
@@ -573,7 +573,7 @@ func (s *Server) recordAdminKeyMintAudit(
 	if ip := middleware.RemoteIP(r); ip != "" {
 		entry.IP = net.ParseIP(ip)
 	}
-	if err := s.audit.Append(r.Context(), entry); err != nil {
+	if err := s.Audit.Append(r.Context(), entry); err != nil {
 		// C3-067: a live credential exists with no record of who minted it.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_mint").Inc()
 		s.logger.Warn("admin key mint: audit append failed (best-effort)",

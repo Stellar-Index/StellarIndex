@@ -94,8 +94,8 @@ func (b *blockingRWASep1Reader) BoundSep1Currencies(
 
 func rwaCacheTestServer(reader Sep1CachedReader) *Server {
 	return &Server{
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sep1Cache: reader,
+		Options: Options{Sep1Cache: reader},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

@@ -88,25 +88,28 @@ case "$q" in
   *) exit 64 ;;
 esac
 STUB
-# macOS has no flock(1); the shim answers "held" only when MOCK_LOCK_HELD=1.
-if ! command -v flock >/dev/null 2>&1; then
-  cat > "$TMP/bin/flock" <<'STUB'
+# Wraps flock (absent on macOS: then it answers "held" only for MOCK_LOCK_HELD=1).
+# Logs every flock call; MOCK_HEAVY_HELD=1 makes the heavy-lock fd (8) busy.
+REAL_FLOCK="$(command -v flock 2>/dev/null || true)"
+cat > "$TMP/bin/flock" <<STUB
 #!/usr/bin/env bash
-[[ "${MOCK_LOCK_HELD:-}" != 1 ]]
+printf '%s\n' "\$*" >> "\$MOCK_FLOCK_LOG"
+[[ "\${!#}" == 8 && "\${MOCK_HEAVY_HELD:-}" == 1 ]] && exit 1
+if [[ -n "$REAL_FLOCK" ]]; then exec "$REAL_FLOCK" "\$@"; fi
+[[ "\${MOCK_LOCK_HELD:-}" != 1 ]]
 STUB
-  chmod +x "$TMP/bin/flock"
-fi
-chmod +x "$TMP/bin/curl" "$TMP/bin/disks"
+chmod +x "$TMP/bin/curl" "$TMP/bin/disks" "$TMP/bin/flock"
 
 run() {
   rm -f "$TMP/disk.calls"
   PATH="$TMP/bin:$PATH" MOCK_LOG="$TMP/queries" MOCK_PRUNE_LOG="$TMP/prunes" \
-    MOCK_LS_LOG="$TMP/lists" MOCK_DISK="$TMP/disk" \
+    MOCK_LS_LOG="$TMP/lists" MOCK_DISK="$TMP/disk" MOCK_FLOCK_LOG="$TMP/flocks" \
+    HEAVY_JOB_LOCK_DIR="$TMP/locks" \
     STATE_DIR="$TMP/state" TEXTFILE_DIR="$TMP/tf" POLL_SECONDS=0 \
     CH_DISKS_CMD="$TMP/bin/disks" BACKUP_DISK="${DISK-si_lake_backup}" \
     bash "$SCRIPT" 2>"$TMP/stderr"
 }
-reset() { rm -rf "$TMP/state" "$TMP/tf" "$TMP/queries" "$TMP/prunes" "$TMP/lists" "$TMP/disk"; }
+reset() { rm -rf "$TMP/locks" "$TMP/flocks"; mkdir -p "$TMP/locks"; rm -rf "$TMP/state" "$TMP/tf" "$TMP/queries" "$TMP/prunes" "$TMP/lists" "$TMP/disk"; }
 on_disk() { if [[ -d "$TMP/disk/$1" ]]; then ok "$2"; else bad "$2"; fi; }
 off_disk() { if [[ -d "$TMP/disk/$1" ]]; then bad "$2"; else ok "$2"; fi; }
 age_chain() { # make the current chain's full look $1 days old
@@ -314,6 +317,51 @@ off_disk "stellar/20200101T000000Z" "the timestamp-named orphan is removed"
 on_disk "stellar/lake-manual-copy" "a non-timestamp folder is never deleted"
 on_disk "stellar/20200101T000000" "a near-miss name without the Z is never deleted"
 on_disk "stellar/x20200101T000000Zx" "a name merely containing a timestamp is never deleted"
+
+echo "12. the host-wide heavy-job lock"
+reset
+run; rc=$?
+expect_rc 0 "a free heavy lock lets the backup run"
+if grep -qx -- "-s -n 8" "$TMP/flocks" && [[ -e "$TMP/locks/stellarindex-heavy.lock" ]]; then ok "the backup takes stellarindex-heavy.lock shared"; else bad "the backup takes stellarindex-heavy.lock shared"; fi
+reset
+MOCK_HEAVY_HELD=1 run; rc=$?
+expect_rc 75 "a held heavy lock defers the run with exit 75"
+file_empty "$TMP/queries" "a deferred run issues no BACKUP"
+prom_unstamped "a deferred run stamps nothing"
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+sleep 1
+MOCK_HEAVY_HELD=1 run; rc=$?
+expect_rc 75 "a second deferred run exits 75"
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a deferred run keeps the previous last-success stamp"; else bad "a deferred run keeps the previous last-success stamp"; fi
+if grep -q "deferring" "$TMP/stderr"; then ok "the deferral is logged"; else bad "the deferral is logged"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+sleep 1
+MOCK_RUNNING=op-9 run; rc=$?
+expect_rc 1 "a run refused because a backup is already running exits 1"
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "an already-running refusal keeps the previous last-success stamp"; else bad "an already-running refusal keeps the previous last-success stamp"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+{ cat "$PROM"; echo "$before"; } > "$PROM.dup" && mv "$PROM.dup" "$PROM"
+MOCK_HEAVY_HELD=1 run; rc=$?
+if [[ "$(grep -c '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" -eq 1 && "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before"  ]] && ! grep -qx '[0-9]*' "$PROM"; then ok "a duplicated success line is re-emitted as one value"; else bad "a duplicated success line is re-emitted as one value"; fi
+reset
+run; rc=$?
+before="$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")"
+holder=""
+if command -v flock >/dev/null 2>&1; then
+  ( exec 9>"$TMP/state/lock"; flock -n 9 || exit 1; sleep 30 ) &
+  holder=$!
+fi
+sleep 1
+MOCK_LOCK_HELD=1 run; rc=$?
+[[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
+if [[ "$rc" -eq 0 ]]; then bad "a run-lock overlap exits non-zero (the lock was not held)"; fi
+if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a run-lock overlap keeps the previous last-success stamp"; else bad "a run-lock overlap keeps the previous last-success stamp"; fi
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"

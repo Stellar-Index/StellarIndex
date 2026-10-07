@@ -12,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
@@ -97,7 +98,7 @@ func TestFrozenPairServesHeldValueThroughProductionAdapters(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Prices:       closedBucketReader{price: moved, sources: []string{"kraken", "coinbase"}},
 		Freeze:       looker,
-		Triangulated: redisTriangulatedLooker{rdb: rdb},
+		Triangulated: wiring.RedisTriangulatedLooker{RDB: rdb},
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

@@ -113,7 +113,7 @@ type LiquidityPoolDepthLevel struct {
 
 // handleLiquidityPools serves GET /v1/liquidity-pools.
 func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
-	if s.explorer == nil {
+	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
 		return
 	}
@@ -167,7 +167,7 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 			"pool must be a native liquidity-pool id — an L-strkey (SEP-23) or 32-byte hex.")
 		return
 	}
-	states, err := s.explorer.NativeLiquidityPoolReserves(ctx, []string{poolFilter})
+	states, err := s.Explorer.NativeLiquidityPoolReserves(ctx, []string{poolFilter})
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -269,7 +269,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	// Uncapped: the scan reads and ranks every pool anyway, and the
 	// ?asset= filter needs the tail beyond the top-N rows.
 	start := time.Now()
-	states, err := s.explorer.NativeLiquidityPoolsRanked(ctx, 0)
+	states, err := s.Explorer.NativeLiquidityPoolsRanked(ctx, 0)
 	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
 	if err != nil {
 		if !fetched.IsZero() {
@@ -326,7 +326,7 @@ func (s *Server) refreshNativeLPListing() {
 // with the same (only) argument, so there is no prewarmed-key-vs-requested-key
 // gap to get wrong (the /v1/pools lesson).
 func (s *Server) PrewarmNativeLiquidityPools(ctx context.Context) {
-	if s.explorer == nil || ctx.Err() != nil {
+	if s.Explorer == nil || ctx.Err() != nil {
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, nativeLPListingRefreshTimeout)

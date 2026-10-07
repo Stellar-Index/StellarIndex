@@ -582,7 +582,7 @@ type SDEXOrderBookView struct {
 
 // handleSDEXOrderbook serves GET /v1/sdex/orderbook?selling=&buying=&depth=.
 func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
-	if s.sdexOrderBook == nil {
+	if s.SDEXOrderBook == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/orderbook-unavailable",
 			"Order book unavailable", http.StatusServiceUnavailable,
@@ -597,7 +597,7 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snap, ready := s.sdexOrderBook.snapshotMarket(selling.String(), buying.String())
+	snap, ready := s.SDEXOrderBook.snapshotMarket(selling.String(), buying.String())
 	if !ready {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/orderbook-loading",

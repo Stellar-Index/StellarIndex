@@ -52,8 +52,8 @@ func (r *lpCacheReader) NativeLiquidityPoolsRanked(_ context.Context, _ int) ([]
 
 func newLPCacheServer(reader *lpCacheReader) *Server {
 	return &Server{
-		explorer: reader,
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Explorer: reader},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

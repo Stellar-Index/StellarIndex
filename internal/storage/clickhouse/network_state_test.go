@@ -1,9 +1,13 @@
 package clickhouse
 
 import (
+	"context"
 	"math/big"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -143,6 +147,47 @@ func TestFoldNativeHolding_UnreadableEntriesError(t *testing.T) {
 	}
 }
 
+// A key newer than the tally ledger needs a pre-image only if its entry can
+// hold native XLM. An evicted temporary allowance has a `removed` row and no
+// pre-image; it must resolve to zero from its key, not abort the run.
+func TestKeyHoldsNativeLumens(t *testing.T) {
+	sac := xdr.ContractId{0x5a}
+	allowance := xdr.ScSymbol("Allowance")
+	allowanceKey := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &allowance}
+	key := func(contract xdr.ContractId, k xdr.ScVal, d xdr.ContractDataDurability) string {
+		s, err := xdr.MarshalBase64(xdr.LedgerKey{
+			Type: xdr.LedgerEntryTypeContractData,
+			ContractData: &xdr.LedgerKeyContractData{
+				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+				Key:        k,
+				Durability: d,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	for _, c := range []struct {
+		name, entryType, key string
+		want                 bool
+	}{
+		{"native SAC balance", "contract_data", key(sac, lumenTestBalanceKey(), xdr.ContractDataDurabilityPersistent), true},
+		{"evicted native SAC allowance", "contract_data", key(sac, allowanceKey, xdr.ContractDataDurabilityTemporary), false},
+		{"other contract's balance", "contract_data", key(xdr.ContractId{0x5a, 0x01}, lumenTestBalanceKey(), xdr.ContractDataDurabilityPersistent), false},
+		{"account", "account", "", true},
+		{"claimable balance", "claimable_balance", "", true},
+	} {
+		got, err := keyHoldsNativeLumens(c.entryType, c.key, sac)
+		if err != nil || got != c.want {
+			t.Errorf("%s: = (%v, %v), want %v", c.name, got, err, c.want)
+		}
+	}
+	if _, err := keyHoldsNativeLumens("contract_data", "not-xdr", sac); err == nil {
+		t.Error("undecodable contract_data key accepted")
+	}
+}
+
 func TestNativeSACKey(t *testing.T) {
 	want := xdr.ContractId{0x5a, 0x02}
 	id, err := strkey.Encode(strkey.VersionByteContract, want[:])
@@ -155,5 +200,122 @@ func TestNativeSACKey(t *testing.T) {
 	}
 	if _, _, err := nativeSACKey("GABC"); err == nil {
 		t.Fatal("bad contract id accepted")
+	}
+}
+
+// preimageRow is one ledger_entry_changes row as foldPreimageLumens selects it.
+type preimageRow struct {
+	key, entryType, changeType string
+	balance                    int64
+	entryXDR, txHash           string
+	opIndex                    int32
+}
+
+// preimageFakeConn serves rows already in the query's (ledger_seq,
+// intra_ledger_seq) order.
+type preimageFakeConn struct {
+	driver.Conn
+	rows []preimageRow
+}
+
+func (c preimageFakeConn) Query(context.Context, string, ...any) (driver.Rows, error) {
+	return &preimageFakeRows{rows: c.rows, i: -1}, nil
+}
+
+type preimageFakeRows struct {
+	driver.Rows
+	rows []preimageRow
+	i    int
+}
+
+func (r *preimageFakeRows) Next() bool {
+	r.i++
+	return r.i < len(r.rows)
+}
+
+func (r *preimageFakeRows) Scan(dest ...any) error {
+	row := r.rows[r.i]
+	*dest[0].(*string) = row.key
+	*dest[1].(*string) = row.entryType
+	*dest[2].(*string) = row.changeType
+	*dest[3].(*int64) = row.balance
+	*dest[4].(*string) = row.entryXDR
+	*dest[5].(*string) = row.txHash
+	*dest[6].(*int32) = row.opIndex
+	return nil
+}
+
+func (r *preimageFakeRows) Err() error   { return nil }
+func (r *preimageFakeRows) Close() error { return nil }
+
+// A legacy snapshot seed row (intra_ledger_seq 0) sharing a ledger with a live
+// change sorts first, but it is the entry's post-state: the pre-image is the
+// live change's `state` row.
+func TestFoldPreimageLumens_SkipsSnapshotSeedRow(t *testing.T) {
+	t.Parallel()
+	const key = "account-key"
+	r := &NetworkStateReader{conn: preimageFakeConn{rows: []preimageRow{
+		{key: key, entryType: "account", changeType: "state", balance: 999, opIndex: -1},
+		{key: key, entryType: "account", changeType: "state", balance: 100, txHash: "ab", opIndex: 0},
+		{key: key, entryType: "account", changeType: "updated", balance: 200, txHash: "ab", opIndex: 0},
+	}}}
+	tally := newLumenTally(10, 0, 0)
+	if err := r.foldPreimageLumens(context.Background(), tally, xdr.ContractId{}, []string{key}); err != nil {
+		t.Fatalf("foldPreimageLumens: %v", err)
+	}
+	if tally.Accounts.Int64() != 100 || tally.Preimages != 1 {
+		t.Errorf("Accounts = %s, Preimages = %d; want 100 (the live pre-image) and 1", tally.Accounts, tally.Preimages)
+	}
+}
+
+// An eviction row is tx-less like a seed but is a real change: it must still
+// be read as the key's first change, not skipped to the later `created`.
+func TestFoldPreimageLumens_HonoursEvictionRow(t *testing.T) {
+	t.Parallel()
+	const key = "claimable-balance-key"
+	r := &NetworkStateReader{conn: preimageFakeConn{rows: []preimageRow{
+		{key: key, entryType: "claimable_balance", changeType: "removed", opIndex: -1},
+		{key: key, entryType: "claimable_balance", changeType: "created", txHash: "cd", opIndex: 0},
+	}}}
+	err := r.foldPreimageLumens(context.Background(), newLumenTally(10, 0, 0), xdr.ContractId{}, []string{key})
+	if err == nil || !strings.Contains(err.Error(), `as "removed"`) {
+		t.Fatalf("foldPreimageLumens err = %v, want the eviction read as a `removed` first change", err)
+	}
+}
+
+// The seed predicate matches every row SnapshotEntryRow writes and no row the
+// live extractor writes, including its tx-level fee rows and evictions.
+func TestIsSnapshotSeedRow_MatchesSeedWriterOnly(t *testing.T) {
+	t.Parallel()
+	seed, ok := SnapshotEntryRow(accountEntry(t, testSource, 42, 7), time.Unix(0, 0).UTC())
+	if !ok {
+		t.Fatal("SnapshotEntryRow refused a well-formed account entry")
+	}
+	if !isSnapshotSeedRow(seed.TxHash, seed.OpIndex, seed.ChangeType) {
+		t.Errorf("seed row %+v not matched", seed)
+	}
+
+	fee, ok := entryChangeRow(42, time.Unix(0, 0).UTC(), "ab", -1, 0, xdr.LedgerEntryChange{
+		Type: xdr.LedgerEntryChangeTypeLedgerEntryState, State: accountEntry(t, testSource, 41, 7),
+	})
+	if !ok {
+		t.Fatal("entryChangeRow refused a fee-phase state change")
+	}
+	if isSnapshotSeedRow(fee.TxHash, fee.OpIndex, fee.ChangeType) {
+		t.Errorf("live fee-phase state row %+v matched as a seed", fee)
+	}
+
+	var ext LedgerExtract
+	temp := xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractData, ContractData: &xdr.LedgerKeyContractData{
+		Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &xdr.ContractId{1}},
+		Key:        lumenTestBalanceKey(),
+		Durability: xdr.ContractDataDurabilityTemporary,
+	}}
+	emitEvictions(&ext, []xdr.LedgerKey{temp}, 42, time.Unix(0, 0).UTC(), 0)
+	if len(ext.Changes) != 1 {
+		t.Fatalf("emitEvictions wrote %d rows, want 1", len(ext.Changes))
+	}
+	if ev := ext.Changes[0]; isSnapshotSeedRow(ev.TxHash, ev.OpIndex, ev.ChangeType) {
+		t.Errorf("eviction row %+v matched as a seed", ev)
 	}
 }

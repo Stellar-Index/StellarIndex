@@ -122,7 +122,7 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 
 // rwaPremiumDayFloorFor derives the per-day market-substance floor from
 // the SAME operator-configured policy /v1/price serves against
-// (s.rwaPremiumSubstance, wired from the live [pricingguard.SubstanceGate]
+// (s.RWAPremiumSubstance, wired from the live [pricingguard.SubstanceGate]
 // in main.go) rather than the pricingguard package defaults — an
 // operator who moves the live serving floor away from those defaults
 // must move this one with it, or the premium history silently measures
@@ -148,11 +148,11 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 //     the span leg already carries, kept explicit so the policy has all
 //     three legs rather than two and a silence.
 func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
-	minVolumeUSD := s.rwaPremiumSubstance.MinVolumeUSD
+	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
 	if minVolumeUSD == nil {
 		minVolumeUSD = new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
 	}
-	minSpan := s.rwaPremiumSubstance.MinSpan
+	minSpan := s.RWAPremiumSubstance.MinSpan
 	if minSpan == 0 {
 		minSpan = pricingguard.DefaultSubstanceMinSpan
 	}
@@ -403,7 +403,7 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 		Quote:       rwaPremiumHistoryQuote.String(),
 		Series:      []RWAPremiumSeries{},
 	}
-	if s.assetsReader == nil || s.oracleHistory == nil || s.marketHistory == nil {
+	if s.AssetsReader == nil || s.OracleHistory == nil || s.MarketHistory == nil {
 		writeRWASeriesUnavailable(w, r, rwaPremiumBasisUnavailable)
 		return
 	}
@@ -797,7 +797,7 @@ func (s *Server) rwaPremiumReferenceDays(
 	}
 	// Full history on purpose: one assembly serves every timeframe including
 	// `all`; the genesis floor excludes no row and keeps the range bounded.
-	rows, err := s.oracleHistory.DailyOraclePrices(ctx, assets, rwaPremiumHistoryQuote, coverageFloorEpoch, to)
+	rows, err := s.OracleHistory.DailyOraclePrices(ctx, assets, rwaPremiumHistoryQuote, coverageFloorEpoch, to)
 	if err != nil {
 		s.logger.Warn("rwa premium: oracle day-bucket read failed", "err", err)
 		return nil, false
@@ -820,7 +820,7 @@ func (s *Server) rwaPremiumMarketDays(
 	}
 	// Full history for the same reason as the reference leg; the first
 	// observed day also bounds the reference-only count.
-	rows, err := s.marketHistory.DailyMarketDays(
+	rows, err := s.MarketHistory.DailyMarketDays(
 		ctx, assets, s.rwaPremiumUSDQuotes(), coverageFloorEpoch, to)
 	if err != nil {
 		s.logger.Warn("rwa premium: market day read failed", "err", err)
@@ -858,7 +858,7 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 		out = append(out, a)
 	}
 	add(rwaPremiumHistoryQuote)
-	for _, peg := range s.usdPeggedClassics {
+	for _, peg := range s.USDPeggedClassics {
 		for _, form := range assetAliases(peg) {
 			add(form)
 		}

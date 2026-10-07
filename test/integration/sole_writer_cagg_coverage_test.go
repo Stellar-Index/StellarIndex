@@ -13,11 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSoleWriterCAGGCoverage_MigratedSchema executes the Phase-4 pre-flip
+// TestSoleWriterCAGGCoverage_MigratedSchema executes the sole-writer
 // gate's query against the fully migrated schema: every continuous
-// aggregate is listed with the offset its latest migration set, and the
-// gate refuses the flip on exactly the views whose lookback is shorter
-// than the projector's stall bound.
+// aggregate is listed with the offset its latest migration set and the
+// raw table it reads, and the Phase-4 flip is refused on exactly the
+// views whose lookback is shorter than the projector's stall bound.
 func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -49,13 +49,16 @@ func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 		}
 		byView[w.View] = w
 	}
-	for view, want := range map[string]time.Duration{
-		"prices_1m":        15 * time.Minute, // 0165
-		"oracle_prices_1m": 5 * time.Minute,  // 0034
-		"twap_1d":          7 * 24 * time.Hour,
+	for view, want := range map[string]struct {
+		offset time.Duration
+		table  string
+	}{
+		"prices_1m":        {15 * time.Minute, "trades"},        // 0165
+		"oracle_prices_1m": {5 * time.Minute, "oracle_updates"}, // 0034
+		"twap_1d":          {7 * 24 * time.Hour, "trades"},      // on prices_1m
 	} {
-		if got := byView[view]; got.StartOffset != want || got.Unbounded {
-			t.Errorf("%s = %+v, want start_offset %s", view, got, want)
+		if got := byView[view]; got.StartOffset != want.offset || got.Unbounded || got.Hypertable != want.table {
+			t.Errorf("%s = %+v, want start_offset %s over %s", view, got, want.offset, want.table)
 		}
 	}
 
@@ -65,7 +68,9 @@ func TestSoleWriterCAGGCoverage_MigratedSchema(t *testing.T) {
 	if !errors.Is(err, pipeline.ErrSoleWriterCAGGWindow) || !strings.Contains(err.Error(), "oracle_prices_1m (start_offset 5m0s)") {
 		t.Fatalf("gate err = %v, want ErrSoleWriterCAGGWindow naming oracle_prices_1m", err)
 	}
+	// No aggregate reads a sep41 or rozo table, and the dispatcher still feeds
+	// oracle_updates live in Phase 3, so that mode starts.
 	if err := pipeline.VerifySoleWriterCAGGCoverage(ctx, store, pipeline.SinkModeSkipSoleWriter); err != nil {
-		t.Fatalf("Phase-3 mode must never be gated, err = %v", err)
+		t.Fatalf("Phase-3 gate err = %v, want nil", err)
 	}
 }

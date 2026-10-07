@@ -63,9 +63,8 @@ func dealStorageSupply() clickhouse.ContractStorageSupply {
 func serveSupplyWithStorage(t *testing.T, flows clickhouse.TokenSupply, st ContractStorageSupplyReader, assetID string) *httptest.ResponseRecorder {
 	t.Helper()
 	srv := &Server{
-		tokenSupply:   &fakeTokenSupply{supply: flows},
-		storageSupply: st,
-		logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{TokenSupply: &fakeTokenSupply{supply: flows}, ContractStorageSupply: st},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/assets/{asset_id}/supply", srv.handleAssetSupply)

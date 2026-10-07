@@ -83,9 +83,7 @@ func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{
-				transitive: tc.pricer,
-				substance:  gate,
-				scam:       transitiveScamGate{flagged: map[string]bool{flagHop: true}},
+				Options: Options{TransitivePricer: tc.pricer, Substance: gate, Scam: transitiveScamGate{flagged: map[string]bool{flagHop: true}}},
 			}
 			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
 			if got != tc.want || ok != (tc.want != wantNone) {
@@ -183,7 +181,7 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{transitive: tc.pricer, substance: tc.gate}
+			s := &Server{Options: Options{TransitivePricer: tc.pricer, Substance: tc.gate}}
 			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (price=%q)", ok, tc.wantOK, got)
@@ -236,9 +234,7 @@ func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{
-				transitive: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}, ok: true},
-				substance:  substance,
-				scam:       transitiveScamGate{flagged: tc.flagged},
+				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}, ok: true}, Substance: substance, Scam: transitiveScamGate{flagged: tc.flagged}},
 			}
 			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
 			if ok != tc.wantOK {
@@ -258,7 +254,7 @@ func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 // should cost nothing, not merely produce no output.
 func TestTransitivePriceFor_NilPricerDoesNotConsultGate(t *testing.T) {
 	gate := &stubListingGate{allow: map[string]bool{}}
-	s := &Server{transitive: nil, substance: gate}
+	s := &Server{Options: Options{TransitivePricer: nil, Substance: gate}}
 	asset, err := canonical.ParseAsset("CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J")
 	if err != nil {
 		t.Fatal(err)
@@ -278,10 +274,12 @@ func TestTransitivePriceFor_ResolverCalledOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "1.00", Hop: hopID}, ok: true}
-	s := &Server{transitive: p, substance: &stubListingGate{allow: map[string]bool{
-		assetID + "|" + hopID: true,
-		hopID + "|native":     true,
-	}}}
+	s := &Server{
+		Options: Options{TransitivePricer: p, Substance: &stubListingGate{allow: map[string]bool{
+			assetID + "|" + hopID: true,
+			hopID + "|native":     true,
+		}}},
+	}
 	if _, ok := s.transitivePriceFor(context.Background(), asset, assetID); !ok {
 		t.Fatal("expected a served price")
 	}
@@ -310,12 +308,11 @@ func TestApplyAssetRowToDetail_FillsTransitiveWhenNoCatalogueRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		transitive: &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}},
-		substance: &stubListingGate{allow: map[string]bool{
+		Options: Options{TransitivePricer: &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}}, Substance: &stubListingGate{allow: map[string]bool{
 			assetID + "|" + hopID: true,
 			hopID + "|native":     true,
-		}},
+		}}},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	var detail AssetDetail
@@ -343,7 +340,7 @@ func TestApplyAssetRowToDetail_RealErrorDoesNotPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "1.00", Hop: "x"}}
-	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), transitive: p, substance: &stubListingGate{allow: map[string]bool{}}}
+	s := &Server{Options: Options{TransitivePricer: p, Substance: &stubListingGate{allow: map[string]bool{}}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	var detail AssetDetail
 	s.applyAssetRowToDetail(context.Background(), &detail, asset, timescale.AssetRow{}, errors.New("db exploded"), assetID)

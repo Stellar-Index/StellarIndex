@@ -37,8 +37,8 @@ func (s *Server) pegUSDObservationPairs() []canonical.Pair {
 		return nil
 	}
 	var out []canonical.Pair
-	seen := make(map[string]struct{}, len(s.usdPeggedClassics))
-	for _, peg := range s.usdPeggedClassics {
+	seen := make(map[string]struct{}, len(s.USDPeggedClassics))
+	for _, peg := range s.USDPeggedClassics {
 		ticker, err := canonical.NewCryptoAsset(peg.Code)
 		if err != nil || !aggregate.IsFiatProxyFor(ticker, "USD") {
 			continue
@@ -60,11 +60,11 @@ func (s *Server) pegUSDObservationPairs() []canonical.Pair {
 // at `at` is outside the [depegBand]. False also covers "no observation": the
 // flag is omitted rather than asserting the peg held.
 func (s *Server) proxyDeviation(ctx context.Context, at time.Time) bool {
-	if s.priceAt == nil {
+	if s.PriceAt == nil {
 		return false
 	}
 	for _, pair := range s.pegUSDObservationPairs() {
-		value, _, _, err := s.priceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+		value, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
 		if err == nil && outsideDepegBand(value) {
 			return true
 		}

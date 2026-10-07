@@ -13,20 +13,24 @@ import (
 
 func TestCAGGRefreshWindows(t *testing.T) {
 	t.Parallel()
-	cols := []string{"view_name", "has_policy", "start_offset_seconds", "schedule_interval_seconds"}
+	cols := []string{"view_name", "hypertable_name", "materialization_hypertable_name", "has_policy", "start_offset_seconds", "schedule_interval_seconds"}
 	store, conn := newScriptedStore(t, scriptedResult{cols: cols, rows: [][]driver.Value{
-		{"oracle_prices_1m", true, int64(300), int64(60)},
-		{"source_volume_1h", false, nil, int64(0)},
-		{"supply_1d", true, nil, int64(3600)},
+		{"oracle_prices_1m", "oracle_updates", "_materialized_hypertable_52", true, int64(300), int64(60)},
+		{"prices_1m", "trades", "_materialized_hypertable_156", true, int64(900), int64(60)},
+		{"source_volume_1h", "trades", "_materialized_hypertable_91", false, nil, int64(0)},
+		{"supply_1d", "asset_supply_history", "_materialized_hypertable_90", true, nil, int64(3600)},
+		{"twap_1d", "_materialized_hypertable_156", "_materialized_hypertable_164", true, int64(604800), int64(3600)},
 	}})
 	got, err := store.CAGGRefreshWindows(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []CAGGRefreshWindow{
-		{View: "oracle_prices_1m", HasPolicy: true, StartOffset: 5 * time.Minute, ScheduleInterval: time.Minute},
-		{View: "source_volume_1h"},
-		{View: "supply_1d", HasPolicy: true, Unbounded: true, ScheduleInterval: time.Hour},
+		{View: "oracle_prices_1m", HasPolicy: true, StartOffset: 5 * time.Minute, ScheduleInterval: time.Minute, Hypertable: "oracle_updates"},
+		{View: "prices_1m", HasPolicy: true, StartOffset: 15 * time.Minute, ScheduleInterval: time.Minute, Hypertable: "trades"},
+		{View: "source_volume_1h", Hypertable: "trades"},
+		{View: "supply_1d", HasPolicy: true, Unbounded: true, ScheduleInterval: time.Hour, Hypertable: "asset_supply_history"},
+		{View: "twap_1d", HasPolicy: true, StartOffset: 7 * 24 * time.Hour, ScheduleInterval: time.Hour, Hypertable: "trades"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d windows, want %d: %+v", len(got), len(want), got)
@@ -39,6 +43,8 @@ func TestCAGGRefreshWindows(t *testing.T) {
 	stmt := conn.only(t)
 	for _, frag := range []string{
 		"timescaledb_information.continuous_aggregates",
+		"c.hypertable_name",
+		"c.materialization_hypertable_name,",
 		"LEFT JOIN timescaledb_information.jobs",
 		"proc_name = 'policy_refresh_continuous_aggregate'",
 		"IN (c.view_name, c.materialization_hypertable_name)",

@@ -115,6 +115,10 @@ func TestECWindowCoverageQuery_AntiJoin(t *testing.T) {
 	if strings.Contains(q, "uniqExact(ledger_seq) FROM stellar.ledger_entry_changes") {
 		t.Errorf("pre-fix standalone entry-changes cardinality is still present:\n%s", q)
 	}
+	// Snapshot seed rows (empty tx_hash) are not tx-meta coverage.
+	if !strings.Contains(q, "WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != ''\n") {
+		t.Errorf("membership subquery admits empty-tx_hash seed rows as coverage:\n%s", q)
+	}
 	// Four positional placeholders: (subquery lo, hi, outer lo, hi).
 	if n := strings.Count(q, "?"); n != 4 {
 		t.Errorf("query has %d placeholders, want 4 (subquery lo/hi + outer lo/hi):\n%s", n, q)

@@ -69,14 +69,14 @@ const withholdingFlaggedAsset = "RIO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MG
 
 func withholdingServer() *Server {
 	return &Server{
-		scam:   withholdingScamGate{withholdingFlaggedAsset: true},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Scam: withholdingScamGate{withholdingFlaggedAsset: true}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
 func TestAnomalies_OmitsWithheldMarketsFrozenValue(t *testing.T) {
 	s := withholdingServer()
-	s.anomalies = &withholdingAnomalyReader{rows: []timescale.FreezeEventRow{
+	s.Anomalies = &withholdingAnomalyReader{rows: []timescale.FreezeEventRow{
 		{AssetID: withholdingFlaggedAsset, QuoteID: "native", FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "0.42"},
 		{AssetID: "native", QuoteID: withholdingFlaggedAsset, FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "2.38"},
 		{AssetID: "native", QuoteID: "fiat:USD", FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "0.11"},
@@ -102,7 +102,7 @@ func TestAnomalies_OmitsWithheldMarketsFrozenValue(t *testing.T) {
 
 func TestDivergence_OmitsWithheldMarketsOurPrice(t *testing.T) {
 	s := withholdingServer()
-	s.divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
+	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
 		{AssetID: withholdingFlaggedAsset, QuoteID: "native", Reference: "coingecko", OurPrice: "0.42", RefPrice: "0.40", DeltaPct: "5"},
 		{AssetID: "native", QuoteID: withholdingFlaggedAsset, Reference: "coingecko", OurPrice: "2.38", RefPrice: "2.5", DeltaPct: "-4.8"},
 		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "coingecko", OurPrice: "100", RefPrice: "99", DeltaPct: "1"},
@@ -130,7 +130,7 @@ func TestDivergenceSeries_WithheldMarketIsWithheldProblem(t *testing.T) {
 			reader := &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
 				{Bucket: time.Unix(0, 0), DeltaPct: "5", OurPrice: "0.42", RefPrice: "0.40"},
 			}}
-			s.divergences = reader
+			s.Divergences = reader
 			rec := httptest.NewRecorder()
 			s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
 				"/v1/divergence/series?pair="+pair+"", nil))
@@ -149,7 +149,7 @@ func TestDivergenceSeries_WithheldMarketIsWithheldProblem(t *testing.T) {
 
 func TestDivergenceSeries_UnflaggedMarketStillServes(t *testing.T) {
 	s := withholdingServer()
-	s.divergences = &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
+	s.Divergences = &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
 		{Bucket: time.Unix(0, 0), DeltaPct: "1", OurPrice: "100", RefPrice: "99"},
 	}}
 	rec := httptest.NewRecorder()

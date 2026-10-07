@@ -30,8 +30,8 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	detail := ""
 	if _, ok := external.Registry[name]; !ok {
 		detail = fmt.Sprintf("no registered source named %q — see /v1/sources for the catalogue", name)
-	} else if ok, _ := sourcenet.Applicable(name, s.network); !ok {
-		detail = fmt.Sprintf("source %q does not exist on network %s — see /v1/sources for the catalogue", name, s.network)
+	} else if ok, _ := sourcenet.Applicable(name, s.Network); !ok {
+		detail = fmt.Sprintf("source %q does not exist on network %s — see /v1/sources for the catalogue", name, s.Network)
 	}
 	if detail != "" {
 		writeProblem(w, r,
@@ -41,10 +41,12 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []SourceHealthRow
+	var asOf WireTime // zero stamps now on the inline build
 	if entry := s.freshIngestionSnapshot(); entry != nil {
-		rows = entry.snap.Sources
+		rows, asOf = entry.snap.Sources, WireTime(entry.builtAt.UTC())
 	}
 	if len(rows) == 0 {
+		asOf = WireTime{}
 		// Cold start, or the refresher has died and gone stale (see
 		// freshIngestionSnapshot). Same ceiling as the snapshot's
 		// sources filler; buildSourceHealth soft-fails its stat reads
@@ -56,7 +58,7 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range rows {
 		if rows[i].Name == name {
-			writeJSON(w, rows[i], Flags{})
+			writeEnvelope(w, Envelope{Data: rows[i], AsOf: asOf})
 			return
 		}
 	}

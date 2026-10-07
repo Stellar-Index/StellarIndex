@@ -164,7 +164,7 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 // Cache header: short-lived, since the worker refreshes on a
 // 5-minute cadence.
 func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
-	if s.changesum == nil {
+	if s.ChangeSummary == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/change-summary-unavailable",
 			"Change summary unavailable", http.StatusServiceUnavailable,
@@ -211,7 +211,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		hit bool
 	)
 	for _, id := range candidates {
-		row, err = s.changesum.GetChangeSummary(r.Context(), entityType, id)
+		row, err = s.ChangeSummary.GetChangeSummary(r.Context(), entityType, id)
 		if err == nil {
 			hit = true
 			break
@@ -279,7 +279,7 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 	if row.EntityType != "coin" {
 		// A pair row names one market: both gates, through the package's
 		// one fold.
-		withheld := withheldBy(r.Context(), s.substance, s.scam, base, quote, changeSummaryGateSurface)
+		withheld := withheldBy(r.Context(), s.Substance, s.Scam, base, quote, changeSummaryGateSurface)
 		if withheld == pricingguard.NotWithheld {
 			return false
 		}
@@ -289,7 +289,7 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 	if s.writeIfScamWithheld(w, r, base, quote, changeSummaryGateSurface) {
 		return true
 	}
-	if s.substance == nil || s.assetPriceAllowed(r.Context(), base, changeSummaryGateSurface) {
+	if s.Substance == nil || s.assetPriceAllowed(r.Context(), base, changeSummaryGateSurface) {
 		return false
 	}
 	writePriceWithheldProblem(w, r, base, quote, PriceWithheldSubstance)
@@ -391,8 +391,8 @@ func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	if !ok {
 		return nil
 	}
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, quote)
 	if baseDec == quoteDec {
 		return nil
 	}

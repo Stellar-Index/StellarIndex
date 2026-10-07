@@ -83,11 +83,14 @@ func (r CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context, 
 	switch {
 	case err == nil:
 		if entry, ok := r.decodeEntry(cacheKey, raw); ok {
+			countRedisRead("oracle_redis", "latest", nil)
 			return entry.Updates, entry.ComputedAt, nil
 		}
+		countRedisRead("oracle_redis", "latest", errors.New("undecodable entry"))
 	case errors.Is(err, redis.Nil):
-		// miss — proceed to DB
+		countRedisRead("oracle_redis", "latest", err)
 	default:
+		countRedisRead("oracle_redis", "latest", err)
 		r.Log.Warn("oracle cache read failed; falling through to DB",
 			"key", cacheKey, "err", err)
 	}

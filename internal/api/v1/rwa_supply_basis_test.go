@@ -121,10 +121,10 @@ func TestRWAContractRowNamesTheFlowSum(t *testing.T) {
 	const contractID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 	total, _ := new(big.Int).SetString("123450000000", 10)
 	s := &Server{
-		logger: slog.Default(),
-		tokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: total, Mint: total, Burn: big.NewInt(0), Clawback: big.NewInt(0), FlowCount: 7},
-		}},
+		}}},
+		logger: slog.Default(),
 	}
 	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
 

@@ -24,7 +24,7 @@ func TestAssetDetail_ReadsRoundedAfterTheCorrectionAreNotFloored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{nonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})}
+	s := &Server{Options: Options{NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})}}
 
 	// 21 fraction places: ROUND(raw, 10 + 11)::text, as getAssetBySlugSQL
 	// and the history SQL now render it.

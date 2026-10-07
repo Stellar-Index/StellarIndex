@@ -422,7 +422,7 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 
 **Diagnose** (at most 10 min).
 
-1. Which cache + op: labels `{cache, op}`. The seven `cache` values (grep `APICacheOpsTotal.WithLabelValues` under `internal/api/v1/`): `coins`, `issuers`, `markets`, `network_stats`, `observations`, `oracle`, `sources_stats`. `markets` ops:
+1. Which cache + op: labels `{cache, op}`. The seven in-memory `cache` values (grep `APICacheOpsTotal.WithLabelValues` under `internal/api/v1/`): `coins`, `issuers`, `markets`, `network_stats`, `observations`, `oracle`, `sources_stats`. The Redis read-through layers in `cmd/stellarindex-api/internal/wiring` add `assets_redis`, `markets_redis`, `oracle_redis`, `prices_redis` (result `hit`/`miss`/`error`); they miss by design and the miss-rate alert excludes them. `markets` ops:
    - `distinct_pairs`: `/v1/markets` (no source filter)
    - `source_markets`: `/v1/markets?source=<x>`
    - `asset_markets`: `/v1/markets?asset=<x>`

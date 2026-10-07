@@ -80,7 +80,7 @@ type NetworkStats struct {
 // call instead of fanning out to /v1/coins, /v1/markets,
 // /v1/sources, /v1/diagnostics/cursors separately.
 func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
-	if s.networkStats == nil {
+	if s.NetworkStats == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/network-stats-unavailable",
 			"Network stats unavailable", http.StatusServiceUnavailable,
@@ -97,10 +97,10 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 		stale      bool
 		err        error
 	)
-	if sr, ok := s.networkStats.(networkStatsStaleReader); ok {
+	if sr, ok := s.NetworkStats.(networkStatsStaleReader); ok {
 		stats, observedAt, stale, err = sr.GetNetworkStatsAt(r.Context())
 	} else {
-		stats, err = s.networkStats.GetNetworkStats(r.Context())
+		stats, err = s.NetworkStats.GetNetworkStats(r.Context())
 	}
 	if err != nil {
 		s.logger.Warn("network stats", "err", err)

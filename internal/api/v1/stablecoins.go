@@ -112,7 +112,7 @@ type stablecoinMember struct {
 // prewarm, reduced by the request path's own [classicLakeSupplyCandidates] so
 // it cannot warm an asset the handler would not look up.
 func (s *Server) stablecoinPrewarmSet() map[string]string {
-	members, _ := stablecoinMembership(s.verifiedCurrencies)
+	members, _ := stablecoinMembership(s.VerifiedCurrencies)
 	details := make([]AssetDetail, 0, len(members))
 	for _, m := range members {
 		details = append(details, AssetDetail{AssetID: m.code + "-" + m.issuer})
@@ -305,12 +305,12 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 		ByPeg:  []StablecoinPegTotal{},
 		Assets: []StablecoinAsset{}, Excluded: []StablecoinExclusion{},
 	}
-	if s.assetsReader == nil || s.verifiedCurrencies == nil {
+	if s.AssetsReader == nil || s.VerifiedCurrencies == nil {
 		view.Total.LowerBound = true
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 		return
 	}
-	members, excluded := stablecoinMembership(s.verifiedCurrencies)
+	members, excluded := stablecoinMembership(s.VerifiedCurrencies)
 	view.Excluded = excluded
 
 	rm := rwaMembership{members: make([]rwaMember, 0, len(members))}

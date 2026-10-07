@@ -5,409 +5,107 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
-	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
-	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
-	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
-	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // BuildRegistry constructs the projector's source list from the
-// operator's enabled-sources config + oracle config. Same shape
-// as `internal/pipeline.BuildDispatcher` but produces
-// `projector.Source` entries rather than dispatcher.Decoder lists.
+// operator's enabled-sources config + oracle config, one [Source] per
+// name whose [pipeline.SourceSpec] has a Projector. Other names (sdex,
+// band, soroswap-router, external CEX/FX) are skipped: the dispatcher
+// writes them.
 //
-// Out of scope (per ADR-0032 § "Out of scope"):
-//   - sdex (classic-DEX; writes direct to trades)
-//   - soroswap_router, band (ContractCallDecoder — bound to
-//     InvokeContract args, not Soroban events)
-//   - external sources (binance, kraken, …) — off-chain, no
-//     soroban_events
+// Watched specs (sep41) are added whatever names says. They are not in
+// config.KnownSources, so they never appear in enabled_sources, and the
+// dispatcher cedes them to the projector as sole writer; registering
+// them only on request once left r1 with no sep41 writer for ~14 days.
+// They are skipped only when no SEP-41 contract is watched.
 //
-// Returns the [Registry] + an error listing any source that
-// requires oracle config + that config is empty (e.g.
-// `reflector-dex` enabled but `oracle.reflector.dex_contract`
-// is "").
+// Returns an error when a source needs oracle config that is empty
+// (e.g. `reflector-dex` enabled but `oracle.reflector.dex_contract` is "").
 func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
 	seen := map[string]bool{}
-	for _, name := range names {
-		lower := strings.ToLower(strings.TrimSpace(name))
-		s, ok, err := buildSource(lower, oracle, watchedSEP41, gated, soroswapOpts...)
-		if err != nil {
-			return Registry{}, err
-		}
-		seen[lower] = true
-		if !ok {
-			// Source is enabled but doesn't have a projector entry
-			// (sdex, band, soroswap-router, external sources), or a
-			// sep41 source with no watched contracts to project.
-			// Silently skip — `pipeline.BuildDispatcher` handles
-			// those via different surfaces.
-			continue
-		}
-		sources = append(sources, s)
-	}
-	// The sep41 domain is NOT gated on the enabled-sources list: the
-	// dispatcher unconditionally cedes it to the projector (F-1316
-	// SKIP-SOLE-WRITER — "the projector is always its sole writer"),
-	// and the sep41 names are not in config.KnownSources, so they can
-	// never legally appear in `names`. Registering them here — gated
-	// only on watchedSEP41 via buildSource's own empty-set skip — is
-	// what closes the zero-writer hole found 2026-07-27: r1 ran ~14
-	// days (ledgers 63,419,139+) with the dispatcher skipping sep41
-	// writes while the projector had no sep41 source to write them.
-	for _, name := range []string{sep41_transfers.SourceName, sep41_supply.SourceName} {
-		if seen[name] {
-			continue // explicit request (e.g. projected-rebuild -source)
-		}
+	add := func(name string) error {
 		s, ok, err := buildSource(name, oracle, watchedSEP41, gated, soroswapOpts...)
-		if err != nil {
-			return Registry{}, err
-		}
 		if ok {
 			sources = append(sources, s)
+		}
+		return err
+	}
+	for _, name := range names {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		seen[lower] = true
+		if err := add(lower); err != nil {
+			return Registry{}, err
+		}
+	}
+	for _, spec := range pipeline.Specs() {
+		if !spec.Watched || seen[spec.Name] {
+			continue
+		}
+		if err := add(spec.Name); err != nil {
+			return Registry{}, err
 		}
 	}
 	return Registry{Sources: sources}, nil
 }
 
-// sep41SymbolSet is the topic-0 prefilter for sep41_transfers
-// + sep41_supply. Symbols are listed exhaustively per the
-// EVERY-event policy (project memory `project_every_event_principle`).
-var sep41TransferSyms = []string{
-	sep41_transfers.SymbolTransfer,
-	sep41_transfers.SymbolApprove,
-	sep41_transfers.SymbolSetAdmin,
-	sep41_transfers.SymbolSetAuthorized,
+// KnownProjectorSources is the set of source names the projector writes:
+// the names BuildRegistry and `stellarindex-ops projector-replay -source`
+// accept. find-data-gaps reads it to tell whether a gap target is
+// projected (AGENTS.md invariant 7).
+var KnownProjectorSources = knownProjectorSources()
+
+func knownProjectorSources() map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, spec := range pipeline.Specs() {
+		if spec.Projector != nil {
+			out[spec.Name] = struct{}{}
+		}
+	}
+	return out
 }
 
-// sep41SupplySyms is the SQL-layer prefilter for the sep41_supply
-// projector source — without it the per-cycle catch-up window would
-// stream the entire CAP-67 firehose to prove which rows are mint/burn/
-// clawback (G16-07).
-var sep41SupplySyms = []string{
-	sep41_supply.SymbolMint,
-	sep41_supply.SymbolBurn,
-	sep41_supply.SymbolClawback,
-}
-
-// firehoseExcludeSyms is the SQL-layer exclusion the DEX/lending sources apply
-// so a far-behind catch-up window doesn't stream the CAP-67 classic-token
-// firehose (under the r1 archive's uniform V4 meta, ~99.8% of all
-// contract_events / soroban_events — transfer alone is ~88%). It's the
-// classic-token topic[0] set MINUS set_admin: every one of the ten sources
-// below (incl. upshift and sushiswap_v3, added since this comment was first
-// written) was audited (events.go + classify) and none consumes any of these six,
-// so the exclusion is provably lossless — whereas blend DOES dispatch on
-// set_admin, so set_admin is deliberately retained (its volume is negligible —
-// not even in the top-20 topic_0_sym). This is an exclude-list rather than a
-// per-source include-list because several decoders match dynamic/prefixed
-// topic[0] symbols (e.g. phoenix "XYK Pool: …") that an include-list would miss.
-var firehoseExcludeSyms = []string{
-	"transfer", "mint", "burn", "clawback", "approve", "set_authorized",
-}
-
-// KnownProjectorSources is the set of source names buildSource
-// recognises — the same strings BuildRegistry's `names` argument and
-// `stellarindex-ops projector-replay -source <name>` accept. Exported
-// so a non-projector caller (find-data-gaps) can tell whether a gap
-// target is projected without re-deriving buildSource's switch —
-// see AGENTS.md invariant 7.
-var KnownProjectorSources = map[string]struct{}{
-	soroswap.SourceName:        {},
-	aquarius.SourceName:        {},
-	phoenix.SourceName:         {},
-	sushiswap_v3.SourceName:    {},
-	spectra.SourceName:         {},
-	upshift.SourceName:         {},
-	comet.SourceName:           {},
-	blend.SourceName:           {},
-	blend_backstop.SourceName:  {},
-	blend_emitter.SourceName:   {},
-	cctp.SourceName:            {},
-	rozo.SourceName:            {},
-	sorocredit.SourceName:      {},
-	defindex.SourceName:        {},
-	sep41_transfers.SourceName: {},
-	sep41_supply.SourceName:    {},
-	reflector.SourceDEX:        {},
-	reflector.SourceCEX:        {},
-	reflector.SourceFX:         {},
-	redstone.SourceName:        {},
-}
-
-//nolint:gocognit,gocyclo,funlen // dispatch switch; one case per source. Same shape as pipeline.BuildDispatcher (which carries the same exemption).
+// buildSource builds the projector [Source] for name from its spec.
+// ok=false with a nil error means the projector does not write name, or
+// it is a watched source with nothing watched.
 func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
-	switch name {
-	case soroswap.SourceName:
-		// Soroswap dispatches via topic[0] across all pairs in
-		// the registry; no contract-list prefilter needed.
-		return Source{
-			Name:              soroswap.SourceName,
-			Decoder:           soroswap.NewDecoder(soroswapOpts...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case aquarius.SourceName:
-		return Source{
-			Name:              aquarius.SourceName,
-			Decoder:           aquarius.NewDecoder(gated[aquarius.SourceName]...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case phoenix.SourceName:
-		return Source{
-			Name:              phoenix.SourceName,
-			Decoder:           phoenix.NewDecoder(gated[phoenix.SourceName]...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case sushiswap_v3.SourceName:
-		// ADR-0035: factory-anchored. The contract-id prefilter is the
-		// decoder's OWN gate set (factory + every registered pool), not a
-		// topic filter: this protocol emits `mint` and `burn`, which a
-		// bounded pubnet census puts at 33% and 12% of ALL contract events,
-		// so firehoseExcludeSyms would have to drop the source's own events
-		// to keep a catch-up window affordable. Scoping by contract instead
-		// is both cheaper and lossless. The set grows across restarts via
-		// the protocol_contracts warm that gated[...] carries, and in-stream
-		// from pool_created — hence the live func, re-read every cycle.
-		sushiDec := sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...)
-		return Source{
-			Name:            sushiswap_v3.SourceName,
-			Decoder:         sushiDec,
-			ContractIDsFunc: sushiDec.GatedContractSet,
-			Genesis:         sushiswap_v3.FactoryGenesisLedger,
-		}, true, nil
-	case spectra.SourceName:
-		// ADR-0035: factory-anchored plus a hand-kept set. The prefilter is the
-		// decoder's own gate set, re-read each cycle because it grows in-stream
-		// (pt_deployed admits a PT, the PT's yt_deployed its YT); no topic
-		// exclusion, since PT/YT `transfer` rows are kept.
-		spectraDec := spectra.NewDecoder(gated[spectra.SourceName]...)
-		return Source{
-			Name:            spectra.SourceName,
-			Decoder:         spectraDec,
-			ContractIDsFunc: spectraDec.GatedContractSet,
-			Genesis:         spectra.GenesisLedger,
-		}, true, nil
-	case upshift.SourceName:
-		// ADR-0035/0040: contract-gated (curated set — the vaults have no
-		// factory namespace). The contract-id prefilter is the decoder's
-		// OWN gate set rather than firehoseExcludeSyms, for the same
-		// reason as sushiswap_v3 but more sharply: this source's symbols
-		// are `deposit`, `withdraw` and `transfer`, and `transfer` is on
-		// the exclude list — a topic filter would have to drop one of
-		// this source's own event kinds to be worth anything. Scoping to
-		// two contracts is both cheaper and lossless.
-		upshiftDec := upshift.NewDecoder(gated[upshift.SourceName]...)
-		return Source{
-			Name:            upshift.SourceName,
-			Decoder:         upshiftDec,
-			ContractIDsFunc: upshiftDec.GatedContractSet,
-			Genesis:         upshift.GenesisLedger,
-		}, true, nil
-	case comet.SourceName:
-		// ADR-0035/0040: contract-gated (curated set — comet has no
-		// factory namespace). gated[comet] layers the protocol_contracts
-		// warm on the in-code MainnetGatedSet trust root.
-		//
-		// WithoutMetrics (Q018): the dispatcher ALWAYS builds its own
-		// comet.Decoder when comet is enabled, independent of whether
-		// the projector also runs (Phase-3 parallel double-write). Both
-		// would otherwise decode the same live event and double-count
-		// the self-pair / non-positive-amount exploit-detection
-		// counters. The dispatcher's instance stays the canonical one.
-		return Source{
-			Name:              comet.SourceName,
-			Decoder:           comet.NewDecoder(gated[comet.SourceName]...).WithoutMetrics(),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case blend.SourceName:
-		// ADR-0035: contract-gated. gated[blend] warms the pool registry
-		// from protocol_contracts so the projector resumes with a complete
-		// gate across restarts (its cursor advances past factory deploy
-		// events). Empty registry → events dropped until seeded, so the
-		// genesis walk is a deploy precondition.
-		return Source{
-			Name:              blend.SourceName,
-			Decoder:           blend.NewDecoder(gated[blend.SourceName]...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-			Genesis:           blend.FactoryGenesisLedger,
-		}, true, nil
-	case blend_backstop.SourceName:
-		return Source{
-			Name:              blend_backstop.SourceName,
-			Decoder:           blend_backstop.NewDecoder(),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-			Genesis:           blend_backstop.BackstopGenesisLedger,
-		}, true, nil
-	case blend_emitter.SourceName:
-		// ADR-0035/0040: contract-gated (curated set — the Emitter has
-		// no factory namespace). gated[blend_emitter] layers the
-		// protocol_contracts warm on the in-code MainnetGatedSet trust
-		// root, same shape as comet.
-		return Source{
-			Name:              blend_emitter.SourceName,
-			Decoder:           blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case cctp.SourceName:
-		return Source{
-			Name:              cctp.SourceName,
-			Decoder:           cctp.NewDecoder(),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case rozo.SourceName:
-		return Source{
-			Name:              rozo.SourceName,
-			Decoder:           rozo.NewDecoder(),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case sorocredit.SourceName:
-		// ADR-0035 contract-gated on a single trust-root contract. Its
-		// seven topic[0] symbols are DISTINCTIVE (not part of the CAP-67
-		// firehose), so a topic-include prefilter pulls exactly this
-		// source's events efficiently and the identity gate then rejects
-		// the two look-alike emitters. No gated[] warm — the trust root is
-		// hard-coded and children never emit (see the source README), so
-		// there is nothing to DB-warm.
-		return Source{
-			Name:       sorocredit.SourceName,
-			Decoder:    sorocredit.NewDecoder(),
-			Topic0Syms: sorocredit.EventSymbols(),
-			Genesis:    sorocredit.GenesisLedger,
-		}, true, nil
-	case defindex.SourceName:
-		return Source{
-			Name:              defindex.SourceName,
-			Decoder:           defindex.NewDecoder(gated[defindex.SourceName]...),
-			ExcludeTopic0Syms: firehoseExcludeSyms,
-		}, true, nil
-	case sep41_transfers.SourceName:
-		// F-1316: this previously passed a single SYNTHETIC watched
-		// contract that no real event could match, so Matches() rejected
-		// every event and the projector wrote ZERO sep41_transfers rows
-		// (silent total loss in Phase-4 sole-writer mode). The fix is to
-		// pass the REAL watched set — the same contracts the dispatcher
-		// writes — so the projector faithfully reproduces the dispatcher
-		// (NOT a firehose over all contracts, which would write rows the
-		// dispatcher never did and diverge Phase-3 from Phase-4). When no
-		// contracts are watched the dispatcher writes nothing either, so
-		// the source is skipped. The SQL Topic0Syms prefilter bounds the
-		// catch-up scan.
-		if len(watchedSEP41) == 0 {
-			return Source{}, false, nil
-		}
-		dec, err := sep41_transfers.NewDecoder(watchedSEP41)
-		if err != nil {
-			return Source{}, false, err
-		}
-		return Source{
-			Name:       sep41_transfers.SourceName,
-			Decoder:    dec,
-			Topic0Syms: sep41TransferSyms,
-		}, true, nil
-	case sep41_supply.SourceName:
-		// Watched-set decoder (see sep41_transfers above) + a mint/burn/
-		// clawback SQL prefilter so the catch-up window doesn't stream
-		// the whole CAP-67 firehose (G16-07).
-		if len(watchedSEP41) == 0 {
-			return Source{}, false, nil
-		}
-		dec, err := sep41_supply.NewDecoder(watchedSEP41)
-		if err != nil {
-			return Source{}, false, err
-		}
-		return Source{
-			Name:       sep41_supply.SourceName,
-			Decoder:    dec,
-			Topic0Syms: sep41SupplySyms,
-		}, true, nil
-	case reflector.SourceDEX:
-		if oracle.Reflector.DEXContract == "" {
-			return Source{}, false, missingConfigErr(name)
-		}
-		return Source{
-			Name: reflector.SourceDEX,
-			Decoder: reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract,
-				reflector.WithDecoderDecimals(oracle.Reflector.DEXDecimals)),
-			ContractIDs: []string{oracle.Reflector.DEXContract},
-		}, true, nil
-	case reflector.SourceCEX:
-		if oracle.Reflector.CEXContract == "" {
-			return Source{}, false, missingConfigErr(name)
-		}
-		return Source{
-			Name: reflector.SourceCEX,
-			Decoder: reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract,
-				reflector.WithDecoderDecimals(oracle.Reflector.CEXDecimals)),
-			ContractIDs: []string{oracle.Reflector.CEXContract},
-		}, true, nil
-	case reflector.SourceFX:
-		if oracle.Reflector.FXContract == "" {
-			return Source{}, false, missingConfigErr(name)
-		}
-		return Source{
-			Name: reflector.SourceFX,
-			Decoder: reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract,
-				reflector.WithDecoderDecimals(oracle.Reflector.FXDecimals)),
-			ContractIDs: []string{oracle.Reflector.FXContract},
-		}, true, nil
-	case redstone.SourceName:
-		if oracle.Redstone.AdapterContract == "" {
-			return Source{}, false, missingConfigErr(name)
-		}
-		return Source{
-			Name:        redstone.SourceName,
-			Decoder:     redstone.NewDecoder(oracle.Redstone.AdapterContract),
-			ContractIDs: []string{oracle.Redstone.AdapterContract},
-			// write_prices stores each ACCEPTED feed's PriceData under a
-			// per-feed contract-data key; the decoder attributes
-			// freshness-filtered batches exactly from those write keys
-			// (events.Event.StateWriteKeys) before falling back to
-			// payload-median alignment.
-			NeedsStateWriteKeys: true,
-		}, true, nil
-	default:
-		// Out of scope per ADR-0032 (sdex, band, soroswap-router,
-		// external CEX/FX).
+	spec, ok := pipeline.SpecByName(name)
+	if !ok || spec.Projector == nil {
 		return Source{}, false, nil
 	}
+	p := spec.Projector
+	a := pipeline.BuildArgs{Oracle: oracle, WatchedSEP41: watchedSEP41, Gated: gated, SoroswapOpts: soroswapOpts}
+	newDecoder := spec.NewDecoder
+	if p.NewDecoder != nil {
+		newDecoder = p.NewDecoder
+	}
+	dec, err := newDecoder(a)
+	if err != nil || dec == nil {
+		return Source{}, false, err
+	}
+	src := Source{
+		Name:                spec.Name,
+		Decoder:             dec,
+		Topic0Syms:          p.Topic0Syms,
+		ExcludeTopic0Syms:   p.ExcludeTopic0Syms,
+		NeedsStateWriteKeys: p.NeedsStateWriteKeys,
+		Genesis:             p.Genesis,
+	}
+	if p.ContractIDs != nil {
+		src.ContractIDs = p.ContractIDs(a)
+	}
+	if p.LiveContractIDs != nil {
+		src.ContractIDsFunc = p.LiveContractIDs(dec)
+	}
+	return src, true, nil
 }
 
 // IsProjectedSource reports whether the projector owns name's writes
-// (AGENTS.md invariant [7]). It probes buildSource itself, so a source
-// added there is covered with no second list; a build error means the
-// name has a projector entry with incomplete config, which still counts.
+// (AGENTS.md invariant [7]). A build error means the name has a projector
+// spec with incomplete config, which still counts.
 func IsProjectedSource(name string, oracle config.OracleConfig, watchedSEP41 []string) bool {
 	_, ok, err := buildSource(strings.ToLower(strings.TrimSpace(name)), oracle, watchedSEP41, nil)
 	return ok || err != nil
 }
-
-func missingConfigErr(source string) error {
-	return &missingConfigError{Source: source}
-}
-
-type missingConfigError struct {
-	Source string
-}
-
-func (e *missingConfigError) Error() string {
-	return "projector: source " + e.Source + " enabled but its oracle config is empty (check oracle.* in /etc/stellarindex.toml)"
-}
-
-// Ensure dispatcher.Decoder is the type the projector expects.
-var _ dispatcher.Decoder = (*aquarius.Decoder)(nil)

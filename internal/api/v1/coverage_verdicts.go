@@ -336,7 +336,7 @@ const coverageIngestStallAge = 10 * time.Minute
 // the row (including tip_ledger and coverage_pct) is frozen at the
 // verdict's own compute time and reads perfectly healthy in isolation.
 func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) {
-	if s.completenessReader == nil {
+	if s.CompletenessReader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/coverage-unavailable",
 			"Coverage verdicts not available", http.StatusServiceUnavailable,
@@ -355,7 +355,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	network := s.network
+	network := s.Network
 	if network == "" {
 		network = sourcenet.Pubnet
 	}
@@ -364,7 +364,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		Network:              network,
 		NotApplicableSources: make([]NotApplicableSourceView, 0),
 	}
-	view.UsdVolumePricing = s.usdVolumePricing.view()
+	view.UsdVolumePricing = s.UsdVolumePricing.view()
 	for _, na := range sourcenet.NotApplicableOn(network) {
 		view.NotApplicableSources = append(view.NotApplicableSources, NotApplicableSourceView{Source: na.Source, Reason: na.Reason})
 	}
@@ -407,7 +407,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			view.LakeCompleteSources++
 		}
 	}
-	view.UnverifiedSources = unverifiedSources(s.auditedSources, snaps, network)
+	view.UnverifiedSources = unverifiedSources(s.AuditedSources, snaps, network)
 	view.TotalSources = len(view.Sources) + len(view.UnverifiedSources)
 	view.LaggingSources = laggingSources(view.Sources)
 
@@ -421,11 +421,11 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 // serve the rows without the freshness verdict that qualifies them.
 // Callers must check completenessReader != nil first.
 func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.CompletenessSnapshot, bool, error) {
-	snaps, err := s.completenessReader.ListCompletenessSnapshots(ctx)
+	snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
 	if err != nil {
 		return nil, false, err
 	}
-	network := s.network
+	network := s.Network
 	if network == "" {
 		network = sourcenet.Pubnet
 	}
@@ -547,7 +547,7 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 // ListCursors ceiling — so a slow Postgres can't hold a public GET open
 // past the point where the annotation is worth waiting for.
 func (s *Server) liveTip(ctx context.Context) (LedgerTipView, bool) {
-	if s.cursors == nil {
+	if s.Cursors == nil {
 		return LedgerTipView{}, false
 	}
 	tipCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

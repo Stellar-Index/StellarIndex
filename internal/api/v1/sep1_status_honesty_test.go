@@ -58,7 +58,7 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			stub := &sep1StateStub{attempted: tt.attempted}
-			s := &Server{logger: discardLogger(), sep1Cache: stub}
+			s := &Server{Options: Options{Sep1Cache: stub}, logger: discardLogger()}
 
 			got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer)
 
@@ -79,7 +79,7 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 // blames nobody, `unreachable` blames the issuer, so an unwired reader must
 // never produce the second.
 func TestSep1StatusClaimsNothingWithoutAFetchStateReader(t *testing.T) {
-	s := &Server{logger: discardLogger(), sep1Cache: payloadOnlyStub{}}
+	s := &Server{Options: Options{Sep1Cache: payloadOnlyStub{}}, logger: discardLogger()}
 
 	if got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer); got != "not_fetched" {
 		t.Errorf("sep1_status = %q with no fetch-state reader wired, want \"not_fetched\" — "+
@@ -92,8 +92,8 @@ func TestSep1StatusClaimsNothingWithoutAFetchStateReader(t *testing.T) {
 // makes no claim about them.
 func TestSep1StatusDoesNotBlameTheIssuerForOurReadFailure(t *testing.T) {
 	s := &Server{
-		logger:    discardLogger(),
-		sep1Cache: &sep1StateStub{attempted: true, stateErr: errors.New("db down")},
+		Options: Options{Sep1Cache: &sep1StateStub{attempted: true, stateErr: errors.New("db down")}},
+		logger:  discardLogger(),
 	}
 
 	if got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer); got != "not_fetched" {
@@ -113,7 +113,7 @@ func TestApplySep1OverlayReportsTheIssuersBrokenFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse asset: %v", err)
 	}
-	s := &Server{logger: discardLogger(), sep1Cache: &sep1StateStub{attempted: true}}
+	s := &Server{Options: Options{Sep1Cache: &sep1StateStub{attempted: true}}, logger: discardLogger()}
 	var detail AssetDetail
 
 	s.applySep1Overlay(context.Background(), &detail, asset)
@@ -132,7 +132,7 @@ func TestApplySep1OverlayStillSaysNotFetchedForOurBacklog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse asset: %v", err)
 	}
-	s := &Server{logger: discardLogger(), sep1Cache: &sep1StateStub{attempted: false}}
+	s := &Server{Options: Options{Sep1Cache: &sep1StateStub{attempted: false}}, logger: discardLogger()}
 	var detail AssetDetail
 
 	s.applySep1Overlay(context.Background(), &detail, asset)
@@ -172,7 +172,7 @@ func TestApplySep1OverlayAgesOutADeadDomainsPayload(t *testing.T) {
 		{true, "unreachable"},
 		{false, "verified"},
 	} {
-		s := &Server{logger: discardLogger(), sep1Cache: &sep1HeldPayloadStub{outlived: tt.outlived}}
+		s := &Server{Options: Options{Sep1Cache: &sep1HeldPayloadStub{outlived: tt.outlived}}, logger: discardLogger()}
 		var detail AssetDetail
 
 		s.applySep1Overlay(context.Background(), &detail, asset)
@@ -193,7 +193,7 @@ func TestAttachVerifiedImagesSkipsAnOutlivedPayload(t *testing.T) {
 		Issuance: []currency.IssuanceEntry{{Network: "stellar", Code: "WTGX", Issuer: sep1TestIssuer}},
 	}}
 	for _, outlived := range []bool{true, false} {
-		s := &Server{logger: discardLogger(), sep1Cache: &sep1HeldPayloadStub{outlived: outlived}}
+		s := &Server{Options: Options{Sep1Cache: &sep1HeldPayloadStub{outlived: outlived}}, logger: discardLogger()}
 		out := make([]VerifiedCurrencyListItem, 1)
 
 		s.attachVerifiedImages(context.Background(), entries, out)

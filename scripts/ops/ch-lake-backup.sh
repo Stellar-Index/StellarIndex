@@ -27,7 +27,7 @@
 #
 # Emits (node_exporter textfile collector):
 #   stellarindex_ch_lake_backup_configured      1 iff BACKUP_DISK is set
-#   stellarindex_ch_lake_backup_last_success_unix   (clean runs only)
+#   stellarindex_ch_lake_backup_last_success_unix   (clean runs; a deferred run keeps the previous value)
 #   stellarindex_ch_lake_backup_full_interval_days  FULL_INTERVAL_DAYS
 #   stellarindex_ch_lake_backup_last_full_unix      the recorded chain's full (every run)
 #   stellarindex_ch_lake_backup_last_bytes          bytes written by the run
@@ -37,7 +37,8 @@
 # Restore: docs/operations/runbooks/ch-lake-backup.md.
 #
 # Exit code: 0 clean; 1 the backup failed or no BACKUP_DISK is configured;
-# 2 the backup succeeded but pruning an old chain or sweeping orphans failed.
+# 2 the backup succeeded but pruning an old chain or sweeping orphans failed;
+# 75 deferred because a heavy job holds the host-wide heavy-job lock.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -78,8 +79,13 @@ running_backups() { ch "SELECT id FROM system.backups WHERE status = 'CREATING_B
 write_metrics() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
   mkdir -p "$TEXTFILE_DIR"
-  local out="$TEXTFILE_DIR/ch_lake_backup.prom" tmp full_unix=""
+  local out="$TEXTFILE_DIR/ch_lake_backup.prom" tmp full_unix="" prev_success=""
   tmp="$out.tmp.$$"
+  # A deferred run did no backup, so it re-emits the last real success rather
+  # than dropping it: the stale alert must age from that, not from the deferral.
+  if [[ "${1:-}" == keep_success && -r "$out" ]]; then
+    prev_success="$(sed -n 's/^stellarindex_ch_lake_backup_last_success_unix \([0-9][0-9]*\)$/\1/p' "$out" | tail -n1)"
+  fi
   # The chain file is written only after a confirmed full, so its first
   # line names the restorable full even on a run that failed.
   [[ -s "$chain_file" ]] && full_unix="$(head -n1 "$chain_file" | cut -f1)"
@@ -114,6 +120,10 @@ write_metrics() {
       echo "# HELP stellarindex_ch_lake_backup_chain_length Backups (full + incrementals) in the current chain."
       echo "# TYPE stellarindex_ch_lake_backup_chain_length gauge"
       echo "stellarindex_ch_lake_backup_chain_length $chain_len"
+    elif [[ -n "$prev_success" ]]; then
+      echo "# HELP stellarindex_ch_lake_backup_last_success_unix Unix time of the most recent BACKUP_CREATED ClickHouse lake backup."
+      echo "# TYPE stellarindex_ch_lake_backup_last_success_unix gauge"
+      echo "stellarindex_ch_lake_backup_last_success_unix $prev_success"
     fi
   } > "$tmp"
   chmod 644 "$tmp"
@@ -253,8 +263,24 @@ main() {
   exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
   if ! flock -n 9; then
     note "another ch-lake-backup run holds $STATE_DIR/lock — not starting"
-    write_metrics
+    write_metrics keep_success
     return 1
+  fi
+  # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
+  # operator heavy job that rewrites lake parts (recompress, ch-backfill
+  # -write, ch-rebuild) is refused while this holds it, and a backup is
+  # deferred (exit 75) while one holds it, instead of reading parts mid-rewrite.
+  # The unit is not under run-heavy-job.sh (see the unit), so it takes it here.
+  local heavy="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
+  [[ -e "$heavy" ]] || (umask 022; : >>"$heavy") 2>/dev/null || true
+  if exec 8<"$heavy"; then
+    if ! flock -s -n 8; then
+      note "a heavy job holds $heavy — deferring this run (exit 75)"
+      write_metrics keep_success
+      return 75
+    fi
+  else
+    note "WARNING cannot open $heavy — running WITHOUT cross-job exclusion (systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf)"
   fi
   # Fail closed: an unreadable system.backups must not read as "nothing running".
   local running
@@ -265,7 +291,7 @@ main() {
   fi
   if [[ -n "$running" ]]; then
     note "a backup to $BACKUP_DISK is already running — not starting a second"
-    write_metrics
+    write_metrics keep_success
     return 1
   fi
   plan="$(plan_next)"

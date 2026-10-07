@@ -52,7 +52,7 @@ type AssetGlobalMarket struct {
 // to this exact classic asset_id, and the parsed asset itself. A lookalike
 // sharing the code never matches: the lookup is on the full CODE-ISSUER id.
 func (s *Server) globalMarketAsset(assetID string) (global, local canonical.Asset, ok bool) {
-	vc, ok := s.verifiedCurrencies.LookupByStellarAssetID(assetID)
+	vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(assetID)
 	if !ok || vc.Class == currency.ClassFiat || vc.CoinGeckoID == "" {
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
@@ -70,7 +70,7 @@ func (s *Server) globalMarketAsset(assetID string) (global, local canonical.Asse
 // globalMarketRefs reads the shared oracle-stream snapshot only when a
 // row can use it, so pages without a vetted classic asset pay nothing.
 func (s *Server) globalMarketRefs(ctx context.Context, rows []AssetDetail) map[string]rwaReference {
-	if s.oracle == nil {
+	if s.Oracle == nil {
 		return nil
 	}
 	for i := range rows {
@@ -159,7 +159,7 @@ func (s *Server) stampStellarDivergence(gm *AssetGlobalMarket, stellarPrice stri
 	gm.StellarDivergencePct = &pct
 	dev := new(big.Rat).Sub(stellar, global)
 	dev.Quo(dev, global).Mul(dev, big.NewRat(100, 1)).Abs(dev)
-	th := s.divergenceThresholdPct
+	th := s.DivergenceThresholdPct
 	if !(th > 0) {
 		th = defaultStellarDivergenceThresholdPct
 	}

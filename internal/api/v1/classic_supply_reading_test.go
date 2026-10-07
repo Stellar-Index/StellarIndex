@@ -208,7 +208,7 @@ func (p *preciseSupplyStub) LatestSupplyObservations(
 // understatement.
 func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	stub := &preciseSupplyStub{obs: observedSupply(map[string]string{"native": "1"})}
-	s := &Server{assetsReader: stub}
+	s := &Server{Options: Options{AssetsReader: stub}}
 
 	got := s.latestPreciseSupply(context.Background())
 
@@ -252,7 +252,7 @@ func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{minMarketCapVolumeUSD: 1000}
+			s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
 			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
 			s.fillRowMarketCap(context.Background(), &row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
 			if row.CirculatingSupply == nil {

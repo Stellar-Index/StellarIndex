@@ -55,8 +55,8 @@ func (deadAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 // guard shipped.
 func newAnomaliesServer() *Server {
 	return &Server{
-		anomalies: deadAnomalyReader{},
-		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options: Options{Anomalies: deadAnomalyReader{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

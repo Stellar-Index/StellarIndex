@@ -187,15 +187,17 @@ groups:
       # a bounded cache under key enumeration emits one `evicted` per
       # `miss`, so miss/(miss+evicted) tops out at 0.5 and never crosses
       # the threshold.
+      # `*_redis` caches are excluded: the in-memory layer in front asks
+      # every 2 min against a 60 s Redis TTL, so they miss by design.
       - alert: stellarindex_api_cache_miss_rate_high
         expr: |
           (
-            sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result="miss"}[5m]))
+            sum by (cache, op) (rate(stellarindex_api_cache_ops_total{cache!~".*_redis",result="miss"}[5m]))
             /
-            sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m]))
+            sum by (cache, op) (rate(stellarindex_api_cache_ops_total{cache!~".*_redis",result=~"hit|miss|stale"}[5m]))
           ) > 0.5
           and
-          sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m])) > 0.1
+          sum by (cache, op) (rate(stellarindex_api_cache_ops_total{cache!~".*_redis",result=~"hit|miss|stale"}[5m])) > 0.1
         for: 10m
         labels:
           severity: ticket

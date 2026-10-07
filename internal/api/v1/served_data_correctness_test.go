@@ -31,7 +31,7 @@ func TestStampListingCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
-	s := &Server{verifiedCurrencies: cat}
+	s := &Server{Options: Options{VerifiedCurrencies: cat}}
 
 	realIss := realUSDCIssuer
 	fakeIss := fakeIssuerStrkey
@@ -77,7 +77,7 @@ func TestStampListingCollisionsTestNet(t *testing.T) {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
 	for _, network := range []string{"testnet", "futurenet"} {
-		s := &Server{verifiedCurrencies: cat, network: network}
+		s := &Server{Options: Options{VerifiedCurrencies: cat, Network: network}}
 		fakeIss := fakeIssuerStrkey
 		rows := []AssetDetail{{Code: "USDC", Issuer: &fakeIss, Slug: "USDC"}}
 		s.stampListingCollisions(rows)
@@ -157,9 +157,8 @@ func TestGlobalAssetViewOnChainFallback(t *testing.T) {
 	stellarID := vc.StellarEntry().AssetID
 	price := "0.0039386011"
 	s := &Server{
-		verifiedCurrencies: cat,
-		assetsReader:       &fallbackAssets{assetID: stellarID, price: price},
-		// globalPrice left nil → the CEX/aggregator tier misses.
+		Options: Options{VerifiedCurrencies: cat, AssetsReader: &fallbackAssets{assetID: stellarID, price: price}},
+		// globalPrice left nil → the CEX/aggregator tier misses.,
 	}
 
 	view := s.buildGlobalAssetView(context.Background(), vc)
@@ -199,8 +198,7 @@ func TestGlobalAssetViewNoFabricationWhenOffChain(t *testing.T) {
 	}
 	// assetID mismatch → the stub returns a no-price row for the twin.
 	s := &Server{
-		verifiedCurrencies: cat,
-		assetsReader:       &fallbackAssets{assetID: "SOMETHING-ELSE", price: "1.23"},
+		Options: Options{VerifiedCurrencies: cat, AssetsReader: &fallbackAssets{assetID: "SOMETHING-ELSE", price: "1.23"}},
 	}
 	view := s.buildGlobalAssetView(context.Background(), vc)
 	if view.PriceUSD != nil {

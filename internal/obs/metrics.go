@@ -1246,7 +1246,7 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 var APICacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_cache_ops_total",
-		Help: "Cache operations in API in-memory cache wrappers, labelled by cache name + op + result (read outcomes hit|miss|stale, side-events refresh_error|evicted).",
+		Help: "Cache operations in API cache wrappers (in-memory and *_redis read-through), labelled by cache name + op + result (read outcomes hit|miss|stale|error, side-events refresh_error|evicted).",
 	},
 	[]string{"cache", "op", "result"},
 )
@@ -5131,7 +5131,7 @@ var MintScopeClampRefusedTotal = prometheus.NewCounterVec(
 )
 
 // ChLiveSinkLedgersTotal — count of ledgers processed by the
-// ClickHouse real-time dual-sink (ADR-0034 #18), labelled by
+// ClickHouse real-time dual-sink (ADR-0041), labelled by
 // `outcome`:
 //   - "written"  — durably flushed to ClickHouse (post-Flush).
 //   - "buffered" — accepted into the in-memory buffer (pre-flush);

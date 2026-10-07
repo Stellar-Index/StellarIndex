@@ -38,7 +38,7 @@ type SEP40Price struct {
 // (ADR-0019) serves the held last-known-good with flags.frozen, or 503
 // when none is held — never the refused bucket.
 func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
-	reader := s.prices
+	reader := s.Prices
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
@@ -235,7 +235,7 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 // 400 when records is out of range or asset is malformed.
 // 503 when no PriceReader is wired.
 func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
-	reader := s.prices
+	reader := s.Prices
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
@@ -377,7 +377,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return snapshots, false, nil
 	}
 	var withheldErr error
-	for _, peg := range s.usdPeggedClassics {
+	for _, peg := range s.USDPeggedClassics {
 		// A peg asked for under any of its spellings — the classic id or
 		// its SAC wrapper — is not a market against itself.
 		if sameAsset(peg, asset) {
@@ -407,7 +407,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
 	var firstErr error
 	for _, a := range assetAliases(asset) {
-		snapshots, err := s.prices.RecentClosedSnapshots(ctx, a, quote, n)
+		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -443,7 +443,7 @@ const (
 // 404 when no observation exists for the pair. Freeze handling as
 // handleOracleLastPrice.
 func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) {
-	reader := s.prices
+	reader := s.Prices
 	if reader == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",

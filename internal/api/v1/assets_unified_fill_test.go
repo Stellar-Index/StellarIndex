@@ -35,7 +35,7 @@ func (s *fillAssetsStub) ListAssetsExt(_ context.Context, opts timescale.ListAss
 // classic stream instead of returning the catalogue tail alone.
 func TestUnifiedPage1Fill(t *testing.T) {
 	stub := &fillAssetsStub{n: 50}
-	s := &Server{assetsReader: stub}
+	s := &Server{Options: Options{AssetsReader: stub}}
 	// No verifiedCurrencies wired → catalogue phase empty → the fill
 	// path must still serve `limit` classic rows on page 1.
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=all&limit=25&q=tok", nil)

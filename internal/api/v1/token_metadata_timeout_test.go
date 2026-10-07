@@ -103,7 +103,7 @@ func TestTokenMetadataOverlays_BoundedByOwnBudget(t *testing.T) {
 		t.Parallel()
 		reader := &slowDecimalsReader{}
 		s := &Server{logger: discardLogger()}
-		s.tokenDecimals = reader
+		s.TokenDecimals = reader
 
 		detail := AssetDetail{Decimals: 7}
 		start := time.Now()
@@ -134,7 +134,7 @@ func TestTokenMetadataOverlays_BoundedByOwnBudget(t *testing.T) {
 		t.Parallel()
 		reader := &slowSupplyReader{}
 		s := &Server{logger: discardLogger()}
-		s.tokenSupply = reader
+		s.TokenSupply = reader
 
 		detail := AssetDetail{Decimals: 7}
 		start := time.Now()

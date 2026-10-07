@@ -1196,7 +1196,7 @@ type StorageConfig struct {
 	// deployment that cannot run ClickHouse opts OUT here rather than in.
 	ClickHouseAddr     string `toml:"clickhouse_addr" doc:"ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink." default:"127.0.0.1:9300"`
 	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three." default:"true"`
-	// ClickHouseProjectorSource feed-switch (ADR-0034 #10): when true, the
+	// ClickHouseProjectorSource feed-switch (ADR-0041): when true, the
 	// projector reads forward events from the CH lake's contract_events instead
 	// of the Postgres soroban_events landing zone, so soroban_events can be
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is
@@ -1279,8 +1279,8 @@ type IngestionConfig struct {
 // events-goroutine because they don't flow through soroban_events.
 //
 // PersistPerSource governs only the sources still in Phase-3 parallel.
-// Domains the projector has EARNED sole-writer status for (currently
-// sep41 — TASK #16b) are exempt: pipeline.SinkModeForProjector routes
+// Domains the projector has EARNED sole-writer status for (the
+// SoleWriter specs in internal/pipeline/source_spec.go) are exempt: pipeline.SinkModeForProjector routes
 // them through the projector alone whenever it is enabled, regardless
 // of this flag, so no value of it can drop their rows (the F-1316
 // foot-gun). See pipeline.IsSoleWriterProjected.
@@ -1292,7 +1292,7 @@ type IngestionConfig struct {
 // pipeline.ProjectorStallBound.
 type ProjectorConfig struct {
 	Enabled          bool `toml:"enabled"            doc:"Master switch. When false the projector goroutines are not started." default:"false"`
-	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); flipping it to false needs more than low projector lag: the indexer refuses to start in that mode unless every continuous aggregate's refresh start_offset covers the projector's stall bound (pipeline.VerifySoleWriterCAGGCoverage), because rows the projector delivers late are otherwise never materialized. The sep41 domain is exempt — the projector is always its sole writer (F-1316 / TASK #16b)." default:"true"`
+	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); flipping it to false needs more than low projector lag: the indexer refuses to start in that mode unless every continuous aggregate's refresh start_offset covers the projector's stall bound (pipeline.VerifySoleWriterCAGGCoverage), because rows the projector delivers late are otherwise never materialized. Sources whose spec sets SoleWriter (internal/pipeline/source_spec.go) are exempt — the projector is always their sole writer." default:"true"`
 }
 
 // AnomalyConfig configures both phases of ADR-0019 anomaly

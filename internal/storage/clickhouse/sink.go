@@ -468,7 +468,7 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 // flush can partially succeed. Writing ledgers last makes a ledgers row a
 // per-ledger COMMIT MARKER: if a ledger_seq is present in stellar.ledgers, all
 // of that ledger's txs/ops/results/events/changes are already durable in CH.
-// The real-time projector's completeness watermark (ADR-0034 #10,
+// The real-time projector's completeness watermark (ADR-0041 feed-switch,
 // ContiguousWatermark) relies on this invariant to read contract_events only up
 // to where the lake is provably complete — never racing ahead of a half-written
 // or dropped ledger. (Buffer-full drops in LiveSink.PushLedger drop the whole

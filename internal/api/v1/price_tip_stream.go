@@ -116,7 +116,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
-	if s.prices == nil {
+	if s.Prices == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
 			"Price serving not configured", http.StatusServiceUnavailable,
@@ -144,7 +144,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 
 	// Refuse before the DB pre-flight when no producer could be minted;
 	// the hub-less path has no producer registry to consult.
-	if s.hub != nil {
+	if s.Hub != nil {
 		if outcome := s.tipProducerPrecheck(r, asset, quote, window); outcome != tipProducerAdmitted {
 			s.writeTipProducerRefused(w, r, outcome, asset, quote, window)
 			return
@@ -200,7 +200,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	//     shared producer is harmless (idempotent state update).
 	//   - Hub-less deployments (tests, minimal binaries): the legacy
 	//     per-connection tick loop.
-	if s.hub != nil {
+	if s.Hub != nil {
 		// The producer's context is DELIBERATELY detached from r.Context()
 		// (contextcheck): the shared compute loop outlives any single
 		// connection — it stops via the registry's refcount + linger, not
@@ -212,7 +212,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		}
 		defer releaseProducer()
 		lastEventID := streaming.LastEventIDFrom(r)
-		sub, cancelSub, err := s.hub.Subscribe([]string{topic}, lastEventID)
+		sub, cancelSub, err := s.Hub.Subscribe([]string{topic}, lastEventID)
 		if err != nil {
 			streaming.WriteSubscribeRefused(w)
 			return

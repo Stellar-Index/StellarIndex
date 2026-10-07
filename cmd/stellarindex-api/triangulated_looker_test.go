@@ -8,6 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -72,7 +73,7 @@ func TestLookupTriangulatedVWAP_ValueAndProvenanceAreOneSnapshot(t *testing.T) {
 		_ = mr.Set(valKey, "0.080000000000")
 	}})
 
-	v, found, err := redisTriangulatedLooker{rdb: rdb}.LookupTriangulatedVWAP(ctx, xlm, gbp, window)
+	v, found, err := wiring.RedisTriangulatedLooker{RDB: rdb}.LookupTriangulatedVWAP(ctx, xlm, gbp, window)
 	if err != nil || !found {
 		t.Fatalf("lookup = (found=%v, err=%v)", found, err)
 	}
@@ -98,7 +99,7 @@ func TestLookupTriangulatedVWAP_UnstampedValueIsAMiss(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	looker := redisTriangulatedLooker{rdb: rdb}
+	looker := wiring.RedisTriangulatedLooker{RDB: rdb}
 	if err := mr.Set(cachekeys.VWAP(xlm, gbp, window).String(), "0.090000000000"); err != nil {
 		t.Fatal(err)
 	}
