@@ -43,8 +43,7 @@ var xlmTotalSupplyStroops = new(big.Int).Mul(
 // ledger-header `total_coins` those chains report — a reset test
 // network never ran inflation and never had the 2019 pubnet vote, so
 // the frozen pubnet figure is simply the wrong number there
-// (api.testnet served 50.0 B against a 100 B ledger, measured
-// 2026-08-28).
+// (api.testnet served 50.0 B against a 100 B ledger).
 var xlmTestNetworkTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(100_000_000_000),
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
@@ -106,22 +105,19 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 }
 
 // ReserveBalanceFreshnessReader is the optional extension to
-// [ReserveBalanceReader] that reports the lowest observation
-// ledger across the configured SDF reserve accounts at or
-// before the snapshot ledger.
+// [ReserveBalanceReader] that reports a freshness anchor for the
+// configured SDF reserve accounts at or before the snapshot ledger.
 //
-// F-1236 (codex audit-2026-05-12): closes the third leg of the
-// supply-snapshot freshness gate (the classic + SEP41 legs were
-// shipped in waves 17 + 18). Without an XLM freshness signal,
+// It is the XLM leg of the supply-snapshot freshness gate, alongside
+// the classic and SEP41 legs. Without an XLM freshness signal,
 // the Refresher's stale-component gate stays permissive on
 // every native-XLM snapshot — a backfilled-reserve observer
 // that drifts hours behind tip would still produce snapshots
 // stamped at the fresh ledger.
 //
 // Implementations:
-//   - [LCMReserveBalanceReader] iterates the per-account
-//     observation rows and returns MIN(row.Ledger) across all
-//     non-removal accounts.
+//   - [LCMReserveBalanceReader] checks that every account is
+//     observed and returns the account observer's watermark.
 //   - [ConfigReserveBalanceReader] DELIBERATELY does NOT
 //     implement this — the static config has no per-ledger
 //     freshness concept. The computer never probes when the balance
@@ -130,7 +126,7 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 //
 // The XLM computer probes for this interface via a type
 // assertion; if not satisfied, MinComponentLedger stays 0 and
-// the Refresher's gate falls back to legacy-permissive — same
+// the Refresher's gate stays permissive — same
 // shape as classic/SEP41 when their MinComponentLedger is 0.
 //
 // Zero return value means "no observation found for at least
@@ -240,8 +236,8 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	}
 
 	circulating := new(big.Int).Sub(total, reserved)
-	// CS-038: clamp at zero, exactly as Algorithm 2 (classic.go) and
-	// Algorithm 3 (sep41.go) already do. A reserve total exceeding the
+	// Clamp at zero, exactly as Algorithm 2 (classic.go) and
+	// Algorithm 3 (sep41.go) do. A reserve total exceeding the
 	// hard-capped XLM total is only reachable through operator misconfig
 	// (a non-SDF whale listed in `reserve_accounts`) or a reader bug, but
 	// the crown-jewel asset is precisely where a negative circulating
@@ -251,7 +247,7 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 		circulating.SetInt64(0)
 	}
 
-	// CS-010: only claim an SDF-reserve exclusion when we actually
+	// Only claim an SDF-reserve exclusion when we actually
 	// excluded reserves. With no reserve accounts configured,
 	// circulating == total; labelling that "xlm_sdf_reserve_exclusion"
 	// would tell every consumer an exclusion happened when it didn't,
@@ -265,10 +261,10 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 		basis = BasisXLMSDFReserveExclusionStatic
 	}
 
-	// F-1236 (codex audit-2026-05-12): if the reader implements
+	// If the reader implements
 	// [ReserveBalanceFreshnessReader], probe it for the
 	// per-account observation freshness signal. A failure here
-	// is non-fatal — the gate falls back to legacy permissive
+	// is non-fatal: the gate falls back to permissive
 	// (MinComponentLedger=0) the same way classic/SEP41 do on
 	// transient freshness-query errors. Never probed for a static-arm
 	// balance: the observer watermark says nothing about a hand-entered

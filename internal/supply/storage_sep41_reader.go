@@ -33,17 +33,17 @@ type SEP41SupplyStore interface {
 	// has events at or before asOfLedger. It feeds the Refresher's
 	// stale-component freshness gate: a quiet contract is not stale, a
 	// stalled producer is. Zero = the contract has no events yet
-	// (gate-skip signal). Optional: returning (0, nil) preserves legacy
-	// permissive behaviour.
+	// (gate-skip signal). Optional: returning (0, nil) keeps the gate
+	// permissive.
 	MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error)
 
 	// SEP41GenesisBaselineSeeded reports whether a pre-Soroban
 	// genesis baseline has been seeded for the contract (migration
-	// 0088, incident 2026-07-06). Feeds the computer's negative-total
+	// 0088). Feeds the computer's negative-total
 	// guard so a not-yet-seeded SAC-wrapper's negative Soroban-era
 	// total is reported as the benign `missing_baseline` outcome
 	// rather than a paging `compute_error`. Returning (false, nil)
-	// when unimplemented preserves the pre-0088 posture (negative
+	// when unimplemented treats the contract as not seeded (negative
 	// total → ErrNegativeTotalMissingBaseline).
 	SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error)
 }
@@ -60,8 +60,8 @@ type SEP41KindTotals struct {
 
 // StorageSEP41SupplyReader satisfies [SEP41SupplyReader] by
 // composing the SEP41 event-sum totals (sep41_supply_events) plus the
-// SAC-balance per-contract lookup primitive (3e215c2e2). Per ADR-0023
-// PR 3/4 — closes the algorithm 3 reader path.
+// SAC-balance per-contract lookup primitive. Per ADR-0023, this is the
+// algorithm 3 reader path.
 //
 // AdminBalance handling: Algorithm 3 names AdminBalance as a
 // separate field, but the SEP-41 admin is operator-policy (the
@@ -72,12 +72,11 @@ type SEP41KindTotals struct {
 // reader; the practical effect on circulating is identical
 // (locked-set sums + admin balance both subtract).
 //
-// C1-041 (audit-2026-07-23): "identical effect on circulating" is
-// only true once the operator HAS configured the locked-set. With
-// no locked-set, nothing is subtracted at all — and the computer
-// used to stamp the result `basis:"admin_exclusion"` regardless,
-// claiming an exclusion that never happened. [SEP41Computer.Compute]
-// now emits [BasisSEP41TotalOnly] for that case, so the unconfigured
+// "Identical effect on circulating" is only true once the operator
+// HAS configured the locked-set. With no locked-set, nothing is
+// subtracted at all, so stamping `basis:"admin_exclusion"` would claim
+// an exclusion that never happened. [SEP41Computer.Compute] emits
+// [BasisSEP41TotalOnly] for that case, so the unconfigured
 // state is visible on the wire instead of masquerading as a
 // configured one. Do NOT "fix" this by returning a non-zero
 // placeholder here.
@@ -127,15 +126,14 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: locked-contracts sum for %s: %w", contractID, err)
 	}
 
-	// F-1236 (codex audit-2026-05-12): per-component freshness.
-	// Non-fatal on query error — preserve legacy permissive
-	// posture by stamping zero.
+	// Per-component freshness. Non-fatal on query error: stamp zero,
+	// which keeps the gate permissive.
 	minLedger, err := r.store.MinSEP41ComponentLedger(ctx, contractID, ledger)
 	if err != nil {
 		minLedger = 0
 	}
 
-	// Migration 0088 / incident 2026-07-06: whether the pre-Soroban
+	// Migration 0088: whether the pre-Soroban
 	// genesis baseline has been seeded. Non-fatal on query error —
 	// treat as not-seeded (the guard then routes a negative total to
 	// the benign `missing_baseline` outcome, the safe default).
@@ -205,7 +203,7 @@ var _ SEP41SupplyReader = (*StorageSEP41SupplyReader)(nil)
 // AssetBoundSEP41Computer adapts a [SEP41Computer] to the
 // [SnapshotComputer] interface (the [Refresher]'s computer
 // contract) by baking in a fixed [canonical.Asset]. Mirrors
-// [AssetBoundClassicComputer] from f93e4bc2d — the aggregator
+// [AssetBoundClassicComputer]; the aggregator
 // constructs one per watched SEP-41 contract for its dedicated
 // Refresher goroutine.
 type AssetBoundSEP41Computer struct {
