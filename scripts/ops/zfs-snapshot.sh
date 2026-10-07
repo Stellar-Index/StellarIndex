@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # zfs-snapshot.sh — rolling ZFS snapshots of the ClickHouse lake, the
-# Postgres datasets and the MinIO Galexie archive on r1 (decision
-# 2026-08-29; archive added 2026-09-19, NS03).
+# Postgres datasets and the MinIO Galexie archive on r1.
 #
 # WHAT THIS PROTECTS AGAINST. pgBackRest (ADR-0043) covers Postgres
 # off-host with PITR, and the lake is re-derivable from the Galexie
@@ -296,7 +295,7 @@ enforce_min_free() {
     # $candidates is every prunable auto snapshot across all datasets —
     # unbounded on a long-lived pool, so `| head` could EPIPE `sort` under
     # pipefail and abort the prune loop exactly when the pool is filling
-    # (#475). Sort to completion in a substitution, then slice in the shell.
+    # Sort to completion in a substitution, then slice in the shell.
     sorted_candidates="$(printf '%s' "$candidates" | awk -F'\t' 'NF==2' | sort -t $'\t' -k2,2n)"
     name="${sorted_candidates%%$'\n'*}"
     name="${name%%$'\t'*}"
@@ -304,7 +303,7 @@ enforce_min_free() {
       log "guard: nothing left to prune (each dataset is down to its newest auto snapshot); free ${free} still < ${ZFS_SNAPSHOT_MIN_FREE_BYTES}"
       return 1
     fi
-    # Same EPIPE class as the sort above (#475): `awk ... exit` stops
+    # Same EPIPE class as the sort above: `awk ... exit` stops
     # reading, `printf` is still writing an unbounded $candidates, and
     # under `set -euo pipefail` the write error takes down the prune loop
     # exactly when the pool is filling. `exit` is not `head`, which is why

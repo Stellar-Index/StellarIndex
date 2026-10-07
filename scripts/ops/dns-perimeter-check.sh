@@ -3,8 +3,8 @@
 # stellarindex.io against the authoritative nameservers.
 #
 # The email perimeter lives OUTSIDE this repo, so none of the repo's gate
-# machinery can see it. #334 found the domain with no MX, no SPF, no DMARC and
-# no CAA while it was sending magic-link auth email — spoofable, with a dead
+# machinery can see it. A domain with no MX, no SPF, no DMARC and no CAA
+# while it sends magic-link auth email — spoofable, with a dead
 # security@ letterbox. This script is the drift check that would have caught it,
 # and it is the reason the intended record set is written down at all.
 #

@@ -54,7 +54,7 @@ if [ ! -f "$CONFIG" ]; then
   fail "config file present" "$CONFIG missing"
 else
   # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
-  # most a handful of lines — well under the pipe buffer (#475).
+  # most a handful of lines — well under the pipe buffer.
   listen_addr="$(grep -E '^\s*listen_addr\s*=' "$CONFIG" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || true)"
   if [ -z "$listen_addr" ]; then
     listen_addr="0.0.0.0:3000  (default)"
@@ -65,7 +65,7 @@ else
       ;;
     *)
       # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
-      # most a handful of lines — well under the pipe buffer (#475).
+      # most a handful of lines — well under the pipe buffer.
       proxy_cidrs="$(grep -E '^\s*trusted_proxy_cidrs\s*=' "$CONFIG" | head -1 || true)"
       if [ -z "$proxy_cidrs" ] || grep -q '\[\s*\]' <<<"$proxy_cidrs"; then
         fail "listen_addr public + no trusted proxies" "$listen_addr"
@@ -78,8 +78,8 @@ else
   # Verify the running process matches.
   # sigpipe-ok: `ss -tlnp` lists listening sockets only — tens of lines,
   # orders of magnitude under the pipe buffer, so awk's early exit cannot
-  # make ss block on a write (#475).
-  # #1097: TASK_COMM_LEN is 16 bytes including the NUL, so the kernel
+  # make ss block on a write.
+  # TASK_COMM_LEN is 16 bytes including the NUL, so the kernel
   # truncates "stellarindex-api" (16 chars) to "stellarindex-ap" in
   # /proc/<pid>/comm — which is what `ss -p` reads. The full name never
   # matched, so this check was unreachable: $actual was always empty and
@@ -109,7 +109,7 @@ echo
 # ── 2. CORS narrowed
 echo "  CORS"
 # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
-# most a handful of lines — well under the pipe buffer (#475).
+# most a handful of lines — well under the pipe buffer.
 allowed_origins="$(grep -E '^\s*allowed_origins\s*=' "$CONFIG" 2>/dev/null | head -1 || true)"
 if [ -z "$allowed_origins" ] || grep -q '"\*"' <<<"$allowed_origins"; then
   fail "allowed_origins is wide open" '["*"] — narrow to your showcase + API hostnames'
@@ -143,8 +143,7 @@ else
   # values single-quoted, and `^NAME=https://` cannot match
   # `NAME='https://...'` — so on r1 this reported all three as "unset —
   # alerts won't fan out" while alertmanager was running with six
-  # receivers and eight webhook URLs loaded from that very file
-  # (2026-09-10). A launch gate that cries wolf about paging is worse
+  # receivers and eight webhook URLs loaded from that very file. A launch gate that cries wolf about paging is worse
   # than no gate: it is read once, disbelieved, and then it is worth
   # nothing when a URL really is missing.
   # Still warns on an empty value or a non-URL — the quote is tolerated,
@@ -214,7 +213,7 @@ echo
 
 # ── 9. Boot warnings
 echo "  Recent SECURITY warnings"
-# #1097: -p warning filters on the journal's syslog PRIORITY, a property
+# -p warning filters on the journal's syslog PRIORITY, a property
 # of the transport — systemd stamps every line from stderr at the
 # default PRIORITY=6/info because no SyslogLevel is set anywhere in this
 # repo's deploy config (grep -rn SyslogLevel deploy configs → 0) — not

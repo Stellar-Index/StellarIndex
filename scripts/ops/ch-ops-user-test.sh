@@ -4,11 +4,11 @@
 #
 #   A. the ClickHouse ops-credential contract for every scripts/ops
 #      script that shells out to clickhouse-client (below);
-#   B. ch-live-catchup.sh's required live-era floor (#371 F10);
+#   B. ch-live-catchup.sh's required live-era floor;
 #   C. ch-live-catchup.sh failing, not reporting "no holes", when its
 #      gap scan errors (at the bottom of this file).
 #
-# Contract (2026-08-28 Wave A follow-up):
+# Contract:
 #
 #   1. STELLARINDEX_CLICKHOUSE_OPS_USER set ⇒ clickhouse-client runs as
 #      that user, with STELLARINDEX_CLICKHOUSE_OPS_PASSWORD handed over
@@ -77,8 +77,8 @@ run() {
     D2_STATE="$TMP/state/d2.$mode" D3_STATE="$TMP/state/d3.$mode"
     STATE="$TMP/state/st.$mode" LOG="$TMP/backfill.log"
     HOST=stub-host INTERVAL=0 DRIVER_PAT=no-such-driver-$$
-    # The destructive-DDL acknowledgement the retired D2 script used to
-    # need (#286): supplied so its refusal is proven unconditional.
+    # The destructive-DDL acknowledgement the retired D2 script took:
+    # supplied so its refusal is proven unconditional.
     # CH_FLAGS_DIR is redirected so no code path can touch the real
     # /var/lib/clickhouse/flags.
     D2_FORCE_DROP=yes CH_FLAGS_DIR="$TMP/flags"
@@ -87,7 +87,7 @@ run() {
   # own TO from the lake, so only the monitor may see it pre-set.
   [ "$name" = backfill-monitor ] && envs+=(TO=1)
   [ "$name" = rederive ] && envs+=(REDERIVE_LOG="$TMP/rederive.log")
-  # LIVE_ERA_FROM is ch-live-catchup's required live-era floor (#371 F10);
+  # LIVE_ERA_FROM is ch-live-catchup's required live-era floor;
   # ansible templates it into /etc/default/stellarindex-ops per host. The
   # script now refuses to run without it, so the credential contract below
   # needs it supplied — the "absent" case is asserted on its own further
@@ -140,7 +140,7 @@ check live-catchup ch-live-catchup.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers"
 check supply-seed ch-supply-flows-seed.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers"
-# d2-ordinal-reproject.sh is retired (#1156): it ranked rows in the
+# d2-ordinal-reproject.sh is retired: it ranks rows in the
 # EntryWalkVersion-1 order. It must refuse before its first query even with
 # the destructive-DDL acknowledgement that used to let it proceed.
 run d2 set "$OPS_DIR/d2-ordinal-reproject.sh" 45 45
@@ -160,7 +160,7 @@ check backfill-monitor ch-backfill-monitor.sh \
   "--port 9300 --query SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='stellar' AND active"
 
 
-# ─── ch-live-catchup's live-era floor contract (#371 F10) ───────────
+# ─── ch-live-catchup's live-era floor contract ───────────
 #
 # Second contract in this file, and it lives here rather than in a new
 # script because this is the harness CI already runs over scripts/ops

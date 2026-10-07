@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # restore-drill-test.sh — pins the restore drill's invocation contract.
 #
-# THE DEFECT THIS EXISTS FOR (found 2026-07-25):
+# THE DEFECT THIS EXISTS FOR:
 # scripts/ops/restore-drill.sh's optional ClickHouse re-derive stage
 # invoked `stellarindex-ops ch-backfill … -database drill_scratch`. That
 # flag has never existed. ch-backfill parses with flag.ContinueOnError,
@@ -21,7 +21,7 @@
 # `ch-backfill -help`, so it also catches a stale binary on disk); this
 # catches it in CI before it ships.
 #
-# Section 5 (2026-09-04) pins a second seam of the same class: the
+# Section 5 pins a second seam of the same class: the
 # textfile metric is per-repo (a `repo` label on every series, one file
 # per repo), the off-site unit runs the script with DRILL_REPO=2, and the
 # off-site staleness rule in BOTH trees selects repo="2". Drift in any one
@@ -66,7 +66,7 @@ fi
 # re-derive, not the `-help` preflight probe, not prose in a comment or a
 # note(). Anchored on the binary immediately preceding the subcommand, so
 # it matches both the current `"$OPS_BIN" ch-backfill` form and the
-# pre-fix inline `/usr/local/bin/stellarindex-ops ch-backfill` one. The
+# older inline `/usr/local/bin/stellarindex-ops ch-backfill` one. The
 # invocation spans continuation lines, so capture through the line that
 # redirects stderr.
 ch_invocation() {

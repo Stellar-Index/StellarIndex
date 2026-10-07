@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # d3-lecur-v2-rebuild-test.sh — fixture tests for the two IRREVERSIBLE
-# decisions in scripts/ops/d3-lecur-v2-rebuild.sh (audit RLT-399).
+# decisions in scripts/ops/d3-lecur-v2-rebuild.sh.
 #
 # clickhouse-client is STUBBED, so this runs anywhere in about a second and
 # never reaches a lake. The stub RECORDS every statement it is handed and
@@ -18,9 +18,9 @@
 #      38,000,000. The RENAME is where rollback-precutover stops applying.
 #   2. cutover REFUSES on an empty v2, on a v2 whose max lags v1's (a v2 MV
 #      that is not capturing live ingest), and on a coverage query that did
-#      not come back at all — r1's state today, where the 2026-07-29 cutover
-#      completed and there is no longer a ledger_entries_current_v2. Unfixed,
-#      that case DROPPED the live ledger_entries_current_mv before failing.
+#      not come back at all — r1's state, where the cutover has completed
+#      and there is no ledger_entries_current_v2. Unguarded, that case
+#      DROPS the live ledger_entries_current_mv before failing.
 #   3. a refusal issues NO DROP, NO RENAME and NO INSERT — v1 keeps serving.
 #   4. D3_FORCE_CUTOVER=yes, and only that, overrides — the same explicit
 #      acknowledgement finalize / rollback-precutover already require.
@@ -30,7 +30,7 @@
 #      [54000000,63050000] must not be adopted by a later [2,38000000].
 #      Unkeyed, that run inserted NOTHING and logged "complete" — and that
 #      ordering is the normal one (phaseD-backfill.sh walks the high range
-#      first). The pre-fix shape is reproduced here by planting the legacy
+#      first). The failing shape is reproduced here by planting the legacy
 #      unkeyed state file.
 #   7. a same-window mark IS still honoured (resume must keep working), a
 #      mark below its own window start is refused as corrupt, and an empty
@@ -163,7 +163,7 @@ else
 fi
 no_ddl lag "v2 behind the tip"
 
-# r1's state TODAY (measured 2026-09-19): the 2026-07-29 cutover completed and
+# r1's state (measured): the cutover has completed and
 # finalize dropped _old, so ledger_entries_current is already the
 # ReplacingMergeTree(version) shape and there is NO ledger_entries_current_v2.
 # A cutover re-run therefore gets a FAILED query, not a number — and a failed
@@ -219,7 +219,7 @@ fi
 
 # ─── 5. reproject state is per-window ───────────────────────────────
 #
-# The pre-fix shape, planted: a run over the HIGH range left an unkeyed
+# The failing shape, planted: a run over the HIGH range left an unkeyed
 # mark at 63050000. The next range is the LOW one — phaseD-backfill.sh's
 # real order — and it must insert, not report itself complete.
 mkdir -p "$TMP/state.lowwindow"

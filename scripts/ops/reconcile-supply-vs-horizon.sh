@@ -5,7 +5,7 @@
 # Why this exists: the confidence campaign's B3 track verified Algorithm 2
 # against the TRUSTLINE sum alone, which is exact — and therefore never
 # exercised the other three components. That blind spot hid a 13.2%
-# understatement on AQUA (unseeded claimable balances, 2026-07-27). This
+# understatement on AQUA (unseeded claimable balances). This
 # script closes it by reconciling against the FULL component sum:
 #
 #     trustlines(authorized) + claimable + liquidity pools + contracts(SAC)
@@ -48,7 +48,7 @@ while getopts "t:a:h" opt; do
 done
 
 # The tracked classic-asset set (Algorithm 2). Sourced from the live
-# trustline_observations distinct asset_key set on r1, 2026-07-27. Keep in
+# trustline_observations distinct asset_key set on r1. Keep in
 # sync with [supply] watched_classic_assets.
 ASSETS=(
   "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"

@@ -3,7 +3,7 @@
 # ops-verdict.sh — sourced helpers that refuse to call an operation
 # successful when it did nothing.
 #
-# THE BUG CLASS. Four variants of one shape were found on 2026-09-07,
+# THE BUG CLASS. Four variants of one shape were found on r1,
 # all of them "an operation that succeeded at doing nothing":
 #
 #   1. Waiting on a `Type=oneshot` unit with
@@ -74,7 +74,7 @@
 : "${OPS_VERDICT_SYSTEMCTL:=systemctl}"
 # Default wait, in seconds. Generous on purpose: a wait helper whose
 # own default is the thing that fails teaches operators to delete it.
-# Measured on r1 2026-09-07 — creators-rollup 963 s, sponsors-rollup
+# Measured on r1 — creators-rollup 963 s, sponsors-rollup
 # 704 s.
 : "${OPS_VERDICT_TIMEOUT:=3600}"
 : "${OPS_VERDICT_POLL:=5}"

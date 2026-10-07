@@ -4,13 +4,13 @@
 # suspiciously short list, instead of reporting a clean 0-route sweep
 # as exit 0.
 #
-# The defect this guards (audit 2026-09-02 F082): an operator without
+# The defect this guards: an operator without
 # PyYAML on PATH ran route-sweep.sh, python3 printed
 # ModuleNotFoundError to stderr, the generator's output file stayed
 # empty, and the sweep still printed "ok=0 client_4xx=0 server_5xx=0
 # unreachable=0 skipped=0" and exited 0 — a tooling failure read as
 # "every route healthy", reproducing exactly the invisibility of the
-# 2026-07-27 incident (21 of 94 GETs 503ing under an all-green board)
+# route-503 incident (21 of 94 GETs 503ing under an all-green board)
 # one layer further down, inside the tool meant to catch it.
 #
 # route-sweep.sh guards its own direct-execution with
@@ -81,7 +81,7 @@ res "$(t ! -s "$out"; echo $?)" \
   "…even though the parser itself exited 0 and left an empty (not missing) file" \
   "expected $out empty"
 
-# ─── 3. floor holds, but a known 2026-07-27 route is missing ───────
+# ─── 3. floor holds, but a known incident route is missing ───────
 echo "route-sweep-test: enough routes to clear the floor, but the wrong ones"
 
 {

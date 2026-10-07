@@ -50,7 +50,7 @@ OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"
 PAR=${PAR:-4}
-# INV-0802: ops_batch's -C file once the role renders it. It must win over
+# ops_batch's -C file once the role renders it. It must win over
 # root's ~/.clickhouse-client/config.xml (ops_admin, normal priority); absent,
 # the env pair above applies as before.
 CH_CFG=/etc/clickhouse-client/ops-batch.xml
@@ -66,10 +66,9 @@ CH() { clickhouse-client ${CH_AUTH[@]+"${CH_AUTH[@]}"} --port "${CH_PORT:-9300}"
 # at or above it a sink-shaped hole can form, so that is where the gap scan
 # starts.
 #
-# It is a per-DEPLOYMENT fact with no defensible default (#371 F10). The
-# literal that used to sit here was r1's mainnet backfill ceiling, shipped
-# verbatim by the ansible role to every host it provisions — and both ways of
-# being wrong are SILENT:
+# It is a per-DEPLOYMENT fact with no defensible default: a literal here
+# (say r1's mainnet backfill ceiling) would ship verbatim via the ansible
+# role to every host it provisions — and both ways of being wrong are SILENT:
 #
 #   too high — the gap scan matches nothing, and the lake's only self-healer
 #              quietly becomes a no-op (the projector then stalls at the

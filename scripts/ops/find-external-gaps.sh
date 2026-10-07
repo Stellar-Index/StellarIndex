@@ -8,7 +8,7 @@
 # one — a Kraken fill has no ledger. So the only gap detector in the tree could
 # not, even in principle, notice a CEX source going dark.
 #
-# It went unnoticed for 26 months. Measured 2026-09-08: `kraken` held no XLM/USD
+# One went unnoticed for 26 months. Measured on r1: `kraken` held no XLM/USD
 # trades at all between 2024-04-01 and 2026-04-30, which is why prices_1m/1h/1d
 # for crypto:XLM/fiat:USD began only in 2026-05, and in turn why 1,738,671 SDEX
 # trades in 2026-03/04 could not be valued and were stored with a NULL
