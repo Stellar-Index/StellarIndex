@@ -63,7 +63,7 @@ func classicOpTypeInList(opTypes []string) string {
 // the WRITE side are harmless — stellar.account_movements is itself a
 // ReplacingMergeTree (ADR-0048 D2), so a redundant re-derived row
 // collapses on its own ORDER BY key. The Postgres classic_movements
-// writer this comment used to cite for that claim (migration 0105) is
+// writer (migration 0105) is
 // retired (ADR-0048 D2) and was never the mechanism anyway. On the
 // READ side a duplicate op is NOT harmless: it fans out to k*m
 // identical ClassicOp rows here, and a caller that counts them 1:1

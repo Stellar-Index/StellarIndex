@@ -486,9 +486,9 @@ func TestClampLedger(t *testing.T) {
 // P23BoundaryLedger on pubnet, the chain's start on a reset test net —
 // and with it at 1 the classic arm owns no ledger while the post-P23 arm
 // owns every one, which is what makes `created` cohorts exist on testnet
-// and futurenet at all. Red on the pre-fix code, where the boundary was
+// and futurenet at all. Red if the boundary were
 // the pubnet constant baked into the SQL: with every test-net ledger
-// below 58,762,517 the classic arm owned all of them and looked for
+// below 58,762,517 the classic arm would own all of them and look for
 // create_account movements a post-P23-only chain never writes.
 func TestCreatorsRollupArmsSplitAtTheGivenBoundary(t *testing.T) {
 	for _, boundary := range []uint32{1, 2, P23BoundaryLedger} {

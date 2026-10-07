@@ -169,7 +169,7 @@ func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 // sums: the exact NUMERIC total text is the volume, the double sums only
 // form the unitless shares. It is the SINGLE derivation shared by the
 // per-asset [Store.AssetVolumeCharacter] and the all-asset rollup, so the
-// rollup can never drift from the value the detail used to compute live —
+// rollup can never drift from the value the detail computes live —
 // same inputs, same round4, same deriveVolumeCharacter.
 func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerSide, marketStyled float64, makers, takers int64) AssetVolumeCharacter {
 	out := AssetVolumeCharacter{

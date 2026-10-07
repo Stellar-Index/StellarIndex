@@ -741,7 +741,7 @@ func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair
 
 // MarkRecovered closes out the currently-firing row for (asset,
 // quote). Called by a recovery worker (or the aggregator when it
-// detects a previously-frozen pair has cleared) — NOT by the
+// detects a already-frozen pair has cleared) — NOT by the
 // freeze.Writer.Mark path.
 //
 // releasedBy records who closed the row: "operator:<actor>" or

@@ -333,8 +333,7 @@ type ExplorerReader struct {
 	accountCreatorEdgesProbe schemaProbe
 	accountSponsorEdgesProbe schemaProbe
 
-	// holdersRollupProbe probes stellar.asset_holders_rollup (inventory
-	// #4, deploy/clickhouse/asset_holders_rollup.sql). Present +
+	// holdersRollupProbe probes stellar.asset_holders_rollup (deploy/clickhouse/asset_holders_rollup.sql). Present +
 	// non-empty → AssetHolders serves keyed precomputed boards; absent →
 	// the legacy two-FINAL-scans-per-request path. requireRows: a
 	// never-exchanged empty rollup must read as unavailable, not as
@@ -359,7 +358,7 @@ type ExplorerReader struct {
 	opsBySourceProbe schemaProbe
 
 	// accountActivityProbe probes stellar.account_activity (the per-account
-	// activity watermark, deploy/clickhouse/account_activity.sql, #31).
+	// activity watermark, deploy/clickhouse/account_activity.sql).
 	// Present + non-empty → AccountOperations bounds each keyset arm's
 	// reverse primary-key resolve with the account's last-active ledger
 	// (`ledger_seq <= ?`), so a long-idle account's page stops at its real
@@ -889,10 +888,10 @@ func scanOpsLight(rows driver.Rows) ([]OpRow, error) {
 // OpRow.BodyXDR is always "". The directory is a summary listing; callers
 // needing the decoded body use the per-ledger / per-tx paths.
 //
-// TWO-PASS, tail-window first. The old form
-// carried NO lower bound on either arm, and the "cheap streamed reverse
-// scan" the query's own comment claimed was refuted by ClickHouse's
-// query_log on r1: the first page read 10.3M rows / 1.37 GiB in
+// TWO-PASS, tail-window first. A form with
+// NO lower bound on either arm is not the "cheap streamed reverse
+// scan" it looks like; ClickHouse's query_log on r1 shows the first page
+// reading 10.3M rows / 1.37 GiB in
 // 1,788–1,875 ms, because with no ledger predicate every part in every
 // partition is a candidate and the reverse read opens all of them.
 //
@@ -994,7 +993,7 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 // when a windowed read (recentOperationsSQL without exactDedup) cannot prove a
 // full page.
 //
-// LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
+// LIMIT 1 BY the operations primary key: stellar.operations
 // is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
 // un-merged duplicate PART that is byte-identical to the original bar
 // ingested_at (which opColsLight doesn't even select) until a background
@@ -1015,8 +1014,7 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 // recentLedgersTailWindow` on a cursor page. That is the same bound
 // RecentLedgers takes on both of ITS arms, for the same measured reason:
 // with no ledger predicate every part in every partition is a candidate,
-// and r1's query_log measured the "cheap streamed reverse scan" this
-// comment used to claim at 10.3M rows / 1.37 GiB / 1.8 s for one 50-row
+// and r1's query_log measured the "cheap streamed reverse scan" at 10.3M rows / 1.37 GiB / 1.8 s for one 50-row
 // page. It is a PERFORMANCE bound only — RecentOperations re-runs the
 // UNBOUNDED form whenever the bounded pass comes back short, so no page is
 // ever truncated by it.
@@ -1073,11 +1071,11 @@ func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
 // be asked about an underflowed bound.
 //
 // Why it matters: KeyCondition
-// does NOT decompose a 3-column tuple comparison, so in the old form the ONLY
+// does NOT decompose a 3-column tuple comparison, so without this rewrite the ONLY
 // index-usable predicate on a cursor page was the `ledger_seq >= lower` —
 // which selects everything ABOVE the cursor, i.e. essentially the whole table.
 // `EXPLAIN ESTIMATE` for `?cursor=5000000.0.0` selected 80 parts /
-// 24,693,075,112 rows / 3,014,332 marks; the same page in this form selects
+// 24,693,075,112 rows / 3,014,332 marks; the same page with the rewrite selects
 // 1 part / 4,157 rows / 1 mark. Executed, that is 2.86 BILLION rows / 32 GiB
 // in 30 s and still unfinished (killed at the cap), versus 4,157 rows /
 // 564 KiB / 5 ms. In the rewrite arm 1 constrains the leading key column to a
@@ -1219,9 +1217,9 @@ type ThroughputBucket struct {
 // It is ONLY ever used to size a `ledger_seq >` predicate as a PARTITION-PRUNING
 // HINT — never as a semantic window boundary. Overshooting is safe (it just
 // scans a little wider); undershooting would silently truncate real data.
-// Using it as the boundary was a chart bug: a ledger-count window
-// lands mid-day, so the first toStartOfDay bucket was a partial day rendered as
-// a real drop, and a "30 day" window actually spanned ~34.6 days.
+// Using it as the boundary would be a chart bug: a ledger-count window
+// lands mid-day, so the first toStartOfDay bucket is a partial day rendered as
+// a real drop, and a "30 day" window actually spans ~34.6 days.
 const ledgersPerDayPruningEstimate = 17280
 
 // recentLedgersTailWindow bounds the tip-page ledger query to a tail slice so
@@ -1236,14 +1234,14 @@ const recentLedgersTailWindow = 5000
 // plus today, which is flagged Partial (still accumulating).
 // windowDays defaults to 30, capped 365.
 //
-// The window is DAY-ALIGNED on close_time, not a ledger count. The old form
-// bounded the range with `ledger_seq > max - windowDays*17280` alone, which
-// lands on an arbitrary ledger MID-DAY: the earliest toStartOfDay bucket then
-// covered only part of that day and rendered as a real throughput drop (at
-// windowDays=90 the first bucket was ~20% of a day). It also silently
-// mis-sized the window — 17280 is the theoretical 5.0s cadence but the real
-// rate is ~14,950/day, so a "30 day" window actually spanned ~34.6 days and
-// inflated every window total by ~15%.
+// The window is DAY-ALIGNED on close_time, not a ledger count. Bounding the range
+// with `ledger_seq > max - windowDays*17280` alone lands on an arbitrary
+// ledger MID-DAY: the earliest toStartOfDay bucket would cover only part of
+// that day and render as a real throughput drop (at windowDays=90 the first
+// bucket is ~20% of a day). It would also silently mis-size the window —
+// 17280 is the theoretical 5.0s cadence but the real rate is ~14,950/day, so
+// a "30 day" window would span ~34.6 days and inflate every window total
+// by ~15%.
 //
 // The ledger predicate is retained ONLY as a partition-pruning hint (sized
 // generously so it can never clip a day the time predicate wants); close_time
@@ -1726,7 +1724,7 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 // O(account history)), used when the windowed read cannot prove a full page.
 // The sentinel op_index rows (tx-sourced) are excluded.
 //
-// hasBound adds ` AND ledger_seq <= ?` (#31): the account's activity
+// hasBound adds ` AND ledger_seq <= ?`: the account's activity
 // watermark (accountActivityWatermark), so a long-idle account's reverse
 // read starts at its real last activity instead of walking every granule
 // from the tip (~4 s for a 46d-idle account). EXACT, not an
@@ -1755,7 +1753,7 @@ func sourcedOpKeysExactQuery(hasCursor, hasBound bool) string {
 // composite (ledger_seq, tx_index, op_index) cursor (ADR-0038 Phase B). The
 // arms never overlap at op granularity: operationParticipantRows excludes the
 // op's own resolved source (TestOperationParticipantRows_SkipsSource). When
-// the account has an activity watermark (stellar.account_activity, #31) both
+// the account has an activity watermark (stellar.account_activity) both
 // arms are additionally bounded by `ledger_seq <= watermark`. resume: see
 // AccountTransactions.
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) (_ []OpRow, resume ExplorerCursor, _ error) {
@@ -2150,7 +2148,7 @@ func (r *ExplorerReader) accountActivityAvailable(ctx context.Context) bool {
 // accountActivityWatermark returns the account's last-active ledger from
 // stellar.account_activity — the exact upper bound AccountOperations'
 // arms use to stop their reverse primary-key resolves at the account's
-// real last activity instead of walking granules back from the tip (#31).
+// real last activity instead of walking granules back from the tip.
 //
 // max(last_ledger), never a bare row read or FINAL: the table is
 // ReplacingMergeTree(last_ledger) fed by three MVs, so an account can
@@ -2184,10 +2182,10 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 // probeSchema answers "does this schema object exist" and CACHES ONLY A
 // DEFINITIVE ANSWER.
 //
-// These probes used to be a plain sync.Once, so the FIRST call's outcome
-// was final for the process lifetime. A transient ClickHouse error at that
+// A plain sync.Once would make the FIRST call's outcome
+// final for the process lifetime. A transient ClickHouse error at that
 // instant — a restart mid-deploy, a connection reset, a request-context
-// deadline — latched the probe to false and silently degraded every
+// deadline — would latch the probe to false and silently degrade every
 // subsequent read for the life of the process, with no error, no metric,
 // and no self-heal short of a restart. That is the worst shape a fallback
 // can have: correct-but-slower forever, triggered by a blip.
@@ -2304,7 +2302,7 @@ func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (tx T
 // KNOWN (ledger_seq, tx_hash) pair. Both txByHashIndexed and txByHashScan's
 // second step call this once they know which ledger the hash lives in.
 //
-// FINAL, not `ORDER BY ingested_at DESC LIMIT 1` (audit DAT-10, "may return
+// FINAL, not `ORDER BY ingested_at DESC LIMIT 1` (which "may return
 // the WRONG row"): ingested_at is `DateTime` — ONE-SECOND resolution — so a
 // batch that re-ingests many rows within the same wall-clock second (a
 // decode-bug-fix backfill re-deriving a ledger range, not just an idempotent
@@ -2312,7 +2310,7 @@ func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (tx T
 // tx_index) key that TIE on the version column `ORDER BY ingested_at DESC`
 // sorts by. A plain SELECT has no way to break that tie correctly — it only
 // sees the tied ingested_at values, not true insertion order — so it could
-// silently keep serving the STALE pre-fix row. FINAL resolves the tie
+// silently keep serving the STALE row. FINAL resolves the tie
 // correctly: ClickHouse's ReplacingMergeTree merge keeps the row that was
 // PHYSICALLY inserted last among version ties, using real insertion order
 // that isn't exposed to a bare SELECT.
@@ -2364,7 +2362,7 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 //
 //  2. Read the authoritative row via txByLedgerAndHash, now that step 1
 //     narrowed the read to one ledger — cheap FINAL, deterministic, correct
-//     even on an ingested_at tie (audit DAT-10; see txByLedgerAndHash).
+//     even on an ingested_at tie (see txByLedgerAndHash).
 //
 // found=false when the hash is unknown (step 1 comes up empty).
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
@@ -2407,10 +2405,10 @@ func (r *ExplorerReader) txSeqByScan(ctx context.Context, seqQ, hash string) (ui
 // OperationsByTx returns a transaction's operations, ledger-scoped (so
 // partition-pruned + fast — the caller passes the ledger from TransactionByHash).
 //
-// FINAL (audit DAT-10): ledger+tx_hash-scoped, so bounded to one partition
+// FINAL: ledger+tx_hash-scoped, so bounded to one partition
 // and a primary-key prefix on ledger_seq — cheap, same reasoning as the
 // sibling OperationsByLedger's FINAL just above. Without it, a re-ingested
-// op left an un-merged duplicate part and this tx-detail view showed the
+// op leaves an un-merged duplicate part and this tx-detail view shows the
 // operation twice.
 func (r *ExplorerReader) OperationsByTx(ctx context.Context, seq uint32, hash string) ([]OpRow, error) {
 	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
@@ -2497,8 +2495,8 @@ type TxOutcome struct {
 // to `ORDER BY ingested_at DESC LIMIT 1 BY tx_hash`: `ingested_at` is DateTime
 // (ONE-SECOND resolution), so a re-ingest batch that rewrites many rows within
 // one wall-clock second TIES on the version column and a bare SELECT has no way
-// to break that tie — it would silently serve the STALE pre-fix verdict. That is
-// audit DAT-10, and txByLedgerAndHash above documents the same trap on this same
+// to break that tie — it would silently serve the STALE verdict. That is
+// the same trap txByLedgerAndHash above documents on this same
 // table. FINAL resolves the tie using real insertion order. It is cheap here for
 // exactly the reason it is cheap there: once ledger_seq is a primary-key point
 // set, FINAL only merges the handful of parts touching those ledgers, so there
@@ -2779,13 +2777,13 @@ const recentContractsQuery = `SELECT contract_id,
 // Window-scoped so the GROUP BY stays bounded (contract_events is billions of
 // rows all-time); the caller derives sinceLedger from the tip.
 //
-// The event count is uniqExact over the PRIMARY KEY, not count() (audit
-// DAT-10). stellar.contract_events is ReplacingMergeTree(ingested_at) and a
+// The event count is uniqExact over the PRIMARY KEY, not count().
+// stellar.contract_events is ReplacingMergeTree(ingested_at) and a
 // partially-succeeded flush is retried over the same range — by design, the
 // writes are idempotent under RMT — so the table legitimately holds duplicate
 // un-merged parts until a background merge collapses them. A bare count()
-// therefore inflated a contract's event tally and MIS-RANKED this directory,
-// and it did so worst exactly where it matters: this query is window-scoped to
+// therefore inflates a contract's event tally and MIS-RANKS this directory,
+// and it does so worst exactly where it matters: this query is window-scoped to
 // recent ledgers, which is where un-merged retries concentrate.
 //
 // Still NOT FINAL, deliberately: FINAL would defeat the contract_id bloom
@@ -2798,7 +2796,7 @@ func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLe
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	// Census-first (inventory #26 item 2): sum precomputed day rows —
+	// Census-first: sum precomputed day rows —
 	// sub-second against ~tens of millions of narrow rows — instead of
 	// the 40s uniqExact GROUP BY over billions of contract_events. Day
 	// resolution: the window floor rounds DOWN to the start of
@@ -2914,15 +2912,15 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	const subjectTxCap = 50_000
 	// uniqExact(tx_hash), not count(), and this fixes TWO defects at once.
 	//
-	// DAT-10: contract_events is ReplacingMergeTree, so a retried partial
-	// flush leaves duplicate un-merged rows that count() double-counted —
+	// contract_events is ReplacingMergeTree, so a retried partial
+	// flush leaves duplicate un-merged rows that count() double-counts —
 	// concentrated in exactly this query's recent window.
 	//
-	// DAT-11 #50: the column is named shared_txs and the API serves it as
-	// shared_txs, but count() counted co-occurring EVENTS, not transactions.
-	// A callee emitting 20 events in one shared tx scored 20. Counting
-	// distinct tx_hash makes the number mean what its name has always
-	// claimed, and is inherently duplicate-proof — a duplicated row carries
+	// The column is named shared_txs and the API serves it as
+	// shared_txs, but count() would count co-occurring EVENTS, not transactions.
+	// A callee emitting 20 events in one shared tx would score 20. Counting
+	// distinct tx_hash makes the number mean what its name
+	// claims, and is inherently duplicate-proof — a duplicated row carries
 	// the same tx_hash and collapses on its own.
 	//
 	// Served values will DROP for busy pairs. That is the correction: the old
@@ -2955,11 +2953,11 @@ type EventSummary struct {
 // EventsByTx returns a transaction's contract events (ledger-scoped — fast;
 // contract_events is ORDER BY (ledger_seq, tx_hash, op_index, event_index)).
 //
-// FINAL (audit W4-storage-1, same class as DAT-10): ledger+tx_hash-scoped, so
+// FINAL: ledger+tx_hash-scoped, so
 // bounded to one partition and a primary-key prefix on ledger_seq — cheap, the
 // same reasoning as the byte-twin OperationsByTx's FINAL. Without it, a
-// re-ingested event left an un-merged duplicate ReplacingMergeTree part and this
-// tx-detail view showed the event twice.
+// re-ingested event leaves an un-merged duplicate ReplacingMergeTree part and this
+// tx-detail view shows the event twice.
 func (r *ExplorerReader) EventsByTx(ctx context.Context, seq uint32, hash string) ([]EventSummary, error) {
 	const q = `SELECT op_index, event_index, contract_id, event_type, topic_0_sym
 		FROM stellar.contract_events FINAL

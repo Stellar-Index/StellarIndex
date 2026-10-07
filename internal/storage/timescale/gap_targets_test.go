@@ -14,7 +14,7 @@ import (
 // migration MUST appear in [DefaultGapDetectorTargets] in the
 // same PR — without this, a new source's table can land with no
 // data-derived coverage signal at all (the exact failure mode
-// F-0020 exhibited at the soroban_events layer).
+// seen at the soroban_events layer).
 //
 // The test walks migrations/*.up.sql for `CREATE TABLE <name>`
 // statements whose name matches the per-source naming

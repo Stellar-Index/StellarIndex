@@ -21,13 +21,13 @@ import (
 // lookup for a not-yet-reached contract returns zero rows even though the
 // contract's executable is fully resolvable from current state.
 //
-// Pre-fix, contractWasmHash trusted that empty index result as an
-// authoritative not-found (ok=false, err=nil) and ContractWasm turned it
+// Without the fallback, contractWasmHash would trust that empty index result as an
+// authoritative not-found (ok=false, err=nil) and ContractWasm would turn it
 // into ErrContractWasmUnresolved — a confidently-wrong "no wasm" 404 for a
-// contract that DOES have code. The fix: only a POSITIVE index verdict (a
+// contract that DOES have code. So only a POSITIVE index verdict (a
 // resolved hash or a SAC verdict) short-circuits; an index MISS falls
 // through to the legacy current-state read (the fallback source of truth),
-// mirroring DATA-2's contract_active_ledgers empty-walk fallthrough.
+// mirroring the contract_active_ledgers empty-walk fallthrough.
 //
 // Proven red: revert the `(err == nil && ok)` guard in contractWasmHash
 // back to `err == nil` and this test fails — the reader returns ok=false
@@ -91,10 +91,10 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 // backfill coverage. Only contractWasmHash guarded against this; this read
 // did not.
 //
-// Pre-fix, an applied-but-still-backfilling index made ContractCodeHistory
+// Without the fallback, an applied-but-still-backfilling index would make ContractCodeHistory
 // return an empty timeline for any contract the backfill hadn't reached
 // yet, even though the changes log holds its real upgrade history. The
-// fix mirrors contractWasmHash: only a NON-EMPTY indexed result is
+// fallback mirrors contractWasmHash: only a NON-EMPTY indexed result is
 // trusted; an empty one falls through to the legacy changes-log scan.
 func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	wantHash := wasmHashN(0xEF)

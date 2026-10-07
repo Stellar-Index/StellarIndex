@@ -174,7 +174,7 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // operator's raw -from/-to with no windowing. That is DELIBERATE and must not
 // be given a row ceiling: it runs on openRead(), whose Settings pin
 // max_execution_time to 0 precisely so "a legitimate FINAL stream over a
-// full-history window" can run for minutes (gate.go, G12-04), it streams rather
+// full-history window" can run for minutes (gate.go), it streams rather
 // than aggregates so its memory is bounded regardless of range, and the range
 // IS the operator's explicit request. The request-path protection lives on the
 // request-path reader instead (protocolRawScanRowCeiling). A NEW consumer of

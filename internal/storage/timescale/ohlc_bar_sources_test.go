@@ -14,7 +14,7 @@ import (
 )
 
 // A bar's BaseVolume/QuoteVolume are sums of SMALLEST-UNIT amounts, and the
-// smallest unit is a per-SOURCE scale (CS-040: on-chain DEX legs are
+// smallest unit is a per-SOURCE scale (on-chain DEX legs are
 // 7-decimal stroops, CEX 8, the FX pollers 6). So a bar is a quantity in
 // units only its contributing venues identify, and any caller that SUMS
 // bars from different markets has to know those units or it adds

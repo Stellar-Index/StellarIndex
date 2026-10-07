@@ -77,7 +77,7 @@ func TestHistoryGranularityBucketDuration(t *testing.T) {
 // TestClosedVWAPAtOrBeforeQueryShape guards the sargability + both-
 // directions invariants of the point-in-time query WITHOUT a database.
 // A regression to the non-sargable `bucket + INTERVAL <= …` form (the
-// 2026-06-20 latency-burn shape) or dropping a stored direction would
+// latency-burn shape) or dropping a stored direction would
 // silently degrade the endpoint; this turns either into a test
 // failure.
 // nonSargableClosedGuard matches the `bucket + INTERVAL '…' <= now()`
@@ -120,8 +120,8 @@ func TestClosedBucketGuardSpelling(t *testing.T) {
 // assertLiteralCount fails t unless literal appears in q exactly want
 // times — catching a slot silently dropped from one UNION branch while
 // the others still carry it, which a plain strings.Contains cannot
-// (#1214: a two-slot template's lower bound checked with one Contains
-// stayed green after one slot was deleted).
+// (a two-slot template's lower bound checked with one Contains
+// stays green after one slot is deleted).
 //
 // want MUST be a hardcoded expectation, never derived from
 // strings.Count(tmpl, placeholder) on the same template being rendered:
@@ -168,9 +168,9 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
 	}
 	// The SQL must NOT weight or invert the directions itself. Both of
-	// these were the pre-fix shape: `1.0 / vwap` rounded the flipped leg
-	// to the division's NUMERIC scale before weighting, and the weight
-	// was trade COUNT — a trade-count-weighted mean of {vwap, 1/vwap}
+	// these are the wrong shape: `1.0 / vwap` rounds the flipped leg
+	// to the division's NUMERIC scale before weighting, and a weight
+	// of trade COUNT — a trade-count-weighted mean of {vwap, 1/vwap}
 	// is not the union VWAP.
 	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
 		t.Error("query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
@@ -181,8 +181,7 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 }
 
 // TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence
-// gate LatestClosedVWAP1mForPair runs BEFORE its value walk (2026-07-06
-// empty-alias latency incident). The gate is what keeps an EMPTY pair
+// gate LatestClosedVWAP1mForPair runs BEFORE its value walk (empty-alias latency incident). The gate is what keeps an EMPTY pair
 // (native/fiat:USD, read as an alias on every XLM query) off the full
 // ~400-day walk, so it MUST stay sargable + literal-cutoff-bounded +
 // both-directions + LIMIT 1. A regression on any of these silently
@@ -192,7 +191,7 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower)
 
 	// Sargable closed-bucket guard: the interval is a constant on the RHS,
-	// NEVER a function on the indexed bucket column (the 2026-06-20
+	// NEVER a function on the indexed bucket column (the
 	// latency-burn shape).
 	if !strings.Contains(q, "bucket <= now() - INTERVAL '1 minute'") {
 		t.Error("gate missing sargable closed-bucket guard `bucket <= now() - INTERVAL '1 minute'`")
@@ -243,7 +242,7 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	}
 	// %[1]s is injected into BOTH UNION ALL branches independently — a
 	// slot dropped from one branch still renders valid SQL and a plain
-	// strings.Contains here stayed green through that regression (#1214).
+	// strings.Contains here would stay green through that regression.
 	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 2)
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
@@ -258,9 +257,9 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	if !strings.Contains(q, "SELECT bucket, base_asset, vwap::text") {
 		t.Error("combined query does not return the raw per-direction rows the Go combine needs")
 	}
-	// The SQL must NOT fold the directions itself. Pre-fix it inverted the
-	// flipped leg (`1.0 / vwap`, rounding it before it was weighted) and
-	// weighted by trade COUNT — which is not a VWAP, and diverged from the
+	// The SQL must NOT fold the directions itself. Inverting the
+	// flipped leg (`1.0 / vwap`, rounding it before it is weighted) and
+	// weighting by trade COUNT is not a VWAP, and would diverge from the
 	// served candidate on every two-sided market.
 	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
 		t.Error("combined query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
@@ -275,8 +274,8 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 }
 
 // TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate —
-// LatestClosedVWAP1mForPair's value-walk query — which had NO shape
-// test at all before this change (#1214). Its four %[1]s slots (both
+// LatestClosedVWAP1mForPair's value-walk query — which needs a shape
+// test. Its four %[1]s slots (both
 // UNION ALL branches of the `latest` max(bucket) CTE, plus both UNION
 // ALL branches of the `r` point-read CTE) each carry the literal lower
 // bound independently; a slot silently dropped from any one of them
@@ -348,7 +347,7 @@ func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 }
 
 // TestDailyMarketDaysQueryShape extends the sargability guard to
-// DailyMarketDays' daily rollup read (RLT-042).
+// DailyMarketDays' daily rollup read.
 //
 // This query used `bucket + INTERVAL '1 hour' <= now()` — a function on
 // the indexed column, so the planner can neither use the bucket index

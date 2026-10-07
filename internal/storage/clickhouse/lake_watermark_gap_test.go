@@ -9,7 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestLakeWatermark_ClampsToContiguousTip is the RLT-151 proof: LakeWatermark
+// TestLakeWatermark_ClampsToContiguousTip is the contiguity proof: LakeWatermark
 // must not surface `as_of_ledger` past a live-sink hole. LiveSink drops whole
 // ledgers under buffer pressure (ADR-0041), so raw max(ledger_seq) can sit
 // past a gap the lake has not actually captured. This pins that a hole
@@ -28,7 +28,7 @@ func TestLakeWatermark_ClampsToContiguousTip(t *testing.T) {
 	wantCloseTime := time.Date(2026, 9, 21, 11, 30, 0, 0, time.UTC) // stamped on the true watermark
 
 	isContiguityQuery := func(q string) bool { return strings.Contains(q, "leadInFrame") }
-	// Pre-fix shape: ONE query selecting both max(ledger_seq) and
+	// Unclamped shape: ONE query selecting both max(ledger_seq) and
 	// max(close_time), no WHERE, no window function.
 	isCombinedTipQuery := func(q string) bool {
 		return strings.Contains(q, "max(ledger_seq)") && strings.Contains(q, "max(close_time)") && !isContiguityQuery(q)

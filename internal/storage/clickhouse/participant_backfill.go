@@ -84,7 +84,7 @@ const participantInsertBatch = 50_000
 // NON-source side of ADR-0038 Phase B account history) for the inclusive
 // [from,to] ledger range by re-deriving participants from
 // stellar.operations.body_xdr — a CH-INTERNAL job, NOT a multi-day Galexie
-// re-walk (BACKLOG #59). operation_participants captures live-forward only;
+// re-walk. operation_participants captures live-forward only;
 // stellar.operations holds the full genesis→tip history WITH the op body, so
 // every historical participant set is derivable in the lake. Each op is decoded
 // with the SAME operationParticipantRows the live extractor uses, so the output

@@ -363,7 +363,7 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	// Precomputed fast path (inventory #4): keyed reads off the 30-min
+	// Precomputed fast path: keyed reads off the 30-min
 	// rollup — the difference between sub-millisecond and two FINAL
 	// scans per request. Read errors fall through to the legacy path
 	// (availability over speed); ok=false means the rollup isn't

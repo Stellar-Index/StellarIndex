@@ -14,12 +14,12 @@ import (
 
 // ─── /v1/ohlc routes are ONE table, and the store serves all of it ───
 //
-// 2h, 12h, 3d and 2w were added to the serving reader's switch in #213
-// while OHLCSeriesReBucketed kept its own hand-written allow-list of
-// fold literals, which never learnt them. Every request at those four
-// widths failed with "outInterval not in allow-list" — a 500 on the
-// public API — from the day they shipped (launch plan W8-17). The
-// allow-list is now the folded rows of [OHLCRoutes], so the check and
+// 2h, 12h, 3d and 2w are in the serving reader's switch, so
+// OHLCSeriesReBucketed must not keep its own hand-written allow-list of
+// fold literals: every request at those four
+// widths would fail with "outInterval not in allow-list" — a 500 on the
+// public API. The
+// allow-list is the folded rows of [OHLCRoutes], so the check and
 // the routing cannot diverge; these tests pin that the table is
 // well-formed and that the store issues a query for every fold it
 // declares.

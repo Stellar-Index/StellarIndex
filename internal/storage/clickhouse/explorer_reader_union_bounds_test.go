@@ -9,12 +9,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for audit C-F1a: the two UNION arms in
-// AccountOperations / AccountTransactions selected full rows with NO per-arm
-// ORDER BY / LIMIT — only the outer query was bounded. A high-activity account
-// therefore materialised EVERY row it ever touched (for operations, including
+// Regression tests for the two UNION arms in
+// AccountOperations / AccountTransactions, which must carry a per-arm
+// ORDER BY / LIMIT. With only the outer query bounded, a high-activity account
+// would materialise EVERY row it ever touched (for operations, including
 // the KB-scale body_xdr blob) before the outer LIMIT 50 discarded almost all of
-// it; live-measured at 5–6 s on an otherwise idle box.
+// it; that was live-measured at 5–6 s on an otherwise idle box.
 //
 // These use the stubConn/stubRows harness from tx_hash_index_test.go.
 // TestAccountListings_ExactSourcedArmIsBounded pins the bounded shape;
@@ -60,9 +60,9 @@ func exactOpsArm(t *testing.T, base func(string) (driver.Rows, error), limit int
 	return "", nil
 }
 
-// The exact sourced arms (audit C-F1a) must ORDER BY the full sort key and
+// The exact sourced arms must ORDER BY the full sort key and
 // dedupe on it BEFORE their own LIMIT, else an un-merged duplicate part eats a
-// slot (DAT-10) or the account's whole history materialises.
+// slot or the account's whole history materialises.
 func TestAccountListings_ExactSourcedArmIsBounded(t *testing.T) {
 	for name, tc := range map[string]struct{ q, order, dedupe string }{
 		"transactions": {sourcedTxKeysExactQuery(true), "ORDER BY ledger_seq DESC, tx_index DESC", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"},
@@ -173,9 +173,9 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Pre-fix semantics: unbounded arms, bounded only by the outer merge.
+			// Without per-arm bounds: unbounded arms, bounded only by the outer merge.
 			want := mergeTopN([][]opKey{tc.arm1, tc.arm2}, limit)
-			// Post-fix semantics: each arm cut to its own top-N first.
+			// With per-arm bounds: each arm cut to its own top-N first.
 			got := mergeTopN([][]opKey{
 				armTopN(tc.arm1, armLimit),
 				armTopN(tc.arm2, armLimit),
@@ -211,7 +211,7 @@ func TestAccountOpTypeCounts_QueryShape(t *testing.T) {
 	if !strings.Contains(arm2, "operation_participants WHERE account = ?") {
 		t.Errorf("arm 2 must resolve via the account-prefixed participant index:\n%s", arm2)
 	}
-	// INV-2697: the participant arm counts only ops of successful txs or txs
+	// The participant arm counts only ops of successful txs or txs
 	// the account sourced, resolved over the arm's own participant keys.
 	if !strings.Contains(arm2, "FROM stellar.transactions") || !strings.Contains(arm2, visibleTxPredicate) {
 		t.Errorf("arm 2 must keep only visible txs (%s):\n%s", visibleTxPredicate, arm2)

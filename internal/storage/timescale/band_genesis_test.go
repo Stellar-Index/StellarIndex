@@ -7,7 +7,7 @@ import "testing"
 // number is 50,842,736 and why an event-table probe cannot find it.
 //
 // Four constants carried this value and two of them disagreed by 9.16M
-// ledgers (#361/#363). The commit that corrected them claimed one test
+// ledgers. The commit that corrected them claimed one test
 // pinned all four; a review proved it pinned one. This is one of the
 // three that were unguarded.
 func TestBandGenesis_GapDetectorTarget(t *testing.T) {

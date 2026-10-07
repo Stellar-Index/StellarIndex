@@ -21,8 +21,8 @@ import (
 // Scope: ledgers, transactions, operations, operation_results, contract_events,
 // supply_flows.
 //
-// ledger_entry_changes (was G12-03; CLOSED by ADR-0038 Phase C).
-// Extract.Changes is now populated by extractEntryChanges (see
+// ledger_entry_changes (ADR-0038 Phase C).
+// Extract.Changes is populated by extractEntryChanges (see
 // extract_entry_changes.go): it walks the tx-meta v3/v4 op-change + fee-meta
 // streams exactly as dispatcher.walkEntryChanges does (fee/tx-level at
 // op_index -1, per-op changes at their index), base64s the entry+key XDR, and
@@ -95,7 +95,7 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 		ext.EvictedKeysUnreadable++
 		evicted = nil
 	}
-	// ADR-0038 Phase C substrate (closes G12-03).
+	// ADR-0038 Phase C substrate.
 	extractLedgerEntryChanges(&ext, txs, evicted, seq, closeTime)
 
 	return ext, nil
@@ -430,8 +430,8 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 // honestly at projection time instead of misattributing.
 //
 // TX-SUCCESS GATE. `successful` is
-// tx.Result.Successful(); a failed transaction contributes nothing. Pre-fix
-// this was the ONLY one of the three ledger walks with no such gate —
+// tx.Result.Successful(); a failed transaction contributes nothing. Without it,
+// this would be the ONLY one of the three ledger walks with no such gate —
 // dispatcher.ProcessLedger skips failed txs outright (dispatcher.go, "Failed
 // transactions don't produce real price signal") and dispatcher.CensusLedger
 // does the same before counting — so the lake's soroban_event_count and the
@@ -460,7 +460,7 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 	}
 	txEvents, terr := tx.GetTransactionEvents()
 	if terr != nil {
-		// G15-06: an unsupported future TransactionMeta version makes this
+		// An unsupported future TransactionMeta version makes this
 		// fail for every tx — count it so the lost events are visible
 		// instead of looking like a clean empty ledger. Tx-level CAP-67
 		// fee/diagnostic events (txEvents.TransactionEvents) are
@@ -568,11 +568,11 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		TopicsXDR:  topics,
 		DataXDR:    base64.StdEncoding.EncodeToString(dataRaw),
 		OpArgsXDR:  opArgs, // callee-only InvokeContract args (Redstone feed_ids, etc.)
-		// Constant 1 is now a STATEMENT OF FACT, not an assumption: the only
+		// Constant 1 is a STATEMENT OF FACT, not an assumption: the only
 		// caller, extractEvents, returns early for a failed transaction.
-		// Pre-fix this literal was
-		// stamped on every row while extractEvents had no tx-success gate at
-		// all, so the column asserted something the extractor had not checked.
+		// Without the gate this literal would be
+		// stamped on every row while extractEvents has no tx-success gate at
+		// all, so the column would assert something the extractor had not checked.
 		InSuccessfulCall: 1,
 	}, true
 }
@@ -582,8 +582,8 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 // trade output — not COUNT(trades), which also excludes one-side-zero fills.
 // The per-atom predicate is [sdexclaim.IsRealTrade] on both sides — the same
 // rule sdex.decodeClaimAtom applies — so the mirror this comment claims is
-// enforced by a shared function, not by inspection (C2-010;
-// TestClaimAtomCount_LockStepWithDecoder in the dispatcher's external test
+// enforced by a shared function, not by inspection
+// (TestClaimAtomCount_LockStepWithDecoder in the dispatcher's external test
 // package pins all three against the same divergent-atom table).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {

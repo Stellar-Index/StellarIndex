@@ -138,7 +138,7 @@ func TestDexActivitySeriesQueryShape(t *testing.T) {
 // TestDexWindowKPIQueryShape — the >1d KPI counts pairs via a hash-agg
 // GROUP BY subquery, NOT count(DISTINCT (base,quote)): the row-comparison
 // sort of the latter measured 6.0s on sdex 90d vs 0.67s for the GROUP BY
-// shape (r1, 2026-07-30).
+// shape (r1).
 func TestDexWindowKPIQueryShape(t *testing.T) {
 	q := dexWindowKPIQuery(90)
 	if strings.Contains(q, "count(DISTINCT (base_asset, quote_asset))") {

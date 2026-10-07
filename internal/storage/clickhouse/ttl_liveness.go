@@ -28,13 +28,13 @@ import (
 // The signal to separate them is already in the lake: every contract_data
 // entry has a companion TTL entry carrying `liveUntilLedgerSeq`.
 //
-// HOW the signal is read changed in v0.21.4. The classifier used to scan
+// HOW the signal is read matters. A classifier that scanned
 // `ledger_entries_current WHERE entry_type = 'ttl'` (586M rows) per batch,
 // extracting liveUntilLedgerSeq from the WIDE entry_xdr column for every ttl
 // row. Six production attempts failed across four mechanisms (IN-list parse
 // cap, two client-pin OOMs, thread fan-out amplification, and terminally an
 // OOM of the query's own 8 GiB pin inside AggregatingTransform); the design
-// was wrong, not the tuning. The extraction now happens ONCE per TTL change,
+// was wrong, not the tuning. The extraction happens ONCE per TTL change,
 // at ingest, into the slim `stellar.ttl_live_until` projection
 // (key_hash → live_until, ReplacingMergeTree(version), ~20-30 GB vs 590 GB),
 // and this reader is a primary-key lookup bounded by construction. The scan

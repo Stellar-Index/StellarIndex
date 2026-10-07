@@ -9,21 +9,21 @@ import (
 
 // claimAtomCount must mirror dispatcher.census + sdex.decode exactly,
 // because classic_trade_effect_count is gated against the census
-// oracle. The package previously had no test, and the 1000-ledger PoC
-// sample happened to contain no crossing CreatePassiveSellOffer — so a
+// oracle. The 1000-ledger PoC
+// sample contains no crossing CreatePassiveSellOffer — so a
 // wrong union-arm accessor (GetManageSellOfferResult instead of
-// GetCreatePassiveSellOfferResult) silently undercounted and slipped
+// GetCreatePassiveSellOfferResult) silently undercounts and slips
 // past the gate. This table covers every claim-bearing op variant.
 
 // claimNative / claimUSDC are the two DISTINCT legs every fixture claim
-// carries. C2-010: these atoms used to leave
+// carries. Leaving
 // AssetSold/AssetBought at their zero value, which is
 // xdr.AssetTypeAssetTypeNative on BOTH legs — a native/native self-cross
 // stellar-core never emits and internal/sources/sdex has always dropped
-// (canonical.NewPair rejects base == quote). That was invisible while
-// sdexclaim.RealTradeCount looked only at amounts; now that it applies
+// (canonical.NewPair rejects base == quote) — is invisible while
+// sdexclaim.RealTradeCount looks only at amounts; once it applies
 // the decoder's full rule set, a fixture claim has to be shaped like a
-// real one. Every `want` in the table below is unchanged.
+// real one.
 var (
 	claimNative = xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	claimUSDC   = xdr.Asset{
@@ -207,7 +207,7 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 	}
 }
 
-// TestLedgerHeaderCounts_FailedTxBasisMismatch pins GH-1068's remaining
+// TestLedgerHeaderCounts_FailedTxBasisMismatch pins the remaining
 // gap: extractOps counts a FAILED transaction's operations into
 // ext.Ledger.OpCount (and TxCount, at the call site in extract.go),
 // while extractEvents excludes a failed transaction entirely from

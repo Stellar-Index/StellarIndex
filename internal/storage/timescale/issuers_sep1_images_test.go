@@ -18,12 +18,11 @@ const (
 // explorer homepage — a per-visitor beacon under a verified brand.
 // Nothing upstream filters on org_verified, and projectCatalogueRows
 // assigns the result unconditionally, so this check is the only thing
-// standing between a hostile TOML and a curated asset's identity
-// (cold audit 2026-08-03).
+// standing between a hostile TOML and a curated asset's identity.
 //
-// The rule moved from whole-payload parsing to a per-row check when the
-// scan was projected server-side (see [allSep1ImagesQuery]); the attack
-// it must refuse did not move, so these cases did not change either.
+// The rule is a per-row check on the server-side-projected scan (see
+// [allSep1ImagesQuery]); the attack it must refuse is the same as under
+// whole-payload parsing.
 // TestAllSep1ImagesProjection in test/integration re-runs this exact
 // hijack through the real SQL.
 func TestSep1ImageFrom_OnlyTheServingIssuerMayDeclareImages(t *testing.T) {

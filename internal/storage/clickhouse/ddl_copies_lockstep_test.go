@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// GH-1169: supplyFlowsDDL, accountMovementsDDL and
+// supplyFlowsDDL, accountMovementsDDL and
 // scripts/ops/d3-lecur-v2-rebuild.sh's `setup` phase are hand-maintained
 // copies of DDL that scripts/ci/lint-ch-apply-scope.sh and
 // configs/ansible/roles/archival-node/files/ch-schema-drift.sh never see —

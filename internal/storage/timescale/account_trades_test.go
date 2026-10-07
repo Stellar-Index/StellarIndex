@@ -89,7 +89,7 @@ func TestClampAccountTradesLimit(t *testing.T) {
 // 42703. The endpoint had therefore
 // never served a row, and TestAccountTradesQuery_Shape could not see it
 // because it asserts substrings of the query STRING rather than the
-// relationship between the two column lists (cold audit 2026-08-04).
+// relationship between the two column lists.
 //
 // This test compares the two lists structurally, so it fails for ANY
 // future expression added to the inner list without an alias — not just
@@ -146,10 +146,10 @@ func resetTradesHorizonCache(t *testing.T) {
 	})
 }
 
-// TestTradesUncompressedHorizon_QueryShape pins #1157's root-cause fix:
+// TestTradesUncompressedHorizon_QueryShape pins the root-cause fix:
 // the floor must come from max(range_end) over COMPRESSED chunks, never
-// from min(range_start) over uncompressed ones. The pre-fix expression
-// let an old uncompressed straggler chunk (a stuck compression job, a
+// from min(range_start) over uncompressed ones. A min(range_start) expression
+// would let an old uncompressed straggler chunk (a stuck compression job, a
 // late-arriving backfill) drag the floor to that chunk's start — 2021
 // was observed on r1 while 313 of 472 trades chunks were already
 // compressed — because it is NOT a time prefix: a chunk newer than the
@@ -189,7 +189,7 @@ func TestTradesUncompressedHorizon_QueryShape(t *testing.T) {
 // straggler uncompressed chunk predating the newest compressed chunk is
 // an anomaly worth logging, but it must NOT alter the served floor —
 // widening it back down toward the straggler would reintroduce the
-// exact compressed-chunk scan #1157 exists to avoid.
+// exact compressed-chunk scan this floor exists to avoid.
 func TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor(t *testing.T) {
 	resetTradesHorizonCache(t)
 	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)

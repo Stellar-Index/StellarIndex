@@ -1171,7 +1171,7 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 //   - a FULL re-derive re-populates the whole history, but the checkpoint's
 //     stale totals get the re-folded tail ADDED on top → served supply
 //     double-counts (KALE was served at 2× this way);
-//   - a SCOPED recovery ADDS previously-missing rows at ledgers ≤ last_ledger,
+//   - a SCOPED recovery ADDS missing rows at ledgers ≤ last_ledger,
 //     which the worker's `> last_ledger` fold never sees → served undercount.
 //
 // Resetting the fold columns forces a clean re-fold over the corrected set.

@@ -18,7 +18,7 @@ type wasmDisasmEntry struct {
 	wat        string
 	decompiled string
 	// toolNote carries only the wat/decompile note fragment (the join
-	// buildWasmDisassembly used to append inline) — NOT the export-parse
+	// buildWasmDisassembly would otherwise append inline) — NOT the export-parse
 	// note the caller may have already set on info.ToolNote before this
 	// stage runs.
 	toolNote string

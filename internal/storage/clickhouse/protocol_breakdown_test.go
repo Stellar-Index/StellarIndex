@@ -8,7 +8,7 @@ import (
 
 // TestEffectiveEventName covers the topic name-recovery priority that
 // labels the protocol event-breakdown pane, especially the generalization
-// (BACKLOG #55 / item 4) that recovers a non-Symbol topic[0] action name
+// that recovers a non-Symbol topic[0] action name
 // so phoenix-style events stop landing in "untyped".
 func TestEffectiveEventName(t *testing.T) {
 	var (

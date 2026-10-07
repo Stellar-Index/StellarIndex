@@ -90,7 +90,7 @@ type AccountTradesCursor struct {
 	OpIndex uint32
 }
 
-// IsSet reports whether the cursor points past a previously served row.
+// IsSet reports whether the cursor points past an already served row.
 func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 
 // accountTradesInnerCols is the per-arm column list. base/quote amounts

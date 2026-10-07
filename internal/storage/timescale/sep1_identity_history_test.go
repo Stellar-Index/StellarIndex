@@ -6,7 +6,7 @@ import (
 )
 
 // An established issuer whose home_domain now serves a different identity
-// must surface every changed field — the overwrite used to be blind.
+// must surface every changed field — an overwrite must not be blind.
 func TestSep1IdentityChanges(t *testing.T) {
 	held := []byte(`{"OrgName":"Circle","OrgVerified":true,
 		"Documentation":{"ORG_URL":"https://circle.com","ORG_LOGO":"https://circle.com/l.png","ORG_DBA":"x"},

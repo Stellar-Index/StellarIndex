@@ -162,21 +162,20 @@ type ECWindowCoverage struct {
 // Missing is the EXACT count of tx-bearing ledgers in [From,To] with zero
 // stellar.ledger_entry_changes rows: TxLedgers - ECCoveredTxLedgers.
 //
-// This used to subtract two INDEPENDENT
+// A naive form would subtract two INDEPENDENT
 // cardinalities — tx-bearing ledgers from stellar.ledgers against
 // uniqExact(ledger_seq) over ALL of ledger_entry_changes in the window — and
 // saturate at zero. Entry-change rows exist for ledgers that carry no
 // transactions at all: a protocol-upgrade ledger (or, in early history, a
 // config/base-reserve change) mutates LedgerEntry state with tx_count == 0,
-// so it landed in the "present" side while never appearing in the "expected"
-// side. Inside a 1,000,000-ledger window those ledgers padded `present` and
-// NETTED OUT genuinely-uncovered tx-bearing ledgers one-for-one: a window
-// holding 5 protocol-upgrade ledgers reported zero deficiency while 5
-// tx-bearing ledgers had no entry-change coverage at all, and Check 2 —
-// the hard gate above -ec-floor — passed on a real gap.
+// so it lands in the "present" side while never appearing in the "expected"
+// side. Inside a 1,000,000-ledger window those ledgers pad `present` and
+// NET OUT genuinely-uncovered tx-bearing ledgers one-for-one: a window
+// holding 5 protocol-upgrade ledgers reports zero deficiency while 5
+// tx-bearing ledgers have no entry-change coverage at all, and Check 2 —
+// the hard gate above -ec-floor — passes on a real gap.
 //
-// The fix is the anti-join this comment used to name as the thing it was
-// NOT doing: ECCoveredTxLedgers is now computed per-ledger against the
+// Instead ECCoveredTxLedgers is an anti-join, computed per-ledger against the
 // tx-bearing set, so a tx_count == 0 ledger can never contribute coverage
 // it does not have, and Missing() is the true gap rather than a lower bound.
 //

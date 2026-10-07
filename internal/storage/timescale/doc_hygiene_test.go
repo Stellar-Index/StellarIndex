@@ -15,9 +15,7 @@ func readPackageSource(t *testing.T, name string) string {
 	return string(src)
 }
 
-// The LP-reserve observer shipped as Task #55 PR 4/5 (commit
-// ecb28f108); "Task #65" in the same internal Task namespace is
-// unrelated work.
+// The LP-reserve observer's internal task references were dropped.
 func TestLPReserveInsertCitesObserverTask(t *testing.T) {
 	text := readPackageSource(t, "classic_supply_observations.go")
 	if strings.Contains(text, "Task #65") {
@@ -28,7 +26,7 @@ func TestLPReserveInsertCitesObserverTask(t *testing.T) {
 	}
 }
 
-// PR #20 no longer resolves after the history rewrite; provenance lives in git.
+// A bare issue or PR number no longer resolves after the history rewrite; provenance lives in git.
 func TestMarketsListingHasNoDanglingIssueReference(t *testing.T) {
 	text := readPackageSource(t, "markets.go")
 	for _, stale := range []string{"(#20)", "#20 perf"} {

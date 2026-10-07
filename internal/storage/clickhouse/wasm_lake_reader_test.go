@@ -12,10 +12,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Regression tests for audit-2026-07-23 C-F1 item 3: ContractCodeHistory's read
-// of stellar.ledger_entry_changes had NO LIMIT. Its sibling instance lookups
+// Regression tests for ContractCodeHistory's read
+// of stellar.ledger_entry_changes must be LIMITed. Its sibling instance lookups
 // (contractWasmHash, SACClassicAssetName) are all `ORDER BY ledger_seq DESC
-// LIMIT 1`; this one streamed and XDR-decoded every captured change to a
+// LIMIT 1`; an unbounded one streams and XDR-decodes every captured change to a
 // contract's instance key, so a contract that rewrites its instance entry often
 // (instance-STORAGE writes, not only `update_contract` upgrades) reintroduces an
 // unbounded scan even once the skip index is tightened.
@@ -177,7 +177,7 @@ func TestContractCodeHistory_CollapsesToDistinctExecutables(t *testing.T) {
 }
 
 // TestContractCodeHistory_IndexedPath pins the fast path over
-// stellar.contract_instance_changes (inventory #26 item 3): when the
+// stellar.contract_instance_changes: when the
 // probe finds the index usable, the reader must walk the keyed timeline
 // (contract_hash primary-key predicate, wasm-only rows, the same
 // newest-first cap re-sorted ascending) and never touch the changes log;

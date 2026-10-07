@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestGapDetectorRestartHonoursPersistedCadence pins the 2026-08-28 r1
+// TestGapDetectorRestartHonoursPersistedCadence pins the r1
 // restart amplifier: with the per-target lastScan map starting empty,
 // every aggregator start re-ran the 6h-cadence soroban_events scan
 // immediately. Seeding from the persisted "gap-detector-scan" cursor's

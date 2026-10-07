@@ -17,7 +17,7 @@ import (
 // admit only CLOSED buckets. The in-progress minute is still filling, so a
 // read that admits it serves a value no other region (and no later read)
 // will reproduce — and on /v1/changes that value was ratcheted into the
-// stored ath/atl for good (GH-757: `bucket < $4` with $4 = the worker's
+// stored ath/atl for good (`bucket < $4` with $4 = the worker's
 // wall clock).
 //
 // Subjects are derived from the source (every string literal that reads

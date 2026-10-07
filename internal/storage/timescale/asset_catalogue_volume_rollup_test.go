@@ -7,8 +7,8 @@ import (
 
 // TestListAssets_readsAssetVolumeRollup asserts the listing's
 // per_asset_24h_vol CTE reads the asset_volume_24h rollup and no longer
-// inlines the trailing-24h SUM(volume_usd) that the 2026-07-06 latency
-// fix (e0fbbbc3b) moved to the aggregator worker. If this regresses (someone
+// inlines the trailing-24h SUM(volume_usd) that a latency
+// fix moved to the aggregator worker. If this regresses (someone
 // re-inlines the per-asset SUM) the ~4.8s cold /v1/assets scan returns.
 func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 	if !strings.Contains(listAssetsBaseSelect, "FROM asset_volume_24h") {
@@ -24,8 +24,8 @@ func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 // TestListAssetsBaseSelectSQL_rendersForBothOrders guards the one
 // remaining render-time substitution: every ordering must produce a
 // query that reads the volume rollup and carries no leftover marker.
-// (This used to also guard the /*PUSHDOWN_*/ machinery's strings.Replace
-// anchor; #331 F1 removed the pushdown along with the price CTEs it
+// (A /*PUSHDOWN_*/ machinery's strings.Replace
+// anchor is no longer guarded; the pushdown was removed along with the price CTEs it
 // narrowed, so the only marker left is /*RANK_TIER*/, whose absence
 // listAssetsBaseSelectSQL panics on rather than shipping a syntax error.)
 func TestListAssetsBaseSelectSQL_rendersForBothOrders(t *testing.T) {

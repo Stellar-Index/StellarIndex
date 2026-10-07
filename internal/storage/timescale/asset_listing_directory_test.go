@@ -465,7 +465,7 @@ func TestListingDirectoryCensus_Check(t *testing.T) {
 // and the one way to get it wrong is to copy the contract read's
 // address-form predicate along with everything else.
 //
-// Measured against the live upstream 2026-09-15, six of the ten
+// Against the live upstream, six of the ten
 // catalogue assets it names are named by their CLASSIC ids (EURC, AQUA,
 // SHX, VELO, BLND, yUSDC). A read that kept the contract filter would
 // drop every one of them and look like a working query while doing it.

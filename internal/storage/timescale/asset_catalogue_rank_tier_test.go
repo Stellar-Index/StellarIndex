@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Rank-tier lockstep (#356). listingRankTierExpr is the listing's LEADING
+// Rank-tier lockstep. listingRankTierExpr is the listing's LEADING
 // ORDER BY key, and like adjustedVolume24hExpr it has to appear in three
 // places that must stay identical — the SELECT (as rank_tier, so the
 // cursor can encode what the query ranked on), the ORDER BY, and the
@@ -27,7 +27,7 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 		if !strings.Contains(sel, "LEFT JOIN account_directory") {
 			t.Errorf("order %v: SELECT is missing the account_directory join the tier reads", order)
 		}
-		// Since #331 F1 the tier's price arm reads asset_price_snapshot
+		// The tier's price arm reads asset_price_snapshot
 		// (listingPriceUSDExpr == aps.price_usd) instead of the inline
 		// COALESCE chain, so the tier now depends on that join too — and
 		// on its staleness floor, which is what makes "priced too long
@@ -146,7 +146,7 @@ func TestEncodeAssetsCursor_RoundTrip(t *testing.T) {
 	}
 }
 
-// A cursor minted before #356 has two fields. It must resume in tier 0
+// A cursor minted before the rank tier existed has two fields. It must resume in tier 0
 // rather than 400 — an in-flight pager should not break on deploy.
 func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 	t.Parallel()

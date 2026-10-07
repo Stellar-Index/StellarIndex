@@ -16,7 +16,7 @@ import (
 
 // Every ops-side opener in this package must put the ops-batch identity
 // ON THE WIRE when STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are set, and
-// the `default` user when they are not (2026-08-28 r1: ch-rebuild as
+// the `default` user when they are not (ch-rebuild as
 // `default` starved the aggregator's supply refresher; the whole fix is
 // that these openers authenticate as the low-priority `ops_batch` user).
 //

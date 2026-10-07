@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestMigration0113DropsClassicMovements guards the C2-18 / DAT-03
+// TestMigration0113DropsClassicMovements guards the
 // cleanup: migration 0113 must DROP the dead classic_movements table
 // (superseded by ADR-0048 D2 — the pre-P23 movement archive moved to
 // ClickHouse-native stellar.account_movements, leaving this Postgres
@@ -19,7 +19,7 @@ import (
 // TimescaleDB (assertTableAbsent(..., "classic_movements") after the
 // full up stack). Without the 0113 migration files this test is RED
 // (os.ReadFile below fails on the missing up.sql), so it cannot pass
-// against the pre-fix tree.
+// against a tree without that migration.
 func TestMigration0113DropsClassicMovements(t *testing.T) {
 	root := findRepoRoot(t)
 

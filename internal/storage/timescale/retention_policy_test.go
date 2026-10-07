@@ -32,7 +32,7 @@ import (
 //     justification is void.
 //   - `prices_1m` is the ONLY price aggregate with one. Every coarser
 //     rung is small (27 GB at 15m down to 341 MB at 1mo against 69 GB
-//     at 1m, r1 2026-09-07) and is what a long-window request is
+//     at 1m, on r1) and is what a long-window request is
 //     actually served from.
 //
 // The ledger is TEXTUAL — it replays `add_retention_policy` /
@@ -41,7 +41,7 @@ import (
 // dropping a continuous aggregate also drops its policies (0115 / 0147
 // recreate all seven price views), so the real database can hold FEWER
 // policies than this ledger counts, never more. Corroborated against
-// r1's live `timescaledb_information.jobs` on 2026-09-07, which held
+// r1's live `timescaledb_information.jobs`, which held
 // exactly one — `api_usage_events` — before 0156.
 //
 // That one-way claim covers migrations only. A Go pruner deletes on a
@@ -176,7 +176,7 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// target and never served as history.
 		"api_usage_events": "0027_platform_v1_schema.up.sql",
 		// The minute price aggregate, 90 days (0156). 69 GB / 82 M
-		// rows on r1 2026-09-07, 55 % of all price-CAGG storage, and
+		// rows on r1, 55 % of all price-CAGG storage, and
 		// recomputable from `trades` — which 0156 depends on and the
 		// next test pins. 0166 and 0187 rebuild prices_1m and re-attach
 		// the same policy (TestPrices1mRetention_RebuildsReattachTheSamePolicy).
@@ -413,7 +413,7 @@ var jobsViewPredicateRe = regexp.MustCompile(`hypertable_name\s*=\s*([^\n]+)`)
 // `alter_job` over an empty row set is NOT an error: it prints nothing
 // and exits 0, so a disarm that matched nothing reads exactly like a
 // disarm that worked — and the policy drops 77 chunks the next day.
-// Verified on r1 2026-09-07 against the structurally identical refresh
+// Verified on r1 against the structurally identical refresh
 // job: the materialization-name predicate returns 0 rows, the view-name
 // predicate returns job 1088.
 func TestPrices1mRetention_JobPredicatesMatchTheViewName(t *testing.T) {
@@ -465,8 +465,8 @@ func TestPrices1mRetention_ArmAndDisarmCarryAVerificationSelect(t *testing.T) {
 // refresh then deletes their history.
 //
 // `_materialized_hypertable_142` is prices_1m's materialization
-// hypertable AND the raw hypertable of both TWAP views (measured on r1
-// 2026-09-07: twap_1h and twap_1d each carry raw_hypertable_id = 142
+// hypertable AND the raw hypertable of both TWAP views (measured on r1:
+// twap_1h and twap_1d each carry raw_hypertable_id = 142
 // and parent_mat_hypertable_id = 142, and an invalidation-threshold row
 // exists for 142). `ts_chunk_do_drop_chunks` invalidates the raw
 // hypertable's dependent aggregates for every chunk it drops, so one
@@ -478,7 +478,7 @@ func TestPrices1mRetention_ArmAndDisarmCarryAVerificationSelect(t *testing.T) {
 //
 // The migration has to point the operator at the windowed form. This
 // asserts it says so, because "re-materialise twap afterwards" — which
-// is what it used to say — points at the destructive one.
+// is the wrong advice — points at the destructive one.
 func TestPrices1mRetention_WarnsThatATWAPRefreshMustBeWindowed(t *testing.T) {
 	for _, name := range []string{
 		"0156_prices_1m_retention.up.sql",
@@ -642,7 +642,7 @@ func collectAgeDeletes(path, root string, found map[string]string) error {
 // reason it is safe, as a migration-side policy must be. mev_events is
 // deliberately absent: it is served history the detectors cannot re-derive
 // (they scan a 30-minute trailing window), and launch-plan row D5 contracts
-// that the served tier keeps what it indexes (#1168).
+// that the served tier keeps what it indexes (launch-plan D5).
 func TestGoAgePruners_AreExactlyTheDeclaredSet(t *testing.T) {
 	const (
 		snapshot = "rolling snapshot recomputed every refresh; the delete drops superseded rows"

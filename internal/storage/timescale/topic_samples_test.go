@@ -10,16 +10,16 @@ import (
 )
 
 // TestDistinctSorobanTopicSamplesWindowedQuery_CarriesTheBound pins the
-// 2026-07-11 fix: an operator's non-`-ch` compute-completeness run
+// bound: an operator's non-`-ch` compute-completeness run
 // against the (by then full-history) soroban_events table walked the
 // old unbounded DISTINCT ON scan for 2h before being cancelled — the
-// same failure mode the gap detector hit on 2026-07-06 against the
+// same failure mode the gap detector hit against the
 // same table's growth (see gap_window_test.go). The query MUST always
 // carry the trailing-window floor ($3), independent of whether the
 // ledger_ingest_log range-covered fast path also applies, or a future
 // edit could silently drop the bound while leaving the (optional)
 // [$4,$5] chunk-pruning bound in place.
-// TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry pins #802: a PHASE 3
+// TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry pins that a PHASE 3
 // per-pair fetch that hits ITS OWN oneSorobanTopicSampleTimeout degrades
 // to "unsampled" so the whole recognition scan doesn't abort — but the
 // comment on the query const claimed this was already "a logged skip"

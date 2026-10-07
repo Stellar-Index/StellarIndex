@@ -219,7 +219,7 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 // duplicates are enormous on r1: the busy contract measured 154,915,417 events
 // with FINAL vs 224,616,719 without (+45%), and the quiet one 200 vs 388
 // (+94%). Dropping FINAL would overstate every protocol's headline event count
-// by tens of percent. (The DAT-10 tie-break argument applies here too —
+// by tens of percent. (The tie-break argument applies here too —
 // `ingested_at` is DateTime, one-second resolution, so an `ORDER BY
 // ingested_at DESC LIMIT 1 BY` rewrite cannot break a same-second re-ingest
 // tie — but the 45-94% overcount is the decisive fact, not the tie.)
@@ -412,7 +412,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 	return out, rows.Err()
 }
 
-// ── contract_events_daily fast paths (BACKLOG #43) ──────────────────────
+// ── contract_events_daily fast paths ──────────────────────
 //
 // The daily pre-aggregation (deploy/clickhouse/tier1_schema.sql,
 // contract_events_daily + its MV) collapses the ~15s raw scans behind

@@ -212,9 +212,9 @@ func (s *spyDecoder) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer
 // The fixture is chosen so every historical divergence between the two would
 // break it:
 //
-//   - tx2 is FAILED with a committed fee debit — the dispatcher used to skip
-//     the whole tx before its entry-change walk while the lake walked it,
-//     so the two disagreed by exactly the failed-tx fee set;
+//   - tx2 is FAILED with a committed fee debit — skipping
+//     the whole tx before its entry-change walk while the lake walks it,
+//     makes the two disagree by exactly the failed-tx fee set;
 //   - tx1 has both an apply-phase change and a later tx's fee change competing
 //     for the same key — the per-tx walk ranked the fee last;
 //   - both txs carry PostTxApplyFeeChanges — the P23 Soroban refund phase

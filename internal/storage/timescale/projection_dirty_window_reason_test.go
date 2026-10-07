@@ -3,7 +3,7 @@ package timescale
 import "testing"
 
 // The Reason column of projection_dirty_windows is the ONLY thing that
-// distinguishes its two writers, and issue #325 made a reader depend on
+// distinguishes its two writers, and a reader came to depend on
 // that distinction: the projector suppresses stellarindex_projector_lag_high
 // only for a `projector-replay` window, never for a `projected-rebuild`
 // one (whose range routinely covers the live cursor's own position, and

@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// This file used to be asset_catalogue_pushdown_test.go and guarded the
-// #27 `chosen_assets` pushdown: a CTE prepended ahead of the spine that
+// This file replaced asset_catalogue_pushdown_test.go, which guarded the
+// `chosen_assets` pushdown: a CTE prepended ahead of the spine that
 // narrowed the listing's eight per-asset price CTEs to one issuer's
 // assets, so a FILTERED /v1/assets did not read 256k prices_1m rows for
 // a one-row result.
 //
-// #331 F1 deleted the thing it narrowed. The price CTEs moved to
+// The pushdown was removed along with the thing it narrowed. The price CTEs moved to
 // refreshAssetPriceSnapshotUpsert and the listing LEFT JOINs the rollup,
 // so a filtered listing is narrowed by the outer WHERE on `ca` alone
 // over a keyed-on-PK price lookup — the shape pushdown existed to
@@ -95,7 +95,7 @@ func TestBuildAssetsQuery_QFilter(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters pins F175: `q`
+// TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters pins that `q`
 // is a caller-supplied literal, not a pattern, so a client sending its
 // own `%` or `_` must match those characters literally rather than
 // have them act as SQL LIKE wildcards once wrapped in `%...%`. Before
@@ -117,7 +117,7 @@ func TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_QFilterMatchesSorobanContractID pins RLT-023: a
+// TestBuildAssetsQuery_QFilterMatchesSorobanContractID pins that a
 // Soroban-native row has NULL code/slug/issuer (see the discovered-
 // contract arm of listAssetsBaseSelect), so the q predicate's slug leg
 // must fall back to ca.asset_id — exactly as the base SELECT's own
@@ -154,7 +154,7 @@ func TestBuildAssetsQuery_IssuerAndQ(t *testing.T) {
 }
 
 // TestBuildAssetsQuery_CodeFilter binds an exact, case-sensitive code
-// equality on the indexed classic_assets.code column (BACKLOG #54).
+// equality on the indexed classic_assets.code column.
 func TestBuildAssetsQuery_CodeFilter(t *testing.T) {
 	t.Parallel()
 	sql, args := mustBuildAssetsQuery(t, 100, "", "USDC", "", "", "", AssetsOrderObservationCountDesc)
@@ -168,7 +168,7 @@ func TestBuildAssetsQuery_CodeFilter(t *testing.T) {
 }
 
 // TestBuildAssetsQuery_IssuerAndCode pins the two-filter placeholder
-// order — the "pin exactly one classic asset" case (BACKLOG #54).
+// order — the "pin exactly one classic asset" case.
 func TestBuildAssetsQuery_IssuerAndCode(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

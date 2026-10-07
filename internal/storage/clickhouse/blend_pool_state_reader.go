@@ -37,7 +37,7 @@ type BlendReserveState struct {
 // (SoroswapPairReserves, PhoenixPoolReserves, CometPoolReserves), which
 // have always read the current-state projection.
 //
-// This reader used to be the outlier: it folded the LATEST entry per key
+// A scan would make this reader the outlier: folding the LATEST entry per key
 // out of stellar.ledger_entry_changes itself, with
 //
 //	WHERE entry_type = 'contract_data'
@@ -87,9 +87,9 @@ type BlendReserveState struct {
 // out on the shared host.
 //
 // LEGACY TIE ROWS. intra_ledger_seq is 0 on every row ingested before
-// the C2-4c fix and on legacy rows until a full re-derive repopulates
+// the stamp existed and on legacy rows until a full re-derive repopulates
 // it, so two same-ledger changes to one key from that era tie under
-// FINAL exactly as they tied under the old argMax — the survivor is
+// FINAL exactly as they would tie under argMax — the survivor is
 // arbitrary. That is not a regression (both shapes resolve it the same
 // way), but it is worth knowing WHERE it bites hardest: the population
 // this query newly admits — quiet reserves whose last write is old — is
@@ -99,9 +99,9 @@ type BlendReserveState struct {
 // ledger_entry_changes.intra_ledger_seq, not a change here.
 //
 // Reading the projection RETIRES the capture-window caveat — a reserve
-// whose ResData had not been touched for 14 days used to be reported
-// absent, and a quiet reserve is not a dead one — but the old window was
-// also acting as an accidental STALENESS bound, so the read is paired
+// whose ResData had not been touched for 14 days would be reported
+// absent, and a quiet reserve is not a dead one — but a scan window would
+// also act as an accidental STALENESS bound, so the read is paired
 // with an explicit archived-entry drop. See [dropArchivedBlendReserves].
 const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
@@ -313,9 +313,9 @@ func scanBlendReserveParts(rows interface {
 // dropArchivedPairs documents ("phantom depth on every surface that
 // consumes this") and that PHO's +157% supply divergence came from.
 //
-// It also replaces a bound that used to exist by accident. The
-// previous 250,000-ledger window was doing DOUBLE DUTY: an archived
-// entry has had no writes since it lapsed, so the window dropped it as a
+// It also replaces a bound that a scan window provides by accident. The
+// 250,000-ledger window does DOUBLE DUTY: an archived
+// entry has had no writes since it lapsed, so the window drops it as a
 // side effect of being narrow. Reading the current-state projection
 // removes that window — correctly, since a QUIET reserve is not a dead
 // one — so the staleness bound has to be stated explicitly rather than

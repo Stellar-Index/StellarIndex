@@ -177,7 +177,7 @@ func TestTxIndexes_TruncatedStreamIsAnError(t *testing.T) {
 
 // TestTxIndexes_ChunkFailureIncrementsSkippedMetric is the visibility half
 // of the ChunkFailureAbortsWithoutAPartialMap contract: an aborted lookup
-// used to be silent past a single log line the mev worker emits on a
+// would be silent past a single log line the mev worker emits on a
 // best-effort basis. obs.MEVLakeOrderLookupSkippedTotal must move so a
 // sustained MEMORY_LIMIT_EXCEEDED rate on stellar.tx_hash_index (the
 // prod incident this bounds) shows up on a dashboard/alert, not just logs.

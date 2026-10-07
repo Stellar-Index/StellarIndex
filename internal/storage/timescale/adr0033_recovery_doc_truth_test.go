@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// RLT-402: the trades delete-then-replay recipe in adr-0033-data-recovery.md
+// The trades delete-then-replay recipe in adr-0033-data-recovery.md
 // must keep `ledger` as its correctness predicate, add a `ts` bound for
 // chunk exclusion (trades is partitioned on ts, migrations/0001), and never
 // take that bound from a subquery that can turn NULL and match nothing.

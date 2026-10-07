@@ -117,7 +117,7 @@ const gapDetectorLastPresentSource = "gap-detector-last-present"
 
 // computeGapScanWindow returns the lower bound `from` of the trailing
 // window a detector cycle scans for a target, given the live `tip`,
-// the source `genesis`, the previously persisted scan `prevHighWater`
+// the source `genesis`, the persisted scan `prevHighWater`
 // (0 when unknown), and whether this is the target's `firstRun`:
 //
 //   - firstRun            → from = max(genesis, tip - FirstScanCap)

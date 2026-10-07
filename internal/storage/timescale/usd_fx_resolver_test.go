@@ -12,7 +12,7 @@ import (
 
 // TestVWAPUSDFXResolver_NoPegs — empty USDPegs list means the
 // resolver is a no-op: every call returns ok=false without
-// touching the DB. Pre-Phase-2 behaviour, preserved by F-1268
+// touching the DB. Pre-Phase-2 behaviour, preserved
 // for deployments that haven't opted in.
 func TestVWAPUSDFXResolver_NoPegs(t *testing.T) {
 	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
@@ -174,7 +174,6 @@ func TestVWAPUSDFXResolver_MinuteBucketKey(t *testing.T) {
 // column's full scale, so a VWAP arithmetically equal to 1.085
 // arrives as `1.085000000000000000000`. The resolver canonicalises
 // before returning so consumers see the human-friendly form.
-// F-1251 (codex audit-2026-05-12).
 func TestTrimNumericText(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -199,10 +198,10 @@ func TestTrimNumericText(t *testing.T) {
 	}
 }
 
-// TestVWAPUSDFXResolver_FreshnessSentinels — F-1251 sentinel
+// TestVWAPUSDFXResolver_FreshnessSentinels — sentinel
 // semantics: 0 → default 1h; negative → disabled; positive →
-// use as-is. Pre-fix the docstring claimed "0 = disable" but
-// the constructor silently overrode 0 to 1h.
+// use as-is. A docstring claiming "0 = disable" would be wrong: the
+// constructor overrides 0 to 1h.
 func TestVWAPUSDFXResolver_FreshnessSentinels(t *testing.T) {
 	cases := []struct {
 		name string
@@ -229,7 +228,7 @@ func TestVWAPUSDFXResolver_FreshnessSentinels(t *testing.T) {
 	}
 }
 
-// ─── fiat quotes via fx_quotes (usd-volume coverage, 2026-07-22) ─────
+// ─── fiat quotes via fx_quotes (usd-volume coverage) ─────
 
 // fiatAsset is a test helper for the fx-quote-resolved fiat side.
 func fiatAsset(t *testing.T, code string) canonical.Asset {
@@ -344,7 +343,7 @@ func TestVWAPUSDFXResolver_FiatCacheKeyIsUTCDay(t *testing.T) {
 // This exercises the exact pair the resolver builds (Base = the fiat
 // asset, Quote = USD) through the same fxSnapFromRows the resolver
 // calls, so it pins the orientation end-to-end without a database.
-// Rates are the real production values read from R1 on 2026-07-22.
+// Rates are the real production values read from R1.
 func TestFiatUSDRateOrientation(t *testing.T) {
 	t.Parallel()
 	usd := fiatAsset(t, "USD")
@@ -445,7 +444,7 @@ func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
 	}
 }
 
-// ─── tier 3b: the XLM bridge (2026-07-22) ────────────────────────────
+// ─── tier 3b: the XLM bridge ────────────────────────────
 
 // TestXLMLegRate_Orientation — a token's XLM market can be stored
 // either way round (trades keep the venue's observed base/quote

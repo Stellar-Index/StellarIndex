@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// REGRESSION (production, 2026-08-28): GET /v1/assets with limit=500
+// REGRESSION (seen in production): GET /v1/assets with limit=500
 // returned HTTP 500 —
 //
 //	timescale: scan asset: sql: Scan error on column index 0,
@@ -33,9 +33,8 @@ func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	t.Parallel()
 
 	// Both orderings share the defect and the fix; assert on each
-	// rendering the store uses. (There used to be a third rendering here,
-	// the issuer-pushdown one; #331 F1 removed the pushdown along with
-	// the per-request price CTEs it narrowed.)
+	// rendering the store uses. (There is no issuer-pushdown rendering:
+	// the per-request price CTEs it narrowed are gone.)
 	for name, sql := range map[string]string{
 		"list_volume": listAssetsBaseSelectSQL(AssetsOrderVolume24hUSDDesc),
 		"list_obs":    listAssetsBaseSelectSQL(AssetsOrderObservationCountDesc),
@@ -86,11 +85,8 @@ func (s nullSorobanScanner) Scan(dest ...any) error {
 	return nil
 }
 
-// REGRESSION, second attempt (production 2026-08-28).
-//
-// v0.47.1 fixed `slug` with a SQL COALESCE and shipped — and production
-// immediately moved on to "column index 2, code". The defect was never
-// about one column: catalogue_assets' Soroban arm supplies slug, code
+// REGRESSION: fixing `slug` alone with a SQL COALESCE just moves the failure
+// to "column index 2, code". The defect is not about one column: catalogue_assets' Soroban arm supplies slug, code
 // AND issuer_g_strkey as NULL, and all three scanned into non-nullable
 // Go strings. Fixing them one deploy at a time is the instance, not the
 // class.

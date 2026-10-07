@@ -12,14 +12,14 @@ import (
 	"time"
 )
 
-// Regression suite for audit finding M-B (MNY-06 on the TWAP surface):
-// the served-TWAP direction combine.
+// Regression suite for the
+// served-TWAP direction combine.
 //
 // SDEX stores the same market in BOTH orientations, so TWAPPointsInRange
 // has to fold the two stored directions into the one the caller asked
-// for. Pre-fix it did so with a TRADE-COUNT-weighted mean of
+// for. A TRADE-COUNT-weighted mean of
 // {twap, 1/twap_flipped} (a `1.0/twap` SQL inversion, then
-// `SUM(twap·trade_count)/SUM(trade_count)`). But the twap_1h / twap_1d
+// `SUM(twap·trade_count)/SUM(trade_count)`) would be wrong: the twap_1h / twap_1d
 // CAGGs (migration 0081) define twap = avg(prices_1m.twap) — EQUAL PER
 // ELAPSED MINUTE, deliberately NOT per trade. The only correct merge
 // weight is therefore each direction's minute COVERAGE (how many prices_1m
@@ -36,7 +36,7 @@ import (
 //	    minute coverage  5, trade count 5000
 //
 //	coverage-weighted (CORRECT): (0.5·50 + 0.6·5)/(50+5) = 28/55 = 0.50909…
-//	trade-count-weighted (pre-fix bug): (0.5·500 + 0.6·5000)/5500 = 0.59090…
+//	trade-count-weighted (WRONG): (0.5·500 + 0.6·5000)/5500 = 0.59090…
 //	equal-weighted (the regression 0081 also rejects): (0.5+0.6)/2 = 0.55
 //
 // Coverage disagrees with BOTH by ~16% / ~8%, so a regression to either is
@@ -47,7 +47,7 @@ import (
 var (
 	// twapCoverageWeighted is the correct answer, 28/55.
 	twapCoverageWeighted = big.NewRat(28, 55)
-	// twapCountWeighted is the pre-fix trade-count answer, 13/22.
+	// twapCountWeighted is the wrong trade-count answer, 13/22.
 	twapCountWeighted = big.NewRat(13, 22)
 	// twapEqualWeighted is the equal-weighted answer, 11/20.
 	twapEqualWeighted = big.NewRat(11, 20)
@@ -77,7 +77,7 @@ func ratNear(t *testing.T, got string, want *big.Rat, tol *big.Rat) bool {
 }
 
 // TestCombineDirTWAP_CoverageWeighted pins the exact combined value and
-// proves it is NEITHER the trade-count-weighted mean (the pre-fix bug) NOR
+// proves it is NEITHER the trade-count-weighted mean (the wrong answer) NOR
 // the equal-weighted mean (the regression migration 0081 also rejects).
 func TestCombineDirTWAP_CoverageWeighted(t *testing.T) {
 	got, ok := combineDirTWAP(twapCombineFixture)
@@ -181,8 +181,8 @@ func TestCombineDirTWAP_NoUsableRows(t *testing.T) {
 // end-to-end over the canned driver (query text, scan, fold) and asserts
 // the VALUE it serves — so a regression anywhere along the path fails, not
 // just in combineDirTWAP. The fixture's per-direction trade counts (500 vs
-// 5000) are the ones that produced 0.59090 under the pre-fix SQL; the read
-// must now serve the coverage-weighted 0.50909 and never touch trade_count.
+// 5000) are the ones that would produce 0.59090 under a trade-count SQL; the read
+// must serve the coverage-weighted 0.50909 and never touch trade_count.
 func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)

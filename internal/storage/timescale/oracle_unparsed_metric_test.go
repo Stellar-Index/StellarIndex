@@ -60,10 +60,9 @@ func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 
 // TestLatestOracleStreams_DropsUnparseableRowsLoudly drives
 // [Store.LatestOracleStreams] itself through the scripted driver, rather
-// than self-incrementing the counter the way this file used to (GH-1219,
-// residue of #339's partial restoration of PR #248): `dropped` was
+// than self-incrementing the counter: `dropped` could be
 // declared and read but never incremented in either parse-fail continue
-// branch, so the "no longer SILENT" slog.Warn summary was unreachable
+// branch, leaving the "not SILENT" slog.Warn summary unreachable
 // dead code even though the per-row counter fired correctly. One healthy
 // row, one with an unparseable asset, one with an unparseable quote —
 // both continue branches must fire.

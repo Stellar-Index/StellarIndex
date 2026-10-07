@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// Provenance guards on the issuer auth-flag persist path (#374).
+// Provenance guards on the issuer auth-flag persist path.
 
 // A real r1 residue issuer: merged away at ledger 54,564,588, its pre-image
 // still declaring `stellarbrunch.com`. A Stellar G-strkey is a PUBLIC account
@@ -26,7 +26,7 @@ const mergedIssuer = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
 // [[CURRENCIES]] back-reference, so persisting one creates an impersonation
 // surface on exactly the accounts nobody can verify on-chain any more. It is
 // not hypothetical: 979 of 985 pre-images recovered from a 1,000-issuer r1
-// sample (2026-09-03) still carry one, `stellarkraken.com` and
+// sample still carry one, `stellarkraken.com` and
 // `stellarbrunch.com` among them.
 //
 // The lake reader blanks it, which is the primary defence. This is the second

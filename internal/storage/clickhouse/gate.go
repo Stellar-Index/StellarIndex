@@ -52,7 +52,7 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
-			// G12-04: this is the heavy-FINAL gate/reconcile read class. We keep
+			// This is the heavy-FINAL gate/reconcile read class. We keep
 			// `max_execution_time` UNLIMITED on purpose — a legitimate FINAL
 			// stream over a full-history window runs for many minutes and we do
 			// NOT want it aborted mid-stream (see the ReadTimeout note below).

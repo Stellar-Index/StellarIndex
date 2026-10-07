@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestChangeWindowsMatchDocumentedTolerance pins GH-702 item 1: every
+// TestChangeWindowsMatchDocumentedTolerance pins that every
 // change lookback reads within AssetRow's documented tolerance of its
 // target (1h ±5 min, 24h ±30 min, 7d ±2 h). The lower bounds were
 // 90 min / 26 h / 7 d 12 h, so a thin token's 88-minute move served as
@@ -49,7 +49,7 @@ func TestChangeWindowsMatchDocumentedTolerance(t *testing.T) {
 // no tie-break after last_trade_at.
 var untiedNewestRE = regexp.MustCompile(`ORDER BY last_trade_at DESC NULLS LAST\s*\)`)
 
-// TestCanonLastPriceIsTieBroken pins GH-702 item 2 for the market fold:
+// TestCanonLastPriceIsTieBroken pins tie-breaking for the market fold:
 // both stored orientations routinely share last_trade_at, so the pick
 // must not fall to scan order. Every fold goes through canonLastPriceSQL.
 func TestCanonLastPriceIsTieBroken(t *testing.T) {
@@ -77,7 +77,7 @@ var untiedBucketPickRE = regexp.MustCompile(`ORDER BY (?:p\.)?bucket DESC(?:[ \t
 // asset: USD's (literal or usdProxyQuotes) or XLM's (xlmQuotesBound*).
 var multiFormQuoteRE = regexp.MustCompile(`'fiat:USD'|\busdProxyQuotes\b|\bxlmQuotesBound\w*`)
 
-// TestUSDQuotePicksAreTieBroken pins GH-702 item 2 for the price readers:
+// TestUSDQuotePicksAreTieBroken pins tie-breaking for the price readers:
 // USDC and fiat:USD (or two XLM or peg forms) can print in the same
 // minute, so every newest-bucket pick across forms needs a stable
 // second key. last(vwap, bucket) has none.

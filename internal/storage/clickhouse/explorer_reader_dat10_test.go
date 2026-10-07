@@ -9,7 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for audit DAT-10 (ClickHouse ReplacingMergeTree reads that
+// Regression tests for ReplacingMergeTree dedup (ClickHouse ReplacingMergeTree reads that
 // neither FINAL nor dedup, over-counting un-merged duplicate rows). These use
 // the stubConn/stubRows harness from tx_hash_index_test.go. stubConn does not
 // implement real ReplacingMergeTree semantics, so these are query-SHAPE
@@ -69,7 +69,7 @@ func TestRecentOperations_DedupsPerPrimaryKey(t *testing.T) {
 	}
 }
 
-// audit DAT-10: stellar.operations is ReplacingMergeTree, so an account
+// stellar.operations is ReplacingMergeTree, so an account
 // listing collapses un-merged duplicate parts on the narrow primary key —
 // never with a DISTINCT over opCols, which carries the KB-scale body_xdr. The
 // exact sourced arm uses LIMIT 1 BY; the windowed reads collapse adjacent keys
@@ -130,7 +130,7 @@ func TestOperationsByTx_UsesFinal(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
 	q := conn.queries[len(conn.queries)-1]
-	// audit DAT-10: ledger+tx_hash-scoped so FINAL stays cheap (partition +
+	// ledger+tx_hash-scoped so FINAL stays cheap (partition +
 	// primary-key-prefix bounded), matching the sibling OperationsByLedger.
 	if !strings.Contains(q, "FROM stellar.operations FINAL") {
 		t.Fatalf("query = %q, want `FROM stellar.operations FINAL`", q)

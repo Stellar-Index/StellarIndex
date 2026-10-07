@@ -140,7 +140,7 @@ func TestExtractEvents_OpArgsProvenanceGate(t *testing.T) {
 }
 
 // TestExtractEvents_TxSuccessGate is the regression guard for the
-// C2-010 sibling: extractEvents was the ONLY one of
+// walk-parity gap: without the gate extractEvents is the ONLY one of
 // the three ledger walks with no tx-success gate.
 // dispatcher.ProcessLedger skips failed txs before dispatching, and
 // dispatcher.CensusLedger skips them before counting — so the lake's

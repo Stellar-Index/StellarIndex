@@ -18,7 +18,7 @@ import (
 // and they have to keep doing it.
 //
 // This is a NEGATIVE-SPACE guard: it exists to stop a fix, not to prove
-// one. On 2026-09-09 an unbounded existence read in
+// one. An unbounded existence read in
 // [Store.hasNonClassicAsset] took GET /v1/assets/native past the 15 s
 // budget on r1 and was correctly window-bounded. The sweep that found it
 // flagged these two readers as the same shape. They are not, and a
@@ -36,11 +36,11 @@ import (
 //     so every chunk is an index SEEK.
 //     [TestRawTradeReadsSpanBothStoredDirections] already pins those
 //     arms; this file pins the other half.
-//   - Measured on r1 2026-08-03 (recorded in
+//   - Measured on r1 (recorded in
 //     internal/api/v1/history_cache.go as a retraction of an earlier
 //     estimate that was off by ~1000x): 49 ms native/fiat:USD, 289 ms
 //     heaviest pair, 47 ms to prove a novel pair EMPTY — the
-//     full-history walk. EXPLAIN on r1 2026-09-05 put the second arm at
+//     full-history walk. EXPLAIN on r1 put the second arm at
 //     exactly 2x with the skip scan surviving.
 //   - No window preserves the answer. "The latest trade" bounded by W is
 //     "the latest trade within W", so a market whose last trade predates
@@ -48,8 +48,8 @@ import (
 //     escape its own window by answering XLM from first principles; a
 //     last-trade read cannot, because the answer IS the unbounded
 //     question. And the loss lands on quiet networks, where testing does
-//     not look: futurenet had ZERO XLM trades in a 14-day window on
-//     2026-09-09 while testnet had 2,030.
+//     not look: futurenet had ZERO XLM trades in a 14-day window
+//     while testnet had 2,030.
 //
 // A test that seeds a row and asserts the trade comes back cannot see
 // any of this — a windowed query answers a seeded in-window row exactly

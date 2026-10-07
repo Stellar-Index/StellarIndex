@@ -62,7 +62,7 @@ import (
 // Precedence ([chAuthFrom]): the ops pair, then the live pair, then CH
 // `default`. Ops first because batch units source both env files and
 // must still run at the batch tier. Every pair unset is byte-for-byte
-// the pre-fix behaviour (clickhouse-go treats an empty Auth.Username as
+// the unconfigured behaviour (clickhouse-go treats an empty Auth.Username as
 // CH's `default` user), which keeps the rollout order-safe: a binary can
 // ship before the CH user and env file exist. The ops pair must reach
 // ONLY the batch jobs' environment; the deploy/systemd reference units

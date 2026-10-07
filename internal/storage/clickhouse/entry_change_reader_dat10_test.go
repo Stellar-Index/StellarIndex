@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// Regression tests for audit DAT-10 (ClickHouse ReplacingMergeTree reads that
-// neither FINAL nor dedup, over-counting un-merged duplicate rows).
+// Regression tests for ClickHouse ReplacingMergeTree reads that
+// neither FINAL nor dedup, over-counting un-merged duplicate rows.
 //
 // StreamEntryChanges and CountOpScopedEntryChanges are free functions that
 // dial a real ClickHouse connection via openRead (not an injectable

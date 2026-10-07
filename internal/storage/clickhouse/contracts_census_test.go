@@ -12,8 +12,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestRecentContracts_CensusPath pins the census-first directory read
-// (inventory #26 item 2): with the day-keyed table usable and covering
+// TestRecentContracts_CensusPath pins the census-first directory read:
+// with the day-keyed table usable and covering
 // the window floor, the reader must sum day rows and NEVER touch
 // contract_events (the 40s scan class).
 func TestRecentContracts_CensusPath(t *testing.T) {
@@ -224,15 +224,15 @@ func (e *execRecorder) stagingTables() map[string]bool {
 // TestRunCensusDay_PrivateStagingPerRun is the W1-chrollup-4 regression:
 // the 30-min census-rollup timer and a manual `ch-census-rollup -backfill`
 // are two separate processes that both drive RunCensusDay against the
-// current UTC day. Before the fix both DROP/INSERT/REPLACE against the ONE
+// current UTC day. Without per-run staging both DROP/INSERT/REPLACE against the ONE
 // shared stellar.contracts_census_daily_staging table, so an interleaving
 // (timer REPLACE landing after the backfill's staging clear but before its
 // INSERT) swaps an EMPTY staging partition into the live table and serves
 // zero census rows for `today`. The fix gives every run its OWN private
 // staging table, so no two concurrent runs can ever touch the same staging
 // table. This test drives two runs concurrently and asserts exactly that —
-// and that neither run uses the old SHARED name, so it fails against the
-// pre-fix code.
+// and that neither run uses the old SHARED name, so it fails against a
+// shared-staging implementation.
 func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 	day := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 

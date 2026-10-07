@@ -31,7 +31,7 @@ func TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary(t *testing.T) {
 	}
 }
 
-// TestCloseTimeBoundPredicate pins INV-1530's scan shape: soroban_events
+// TestCloseTimeBoundPredicate pins the scan shape: soroban_events
 // is partitioned by ledger_close_time, so its gap scan must carry a
 // close-time predicate or it excludes no chunk; each known bound becomes
 // its own placeholder after the four fixed ones, an unknown side stays open.
@@ -105,7 +105,7 @@ func TestMaxLedgerInWindowSkipsCensusOverrideTargets(t *testing.T) {
 }
 
 // TestComputeGapScanWindow pins the trailing-window arithmetic that
-// replaced the [genesis, tip] full-history scan (2026-07-06 IO-
+// replaced the [genesis, tip] full-history scan (an IO-
 // saturation incident). The detector must scan only a bounded trailing
 // window each cycle; deep history is the ADR-0033 completeness
 // verdict's domain.
@@ -227,7 +227,7 @@ func TestGapScanWindowCoverageMathCoherent(t *testing.T) {
 }
 
 // TestMarkGapDetectorScanSuccessAdvancesLivenessGauge pins the crux of
-// the 2026-07-06 false-`stellarindex_ingest_gap_detector_silent` fix: a
+// the false-`stellarindex_ingest_gap_detector_silent` case: a
 // successful scan stamps the wall-clock last-success gauge the alert
 // keys off. The once-per-6h `ok` COUNTER is invisible to `rate()` across
 // a restart (its value is 1 → 1, no detectable reset), so liveness must

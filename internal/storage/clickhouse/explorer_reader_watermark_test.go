@@ -9,7 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Tests for the per-account activity watermark bound (#31): AccountOperations'
+// Tests for the per-account activity watermark bound: AccountOperations'
 // key arms read `ORDER BY pk DESC LIMIT n`, which streams granules backwards
 // from the TIP until the account's rows turn up (~4 s for a 46d-idle account). With a watermark
 // row in stellar.account_activity the reader bounds EACH arm's resolve with

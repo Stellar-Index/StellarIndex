@@ -40,8 +40,8 @@ func TestBuildWasmDisassembly_BestEffort(t *testing.T) {
 // never come out of a real tool run, so the assertion is decisive regardless
 // of whether wabt is installed on the box running the test.
 //
-// Pre-fix, buildWasmDisassembly ignored any cache and always ran the tools
-// live, so a seeded entry was never read back and this fails.
+// Without the cache, buildWasmDisassembly would always run the tools
+// live, so a seeded entry would never be read back and this fails.
 func TestBuildWasmDisassembly_CacheHitSkipsToolRun(t *testing.T) {
 	r := &ExplorerReader{disasmCache: newWasmDisasmCache()}
 	const hash = "cachehit-hash"

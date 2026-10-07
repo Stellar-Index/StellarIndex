@@ -153,7 +153,7 @@ func TestXLMQuoteRestampDecide_DeclinedRowsAreReportedNotGuessed(t *testing.T) {
 
 // TestCEXFiatRestampDecide_ValuesTheFiatQuoteAtTheSourceScale: a binance
 // BTC/EUR trade is worth quote_amount/1e8 x EUR/USD — the CEX amount
-// scale (CS-040), not the on-chain 1e7 — and the number is the insert
+// scale, not the on-chain 1e7 — and the number is the insert
 // path's own.
 func TestCEXFiatRestampDecide_ValuesTheFiatQuoteAtTheSourceScale(t *testing.T) {
 	t.Parallel()

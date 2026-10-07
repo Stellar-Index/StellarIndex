@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The contract arm's directory scan (#352).
+// The contract arm's directory scan.
 //
 // Two properties are testable without a database and both are
 // load-bearing: the census has to refuse to balance when its buckets do

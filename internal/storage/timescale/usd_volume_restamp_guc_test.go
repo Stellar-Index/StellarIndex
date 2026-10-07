@@ -24,7 +24,7 @@ const (
 )
 
 // TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction
-// pins the GUC hygiene of [Store.RestampExactTierUSDVolume] (#312).
+// pins the GUC hygiene of [Store.RestampExactTierUSDVolume].
 //
 // The hazard is pooling, not SQL: `database/sql`'s Conn.Close returns the
 // connection TO THE POOL, and pgx v5's stdlib adapter resets nothing on
@@ -40,7 +40,7 @@ const (
 // reuse the hazard needs is observable without a database. The test
 // asserts BOTH halves: the cap is still lifted for the restamp's own
 // UPDATE (a "fix" that drops the SET would abort a real day's DML — one
-// day needed 265k tuples on 2026-07-30), and no statement after it sees
+// day needed 265k tuples), and no statement after it sees
 // anything but the default.
 func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t *testing.T) {
 	ctx := context.Background()

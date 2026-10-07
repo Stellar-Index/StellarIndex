@@ -153,7 +153,7 @@ func TestBoundSep1CurrenciesFromPayload_BindsOnTheAccountNotTheSpelling(t *testi
 	}
 }
 
-// A whitespace-only code names no asset. It used to pass the empty
+// A whitespace-only code names no asset. It must not pass the empty
 // check, bind, and then fail every downstream join silently.
 func TestBoundSep1CurrenciesFromPayload_WhitespaceCodeNamesNoAsset(t *testing.T) {
 	const serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"

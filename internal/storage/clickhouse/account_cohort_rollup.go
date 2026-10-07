@@ -368,7 +368,7 @@ type AccountCohort struct {
 	// FlowPricesUnavailable is true when Flows was served without
 	// then-prices because asset_month_usd_prices (an OPTIONAL
 	// enrichment, not the flows' own table) does not exist on this
-	// deployment (GH-1078). Flows themselves are never withheld for
+	// deployment. Flows themselves are never withheld for
 	// this: PriceUSDThen is simply nil on every row.
 	FlowPricesUnavailable bool
 }
@@ -526,7 +526,7 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 // and literals it empty (read as nil, same as a joined-but-unpriced
 // month) so the same Scan below serves both. Used when
 // asset_month_usd_prices — an OPTIONAL enrichment of the flows, not
-// their source of truth — is absent (GH-1078): a missing enrichment
+// their source of truth — is absent: a missing enrichment
 // table must not take the whole cohort-flows read down with it.
 const cohortFlowsSQL = `
 		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,

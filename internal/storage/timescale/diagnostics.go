@@ -483,14 +483,10 @@ func isConcurrentRefreshErr(err error) bool {
 // prices_15m. `trades`, prices_1h and this stat still
 // span the same history. prices_1m need not, on a deployment that has
 // armed migration 0156's 90-day policy on that one view — one more
-// reason this answer is about prices_1h alone. The comment this replaces described
+// reason this answer is about prices_1h alone. A stale comment would describe
 // migration 0002's world instead — trades kept for a rolling 90 days,
 // only the hourly-and-coarser aggregates kept indefinitely — which
-// migration 0031 retired on 2026-05-14. The date is deliberate, and
-// so is the absence of an elapsed-time phrase beside it: the previous
-// wording gave the gap as a span of months, which was wrong by four
-// times on the day it was typed and would have gone on rotting after
-// that. Subtract 2026-05-14 from the reader's own clock.
+// migration 0031 retired.
 //
 // A wide CAGGCoverage therefore means what it says — a healthy
 // since-genesis backfill — but it says it about prices_1h alone. It
@@ -566,9 +562,9 @@ type BackfillCoverage struct {
 // BackfillCoverageStats is intentionally a no-op (returns no rows).
 // Retained only for interface/return-type compatibility with the
 // CoverageCache scaffolding, which is removed in the server-side
-// snapshot-pregeneration refactor (4d6e7ac4f).
+// snapshot-pregeneration refactor.
 //
-// Why it does nothing: it used to scan `trades` per source for
+// Why it does nothing: it formerly scanned `trades` per source for
 // earliest/latest ledger + an approximate trade count, cached by
 // CoverageCache and read via buildBackfillCoverage. The
 // cursor-first refactor made that output 100% dead — every mapped
@@ -807,9 +803,9 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 // phoenix ALSO bump via the idempotent trades INSERT for their swaps; their
 // non-swap streams (liquidity / skim / stake) are a DISJOINT event set, so
 // summing the folded table with the trades count is the honest total, not a
-// double-count. Net effect: a re-seed now CORRECTS a replay's over-count for
+// double-count. Net effect: a re-seed CORRECTS a replay's over-count for
 // every bumpEntryCount source instead of leaving it drifted (or zeroing the
-// ones that used to have no table), so seed-reset is SAFE and required after
+// ones that have no table), so seed-reset is SAFE and required after
 // a replay.
 const seedSourceEntryCountsSQL = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)

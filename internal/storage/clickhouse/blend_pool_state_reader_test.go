@@ -29,8 +29,8 @@ import (
 // nonsense both sides agree on.
 //
 // Those two figures are also the measurement: ONE reserve's key matches
-// 74,834 rows in the window the reader used to fold over, and exactly one row
-// in the projection it reads now. The instance key resolving in
+// 74,834 rows in the raw window a fold would scan, and exactly one row
+// in the projection it reads. The instance key resolving in
 // ledger_entries_current is what proves contract_data is projected there.
 const (
 	blendTestPool     = "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD"
@@ -252,14 +252,14 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 		}
 	}
 	// Version resolution is now the projection's, and it is the SAME composite
-	// the old argMax spelled out: ledger_entries_current is
+	// the argMax spelled out: ledger_entries_current is
 	// ReplacingMergeTree(version) with version = (ledger_seq << 32) |
-	// intra_ledger_seq, so FINAL keeps the LAST change in a ledger (audit
-	// C2-4c). Nothing to assert in the text; what MUST be asserted is that the
+	// intra_ledger_seq, so FINAL keeps the LAST change in a ledger.
+	// Nothing to assert in the text; what MUST be asserted is that the
 	// removed-key filter cannot run before that collapse — moving
 	// `entry_xdr != ''` into PREWHERE would drop the winning removal and
 	// RESURRECT a key deleted later in the same ledger, which is exactly the
-	// bug the old HAVING existed to avoid.
+	// bug a removed-key HAVING exists to avoid.
 	if !strings.Contains(q, "optimize_move_to_prewhere_if_final = 0") {
 		t.Errorf("reserve lookup does not pin optimize_move_to_prewhere_if_final=0; a removed reserve could resurrect:\n%s", q)
 	}

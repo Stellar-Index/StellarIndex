@@ -105,9 +105,9 @@ var errAccountStateRefreshFailed = errors.New(
 // see accountStateCache's godoc for why (site-audit follow-up:
 // /v1/accounts/{g} and /v1/issuers/{g} were 6-8s under concurrent load).
 //
-// Detached: the scan used to run on the request
-// context, so a whale account whose UNION arms exceed the 8s budget died
-// WITH the request, the cache never filled, and every retry paid the
+// Detached: the scan must not run on the request
+// context: a whale account whose UNION arms exceed the 8s budget would die
+// WITH the request, the cache would never fill, and every retry would pay the
 // timeout again — a permanent 503 for exactly the accounts people look up.
 // Now the scan runs on its own bounded budget and outlives any caller that
 // gives up; the timed-out request 503s honestly and the retry lands warm.
@@ -141,7 +141,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 			// maps it to 503 (retry) instead of 500 (bug); a genuine scan
 			// failure below keeps errAccountStateRefreshFailed → 500.
 			// fl.saturated covers the NON-OWNER that joined a flight the
-			// owner then saturation-skipped — it used to fall through to
+			// owner then saturation-skipped — it must not fall through to
 			// the 500 for pure backpressure.
 			return AccountState{}, false, ErrRefreshSaturated
 		}

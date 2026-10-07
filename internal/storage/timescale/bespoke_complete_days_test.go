@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// These tests pin the server-side partial-bucket honesty rule (UXP-16
-// class, audit 2026-07-31): every DAILY-grain bespoke series excludes the
+// These tests pin the server-side partial-bucket honesty rule (a
+// partial-bucket class): every DAILY-grain bespoke series excludes the
 // current, still-accumulating day — its partial bucket renders as a
 // phantom activity/volume cliff on every daily chart — while the 24h
 // window's HOURLY grain keeps its live edge.

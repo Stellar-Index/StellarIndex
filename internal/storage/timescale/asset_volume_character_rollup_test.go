@@ -14,7 +14,7 @@ import (
 // TestAssetVolumeCharacterRollupSQL_Shape pins the all-asset roll to the
 // SAME signal definitions the per-asset assetVolumeCharacterSQL uses, so a
 // future edit can't silently let the rollup drift from the value the detail
-// used to compute live (the oracle guards it end-to-end; this guards the
+// computes live (the oracle guards it end-to-end; this guards the
 // SQL text cheaply).
 func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 	q := assetVolumeCharacterRollupSQLTemplate

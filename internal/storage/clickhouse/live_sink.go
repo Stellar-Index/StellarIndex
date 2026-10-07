@@ -30,7 +30,7 @@ type LiveSinkOptions struct {
 	StopTimeout time.Duration
 	// MaxBufferLedgers caps how many ledgers the underlying Sink holds in
 	// memory before it starts BOUNDED-DROPPING incoming extracts during a
-	// sustained ClickHouse outage (G12-01; default 4096). The channel
+	// sustained ClickHouse outage (default 4096). The channel
 	// (BufferSize) bounds the worker's INBOX; this bounds the Sink's per-table
 	// row slices, which the channel cap does NOT (a failing flush keeps them
 	// intact while the worker keeps appending). Combined, the live path's CH
@@ -118,7 +118,7 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	if err != nil {
 		return nil, err
 	}
-	// G12-01: cap the underlying Sink's in-memory buffers so a sustained CH
+	// Cap the underlying Sink's in-memory buffers so a sustained CH
 	// outage can't grow the heap unbounded on the shared r1 host.
 	sink.SetMaxBufferLedgers(opts.MaxBufferLedgers)
 	return newLiveSink(sink, logger, opts), nil
@@ -221,7 +221,7 @@ func (l *LiveSink) add(ext LedgerExtract) {
 	ctx, cancel := context.WithTimeout(l.base, l.timeout)
 	defer cancel()
 	if err := l.sink.Add(ctx, ext); err != nil {
-		// G12-01: a full buffer is a bounded DROP (heals via ch-live-catchup),
+		// A full buffer is a bounded DROP (heals via ch-live-catchup),
 		// not a write ERROR. Distinguish so the metric/log don't conflate a
 		// healthy back-pressure drop with a genuine CH write failure.
 		if errors.Is(err, ErrBufferFull) {
@@ -235,7 +235,7 @@ func (l *LiveSink) add(ext LedgerExtract) {
 		l.bump(&l.errored)
 		l.logger.Warn("clickhouse live-sink: inline flush failed", "ledger", ext.Ledger.LedgerSeq, "err", err)
 	}
-	// G12-02: count buffer-enqueue as `buffered`, NOT `written`. `written` is
+	// Count buffer-enqueue as `buffered`, NOT `written`. `written` is
 	// credited only by a successful Flush (Sink.onFlushed), so the metric
 	// can't claim durability the lake doesn't have during a CH stall.
 	l.bump(&l.buffered)

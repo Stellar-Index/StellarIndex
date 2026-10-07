@@ -15,7 +15,7 @@ import (
 // market orientations as a UNION ALL of two single-direction branches —
 // never as one `(A AND B) OR (B AND A)` disjunction.
 //
-// Measured on r1 (2026-08-31), prices_1m at 34 chunks, reading the pair
+// Measured on r1, prices_1m at 34 chunks, reading the pair
 // native/fiat:USD which has ZERO rows:
 //
 //	OR form        10682.994 ms
@@ -36,7 +36,7 @@ import (
 // the pair index, where an empty pair is an immediate miss.
 //
 // This is a REGRESSION, not an original defect: both queries read a
-// single direction until 2026-08-31, when wave-D UNAUTH-DOS-9 folded in
+// single direction until the fix that folded in
 // the second orientation to fix a genuine correctness bug (a bucket
 // holding only the flipped leg went missing). The correctness fix is
 // right and must stay; only its shape was wrong. Hence a shape guard
@@ -232,7 +232,7 @@ func declName(d ast.Decl) string {
 // pairDeclFiles lists every non-test .go file in the package, the same
 // set TestPairReadsNeverFoldDirectionsWithOr and
 // TestBatchPairReadsFoldBothDirections scan (pair_direction_guard_test.go).
-// A subject scan hardcoded to a single file — aggregates.go used to be
+// A subject scan hardcoded to a single file — aggregates.go was
 // the only one — goes silently blind the moment a both-directions reader
 // lands anywhere else, which is exactly how change_summary.go's series
 // read shipped uncovered.

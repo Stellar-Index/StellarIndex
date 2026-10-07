@@ -259,11 +259,11 @@ func (c *cohortFlowsFakeConn) Query(_ context.Context, query string, _ ...any) (
 	return &cohortFlowsFakeRows{}, nil
 }
 
-// A missing asset_month_usd_prices table (GH-1078: the v0.91.0 cohort
+// A missing asset_month_usd_prices table (the cohort
 // outage) must degrade the flows read — serve flows with no then-price —
-// not fail the whole /graph/cohort route. Before the fix, readCohortFlows
-// returned the UNKNOWN_TABLE error straight through and AccountCohort
-// propagated it as a 500.
+// not fail the whole /graph/cohort route. Otherwise readCohortFlows
+// would return the UNKNOWN_TABLE error straight through and AccountCohort
+// would propagate it as a 500.
 func TestCohortFlowsDegradeWhenPricesTableAbsent(t *testing.T) {
 	conn := &cohortFlowsFakeConn{}
 	r := &ExplorerReader{conn: conn}

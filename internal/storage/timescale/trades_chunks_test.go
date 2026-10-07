@@ -17,7 +17,7 @@ import (
 //
 // The chunk mode of `usd-volume-restamp -tier xlm-base` exists because an
 // UPDATE into a COMPRESSED `trades` chunk decompresses the chunk
-// (measured 2026-09-03: one 2,000-row batch took over 14 minutes, ~1,574
+// (measured: one 2,000-row batch took over 14 minutes, ~1,574
 // rows/min across 28.6M rows). The remedy is mechanical — decompress the
 // chunk, restamp inside it, re-compress it — and the whole of its safety
 // lives in the ORDER of those statements. These tests pin that order and
@@ -165,8 +165,8 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 			t.Errorf("bracket %d compress args = %v, want (%s, %s)", i, comp.args, chunk.Schema, chunk.Name)
 		}
 		// Each of the two exclusive-lock statements opens its transaction
-		// by bounding how long it may leave a lock request PENDING (the
-		// 2026-09-10 convoy). The bound is transaction-LOCAL so it cannot
+		// by bounding how long it may leave a lock request PENDING (a
+		// lock convoy). The bound is transaction-LOCAL so it cannot
 		// ride the pooled connection into the next statement.
 		for _, at := range []int{base + 2, base + 9} {
 			if got[at] != "SET LOCAL lock_timeout = '5000ms'" {

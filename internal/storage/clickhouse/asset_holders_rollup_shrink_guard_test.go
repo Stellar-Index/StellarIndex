@@ -61,10 +61,10 @@ func (r *shrinkGuardRow) Err() error { return r.err }
 // error, so the only thing that can catch it is a row-count comparison
 // between the fills finishing and the EXCHANGE firing.
 //
-// Proven red against the pre-fix RunHoldersRollup, which executed every
+// Red against a RunHoldersRollup that executes every
 // statement in holdersRollupStatements — including the final EXCHANGE — in
-// a plain loop with no check in between: the swap fired anyway and the
-// degraded board went live.
+// a plain loop with no check in between: the swap fires anyway and the
+// degraded board goes live.
 func TestRunHoldersRollupRefusesAShrunkenBoard(t *testing.T) {
 	conn := &shrinkGuardConn{counts: map[string]uint64{
 		// Staging came out of this cycle's fills with almost nothing —

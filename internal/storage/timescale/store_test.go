@@ -9,7 +9,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// TestConfigurePool_AppliesAllFourSettings is the F-0151
+// TestConfigurePool_AppliesAllFourSettings is the
 // regression test: every pool setting that the audit pinned in
 // place MUST be applied on every fresh *sql.DB the package opens.
 // If a future refactor drops one, this test fails before the bug

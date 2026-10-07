@@ -30,11 +30,11 @@ import (
 //
 // This has now been the same bug three times:
 //
-//   - LatestClosedVWAP1mForPair (fixed, audit-2026-07-23 MNY-06)
-//   - RecentClosedVWAP1mForPair — reported by the MNY-06 fixer as R-076,
+//   - LatestClosedVWAP1mForPair (fixed)
+//   - RecentClosedVWAP1mForPair — missed by the first fix,
 //     recorded in that audit's remediation-state.json, and never
-//     dispositioned. Fixed 2026-08-31, wave-D UNAUTH-DOS-9.
-//   - ClosedVWAP1mAtOrBefore — the second reader UNAUTH-DOS-9 itself
+//     dispositioned. Fixed later.
+//   - ClosedVWAP1mAtOrBefore — the second reader the direction-union fix itself
 //     missed; found by its skeptic. Fixed in the same change.
 //
 // Each previous fix came with a test pinning THAT function's query.

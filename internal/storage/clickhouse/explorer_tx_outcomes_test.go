@@ -23,7 +23,7 @@ import (
 // hash probes false-positive on ~39% of candidate granules. At the explorer's
 // own PAGE_SIZE=50 the span form blew stampTxOutcomes' budget on every idle
 // account, so 0 of 50 operations got transaction_successful and the whole page
-// rendered with an UNKNOWN outcome behind the coverage note (#332 F1).
+// rendered with an UNKNOWN outcome behind the coverage note.
 
 func TestTxOutcomesByHashQuery_PrunesOnTheExactLedgerSet(t *testing.T) {
 	q := txOutcomesByHashQuery
@@ -61,8 +61,8 @@ func TestTxOutcomesByHashQuery_KeepsFinal(t *testing.T) {
 	//   - `ingested_at` is DateTime, ONE-SECOND resolution. A re-ingest batch
 	//     that rewrites many rows inside one wall-clock second TIES on the
 	//     version column, and a bare SELECT cannot break that tie — it would
-	//     silently keep serving the STALE pre-fix verdict. That is audit
-	//     DAT-10; txByLedgerAndHash documents the same trap on this table.
+	//     silently keep serving the STALE verdict. That is the
+	//     ReplacingMergeTree tie trap; txByLedgerAndHash documents the same trap on this table.
 	//     FINAL breaks the tie on real insertion order.
 	//
 	// FINAL is only ruinous when the granule selection comes from a SKIP index

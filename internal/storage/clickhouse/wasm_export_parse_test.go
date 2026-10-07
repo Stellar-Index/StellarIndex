@@ -141,8 +141,7 @@ func TestParseWasmExports_HugeCountDoesNotOOM(t *testing.T) {
 // arrive from a successful on-chain upload today. It is reachable from
 // any corruption of entry_xdr that preserves XDR framing — and nothing
 // downstream verifies sha256(code) against the content-addressed key —
-// and from any future caller feeding non-chain bytes (cold audit
-// 2026-08-04).
+// and from any future caller feeding non-chain bytes.
 func TestParseWasmExports_HugeLengthDoesNotPanic(t *testing.T) {
 	// LEB128 encoding of a value near MaxInt64.
 	huge := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}

@@ -169,7 +169,7 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 //     single-flight refresh is kicked. The handler compares asOf against
 //     AccountsWealthCacheTTL to set the envelope's degraded (`stale`)
 //     flag — a real-but-old ranking with an honest timestamp beats a 503
-//     (a window of refresh failures used to blank
+//     (a window of refresh failures would blank
 //     the route back to "warming up" indefinitely).
 //   - nothing ever stored: ok=false immediately so the handler can render
 //     an honest warming state instead of hanging for the request timeout

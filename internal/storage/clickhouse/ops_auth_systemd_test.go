@@ -25,9 +25,9 @@ import (
 // out of the same file — so a self-hoster who follows the doc used to
 // demote the LIVE ledger sink (NewLiveSink -> Open) and the aggregator's
 // supply readers (NewExplorerReader) to the batch tier: the precise
-// inverse of the 2026-08-28 r1 incident the profile exists to prevent.
+// inverse of the ch-rebuild starvation incident the profile exists to prevent.
 //
-// The units now strip the pair with `UnsetEnvironment=`, which systemd
+// The units strip the pair with `UnsetEnvironment=`, which systemd
 // applies AFTER every Environment=/EnvironmentFile= (systemd.exec(5);
 // v235+, the Ubuntu 22.04/24.04 targets ship 249/255). This test pins
 // the GUARANTEE rather than the directive: it resolves the environment
@@ -189,7 +189,7 @@ func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving ma
 	case u.runsAnyOf(opsBinary) || u.reachesOpsViaScript(scripts):
 		// Running the ops CLI, directly or through a shipped script, IS
 		// the batch tier: it MUST resolve to ops_batch whether or not it
-		// sources the file (#113: batch units that sourced nothing
+		// sources the file (batch units that sourced nothing
 		// ran at CH `default`/serving priority and matched no arm here).
 		if auth != batchWant {
 			violation = fmt.Sprintf("%s runs stellarindex-ops (directly or via a shipped script) but would authenticate as %+v, want %+v.\n"+

@@ -16,7 +16,7 @@ import (
 // accepts one the reader silently clamps, which is the exact defect this
 // validation was added to prevent: raising max_trades_per_window above
 // the ceiling does not widen the scan AND permanently blinds the
-// orchestrator's truncation detector (cold audit 2026-08-04).
+// orchestrator's truncation detector.
 func TestMaxTradesInRangeLimit_matchesConfigCeiling(t *testing.T) {
 	cfg := config.Default()
 	cfg.Aggregate.MaxTradesPerWindow = timescale.MaxTradesInRangeLimit

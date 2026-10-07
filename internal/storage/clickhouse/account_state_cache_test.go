@@ -68,8 +68,8 @@ func TestAccountStateCacheNilSafe(t *testing.T) {
 // here, so refreshAccountState's TryAcquire fails and no scan (which would need
 // a live ClickHouse conn) ever runs.
 //
-// Red without the fix: pre-fix, refreshAccountState returned only the channel
-// and the cold-miss path returned errAccountStateRefreshFailed regardless of
+// Red without the fix: refreshAccountState would return only the channel
+// and the cold-miss path would return errAccountStateRefreshFailed regardless of
 // why the cache stayed empty, so errors.Is(err, ErrRefreshSaturated) is false
 // and this test fails.
 func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
@@ -101,10 +101,10 @@ func TestAccountStateCached_SaturationReturnsDistinctSentinel(t *testing.T) {
 }
 
 // A NON-OWNER waiter that joined a flight the owner then
-// saturation-skipped must also see ErrRefreshSaturated: pre-fix it woke on
-// the closed channel, found no cache entry, and fell through to the
-// 500-class errAccountStateRefreshFailed for pure backpressure (cold audit
-// 2026-08-03). The owner publishes the outcome on the flight entry before
+// saturation-skipped must also see ErrRefreshSaturated: otherwise it wakes on
+// the closed channel, finds no cache entry, and falls through to the
+// 500-class errAccountStateRefreshFailed for pure backpressure.
+// The owner publishes the outcome on the flight entry before
 // end() closes done.
 func TestAccountStateCached_NonOwnerSeesSaturation(t *testing.T) {
 	t.Parallel()

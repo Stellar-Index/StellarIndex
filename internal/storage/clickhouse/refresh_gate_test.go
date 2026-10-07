@@ -10,8 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestRefreshGate_ClassFairness pins the per-class cap (inventory #26
-// item 5, second half): one client-keyed class saturating its
+// TestRefreshGate_ClassFairness pins the per-class cap (second half of
+// the fairness work): one client-keyed class saturating its
 // quarter-of-global cap must NOT stop other classes from acquiring, the
 // reserved slot stays out of client-keyed reach, and the global bound
 // must still hold across classes.

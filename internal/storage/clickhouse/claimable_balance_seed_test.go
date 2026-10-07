@@ -355,7 +355,7 @@ func TestClaimableSeedReducer_LatestLedgerWins(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_SameLedgerRemovalWins is the C2-4 case. A claimable
+// TestClaimableSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break case. A claimable
 // balance created and CLAIMED in the same ledger is an ordinary pattern (one
 // transaction can do both), so the tie-break is not hypothetical here: getting
 // it backwards seeds a claimed balance and inflates classic supply — the

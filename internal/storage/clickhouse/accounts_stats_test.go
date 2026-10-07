@@ -307,8 +307,8 @@ func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 // so AccountsStats must retry and the second attempt's (self-consistent)
 // values must be what is served.
 //
-// Proven red against the pre-fix AccountsStats, which had no marker
-// re-check at all: it returned the FIRST read's snapshot (TotalAccounts=1)
+// Red against an AccountsStats that has no marker
+// re-check at all: it returns the FIRST read's snapshot (TotalAccounts=1)
 // instead of retrying to the second, consistent one (TotalAccounts=2).
 func TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	cycle1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)

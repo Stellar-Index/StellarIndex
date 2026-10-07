@@ -14,12 +14,12 @@ import (
 )
 
 // TestListAssetsBaseSelect_NoPerRequestPriceScan is the regression guard
-// for #331 F1, and the one that must never be relaxed.
+// for the per-request price scan, and the one that must never be relaxed.
 //
-// The /v1/assets listing used to DERIVE its price column per request:
+// Deriving the /v1/assets price column per request would mean
 // twelve `DISTINCT ON … FROM prices_1m` CTEs materialised for every
 // asset in the catalogue, on every uncached variant, whatever page was
-// asked for. On r1 (`pg_stat_statements`, 2026-07-06 → 2026-09-02) the
+// asked for. On r1 (`pg_stat_statements`) that
 // unfiltered statement ran 8,019 times at mean 2,400 ms / max 10,295 ms
 // with 380,324 shared-buffer hits per call, three sibling shapes added
 // 10,483 more calls at 1.5-2.1 s, and `EXPLAIN (ANALYZE, BUFFERS)` on

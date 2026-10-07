@@ -13,9 +13,9 @@ import (
 // TV-1/TV-3: the bulk COPY+merge path used by ch_rebuild must carry the SAME
 // INV-3 generation-guarded corrective-upsert semantics as the per-row writers
 // (sep41_transfers.go InsertSEP41TransferBatch / sep41_supply_events.go
-// InsertSEP41SupplyEvent), NOT the old generation-0 `ON CONFLICT DO NOTHING`.
+// InsertSEP41SupplyEvent), NOT a generation-0 `ON CONFLICT DO NOTHING`.
 //
-// Before the fix, copyMerge emitted `... ON CONFLICT (...) DO NOTHING` and the
+// Without it, copyMerge would emit `... ON CONFLICT (...) DO NOTHING` and the
 // COPY column list omitted derive_generation, so a re-derive's corrected value
 // (a) defaulted to generation 0 and (b) never landed on an existing PK. Worse,
 // on a COPY batch error ch_rebuild's per-row fallback (gen-guarded DO UPDATE)

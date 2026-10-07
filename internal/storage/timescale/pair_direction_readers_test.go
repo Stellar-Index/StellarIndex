@@ -42,10 +42,10 @@ func dirRows(b time.Time, base, quote string) [][]driver.Value {
 }
 
 // TestRecentClosedVWAP1mForPair_FoldsBothDirections — the SEP-40
-// /v1/oracle/prices series. Pre-fix this reader filtered a single
+// /v1/oracle/prices series. A reader that filtered a single
 // orientation and scanned (bucket, base, quote, vwap, count, sources),
-// so a flipped-only minute was absent from the series entirely and a
-// two-sided minute reported one leg's price.
+// would leave a flipped-only minute absent from the series entirely and a
+// two-sided minute reporting one leg's price.
 func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	base := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -90,7 +90,7 @@ func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 
 // TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed is the
 // headline failure scenario: a market that traded ONLY in the stored
-// (quote, base) orientation. Pre-fix, /v1/oracle/prices returned 200
+// (quote, base) orientation. Otherwise /v1/oracle/prices returns 200
 // with an empty array for an asset /v1/oracle/lastprice priced without
 // difficulty — two endpoints on the same declared SEP-40 surface
 // disagreeing about whether the asset had any history.

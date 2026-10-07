@@ -50,7 +50,7 @@ func (c *fakeConnector) Connect(context.Context) (driver.Conn, error) {
 }
 func (c *fakeConnector) Driver() driver.Driver { return nil }
 
-// TestStatementTimeoutConnector_SetsTimeout pins R1 (audit-2026-07-16):
+// TestStatementTimeoutConnector_SetsTimeout pins that
 // every freshly-dialed serving-pool connection runs `SET statement_timeout`
 // with the configured value (milliseconds) before it is handed out.
 func TestStatementTimeoutConnector_SetsTimeout(t *testing.T) {
@@ -124,12 +124,11 @@ func TestStatementTimeoutConnector_PropagatesDialError(t *testing.T) {
 	}
 }
 
-// TestBoundedConnector_PositiveTimeoutSetsBackstop pins REC-08
-// (audit-2026-08-14): OpenBackground (indexer/aggregator) with a positive
+// TestBoundedConnector_PositiveTimeoutSetsBackstop pins that
+// OpenBackground (indexer/aggregator) with a positive
 // timeout builds a pool that SETs statement_timeout — the exact
 // milliseconds the config Duration renders to — so a runaway background
-// query is bounded SQL-side. Before REC-08 those pools opened via plain
-// Open with NO connector at all.
+// query is bounded SQL-side, unlike a plain Open with NO connector.
 func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
 	conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", 30*time.Minute, false)
 	if err != nil {
@@ -182,7 +181,7 @@ func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
 	}
 }
 
-// TestStatementTimeoutConnector_ForceCustomPlans pins the 2026-08-24
+// TestStatementTimeoutConnector_ForceCustomPlans pins the
 // /v1/price p95-tail fix: the SERVING pool's connections must ALSO set
 // plan_cache_mode = force_custom_plan (generic-plan builds over the
 // ~870-chunk trades hypertable cost ~206 ms and are rebuilt on every

@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── tier 3a: the alias-complete direct leg (#372 F4) ────────────────
+// ─── tier 3a: the alias-complete direct leg ────────────────
 
 // The single declared USD peg on r1, its SAC wrapper, and one wrapper for
 // a classic that is NOT a peg — so a test can tell "expanded the peg set"
@@ -29,17 +29,17 @@ var (
 )
 
 // TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms is the
-// #372-F4 regression: the tier-3/4 XLM/USD anchor was bound to ONE
+// alias regression: the tier-3/4 XLM/USD anchor was bound to ONE
 // spelling of XLM (`native`) against ONE spelling of the peg (the
 // classic), and XLM's USD markets are split across its three canonical
-// identities BY VENUE. Measured on r1 2026-09-03, prices_1m buckets
+// identities BY VENUE. Measured on r1, prices_1m buckets
 // clearing this query's own dust floor:
 //
 //	native      / USDC-GA5Z… (classic)  215,790 buckets, from 2026-03-12
 //	CAS3J7…SAC  / CCW67T…SAC (the SAC)  291,883 buckets, from 2024-03-12
 //	every other combination of those forms                0
 //
-// so the pre-fix predicate could not price ANY on-chain XLM trade before
+// so a single-spelling predicate could not price ANY on-chain XLM trade before
 // 2026-03-12 — 28,534 sdex/AMM XLM-base rows in 2025-06 alone, moving
 // 19,174,885 XLM, all stored with usd_volume NULL and served as $0.00.
 //
@@ -110,10 +110,10 @@ func TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms(t *testing.T)
 }
 
 // TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm pins the other
-// half of the #372-F4 contract: the loop is ADDITIVE. Where the
+// half of the alias contract: the loop is ADDITIVE. Where the
 // pre-existing `native` form already answers — every date from 2026-03-12
 // — it answers FIRST, no further form is consulted, and the result is
-// what the pre-fix code returned. This is the manipulation guard
+// what the single-spelling code returned. This is the manipulation guard
 // [canonical.AssetAliases] documents (SAC form LAST) expressed as
 // behaviour: the fresher, 99.00 Soroban print must not win.
 func TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm(t *testing.T) {

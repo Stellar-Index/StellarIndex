@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite for audit-2026-07-23 R-004 / R-006 / R-007 (MNY-06):
+// Regression suite for
 // the served-VWAP direction combine.
 //
 // SDEX stores the same market in BOTH orientations — the decoder files
@@ -44,7 +44,7 @@ import (
 //
 // Union: 60 USDC / 150 XLM = 0.4 USDC per XLM, exactly.
 //
-// The pre-fix count-weighted answer, with the flipped side inverted to
+// A count-weighted answer, with the flipped side inverted to
 // 1/5 = 0.2 and the counts below, is (0.5·1 + 0.2·9) / 10 = 0.23 — off by
 // 42%, and driven entirely by how many prints each side happened to make.
 var combineFixture = []dirVWAP{
@@ -54,7 +54,7 @@ var combineFixture = []dirVWAP{
 
 const (
 	combineFixtureUnionVWAP = "0.4"  // Σquote / Σbase — the correct answer
-	combineFixtureCountVWAP = "0.23" // the pre-fix trade-count-weighted answer
+	combineFixtureCountVWAP = "0.23" // the wrong, trade-count-weighted answer
 )
 
 // TestCombineDirVWAP_VolumeWeightedUnion pins the exact combined value
@@ -96,7 +96,7 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 			//   forward: 999 900 XLM @ 0.1 USDC  →  99 990 USDC / 999 900 XLM
 			//   flipped:      25 USDC @ 0.25     →      25 USDC /     100 XLM
 			// Union = 100 015 / 1 000 000 = 0.100015 — within 0.015% of the
-			// whale's price, as a VWAP must be. The pre-fix count-weighted
+			// whale's price, as a VWAP must be. A count-weighted
 			// answer, with 1 forward print against 100 flipped ones, was
 			// (0.1·1 + 0.25·100)/101 ≈ 0.2485 — 2.5× the true price, and
 			// movable at will by anyone willing to emit dust prints.
@@ -241,10 +241,10 @@ func TestBucketRowCap(t *testing.T) {
 // just in combineDirVWAP — fails.
 // -----------------------------------------------------------------
 
-// TestHistoryPoints_CombinesBothStoredDirections is R-006: /v1/history
+// TestHistoryPoints_CombinesBothStoredDirections: /v1/history
 // (and the default /v1/chart, via HistoryPointsInRange) must read BOTH
-// stored orientations and serve their volume-weighted union. Pre-fix this
-// read filtered `base_asset = $1 AND quote_asset = $2` and served 0.5 —
+// stored orientations and serve their volume-weighted union. A single-direction
+// read would filter `base_asset = $1 AND quote_asset = $2` and served 0.5 —
 // the requested-orientation rows alone, with the 50 XLM traded the other
 // way round silently discarded.
 func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
@@ -288,9 +288,9 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 }
 
 // TestHistoryPoints_FlippedOnlyBucketIsServed is the other half of
-// R-006: a bucket that traded ONLY in the reverse orientation used to
+// A bucket that traded ONLY in the reverse orientation must not
 // vanish from /v1/history and /v1/chart entirely — the chart showed a
-// gap where a real market had traded. It must now be served, at the
+// gap where a real market had traded. It must be served, at the
 // exact inverse of the stored price.
 func TestHistoryPoints_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
@@ -321,8 +321,8 @@ func TestHistoryPoints_FlippedOnlyBucketIsServed(t *testing.T) {
 	}
 }
 
-// TestLatestClosedVWAP1mForPair_VolumeWeightedUnion is R-004: the value
-// /v1/price serves. Pre-fix the SQL folded the bucket's two directions by
+// TestLatestClosedVWAP1mForPair_VolumeWeightedUnion pins the value
+// /v1/price serves. Folding the bucket's two directions by
 // trade count and served 0.23 for this bucket.
 func TestLatestClosedVWAP1mForPair_VolumeWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
