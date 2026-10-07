@@ -16,16 +16,16 @@ import (
 // `deploy/monitoring/rules/archive-completeness.yml`; renaming any
 // field is a wire break against the alert rule file.
 type MetricsSnapshot struct {
-	// FilesMissing per archive. The shipped flow populates
+	// FilesMissing per archive. The current flow populates
 	// `cross-anchor` only; callers may add other archives once those
 	// checks are implemented.
 	FilesMissing map[string]int
 
 	// ChecksExpected / ChecksFound are the per-archive checkpoint
-	// counts a run scanned. GH-1095: FilesMissing alone has no
-	// denominator, so `archive_files_missing == 0` reads identically
-	// whether a run scanned 2M checkpoints or zero (a vacuous range,
-	// see [Report.Vacuous]) — these two gauges let an alert require
+	// counts a run scanned. FilesMissing alone has no denominator, so
+	// `archive_files_missing == 0` reads identically whether a run
+	// scanned 2M checkpoints or zero (a vacuous range, see
+	// [Report.Vacuous]) — these two gauges let an alert require
 	// Expected > 0 before trusting a zero-missing reading.
 	ChecksExpected map[string]int
 	ChecksFound    map[string]int
@@ -144,14 +144,13 @@ func writeFilesMissing(w io.Writer, snapshot *MetricsSnapshot) error {
 
 // writeLastSuccess ALWAYS emits the last_success_timestamp gauge.
 //
-// C4-038/039/054 (audit-2026-07-23): this used to return early on a
-// zero timestamp, with a comment claiming node_exporter would
-// "surface the previous-scrape value". It does not — the textfile
-// collector re-reads the file on every scrape, so an omitted line
-// means the SERIES DISAPPEARS. `archive-completeness.yml` alerts on
+// Returning early on a zero timestamp would not leave node_exporter
+// serving the previous-scrape value: the textfile collector re-reads
+// the file on every scrape, so an omitted line means the SERIES
+// DISAPPEARS. `archive-completeness.yml` alerts on
 // `(time() - archive_completeness_last_success_timestamp) > 26h/48h`,
 // and a PromQL comparison over an absent series yields no samples, so
-// the staleness alert went silent during exactly the persistent-
+// the staleness alert would go silent during exactly the persistent-
 // failure state it exists for — absence reading as health.
 //
 // [WriteTextfileAtomic] fills a zero timestamp from the previous
@@ -242,14 +241,13 @@ func writeCounter(w io.Writer, name, help, labelKey string, samples map[string]i
 // in `.tmp`, so a partial write never appears in a scrape.
 //
 // Step 1 exists because the rename REPLACES the file wholesale: any
-// series this run doesn't re-emit vanishes from the next scrape.
-// That is C4-037/038/039/054 — see [writeLastSuccess]. It MUTATES
-// snapshot (last-success timestamp and the two repair counters) so
-// that what lands on disk is cumulative host state rather than a
-// per-run fragment. A missing or unparseable previous file is
-// normal (first run ever, operator wiped the collector dir) and is
-// treated as "no prior state", which is a plain counter reset to
-// Prometheus.
+// series this run doesn't re-emit vanishes from the next scrape (see
+// [writeLastSuccess]). It MUTATES snapshot (last-success timestamp
+// and the two repair counters) so that what lands on disk is
+// cumulative host state rather than a per-run fragment. A missing or
+// unparseable previous file is normal (first run ever, operator wiped
+// the collector dir) and is treated as "no prior state", which is a
+// plain counter reset to Prometheus.
 func WriteTextfileAtomic(path string, snapshot *MetricsSnapshot) error {
 	if snapshot != nil {
 		snapshot.carryForward(readPriorTextfile(path))
@@ -433,14 +431,13 @@ func (s *MetricsSnapshot) PopulateFromReport(r *Report) {
 // — contributes one attempt under that source's REAL name, and every
 // failed try contributes one failure under the same name.
 //
-// C4-037 (audit-2026-07-23): failures used to be filed under a
-// synthetic `multi-source-exhausted` label while attempts used real
-// source names, so the two label sets never intersected and
-// `archive-completeness.yml`'s
-// `sum by (source)(failures) / sum by (source)(attempts)` alert had a
-// permanently-zero numerator for every real source — structurally
-// unfireable. [CrossAnchorFiller.Fill] now reports per-source
-// attempts and failures directly.
+// Filing failures under a synthetic `multi-source-exhausted` label
+// while attempts use real source names would leave the two label sets
+// disjoint, so `archive-completeness.yml`'s
+// `sum by (source)(failures) / sum by (source)(attempts)` alert would
+// have a permanently-zero numerator for every real source —
+// structurally unfireable. [CrossAnchorFiller.Fill] therefore reports
+// per-source attempts and failures directly.
 //
 // Per-run counts: [WriteTextfileAtomic] adds them to the totals
 // already on disk so the emitted series is a real counter.

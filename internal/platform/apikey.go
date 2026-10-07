@@ -60,11 +60,10 @@ const (
 // that serves market/network data is `read`; the account
 // self-service surface is `account`; the session-dashboard
 // management surface is `dashboard`; the operator surface is
-// `admin`. A key with an EMPTY scope list retains full access
-// (legacy posture, back-compat with every key minted before scopes
-// shipped); a key WITH scopes is confined to the listed families.
-// Enforcement lives in the API's KeyPolicy middleware
-// (internal/api/v1/middleware/keypolicy.go).
+// `admin`. A key with an EMPTY scope list retains full access (so every
+// key minted before scopes existed keeps working); a key WITH scopes is
+// confined to the listed families. Enforcement lives in the API's
+// KeyPolicy middleware (internal/api/v1/middleware/keypolicy.go).
 const (
 	KeyScopeRead      = "read"      // public data surfaces (price, history, chart, assets, explorer, …)
 	KeyScopeAccount   = "account"   // /v1/account/* self-service
@@ -95,12 +94,11 @@ func ValidKeyScope(s string) bool {
 // in Postgres. Default is {All: true} (no enforcement); a dashboard
 // customer can restrict a key to specific endpoints via Allow/Deny.
 //
-// AGT-08 (audit-2026-07-23): the per-endpoint allow/deny check has
-// SHIPPED — internal/api/v1/middleware.KeyPolicy() enforces it on
-// every authenticated request (wired in cmd/stellarindex-api/main.go),
-// reading All/Allow/Deny via auth.NewPostgresAPIKeyValidator
-// (internal/auth/apikey_postgres.go: Permissions.All →
-// Subject.AllowAllPermissions). This is live, not future work.
+// internal/api/v1/middleware.KeyPolicy() enforces the per-endpoint
+// allow/deny check on every authenticated request (wired in
+// cmd/stellarindex-api/main.go), reading All/Allow/Deny via
+// auth.NewPostgresAPIKeyValidator (internal/auth/apikey_postgres.go:
+// Permissions.All → Subject.AllowAllPermissions).
 type KeyPermissions struct {
 	All   bool                 `json:"all"`
 	Allow []KeyPermissionEntry `json:"allow,omitempty"`
@@ -139,7 +137,6 @@ type APIKeyStore interface {
 	// inside the INSERT statement; zero or negative disables
 	// the cap (operator/staff seeding paths). Returns
 	// [ErrAPIKeyQuotaExceeded] when the cap is met.
-	// F-1257 (codex audit-2026-05-12).
 	Create(ctx context.Context, k APIKey, maxActiveKeysPerAccount int) (APIKey, error)
 
 	// Get by key ID; ErrNotFound if absent.

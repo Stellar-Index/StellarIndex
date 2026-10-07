@@ -616,7 +616,7 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 //   - a POSITIVE derive generation (time.Now().Unix()) so a corrected
 //     re-derive wins the served-tier writers' ON CONFLICT guard
 //     (`derive_generation <= EXCLUDED.derive_generation`) and can never be
-//     reverted by a live gen-0 replay (the INV-3 re-derive trap); and
+//     reverted by a live gen-0 replay; and
 //   - the USD-volume resolvers ([timescale.InstallUSDVolumeResolution]) so
 //     on-chain DEX trades resolve a real usd_volume instead of NULL.
 //

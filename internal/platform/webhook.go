@@ -21,7 +21,6 @@ const (
 	// declared (status-page page-level event). Triggered by
 	// Alertmanager via an internal inbound-webhook receiver that
 	// fans the event out to every customer subscribed to it.
-	// F-1270 (audit-2026-05-12).
 	WebhookEventIncidentSEV1 WebhookEventType = "incident.sev1"
 
 	// WebhookEventIncidentResolved fires when a previously-active
@@ -155,10 +154,9 @@ type WebhookStore interface {
 	// the per-account `maxPerAccount` cap atomically. Returns
 	// [ErrWebhookQuotaExceeded] when the cap is met — the cap
 	// check + insert happen in a single SQL statement so
-	// concurrent callers can't both pass a pre-check and each
-	// append a row past the cap. F-1248 (codex audit-2026-05-12).
-	// A cap <= 0 admits nothing (TierAnon's ladder value). Returns
-	// [ErrConflict] when the account already registered w.URL.
+	// concurrent callers can't both pass a pre-check and each append a row
+	// past the cap. A cap <= 0 admits nothing (TierAnon's ladder value).
+	// Returns [ErrConflict] when the account already registered w.URL.
 	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
 	// GetWebhook by ID, with SigningKey unsealed. A key that cannot
@@ -207,7 +205,7 @@ type WebhookStore interface {
 	// most-recent first. Used by the dashboard delivery log.
 	ListDeliveries(ctx context.Context, webhookID uuid.UUID, limit int) ([]WebhookDelivery, error)
 
-	// ─── Worker-side queue surface (F-1270 audit-2026-05-12) ─────
+	// ─── Worker-side queue surface ─────
 
 	// EnqueueDelivery inserts one pending delivery row keyed off
 	// an existing webhook. The worker then drains the queue via
