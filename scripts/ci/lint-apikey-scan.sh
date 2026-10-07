@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# lint-apikey-scan.sh — no new walk of the API-key credential keyspace
-# (class finding K051, reverification 2026-09-18).
+# lint-apikey-scan.sh — no new walk of the API-key credential keyspace.
 #
 # The defect this pins shut: a lookup of credential records by something
 # other than their Redis key — "which keys does this owner hold", "which

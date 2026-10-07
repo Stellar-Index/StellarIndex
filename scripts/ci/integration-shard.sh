@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # integration-shard.sh — run ONE deterministic slice of the Docker-backed
-# integration suite (ci.yml `integration-test` matrix, 2026-08-29).
+# integration suite (ci.yml `integration-test` matrix).
 #
 # Why: main CI's wall-clock was ~23 min and the single long pole was the
 # `integration tests (Docker)` job at ~1230 s (20.5 min) — every other job
@@ -28,7 +28,7 @@
 # in this file was guarded only by a "keep in lockstep" comment, so a package
 # added to INT_TEST_PKGS ran under `make test-integration` and compiled under
 # `make test-integration-build` but was executed by NO shard, and a failing
-# test in it shipped green (#333 F1).
+# test in it shipped green.
 #
 # Fail-closed: an empty shard, an empty listing, a bad index, or a listing
 # that yields fewer tests than shards all exit non-zero — a shard that ran
@@ -101,7 +101,7 @@ fi
 # `[^[:space:]]` not `[A-Za-z0-9_]`: Go identifiers admit Unicode letters,
 # so `TestÜberweisung` is a real, listable test — the ASCII class dropped it
 # from the listing, which put it in no shard's -run regex and executed it
-# nowhere (#333). Every non-test line `go test -list` emits ("ok\t<pkg>\t0.5s",
+# nowhere. Every non-test line `go test -list` emits ("ok\t<pkg>\t0.5s",
 # "?\t<pkg>\t[no test files]") contains whitespace, so this stays exact.
 all="$(printf '%s\n' "$raw" | grep -E '^Test[^[:space:]]*$' | LC_ALL=C sort -u || true)"
 [ -n "$all" ] || die "test listing is empty — nothing to shard (build-tag or listing breakage?)"

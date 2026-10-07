@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # check-public-dataset.sh — AWS Public Blockchain dataset drift tripwire
-# (backup-restore-6, audit 2026-08-29; ADR-0043 §2).
+# (ADR-0043 §2).
 #
 # r1's own galexie-archive was capacity-trimmed below ledger 49,984,000
-# on 2026-07-26 (ADR-0027 hot floor; galexie-archive-trim deletes only
+# (ADR-0027 hot floor; galexie-archive-trim deletes only
 # after the AWS object HEADs OK). So the "second independent raw-LCM
 # archive" ADR-0043 relies on for deep-history re-derive is
 # s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ — a dataset

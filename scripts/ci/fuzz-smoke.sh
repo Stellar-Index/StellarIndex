@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fuzz smoke for Stellar Index (#340 item 5).
+# Fuzz smoke for Stellar Index.
 #
 # Runs every `func Fuzz*` target in the tree for a short generative
 # budget. This is a SMOKE, not a fuzzing campaign: 30s per target finds

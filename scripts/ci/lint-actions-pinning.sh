@@ -2,7 +2,7 @@
 # lint-actions-pinning.sh — enforce SHA-pinning policy for third-
 # party GitHub Actions.
 #
-# F-1216 (codex audit-2026-05-12): without SHA-pinning, a
+# Without SHA-pinning, a
 # compromised tag on a third-party action repo can land arbitrary
 # code on every CI run. `actions/*` is hosted by GitHub itself
 # (still mutable but a single trust boundary); everything else
@@ -32,13 +32,11 @@
 #      version as a trailing comment).
 #   3. This gate refuses the merge until that step has happened.
 #
-# Repository policy half of F-1216 (allowed_actions=selected,
-# require_sha_pinning) is meant to be set via the GitHub admin UI, but
-# as of 2026-09-23 it is NOT: `gh api repos/<owner>/<repo>/actions/permissions`
-# returns `allowed_actions: "all"`, `sha_pinning_required: false` on this
-# repo. See the CS-097 entry in
+# The repository-policy half (allowed_actions=selected,
+# require_sha_pinning) is set in the GitHub admin UI; check it with
+# `gh api repos/<owner>/<repo>/actions/permissions`. See
 # docs/operations/audit-remediation-operator-actions.md for the operator
-# steps to close that gap. This script enforces only the workflow-side
+# steps. This script enforces only the workflow-side
 # discipline (the `uses:` lines below); it cannot enforce the repo setting.
 #
 # Usage:

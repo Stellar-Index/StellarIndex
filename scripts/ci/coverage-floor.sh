@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Coverage floor for Stellar Index (#340 item 6).
+# Coverage floor for Stellar Index.
 #
 # `coverage.txt` has been produced by CI and uploaded as an artifact
 # since the unit-test job existed, and nothing has ever read it. This
@@ -48,8 +48,8 @@ set -euo pipefail
 PROFILE="${COVERAGE_PROFILE:-coverage.txt}"
 # Raise the floor deliberately; never lower it to make a red PR green —
 # that is the anti-fix this gate exists to make visible.
-# Measured 55.7% over the whole tree on 2026-09-03 (go test ./...
-# -covermode=atomic, 135 packages). 54.0 leaves ~1.7 points of headroom
+# The whole tree measured 55.7% (go test ./... -covermode=atomic).
+# 54.0 leaves ~1.7 points of headroom
 # for the run-to-run wobble of atomic counters under -race, which is an
 # order of magnitude more than that wobble actually is.
 FLOOR="${COVERAGE_FLOOR:-54.0}"
@@ -79,7 +79,7 @@ head -n 1 "$PROFILE" | grep -q '^mode:' ||
 # gate untestable, and an untestable gate is the thing being guarded
 # against. The arithmetic is the same ratio the tool prints (covered
 # statements / total statements); verified byte-equal against
-# `go tool cover -func` on the real repo profile at 55.7% on 2026-09-03,
+# `go tool cover -func` on the real repo profile,
 # and cross-checked on every run below whenever the toolchain can run —
 # and when it can, the tool's own total is the one the floor is judged on.
 #

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-fleet-release-drift.sh — test-net release-drift tripwire
-# (launch-plan 1.7, 2026-09-03).
+# (launch-plan 1.7).
 #
 # One day after testnet and futurenet were caught up to r1 they were a
 # release and three migrations behind again (v0.57.0 / migrations head
@@ -65,11 +65,8 @@
 # released tag that follower lacks — the earliest tagger/committer date
 # over the released tags in (follower, reference] by version — never on
 # the reference's newest tag. Anchoring on the newest tag re-granted a
-# fresh window every time r1 released again: on 2026-09-03 r1 cut v0.58.0
-# at 01:26Z and v0.59.1 at 07:30Z, and at the next morning's 07:25Z run a
-# follower still on v0.57.0 would have read "released 23h ago, within
-# grace" while it had lacked v0.58.0 for 29h; releases fewer than 24h
-# apart would have deferred the ticket forever and closed an open one. An
+# fresh window every time r1 released again, so releases fewer than 24h
+# apart would defer the ticket forever and close an open one. An
 # anchor that cannot be dated (the tag is not in the checkout) means the
 # grace cannot be applied and the lag COUNTS — fail closed.
 #

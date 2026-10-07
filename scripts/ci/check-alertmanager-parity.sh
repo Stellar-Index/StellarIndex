@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-alertmanager-parity.sh — the two Alertmanager apply paths must
-# render the same routing (#501).
+# render the same routing.
 #
 # WHY THIS EXISTS. /etc/prometheus/alertmanager.yml has two producers:
 #
@@ -8,23 +8,15 @@
 #   configs/ansible/roles/prometheus/templates/alertmanager.yml.j2
 #                                              (the role, for new hosts)
 #
-# Both files SAID they mirrored each other — in a header comment, which
-# is not a gate. On 2026-09-08, c0815d73e fixed #485 by routing
-# `severity: informational` to a new `chat-informational` Discord
-# receiver, and touched only the first file. The Ansible template kept
-# routing informational to `silent`, a receiver with no *_configs block,
-# which accepts alerts and delivers them to nobody. An apply of the
-# prometheus role would have silently reinstated the exact bug that had
-# just been fixed, and nothing in CI could have seen it because nothing
-# in CI read both files. This does.
+# A routing fix made in one file only is silently reverted by the next
+# apply of the other path (e.g. back to `silent`, a receiver with no
+# *_configs block that accepts alerts and delivers them to nobody).
 #
 # WHAT PARITY MEANS. Rendered with identical inputs, the two must agree
 # on `global`, `route` (the whole tree), `inhibit_rules` and `receivers`
 # — including the Discord Go templates, whose payload bounds are what
-# keep a large alert group under Discord's 4096-character embed limit
-# (the 2026-09-07 outage: 11 h of HTTP 400, every ticket alert dropped).
-# A bound present on one path and not the other is one apply away from
-# repeating it.
+# keep a large alert group under Discord's 4096-character embed limit;
+# past it every ticket alert is dropped with HTTP 400.
 #
 # BOTH RENDER BRANCHES are compared, because they fail differently:
 #
