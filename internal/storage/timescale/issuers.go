@@ -363,9 +363,9 @@ type IssuerSep1Currency struct {
 //
 // [GetIssuerSep1Cached] returns (nil, nil) for both of the ways an issuer can
 // hold no payload, and they are opposite findings: OUR backlog, or the
-// ISSUER's publication — e.g. a real asset manager's stellar.toml with an
-// unterminated string on line 20, thirteen live RWA-class declarations
-// unreadable.
+// ISSUER's publication — e.g. a real asset manager's stellar.toml with
+// an unterminated string on line 20, leaving thirteen live RWA-class
+// declarations unreadable.
 //
 // It reads sep1_consecutive_failures, not sep1_resolved_at, because the
 // refresh cron stamps resolved_at BEFORE each fetch and keeps it through

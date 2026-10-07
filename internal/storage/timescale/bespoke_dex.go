@@ -9,8 +9,7 @@ package timescale
 //     sdex) ───────────────────────────────────────────────────────────────
 //
 // Three data tiers, chosen per query so nothing scans the 300M+-row trades
-// hypertable unbounded (every figure below ground-truthed READ-ONLY on
-// r1):
+// hypertable unbounded (every figure below ground-truthed READ-ONLY on r1):
 //
 //  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true) — the
 //     daily per-(source, pair) rollup. Backs the >1-day windows: KPIs,
@@ -46,9 +45,8 @@ package timescale
 // taker coverage: aquarius/phoenix/comet/sdex stamp taker on 100% of
 // rows; soroswap's current decoder stamps taker on 100% of new rows, but
 // rows an earlier decoder ingested carry NULL unless re-derived, so
-// trader metrics stay DATA-DRIVEN:
-// served when the window has taker-stamped rows, omitted (with a Note)
-// when it observably has none.
+// trader metrics stay DATA-DRIVEN: served when the window has
+// taker-stamped rows, omitted (with a Note) when it observably has none.
 //
 // Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
 // never ad-hoc pricing. At 24h the XLM legs valuation left unpriced are

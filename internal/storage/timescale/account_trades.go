@@ -190,11 +190,11 @@ const tradesHorizonFailClosedWindow = 24 * time.Hour
 // (tradesHorizonFailClosedWindow), NOT epoch — on a catalog lookup
 // error: epoch means "no floor", which sends the read straight into the
 // unindexed full-history scan, which on r1 hit the 8s timeout and
-// returned 503. AccountTrades and
-// computeAccountActivity already render any non-zero, post-1971 horizon
-// as an honest "showing trades since <date>" / trades_total_since
-// coverage note, so failing closed degrades into that same channel
-// instead of silently serving as if all history were indexed.
+// returned 503. AccountTrades and computeAccountActivity already render
+// any non-zero, post-1971 horizon as an honest "showing trades since
+// <date>" / trades_total_since coverage note, so failing closed degrades
+// into that same channel instead of silently serving as if all history
+// were indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()
@@ -289,9 +289,9 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 // the compression boundary below which the per-account partial indexes
 // don't exist (an all-time OR count decompress-scanned all 248
 // compressed chunks in ~8s when measured, burning the activity
-// endpoint's trades_total budget). The OR here
-// stays deliberate: with the ts floor the scan is confined to indexed
-// uncompressed chunks, where a bitmap-or counts each row once.
+// endpoint's trades_total budget). The OR here stays deliberate: with
+// the ts floor the scan is confined to indexed uncompressed chunks,
+// where a bitmap-or counts each row once.
 func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
 	horizon := s.tradesUncompressedHorizon(ctx)
 	const q = `SELECT count(*) FROM trades WHERE (taker = $1 OR maker = $1) AND ts >= $2`

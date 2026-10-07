@@ -959,11 +959,11 @@ type Vwap1mRow struct {
 // two rows, so it still bounds the walk to the requested number of
 // buckets; [scanCombinedVwap1mRows] trims any partial tail.
 //
-// Deliberately still NOT given the literal `bucket >=` lower bound or
+// Deliberately NOT given the literal `bucket >=` lower bound or
 // the 14-day existence gate its [RecentClosedVWAP1mCombined] sibling
 // carries. Those would change what this documented public endpoint
 // SERVES (a dormant asset's last N closed buckets becoming an empty
-// array) — an owner decision, and out of scope for a correctness fix.
+// array) — an owner decision, not a query-shape choice.
 // Folding the two directions is not that: it makes the endpoint
 // report the buckets it always claimed to.
 //
@@ -1559,33 +1559,34 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// (bounded → unbounded) form would make the no-data case slow: the
 	// handler reads native/fiat:USD as an alias on every XLM query, that
 	// synthetic pair has zero rows, so the bounded miss would fall through
-	// to the slow all-chunk scan finding nothing. A pair with no closed bucket in the
-	// window returns ErrNoRows, which the price handler already resolves via
-	// its Redis-triangulation / last-trade fallback chain — the right path
-	// for a synthetic pair, and the honest answer for a genuinely-dead asset
-	// (a stale "latest" is not a current price).
+	// to the slow all-chunk scan finding nothing. A pair with no closed
+	// bucket in the window returns ErrNoRows, which the price handler
+	// already resolves via its Redis-triangulation / last-trade fallback
+	// chain — the right path for a synthetic pair, and the honest answer
+	// for a genuinely-dead asset (a stale "latest" is not a current price).
 	//
 	// Empty aliases: the two layers above make the EMPTY pair cheap only
-	// WARM. The value walk's max() arms still have to
-	// PROVE emptiness across the whole (generous, ~400-day) literal window —
-	// min/max short-circuits when a matching row exists, but a truly-empty
+	// WARM. The value walk's max() arms still have to PROVE emptiness
+	// across the whole (generous, ~400-day) literal window — min/max
+	// short-circuits when a matching row exists, but a truly-empty
 	// (base,quote) forces touching every chunk in the window to conclude "no
 	// rows". COLD (post-ARC-eviction, decompressing hundreds of old chunks)
 	// that is minutes, not milliseconds, and /v1/price?asset=native would
 	// time out on the native/fiat:USD alias probe BEFORE the fast
-	// crypto:XLM/fiat:USD alias was ever tried. So gate the value walk behind a cheap
-	// recent-existence probe bounded to the last latestVWAPGateWindow: a
-	// populated pair short-circuits at the first row (one recent chunk); a
-	// truly-empty pair proves emptiness over only ~2 weeks of recent (hot,
-	// mostly-uncompressed) chunks and returns ErrNoRows. The gate — NOT the
-	// value walk's window — is the freshness horizon: a pair with no closed
-	// 1-minute bucket in a fortnight is not "currently priced", and the
-	// handler's fallback chain surfaces its last trade with an honest
-	// observed_at. Reordering the handler's aliases can't fix this (it just
-	// moves the empty walk onto the SDEX native/<asset> pairs); the gate
-	// makes the empty case cheap for EVERY pair. On a gate HIT the value walk
-	// below is byte-identical to the pre-incident path (combined-direction,
-	// literal-cutoff pruned) and returns the same recent bucket as before.
+	// crypto:XLM/fiat:USD alias was ever tried. So gate the value walk
+	// behind a cheap recent-existence probe bounded to the last
+	// latestVWAPGateWindow: a populated pair short-circuits at the first
+	// row (one recent chunk); a truly-empty pair proves emptiness over
+	// only ~2 weeks of recent (hot, mostly-uncompressed) chunks and
+	// returns ErrNoRows. The gate — NOT the value walk's window — is the
+	// freshness horizon: a pair with no closed 1-minute bucket in a
+	// fortnight is not "currently priced", and the handler's fallback
+	// chain surfaces its last trade with an honest observed_at. Reordering
+	// the handler's aliases can't fix this (it just moves the empty walk
+	// onto the SDEX native/<asset> pairs); the gate makes the empty case
+	// cheap for EVERY pair. On a gate HIT the value walk below is the same
+	// ungated walk (combined-direction, literal-cutoff pruned) and returns
+	// the same recent bucket it would without the gate.
 	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
 	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
 	if err != nil {
@@ -1607,17 +1608,17 @@ const latestVWAPWindow = 400 * 24 * time.Hour
 
 // latestVWAPGateWindow bounds the cheap recent-existence probe
 // [LatestClosedVWAP1mForPair] runs BEFORE its combined-direction value
-// walk. It is the price
-// surface's freshness horizon: a pair with no closed 1-minute VWAP
-// bucket in the last two weeks is treated as "not currently priced" —
-// the read returns [sql.ErrNoRows] and the /v1/price handler resolves it
-// via its Redis-triangulation / last-trade fallback chain. Two weeks is
-// generous for an on-chain price surface whose freshness contract is
-// minutes, yet small enough that PROVING a pair empty touches only a
-// fortnight of recent (hot, mostly-uncompressed) prices_1m chunks —
-// cheap even cold — instead of the value walk's ~400-day span. It MUST
-// stay < [latestVWAPWindow]: on a gate HIT the value walk (bounded by the
-// wider window) always finds the just-confirmed recent bucket.
+// walk. It is the price surface's freshness horizon: a pair with no
+// closed 1-minute VWAP bucket in the last two weeks is treated as "not
+// currently priced" — the read returns [sql.ErrNoRows] and the /v1/price
+// handler resolves it via its Redis-triangulation / last-trade fallback
+// chain. Two weeks is generous for an on-chain price surface whose
+// freshness contract is minutes, yet small enough that PROVING a pair
+// empty touches only a fortnight of recent (hot, mostly-uncompressed)
+// prices_1m chunks — cheap even cold — instead of the value walk's
+// ~400-day span. It MUST stay < [latestVWAPWindow]: on a gate HIT the
+// value walk (bounded by the wider window) always finds the
+// just-confirmed recent bucket.
 const latestVWAPGateWindow = 14 * 24 * time.Hour
 
 // recentClosedVWAP1mExistsTemplate is the recent-existence gate query.
@@ -2541,12 +2542,12 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 // [Store.PairMarketSubstance], whose window always ends now.
 //
 // It exists because a trailing-from-now measurement says nothing about
-// a historical instant. /v1/price/at and the
-// /v1/price/changes horizons serve the bucket at-or-before `ts`, and
-// whether THAT bucket came from a market of substance is a question
-// about the hours before `ts`: a pair that is thick today may have
-// been attacker-seeded dust at `ts`, and a pair that is dormant today
-// may have been deep and honest at `ts`.
+// a historical instant. /v1/price/at and the /v1/price/changes
+// horizons serve the bucket at-or-before `ts`, and whether THAT bucket
+// came from a market of substance is a question about the hours before
+// `ts`: a pair that is thick today may have been attacker-seeded dust
+// at `ts`, and a pair that is dormant today may have been deep and
+// honest at `ts`.
 //
 // `g` is the grain the three legs are counted at, and only the two
 // grains with a stated serve floor are accepted:

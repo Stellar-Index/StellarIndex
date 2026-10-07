@@ -41,8 +41,7 @@ import (
 // advancing while still bounding DB pressure. A plain `sync.Map` of
 // asset_id → struct{} would short-circuit every subsequent trade in
 // the same process, leaving the row frozen at first observation. A
-// coarse TTL
-// caps the upsert rate to one per asset per window while
+// coarse TTL caps the upsert rate to one per asset per window while
 // guaranteeing the row advances under sustained trading.
 //
 // 60 seconds is generous enough to keep the indexer hot path
@@ -194,12 +193,12 @@ func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
 
 // ResetAssetRegistryDedupeForTest clears this Store's
 // dedupe cache used by [Store.registerClassicAssetSeen]. Used by
-// the duplicate-replay integration
-// proof to simulate a process restart between an original trade
-// insert and a replay of the same trade — the test asserts that
-// the registry row's `observation_count` does NOT advance on the
-// replay because the [Store.InsertTrade] `RowsAffected == 0` guard
-// short-circuits the registry hook even with a cold dedupe cache.
+// the duplicate-replay integration proof to simulate a process
+// restart between an original trade insert and a replay of the same
+// trade — the test asserts that the registry row's `observation_count`
+// does NOT advance on the replay because the [Store.InsertTrade]
+// `RowsAffected == 0` guard short-circuits the registry hook even with
+// a cold dedupe cache.
 //
 // Production code never calls this; it only exists so the
 // integration test can isolate the RowsAffected guard from the

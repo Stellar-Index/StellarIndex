@@ -197,9 +197,9 @@ func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote,
 // hypertable instead, so a trades-only triangulation forex-snap
 // ([Store.FXQuoteAtOrBefore]) would always soft-fall-back to cached VWAP
 // while fresh quotes sat one table over. The helpers below are the
-// fx_quotes-first leg of the unified read path; the trades read survives
-// only as the compatibility fallback for re-enabled connector-path
-// sources.
+// fx_quotes-first leg of the unified read path; the trades read
+// survives only as the compatibility fallback for re-enabled
+// connector-path sources.
 
 // fxQuotesSnapLookback bounds how far back the fx_quotes snap read
 // accepts a row. fx_quotes buckets are daily and the feed skips

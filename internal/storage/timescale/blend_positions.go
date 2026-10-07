@@ -28,9 +28,8 @@ import (
 // SQL-boundary magnitude guards the sibling money-market writers
 // carry (comet Amount.Sign() > 0, aquarius reserve >= 0): the sole
 // producer (decode_money_market.go) errors rather than emitting a nil
-// amount, but without this guard at the insert boundary a
-// defaulted/fuzzed struct could land a bad row via the nil-to-"0"
-// coercion.
+// amount, but without this guard at the insert boundary a defaulted/fuzzed
+// struct could land a bad row via the nil-to-"0" coercion.
 func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")

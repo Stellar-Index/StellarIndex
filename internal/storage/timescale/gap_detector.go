@@ -80,8 +80,8 @@ const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
 // every 30 min buys nothing and — at sep41_transfers' ~13M distinct
 // ledgers (~700M rows) — costs two ~13-min LAG-over-DISTINCT scans per
 // cycle, near-continuous IO saturation that blew p95/p99 on r1.
-// Trailing-window scanning keeps
-// the detector cheap; deep history is the verdict system's job.
+// Trailing-window scanning keeps the detector cheap; deep history is
+// the verdict system's job.
 const GapDetectorSafetyLookback = int64(200_000)
 
 // GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no
@@ -225,9 +225,9 @@ func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, 
 // state ("did we walk this ledger") and can read 100% while data
 // is missing — r1 once had the soroban_events writer halted across
 // a 92,737-ledger contiguous window while the cursor inventory +
-// density projection said fine. This worker scans every per-source data table directly
-// and surfaces the honest signal as Prometheus gauges that
-// operators (and an alert rule) can act on.
+// density projection said fine. This worker scans every per-source
+// data table directly and surfaces the honest signal as Prometheus
+// gauges that operators (and an alert rule) can act on.
 //
 // Failure semantics: a transient Postgres error on one target's
 // scan does NOT clear its gauges and does NOT halt the remaining

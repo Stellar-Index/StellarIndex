@@ -78,9 +78,9 @@ type FreezeEventSinkOption func(*FreezeEventSink)
 // WithFreezeHook installs a post-insert side-effect closure.
 // Invoked AFTER a successful row insert (idempotent no-ops
 // don't fire). Wired by the aggregator binary to bridge into
-// customerwebhook.Fanout.Publish so dashboard hooks subscribed to
-// `anomaly.freeze` get callbacks. Best-effort — hook panics/errors
-// don't propagate.
+// customerwebhook.Fanout.Publish so dashboard hooks subscribed
+// to `anomaly.freeze` get callbacks. Best-effort — hook
+// panics/errors don't propagate.
 func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.onFreeze = hook
@@ -192,10 +192,10 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: commit: %w", err)
 	}
-	// Fire the post-insert hook only when a row was actually appended. The idempotency check
-	// + ON CONFLICT DO NOTHING means RowsAffected==0 is the
-	// "already firing, this is just a TTL refresh" path; firing
-	// the webhook then would spam subscribers.
+	// Fire the post-insert hook only when a row was actually appended.
+	// The idempotency check + ON CONFLICT DO NOTHING means
+	// RowsAffected==0 is the "already firing, this is just a TTL
+	// refresh" path; firing the webhook then would spam subscribers.
 	if s.onFreeze != nil {
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
 			// The original value, not frozenValueArg: "0" is this column's

@@ -54,7 +54,7 @@ type IssuerAuthFlags struct {
 // bidirectional [[CURRENCIES]] back-reference, so persisting one would create
 // an impersonation surface on exactly the accounts that can no longer be
 // verified on-chain — and it is not hypothetical: 979 of 985 recovered
-// pre-images in a 1,000-issuer r1 sample carry one, including
+// pre-images in a 1,000-issuer r1 sample carried one, including
 // `stellarkraken.com` and `stellarbrunch.com` on accounts that no longer
 // exist. clickhouse.RemovedAccountsLastKnownAuthFlags already blanks it at
 // the reader, which is the primary defence; this refuses to be the second

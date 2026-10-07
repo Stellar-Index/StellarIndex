@@ -484,9 +484,9 @@ const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 // expression can ask "does this row have a price at all?" without a
 // second, drifting copy of the direct-or-XLM-triangulated chain.
 //
-// That chain is not evaluated here: it is
-// [snapshotPriceUSDExpr], resolved once per aggregator pass into
-// asset_price_snapshot, and this is the rollup column the listing reads.
+// That chain is not evaluated here: it is [snapshotPriceUSDExpr],
+// resolved once per aggregator pass into asset_price_snapshot, and this
+// is the rollup column the listing reads.
 // The stored value is already decimals-normalised for a confirmed
 // non-7-decimals token ([snapshotNormalizedPriceUSDExpr]); it is served
 // as read, never scaled again.
@@ -593,12 +593,13 @@ func listingRankTierExpr(order AssetsOrder) string {
 // come from worker-maintained rollups keyed on asset_id — volume from
 // asset_volume_24h (migration 0087) and price/change/source_count from
 // asset_price_snapshot (migration 0154) — so the cost of a listing page
-// is the spine plus three small hash joins, whatever the limit / cursor
-// / filter. Materialising twelve `DISTINCT ON … FROM prices_1m` CTEs per
-// call for every asset in the catalogue instead measured 8,019 calls at
-// mean 2,400 ms on r1 (`pg_stat_statements`), 380,324 shared buffers
-// each, to return ~116 rows. Keep it that way — if you find yourself adding a prices_1m read
-// here, the answer is another column on a rollup.
+// is the spine plus three small hash joins, whatever the
+// limit / cursor / filter. Materialising twelve `DISTINCT ON … FROM
+// prices_1m` CTEs per call for every asset in the catalogue instead
+// measured 8,019 calls at mean 2,400 ms on r1 (`pg_stat_statements`),
+// 380,324 shared buffers each, to return ~116 rows. Keep it that way —
+// if you find yourself adding a prices_1m read here, the answer is
+// another column on a rollup.
 //
 // Volume aggregation: prices_1m.volume_usd summed across the
 // trailing 24h, where the asset participates as base OR quote —
@@ -897,8 +898,8 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order Asse
 		conds = append(conds, fmt.Sprintf("ca.issuer_g_strkey = $%d", len(args)))
 	}
 	if code != "" {
-		// Exact, case-sensitive code equality on the
-		// indexed classic_assets.code column (classic_assets_code_idx).
+		// Exact, case-sensitive code equality on the indexed
+		// classic_assets.code column (classic_assets_code_idx).
 		// A bare code is not unique (many issuers mint "USDC"), so it
 		// only narrows to a handful of rows — but combined with issuer
 		// it pins a single asset.
@@ -1431,14 +1432,14 @@ var getAssetPriceHistory7dSQL = `
 // don't have that smoothing layer pre-launch, so day-VWAP is
 // the closest dust-resistant approximation.
 //
-// USD-quote allowlist note: the `USDT-GCQTGZQQ…` issuer is
-// EXCLUDED from every USD allowlist —
-// there is no Tether on Stellar (the verified catalogue lists no
-// stellar network for USDT); that asset trades unpegged (~\-e.09),
-// which fabricated an XLM "ATH" of \.78 on thin Jan-2025 days
-// (volume_usd=0 dust). USD proxies are [usdProxyQuotes]: the verified
-// USDC issuer, its SAC (where the Soroban XLM/USD book trades) and
-// fiat:USD; new proxies require a verified-catalogue entry.
+// USD-quote allowlist note: the `USDT-GCQTGZQQ…` issuer is EXCLUDED
+// from every USD allowlist — there is no Tether on Stellar (the
+// verified catalogue lists no stellar network for USDT); that asset
+// trades unpegged (~\-e.09), which fabricated an XLM "ATH" of \.78 on
+// thin Jan-2025 days (volume_usd=0 dust). USD proxies are
+// [usdProxyQuotes]: the verified USDC issuer, its SAC (where the
+// Soroban XLM/USD book trades) and fiat:USD; new proxies require a
+// verified-catalogue entry.
 //
 // A day-bucket only counts if its pair cleared [athMinDayVolumeUSD] and
 // [athMinDayTrades], so a lone print on an empty book cannot set the high.
