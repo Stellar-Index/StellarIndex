@@ -20,8 +20,8 @@ import (
 // text documents ("kebab-case slug, e.g. customer-acme-corp"):
 // lowercase alphanumeric segments joined by single hyphens.
 //
-// Without it -identifier is checked only for non-empty, which is all
-// store.Create (internal/auth/store.go) checks. Today the only caller
+// Without it, -identifier would be checked only for non-empty, which is
+// all store.Create (internal/auth/store.go) checks. Today the only caller
 // is a trusted operator running this CLI by hand, so an out-of-shape
 // value is low-risk; but any future HTTP-handler reuse of the SAME
 // auth.RedisAPIKeyStore.Create path would make Identifier

@@ -96,8 +96,7 @@ const (
 	// debt flags protocol health. None of these contributes to
 	// VWAP — lending events represent decisions taken on top of
 	// other oracles' prices, not new price observations. Reported
-	// alongside as a secondary validation surface
-	// (internal/sources/blend/README.md).
+	// alongside as a secondary validation surface.
 	ClassLending Class = "lending"
 
 	// ClassRouter — Soroban DEX routers + aggregator vaults (Soroswap

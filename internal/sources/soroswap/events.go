@@ -1,7 +1,7 @@
 // Package soroswap ingests trade events from the Soroswap Soroban DEX.
 //
 // Design reference: internal/sources/soroswap/README.md and
-// docs/protocols/soroswap.md. See especially the Q1–Q4
+// docs/protocols/soroswap.md. See especially the Q1–Q6
 // quirk notes in the README before modifying the correlation logic.
 package soroswap
 

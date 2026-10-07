@@ -312,9 +312,9 @@ func (s *AsyncSink) run() {
 			// contract re-appears on a later event", and the seen-set
 			// suppresses every later Push for this key. So without this
 			// rollback a contract first sighted DURING a recorder outage
-			// would be dropped from discovery permanently,
-			// for the lifetime of the process, with nothing but a
-			// failure counter to show for it.
+			// would be dropped from discovery permanently, for the
+			// lifetime of the process, with nothing but a failure
+			// counter to show for it.
 			delete(s.seen, seenKey(hit))
 			s.mu.Unlock()
 			s.logger.Warn("discovery: record failed",

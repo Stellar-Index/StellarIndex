@@ -3,7 +3,7 @@
 // Stellar / Soroban.
 //
 // Design reference: internal/sources/reflector/README.md and
-// docs/protocols/reflector.md. Read the Q1–Q5 quirks first
+// docs/protocols/reflector.md. Read the README's Q1–Q5 quirks
 // before changing the decoder.
 package reflector
 

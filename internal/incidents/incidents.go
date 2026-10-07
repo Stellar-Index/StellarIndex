@@ -62,8 +62,8 @@ const (
 // out-of-enum value to every typed client, AND every downstream
 // severity mapping is a ternary chain whose final branch is
 // `maintenance`, which the status page renders GREEN. An ongoing SEV-1
-// could then be published looking like routine maintenance.
-// Validating here fails the post loudly instead.
+// could then be published looking like routine maintenance. Validating
+// here fails the post loudly instead.
 func (s Severity) valid() bool {
 	switch s {
 	case SeverityMajor, SeverityMinor, SeverityInformative:

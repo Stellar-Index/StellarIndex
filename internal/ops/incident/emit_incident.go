@@ -123,11 +123,11 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 //     -slug <slug> -event resolved`.
 //
 // The command returns non-zero on hard input errors (bad slug, no
-// Postgres, missing config) AND when the fan-out
-// itself lost a delivery: a subscribed customer was not told about
-// the incident and no retry row exists, which the operator has to
-// know before they close the loop. A zero-subscriber fan-out is a
-// successful no-op — informational stderr line only.
+// Postgres, missing config) AND when the fan-out itself lost a
+// delivery: a subscribed customer was not told about the incident
+// and no retry row exists, which the operator has to know before
+// they close the loop. A zero-subscriber fan-out is a successful
+// no-op — informational stderr line only.
 //
 // Usage:
 //
