@@ -17,7 +17,7 @@ import (
 )
 
 // Observer is the dispatcher-facing LiquidityPoolEntry observer
-// per ADR-0022 PR 4/5. Implements
+// per ADR-0022. Implements
 // [dispatcher.LedgerEntryChangeDecoder].
 //
 // Watched-asset driven via the same operator config the
@@ -148,7 +148,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 			// SumLPReservesAtOrBefore permanently (a removal is absorbing,
 			// not a delta), over-reporting supply with nothing counting
 			// the loss. Error so it lands on the per-source decode-error
-			// counter (cold audit 2026-08-04).
+			// counter.
 			return nil, fmt.Errorf(
 				"%w: removed pool %s has no pre-image in ledger %d's memo — "+
 					"a watched pool's reserves cannot be attributed, so they "+

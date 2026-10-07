@@ -184,7 +184,7 @@ func Capture(ev events.Event) (Row, error) {
 }
 
 // decodeTopics base64-decodes EVERY topic slot from the wire into an
-// ordered slice — no truncation (audit-2026-07-16 C2-11). The first
+// ordered slice — no truncation. The first
 // four also populate the fixed topic_0..3 columns (back-compat + the
 // topic_0_sym index fast-path); the full slice is persisted in the
 // topics_xdr array column (migration 0114) so events with 5+ topics —

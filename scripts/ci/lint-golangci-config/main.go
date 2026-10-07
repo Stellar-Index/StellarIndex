@@ -1,12 +1,12 @@
 // lint-golangci-config validates .golangci.yml against a VENDORED JSON
 // Schema, and guards the wiring that keeps that validation offline.
 //
-// Why (#317): golangci-lint-action defaults `verify: true`, which makes the
+// Why: golangci-lint-action defaults `verify: true`, which makes the
 // action run `golangci-lint config verify`. That command downloads
 // https://golangci-lint.run/jsonschema/golangci.v<major>.<minor>.jsonschema.json
 // on every invocation, so a hiccup at a third-party site turns the REQUIRED
-// `lint` check red on a diff that touched no Go at all — observed 2026-08-28
-// on PR #275 (`read: connection reset by peer`), green on rerun. Reproduced
+// `lint` check red on a diff that touched no Go at all (`read: connection
+// reset by peer`, green on rerun). Reproduced
 // locally against v2.14.0 with the network blocked:
 //
 //	$ HTTPS_PROXY=http://127.0.0.1:9 golangci-lint config verify

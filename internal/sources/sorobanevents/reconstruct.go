@@ -70,8 +70,8 @@ func Reconstruct(row Row) (events.Event, error) {
 // reconstructTopics base64-re-encodes the stored topic XDR bytes
 // into the slice shape decoders expect.
 //
-// Prefers the COMPLETE ordered topics_xdr list (migration 0114,
-// audit-2026-07-16 C2-11) so events with 5+ topics reconstruct with
+// Prefers the COMPLETE ordered topics_xdr list (migration 0114)
+// so events with 5+ topics reconstruct with
 // every topic instead of the pre-fix cap of 4. Rows written before
 // 0114 (or by a pre-0114 binary) carry an empty TopicsXDR — fall back
 // to the fixed topic_0..3 columns, trimmed to TopicCount so events
@@ -82,8 +82,8 @@ func Reconstruct(row Row) (events.Event, error) {
 //
 // An empty slot ahead of a non-empty one is not a "fewer topics"
 // case (those trail off with nothing after them) — it's a storage
-// gap. Decoders dispatch on topic[0] and read the rest by position
-// (Q123), so silently skipping the gap would shift every later topic
+// gap. Decoders dispatch on topic[0] and read the rest by position,
+// so silently skipping the gap would shift every later topic
 // down one slot and hand a decoder the wrong field at the wrong
 // index. Fail closed instead of returning a misaligned slice.
 func reconstructTopics(row Row) ([]string, error) {

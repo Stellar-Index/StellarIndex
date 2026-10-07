@@ -35,7 +35,7 @@ type SorobanEventRow struct {
 	Topic3XDR []byte
 
 	// TopicsXDR is the COMPLETE ordered list of every topic's raw XDR
-	// bytes, in emit order (migration 0114, audit-2026-07-16 C2-11).
+	// bytes, in emit order (migration 0114).
 	// Authoritative for the full topic set; Topic0XDR..Topic3XDR hold
 	// the first four for back-compat. Empty for legacy rows written
 	// before 0114 — the reader falls back to Topic0XDR..Topic3XDR in

@@ -1,5 +1,5 @@
-// Package sep41_transfers is the SEP-41 audit-trail decoder
-// (F-0021 closure from audit-2026-05-26). Every SEP-41 transfer /
+// Package sep41_transfers is the SEP-41 audit-trail decoder.
+// Every SEP-41 transfer /
 // approve / set_admin / set_authorized event is materialised into
 // a queryable hypertable so per-account net-position becomes a
 // first-class API surface — the Stellar moat feature CG/CMC

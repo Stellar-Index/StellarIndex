@@ -1,9 +1,8 @@
 // Package stellarrpc is a minimal JSON-RPC client for stellar-rpc.
 //
-// # Scope after r1 stellar-rpc removal (2026-04-23)
+// # Scope
 //
-// stellar-rpc was removed from r1's production ingest path on
-// 2026-04-23 — every trade and oracle update now flows through
+// stellar-rpc is not on the production ingest path — every trade and oracle update now flows through
 // Galexie → ledgerstream → dispatcher per
 // docs/architecture/ingest-pipeline.md. This package's remaining
 // callers are:

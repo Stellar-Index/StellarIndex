@@ -12,7 +12,7 @@ import (
 // total* folded from those rows still equals the authoritative re-sum of
 // them.
 //
-// Why it exists (incident 2026-07-06). `sep41_supply_rollup` (migration
+// Why it exists. `sep41_supply_rollup` (migration
 // 0085) holds a per-contract mint/burn/clawback running total advanced
 // INCREMENTALLY by a watermark worker (AdvanceSEP41SupplyRollup: sum only
 // `ledger > last_ledger`, add in). A full-history re-derive rewrote a

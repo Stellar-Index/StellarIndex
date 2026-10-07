@@ -31,8 +31,7 @@ import (
 // once per window — never more often, because a second sweep inside the
 // SAME window is provably incapable of freeing anything (every entry
 // left after a sweep names the current window, and every entry written
-// since names it too). REL-05 / CON-04 (audit-2026-07-23): the previous
-// size-triggered branch re-ran a full O(n) map scan under the global
+// since names it too). A size-triggered branch would re-run a full O(n) map scan under the global
 // mutex on EVERY call once the map passed [localStoreMaxKeys], deleting
 // nothing and turning the fallback limiter into a self-inflicted DoS at
 // exactly the moment it was under flood.

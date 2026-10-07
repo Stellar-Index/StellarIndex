@@ -47,7 +47,7 @@ import (
 // The classification (ClassifyUSDVolumeTier, per UTC day — the tier is a
 // property of the day's groups, so the targets are resolved per day and
 // cached rather than per chunk), the identity, the `derive_generation <=
-// gen` guard (INV-3), `-fill-null` as an opt-in, and the fail-closed dry
+// gen` guard, `-fill-null` as an opt-in, and the fail-closed dry
 // run: without `-write` this walk counts through
 // CountUSDVolumeRestampCandidates and decompresses nothing.
 
