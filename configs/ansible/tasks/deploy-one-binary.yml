@@ -26,16 +26,15 @@
 #   8. On failure in steps 6-7: rollback (mv .prev back, restart,
 #      restore old sidecar). Playbook exits non-zero. This rolls back
 #      the BINARY only — migrations already applied in this deploy's
-#      pre_tasks are never reverted (CS-099; that's policy, not a gap,
-#      see docs/operations/deploy-workflow.md).
+#      pre_tasks are never reverted (that's policy, not a gap, see
+#      docs/operations/deploy-workflow.md).
 #      Every rollback — this binary's and the whole-deploy one below —
 #      acts on the record the forward path wrote BEFORE it touched the
 #      path (`rollback_record`), and moves aside only what this run can
 #      show it installed: nothing before the atomic rename, and nothing
 #      it cannot put a recorded backup back into. A binary this run
 #      installed for the first time has no backup: it is left installed,
-#      its service stopped, and NAMED in the failure — not deleted
-#      (K078).
+#      its service stopped, and NAMED in the failure — not deleted.
 #   9. Prune backups beyond the latest 5 to bound disk use.
 
 - name: "[{{ binary }}] Confirm new artefact exists on controller"
@@ -76,12 +75,12 @@
   # the record built from it, so it must describe THIS binary. Facts are
   # host-scoped and persist across the include_tasks loop, so a stat that
   # could be skipped by an early failure would leave the previous
-  # iteration's answer in scope (K078).
+  # iteration's answer in scope.
   ansible.builtin.stat:
     path: "{{ install_dir }}/{{ binary }}"
   register: current_stat
 
-# K078 (audit-2026-09-02): what a rollback may undo is what this deploy
+# What a rollback may undo is what this deploy
 # OBSERVED before it touched anything — never something re-derived while
 # the rescue runs. The two disagree exactly when it matters: a binary this
 # run installs for the FIRST time has no .prev-<tag> to go back to, and a
@@ -104,7 +103,7 @@
         {{ backup_tag if (sidecar is succeeded and sidecar.content is defined) else '' }}
     # Flipped by the atomic rename below. Until then the live path holds
     # the build that was already installed, which this run must not treat
-    # as "the bad binary" and move aside (K078).
+    # as "the bad binary" and move aside.
     rollback_swapped: false
 
 - name: "[{{ binary }}] Stage new binary as .new alongside live path"
@@ -130,7 +129,7 @@
       # backups by mtime to decide what's oldest; without this stamp, a
       # revert-to-an-older-version run creates a backup that already
       # LOOKS old and can be pruned in this same run — the opposite of
-      # "keep the latest 5" (audit-2026-07-23 AGT-08).
+      # "keep the latest 5".
       ansible.builtin.file:
         path: "{{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
         state: touch
@@ -196,7 +195,7 @@
       delay: 3
       until: probe.status is defined and probe.status == 200
 
-    # GH-1167: `systemctl is-active` reads "active" for a daemon that is up
+    # `systemctl is-active` reads "active" for a daemon that is up
     # and failing every write; /readyz fails when the applied schema is
     # behind the binary. A daemon with no declared port fails closed.
     - name: "[{{ binary }}] Health probe — daemon /readyz"
@@ -210,8 +209,8 @@
       delay: 3
       until: daemon_probe.status is defined and daemon_probe.status == 200
 
-    # CA2-A37: the two probes above stop at the FIRST 200 (or the first
-    # `is-active`, pre-GH-1167). A binary that panics ~15-30s after start —
+    # The two probes above stop at the FIRST 200. A binary that panics
+    # ~15-30s after start —
     # after the grace period and first successful probe — passes cleanly:
     # `Record successful swap` runs, systemd's own Restart=on-failure
     # (RestartSec=10s) brings it back up crash-looping, and neither the
@@ -264,7 +263,7 @@
         status_code: 200
         timeout: 5
 
-    # audit-2026-07-23 CID-14: migrations are applied once for the whole
+    # Migrations are applied once for the whole
     # deploy up-front, but each binary swap+probe is independent — record
     # every binary that reached a HEALTHY new version in this run so that
     # if a LATER binary in binary_list fails, the rescue block below can
@@ -272,8 +271,8 @@
     # persist across include_tasks loop iterations (host-scoped, not
     # loop-scoped), so this accumulates across the whole binary_list loop.
     #
-    # The value is the restore RECORD built before this binary was touched
-    # (K078), not the backup tag: the rescue must be able to tell "roll
+    # The value is the restore RECORD built before this binary was touched,
+    # not the backup tag: the rescue must be able to tell "roll
     # this one back to <path>" from "this run installed it for the first
     # time, there is nothing to roll back to".
     - name: "[{{ binary }}] Record successful swap (for whole-deploy rollback if a LATER binary fails)"
@@ -283,7 +282,7 @@
   rescue:
     # Neither of these narrate an OUTCOME: at this point the rescue has
     # not run, and whether there is anything to roll back to depends on
-    # the record (K078). The "FAIL the play" task at the end of the rescue
+    # the record. The "FAIL the play" task at the end of the rescue
     # is the one that reports what actually happened.
     - name: "[{{ binary }}] FAILURE — rolling back"
       ansible.builtin.debug:
@@ -308,8 +307,8 @@
     # When the block failed before the atomic rename — a backup `mv` that
     # errored on a hand-written sidecar, a full filesystem — the live path
     # still holds the previously installed, working build, and moving it
-    # to .failed-<version> deletes a binary this run never installed
-    # (K078). `removes:` also makes a repeated rescue a no-op instead of
+    # to .failed-<version> would delete a binary this run never installed.
+    # `removes:` also makes a repeated rescue a no-op instead of
     # clobbering the forensic copy.
     - name: "[{{ binary }}] Move bad binary out of the way"
       when: rollback_swapped | bool
@@ -320,7 +319,7 @@
 
     # Restore from the recorded backup, and only if that exact file is on
     # disk now: with no prior install there is nothing to move back, and
-    # the un-gated `mv` only ever failed into ignore_errors (K078).
+    # an un-gated `mv` would only fail into ignore_errors.
     # `creates:` keeps it from clobbering a live path that is still
     # occupied — if the move-aside above did not run, what is there is
     # already the build we want.
@@ -380,7 +379,7 @@
         state: restarted
       ignore_errors: true
 
-    # audit-2026-07-23 CID-14: this binary failing its health probe means
+    # This binary failing its health probe means
     # the whole deploy failed — don't leave EARLIER binaries in this same
     # run stranded on the new version while this one reverts. Roll every
     # binary recorded in swapped_binaries (built up by the "Record
@@ -398,14 +397,13 @@
       when: item.key not in cli_binaries
       ignore_errors: true
 
-    # K078 (audit-2026-09-02): this used to move EVERY recorded binary
-    # aside and then `mv` a .prev-<tag> back with ignore_errors. For a
-    # binary this run installed for the FIRST time no .prev-<tag> exists,
-    # so the restore failed silently and the install path was left EMPTY
-    # while the play reported it rolled back — a bad deploy turned into an
-    # outage for a binary that was healthy. Nothing is moved aside now
-    # unless the exact backup the forward path recorded is on disk at this
-    # moment; the rest are named in the failure instead of being deleted.
+    # Nothing is moved aside unless the exact backup the forward path
+    # recorded is on disk at this moment; the rest are named in the failure
+    # instead of being deleted. For a binary this run installed for the
+    # FIRST time no .prev-<tag> exists, so moving it aside and restoring
+    # with ignore_errors would fail silently and leave the install path
+    # EMPTY while the play reports it rolled back — turning a bad deploy
+    # into an outage for a binary that was healthy.
     - name: "[{{ binary }}] Whole-deploy rollback — stat each recorded previous binary"
       ansible.builtin.stat:
         path: "{{ item.value.prev_path }}"
@@ -511,10 +509,10 @@
         - item.key in rollback_restorable
       ignore_errors: true
 
-    # The message must describe what the rescue ACTUALLY did. It used to
-    # list every recorded binary as "rolled back" whether or not the
-    # restore landed, so the one case that needs an operator — an install
-    # path the rollback cannot refill — read as a clean rollback (K078).
+    # The message must describe what the rescue ACTUALLY did. Listing every
+    # recorded binary as "rolled back" whether or not the restore landed
+    # would make the one case that needs an operator — an install path the
+    # rollback cannot refill — read as a clean rollback.
     - name: "[{{ binary }}] FAIL the play"
       ansible.builtin.fail:
         msg: >-

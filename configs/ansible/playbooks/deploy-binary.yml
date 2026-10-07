@@ -29,11 +29,11 @@
 #      across the same filesystem; mv is just a wrapper around it).
 #   5. systemctl restart <binary>.
 #   6. Health probe:
-#         api → curl http://127.0.0.1:3000/v1/readyz expects 200 (GH-1167:
-#           was /v1/healthz, a constant-200 liveness probe that never
-#           touches the schema/DB checkers HAProxy's readyz-based
-#           routing decision depends on — a binary readyz would refuse
-#           could pass this gate, HAProxy would then drain every backend)
+#         api → curl http://127.0.0.1:3000/v1/readyz expects 200 (not
+#           /v1/healthz, a constant-200 liveness probe that never touches the
+#           schema/DB checkers HAProxy's readyz-based routing decision
+#           depends on — a binary readyz would refuse could pass that gate,
+#           then HAProxy would drain every backend)
 #         indexer / aggregator → curl http://127.0.0.1:<daemon_ready_ports>/readyz
 #           expects 200 (the schema-head check); a daemon with no
 #           daemon_ready_ports entry fails its probe
@@ -51,15 +51,15 @@
     binary_list: "{{ binaries_csv.split(',') | map('trim') | list }}"
     install_dir: /usr/local/bin
     api_port: 3000
-    # GH-1167: was /v1/healthz (constant 200, touches nothing) while
-    # HAProxy routes on /v1/readyz (checks Postgres + the REC-06 schema
-    # version — critical checks drain the backend on failure). A binary
-    # readyz would refuse used to pass the deploy gate and then get
-    # drained by every backend the moment traffic hit it.
+    # Not /v1/healthz (constant 200, touches nothing): HAProxy routes on
+    # /v1/readyz (checks Postgres + the schema version — critical checks
+    # drain the backend on failure). A binary readyz would refuse would pass
+    # a healthz gate and then get drained by every backend the moment
+    # traffic hit it.
     api_health_path: /v1/readyz
     # Every other daemon is probed on its metrics listener's /readyz (the
     # schema-head check), not `systemctl is-active`, which reads "active"
-    # for a process that is up and failing every write (GH-1167). Ports are
+    # for a process that is up and failing every write. Ports are
     # the obs.metrics_listen default and the aggregator's shift off it
     # (archival-node defaults: local_prometheus_{indexer,aggregator}_port).
     # A daemon missing here fails its deploy rather than going unprobed.
@@ -88,27 +88,25 @@
     - name: Confirm SSH connectivity
       ansible.builtin.ping:
 
-    # F-1220 (codex audit-2026-05-12): migration sync + apply
-    # before any binary swap. The previous flow could restart a
-    # binary onto a database whose schema_migrations was older
-    # than the binary expected, producing partial-outage shapes
-    # at runtime even though /v1/healthz returned 200. Now the
-    # playbook ships the migrations dir from the controller and
-    # runs `stellarindex-migrate up` BEFORE touching any binary.
-    # Idempotent — golang-migrate skips already-applied versions.
+    # Migration sync + apply before any binary swap. Restarting a binary
+    # onto a database whose schema_migrations is older than the binary
+    # expects produces partial-outage shapes at runtime even though
+    # /v1/healthz returns 200. So the playbook ships the migrations dir
+    # from the controller and runs `stellarindex-migrate up` BEFORE
+    # touching any binary. Idempotent — golang-migrate skips
+    # already-applied versions.
     #
     # ONE archive transfer (ansible.builtin.unarchive) + explicit prune —
-    # see ../tasks/sync-migrations.yml for the full history. In short:
-    # ansible.posix.synchronize's rsync runs on the CONTROLLER and never
-    # sees the `--ssh-common-args "-o ProxyJump=…"` deploy.yml uses for
-    # the NAT-only test-net VMs (deploy-ansible-deploy-2); the
-    # directory-src ansible.builtin.copy that replaced it (#268) is
-    # connection-agnostic but O(files) — > 16 min for 291 unchanged
-    # files on the r1 v0.49.0 deploy (run 33244745680) — and dropped
-    # synchronize's `delete: true`. unarchive rides the same connection
-    # as every other module (jump-safe) and moves the tree in one go.
-    # `import_tasks` (static) so --syntax-check and lint-deploy-playbook
-    # cover the task file; the `when:` below applies to every task in it.
+    # see ../tasks/sync-migrations.yml. In short: ansible.posix.synchronize's
+    # rsync runs on the CONTROLLER and never sees the
+    # `--ssh-common-args "-o ProxyJump=…"` deploy.yml uses for the NAT-only
+    # test-net VMs; a directory-src ansible.builtin.copy is
+    # connection-agnostic but O(files) — > 16 min for 291 unchanged files on
+    # an r1 deploy — and drops synchronize's `delete: true`. unarchive rides
+    # the same connection as every other module (jump-safe) and moves the
+    # tree in one go. `import_tasks` (static) so --syntax-check and
+    # lint-deploy-playbook cover the task file; the `when:` below applies to
+    # every task in it.
     - name: Sync migrations from controller (one archive transfer + prune)
       ansible.builtin.import_tasks: ../tasks/sync-migrations.yml
       when:
@@ -116,17 +114,16 @@
         # `| bool` is load-bearing: deploy.yml passes this via
         # `-e "migrations_skip=false"`, which arrives as the STRING
         # "false" — truthy in Jinja, so a bare `not migrations_skip`
-        # silently SKIPPED every deploy's migration apply (the F-1220
-        # safety feature was a no-op). `| bool` coerces "false"→False.
+        # would silently SKIP every deploy's migration apply. `| bool`
+        # coerces "false"→False.
         - not (migrations_skip | default(false) | bool)
 
-    # C6-107 (audit-2026-07-23): the binary is backed up before a deploy
-    # (deploy-one-binary.yml `mv` to .prev-<version>) — the SCHEMA is not.
-    # `stellarindex-migrate up` below runs arbitrary DDL against the live
-    # database with no snapshot and no proof that a recent restorable
-    # backup exists, so a destructive or wrong migration is unrecoverable
-    # beyond whatever pgBackRest happens to hold. Sibling of the tracked
-    # CID-14.
+    # The binary is backed up before a deploy (deploy-one-binary.yml `mv`
+    # to .prev-<version>) — the SCHEMA is not. `stellarindex-migrate up`
+    # below runs arbitrary DDL against the live database with no snapshot,
+    # so without proof that a recent restorable backup exists a destructive
+    # or wrong migration is unrecoverable beyond whatever pgBackRest happens
+    # to hold.
     #
     # This gate asserts a RESTORABLE backup finished recently, straight
     # from `pgbackrest info --output=json` (backup[-1].timestamp.stop is
@@ -139,7 +136,7 @@
     # Deliberately NOT a `pg_dump`/snapshot step: on a multi-TB TimescaleDB
     # a pre-migration dump would add hours to every deploy. pgBackRest's
     # daily full/diff (18-pgbackrest-backup.yml) plus WAL archiving already
-    # gives PITR to any moment; what was missing was proof it is CURRENT
+    # gives PITR to any moment; what this adds is proof it is CURRENT
     # before we mutate the schema.
     #
     # Overrides: `-e backup_freshness_max_age_hours=N` widens the window;
@@ -150,7 +147,7 @@
     # test-net VMs never get pgbackrest (18-pgbackrest-backup.yml — no
     # apt task, provisioned out of band on pubnet only), so on them this
     # fail-closed gate can only ever exit 1 and the only way to deploy
-    # was migrations_skip=true — i.e. never applying schema from the
+    # would be migrations_skip=true — i.e. never applying schema from the
     # workflow at all. deploy.yml passes the flag per region; the ad-hoc
     # `-i host,` inventory means the role's inventory var of the same
     # name is NOT loaded here, so it must arrive via -e. Defaults true.
@@ -236,29 +233,23 @@
     - name: Apply outstanding migrations
       # Source the host's env (STELLARINDEX_POSTGRES_DSN — the real,
       # password-bearing DSN that the services already use) and let
-      # stellarindex-migrate read it, rather than the old hardcoded
-      # passwordless `postgres://stellarindex@127.0.0.1` DSN, which fails
-      # auth against the live db (28P01 — F-1301). That auth failure is why
-      # operators set migrations_skip=true; with the `| bool` skip fix this
-      # step actually runs now, so it has to use working credentials. Same
-      # mechanism as the bootstrap role + manual applies. An operator can
-      # still override with -e migrate_dsn=… .
+      # stellarindex-migrate read it. A hardcoded passwordless
+      # `postgres://stellarindex@127.0.0.1` DSN fails auth against the live
+      # db (28P01). Same mechanism as the bootstrap role + manual applies. An
+      # operator can still override with -e migrate_dsn=… .
       #
       # The env file is read VERBATIM, not `.`-sourced: it is systemd
       # EnvironmentFile syntax (unquoted values), so sourcing it lets sh
       # expand `$`, split on `;`/`&`/`|`/whitespace and strip quotes inside
       # the password — the services (systemd reads the raw line) keep
       # working while migrate gets a mangled DSN and fails 28P01, or worse
-      # runs the tail of the secret as root (deploy-ansible-secrets-5).
+      # runs the tail of the secret as root.
       # POSIX loop (this runs under /bin/sh); same reader as run-heavy-job.sh.
       #
-      # PGOPTIONS (GH-1166): the 2026-07-18 deploy plan recorded "apply
-      # with a short lock_timeout+retry in a low-write window" as the
-      # mitigation for a DDL lock convoy on a hot table — an ACCESS
-      # EXCLUSIVE request (0110 holds one across 24 ALTERs) queues behind
-      # a long read and PostgreSQL's FIFO lock queue then blocks every
-      # later reader of that table too, with no bound. That was never
-      # implemented anywhere on the migrate path. stellarindex-migrate runs
+      # PGOPTIONS: a DDL lock convoy on a hot table is the risk — an ACCESS
+      # EXCLUSIVE request (0110 holds one across 24 ALTERs) queues behind a
+      # long read and PostgreSQL's FIFO lock queue then blocks every later
+      # reader of that table too, with no bound. stellarindex-migrate runs
       # golang-migrate's database/postgres driver, which is lib/pq; lib/pq
       # reads PGOPTIONS as backend startup options (conn.go parseEnviron)
       # — same effect as a session SET before every migration, without
@@ -292,11 +283,10 @@
       register: migrate_result
       # `migrated to version` is what cmdUp actually prints on success; its
       # only other output is "already at latest version — nothing to do".
-      # This used to test for "migrations applied", a string the binary
-      # never emits (it exists only in cmdStatus, which this task does not
-      # run), so EVERY deploy reported the schema step as ok/changed=0 —
-      # including deploys that applied new hypertables requiring a
-      # follow-up projector-replay (cold audit 2026-08-04).
+      # Testing for "migrations applied" — a string that exists only in
+      # cmdStatus, which this task does not run — would report EVERY deploy's
+      # schema step as ok/changed=0, including deploys that apply new
+      # hypertables requiring a follow-up projector-replay.
       changed_when: "'migrated to version' in migrate_result.stdout"
       failed_when: migrate_result.rc != 0
       when: not (migrations_skip | default(false) | bool)
@@ -323,8 +313,8 @@
       register: ch_schema_drift_script
 
     # The drift check refuses a verdict when the shipped intent's
-    # Intent-Version predates the release the host runs; only the ansible
-    # role stamped it, so every release left the alert firing (INV-2530).
+    # Intent-Version predates the release the host runs. With only the
+    # ansible role stamping it, every release would leave the alert firing.
     - name: Re-stamp the ClickHouse schema-drift intent with this release
       ansible.builtin.import_tasks: ../tasks/ship-ch-schema-intent.yml
       when: ch_schema_drift_script.stat.exists
