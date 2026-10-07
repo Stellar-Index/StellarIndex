@@ -64,7 +64,7 @@ type Bucket struct {
 	nowFn func() time.Time
 
 	// dwellTime is the fail-open window. Negative disables the
-	// inversion (legacy fail-open-always behaviour).
+	// inversion, so every Redis error fails open.
 	dwellTime time.Duration
 
 	// local is the in-process fixed-window fallback, non-nil iff rdb
@@ -106,11 +106,13 @@ func WithKeyPrefix(prefix string) Option {
 	return func(b *Bucket) { b.keyPrefix = prefix }
 }
 
-// WithDwellTime overrides the F-0050 / F-0150 fail-open dwell-time
-// window. Operators with a stricter or looser Redis-availability
-// SLO tune this via api.rate_limit_dwell (config.APIConfig.RateLimitDwell,
-// wired at cmd/stellarindex-api/main.go); a negative value disables the
-// dwell-time inversion (legacy fail-open-always). Default
+// WithDwellTime overrides the fail-open dwell-time window: how long
+// Redis may keep failing before Take stops failing open and returns
+// [ErrThrottleUnavailable]. Operators with a stricter or looser
+// Redis-availability SLO tune this via api.rate_limit_dwell
+// (config.APIConfig.RateLimitDwell, wired at
+// cmd/stellarindex-api/main.go); a negative value disables the
+// inversion, so every Redis error fails open. Default
 // [DefaultDwellTime] (30s).
 func WithDwellTime(d time.Duration) Option {
 	return func(b *Bucket) { b.dwellTime = d }
