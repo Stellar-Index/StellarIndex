@@ -15,8 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// RLT-416 residual, through the production entry point both commands call.
-// Failing closed on a seed error (soroswap_seed_failclosed_test.go) made the
+// Through the production entry point both commands call: failing closed on
+// a seed error (soroswap_seed_failclosed_test.go) makes the
 // nightly pass only as reliable as ~640 sequential calls to a public RPC. The
 // retry itself is pinned in internal/sources/soroswap; this proves it is
 // REACHED from seedSoroswapForRecon — with the client and timeouts that

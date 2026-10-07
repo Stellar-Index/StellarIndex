@@ -11,7 +11,7 @@ import (
 )
 
 // A keyed stellar-rpc provider carries its API key in the URL path
-// (e.g. .../v2/<KEY>), the same shape RLT-441 found printed raw to
+// (e.g. .../v2/<KEY>), the same shape that must not be printed raw to
 // stderr. logSeedStart must not repeat it.
 func TestLogSeedStartRedactsKeyedRPCEndpoint(t *testing.T) {
 	var buf bytes.Buffer

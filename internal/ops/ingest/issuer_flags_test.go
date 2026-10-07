@@ -13,10 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The `issuer-flags` drain against merged issuers (#374).
+// The `issuer-flags` drain against merged issuers.
 //
 // Reading only LIVE AccountEntry rows left every issuer that has merged its
-// account away permanently unresolved — r1 2026-09-03: 10,239 of 59,241, and
+// account away permanently unresolved — on r1: 10,239 of 59,241, and
 // of the first 1,000 by primary key, 985 are merged accounts (a `removed` row
 // in the current-state projection), 1 is live again, 14 are below the
 // projection's floor. The lake CAN recover the merged ones: the same probe

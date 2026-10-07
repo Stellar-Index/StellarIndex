@@ -11,17 +11,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── #372 F1: the verify footer must describe the bound it actually runs ──
+// ─── The verify footer must describe the bound it actually runs ──
 
 // TestUSDVolumeFooter_QuotesTheBoundsRealFiringThresholds is the lockstep
 // guard between [xlmBaseBoundTolerance] and the prose the operator reads.
 //
-// The pre-fix footer told operators the XLM-base bound "catches 10x+
+// A footer telling operators the XLM-base bound "catches 10x+
 // errors" and "cannot false-alarm on intraday movement". Both are false at
 // ±30%: it fires at 1.30× overstatement / 1.43× understatement, and its
 // immunity to intraday movement is a measured 0.08 of headroom (worst
 // honest day 1.2206 over 120 days of r1 data), not a structural property.
-// That wrong footer is what generated issue #372's own hypothesis — that a
+// That wrong footer would invite the hypothesis that a
 // 1.3–1.7 ratio must be dispersion rather than error.
 //
 // The thresholds are DERIVED from the constant here, so changing the
@@ -54,10 +54,10 @@ func TestUSDVolumeFooter_QuotesTheBoundsRealFiringThresholds(t *testing.T) {
 	}
 }
 
-// ─── #372 F3/F5: the restamp report must name its own follow-up ──────────
+// ─── The restamp report must name its own follow-up ──────────
 
-// TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast is the #372-F3
-// regression. The restamp's printed `acceptance:` step runs
+// TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast is the
+// follow-up ordering regression. The restamp's printed `acceptance:` step runs
 // verify-usd-volume, which reads `trades` DIRECTLY — while every served
 // volume surface reads a continuous aggregate that will not auto-refresh
 // a months-old window (measured start_offset on r1: prices_1m 5 min,
@@ -163,7 +163,7 @@ func TestXLMBaseRestampFollowUp_ForcesPrices1mOverEveryTwapWindow(t *testing.T) 
 	}
 }
 
-// TestXLMBaseRestampFollowUp_RecommendsMinRelDelta is #372 F5. The
+// TestXLMBaseRestampFollowUp_RecommendsMinRelDelta pins the min-rel-delta advice. The
 // re-derive reads the FINALISED prices_1m bucket while the original
 // insert read the partially-materialised real-time bucket for the same
 // minute, so ~8% of the write set moves by under 0.1% — repairing nothing,

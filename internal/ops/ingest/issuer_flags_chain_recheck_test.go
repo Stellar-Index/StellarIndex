@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The `issuer-flags` drain's CHAIN RE-CHECK pass (RSEC-V1 / RLT-470).
+// The `issuer-flags` drain's CHAIN RE-CHECK pass.
 //
 // `issuers.home_domain` stopped being write-once, but nothing scheduled ever
 // re-read a row that already held one: the primary queue is `auth_required IS
@@ -54,8 +54,8 @@ func onRecord(g string, flags uint32, domain, source string, asOf uint32) timesc
 // The row is the exact shape the drain leaves behind: flags resolved, source
 // `live`, and a home_domain that was true when it was written. The account has
 // since declared a different one on-chain. A run must re-read it and write the
-// chain's answer back — that is the on-chain remediation path the finding says
-// has no effect.
+// chain's answer back — that is the on-chain remediation path, which
+// would otherwise have no effect.
 func TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -187,8 +187,8 @@ func TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone(t *testin
 
 // TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling is the
 // merged half. A row filled `live` whose account has since merged is absent
-// from the live reader; the pass used to leave it alone, so it kept its `live`
-// label and home_domain for good. It must now ask the last-known reader, and
+// from the live reader; a pass that leaves it alone keeps its `live`
+// label and home_domain for good. It must ask the last-known reader, and
 // write what that reader returns: the removal-ledger flags and NO domain. A
 // key neither reader answers for (a coverage gap) is still left untouched.
 func TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling(t *testing.T) {

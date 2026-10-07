@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestArchiveCompletenessFix_DryRunByDefault pins #1191: `fix` and
+// TestArchiveCompletenessFix_DryRunByDefault pins that `fix` and
 // `verify` registered neither -write nor -dry-run and fetched over HTTP,
 // then os.Create/os.Rename/os.Chown'd into -archive-root unconditionally
 // — the daily systemd timer runs `verify` unattended, with no preview and

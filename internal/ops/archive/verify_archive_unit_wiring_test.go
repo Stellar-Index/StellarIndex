@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── #282: the deployed unit must EXPORT the P1 counter ────────────
+// ─── the deployed unit must EXPORT the P1 counter ────────────
 //
 // `stellarindex_stellar_archive_divergence` (severity: page) selects
 // `stellarindex_verify_archive_mismatches_total`. Declaring that
@@ -129,13 +129,13 @@ func readRepoFile(t *testing.T, rel string) string {
 	return string(b)
 }
 
-// ─── #282 (repair): the DOCUMENTED APPLY must render both units ────
+// ─── the DOCUMENTED APPLY must render both units ────
 //
 // Wiring `-textfile-output` into the unit templates only closes the
 // P1's export path if the templates actually reach r1. The runbook
 // prescribes `--tags ops-jobs` (deliberately: a full archival-node
 // run can restart galexie, and a galexie restart is a ~9-minute
-// mainnet cold catchup — the 2026-08-27 incident), and the tier-a
+// mainnet cold catchup), and the tier-a
 // install/enable tasks carry that tag. The tier-b block did not: it
 // is a separate `when: verify_archive_tier_b_enabled` block added
 // later, and it was never tagged. So the documented apply rendered

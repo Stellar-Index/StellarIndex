@@ -22,7 +22,7 @@ import (
 )
 
 // listingCoinsFixture is a trimmed copy of a real
-// `/coins/list?include_platform=true` response (fetched 2026-09-15),
+// `/coins/list?include_platform=true` response,
 // cut to seven elements and kept byte-faithful in shape: the real field
 // names, the real `platforms` objects with their other chains left in,
 // and the `name` field this sync does not read.
@@ -388,8 +388,8 @@ func TestApplyListingPrices_LeavesUnpricedEntriesUnpriced(t *testing.T) {
 	}
 }
 
-// TestListingClient_SendsTheKeyInAHeaderNotTheQuery pins finding G10-04
-// on this path. A transport error's *url.Error embeds the request URL in
+// TestListingClient_SendsTheKeyInAHeaderNotTheQuery pins the no-key-in-the-query
+// rule on this path. A transport error's *url.Error embeds the request URL in
 // its message, so a key in the query string ends up in every log line
 // that reports a failed fetch — and the failed fetches are exactly the
 // ones that get logged.

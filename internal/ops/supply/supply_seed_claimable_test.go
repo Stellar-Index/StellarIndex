@@ -132,7 +132,6 @@ func TestClaimableSeedWriterDryRunTallies(t *testing.T) {
 // posture: is_removal=false and
 // intra_ledger_seq = SeedIntraLedgerSeq, so a live per-ledger observation can
 // never overwrite the reconstructed final state and a re-seed stays corrective
-// (audit-2026-07-16 C2-6).
 func TestClaimableSeedWriterRowShape(t *testing.T) {
 	w := &claimableSeedWriter{tallies: map[string]*claimableSeedTally{}}
 	if err := w.add(clickhouse.ClaimableBalanceSeed{

@@ -17,7 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// F050: ch-rebuild -write runs the CURRENT decoders over a historical
+// ch-rebuild -write runs the CURRENT decoders over a historical
 // lake range and its rows win over the stored ones, yet only `backfill`
 // consulted external.BackfillSafe.
 

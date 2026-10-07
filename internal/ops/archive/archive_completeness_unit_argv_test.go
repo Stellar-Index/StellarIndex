@@ -8,13 +8,13 @@ import (
 
 // archiveCompletenessUnitFiles are the units that run `archive-completeness
 // verify`: the ansible template is what r1 runs, the deploy/ copy is the
-// operator-facing reference for self-hosters, so both must parse (#1179).
+// operator-facing reference for self-hosters, so both must parse.
 var archiveCompletenessUnitFiles = []string{
 	"configs/ansible/roles/archival-node/templates/systemd/archive-completeness.service.j2",
 	"deploy/systemd/archive-completeness.service",
 }
 
-// TestArchiveCompletenessUnits_NoDeadArchiveToDefault pins #1179: the
+// TestArchiveCompletenessUnits_NoDeadArchiveToDefault pins that the
 // ansible template shipped `Environment=ARCHIVE_TO=0`, which the binary
 // refuses outright ("-to is required") — the exact landmine the deploy/
 // reference unit's own comment already documents fixing ("a self-hoster
@@ -60,7 +60,7 @@ func substituteArchiveCompletenessUnitVars(body string) string {
 
 // TestArchiveCompletenessUnits_ExecStartParses runs each unit's
 // `archive-completeness verify` invocation through the real FlagSet
-// (#1179, mirrors TestTrimUnits_ExecStartParses). A flag the parser does
+// (mirrors TestTrimUnits_ExecStartParses). A flag the parser does
 // not define, or the ARCHIVE_TO=0 landmine, exits 1 before anything is
 // checked — a daily timer reports only `failed`, indistinguishable from
 // "nothing to check" to anyone not reading the journal.

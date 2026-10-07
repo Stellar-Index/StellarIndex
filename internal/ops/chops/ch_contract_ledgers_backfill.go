@@ -19,7 +19,7 @@ import (
 // operator contract). Same r1 cautions as ch-txindex-backfill: serialize,
 // run under run-heavy-job.sh, resume with the printed -from — including the
 // same implicit-full-run refusal (a bare invocation needs an explicit
-// -from/-to or -full; GH-1192).
+// -from/-to or -full).
 func chContractLedgersBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-contract-ledgers-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

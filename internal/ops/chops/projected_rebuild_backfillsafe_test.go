@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// F050, third leg: projected-rebuild builds the live projector's CURRENT
+// Third leg: projected-rebuild builds the live projector's CURRENT
 // decoder and runs it over a historical lake range with a winning
 // derive_generation — the bulk sibling the projector-replay runbook sends
 // any rewind over ~1M ledgers to — and it never consulted the

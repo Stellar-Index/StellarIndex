@@ -283,15 +283,15 @@ func TestValidateRestampFXStaleness(t *testing.T) {
 	}
 }
 
-// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne is the RLT-019
-// regression. printReport (usd_volume_restamp_xlmbase.go) is the shared
+// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne pins the
+// tier name. printReport (usd_volume_restamp_xlmbase.go) is the shared
 // report chokepoint EVERY estimated tier's walk finishes through — the
 // xlm-base run this file's tests exercise, and the xlm-quote/cex-fx
-// mirrors here. Its scanLabel/declineLabel lines were already templated
-// on the running tier; only the report's own header line hard-coded
-// "tier xlm-base" regardless of which tier actually ran, so an operator
-// reading an xlm-quote or cex-fx report's banner saw the wrong tier name
-// on every line above the ones the walk itself supplied.
+// mirrors here. Its scanLabel/declineLabel lines are templated
+// on the running tier; the report's own header line must not hard-code
+// "tier xlm-base", or an operator reading an xlm-quote or cex-fx banner
+// would see the wrong tier name on every line above the ones the walk
+// itself supplies.
 func TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne(t *testing.T) {
 	store := newFakeMirrorChunkStore(nil)
 	run := newEstimatedRestampRun(xlmBaseRestampOptions{Slice: time.Hour, Batch: 1}, xlmQuoteTierProfile(store))

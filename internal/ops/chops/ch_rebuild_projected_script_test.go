@@ -359,7 +359,7 @@ func csvSet(csv string) map[string]bool {
 	return out
 }
 
-// RLT-380: a trade source named in the DELETE but absent from the
+// A trade source named in the DELETE but absent from the
 // re-derive is wiped and never rewritten, and the window is marked done.
 // sushiswap_v3 was exactly that — and since the BackfillSafe gate it
 // cannot be added to the re-derive either, so it must not be deleted.
@@ -392,7 +392,7 @@ func TestChRebuildProjectedScript_DeletesOnlyTradeSourcesItRederives(t *testing.
 	}
 }
 
-// RLT-381: ch-rebuild's refusals (BackfillSafe, the live-cursor one-writer
+// ch-rebuild's refusals (BackfillSafe, the live-cursor one-writer
 // guard, the buffered-range ceiling) used to fire only inside the -write
 // run, AFTER the script's DELETE had committed — so the guard doing its job
 // left the window's tables empty. A refusal must now cost nothing.

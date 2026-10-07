@@ -7,7 +7,7 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestValidateFollowFlags is the GH-1190 regression: -follow (the explicit
+// TestValidateFollowFlags is the regression: -follow (the explicit
 // opt-in for an unbounded live tail) must reject an explicit -to and a
 // bounded parallel split, and must not fire at all for a plain -to=0 run
 // (that case is resolved to a real tip elsewhere, not rejected here).
@@ -702,12 +702,12 @@ func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_MidFileCorruptionErrors is the GH-1199
+// TestReadTransitionJSONL_MidFileCorruptionErrors is the
 // regression: a malformed line that is NOT the file's last line means a
 // second run's lines landed after a first run's crash residue (the
-// O_APPEND-across-runs defect), not a crash-truncated tail — the old
-// break-on-first-error behaviour silently dropped every transition after
-// it and returned success. It must now be a hard error, and the good
+// O_APPEND-across-runs defect), not a crash-truncated tail — a
+// break-on-first-error reader would silently drop every transition after
+// it and return success. It must be a hard error, and the good
 // lines AFTER the corrupt one must not be silently lost from the count.
 func TestReadTransitionJSONL_MidFileCorruptionErrors(t *testing.T) {
 	dir := t.TempDir()

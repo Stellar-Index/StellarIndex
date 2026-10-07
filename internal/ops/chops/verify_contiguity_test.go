@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// ─── checkFieldValue / contiguityChecksRunLabel: SKIPPED vs. zero (GH-1195) ─
+// ─── checkFieldValue / contiguityChecksRunLabel: SKIPPED vs. zero ─
 
 func TestCheckFieldValueDistinguishesSkippedFromZero(t *testing.T) {
 	if got := checkFieldValue(false, 0); got != "SKIPPED" {
@@ -260,7 +260,7 @@ func TestToLedgerSeq(t *testing.T) {
 	}
 }
 
-// ─── auto -ec-floor + exemption reporting (GH-1092) ───────────────────────
+// ─── auto -ec-floor + exemption reporting ───────────────────────
 
 func TestAutoECFloor(t *testing.T) {
 	cases := []struct {
@@ -305,7 +305,7 @@ func TestECFloorFlagLabel(t *testing.T) {
 	}
 }
 
-// ─── Check 1 verdict must not claim "exactly once" over duplicates (GH-1091) ─
+// ─── Check 1 verdict must not claim "exactly once" over duplicates ─
 
 func TestLedgerCheckOKLine(t *testing.T) {
 	if got := ledgerCheckOKLine(0); got != "check 1: OK — every ledger present exactly once" {

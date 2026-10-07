@@ -59,7 +59,7 @@ func newPrefixedHotBucket(t *testing.T, bucketPath string) (*fakeHotBucket, stri
 // path carrying a trailing slash, the hand-built key
 // (TrimPrefix(prefix+"/", "/") + p) was "archive//FFFF…", which names no
 // object; S3 answered success and the run reported deleted=N while the
-// disk never moved (#1198). The key must be the one the listing used.
+// disk never moved. The key must be the one the listing used.
 func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
 	t.Parallel()
 	for _, bucketPath := range []string{"galexie-archive", "galexie-archive/archive", "galexie-archive/archive/"} {

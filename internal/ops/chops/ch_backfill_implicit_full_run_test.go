@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestWindowedCHBackfills_RefuseImplicitFullRun pins GH-1192: every windowed
+// TestWindowedCHBackfills_RefuseImplicitFullRun pins that every windowed
 // ClickHouse backfill must refuse a bare invocation (no -from/-to/-full)
 // rather than silently starting the whole ledger-2..tip history outside
 // run-heavy-job.sh. ch-txindex-backfill already enforced this (W8.15); its

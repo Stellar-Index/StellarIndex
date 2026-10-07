@@ -30,7 +30,7 @@ func TestRecognitionCensus_SoroswapPairSeedRequired(t *testing.T) {
 		Topic:      []string{soroswap.TopicPrefixPair, soroswap.TopicSymbolSync},
 	}
 
-	// Pre-fix: an UNSEEDED census dispatcher must NOT recognize the pair event.
+	// Control: an UNSEEDED census dispatcher must NOT recognize the pair event.
 	unseeded, err := pipeline.BuildDispatcher([]string{soroswap.SourceName}, config.OracleConfig{}, nil)
 	if err != nil {
 		t.Fatalf("build unseeded dispatcher: %v", err)

@@ -216,7 +216,7 @@ func renderLakeVerifyProm(c lakeChecks, n lakeCounts, from, to uint32, now time.
 // lakeCheckLine formats one verify-lake summary line. A check narrowed out
 // via -checks prints "SKIPPED (not requested)" rather than a zero count —
 // "not run" and "ran, found zero" must not share one representation
-// (GH-1195), or a report from a narrowed run reads as full coverage. Pure
+// , or a report from a narrowed run reads as full coverage. Pure
 // — unit-testable without a live lake.
 func lakeCheckLine(label string, ran bool, detail string) string {
 	if !ran {

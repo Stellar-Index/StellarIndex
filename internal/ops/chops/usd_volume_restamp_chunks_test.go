@@ -249,7 +249,7 @@ func (f *fakeChunkStore) RestampTradesChunk(ctx context.Context, c timescale.Tra
 	// A scripted chunk holds its "decompress" open until the byte poll
 	// has observed the whole script — the real decompress runs for up to
 	// about 1.5 hours before the work can write its first row. BOUNDED,
-	// so a walk that never polls (the pre-fix behaviour) fails its
+	// so a walk that never polls fails its
 	// assertions instead of hanging the suite until the go test timeout.
 	if f.byteScriptDrained != nil {
 		timeout := time.NewTimer(3 * time.Second)
@@ -1320,7 +1320,7 @@ func TestXLMBaseChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testin
 // ─── the acceptance line the runbook quotes ──────────────────────────────
 
 // TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow pins the
-// exact acceptance command the tool prints for the #372 window;
+// exact acceptance command the tool prints for the runbook window;
 // the runbook's Acceptance line describes the `-day`/`-days` shape
 // generically. -day is the LAST day and -days counts
 // back from it, so that window is 202 days ending on 07-21.
@@ -1338,8 +1338,8 @@ func TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow(t *testing.T) {
 // ─── the decompress must not read as a hung job ──────────────────────────
 
 // TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow
-// is the 2026-09-09 regression: `stellarindex_ops_job_no_progress` fired
-// on EVERY healthy chunked restamp.
+// is the false no-progress regression: without byte progress,
+// `stellarindex_ops_job_no_progress` fires on EVERY healthy chunked restamp.
 //
 // The walk cannot restamp a row in a compressed chunk until the chunk is
 // decompressed, and that decompress ran 49+ minutes on a 17.3 GB chunk on
@@ -1423,7 +1423,7 @@ func (f fakeVolumePathStore) TradesDataVolumePath(context.Context) (string, erro
 // job once the shared ZFS pool drops under its own floor, regardless of
 // what this CLI's own headroom math decided. A run that only checked
 // 2x-the-largest-chunk could clear pre-flight and still get killed
-// mid-decompress. RLT-310: Required must be the max of the two, read from
+// mid-decompress. Required must be the max of the two, read from
 // the same HEAVY_MIN_DATA_KB the watchdog uses, so they cannot disagree.
 func TestChunkRestampPreflight_WatchdogFloorAddsToHeadroom(t *testing.T) {
 	t.Setenv("HEAVY_MIN_DATA_KB", "1048576") // 1 GiB floor, in KB
@@ -1454,7 +1454,7 @@ func TestChunkRestampPreflight_WatchdogFloorAddsToHeadroom(t *testing.T) {
 // the watchdog's own floor has no knowledge of the chunk's headroom math and
 // enforces it unconditionally. This free-space figure sits exactly in that
 // gap: it is below floor+headroom (must refuse) but above max(floor,
-// headroom) (the pre-fix code let it through).
+// headroom) (a max-only check lets it through).
 func TestChunkRestampPreflight_RefusesInTheWatchdogGapBand(t *testing.T) {
 	t.Setenv("HEAVY_MIN_DATA_KB", "314572800") // 300 GiB, KB (watchdog default)
 	store := fakeVolumePathStore{path: "/data"}
@@ -1481,8 +1481,8 @@ func TestChunkRestampPreflight_RefusesInTheWatchdogGapBand(t *testing.T) {
 	}
 }
 
-// Before RLT-310's fix, any freeBytesOnPath failure — permission denied on
-// the right host, a transient EIO, or a genuinely wrong host — printed the
+// Unclassified, any freeBytesOnPath failure — permission denied on
+// the right host, a transient EIO, or a genuinely wrong host — would print the
 // same "this host is not the database host" line, sending an operator with
 // the right host and the wrong role chasing a host that was never wrong.
 func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {

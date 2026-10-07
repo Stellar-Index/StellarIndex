@@ -116,7 +116,7 @@ func TestFindIncidentForEmit_RefusesWrongStatus(t *testing.T) {
 }
 
 // TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil pins
-// RLT-211: incidents.Incident tags affected_components `omitempty`,
+// that incidents.Incident tags affected_components `omitempty`,
 // so an incident with no components published via /v1/incidents
 // simply lacks the key. incidentPayloadFields hand-builds a
 // map[string]any for the webhook body, where a struct's json tag has

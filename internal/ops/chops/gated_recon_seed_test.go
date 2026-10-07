@@ -63,7 +63,7 @@ func TestExpectedProjectionPreseedsFactoryChildFromTheLake(t *testing.T) {
 	}
 }
 
-// RLT-395: a preseed walk over a real, non-empty window that finds zero
+// A preseed walk over a real, non-empty window that finds zero
 // factory children must not go silent — an empty gate registry then makes
 // every pre-existing pool's events look like a real projection gap for the
 // rest of the re-derive instead of the decoder-blind spot it actually is.

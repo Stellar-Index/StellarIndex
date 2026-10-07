@@ -142,8 +142,8 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 }
 
 // TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak is the
-// GH-694 regression: a checkpoint-only run (Tier B, the nightly —
-// doCheckpoint=true, no "chain" tier requested) used to skip the
+// regression: a checkpoint-only run (Tier B, the nightly —
+// doCheckpoint=true, no "chain" tier requested) skipped the
 // internal sequence/hash continuity check entirely, because it was
 // gated on a doChain flag runVerifyChunks/verifyChunk no longer
 // accept. A hash break planted mid-chunk must still be caught.
@@ -257,7 +257,7 @@ func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint
 
 // seedLedgersWithBrokenChain is seedEmptyLedgers with one ledger's
 // PreviousLedgerHash set to a non-zero value that does not match its
-// predecessor's (zero) hash — a planted chain break used to prove
+// predecessor's (zero) hash — a planted chain break proves
 // the internal sequence/hash check still fires when it runs outside
 // the "chain" tier.
 func seedLedgersWithBrokenChain(t *testing.T, ctx context.Context, dir string, seqs []uint32, brokenSeq uint32) { //nolint:revive // ctx-second matches seedEmptyLedgers

@@ -5,8 +5,8 @@ package ingest
 
 import "testing"
 
-// TestSep1FetchDomain pins the curated-override semantics (board
-// board #47): Circle's on-chain home_domain 404s its TOML; the override
+// TestSep1FetchDomain pins the curated-override semantics:
+// Circle's on-chain home_domain 404s its TOML; the override
 // redirects the FETCH while the on-chain value stays authoritative
 // for identity display.
 func TestSep1FetchDomain(t *testing.T) {

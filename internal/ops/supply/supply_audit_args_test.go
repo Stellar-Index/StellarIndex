@@ -16,7 +16,7 @@ import (
 // TestParseSupplyAuditArgs_AssetAnywhere: the asset is accepted before,
 // between or after the flags. Go's flag package stops at the first
 // positional, so the asset-first form both triage runbooks prescribe
-// parsed no flags and failed with "-config is required" (#1177).
+// parsed no flags and failed with "-config is required".
 func TestParseSupplyAuditArgs_AssetAnywhere(t *testing.T) {
 	t.Parallel()
 	want := supplyAuditArgs{cfgPath: "/etc/stellarindex.toml", crossCheck: "CCW6", asset: "USDC-GA5Z", historyHours: 24}

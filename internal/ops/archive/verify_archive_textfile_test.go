@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Regression tests for issue #282 — the P1
+// Regression tests for the P1
 // `stellarindex_stellar_archive_divergence` page had no producer on
 // r1 because `stellarindex_verify_archive_mismatches_total` only
 // ever left the process through the opt-in `-metrics-listen` HTTP
@@ -121,7 +121,7 @@ func TestWriteVerifyArchiveTextfile_atomicRenameLeavesNoTmp(t *testing.T) {
 // best-effort contract: a missing or garbage previous file must not
 // fail the run. To Prometheus that is an ordinary counter reset; an
 // ops binary that refused to publish because it could not parse its
-// own last output would recreate the #282 blind spot.
+// own last output would recreate that blind spot.
 func TestReadPriorVerifyArchiveTextfile_degradesToEmpty(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -209,7 +209,7 @@ func TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess(t *testing.T) {
 
 	// Three consecutive nightly FAILURES, each an hour later. The gauge
 	// must not move: this is the "fails every night but looks fresh"
-	// case the old signal could not distinguish.
+	// case a last-run-time signal could not distinguish.
 	for i := 1; i <= 3; i++ {
 		failedAt := clean.Add(time.Duration(i) * 24 * time.Hour)
 		if err := writeVerifyArchiveTextfile(path, "chain", nil, false, failedAt); err != nil {

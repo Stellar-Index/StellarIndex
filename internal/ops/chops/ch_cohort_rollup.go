@@ -25,7 +25,7 @@ var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 // trades, so admitting it would serve a partial-month VWAP that
 // changes on every rollup cycle — the flicker ADR-0015's closed-bucket
 // rule exists to prevent, applied here to the month grain instead of
-// the rate endpoints' 30 s one (GH-1058).
+// the rate endpoints' 30 s one.
 func closedMonthEdge(now time.Time) time.Time {
 	now = now.UTC()
 	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

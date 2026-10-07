@@ -39,10 +39,10 @@ func hasSeries(body, metric string) bool {
 	return strings.Contains(body, "\n"+metric+"{") || strings.HasPrefix(body, metric+"{")
 }
 
-// TestJobHeartbeatPublishesRunningAndProgress is the C6-020 regression:
+// TestJobHeartbeatPublishesRunningAndProgress pins that
 // a long backfill must publish enough state for a monitor to tell
-// "working" from "hung" from "died". Before the fix NOTHING was published
-// at all — no textfile, no series, no alert in either rule tree.
+// "working" from "hung" from "died". Publishing nothing at all — no textfile, no series,
+// no alert in either rule tree — fails that.
 func TestJobHeartbeatPublishesRunningAndProgress(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ops_job_ch_backfill.prom")

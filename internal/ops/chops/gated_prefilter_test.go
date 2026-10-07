@@ -239,7 +239,7 @@ func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 	}
 }
 
-// TestSorocreditCatalogue_GatedNotRootPinned guards INV-2587: sorocredit's
+// TestSorocreditCatalogue_GatedNotRootPinned guards that sorocredit's
 // Matches admits registered Collateral children, so the catalogue must not
 // pin contractIDs to the root (a hard per-event filter in ch-rebuild /
 // ch-reproject and the re-derive prefilter) and must scope by the gated set.

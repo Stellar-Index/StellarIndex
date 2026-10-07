@@ -21,9 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// RLT-416. The soroswap pair seed was the one pre-loop input of
-// compute-completeness (and verify-reconciliation) that logged and continued on
-// failure while every sibling precondition returned. These tests pin BOTH
+// The soroswap pair seed is a pre-loop input of compute-completeness (and
+// verify-reconciliation) that must not log and continue on failure while every
+// sibling precondition returns. These tests pin BOTH
 // halves of the corrected contract, through the production function and a real
 // stellar-rpc client against a scripted JSON-RPC server:
 //

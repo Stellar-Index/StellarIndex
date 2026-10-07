@@ -3,8 +3,8 @@
 
 package chops
 
-// An emptied window has TWO records to keep, and scripts/ops/ch-rebuild-
-// projected.sh used to keep only one (F075):
+// An emptied window has TWO records to keep in scripts/ops/ch-rebuild-
+// projected.sh:
 //
 //   - $DIRTY, the local marker that drives this script's own recovery. It
 //     must be WRITTEN before anything is deleted — a failed append may not
@@ -17,7 +17,7 @@ package chops
 //
 // These tests EXECUTE the shipped script (the harness in
 // ch_rebuild_projected_script_test.go) and pin both, plus the case that
-// must NOT change: a window that re-derived cleanly files nothing (#408 —
+// must NOT change: a window that re-derived cleanly files nothing (a measured decision —
 // filing one per routine window would point the next nightly at ~12.9M
 // ledgers across 8 sources and time every verdict out).
 
@@ -67,7 +67,7 @@ func assertRecordCommand(t *testing.T, cmd, lo, hi, sources string) {
 }
 
 // TestChRebuildProjectedScript_EmptiedWindowTellsTheVerdictHow is the
-// completeness-verdict leg of F075: the DELETE landed, the re-derive died,
+// completeness-verdict leg of the emptied-window case: the DELETE landed, the re-derive died,
 // so the window is EMPTY. $DIRTY records that for the next run of this
 // script; nothing recorded it for /v1/coverage, which kept certifying the
 // hole complete=true until someone noticed.
@@ -135,14 +135,14 @@ func TestChRebuildProjectedScript_PendingDirtyWindowTellsTheVerdictAtStartup(t *
 		t.Errorf("the note (at %d) must precede the recovery attempt (at %d)", noteAt, recoverAt)
 	}
 	// The script never retracts the obligation: only the verdict that
-	// discharges it may (F072). A successful recovery clears the local
+	// discharges it may. A successful recovery clears the local
 	// marker and nothing else.
 	if strings.TrimSpace(run.dirty) != "" {
 		t.Errorf("$DIRTY after a successful recovery = %q, want empty", run.dirty)
 	}
 }
 
-// #408's measured decision, which this fix deliberately does NOT reverse.
+// The measured clean-window decision, which this test deliberately keeps.
 func TestChRebuildProjectedScript_CleanWindowTellsTheVerdictNothing(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", map[string]string{"SRC": "cctp"})
@@ -183,8 +183,8 @@ func TestChRebuildProjectedScript_PrintedRecordCommandIsAcceptedByTheBinary(t *t
 // ── the local marker: rule 3 is only a rule if the write is CHECKED ──────
 
 // TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete:
-// an unwritable/missing state directory used to be silent — every append to
-// $DIRTY failed and the DELETE ran anyway, so the window was emptied with
+// an unwritable/missing state directory must not be silent — otherwise every
+// append to $DIRTY fails and the DELETE runs anyway, so the window is emptied with
 // no record that would ever rebuild it.
 func TestChRebuildProjectedScript_UnusableDirtyMarkerRefusesBeforeAnyDelete(t *testing.T) {
 	t.Parallel()
@@ -246,7 +246,7 @@ func TestChRebuildProjectedScript_DirtyMarkerThatFailsMidRunStopsBeforeTheDelete
 	}
 }
 
-// TestChRebuildProjectedScript_FilesTheEmptiedWindowItself: F075's filing
+// TestChRebuildProjectedScript_FilesTheEmptiedWindowItself: the filing
 // leg — the script RUNS the record command, it does not only print it.
 func TestChRebuildProjectedScript_FilesTheEmptiedWindowItself(t *testing.T) {
 	t.Parallel()

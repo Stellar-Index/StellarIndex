@@ -160,7 +160,7 @@ func archiveCompletenessVerify(args []string) error {
 		return err
 	}
 
-	// Phase 3 — re-check; the post-fix state is what we report.
+	// Phase 3 — re-check; the state after the fill is what we report.
 	postRes, err := checker.Check(opts.from, opts.to)
 	if err != nil {
 		return fmt.Errorf("post-fix cross-anchor check: %w", err)
@@ -168,7 +168,7 @@ func archiveCompletenessVerify(args []string) error {
 	report.SetCrossAnchor(opts.archiveRoot, postRes)
 
 	// Populate metrics. LastSuccessTimestamp is set ONLY when the
-	// post-fix state is clean AND non-vacuous — alert rules rely on
+	// state after the fill is clean AND non-vacuous — alert rules rely on
 	// this gauge going stale when something's wrong, and a range that
 	// contained no checkpoint position at all verified nothing, so it
 	// must not stamp success either.
@@ -274,7 +274,7 @@ func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []ui
 // confirming the file is missing.
 //
 // Exit semantics:
-//   - 0: every previously-missing file has been placed
+//   - 0: every missing file has been placed
 //   - 1: some files still missing after exhausting the chain
 //   - other: I/O / config error
 func archiveCompletenessFix(args []string) error {
@@ -375,7 +375,7 @@ func archiveCompletenessFix(args []string) error {
 	}
 
 	// Phase 3 — re-check: after the fill, scan again so the report
-	// reflects post-fix state. The Filler is idempotent (next run
+	// reflects the state after the fill. The Filler is idempotent (next run
 	// will just skip files now present), so the re-check is the
 	// authoritative measure of what's still missing.
 	postRes, err := checker.Check(from32, to32)

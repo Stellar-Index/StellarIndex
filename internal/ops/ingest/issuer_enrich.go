@@ -90,11 +90,11 @@ type homeDomainWriter interface {
 
 // issuerEnrichLoop resolves and writes home_domain in fixed-size batches.
 //
-// It used to abort the entire run — leaving every remaining batch
+// It must not abort the entire run — leaving every remaining batch
 // unenriched — the moment a single batch's lookup or write failed. For a
 // table of thousands of issuers split into hundreds of batches, one
 // transient ClickHouse or Postgres hiccup partway through meant the rest
-// of the issuers silently never got a chance. It now logs the failing
+// of the issuers silently never got a chance. It logs the failing
 // batch, counts it, and keeps going; the caller decides whether any
 // failedBatches should fail the run.
 func issuerEnrichLoop(ctx context.Context, er homeDomainLookup, store homeDomainWriter, ids []string, batchSize int, dryRun bool) (found, updated, failedBatches int) {
@@ -151,10 +151,10 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 // updateIssuerHomeDomains writes each issuer's on-chain home_domain onto
 // its row and returns how many rows actually changed.
 //
-// It used to write only into an EMPTY column — "never clobbers a
-// resolver-set value" — which made this job unable to CORRECT anything and
+// It must not write only into an EMPTY column ("never clobbers a
+// resolver-set value"), which would make this job unable to CORRECT anything and
 // the column write-once. See [timescale.Store.SyncIssuerHomeDomain] for why
-// that was an identity defect rather than a conservatism, and why the only
+// that is an identity defect rather than a conservatism, and why the only
 // other writer of the column had the same clause for the same absent reason.
 //
 // An empty domain is an account the lake READ as declaring none, and clears

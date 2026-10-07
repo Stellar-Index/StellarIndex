@@ -54,7 +54,7 @@ var errInsert = errors.New("insert failed")
 // TestDrainAndWriteCountsOnlyWritten pins RA-1: an event whose insert fails
 // must NOT be counted in written[] and MUST appear in failed[], so the
 // completion report + exit code cannot claim a partially-failed recovery as
-// complete. Proven red against the pre-fix behavior (unconditional written++
+// complete. Red against an implementation with unconditional written++
 // and `_ = HandleEvent`).
 func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

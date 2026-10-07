@@ -25,7 +25,7 @@ func (r *recordingPublisher) PublishCompletenessVerdict(_ context.Context, _ tim
 	return r.out, nil
 }
 
-// F072: the clear travels INTO the verdict's transaction — identified by
+// The clear travels INTO the verdict's transaction — identified by
 // the exact row this run read — only when the run earned it; an unearned
 // run must hand the store no clear at all.
 func TestPublishSourceVerdict_ClearOnlyWhenEarned(t *testing.T) {

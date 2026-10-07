@@ -43,7 +43,7 @@ func TestParseSnapScope(t *testing.T) {
 }
 
 // TestShouldCollect_ContractDataStorage is the regression guard for the
-// 2026-07-06 dormant-current-state fill: contract_data STORAGE entries (SAC
+// dormant-current-state fill: contract_data STORAGE entries (SAC
 // Balance / Blend reserve) must be collected under scope=storage but NOT under
 // scope=contracts or scope=all — the exact gap that hid ~99% of PHO supply.
 func TestShouldCollect_ContractDataStorage(t *testing.T) {
@@ -83,10 +83,9 @@ func TestShouldCollect_ContractDataStorage(t *testing.T) {
 	}
 }
 
-// TestShouldCollectDoc_DoesNotCiteUnrelatedPR is the regression for RSWP-011:
-// shouldCollect's doc comment cited "#30" as the LP-scope reader, but PR #30
-// is "Remove TradingView attribution logo from charts" (merged 2026-07-21) —
-// unrelated to state-snapshot or LP reserves. A reader following that
+// TestShouldCollectDoc_DoesNotCiteUnrelatedPR is the regression for a wrong PR citation:
+// shouldCollect's doc comment must not cite an unrelated PR number as the
+// LP-scope reader. A reader following that
 // reference lands on the wrong PR entirely. The doc must instead name the
 // actual ADR-0039 native liquidity-pool reserve reader.
 func TestShouldCollectDoc_DoesNotCiteUnrelatedPR(t *testing.T) {
@@ -124,8 +123,8 @@ func TestShouldCollectDoc_DoesNotCiteUnrelatedPR(t *testing.T) {
 // T240: -write inserts the checkpoint straight into the target ClickHouse's
 // ledger_entry_changes with no cross-check against the network that
 // ClickHouse instance actually tracks. On a config load failure,
-// resolveArchiveTarget used to log one stderr line and silently fall back to
-// the public pubnet archive/passphrase — so a stale or missing -config could
+// resolveArchiveTarget must not log one stderr line and silently fall back to
+// the public pubnet archive/passphrase — a stale or missing -config could
 // make -write insert mainnet's checkpoint into a testnet ledger (or vice
 // versa) with no abort and no operator-visible failure. For write=true, an
 // unresolved config must return an error, not a fallback.

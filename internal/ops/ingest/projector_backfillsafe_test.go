@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// F050: projector-replay is the documented catch-up procedure for every
+// projector-replay is the documented catch-up procedure for every
 // projected source, and it re-decodes history with the CURRENT decoder —
 // but only `backfill` consulted external.BackfillSafe. These tests drive
 // the real subcommand entry point. The config path does not exist, so a
@@ -66,7 +66,7 @@ func TestProjectorReplay_RefusesUnknownSourceName(t *testing.T) {
 func TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{
-		"aquarius", // the finding's own scenario: audited, replay allowed
+		"aquarius", // the canonical scenario: audited, replay allowed
 		blend_backstop.SourceName,
 		sep41supply.SourceName,
 		sep41transfers.SourceName,

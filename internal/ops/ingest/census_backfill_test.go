@@ -112,7 +112,7 @@ func TestCensusCoverage_ZeroPersistedIsAHardError(t *testing.T) {
 
 // TestCensusCoverage_PartialRunIsAHardError — a run whose ledgers were
 // partly absent / skipped / failed to upsert left a substrate hole and still
-// exited 0. The C2-14 watermark froze the resume cursor correctly, but
+// exited 0. The watermark froze the resume cursor correctly, but
 // nothing told the caller.
 func TestCensusCoverage_PartialRunIsAHardError(t *testing.T) {
 	err := censusCoverage(1_000_000, 1_000_999, 900, 40, "galexie-archive", false)
@@ -130,7 +130,7 @@ func TestCensusCoverage_PartialRunIsAHardError(t *testing.T) {
 }
 
 // TestCensusCoverage_InterruptedRunIsNotADoneRange — a SIGINT'd walk unwinds
-// through `errors.Is(walkErr, context.Canceled)` and used to return nil.
+// through `errors.Is(walkErr, context.Canceled)` and must not return nil.
 func TestCensusCoverage_InterruptedRunIsNotADoneRange(t *testing.T) {
 	err := censusCoverage(1_000_000, 1_000_999, 1000, 0, "galexie-archive", true)
 	if err == nil {
@@ -158,10 +158,10 @@ func TestCensusCoverage_CompleteRunPasses(t *testing.T) {
 	}
 }
 
-// TestContiguousWatermark_FreezesOnGap is the C2-14 proof for the
+// TestContiguousWatermark_FreezesOnGap is the proof for the
 // census-backfill resume checkpoint: a mid-range skipped/failed ledger must
-// NOT let the checkpoint stride past it. The pre-fix code checkpointed the
-// last WRITTEN ledger (`lastProcessed`), which advanced straight over a gap
+// NOT let the checkpoint stride past it. Checkpointing the
+// last WRITTEN ledger (`lastProcessed`) advances straight over a gap
 // — leaving a permanent substrate hole on resume. The watermark instead
 // freezes at the last contiguous ledger before the first gap.
 func TestContiguousWatermark_FreezesOnGap(t *testing.T) {

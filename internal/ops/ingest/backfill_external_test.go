@@ -64,7 +64,7 @@ func tradeWithHash(hash string) canonical.Trade {
 	return canonical.Trade{Source: "binance", Ledger: 1, TxHash: hash, Timestamp: time.Now()}
 }
 
-// TestInsertBackfilledTrades_SkippedRowIsError: REL-02 — a per-row data
+// TestInsertBackfilledTrades_SkippedRowIsError: a per-row data
 // fault must not be counted as "skipped" and silently exit 0. Dropped
 // rows have no dead-letter, so any skip must surface as a non-nil error.
 func TestInsertBackfilledTrades_SkippedRowIsError(t *testing.T) {

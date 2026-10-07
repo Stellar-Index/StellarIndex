@@ -40,7 +40,7 @@ func poisonSoroswapTrade() consumer.Event {
 }
 
 // TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow pins the
-// projected-rebuild half of RLT-132. Once HandleEvent REPORTS a permanently
+// projected-rebuild half of the permanent-drop rule. Once HandleEvent REPORTS a permanently
 // dropped trade (instead of folding it into nil), counting every non-nil
 // return as a window-holding insert error leaves a deterministically poison
 // trade's window un-checkpointed on EVERY resumed run, under a log line that

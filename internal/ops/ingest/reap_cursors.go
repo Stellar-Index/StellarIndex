@@ -210,7 +210,7 @@ func printReapPlan(w io.Writer, plan reapPlan, cutoff time.Time, opts reapCursor
 	_, _ = fmt.Fprintf(w, "reap-cursors: last_updated < %s (older than %s)%s\n",
 		cutoff.Format(time.RFC3339), opts.olderThan, sourceScope(opts.source))
 
-	// A protected row past the cutoff is the one finding here an
+	// A protected row past the cutoff is the one result here an
 	// operator must not miss: live ingest has not written in that long.
 	// Printed BEFORE the empty-plan return, because a table with
 	// nothing else old enough to reap is exactly the case where a stuck

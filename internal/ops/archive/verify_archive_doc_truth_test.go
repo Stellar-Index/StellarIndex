@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// RLT-304: "Local Tier D" was documented as comparing sampled
+// "Local Tier D" was documented as comparing sampled
 // checkpoint hashes against a locally-held ledger hash.
 // verifyArchivePeers never reads one — it fetches each peer's
 // history-XXXXXXXX.json and cross-compares the rest against one peer

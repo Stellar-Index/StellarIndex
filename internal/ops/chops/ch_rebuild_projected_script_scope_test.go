@@ -3,7 +3,7 @@
 
 package chops
 
-// F075: scripts/ops/ch-rebuild-projected.sh deleted a HARD-CODED table set
+// scripts/ops/ch-rebuild-projected.sh deleted a HARD-CODED table set
 // whatever -sources it then passed, keyed its done-state by window alone,
 // and recorded nothing when the re-derive failed after the DELETE. So a
 // narrowed run emptied eleven tables it never rebuilt, marked the window

@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// hostileTOML is the shape RSEC-Z1 / RLT-458 describe: 4,000 nested
+// hostileTOML is the hostile shape: 4,000 nested
 // inline tables. 16 KB — comfortably inside the resolver's 1 MiB body
 // cap, publishable by any account with 1 XLM — and measured at 1.81 GiB
 // of decoder allocation in 0.72s before the parse budget existed. The
@@ -128,12 +128,11 @@ func sep1TestResolver(srv *httptest.Server) *metadata.Resolver {
 	)
 }
 
-// TestSep1RefreshLoopSurvivesAHostileTOML is the wedge (RSEC-Z1 /
-// RLT-458) at the production entry point: one issuer serving a hostile
+// TestSep1RefreshLoopSurvivesAHostileTOML is the wedge at the production entry point: one issuer serving a hostile
 // document must not stop the refresh reaching the ~76,000 issuers
 // behind it, and must not return as candidate #1 on every later run.
 //
-// Three assertions, one per link of the chain the finding names:
+// Three assertions, one per link of the chain:
 //
 //  1. the run COMPLETES and the healthy issuer behind the poison one is
 //     reached and written (no starvation);

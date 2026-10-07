@@ -221,8 +221,8 @@ func TestReportRollupDrifts_OKAndDrift(t *testing.T) {
 // TestRollupExitDecision_ZeroCheckedIsError: an empty sep41_supply_rollup
 // table or a -contracts filter that matched nothing must not be certified
 // clean — checked==0 must produce a non-nil error even though drifts is
-// empty (OBS-01 / REL-02: "OK: 0 checkpoint(s) reconcile" previously exited
-// 0, indistinguishable from a genuine all-clean run).
+// empty ("OK: 0 checkpoint(s) reconcile" exiting
+// 0 would be indistinguishable from a genuine all-clean run).
 func TestRollupExitDecision_ZeroCheckedIsError(t *testing.T) {
 	if err := rollupExitDecision(nil, 0, nil); err == nil {
 		t.Fatal("checked=0, drifts=nil must return a non-nil error, got nil")

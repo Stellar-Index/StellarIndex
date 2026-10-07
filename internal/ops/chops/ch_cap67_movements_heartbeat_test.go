@@ -26,7 +26,7 @@ func gaugeValue(t *testing.T, body, metric string) string {
 	return ""
 }
 
-// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins INV-0793: the
+// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins that the
 // cap67-movements watermark had no metric publisher at all, so a wedged
 // -follow daemon (holding the watermark, and every downstream /movements
 // read behind it, at a fixed ledger) looked identical to a healthy one.

@@ -16,7 +16,7 @@ import (
 
 // The trim (compute-trim-cutoff.sh -> trim-galexie-archive) and the hourly
 // fill (galexie-archive-fill.sh) share one host archive. These tests run the
-// REAL shipped scripts against stub psql/mc binaries (#696).
+// REAL shipped scripts against stub psql/mc binaries.
 
 const (
 	fillScript   = "configs/ansible/roles/archival-node/files/galexie-archive-fill.sh"

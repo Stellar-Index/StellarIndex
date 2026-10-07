@@ -43,7 +43,7 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 			tipCalls.Add(1)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		// closeTime is "now" so this fixture clears the GH-1095 RPC
+		// closeTime is "now" so this fixture clears the RPC
 		// freshness gate and reaches the storage-open failure this test
 		// actually pins.
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"id":"ab","protocolVersion":22,"sequence":1000,"closeTime":"%d"}}`,
@@ -75,9 +75,9 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 	}
 }
 
-// TestDetectGaps_StaleRPCTipFailsBeforeStorage pins GH-1095: the RPC tip
-// used to be trusted as ground truth with no freshness check of its own,
-// so a stuck or disconnected stellar-rpc node made every cursor compare
+// TestDetectGaps_StaleRPCTipFailsBeforeStorage pins the RPC-tip freshness gate: an RPC tip
+// trusted as ground truth with no freshness check of its own
+// would let a stuck or disconnected stellar-rpc node make every cursor compare
 // "ok" against a frozen tip. A tip whose closeTime is far in the past
 // must now fail closed, before the command ever reaches storage.
 func TestDetectGaps_StaleRPCTipFailsBeforeStorage(t *testing.T) {
@@ -106,7 +106,7 @@ func TestDetectGaps_StaleRPCTipFailsBeforeStorage(t *testing.T) {
 	}
 }
 
-// TestParseRPCCloseTime pins the GH-1095 fail-closed contract: a missing
+// TestParseRPCCloseTime pins the fail-closed contract: a missing
 // or malformed closeTime must error, never silently read as "now".
 func TestParseRPCCloseTime(t *testing.T) {
 	now := time.Now().Unix()
@@ -127,7 +127,7 @@ func TestParseRPCCloseTime(t *testing.T) {
 
 // TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK pins that
 // enabling the projector with the default enabled_sources set builds a
-// registry without error — the GH-1095 catalogue-join step added ahead
+// registry without error — the catalogue-join step ahead
 // of the RPC/storage calls must not itself break a routine config.
 func TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +154,7 @@ func TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK(t *testing.T) {
 	}
 }
 
-// TestCatalogueMissingProjectorSources_ReapedSourceFlagged pins GH-1095:
+// TestCatalogueMissingProjectorSources_ReapedSourceFlagged pins the catalogue join:
 // a source catalogued in ingestion.enabled_sources (and thus registered
 // by projector.BuildRegistry) whose ("projector", <name>) cursor row was
 // reaped, or never created, must be reported — not silently absent from

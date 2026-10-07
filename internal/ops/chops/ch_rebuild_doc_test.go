@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// GH-905: backfill-router was never removed from cmd/stellarindex-ops/main.go's
-// command table (still `"backfill-router": ingest.Run`) — it was superseded on
+// backfill-router is not removed from cmd/stellarindex-ops/main.go's
+// command table (still `"backfill-router": ingest.Run`) — it is superseded on
 // the lake path by ch-rebuild -contract-calls, not retired. ch_rebuild.go's own
 // doc comments and flag help must not claim it is "retired": that tells an
 // operator the command no longer exists when `stellarindex-ops backfill-router`

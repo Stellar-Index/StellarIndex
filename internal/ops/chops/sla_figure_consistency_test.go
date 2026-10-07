@@ -24,7 +24,7 @@ import (
 // that explain those alerts. For four months they disagreed by an
 // order of magnitude — the page promised ≥ 99.9 % while ADR-0008 and
 // the alerts operationalised 99.99 %, under a recording-rule label
-// named for the tighter figure (#487). Nothing could fail on the
+// named for the tighter figure. Nothing could fail on the
 // disagreement because each site is prose or config that no build
 // step reads.
 //
@@ -282,7 +282,7 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 // verdict fails on each, so a published bound that no rule compares
 // against is a breach nobody is told about: availability and p99 were
 // exported and selected by nothing, and the /v1/price freshness alert
-// sat above the published structural bound (#741).
+// sat above the published structural bound.
 
 const (
 	slaProbeTextfile   = "cmd/stellarindex-sla-probe/textfile.go"

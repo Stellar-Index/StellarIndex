@@ -16,7 +16,7 @@ import (
 )
 
 // indexBackfillSubcommands are the windowed INSERT…SELECT lake backfills.
-// Each wrote on every run that named no flag at all (#868): there was no
+// Each wrote on every run that named no flag at all: there was no
 // preview, so a mistyped -from started a multi-hour, billions-of-rows fill.
 var indexBackfillSubcommands = []string{
 	"ch-txindex-backfill",

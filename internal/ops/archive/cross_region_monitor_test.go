@@ -150,13 +150,13 @@ func TestAllFailed_Outcome(t *testing.T) {
 	}
 }
 
-// ─── C4-007: /healthz must reflect the LAST tick, not the first ────
+// ─── /healthz must reflect the LAST tick, not the first ────
 //
-// The pre-fix verdict was `lastRunUnix != 0` — a latch the very first
+// A verdict of `lastRunUnix != 0` is a latch the very first
 // sweep set and nothing ever cleared, so the monitor reported healthy
 // forever afterwards no matter what happened to the tick loop or to the
-// regions. Each case below is a state in which the old handler returned
-// 200 and the corrected one must not.
+// regions. Each case below is a state in which such a handler returns
+// 200 and the real one must not.
 
 // TestCrossRegionHealth_StaleTick — the loop stopped ticking (goroutine
 // wedged/dead, or resolveAnchor failing every time so lastRunUnix is
@@ -184,7 +184,7 @@ func TestCrossRegionHealth_StaleTick(t *testing.T) {
 // TestCrossRegionHealth_EveryRegionFailing — the loop is ticking fine,
 // but every region fetch has failed since startup. runOneTick still
 // stamps lastRunUnix on such a sweep (the sweep DID complete), which is
-// exactly why the old latch stayed green while the monitor was blind.
+// exactly why that latch stays green while the monitor was blind.
 func TestCrossRegionHealth_EveryRegionFailing(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -260,9 +260,9 @@ func TestCrossRegionHealth_BeforeFirstSweep(t *testing.T) {
 
 // TestRunOneTick_AllFailedDoesNotStampReached is the end-to-end half:
 // a real sweep against two dead regions must NOT advance the
-// reachability clock, so the health verdict above can go red. Pre-fix
-// there was no such clock — runOneTick stamped lastRunUnix and the
-// handler called that healthy.
+// reachability clock, so the health verdict above can go red. Without it
+// runOneTick would stamp lastRunUnix and the handler would call that
+// healthy.
 func TestRunOneTick_AllFailedDoesNotStampReached(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "down", http.StatusBadGateway)
@@ -366,7 +366,7 @@ func stubResponse(t *testing.T, body crossRegionResponse) *httptest.Server {
 }
 
 // TestRunOneTick_PartialFailureIsNotLabelledOK is the regression test
-// for the cold audit of 2026-08-04.
+// for a sweep that labels itself ok without comparing anything.
 //
 // runOneTick discarded analyseRegionResults' `compared` return and
 // defaulted outcome to "ok", so a sweep in which fewer than two regions
@@ -374,8 +374,8 @@ func stubResponse(t *testing.T, body crossRegionResponse) *httptest.Server {
 // time series as a genuine agreement. In a two-region fleet that means
 // one region being down produces a permanent green: divergences flat,
 // last_reached fresh, /healthz 200, and zero comparisons performed.
-// analyseRegionResults documents that such a sample "proves NOTHING"
-// (OBS-07), and the one-shot sibling exits 1 on it.
+// analyseRegionResults documents that such a sample "proves NOTHING",
+// and the one-shot sibling exits 1 on it.
 //
 // The existing TestRunOneTick_FetchErrorTracked builds this exact
 // scenario and asserts fetchErrors and divergences — but never the

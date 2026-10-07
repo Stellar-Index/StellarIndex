@@ -10,7 +10,7 @@ import (
 )
 
 // TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes is the
-// regression test for the 2026-05-01 r1-walk audit finding: the
+// regression test for the r1-walk bug: the
 // original implementation only matched Created + Restored, which
 // caused the tool to return MISSING for every hash even though
 // the wasm-history walker (which handles Created + Updated +
@@ -108,7 +108,7 @@ func TestMaybeWriteWasmCode_IgnoresRemoved(t *testing.T) {
 	}
 }
 
-// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound is the GH-1189
+// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound is the
 // regression: found is the walk's completion receipt (drives -early-exit,
 // the "wrote N/N" summary, and the missing-hash exit code), so a write
 // that fails must leave the hash absent from it rather than recording a

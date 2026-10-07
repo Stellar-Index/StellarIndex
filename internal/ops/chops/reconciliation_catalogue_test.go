@@ -37,8 +37,8 @@ const wantSEP41Filter = "contract_id IN (" +
 	"'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC')"
 
 // TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched pins the
-// 2026-07-11 promotion: now that the full-history truncate+re-derive
-// (`ch-rebuild -sep41 -write`, windows 50.0M→63.42M, rc=0) has purged
+// sep41 promotion: once the full-history truncate+re-derive
+// (`ch-rebuild -sep41 -write`) has purged
 // every pre-migration-0057 collapsed row, a configured watched set makes
 // the DEFAULT catalogue (compute-completeness / ch-reproject /
 // verify-reconciliation) carry sep41_transfers + sep41_supply with the
@@ -75,7 +75,7 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 
 // TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry pins the
 // lake-derived exact genesis values for the two sources whose catalogue
-// floors had drifted (2026-07-31): cctp's true first on-chain event is
+// floors had drifted: cctp's true first on-chain event is
 // ledger 62,146,641 (the MessageTransmitter's first event; the stale
 // 62_403_000 ingestion-config floor left 410 real served rows permanently
 // BELOW the verify floor, structurally out of every verdict) and rozo's is
@@ -178,10 +178,10 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 			t.Errorf("%s: kinds = %v, want [%q]", src.name, tgt.kinds, w.kind)
 		}
 		// The sep41 targets are watched-set SLICES of their tables, not
-		// whole tables. This assertion used to demand whereFilter == ""
-		// (whole-table ownership) — it encoded the defect: the served
-		// side then counted every contract's rows while the expected
-		// side was gated on the watched set by dec/contractIDs, so any
+		// whole tables. Demanding whereFilter == ""
+		// (whole-table ownership) would encode a defect: the served
+		// side would count every contract's rows while the expected
+		// side is gated on the watched set by dec/contractIDs, so any
 		// row from a since-unwatched contract was a permanent, never-
 		// closing surplus. Pinned to the exact predicate, not merely
 		// non-empty, because this string is part of the durable
@@ -317,11 +317,11 @@ func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
 	}
 }
 
-// TestCatalogue_OpArgsOnlyForRedstone pins the 2026-07-08 wide-column trim:
+// TestCatalogue_OpArgsOnlyForRedstone pins the wide-column trim:
 // redstone is the ONLY decoder that consumes events.Event.OpArgs (write_prices
-// feed-id zip, PR 166), so it alone may ask the -ch reconcile to read the wide
-// op_args_xdr column. Every other source — critically the sep41 pair (promoted
-// into the catalogue as of 2026-07-11, whose reconcile streams the CAP-67
+// feed-id zip), so it alone may ask the -ch reconcile to read the wide
+// op_args_xdr column. Every other source — critically the sep41 pair (in the
+// catalogue, whose reconcile streams the CAP-67
 // firehose) — must keep needsOpArgs false, or the lake read regrows the memory
 // profile that OOM-killed compute-completeness at any ClickHouse server cap.
 func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
@@ -359,12 +359,12 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	}
 }
 
-// TestBlendEmitterDropFanoutWaived pins the 2026-08-18 blend_emitter
+// TestBlendEmitterDropFanoutWaived pins the blend_emitter
 // projection false-red fix. The `drop` event is a FAN-OUT: one decoder
 // DropEvent carries N recipients and the sink writes one blend_emitter_events
 // row per recipient (recipient_index is a PK component), so a per-ledger
 // event-count-vs-served-row-count reconcile false-flags every drop ledger
-// (r1-measured 2026-08-18: ledger 51,499,914 = 13 rows / 1 event identity;
+// (r1-measured: ledger 51,499,914 = 13 rows / 1 event identity;
 // ledger 57,467,292 = 3 / 1 → Σ|Δ|=14, data CORRECT).
 //
 // Unlike the aquarius_reserves/liquidity fan-out tables — which are ENTIRELY
@@ -374,8 +374,8 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 // fan-out drop rows out of the served side (whereFilter `event_kind <> 'drop'`)
 // and omits the drop kind from the re-derive: the 467/469 1:1 events keep exact
 // per-ledger reconciliation and the 2 drop ledgers are covered by the density
-// gap-detector (per_source_gaps.go). This test fails against the pre-fix
-// catalogue (kinds included "blend_emitter.drop"; whereFilter was "").
+// gap-detector (per_source_gaps.go). This test fails against a
+// catalogue whose kinds include "blend_emitter.drop" with whereFilter "".
 func TestBlendEmitterDropFanoutWaived(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
 	if err != nil {
@@ -452,7 +452,7 @@ func TestValidateSourceFilter(t *testing.T) {
 // config-driven ingest sources — they bump stellarindex_source_decode_errors_total
 // like any other source and the generic decode-error alert fires on them —
 // but they read LedgerEntry changes, not soroban_events, so they can never
-// be a reconSource. Before the fix, -source accounts got the SAME "matches
+// be a reconSource. Without a tailored message, -source accounts gets the SAME "matches
 // no reconciliation source" message a typo would, which reads as "accounts
 // isn't a real source" rather than "accounts is real but not reconcilable
 // here". The rejection must name the reason, not just the known-sources list.
@@ -478,7 +478,7 @@ func TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage(t *testing.T
 	}
 }
 
-// TestFilterCatalogueByNetwork pins #483: on a test net the pubnet-anchored
+// TestFilterCatalogueByNetwork pins network filtering: on a test net the pubnet-anchored
 // protocol sources leave the catalogue entirely (their decoders match
 // nothing there and their pubnet genesis floors sit above the network's
 // tip), while the ledger-anchored ones stay. On pubnet the filter is the
@@ -523,7 +523,7 @@ func TestFilterCatalogueByNetwork(t *testing.T) {
 }
 
 // TestBandGenesisAgreesAcrossEveryConstant pins the fix for a four-way
-// disagreement (#361/#363). Band's genesis lived in four places and two
+// disagreement. Band's genesis lived in four places and two
 // of them said 60,000,000 while two said 50,842,736 — a 9.16M-ledger
 // difference that silently shortened the range every completeness and
 // gap check evaluated, so the source read clean over a window that

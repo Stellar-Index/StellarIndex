@@ -113,7 +113,7 @@ func TestReportCrossCheck(t *testing.T) {
 	}
 }
 
-// A pair the aggregator refuses as misaligned (MNY-04) must not get a
+// A pair the aggregator refuses as misaligned must not get a
 // verdict from the CLI either: the runbook sends the operator here
 // exactly when the daemon reported `misaligned`.
 func TestCrossCheckAndReport_MisalignedPairHasNoVerdict(t *testing.T) {

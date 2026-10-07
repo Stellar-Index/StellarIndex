@@ -18,7 +18,7 @@ import (
 )
 
 // TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag is the
-// DAT-09 regression: checkpointsOK==0 && checkpointsMissed>0 (every
+// all-missed regression: checkpointsOK==0 && checkpointsMissed>0 (every
 // checkpoint anchor missed) must return a non-nil error even when
 // -fail-on-missed is NOT set — an all-missed range verified nothing
 // against the cross-anchor archive and must not be certified
@@ -47,7 +47,7 @@ func TestCheckpointAnchorDecision_AllMatchedIsClean(t *testing.T) {
 
 // TestCheckpointAnchorDecision_PartialMiss: SOME matched, some
 // missed — the pre-existing -fail-on-missed gate applies (distinct
-// from the DAT-09 all-missed case).
+// from the all-missed case).
 func TestCheckpointAnchorDecision_PartialMiss(t *testing.T) {
 	if err := checkpointAnchorDecision(8, 2, false); err != nil {
 		t.Errorf("partial miss with -fail-on-missed=false should be clean, got %v", err)
@@ -101,10 +101,10 @@ func TestCheckpointAnchorDecision_NoCheckpointsAttempted(t *testing.T) {
 	}
 }
 
-// TestWatchdogGate is the OBS-07 regression: the systemd WATCHDOG=1
-// ping used to fire every 30s unconditionally, so it detected a
-// crashed process but was blind to a HUNG one — the exact failure the
-// unit's WatchdogSec=1h exists to catch. The ping must now be withheld
+// TestWatchdogGate pins the hung-walk gate: a systemd WATCHDOG=1
+// ping fired every 30s unconditionally detects a crashed process but
+// is blind to a HUNG one — the exact failure the unit's
+// WatchdogSec=1h exists to catch. The ping must be withheld
 // while the walk is armed but not advancing.
 func TestWatchdogGate(t *testing.T) {
 	t.Parallel()
@@ -175,11 +175,11 @@ func TestPeerSampleCheckpointsAlwaysIncludesBothEnds(t *testing.T) {
 	}
 }
 
-// TestPeerCheckpointBounds is the OBS-07 regression for Tier D's
-// sample range. The old form fabricated `lastCP = firstCP + 640` for
-// an unbounded -to, so a default `-tier peers` run sampled ledgers
-// 63..703 — pure genesis — and printed "peer cross-check OK". It also
-// underflowed for to < 64 and dropped `to` itself when `to` was
+// TestPeerCheckpointBounds pins Tier D's sample range. Fabricating
+// `lastCP = firstCP + 640` for an unbounded -to would make a default
+// `-tier peers` run sample ledgers 63..703 — pure genesis — and print
+// "peer cross-check OK"; that form also underflows for to < 64 and drops
+// `to` itself when `to` was
 // exactly a checkpoint.
 func TestPeerCheckpointBounds(t *testing.T) {
 	t.Parallel()
@@ -278,12 +278,11 @@ func TestPeerArchiveTip(t *testing.T) {
 	}
 }
 
-// TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger is the GH-725
-// regression: a 200 response that isn't a real checkpoint (an error
+// TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger pins the
+// zero-value case: a 200 response that isn't a real checkpoint (an error
 // envelope, `null`, or a not-yet-uploaded object behind a CDN that
-// 200s on a miss) decodes to the historyCheckpoint zero value. Before
-// the fix, fetchHistoryCheckpoint returned that zero value as success,
-// and checkpointsEqual on two such zero values reported "peers agree"
+// 200s on a miss) decodes to the historyCheckpoint zero value. Returned
+// as success, checkpointsEqual on two such zero values would report "peers agree"
 // with zero bytes of checkpoint data actually compared.
 func TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger(t *testing.T) {
 	t.Parallel()
@@ -301,7 +300,7 @@ func TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger(t *testing.T) {
 	}
 }
 
-// TestPeerCheckpointQuorum_RequiresMajority is the GH-725 regression:
+// TestPeerCheckpointQuorum_RequiresMajority pins quorum:
 // two survivors of a seven-peer set must not be reported as network
 // consensus — quorum is a strict majority of the configured peers,
 // not a flat floor of 2.
@@ -326,7 +325,7 @@ func TestPeerCheckpointQuorum_RequiresMajority(t *testing.T) {
 	}
 }
 
-// TestPeerArchiveTip_ExcludesStalePeer is the GH-725 regression: a
+// TestPeerArchiveTip_ExcludesStalePeer pins tip staleness: a
 // peer whose published tip trails the freshest responding peer by
 // more than peerTipStalenessWindow (an abandoned-but-still-serving
 // archive) must not silently become the resolved -to and cap the
@@ -357,7 +356,7 @@ func TestPeerArchiveTip_ExcludesStalePeer(t *testing.T) {
 	}
 }
 
-// TestDefaultTier1Peers_AllHTTPS is the RLT-308 regression: Tier D
+// TestDefaultTier1Peers_AllHTTPS pins HTTPS-only peers: Tier D
 // exists to detect on-path forks across the archive network, so a
 // plaintext http:// entry in defaultTier1Peers is forgeable by
 // exactly the class of attacker the tier is meant to catch.
@@ -370,13 +369,12 @@ func TestDefaultTier1Peers_AllHTTPS(t *testing.T) {
 	}
 }
 
-// TestVerifyArchive_PeersTier_HonoursFromLastVerified is the RLT-308
-// regression for the Tier D wiring bug: `-tier peers -from-last-
+// TestVerifyArchive_PeersTier_HonoursFromLastVerified pins the
+// Tier D -from-last-verified wiring: `-tier peers -from-last-
 // verified` must sample checkpoints from the incremental watermark
 // (effectiveFrom), not from the raw -from flag (default 2, i.e.
-// checkpoint 63 at genesis). Before the fix, verifyArchivePeers was
-// always called with uint32(*from), so -from-last-verified was
-// silently ignored for Tier D.
+// checkpoint 63 at genesis). Calling verifyArchivePeers with
+// uint32(*from) would silently ignore -from-last-verified for Tier D.
 func TestVerifyArchive_PeersTier_HonoursFromLastVerified(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

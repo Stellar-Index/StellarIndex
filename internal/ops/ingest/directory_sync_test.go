@@ -126,14 +126,12 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_FailsClosedByDefault pins the ops write-gate
-// unification (W8.15c): directory-sync used to WRITE unless you passed
-// -dry-run — the unsafe default-WRITE convention. After the flip it
+// TestDirectorySync_FailsClosedByDefault pins the ops write-gate:
+// directory-sync must not WRITE unless asked — default-WRITE is unsafe. It
 // previews by DEFAULT and mutates Postgres only on an explicit -write,
 // announced by a loud stderr banner. This asserts the CORRECTED default
-// (dry run, no writes) and that -write is the opt-in — the exact reversal
-// the automated systemd caller now depends on. It compiles against both
-// the pre- and post-fix directorySync signature, so reverting the gate
+// (dry run, no writes) and that -write is the opt-in — the contract
+// the automated systemd caller depends on. Reverting the gate
 // makes the default assertion fail (no DRY-RUN banner is printed): the
 // non-vacuous red.
 //
@@ -164,7 +162,7 @@ func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_WiresAJobHeartbeat — RLT-317: directory-sync had no
+// TestDirectorySync_WiresAJobHeartbeat — without a heartbeat, directory-sync has no
 // signal of its own, only the generic stellarindex_systemd_unit_failed
 // catch-all (a 15m+, exit-code-only ticket). Wiring the same
 // opsutil.JobHeartbeat every other stellarindex-ops job uses gives it
@@ -172,9 +170,7 @@ func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
 // (deploy/monitoring/rules/ingestion.yml) — with no bespoke metric or
 // rule to invent. This drives directorySync all the way to a failed
 // Postgres ping (a closed local port refuses instantly) and asserts the
-// heartbeat textfile records that failure: before the fix, no such
-// textfile is ever written because directorySync does not accept a
-// -heartbeat flag at all and flag.Parse fails outright.
+// heartbeat textfile records that failure.
 func TestDirectorySync_WiresAJobHeartbeat(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 1)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -259,8 +255,8 @@ func buildDirectoryTarballN(t *testing.T, n int) []byte {
 // TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary — the
 // size bound is an exact multiple of tar's 512-byte block. Cut there,
 // between two entries, tar.Reader sees a clean end of archive and the
-// walk used to return the entries read so far with a nil error: a
-// partial snapshot that ReplaceDirectory then pruned the table down
+// walk could return the entries read so far with a nil error: a
+// partial snapshot that ReplaceDirectory would then prune the table down
 // to. The bound must be a refusal, not a shorter result.
 func TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3) // 3 × 1024 B + 1024 B end-of-archive, uncompressed

@@ -121,7 +121,7 @@ func TestAnalyseRegionResults_FetchErrorTolerated(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_NotComparable is the OBS-07 regression:
+// TestAnalyseRegionResults_NotComparable is the not-comparable regression:
 // when fewer than 2 regions respond (here, only r1 — r2 and r3 both
 // failed), the sample proves NOTHING. It must not be flagged as a
 // divergence, but it MUST be reported as not-compared so a caller
@@ -166,7 +166,7 @@ func TestAnalyseRegionResults_ZeroRegionsRespond(t *testing.T) {
 }
 
 // TestCrossRegionCheck_InconclusiveWhenNoBucketComparable is the
-// OBS-07 regression at the command level: when EVERY sampled bucket
+// Same regression at the command level: when EVERY sampled bucket
 // has fewer than 2 responding regions (here, both configured regions
 // are unreachable), crossRegionCheck must return a non-nil
 // "inconclusive" error instead of silently printing "OK" and exiting
@@ -194,7 +194,7 @@ func TestCrossRegionCheck_InconclusiveWhenNoBucketComparable(t *testing.T) {
 
 // TestCrossRegionCheck_AllAgreeIsOK: the healthy path still exits 0
 // when regions agree (regression guard against over-correcting the
-// OBS-07 fix into always-error).
+// not-comparable fix into always-error).
 func TestCrossRegionCheck_AllAgreeIsOK(t *testing.T) {
 	body := map[string]any{
 		"from": "2026-04-27T12:00:00Z", "to": "2026-04-27T12:00:30Z", "price": "1.00",

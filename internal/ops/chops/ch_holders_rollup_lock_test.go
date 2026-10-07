@@ -12,10 +12,9 @@ import (
 // TestAcquireHoldersRollupLockSerializesConcurrentRuns pins T572: a manual
 // `stellarindex-ops ch-holders-rollup` invocation must not be able to run
 // while another invocation (the 30-minute timer, or a second manual run) is
-// still mid-cycle. Proven red against the pre-fix ch_holders_rollup.go,
-// which called neither flock nor any other advisory-lock primitive —
-// acquireHoldersRollupLock did not exist, so a second invocation always
-// proceeded straight into RunHoldersRollup alongside the first.
+// still mid-cycle. Red without acquireHoldersRollupLock: with neither flock nor any
+// other advisory-lock primitive a second invocation always
+// proceeds straight into RunHoldersRollup alongside the first.
 func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ch-holders-rollup.lock")
 
