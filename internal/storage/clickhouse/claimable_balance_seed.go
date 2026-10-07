@@ -188,7 +188,7 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 // A SINGLE argMax over a TUPLE of every projected column, keyed on the full
 // within-ledger identity tuple (ledger_seq, intra_ledger_seq, tx_hash,
 // op_index, change_index) — NOT ledger_seq alone, and NOT one argMax per
-// column. C2-4: ledger_seq is not unique per key within a
+// column. ledger_seq is not unique per key within a
 // ledger, so independent per-column argMax lets ClickHouse resolve the tie
 // differently for each column and stitch a row out of two different changes —
 // entry_xdr from a still-present change and change_type from a later 'removed'
@@ -585,7 +585,7 @@ func claimableIDFromKeyXDR(keyXDR string) ([32]byte, bool, error) {
 // leaf helper canonical.AssetFromXDR uses.
 //
 // NOTE it deliberately does NOT go through canonical.AssetFromXDR, which
-// additionally VALIDATES the code. The live
+// additionally VALIDATES the code (ASCII-alphanumeric). The live
 // claimable observer applies no such rule, so routing through it here would
 // seed a strict SUBSET of what the observer records and re-open a silent gap
 // for the control-byte / non-ASCII asset codes that do occur on pubnet. The

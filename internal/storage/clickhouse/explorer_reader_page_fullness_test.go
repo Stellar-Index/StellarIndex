@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Regression tests for: an account page came back SHORT while older
+// Regression tests: an account page came back SHORT while older
 // history remained, and the handlers emit `next_cursor` only on a FULL page
 // (internal/api/v1/explorer/accounts.go — the OpenAPI contract says the cursor
 // is "absent on the last page"), so a client walking the history stopped there

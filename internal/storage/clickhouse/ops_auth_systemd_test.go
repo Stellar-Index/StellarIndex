@@ -36,7 +36,7 @@ import (
 // pair), feeds it to [chAuthFrom], and asserts the identity that comes
 // out — live_daemon (CH `default` before the live pair is rendered) for
 // the live daemons, `ops_batch` for the batch one-shots that share the
-// file (so a future over-broad strip cannot quietly re-break in the
+// file (so a future over-broad strip cannot quietly re-break the batch tier in the
 // other direction).
 //
 // Deliberately NOT credited as a strip: `Environment=VAR=` neutralising.

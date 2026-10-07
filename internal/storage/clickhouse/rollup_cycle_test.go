@@ -135,8 +135,8 @@ func TestRollupCyclesWalkEveryArchiveScan(t *testing.T) {
 // overlap the first — each reader carries an explicit ledger clamp, all
 // the clamps name the SAME boundary, and exactly one of them takes the
 // side below it. That makes the arms a partition of the ledger axis:
-// their union is every ledger (nothing silently stops at the boundary,
-// which was) and their intersection is empty (no creation is
+// their union is every ledger (nothing silently stops at the boundary)
+// and their intersection is empty (no creation is
 // counted twice, which would inflate every row of the board). It also
 // keeps the cost honest, because a window wholly on the far side of the
 // clamp prunes to no parts at all.

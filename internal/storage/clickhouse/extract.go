@@ -569,7 +569,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		DataXDR:    base64.StdEncoding.EncodeToString(dataRaw),
 		OpArgsXDR:  opArgs, // callee-only InvokeContract args (Redstone feed_ids, etc.)
 		// Constant 1 is now a STATEMENT OF FACT, not an assumption: the only
-		// caller, extractEvents, returns early for a failed transaction
+		// caller, extractEvents, returns early for a failed transaction.
 		// Pre-fix this literal was
 		// stamped on every row while extractEvents had no tx-success gate at
 		// all, so the column asserted something the extractor had not checked.

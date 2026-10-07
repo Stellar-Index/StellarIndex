@@ -34,7 +34,7 @@ import (
 // Balance entry created before that window and idle since never emits a
 // LedgerEntryChange, so its balance is invisible to Algorithm-2 classic
 // supply — dormant contract-held (C-address) SAC balances silently drop
-// out of the SAC component. Incident: ~98% of PHO sits in a
+// out of the SAC component. Example: ~98% of PHO sits in a
 // handful of dormant Phoenix contracts, dragging PHO's Algorithm-2 total
 // 156.9% under true supply (BLND 12.4% under). This is the SAC analogue
 // of the dormant-reserve-account bootstrap that `supply
@@ -740,7 +740,7 @@ func isMemoryLimitExceeded(err error) bool {
 
 // lakeEntryChangeOrder is the full within-ledger identity tuple of one entry
 // change — the ordering key the server-side argMax uses, carried into Go so the
-// cross-window reduction compares winners on exactly the same terms
+// cross-window reduction compares winners on exactly the same terms.
 // Compared lexicographically:
 // ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index.
 //
@@ -856,7 +856,7 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 // key" and calls it current state — but the lake keeps an archived entry's
 // last-known value forever, so a balance that left live ledger state years ago
 // is written as though it were current. Measured on r1: PHO served
-// +156.9% against Horizon, entirely from 39 seeded holders archived since
+// +156.9% against Horizon, entirely from 39 seeded holders whose entries had been archived,
 // while the live observer's rows matched Horizon to 0.009%.
 //
 // Retracting rather than deleting also clears a balance an earlier seed pass

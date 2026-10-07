@@ -80,7 +80,7 @@ const opCreateAccount = "OperationTypeCreateAccount"
 // that the transfer WAS a creation is carried by the
 // OperationTypeCreateAccount row in stellar.operations. Reading only the
 // classic arm therefore ranks creators over a population that ends at
-// this ledger — 4,715,612 creations short as of the measurement above
+// this ledger — 4,715,612 creations short as of the measurement above.
 //
 // Same VALUE as internal/sources/classicmovements.P23StartLedger and
 // internal/storage/timescale.SEP41MovementsFloorLedger, not the same
@@ -117,7 +117,7 @@ const creatorsBoardSettings = boundedScanSettings +
 //
 // It pins the build side for the same reason the board does, over a
 // different pair. The right side is that window's
-// OperationTypeCreateAccount rows — 936,483 in partition 63 on r1
+// OperationTypeCreateAccount rows — 936,483 in partition 63 on r1,
 // growing with the creation rate — and the left side is the
 // window's `transfer` movements, which grow with Soroban token traffic
 // and are already two orders of magnitude larger (about 300 M per
@@ -189,7 +189,7 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // transfer was a creation. The two clamp on opposite sides of
 // `boundary`, so their union is every ledger and their intersection is
 // empty: no creation is missed and none is counted twice. Reading only
-// the classic arm was — a league table ranking over a population
+// the classic arm ranked a league table over a population
 // that ended a year before the tip.
 //
 // WHY THE BOUNDARY IS A PARAMETER. It is the network's P23 boundary —

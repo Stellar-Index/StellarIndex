@@ -20,7 +20,7 @@ import (
 //
 // That is not hypothetical. It is why PHO served +157% against Horizon:
 // `supply seed-sac-balances` wrote 122,148,204 PHO across 39
-// contract holders whose entries had been archived
+// contract holders whose entries had been archived,
 // while our LIVE observer's rows matched Horizon to 0.009%. Four of the five
 // keys behind the largest balance had `live_until` in the 54.4M–56.5M range
 // against a tip of 63.68M.

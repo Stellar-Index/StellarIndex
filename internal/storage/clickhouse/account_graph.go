@@ -167,7 +167,7 @@ const accountGraphInboundQuery = `
 
 // accountGraphOutboundQuery summarises both outbound directions in one
 // round-trip. Each arm is an aggregate over a primary-key range, so its
-// cost is that account's own edges and not the table: measured on r1
+// cost is that account's own edges and not the table: measured on r1,
 // the same shape over the busiest creator's 1,569,693 rows
 // in stellar.account_creators_ops — an upper bound, since that address
 // collapses to 193,015 edges — cost 63 ms at max_threads=2.

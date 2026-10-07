@@ -48,7 +48,7 @@ const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balan
 // column for trustlines ONLY (extract_entry_changes.go, ownerAndAsset). A
 // query keyed on `asset` therefore cannot see the other three at all; it is
 // blind to them by construction, not merely approximate. Measured against
-// Horizon the hidden remainder was CETES +36.605%, TESOURO
+// Horizon, the hidden remainder was CETES +36.605%, TESOURO
 // +10.594%, USTRY +10.272%, USDY +1.274% — 99.9% of it SAC-held.
 //
 // Every trustline balance was minted, so this sum is a PROVABLE LOWER BOUND on

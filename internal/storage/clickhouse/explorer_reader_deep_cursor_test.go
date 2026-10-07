@@ -10,7 +10,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for: a deep operations cursor was O(table).
+// Regression tests: a deep operations cursor was O(table).
 //
 // The cursor arms compared the whole primary key as a TUPLE —
 // `(ledger_seq, tx_index, op_index) < (?, ?, ?)` — and ClickHouse's

@@ -18,7 +18,7 @@ import (
 var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity saturated; retry shortly")
 
 // RefreshGate is a small non-blocking semaphore bounding how many DETACHED
-// cache refreshes may run concurrently against the explorer's lake pool
+// cache refreshes may run concurrently against the explorer's lake pool.
 //
 // Why it exists: the explorer's stale-while-revalidate caches (account
 // state here; asset holders / contracts directory / contract detail in

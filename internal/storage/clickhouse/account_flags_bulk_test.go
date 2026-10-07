@@ -66,7 +66,7 @@ func isPreImageRead(q string) bool {
 }
 
 // TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain
-// is the core: a merged issuer's auth flags ARE knowable from the
+// is the core case: a merged issuer's auth flags ARE knowable from the
 // `state` pre-image the merge left in its own removal ledger, and they must
 // come back labelled as historical — with the dead account's self-declared
 // home_domain DROPPED.

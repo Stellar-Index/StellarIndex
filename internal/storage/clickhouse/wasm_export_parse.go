@@ -121,7 +121,7 @@ func (r *reader) uvarint() (uint64, error) {
 // `slice bounds out of range [:-9223372036854775791]`.
 //
 // `len(r.b)-r.i` cannot overflow: both are non-negative and r.i <= len(r.b)
-// is an invariant of every mutation in this file. Cold.
+// is an invariant of every mutation in this file.
 func (r *reader) bytes(n int) ([]byte, error) {
 	if n < 0 || n > len(r.b)-r.i {
 		return nil, errTruncated

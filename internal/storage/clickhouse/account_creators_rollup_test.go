@@ -402,7 +402,7 @@ func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
 }
 
 // TestCreatorsRollupLiveAccountsDedupeRecycledAddresses is the regression
-// guard for: account_creators_ops is one row per creation OPERATION,
+// guard for the board's live-account count: account_creators_ops is one row per creation OPERATION,
 // so a creator that recycles one address (create -> merge -> create ...)
 // produces several rows sharing the same `created`. The board's
 // live_accounts/live_stroops must describe the SURVIVING SET — one row

@@ -29,7 +29,7 @@ import (
 // operation_participants are ORDER BY (account, ledger_seq, tx_index,
 // op_index), so `account = ?` + cursor + bound + `ORDER BY … DESC LIMIT n`
 // is a primary-key-prefix range read — and touches the wide table only with
-// literal key lists: the hydration pass and the participant visibility lookup
+// literal key lists: the hydration pass and the participant visibility lookup.
 // A wide-table query with `IN (SELECT` is the pathology.
 func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}

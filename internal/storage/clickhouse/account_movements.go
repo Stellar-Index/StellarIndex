@@ -157,7 +157,7 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 // a fresh/older ClickHouse before the first backfill write, the same
 // belt-and-suspenders pattern supply_flows.go uses.
 //
-// idx_cb_balance_id (added see FindClaimableBalanceCreates'
+// idx_cb_balance_id (see FindClaimableBalanceCreates'
 // doc comment) is part of this DDL so a FRESH install gets it from the
 // start. `CREATE TABLE IF NOT EXISTS` does NOT retrofit an index onto
 // an already-existing table, though — this only takes effect the first

@@ -24,7 +24,7 @@ import (
 // correctness properties (see that function's doc for the full derivation):
 //
 //   - Every tx is walked, FAILED TXS INCLUDED: a failed tx's fee debit is
-//     committed on chain, and only its operation changes are rolled back
+//     committed on chain, and only its operation changes are rolled back.
 //   - The walk is LEDGER-WIDE AND THREE-PHASE — every tx's fee changes,
 //     then every tx's apply-phase changes, then every tx's
 //     PostTxApplyFeeChanges — mirroring the SDK's canonical
@@ -62,7 +62,7 @@ import (
 // monotonic over the whole ledger's canonical walk, so it uniquely orders
 // every change to a given key within one ledger. It is folded into
 // ledger_entries_current's ReplacingMergeTree version so the LAST
-// intra-ledger change to a key wins FINAL dedup deterministically
+// intra-ledger change to a key wins FINAL dedup deterministically.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between

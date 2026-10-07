@@ -45,8 +45,8 @@ func newAccountStateCache() *accountStateCache {
 }
 
 // get returns the cached state whenever one exists — INCLUDING past the
-// TTL (fresh=false). Staleness is the CALLER's judgment (route-sweep
-// finding): treating an expired entry as a hard miss meant a whale
+// TTL (fresh=false). Staleness is the CALLER's judgment:
+// treating an expired entry as a hard miss meant a whale
 // account whose scan outruns the request budget was warm for only the
 // 30s after each detached fill and 503'd the rest of the time — the
 // same failure shape the wealth cache fixed. ok=false only

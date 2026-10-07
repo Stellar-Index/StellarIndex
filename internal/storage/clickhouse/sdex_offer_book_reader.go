@@ -197,7 +197,7 @@ func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint3
 // under pressure. Reading to the raw max crosses such a hole and commits
 // a cursor above it, so the rows ch-live-catchup later writes INTO the
 // hole are below the cursor forever — an offer removed in the dropped
-// ledger is served as resting liquidity until the process restarts
+// ledger is served as resting liquidity until the process restarts.
 // Bounded by the contiguous tip the cursor holds
 // just below the hole and resumes through it once it is filled — the
 // same guard as projector.resolveTip and chops.Cap67Range.
@@ -247,7 +247,7 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 				// A skipped non-removed change FREEZES this key's
 				// previously-applied state in the served book (the update
 				// it carried is lost until the key's next decodable
-				// change) — surface it instead of dropping it silently
+				// change) — surface it instead of dropping it silently.
 				// Offer entries are core-emitted XDR,
 				// so any increment here points at a lake problem upstream.
 				slog.Warn("sdex order book: undecodable non-removed offer change skipped; key's prior state frozen",

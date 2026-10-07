@@ -88,7 +88,7 @@ const schemaProbeLease = 30 * time.Second
 const schemaProbeStaleLeases = 4
 
 // schemaProbe caches the answer to a "does this schema object exist"
-// question — but ONLY once the server has actually answered one
+// question — but ONLY once the server has actually answered one.
 // See [ExplorerReader.probeSchema] for why a
 // sync.Once was the wrong primitive here, and for which verdicts latch
 // for the process lifetime and which are only leased.
@@ -1007,8 +1007,7 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 // than triggering a merge.
 //
 // explorerScanSettings: a reverse tip read is cheap in TIME but its stream
-// setup still fans out over the part layout at default threads (route-sweep
-// /v1/operations was in the 8s-budget 503 class); pinning
+// setup still fans out over the part layout at default threads (/v1/operations was in the 8s-budget 503 class); pinning
 // threads bounds the fan-out with no correctness change.
 //
 // The `bounded` arm carries the LOWER ledger bound that makes the read
@@ -2236,7 +2235,7 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 //
 // The query runs OUTSIDE the mutex. sync.Mutex is not context-aware, so
 // holding it across a network round-trip would queue every concurrent
-// reader behind one slow probe and serialise the whole explorer read path
+// reader behind one slow probe and serialise the whole explorer read path.
 // The cost is that concurrent first-callers may
 // each issue a probe until one settles — bounded, and each is a LIMIT 1.
 func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string, requireRows bool) bool {

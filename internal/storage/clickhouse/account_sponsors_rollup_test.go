@@ -80,7 +80,7 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for: a
+// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for a
 // served league table that counted sponsorship arrangements which never
 // took effect.
 //

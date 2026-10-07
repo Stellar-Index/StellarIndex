@@ -914,8 +914,8 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 // — the topic is attacker-influenceable on non-SAC contracts, the
 // derivation is not.
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
-	// Bound the scan by the contract's own active ledgers (sub-second
-	// reads). Unbounded, this is the quiet-contract reverse
+	// Bound the scan by the contract's own active ledgers.
+	// Unbounded, this is the quiet-contract reverse
 	// read-in-order trap that contract_active_ledgers exists to fix:
 	// `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the whole
 	// key range backwards for a contract with few events, and this

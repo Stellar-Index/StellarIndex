@@ -738,7 +738,7 @@ func TestClaimableSeedWindowPolicy(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RetractsServedClaim pins this: a balance the
+// TestClaimableSeedReducer_RetractsServedClaim pins retraction: a balance the
 // served tier still holds as live, claimed in a later window, comes out as a
 // tombstone at the claim (served asset, zero balance, the claim's ledger and
 // close time), and survives the tombstone compaction that bounds memory. A
