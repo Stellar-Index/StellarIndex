@@ -210,15 +210,16 @@ func backfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// The main on-chain backfill re-processes ledgers
-	// that may overlap live ingest (gap-fill within the trades window / running
-	// alongside live). It writes the same trade PKs, so ON CONFLICT UPDATEs the
-	// existing rows. Without the USD-volume resolvers installed it computes
-	// usd_volume=NULL and — at the default gen 0 — still wins the guard (0<=0),
-	// overwriting live-ingested correct values with NULL. Mirror the indexer /
-	// backfill_external / ch_rebuild wiring: a positive generation so a corrected
-	// re-derive is authoritative, AND the resolvers so it writes real values (not
-	// NULL). The reDeriveNullVolumeGuard backstops any future omission.
+	// The main on-chain backfill re-processes ledgers that may overlap live
+	// ingest (gap-fill within the trades window / running alongside live). It
+	// writes the same trade PKs, so ON CONFLICT UPDATEs the existing rows.
+	// Without the USD-volume resolvers installed it computes usd_volume=NULL
+	// and — at the default gen 0 — still wins the guard (0<=0), overwriting
+	// live-ingested correct values with NULL. Mirror the indexer /
+	// backfill_external / ch_rebuild wiring: a positive generation so a
+	// corrected re-derive is authoritative, AND the resolvers so it writes
+	// real values (not NULL). The reDeriveNullVolumeGuard backstops any
+	// future omission.
 	store.SetDeriveGeneration(time.Now().Unix())
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
@@ -798,10 +799,10 @@ func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursor
 }
 
 // caggRefresher is the storage seam refreshCAGGsForChunk depends on —
-// split out so its failure-aggregation logic (a per-view failure
-// must make the WHOLE refresh fail, not just log and
-// continue) is unit-testable with a fake, without a live Postgres.
-// *timescale.Store satisfies this structurally.
+// split out so its failure-aggregation logic (a per-view failure must
+// make the WHOLE refresh fail, not just log and continue) is
+// unit-testable with a fake, without a live Postgres. *timescale.Store
+// satisfies this structurally.
 type caggRefresher interface {
 	LedgerRangeToTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
 	LedgerRangeToOracleTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
@@ -812,20 +813,19 @@ type caggRefresher interface {
 // caggRefreshMu serialises the refresh loop across every `-parallel`
 // worker in this process.
 //
-// `-parallel N` is N goroutines in ONE process (see the WaitGroup fan-
-// out in runBackfill), each walking the same refresh plan
-// ([chunkCAGGRefreshPlan]) at the end of its own chunk. TimescaleDB already serialises two
-// refreshes of the SAME continuous aggregate — but it does it by
-// rejecting the loser with 55P03 immediately, not by making it wait.
-// [timescale.Store.RefreshContinuousAggregate] absorbs that with a
-// bounded retry, which is enough for a cheap view such as prices_1mo (a
-// handful of calendar buckets). It is not enough for prices_1m, first
-// in the list and by far the longest rung: its cost is the
-// chunk's trade count, hundreds of thousands of rows for a sub-chunk
-// of the documented `-parallel 4` weekly loop. A worker that loses
-// that race retries for a fixed budget and then fails — and a
-// refresh failure is FATAL to the chunk, so the cursor does not checkpoint
-// and the loop halts on a collision that is not a fault at all.
+// `-parallel N` is N goroutines in ONE process (see the WaitGroup fan-out in
+// runBackfill), each walking the same refresh plan ([chunkCAGGRefreshPlan])
+// at the end of its own chunk. TimescaleDB already serialises two refreshes
+// of the SAME continuous aggregate — but it does it by rejecting the loser
+// with 55P03 immediately, not by making it wait.
+// [timescale.Store.RefreshContinuousAggregate] absorbs that with a bounded
+// retry, which is enough for a cheap view such as prices_1mo (a handful of
+// calendar buckets). It is not enough for prices_1m, first in the list and by
+// far the longest rung: its cost is the chunk's trade count, hundreds of
+// thousands of rows for a sub-chunk of the documented `-parallel 4` weekly
+// loop. A worker that loses that race retries for a fixed budget and then
+// fails — and a refresh failure is FATAL to the chunk, so the cursor does not
+// checkpoint and the loop halts on a collision that is not a fault at all.
 //
 // The lock is BROADER than the race it removes, and that is a real
 // cost rather than a free one. Timescale's 55P03 is per continuous
@@ -853,11 +853,11 @@ var caggRefreshMu sync.Mutex
 // prices_1m has been forced under them. Idempotent.
 //
 // Every independent view is still attempted after one fails — a single
-// wedged view must not leave the rest un-materialised — but any
-// failure makes the function return a non-nil error, so the
-// caller does NOT advance the durable cursor past the chunk. A view built
-// on prices_1m is skipped when prices_1m's own refresh failed:
-// recomputing it from stale minute rows would overwrite good history.
+// wedged view must not leave the rest un-materialised — but any failure
+// makes the function return a non-nil error, so the caller does NOT
+// advance the durable cursor past the chunk. A view built on prices_1m is
+// skipped when prices_1m's own refresh failed: recomputing it from stale
+// minute rows would overwrite good history.
 func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) error {
 	plan, err := chunkCAGGRefreshPlan(ctx, logger, store, chunk)
 	if err != nil || len(plan) == 0 {
@@ -1058,13 +1058,13 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			SorobanEventsPseudoSource, sources)
 	}
 
-	// Deliberately NOT opsutil.ResolveStreamBucket: that
-	// policy's no-seam default is the LIVE bucket, kept for
-	// ch-live-catchup.sh, and live cannot hold the historic ranges this
-	// command exists to walk. The archive is the full history plus an
-	// hourly mirror of live, so it is the right default on both sides of
-	// a seam; its one weakness — the mirror lagging a -to near the tip —
-	// fails the chunk in backfillChunkCoverage instead of exiting 0.
+	// Deliberately NOT opsutil.ResolveStreamBucket: that policy's
+	// no-seam default is the LIVE bucket, kept for ch-live-catchup.sh,
+	// and live cannot hold the historic ranges this command exists to
+	// walk. The archive is the full history plus an hourly mirror of
+	// live, so it is the right default on both sides of a seam; its one
+	// weakness — the mirror lagging a -to near the tip — fails the chunk
+	// in backfillChunkCoverage instead of exiting 0.
 	bucket := cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
 		bucket = *bucketOverride

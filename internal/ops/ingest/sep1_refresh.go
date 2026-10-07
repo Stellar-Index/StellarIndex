@@ -412,12 +412,12 @@ func sep1Candidates(
 //     reports "0 succeeded, 750 failed" to a journal nobody reads and
 //     exits 0.
 //
-// On r1, a healthy run failed 291 of 500, and all 291 were
-// domains that had never produced a payload (migration 0159), so the
-// regression rate of a healthy run is near zero. 90% sits far above that
-// and below "everything is broken". minAttempts counts only the reached
-// domains, so a short run (a nearly-drained queue, a deadline-truncated
-// batch, a targeted -issuer refresh) cannot trip it on a handful.
+// On r1, a healthy run failed 291 of 500, and all 291 were domains that
+// had never produced a payload (migration 0159), so the regression rate
+// of a healthy run is near zero. 90% sits far above that and below
+// "everything is broken". minAttempts counts only the reached domains,
+// so a short run (a nearly-drained queue, a deadline-truncated batch, a
+// targeted -issuer refresh) cannot trip it on a handful.
 const (
 	defaultSystemicFailureRate = 0.90
 	systemicMinAttempts        = 50

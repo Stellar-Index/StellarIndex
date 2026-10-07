@@ -74,9 +74,9 @@ type issuerFlagsCounts struct {
 // # MERGED ISSUERS
 //
 // A live-entry read alone leaves every issuer that has MERGED ITS ACCOUNT
-// AWAY permanently unresolved — on r1, 10,239 of 59,241, and a
-// 1,000-key sample says 985 (98.5%) are merged accounts, not coverage gaps.
-// Their flags ARE knowable, so a miss falls through to
+// AWAY permanently unresolved — on r1, 10,239 of 59,241, and a 1,000-key
+// sample says 985 (98.5%) are merged accounts, not coverage gaps. Their
+// flags ARE knowable, so a miss falls through to
 // RemovedAccountsLastKnownAuthFlags, which recovers the pre-image the
 // account_merge left in the removing ledger. Such a reading is persisted
 // with its provenance (`last_known_before_removal` + the removal ledger)

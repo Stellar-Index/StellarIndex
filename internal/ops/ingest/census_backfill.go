@@ -101,19 +101,19 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		skipped       int
 		persisted     int    // ledgers whose substrate row is durably committed
 		lastProcessed uint32 // last ledger we actually WROTE a row for (logging only)
-		// `wm` is the durable resume checkpoint — the highest
-		// ledger such that EVERY ledger from startLedger through it was
-		// persisted (no census error, no skip, no upsert failure). The
-		// moment any ledger in the run is left un-persisted the watermark
-		// FREEZES, so the checkpoint can never stride PAST a gap.
-		// Checkpointing `lastProcessed` (the last row written) would advance
-		// right over mid-range skipped ledgers: on resume the cursor would
-		// sit beyond the gap and the skipped ledgers would never be re-read,
-		// leaving a permanent substrate hole. Freezing instead
-		// re-reads the gap on the next run (idempotent UpsertLedgerIngestLog
-		// converges) — and if the ledger is still unreadable the run makes
-		// no forward progress, which is a LOUD stall rather than a silent
-		// gap (the "durable watermark = last fully-committed" posture).
+		// `wm` is the durable resume checkpoint — the highest ledger such
+		// that EVERY ledger from startLedger through it was persisted (no
+		// census error, no skip, no upsert failure). The moment any ledger
+		// in the run is left un-persisted the watermark FREEZES, so the
+		// checkpoint can never stride PAST a gap. Checkpointing
+		// `lastProcessed` (the last row written) would advance right over
+		// mid-range skipped ledgers: on resume the cursor would sit beyond
+		// the gap and the skipped ledgers would never be re-read, leaving a
+		// permanent substrate hole. Freezing instead re-reads the gap on the
+		// next run (idempotent UpsertLedgerIngestLog converges) — and if the
+		// ledger is still unreadable the run makes no forward progress,
+		// which is a LOUD stall rather than a silent gap (the "durable
+		// watermark = last fully-committed" posture).
 		wm             contiguousWatermark
 		lastCheckpoint = time.Now()
 	)
@@ -147,10 +147,10 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 			// whose GetTransactionEvents failed — e.g. an unsupported
 			// future meta version) must NOT get an authoritative
 			// "complete" substrate row: its SorobanEventCount undercounts,
-			// so a projection reconcile against it would falsely pass
-			// Skip it; a later re-run on a fixed reader writes
-			// the real row. The checkpoint must stay behind the skip so
-			// that "later re-run" actually re-reads it.
+			// so a projection reconcile against it would falsely pass.
+			// Skip it; a later re-run on a fixed reader writes the real
+			// row. The checkpoint must stay behind the skip so that "later
+			// re-run" actually re-reads it.
 			if census.TxReadErrors > 0 || census.TxEventReadErrors > 0 {
 				skipped++
 				wm.gap()

@@ -24,8 +24,8 @@ import (
 //
 // This is the cascade's last resort, and it exists because the preferred
 // venues cannot reach certain windows even in principle. For 2017-11-15,
-// kraken, binance, coinbase and bitstamp each return zero
-// trades, because Binance listed XLM in 2018 and Coinbase in 2019. Two
+// kraken, binance, coinbase and bitstamp each return zero trades,
+// because Binance listed XLM in 2018 and Coinbase in 2019. Two
 // windows are unreachable from venues for that reason — 2017-08-23..
 // 2018-02-15 (177 days) and everything before Kraken's floor of 2017-01-17
 // (475 days back to chain genesis).

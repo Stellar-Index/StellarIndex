@@ -198,10 +198,10 @@ func hasNonSorobanDecoder(sources []string) bool {
 }
 
 // anyPlanNeedsClassicGate reports whether any parsed, not-yet-skipped
-// plan has an SDEX (non-Soroban) portion — classic-only OR mixed —
-// i.e. whether the SDEX gap scan is needed at all this run. Mixed
-// plans need it too: a clean soroban_events check alone
-// does not verify the SDEX side of a mixed plan.
+// plan has an SDEX (non-Soroban) portion — classic-only OR mixed — i.e.
+// whether the SDEX gap scan is needed at all this run. Mixed plans need
+// it too: a clean soroban_events check alone does not verify the SDEX
+// side of a mixed plan.
 func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 	for _, p := range plans {
 		if !p.skip && hasNonSorobanDecoder(p.sources) {
@@ -342,13 +342,13 @@ func sorobanSourcesOf(sources []string) []string {
 	return out
 }
 
-// gateAgainstDataGaps narrows the actionable plan list to those
-// whose remaining range overlaps a real data-gap. Soroban-era plans
-// gate against their OWN registered per-decoder tables (see
-// [decoderGapIndex]); SDEX-only plans gate against
-// the per-source trades[source='sdex'] scan carried in classic
-// (retention-scoped — see classicGapGate). MIXED plans (both Soroban
-// and SDEX decoders present) gate against BOTH — see gateMixedPlan.
+// gateAgainstDataGaps narrows the actionable plan list to those whose
+// remaining range overlaps a real data-gap. Soroban-era plans gate
+// against their OWN registered per-decoder tables (see
+// [decoderGapIndex]); SDEX-only plans gate against the per-source
+// trades[source='sdex'] scan carried in classic (retention-scoped — see
+// classicGapGate). MIXED plans (both Soroban and SDEX decoders present)
+// gate against BOTH — see gateMixedPlan.
 //
 // Without this gate, a dry-run on r1 surfaced 50 "actionable" plans,
 // most of which were false positives — sibling cursors had already
@@ -377,14 +377,14 @@ func gateAgainstDataGaps(plans []stalledCursorPlan, decoderGaps decoderGapIndex,
 }
 
 // gateMixedPlan handles a plan whose decoder CSV contains BOTH a
-// Soroban decoder and a non-Soroban (SDEX) decoder. A clean
-// soroban side alone is NOT sufficient grounds to call the whole plan
-// a cursor-inventory false positive — SDEX flows through a different
+// Soroban decoder and a non-Soroban (SDEX) decoder. A clean soroban
+// side alone is NOT sufficient grounds to call the whole plan a
+// cursor-inventory false positive — SDEX flows through a different
 // table (trades[source='sdex']), so a real SDEX-side gap could exist
 // even when the Soroban side is fully covered by sibling cursors. A
-// real (or unresolved) gap on EITHER side keeps the plan
-// actionable; only when BOTH sides are independently confirmed clean
-// (or the operator opted into --force-classic-cursors) is it skipped.
+// real (or unresolved) gap on EITHER side keeps the plan actionable;
+// only when BOTH sides are independently confirmed clean (or the
+// operator opted into --force-classic-cursors) is it skipped.
 func gateMixedPlan(p *stalledCursorPlan, decoderGaps decoderGapIndex, classic classicGapGate, forceClassic bool) {
 	if decoderPortionHasGap(sorobanSourcesOf(p.sources), p.rangeFrom, p.rangeTo, decoderGaps) {
 		return // soroban side alone already justifies the resume

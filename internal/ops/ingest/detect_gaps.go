@@ -20,13 +20,12 @@ import (
 // detectGaps compares every LIVE per-source cursor (see
 // [timescale.LiveCursorSources]) against the stellar-rpc network tip
 // and reports any source lagging by more than `threshold` ledgers.
-// One-shot job namespaces (backfill, projected-rebuild, …) are
-// excluded — their last_ledger is a historical range end, not a
-// live position, so including them can only produce false LAGGING
-// verdicts. Exits non-zero when at least one live
-// source is lagging, or when no live cursor exists at all, so the
-// command works as a prometheus-style health probe from a cron / k8s
-// Job.
+// One-shot job namespaces (backfill, projected-rebuild, …) are excluded
+// — their last_ledger is a historical range end, not a live position,
+// so including them can only produce false LAGGING verdicts. Exits
+// non-zero when at least one live source is lagging, or when no live
+// cursor exists at all, so the command works as a prometheus-style
+// health probe from a cron / k8s Job.
 //
 // For sources that track multiple sub-cursors (the projector tracks
 // one per registered decoder), the MINIMUM last-ledger across the
@@ -111,10 +110,9 @@ func detectGaps(args []string) error {
 	if len(minBySource) == 0 {
 		// An empty (or all-one-shot) cursor table is exactly the "every live
 		// source is stalled" state this probe exists to catch — it must not
-		// read as ok.
-		// Runbooks (ingestion.md, ingestion-sink.md, ledger-ingest.md)
-		// send an operator here expecting a non-zero exit to mean
-		// something; a silent 0 would bury that signal.
+		// read as ok. Runbooks (ingestion.md, ingestion-sink.md,
+		// ledger-ingest.md) send an operator here expecting a non-zero exit
+		// to mean something; a silent 0 would bury that signal.
 		return fmt.Errorf("no live cursor (%v) found against tip %d — ingest may never have started or every live cursor was lost",
 			timescale.LiveCursorSources(), tip.Sequence)
 	}
@@ -141,14 +139,13 @@ func detectGaps(args []string) error {
 }
 
 // expectedProjectorSources returns the ("projector", <name>) cursor
-// names this deployment's config commits it to running, or nil when
-// the projector isn't enabled at all (no "projector" cursor is
-// expected in that case). Building the real registry — rather than
-// re-deriving the enabled/projected split by hand — is what keeps
-// this in sync with buildSource's dispatch table and the sep41
-// unconditional-registration special case; the gated
-// contract-set argument is nil because only Source.Name is read here,
-// never the decoders themselves.
+// names this deployment's config commits it to running, or nil when the
+// projector isn't enabled at all (no "projector" cursor is expected in
+// that case). Building the real registry — rather than re-deriving the
+// enabled/projected split by hand — is what keeps this in sync with
+// buildSource's dispatch table and the sep41 unconditional-registration
+// special case; the gated contract-set argument is nil because only
+// Source.Name is read here, never the decoders themselves.
 func expectedProjectorSources(cfg config.Config) ([]string, error) {
 	if !cfg.Ingestion.Projector.Enabled {
 		return nil, nil
@@ -202,14 +199,14 @@ func parseRPCCloseTime(raw string) (time.Time, error) {
 // minLedgerBySource reduces cursors to the minimum LastLedger per source,
 // restricted to [timescale.LiveCursorSources] (ledgerstream, projector).
 //
-// ingestion_cursors also holds one-shot job shards
-// (backfill, projected-rebuild, census-backfill, tag-signer,
-// backfill-router, …) whose last_ledger is a historical range end by
-// design — a FINISHED shard's row never advances again. Without this
-// filter those namespaces would report LAGGING by millions of ledgers on
-// a perfectly healthy system, because the probe cannot tell "stuck" from
-// "done". reap-cursors and /v1/diagnostics/cursors draw this same line
-// (see [timescale.IsLiveCursorSource]'s doc comment).
+// ingestion_cursors also holds one-shot job shards (backfill,
+// projected-rebuild, census-backfill, tag-signer, backfill-router, …)
+// whose last_ledger is a historical range end by design — a FINISHED
+// shard's row never advances again. Without this filter those namespaces
+// would report LAGGING by millions of ledgers on a perfectly healthy
+// system, because the probe cannot tell "stuck" from "done".
+// reap-cursors and /v1/diagnostics/cursors draw this same line (see
+// [timescale.IsLiveCursorSource]'s doc comment).
 //
 // For sources that track multiple sub-cursors (the projector tracks one
 // per registered decoder), this is the slowest position, not the fastest.
