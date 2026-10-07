@@ -101,7 +101,7 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 						"module — there is no WASM bytecode to show")
 				return
 			}
-			// Event-derived SAC identification (site-audit S-006): ~55k
+			// Event-derived SAC identification: ~55k
 			// contracts are SACs whose instance was never captured
 			// (deployed pre-lake, TTL-evicted before every checkpoint —
 			// structurally invisible to snapshots). Their CAP-67 events
@@ -189,9 +189,9 @@ func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *Contrac
 
 // wasmCacheControl bounds the wasm view's cache lifetime. The wasm for a
 // content-addressed hash IS immutable, but this URL is keyed on contract_id,
-// not on the wasm hash (#1070): an in-place upgrade changes the bytes this
+// not on the wasm hash: an in-place upgrade changes the bytes this
 // same URL serves (see GET .../code-history), so treating it as
-// forever-immutable let a CDN/browser serve pre-upgrade bytecode, exports
+// forever-immutable would let a CDN/browser serve pre-upgrade bytecode, exports
 // and decompile for up to a day after an upgrade. Bounded to the standard
 // catalogue band instead until the route is content-addressed. A ttl
 // verdict (archival/restore) takes the tighter band regardless.

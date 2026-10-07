@@ -41,9 +41,8 @@ type ContractsDirectoryView struct {
 //
 // `days` is rounded UP onto [contractsWindowLadder] and the result served
 // from a bounded TTL cache — the endpoint is unauthenticated and each
-// distinct window is a multi-day GROUP BY over contract_events (C3-009,
-// audit-2026-07-23). The response's `window_days` reports the window
-// actually aggregated.
+// distinct window is a multi-day GROUP BY over contract_events. The
+// response's `window_days` reports the window actually aggregated.
 func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -65,7 +64,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Quantise the window onto the supported ladder before it reaches the
-	// lake (C3-009, audit-2026-07-23). Rounds UP, so the served window is
+	// lake. Rounds UP, so the served window is
 	// never smaller than the one asked for; `window_days` below echoes what
 	// was actually aggregated. See contractsWindowLadder in hot_reads.go
 	// for why an unauthenticated endpoint cannot offer 365 distinct
@@ -75,7 +74,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Snapshot-served (route-sweep 2026-07-29): a stale rung comes back
+	// Snapshot-served: a stale rung comes back
 	// degraded=true and is served as 200 + flags.stale + its real as_of
 	// while the detached re-aggregation runs; only a never-computed rung
 	// can still time out here (and its detached compute keeps running, so
@@ -142,7 +141,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := r.PathValue("contract_id")
-	// Validate up front (P2/C3-9, audit-2026-07-16): a malformed
+	// Validate up front: a malformed
 	// contract_id otherwise reaches ClickHouse before any 400. IsContractID
 	// is the same C-strkey validator the sibling contract endpoints
 	// (contracts.go ContractDetail, wasm_view.go ContractWasm) enforce.
@@ -168,7 +167,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Quantise the window onto the supported ladder before it becomes a
-	// cache key (C3-009, audit-2026-07-23; mirrors ContractsList above).
+	// cache key (mirrors ContractsList above).
 	// Keying on the raw `?days=` bounds a repeat caller but not an
 	// adversary, who walks ?days=1..365 to mint 365 distinct cold keys —
 	// each a full-price two-phase scan that pollutes and LRU-evicts the
@@ -182,9 +181,9 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Served via the shared contract-detail SWR cache (route-sweep
-	// 2026-07-30: the two-phase interactions scan ran inline and timed out
-	// on every request for busy contracts). Computed at the max page size
+	// Served via the shared contract-detail SWR cache: run inline, the
+	// two-phase interactions scan timed out on every request for busy
+	// contracts. Computed at the max page size
 	// and sliced; the window floor is captured WITH the edges so the
 	// served since_ledger describes the data actually served.
 	type interactionsPayload struct {
@@ -273,7 +272,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := r.PathValue("contract_id")
-	// Validate up front (P2/C3-9, audit-2026-07-16) — see ContractInteractions.
+	// Validate up front — see ContractInteractions.
 	if !canonical.IsContractID(cid) {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract-id",
 			"Invalid contract id", http.StatusBadRequest,
@@ -284,8 +283,8 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Served via the shared contract-detail SWR cache — same route-sweep
-	// 2026-07-30 rationale as ContractInteractions above.
+	// Served via the shared contract-detail SWR cache — same rationale as
+	// ContractInteractions above.
 	v, asOf, degraded, err := h.contractDetailCached(ctx, "ch:"+cid, func(rctx context.Context) (any, error) {
 		full, cerr := h.Reader.ContractCodeHistory(rctx, cid)
 		if cerr != nil {
@@ -324,17 +323,17 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 // ledgers captured yet) / the window reaches past genesis. A FAILED tip
 // read is returned as an error rather than folded into the 0 floor: 0 means
 // "scan from genesis", and silently substituting it for "the tip read
-// failed" turned a transient ClickHouse error into an unbounded
-// genesis-wide GROUP BY on every caller (RLT-099 / #581b). Callers must
+// failed" would turn a transient ClickHouse error into an unbounded
+// genesis-wide GROUP BY on every caller. Callers must
 // refuse the window on error rather than serve one computed from ledger 0.
 //
 // The boundary is the tip's close_time, not a ledger-count multiple of the
-// theoretical 5.0s/17,280-per-day cadence (CA2-A03-correct-0): pubnet's
-// observed cadence is ~14,950-15,300 ledgers/day, so a ledger-count window
-// overshoots the requested number of days by ~13-15% — the exact class of
-// bug already fixed for
-// NetworkThroughput (see explorer_reader.go's ledgersPerDayPruningEstimate
-// doc). The floor is the lowest captured ledger closed at or after the
+// theoretical 5.0s/17,280-per-day cadence: pubnet's observed cadence is
+// ~14,950-15,300 ledgers/day, so a ledger-count window overshoots the
+// requested number of days by ~13-15% — which is why NetworkThroughput
+// uses a ledger count only as a partition-pruning hint (see
+// ledgersPerDayPruningEstimate in internal/storage/clickhouse). The floor
+// is the lowest captured ledger closed at or after the
 // boundary, found by a close_time binary search that a lake gap cannot
 // mislead; a boundary before the lake's first ledger yields that ledger.
 func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {

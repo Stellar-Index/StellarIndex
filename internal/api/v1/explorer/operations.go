@@ -19,10 +19,10 @@ import (
 // is considered. The directory changes each ledger (~5s close time), so ~two
 // ledgers keeps it recognisably current while absorbing repeated hits.
 //
-// Raised 3s → 10s with the move to stale-serve (#444 / #332 F2, 2026-09-02).
-// At 3s and fill-on-miss, r1's actual arrival rate meant nearly every hit
-// missed and paid the read inline — the cache was warm essentially only for
-// concurrent bursts. Past the TTL the entry is now SERVED (flags.stale + its
+// 10s, not 3s, because the entry is stale-served: at 3s and fill-on-miss,
+// r1's actual arrival rate meant nearly every hit missed and paid the read
+// inline — the cache was warm essentially only for concurrent bursts. Past
+// the TTL the entry is SERVED (flags.stale + its
 // real as_of) while a detached refresh runs, so the TTL sets the freshness
 // LABEL rather than gating a blocking recompute.
 const opsDirTTL = 10 * time.Second
@@ -50,12 +50,12 @@ const opsDirFlightKey = "ops_directory"
 // caller between ledgers, but assembling it is a multi-column DESC-LIMIT
 // read over the 24B-row lake plus the batched tx-outcome read.
 //
-// ONE cache entry, not one per limit (K053): it always holds the MAXIMUM
+// ONE cache entry, not one per limit: it always holds the MAXIMUM
 // page (opsDirMaxLimit) and every request slices its head, exactly as
 // assetHoldersCache/contractsDirCache/networkThroughputCache hold the
-// maximum and slice. Keying by the raw `?limit=` let every value in
+// maximum and slice. Keying by the raw `?limit=` would let every value in
 // [50,200] mint its own independent cache slot — a caller sweeping the
-// range bought a fresh lake read (and a fresh cache slot) per value
+// range would buy a fresh lake read (and a fresh cache slot) per value
 // instead of sharing the one warm page. Cursor pages are unique + cheaper
 // (they skip the stats) so they're never cached. Zero value is ready to
 // use.
@@ -301,28 +301,22 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 	if len(hashes) == 0 {
 		return ""
 	}
-	// Detached budget (2026-08-24, operator-reported): this read runs LAST,
-	// after the ops-by-account scan — which for a long-idle account walked
-	// granules from the tip back to the account's last activity (~4s live
-	// for a 46d-idle account) and exhausted the request budget, so the
-	// outcome read deadline-exceeded despite being ~45ms once its ledger
-	// span is known. (#31 has since bounded that scan itself with the
-	// stellar.account_activity watermark; the detached budget stays as
-	// defence for accounts without a watermark row.) Give it its own small budget, detached from the
+	// Detached budget: this read runs LAST, after the ops-by-account scan,
+	// which for a long-idle account without a stellar.account_activity
+	// watermark row walks granules from the tip back to the account's last
+	// activity (~4s live for a 46d-idle account) and can exhaust the
+	// request budget, while the outcome read is ~45ms once its ledger span
+	// is known. Give it its own small budget, detached from the
 	// (nearly spent) request deadline but still cancel-aware via values;
 	// WithoutCancel keeps tracing/session values without inheriting the
 	// exhausted deadline. The honest-degrade note remains the fallback.
 	//
-	// 1s, resized down from 3s (2026-09-03). The 3s was sized around a read
-	// that could not fit any budget: keyed on a [lo,hi] SPAN it took >60s on
-	// a real 50-op page and timed out EVERY time on an idle account, so the
-	// budget bought nothing but 3s of added latency before serving the
-	// coverage note. Now that TxOutcomesByHash is keyed on the exact ledger
-	// SET it measures 32-61ms cold on r1 for the same pages, so 1s is ~16x
+	// 1s: TxOutcomesByHash is keyed on the exact ledger SET and measures
+	// 32-61ms cold on r1 for real 50-op pages, so 1s is ~16x
 	// the observed worst case — enough headroom for a cold cache or a busy
 	// lake, while capping what this stitch can add to an unauthenticated
 	// request. Beyond 1s ClickHouse is degraded well past this query, and
-	// shedding to the honest note beats holding the client for another 2s.
+	// shedding to the honest note beats holding the client longer.
 	octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), txOutcomeStitchBudget)
 	defer cancel()
 	outcomes, err := h.Reader.TxOutcomesByHash(octx, ledgers, hashes)
@@ -341,9 +335,9 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the panel — `op_type_stats` is omitempty) while a DETACHED single-flight
 // refresh runs. For a 24-hour aggregate, numbers a few minutes old are
 // still truthful, whereas an empty panel is not — and recomputing INLINE on
-// the request context was the failure (route-sweep 2026-07-29): the
-// day-window FINAL GROUP BY shared the directory's 8s budget and dragged
-// the whole /v1/operations page into its 503 class every 5 minutes.
+// the request context fails: the day-window FINAL GROUP BY shares the
+// directory's 8s budget and drags the whole /v1/operations page into its
+// 503 class every 5 minutes.
 func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
@@ -354,15 +348,15 @@ func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
 }
 
 // PrewarmOpTypeStats primes the trailing-24h op-type breakdown so a cold
-// process never serves /v1/operations without the panel (pre-prewarm, the
-// FIRST directory hit after every deploy got `op_type_stats` omitted —
+// process never serves /v1/operations without the panel (without it, the
+// FIRST directory hit after every deploy gets `op_type_stats` omitted —
 // absence as the cold-start default rather than the rare exception).
 // Called from the API's 5-minute prewarm loop
 // (cmd/stellarindex-api/main.go), which matches opTypeStatsTTL, so the
 // panel stays permanently fresh. Kicks the same detached single-flight
 // refresh the request path uses; a still-fresh panel is a no-op. The
-// aggregate itself measured ~70ms warm on r1 under replay load
-// (2026-07-31) — the refresh's 1-minute budget is contention headroom.
+// aggregate itself measured ~70ms warm on r1 under replay load —
+// the refresh's 1-minute budget is contention headroom.
 func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return
@@ -427,7 +421,7 @@ type OperationsView struct {
 	// while assembling this page, so operations without transaction_successful
 	// are of UNKNOWN outcome rather than known-applied (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
-	// Total and Truncated are set only on the per-ledger form (GH-1135): the
+	// Total and Truncated are set only on the per-ledger form: the
 	// ledger header's exact operation count vs len(Operations), the same
 	// shape LedgerTransactionsView already gives /v1/ledgers/{seq}/transactions.
 	// Zero/false on the no-cursor directory arm, which pages instead.
@@ -506,10 +500,10 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 	out := OperationsView{Ledger: seq, Operations: make([]OpView, len(rows))}
 	decodedBytes := 0
 	for i, o := range rows {
-		// Q207: ParseLimit bounds ROW count (500..2000), but each op's XDR
+		// ParseLimit bounds ROW count (500..2000), but each op's XDR
 		// body is attacker-influenced in size (a Soroban invoke-host-
 		// function's footprint/auth can run into the tens of KB), so the
-		// row cap alone left the response BYTE size unbounded. Past the
+		// row cap alone would leave the response BYTE size unbounded. Past the
 		// budget, further rows are served UNDECODED (opViewLight) — never
 		// dropped — the same degrade opView already takes on a single
 		// malformed body, applied to a size ceiling instead of a decode
@@ -522,7 +516,7 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 		out.Operations[i] = opView(o)
 	}
 	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
-	// GH-1135: len(rows)==limit alone can't distinguish "exactly limit ops"
+	// len(rows)==limit alone can't distinguish "exactly limit ops"
 	// from "truncated at limit", so read the ledger header's exact op
 	// count — the same shape LedgerTransactions already gives its route. A
 	// header-read hiccup only loses this metadata, not the served page.
@@ -539,7 +533,7 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 
 // operationsResponseByteBudget is a conservative placeholder ceiling on the
 // total raw XDR bytes GET /v1/ledgers/{seq}/operations will fully decode into a
-// single response (Q207). It is deliberately conservative and fail-closed;
+// single response. It is deliberately conservative and fail-closed;
 // the exact number depends on infra (reverse proxy / load-balancer response
 // limits) not visible from this repo, so treat it as a placeholder pending
 // that input rather than a tuned figure.
@@ -606,7 +600,7 @@ func feePoolAdjustment(day string, prevProtocol, protocol uint32) string {
 // trailing `?window_days=` (default 30, max 365), ascending by day.
 // The time-series companion to the /v1/network/stats snapshot.
 //
-// Snapshot-served (§2.6b, 2026-08-13): the underlying year-window FINAL
+// Snapshot-served: the underlying year-window FINAL
 // scan runs DETACHED and prewarmed, and this handler only ever slices the
 // warm entry — fresh, or STALE with flags.stale + its real as_of while a
 // single-flight rescan runs. Only a never-computed process can time out
@@ -649,8 +643,8 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 	// already answered, and can get it wrong: a cached entry sliced past its
 	// TTL (or, cross-region, a peer whose clock has already rolled the day)
 	// would silently clear a bucket that is still genuinely incomplete —
-	// exactly the multi-region disagreement §2.6b's data-derived flag exists
-	// to prevent.
+	// exactly the multi-region disagreement the data-derived flag exists to
+	// prevent.
 	out := NetworkThroughputView{WindowDays: windowDays, Buckets: make([]ThroughputBucketV, len(buckets))}
 	for i, b := range buckets {
 		out.Buckets[i] = ThroughputBucketV{
@@ -703,8 +697,8 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// with flags.stale + its real as_of while a detached rebuild runs, and a
 	// never-computed cache single-flighted through opsDirCached — a burst of
 	// concurrent first-page requests (e.g. a caller sweeping `?limit=`)
-	// before the entry has ever filled now shares ONE lake read instead of
-	// each request paying for its own (F062).
+	// before the entry has ever filled shares ONE lake read instead of
+	// each request paying for its own.
 	if !cur.IsSet() {
 		view, asOf, degraded, err := h.opsDirCached(ctx)
 		if err != nil {
@@ -744,7 +738,7 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 	}
 	// A cursor so deep that the bounded read hits its row ceiling is
 	// the CALLER's fault, not ours, and an identical retry is refused
-	// identically — so it must not be dressed up as retryable (#484).
+	// identically — so it must not be dressed up as retryable.
 	// The cursor is a publicly mintable dotted decimal, which is why
 	// this path exists at all.
 	if errors.Is(err, clickhouse.ErrOperationsCursorTooDeep) {
@@ -771,9 +765,9 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 // through refreshOpsDirectory and waits on it up to ctx's own deadline — the
 // same shape assetHoldersCached uses for its stone-cold branch — so
 // concurrent first-page requests landing before the entry has ever filled
-// share ONE detached lake read instead of each triggering its own (F062:
-// the cold path previously fell through to an inline, unshared read per
-// request, so a limit sweep defeated the cache on its first pass).
+// share ONE detached lake read instead of each triggering its own (an
+// inline, unshared read per request would let a limit sweep defeat the
+// cache on its first pass).
 func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, degraded bool, err error) {
 	if e, hit, fresh := h.opsDir.get(); hit {
 		if !fresh {
@@ -899,7 +893,7 @@ func (h *Handler) parseOpTypes(w http.ResponseWriter, r *http.Request) ([]string
 // the NEXT visitor pays the same wait.
 //
 // Bounded by the shared refresh gate under its own class. The cache holds
-// exactly one entry now (K053), so the gate's only job here is capping how
+// exactly one entry, so the gate's only job here is capping how
 // long one rebuild may run against the shared pool; on saturation we skip
 // and keep serving the stale entry — never queue.
 func (h *Handler) refreshOpsDirectory() *keyFlight {

@@ -15,15 +15,13 @@ import (
 // This file holds the bounded-TTL + single-flight layer in front of the
 // two UNAUTHENTICATED explorer reads whose cost is set by the size of
 // the lake rather than by the request: GET /v1/assets/{asset_id}/holders
-// and the GET /v1/contracts directory (C3-002 + C3-009,
-// audit-2026-07-23).
+// and the GET /v1/contracts directory.
 //
-// Both endpoints ran their scans on every request, over the shared
-// 8-connection explorer pool, with no credential required — so a single
-// client looping either of them could hold every connection and stall
-// every lake-backed endpoint behind it, which the per-request
-// explorerReadTimeout bounds but does not prevent. The shape of the fix
-// is the one already in the tree for the same class of read:
+// Run on every request, over the shared 8-connection explorer pool, with
+// no credential required, either scan lets a single client looping it
+// hold every connection and stall every lake-backed endpoint behind it,
+// which the per-request explorerReadTimeout bounds but does not prevent.
+// The defence is the one already in the tree for the same class of read:
 //
 //   - a short TTL cache keyed on the query's expensive dimension, with a
 //     bounded entry count (accountStateCache, opsDirCache, opTypeStatsCache);
@@ -35,9 +33,8 @@ import (
 //     warm entry covers all traffic — the limit argument is not a cache
 //     key"). The aggregation cost is set by the scan, not by LIMIT.
 //
-// Refresh model (route-sweep 2026-07-29 — both endpoints were in the
-// 8s-budget 503 class, so "the request path may fill the cache" stopped
-// being true on the post-D3 part layout): the underlying scans now run
+// Refresh model (both scans can outlast the 8s request budget, so the
+// request path cannot be what fills the cache): the underlying scans run
 // DETACHED from any request context, on their own bounded budget, and the
 // request path only ever (a) serves a fresh entry, (b) serves a STALE
 // entry — 200 + flags.stale + the entry's real as_of — while a
@@ -213,7 +210,7 @@ var errRefreshPanicked = errors.New("explorer: detached refresh panicked")
 // a flight is already up) and returns the flight to optionally wait on.
 // Detached on purpose: bound to a request's 8s deadline the scan for a huge
 // asset never completed, so the cache never filled and every request kept
-// paying the timeout (same failure shape as site-audit S3's wealth
+// paying the timeout (the same failure shape as the wealth
 // ranking).
 func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	fl, owner := h.assetHolders.flight.begin(asset)
@@ -415,7 +412,7 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank,
 			// and a failed tip read must not fall back to a genesis-wide
-			// scan (RLT-099 / #581b).
+			// scan.
 			h.Logger.Warn("contracts directory detached refresh failed (tip read)", "window_days", window, "err", err)
 			return
 		}
