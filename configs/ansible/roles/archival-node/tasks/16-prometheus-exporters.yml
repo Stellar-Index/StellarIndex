@@ -1,14 +1,10 @@
 ---
-# F-0152 (audit-2026-05-26): closes the cascade-blind deployment
-# gap where `configs/prometheus/prometheus.r1.yml` has scrape jobs
-# for redis_exporter / postgres_exporter / pgbackrest_exporter,
-# but none of the three were ever installed on r1. The audit
-# originally framed F-0045/F-0046/F-0047 as runtime crashes;
-# reality is they never ran. Every alert family that consumes
-# their metrics (cache.yml, storage.yml, pgbackrest.* in
-# infra.yml) has been silently `absent_over_time` since the rule
-# files landed — the F-0085 meta-alert that fires `up == 0` is
-# the only thing that currently surfaces the gap.
+# Installs the exporters that `configs/prometheus/prometheus.r1.yml`
+# scrapes: redis_exporter, postgres_exporter, pgbackrest_exporter and
+# MinIO's metrics token. Without them the scrape jobs exist but every
+# alert family that consumes their metrics (cache.yml, storage.yml,
+# pgbackrest.* in infra.yml) is silently `absent_over_time`; only the
+# `up == 0` meta-alert surfaces the gap.
 #
 # Four groups wired here:
 #   - Group A: redis_exporter via the Debian package
@@ -25,22 +21,21 @@
 #   - Group C: pgbackrest_exporter — no Debian package; pinned
 #     upstream release tarball from
 #     https://github.com/woblerr/pgbackrest_exporter/releases
-#     (port 9854). Same fail-fast checksum pattern as F-1280 /
-#     F-1285 / F-1291 / F-1293 — operator must set
+#     (port 9854). Same fail-fast checksum pattern as the other
+#     pinned binaries — operator must set
 #     `pgbackrest_exporter_release_sha256` in inventory.
-#   - Group D: MinIO's native /minio/v2/metrics/cluster bearer token
-#     (INV-0981/INV-1144). No exporter binary — MinIO exposes its
-#     own metrics behind `admin:Prometheus`; provisioning was an
-#     operator hand-step (docs/operations/runbooks/infra.md#minio-metrics-403)
-#     with no ansible task producing it, so a rebuilt or rotated host
-#     silently shipped a missing/empty `/etc/prometheus/minio.token`
-#     and every MinIO-dependent alert went blind.
+#   - Group D: MinIO's native /minio/v2/metrics/cluster bearer token.
+#     No exporter binary — MinIO exposes its own metrics behind
+#     `admin:Prometheus`. Without this task the token is an operator
+#     hand-step (docs/operations/runbooks/infra.md#minio-metrics-403),
+#     so a rebuilt or rotated host ships a missing/empty
+#     `/etc/prometheus/minio.token` and every MinIO-dependent alert
+#     goes blind.
 #
 # Env-files containing DATA_SOURCE_NAME live at mode 0640 with
 # group `prometheus` so the package-shipped systemd unit (which
 # runs as `prometheus`) can read them but no other local user
-# can. Matches the F-1295 posture used by the redis-sentinel
-# role's secret env-file.
+# can. Matches the redis-sentinel role's secret env-file.
 
 # ── Group A: redis_exporter (Debian package) ──────────────────
 #
@@ -105,13 +100,11 @@
 # same-named PG role holding pg_monitor — no password anywhere.
 # `sslmode=disable` is required for Unix-socket connections.
 #
-# HISTORY (2026-07-05, the pg_up=0 blind spell): the previous
-# `user=postgres` socket DSN could NEVER work — peer auth requires
-# the OS user to match, and the unit runs as `prometheus`, not
-# `postgres`. The exporter had ALSO kept a stale pre-rotation TCP
-# DSN in-process for weeks (env-file edits don't apply until
-# restart). Both failure modes are closed by the role task below +
-# the restart handler.
+# A `user=postgres` socket DSN can never work: peer auth requires the
+# OS user to match, and the unit runs as `prometheus`, not `postgres`.
+# Env-file edits also don't apply until restart, so the exporter can
+# keep a stale DSN in-process for weeks; the restart handler below
+# closes that.
 
 # Group B needs a running Postgres to grant into and a role for the
 # exporter to authenticate as; main.yml's own scrape-list Jinja already
@@ -140,8 +133,7 @@
 
     # Env-file is 0640 root:prometheus — DATA_SOURCE_NAME would
     # leak a password if the operator switches off peer auth, so
-    # we treat the file as secret regardless of current contents
-    # (F-1295 posture).
+    # we treat the file as secret regardless of current contents.
     - name: Template /etc/default/prometheus-postgres-exporter
       ansible.builtin.copy:
         dest: /etc/default/prometheus-postgres-exporter
@@ -209,8 +201,8 @@
 #
 # No Debian package exists. Pinned upstream release from
 # https://github.com/woblerr/pgbackrest_exporter/releases.
-# Same fail-fast checksum pattern as F-1280/F-1285/F-1291 +
-# F-1293 — operator must set `pgbackrest_exporter_release_sha256`
+# Same fail-fast checksum pattern as the other pinned binaries —
+# operator must set `pgbackrest_exporter_release_sha256`
 # in inventory before running this group. The default version
 # (`pgbackrest_exporter_version` in defaults/main.yml) is
 # updated per release; the SHA must be re-pasted from the
@@ -250,9 +242,8 @@
       check_mode: false
 
     - name: Download pgbackrest_exporter release tarball
-      # Skipped when the installed version already matches — the download
-      # previously ran unconditionally (2026-07-03 drift audit), and the
-      # URL pattern matched the 0.18-era naming; >=0.23 uses
+      # Skipped when the installed version already matches, so a re-run
+      # does not re-download. The URL pattern follows >=0.23 naming:
       # name-version-os-arch with x86_64.
       when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
       ansible.builtin.get_url:

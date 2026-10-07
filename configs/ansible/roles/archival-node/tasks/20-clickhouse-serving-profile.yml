@@ -197,7 +197,7 @@
       </clickhouse>
   when: clickhouse_serving_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  # Deliberately NO `notify: Restart clickhouse-server` (2026-08-29): a
+  # Deliberately NO `notify: Restart clickhouse-server`: a
   # users.d drop-in (profiles / users / quotas) is HOT-RELOADED by
   # clickhouse-server's users-config reloader, so a restart is never
   # what applies it — it would only bounce the lake (minutes of
@@ -245,7 +245,7 @@
   until: ch_serving_profile_live.stdout == '1,1'
   tags: [clickhouse, clickhouse-serving-profile]
 
-# ───── ops_batch: the LOW-priority counterpart (2026-08-28 r1) ─────────
+# ───── ops_batch: the LOW-priority counterpart ─────────
 #
 # WHY: a runbook-prescribed `stellarindex-ops ch-rebuild -sep41` dry-run
 # over 2M ledgers (run under run-heavy-job.sh: CPUWeight=50, IOWeight=50,
@@ -256,7 +256,7 @@
 # INSIDE clickhouse-server, where the ops job's heavy-FINAL scans and the
 # aggregator's supply reads both ran as CH's unauthenticated `default`
 # user — the same identity, so CH's query scheduler had nothing to yield
-# with. api_serving above protects the API; nothing protected the
+# with. api_serving above protects the API; nothing else protects the
 # aggregator/indexer side from a batch job. This profile is that
 # protection: a dedicated user every stellarindex-ops CH connection
 # authenticates as (internal/storage/clickhouse/ops_auth.go reads
@@ -280,10 +280,10 @@
 # heavy-job-wrapper re-renders /usr/local/sbin/run-heavy-job.sh, which
 # imports the pair from /etc/default/stellarindex-ops into every wrapped
 # job itself — 14-stellarindex-services.yml — so how the runbooks launch
-# jobs does not change; a wrapper rendered before 2026-08-28 does not
+# jobs does not change; an older rendered wrapper does not
 # import it, hence the tag).
 
-- name: Assert ClickHouse ops-batch profile password is set (2026-08-28 r1)
+- name: Assert ClickHouse ops-batch profile password is set
   ansible.builtin.assert:
     that:
       - clickhouse_ops_batch_password | default('') is match('^[A-Za-z0-9]{16,}$')
@@ -300,7 +300,7 @@
   when: clickhouse_ops_batch_profile_enabled | bool
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
-- name: Install the ops_batch ClickHouse profile + user (2026-08-28 r1)
+- name: Install the ops_batch ClickHouse profile + user
   ansible.builtin.copy:
     dest: /etc/clickhouse-server/users.d/ops-batch.xml
     owner: clickhouse
@@ -398,10 +398,10 @@
       </clickhouse>
   when: clickhouse_ops_batch_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  # Deliberately NO `notify: Restart clickhouse-server` (2026-08-29,
-  # caught in the r1 --check --diff for the FIRST enable): this is a
+  # Deliberately NO `notify: Restart clickhouse-server` (the r1
+  # --check --diff of the FIRST enable showed one): this is a
   # users.d drop-in, hot-reloaded by clickhouse-server — the notify
-  # would have restarted the 9.3 TB lake (minutes of explorer/lake
+  # would restart the 9.3 TB lake (minutes of explorer/lake
   # downtime + cold caches) for a change a config reload applies. The
   # first enable must not bounce the lake; the reload + verify tasks
   # below apply and prove it instead (same pattern as api_serving above
@@ -598,7 +598,7 @@
 
 # ───── ops_monitor / ops_admin: the last callers of `default` ───────────
 #
-# INV-0802 step 2. `default` takes no password, so every local uid gets a
+# `default` takes no password, so every local uid gets a
 # passwordless superuser over loopback. These two users give its remaining
 # callers a password-backed identity so `default` can be locked later:
 #   ops_monitor — read-only probes (config-assertions, data-freshness,
@@ -607,7 +607,7 @@
 #     priority 100 a heavy job would time freshness probes out into alerts.
 #   ops_admin — root shells and this role's own clickhouse-client tasks,
 #     through /root/.clickhouse-client/config.xml. The same envelope as
-#     `default` today minus access management.
+#     `default` minus access management.
 # Each flag also renders that user's client credential files: ops_monitor's
 # root:stellarindex 0640 (data-freshness runs as stellarindex), root's
 # ops_admin config root 0600. Client files carry <port> because a -C file or
