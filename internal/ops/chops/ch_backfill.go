@@ -112,7 +112,7 @@ func chBackfill(args []string) error {
 }
 
 // backfillProgress owns everything a ch-backfill walk reports about its own
-// pace: the periodic stderr rate line the operator watches, and (C6-020) the
+// pace: the periodic stderr rate line the operator watches, and the
 // node_exporter heartbeat that makes a WEDGED walk distinguishable from a
 // working one without somebody tailing the journal.
 //
@@ -196,10 +196,9 @@ func (p *backfillProgress) stop() {
 }
 
 // backfillBucket resolves which galexie bucket a bounded ch-backfill walk
-// reads. The seam policy itself now lives in opsutil.ResolveStreamBucket:
-// census-backfill carried an INDEPENDENT copy of the same broken
-// live-bucket default (fixed 2026-07-25), and two copies of a subtle seam
-// rule is how this defect class survives a remediation. This thin wrapper
+// reads. The seam policy itself lives in opsutil.ResolveStreamBucket,
+// shared with census-backfill, because two independent copies of a subtle
+// seam rule let a wrong live-bucket default survive in one of them. This thin wrapper
 // stays so the call site and the tests keep reading in ch-backfill's own
 // vocabulary.
 func backfillBucket(cfg config.Config, override string, from, to uint32) (string, error) {
@@ -209,11 +208,11 @@ func backfillBucket(cfg config.Config, override string, from, to uint32) (string
 // backfillCoverage turns a walk that did not cover its requested range into
 // a hard error, naming the bucket it read.
 //
-// The defect this closes (found live 2026-07-25): ch-backfill exited 0 after
-// streaming ZERO ledgers of a nonzero request. TolerateTrailingMissing —
+// Without it ch-backfill exits 0 after streaming ZERO ledgers of a nonzero
+// request. TolerateTrailingMissing —
 // which every ops walker sets so a `-to` at the live tip doesn't explode —
 // makes an ENTIRELY absent range indistinguishable from a clean walk at the
-// ledgerstream layer, so a wrong-bucket run reported success. That success
+// ledgerstream layer, so a wrong-bucket run reports success. That success
 // is load-bearing: scripts/ops/ch-full-backfill.sh appends the window to its
 // resume state only when ch-backfill exits 0, so one vacuous success removes
 // that window from the backfill forever and leaves a hole the completeness

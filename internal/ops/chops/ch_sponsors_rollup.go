@@ -14,7 +14,7 @@ import (
 // holdersRollupLockPath).
 const sponsorsRollupLockPath = "/var/lib/stellarindex/ch-sponsors-rollup.lock"
 
-// ch-sponsors-rollup — #351: recompute the sponsor league table (who has
+// ch-sponsors-rollup recomputes the sponsor league table (who has
 // entered into sponsorship arrangements, with how many distinct
 // accounts, and how many revocations they issued) into staging and
 // atomically exchange it live
