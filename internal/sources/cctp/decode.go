@@ -603,9 +603,9 @@ func DecodeOwnershipTransferCompleted(e *events.Event) (OwnershipTransferComplet
 // canonical struct. Single-topic event; body ScMap.
 //
 // Body: { new_admin: Address, old_admin: Address | Void }. Verified
-// against real mainnet events (2026-07-08): the bootstrap instance
-// of this event carries `old_admin = Void` — type-tested via
-// [scval.AsAddressOrVoid] rather than assumed to always be an Address.
+// against real mainnet events: the bootstrap instance of this event
+// carries `old_admin = Void` — type-tested via [scval.AsAddressOrVoid]
+// rather than assumed to always be an Address.
 func DecodeAdminChanged(e *events.Event) (AdminChanged, error) {
 	if len(e.Topic) < 1 {
 		return AdminChanged{}, fmt.Errorf("%w: admin_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -752,7 +752,7 @@ func DecodeTokenPairLinked(e *events.Event) (TokenPairLinked, error) {
 	}, nil
 }
 
-// ─── Lower-signal admin/governance events (ROADMAP #89c, 2026-07-09) ──
+// ─── Lower-signal admin/governance events ───────────────────────────
 
 // DecodeAdminChangeStarted turns one `admin_change_started` event into
 // the canonical struct. Single-topic event; body ScMap.

@@ -28,8 +28,8 @@ type Event struct {
 	// EventIndex is the position of this event within its operation's
 	// contract-event list (internal/events.Event.EventIndex). It is the
 	// cctp_events PK discriminator (migration 0112) that keeps two same-type
-	// events emitted by ONE operation from collapsing to a single row
-	// (C2-13a). Stamped by the Decoder from the source events.Event.
+	// events emitted by ONE operation from collapsing to a single row.
+	// Stamped by the Decoder from the source events.Event.
 	EventIndex         uint32
 	ObservedAt         time.Time
 	EventType          string // one of the Event* constants
@@ -250,7 +250,7 @@ func eventFromTokenPairLinked(l TokenPairLinked, observedAt time.Time) Event {
 	}
 }
 
-// ─── Lower-signal admin/governance events (ROADMAP #89c, 2026-07-09) ──
+// ─── Lower-signal admin/governance events ───────────────────────────
 //
 // All 16 are governance/config events: no promoted Amount/Fee, and no
 // CounterpartyDomain (none of them carry a cross-chain domain field).
