@@ -15,8 +15,7 @@ import (
 )
 
 // supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban
-// per-kind OPENING BALANCE into sep41_supply_rollup (migration 0088, incident
-// 2026-07-06).
+// per-kind OPENING BALANCE into sep41_supply_rollup (migration 0088).
 //
 // Why this exists. The SEP-41 Algorithm-3 supply refresher derives total as
 // Σmint−Σburn−Σclawback from `sep41_supply_events` (Postgres), which the

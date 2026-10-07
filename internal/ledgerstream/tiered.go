@@ -41,11 +41,11 @@ var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 //     {outcome="ok"|"miss"|"error"} (obs.LedgerstreamColdReadDurationSeconds)
 //
 // These are obs package-level metrics registered unconditionally at
-// process boot — NOT gated on a per-instance registry (W5-mon-3). The
+// process boot — NOT gated on a per-instance registry. The
 // production ledgerstream.Config leaves Registry nil (the SDK's
 // BufferedStorageBackend registration panics across the
 // archive→live→catch-up Stream calls), so a per-instance metric here
-// was nil in production and the `both_missing` page could never fire.
+// would be nil in production and the `both_missing` page could never fire.
 // Sourcing them from obs decouples this observability from the SDK's
 // registry constraint.
 //
@@ -63,9 +63,8 @@ type TieredDataStore struct {
 // Metrics are the obs package-level [obs.LedgerstreamTierReadTotal] /
 // [obs.LedgerstreamColdReadDurationSeconds], registered once at process
 // boot — so there is no per-instance registry to wire and no typed-nil
-// footgun (W5-mon-3). Repeated construction across the
-// archive→live→catch-up Stream calls is safe precisely because the
-// metrics are NOT re-registered here.
+// footgun. Repeated construction across the archive→live→catch-up
+// Stream calls is safe because the metrics are NOT re-registered here.
 func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
 	return &TieredDataStore{hot: hot, cold: cold}
 }
@@ -76,9 +75,7 @@ func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
 // AWS typed errors (types.NoSuchKey from GetObject, types.NotFound
 // from HeadObject) via errors.As before returning os.ErrNotExist
 // (go-stellar-sdk support/datastore/s3.go, isNotFoundError) — so no
-// string matching is needed or performed (C2-064: the previous
-// "NoSuchKey" string arm was dead code and its comment inverted the
-// SDK's actual behavior). Manifest-empty errors
+// string matching is needed or performed. Manifest-empty errors
 // ([datastore.ErrNoLedgerFiles] etc.) also count as not-found.
 // Transient errors (network timeouts, auth failures, throttling)
 // DO NOT match and so propagate up rather than falsely triggering

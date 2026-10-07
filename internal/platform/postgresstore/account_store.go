@@ -73,7 +73,7 @@ func scanAccount(row interface {
 	if suspendedAt.Valid {
 		a.SuspendedAt = suspendedAt.Time
 	}
-	// Legacy-tier folding (free-platform model, 2026-08-11): stored
+	// Legacy-tier folding (free-platform model): stored
 	// rows still carry the migration-0027 five-string vocabulary
 	// (free/starter/pro/business/enterprise). In-memory the tier is
 	// always canonical (free/partner) so every ladder lookup, clamp,
@@ -173,14 +173,13 @@ func (r *AccountStore) GetBySlug(ctx context.Context, slug string) (platform.Acc
 // rather than an error so callers can round-trip a Get → mutate →
 // Update pattern.
 func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
-	// suspended_at / suspended_reason are written here too (C3-010,
-	// audit-2026-07-23). Pre-fix Update wrote `status` but silently
-	// dropped the two columns that explain it, so a caller doing the
-	// documented Get → mutate → Update round-trip could move an account
-	// to `suspended` and leave suspended_at NULL with no reason — the
-	// suspension would be enforced with no record of when or why. Every
-	// reader projects both columns (accountColumns), so an untouched
-	// round-trip rewrites the same values it read.
+	// suspended_at / suspended_reason are written here too. Writing
+	// `status` without the two columns that explain it would let a caller
+	// doing the documented Get → mutate → Update round-trip move an
+	// account to `suspended` and leave suspended_at NULL with no reason —
+	// the suspension would be enforced with no record of when or why.
+	// Every reader projects both columns (accountColumns), so an
+	// untouched round-trip rewrites the same values it read.
 	n, err := execAccountUpdate(ctx, r.s.db, a)
 	if err != nil {
 		return fmt.Errorf("update account: %w", err)
@@ -236,14 +235,13 @@ func execAccountUpdate(ctx context.Context, exec accountExecer, a platform.Accou
 // — all inside one transaction, so a concurrent PATCH on the same
 // account cannot interleave between the read and the write.
 //
-// Q148 (audit-2026-09-18): handleAdminAccountOverrides previously did a
-// plain Get, mutated in memory, then Update — with no lock and no
-// version check. Update rewrites every mutable column (not a diff), so
-// two operator PATCHes racing on the same account (one flipping
-// status, the other setting an override) both start from the same
-// stale snapshot and the second commit silently discards the first's
-// change. Status is the operator kill switch (C3-010): a lost SUSPEND
-// under this race is a live hole, not just clobbered data.
+// A plain Get, in-memory mutate, then Update has no lock and no version
+// check. Update rewrites every mutable column (not a diff), so two
+// operator PATCHes racing on the same account (one flipping status,
+// the other setting an override) would both start from the same stale
+// snapshot and the second commit would silently discard the first's
+// change. Status is the operator kill switch: a lost SUSPEND under
+// that race would be a live hole, not just clobbered data.
 //
 // mutate returning an error aborts the transaction; nothing is read or
 // written durably. platform.ErrNotFound (unwrapped) is returned when
@@ -323,7 +321,7 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 
 // ReapSuspendedOrphans hard-deletes speculative-account orphans: rows
 // that were Suspended with a `suspended_reason` starting with
-// reasonPrefix (the `signup-race:` marker the F-1255 lost-race
+// reasonPrefix (the `signup-race:` marker the lost-race
 // recovery path stamps on the losing account) and suspended strictly
 // before olderThan.
 //

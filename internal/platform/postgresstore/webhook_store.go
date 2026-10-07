@@ -19,10 +19,8 @@ import (
 // `customer_webhooks` + `webhook_deliveries` tables from migration
 // 0027.
 //
-// F-1270 (audit-2026-05-12): the data plane for customer-facing
-// incident callbacks. The delivery worker that drains the queue
-// is a follow-up; this commit lands the store half so the wire is
-// end-to-end-ready.
+// It is the data plane for customer-facing incident callbacks: the
+// fan-out enqueues deliveries here and the delivery worker drains them.
 type WebhookStore struct {
 	s      *Store
 	sealer *platform.WebhookKeySealer
@@ -60,11 +58,10 @@ func webhookURLConflict(err error) error {
 }
 
 // CreateWebhook inserts the registry row, enforcing the per-account
-// `maxPerAccount` cap atomically. F-1248 (codex audit-2026-05-12):
-// the handler's pre-check (`SELECT … then INSERT`) was raceable —
-// N parallel HandleCreate requests for an account at 9 webhooks
-// could all pass the precheck and each insert one row, taking the
-// account to 9+N.
+// `maxPerAccount` cap atomically. A handler pre-check (`SELECT … then
+// INSERT`) is raceable: N parallel HandleCreate requests for an
+// account at 9 webhooks could all pass the precheck and each insert
+// one row, taking the account to 9+N.
 //
 // Closure shape: the create runs inside a transaction guarded by
 // a per-account advisory lock ([lockAccount]). The
@@ -173,13 +170,12 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 // `eventType` whose owning account is ACTIVE. The fan-out service
 // iterates the result and calls EnqueueDelivery for each. The events
 // column is a text[] in Postgres; ANY($1) is the membership predicate.
-// F-1249 (codex audit-2026-05-12).
 //
-// SEC-06 / RLT-420: the account kill switch used to be inbound-only.
-// Suspending or closing an account stopped its API keys authenticating
-// (internal/auth/apikey_redis.go) but nothing on the OUTBOUND side read
-// account status, so this resolver kept handing the fan-out a suspended
-// customer's endpoints and we kept POSTing their data to them. The
+// The account kill switch must hold outbound as well as inbound.
+// Suspending or closing an account stops its API keys authenticating
+// (internal/auth/apikey_redis.go); without a status check here this
+// resolver would keep handing the fan-out a suspended customer's
+// endpoints and we would keep POSTing their data to them. The
 // EXISTS is the resolver-side gate: a webhook whose account is anything
 // other than `active` — and a webhook whose account row is missing
 // altogether — is not a subscriber. Fail-closed, matching the inbound
@@ -392,12 +388,12 @@ func (c *WebhookStore) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 // EnqueueDelivery inserts one pending delivery row, conditional on the
 // owning account being ACTIVE.
 //
-// SEC-06 / RLT-420: this is the choke point EVERY producer shares.
+// This is the choke point EVERY producer shares.
 // ListWebhooksSubscribedTo already withholds a suspended account's
 // endpoints from the fan-out, but internal/pricealerts/worker.go
 // resolves its targets with ListWebhooksForAccount — the customer's own
 // dashboard listing, deliberately unfiltered — so without the gate here
-// a suspended account still accrued queued deliveries. Returns an error
+// a suspended account would still accrue queued deliveries. Returns an error
 // wrapping [ErrWebhookAccountInactive] when the account is not active,
 // and [platform.ErrNotFound] when the webhook itself is gone (the
 // pre-gate behaviour a foreign-key violation produced).
@@ -523,7 +519,7 @@ func (c *WebhookStore) refuseEnqueue(ctx context.Context, op string, webhookID u
 // account it hangs off) is absent. It is the delivery worker's leg of
 // the account kill switch: the worker re-reads it immediately before
 // signing and POSTing, so an account suspended AFTER its deliveries were
-// claimed is still caught (SEC-06 / RLT-420).
+// claimed is still caught.
 func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error) {
 	const q = `
 		SELECT a.status
@@ -548,7 +544,7 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 const maxClaimPerWebhook = 5
 
 // ListPendingDeliveries atomically claims up to `limit` due
-// deliveries, fair-shared across endpoints (see below). F-1247 (codex audit-2026-05-12): claim happens
+// deliveries, fair-shared across endpoints (see below). The claim happens
 // in the same statement as the read via UPDATE…RETURNING +
 // `FOR UPDATE SKIP LOCKED`, so two workers running concurrently
 // (horizontal scale or blue/green overlap during deploy) never
@@ -567,7 +563,7 @@ const maxClaimPerWebhook = 5
 // X-StellarIndex-Signature-V2; and customer-side metrics treat
 // duplicate-post-after-worker-crash as the same class as 5xx-retry.
 //
-// Fair share (GH-663): the claim ranks each endpoint's due rows FIFO and
+// Fair share: the claim ranks each endpoint's due rows FIFO and
 // takes every endpoint's first row before any endpoint's second, and at
 // most maxClaimPerWebhook rows per endpoint per claim. One endpoint's
 // backlog — say a black-holing host with hundreds of queued events —
@@ -576,7 +572,7 @@ const maxClaimPerWebhook = 5
 // cap also bounds how long that endpoint's lane holds a poll. Within an
 // endpoint, order stays FIFO by next_attempt_at.
 //
-// SEC-06 / RLT-420: the claim also skips any delivery whose owning
+// The claim also skips any delivery whose owning
 // account is not ACTIVE. Rows queued before a suspension are therefore
 // PARKED, not destroyed — suspension is reversible (AccountStore has
 // Unsuspend), so the conservation-correct behaviour is to withhold the
@@ -853,7 +849,7 @@ func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, ne
 // dashboard-flow path where the caller has the full attempt state
 // already (vs EnqueueDelivery which seeds a fresh queue row).
 //
-// SEC-06 / RLT-420: gated on the owning account being ACTIVE, exactly as
+// Gated on the owning account being ACTIVE, exactly as
 // [WebhookStore.EnqueueDelivery] is — it is the second way a row reaches
 // webhook_deliveries, and a kill switch honoured by only one of two
 // writers is not a kill switch.

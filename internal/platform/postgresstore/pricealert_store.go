@@ -13,8 +13,7 @@ import (
 )
 
 // PriceAlertStore implements [platform.PriceAlertStore] against the
-// `price_alerts` table from migration 0080 (introduced in 7145a7e51,
-// "customer webhook price alerts — CRUD + evaluator").
+// `price_alerts` table from migration 0080.
 //
 // Shape mirrors [WebhookStore]: an atomic per-account cap on create
 // (advisory lock + CTE-gated INSERT), owner-scoped reads for the
@@ -32,7 +31,7 @@ var _ platform.PriceAlertStore = (*PriceAlertStore)(nil)
 
 // CreatePriceAlert inserts the alert, enforcing the per-account
 // `maxPerAccount` cap atomically. Same race-proof shape as
-// [WebhookStore.CreateWebhook] (F-1248): a per-account advisory lock
+// [WebhookStore.CreateWebhook]: a per-account advisory lock
 // serialises concurrent creates, and the count + insert observe a
 // stable view via `WHERE current_count.n < $N`. Returns
 // [platform.ErrPriceAlertQuotaExceeded] when the account is at the cap.
@@ -201,7 +200,7 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 // updated_at) ONLY when this alert is armed and its own cooldown window
 // has elapsed, and reports whether it won the claim. See
 // [platform.PriceAlertStore] for why the gate has to live in the UPDATE
-// rather than in the evaluator (#368 M10).
+// rather than in the evaluator.
 //
 // The cooldown half is the exact SQL translation of the evaluator's
 // coolingDown: never fired (NULL) OR last_fired_at + cooldown <= firedAt.

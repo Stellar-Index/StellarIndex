@@ -14,9 +14,8 @@ import (
 //
 // Behaviour:
 //   - seam <= 1 → archive bucket is unused; the call degrades to a
-//     plain unbounded Stream(live, from, 0, ...). This matches the
-//     pre-2026-04-26 indexer behaviour. (seam==1 is folded in with
-//     seam==0 because a bounded archive read of [from, seam-1]=[from,0]
+//     plain unbounded Stream(live, from, 0, ...). (seam==1 is folded in
+//     with seam==0 because a bounded archive read of [from, seam-1]=[from,0]
 //     would hit Stream's to==0 UNBOUNDED sentinel and tail the archive
 //     forever — see the guard below.)
 //   - from >= seam → all wanted data lives in the live bucket; same
@@ -46,7 +45,7 @@ func StreamArchiveThenLive(
 	// forever and never hand off to live. Unreachable today
 	// (resolveStartLedger guarantees from >= 1, so from >= seam holds for
 	// seam==1), but guarded here so a future reuse with from==0 can't
-	// reintroduce the freeze (audit 2026-08-03).
+	// hit that freeze.
 	if seam <= 1 || from >= seam {
 		if logger != nil {
 			logger.Info("ledgerstream: live-only", "from", from, "seam", seam)
@@ -66,12 +65,12 @@ func StreamArchiveThenLive(
 	// never delivered — and skipping it permanently, because the cursor
 	// advances past the gap.
 	//
-	// Deliberately NOT fixed by disabling TolerateTrailingMissing for the
+	// Deliberately NOT handled by disabling TolerateTrailingMissing for the
 	// archive bucket in the shared helper: internal/ops/ingest/backfill.go
 	// reuses that same helper against the archive bucket for fills that must
-	// survive racing the live tip (the 2026-05-26 soroban-events walk failed
-	// exactly that way). Narrowing the shared config would regress a
-	// legitimate, battle-tested ops path to fix an indexer-only bug. The
+	// survive racing the live tip (a soroban-events walk failed exactly
+	// that way). Narrowing the shared config would regress a
+	// legitimate, battle-tested ops path to fix an indexer-only problem. The
 	// check belongs here, at the one call site that has a hard seam.
 	var lastArchive uint32
 	archiveCB := func(lcm xdr.LedgerCloseMeta) error {
