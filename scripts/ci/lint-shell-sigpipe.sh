@@ -2,17 +2,12 @@
 # lint-shell-sigpipe — refuse `… | head` inside a pipefail shell script,
 # and inside a pipefail `run:` block in a GitHub workflow.
 #
-# THE BUG CLASS (#475). Under `set -o pipefail`, a pipeline whose LAST
+# THE BUG CLASS. Under `set -o pipefail`, a pipeline whose LAST
 # stage stops reading early is a coin flip. `head -n N` is the obvious
 # form, but any early-exit consumer does it: `awk '...{exit}'`,
-# `sed '...q'`, `grep -m N`, `grep -q`. The first version of this lint
-# matched only `head`, and an independent review found `awk ... exit` five
-# lines from the fix it shipped with — a lint that catches one spelling of a
-# class licenses the others. The next version named `grep -m N` and not
-# `grep -q`, which is the spelling the tree actually writes: 44 sites over
-# the four roots, among them the substring assertion at the heart of ten
-# gate self-tests, where `if ! … | grep -q "$want"` reports a substring
-# MISSING from output that contains it. Example of the obvious form:
+# `sed '...q'`, `grep -m N`, `grep -q`. A lint that catches one spelling of
+# a class licenses the others; `if ! … | grep -q "$want"` reports a
+# substring MISSING from output that contains it. Example of the obvious form:
 #
 #     mc ls … | sort | head -n 4 > out      # looks fine, fails ~1 run in 3
 #
@@ -23,8 +18,7 @@
 # pipefail promotes that to the pipeline's status, and (with `set -e`) it
 # kills the script. It only bites when the producer writes more than the
 # 64 KiB pipe buffer before `head` is done, which is why it presents as a
-# random, unreproducible failure: three of r1's galexie-archive-fill runs,
-# the last on 2026-09-02 18:19:35 UTC, exited 2 exactly this way.
+# random, unreproducible failure.
 #
 # THE FIX is always the same shape — land the output, then slice it:
 #
@@ -48,20 +42,9 @@
 # (a `pgrep` result, a single grepped line). State the reason; "it's
 # fine" is not one.
 #
-# WORKFLOW YAML (2026-09-10). The subject set was `find … -name '*.sh'`,
-# and a `run:` block inside GitHub workflow YAML is not a .sh file — so
-# every pipeline in the workflows directory was outside this gate for its
-# whole life. The v0.69.0 deploy failed on exactly that blind spot:
-#
-#     sort: write failed: 'standard output': Broken pipe
-#     ##[error]Process completed with exit code 2
-#
-# in the step that merely LISTS the staged migrations. All 305 files had
-# staged correctly. The line carried a comment naming this trap (F-1300,
-# filed after an EARLIER deploy died the same way) and did it anyway: the
-# previous fix had turned `ls | head` into `ls | sort | head -n 10`, which
-# only moved the SIGPIPE from ls to sort. It is a race, so it deployed
-# v0.67.0 and v0.68.0 from identical code and killed v0.69.0.
+# WORKFLOW YAML. A `run:` block inside GitHub workflow YAML is not a .sh
+# file, but it is pipefail shell and fails a deploy the same way. Turning
+# `ls | head` into `ls | sort | head -n 10` only moves the SIGPIPE to sort.
 #
 # So the workflows directory is a root and a `run:` block is a subject. The
 # shell is EXTRACTED with a real YAML parse — a run block is a scalar with
@@ -93,10 +76,7 @@
 set -uo pipefail
 
 # scripts/ci is a default root because the gate scripts and their self-tests
-# are themselves pipefail shell, and the lint never looked at its own
-# directory: a `printf … | head -1` in check-public-dataset-test.sh took down
-# a full local verify with "printf: write error: Broken pipe" on 2026-09-03,
-# while this gate reported OK over the three roots it did scan.
+# are themselves pipefail shell.
 roots=("${@:-configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci .github/workflows}")
 # shellcheck disable=SC2206
 read -r -a roots <<<"${roots[*]}"

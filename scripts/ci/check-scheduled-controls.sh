@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# check-scheduled-controls.sh — the scheduled-control detector
-# (#496, #502). It no longer detects only DEAD controls; the GitHub
-# label it feeds is still `dead-control`.
+# check-scheduled-controls.sh — the scheduled-control detector. It
+# detects more than DEAD controls; the GitHub label it feeds is still
+# `dead-control`.
 #
 # A scheduled workflow is a CONTROL: it exists to notice something and
 # say so. When one stops working, nothing says so — its silence reads
-# exactly like "nothing to report". ansible-drift.yml is the recorded
-# case: zero green scheduled runs from 2026-07-20 to 2026-09-07, seven
-# weeks unnoticed, while a three-way divergence in the rollup statement
-# cap (r1 7200 / template 600 / code 1800) sat behind it.
+# exactly like "nothing to report".
 #
 # THE RULE. A scheduled workflow that has produced no PASSING scheduled
 # run for N days is not delivering signal. Two states satisfy that,
@@ -25,13 +22,6 @@
 #     days was red. SOMEBODY IS CHECKING AND THE ANSWER IS IGNORED.
 #     Remedy: act on what the control found. Re-arming anything is a
 #     category error, because nothing is un-armed.
-#
-# Until 2026-09-10 this script called both DEAD, which is how #502 came
-# to say "a control has stopped reporting" about ansible-drift.yml — a
-# control whose failing step is named "Drift verdict (fails on drift,
-# and NAMES the tasks)", which had fired every Monday for eight weeks
-# and named two drifted tasks each time (#496). It had not stopped
-# reporting. It was reporting, and being read as broken.
 #
 # THE SIGNAL. Both questions come out of the same run history that was
 # already being fetched. DEAD is the age of the newest scheduled run of
@@ -56,16 +46,15 @@
 # behind "oh, that one always fails", because it is now a different
 # word on a different line.
 #
-# A THIRD STATE, DECLARED AND NOT INFERRED (2026-09-10). FAIL as written
+# A THIRD STATE, DECLARED AND NOT INFERRED. FAIL as written
 # above reads "somebody is checking and the answer is being ignored",
 # and for almost every control that is the right sentence. For one shape
 # it is a mislabel of its own. ansible-drift.yml REPORTS BY FAILING: its
 # verdict step is named "Drift verdict (fails on drift, and NAMES the
 # tasks)", and a red run there is not a broken control, it is the
 # control speaking. Filing that under FAIL sends the reader to the
-# workflow's plumbing when what they should open is the drift report —
-# the same wrong-remedy mistake #502 made one level up. So the split is
-# only half done until the third state is named:
+# workflow's plumbing when what they should open is the drift report.
+# So the third state is named:
 #
 #   ALARM — the schedule is firing, every run within N days was red, AND
 #     the workflow declares that failing is how it reports. SOMEBODY IS
@@ -123,21 +112,14 @@
 #      therefore cannot outlive the step whose existence is the whole
 #      basis of its claim.
 #
-# WHY SCHEDULED RUNS ONLY. Manual dispatch masks a dead schedule. Of
-# ansible-drift.yml's 38 runs on 2026-09-07, 31 were workflow_dispatch
-# and several were green; the newest run in its history was a green
-# dispatch, so any check that reads "the latest run" — as
-# scripts/ci/check-main-ci-health.sh does — called it healthy while
-# every one of its 8 scheduled runs had failed. Only a scheduled run
-# is evidence that the SCHEDULE works.
+# WHY SCHEDULED RUNS ONLY. Manual dispatch masks a dead schedule: a
+# green dispatch as the newest run reads healthy while every scheduled
+# run failed. Only a scheduled run is evidence that the SCHEDULE works.
 #
 # A CAVEAT THIS CANNOT SEE. Green is only evidence if green means the
-# control rendered a verdict. ansible-drift.yml used to skip its
-# verdict step entirely in apply mode, so an apply run was green
-# without checking anything (run 33418645334, 2026-08-31). That is
-# fixed at the source — the workflow now re-runs the dry-run after an
-# apply and always renders a verdict — because no generic reader of
-# run history can tell a skipped step from a passing one cheaply.
+# control rendered a verdict. Each control must render one on every
+# run (ansible-drift.yml re-runs the dry-run after an apply), because no
+# generic reader of run history can tell a skipped step from a pass.
 #
 # N IS DERIVED FROM THE CADENCE, not fixed. A weekly control judged by
 # a daily control's clock is either paged for one flake or blind for a
@@ -574,11 +556,8 @@ EOF
   if [ "$run_age" -lt 0 ] || [ "$run_age" -ge "$n_days" ]; then
     verdict="DEAD"
     if [ "$run_age" -lt 0 ]; then
-      # #1097: days_since() returns -1 for a timestamp it couldn't parse,
-      # and -1 -ge $n_days is always false, so an undateable run compared
-      # as FRESHER than one that ran an hour ago and fell through to
-      # "live" — the exact shape this script's header promises never
-      # happens ("Never a silent pass").
+      # days_since() returns -1 for an unparseable timestamp; without this
+      # branch an undateable run would compare as fresh and pass silently.
       detail="the newest scheduled run's timestamp could not be parsed — cannot verify the schedule is firing"
     elif [ "$total" -eq 0 ]; then
       detail="the cron has not fired once since the workflow was registered ${run_age}d ago"
@@ -669,13 +648,9 @@ if [ "$requested" -eq 0 ]; then
   exit 2
 fi
 if [ "$assessed" -eq 0 ]; then
-  # #1097: this used to be guarded by `[ "$requested" -gt "$excluded" ]`
-  # too, so when the only schedule:-bearing workflow left standing was
-  # this detector's own file (requested == excluded), the guard went
-  # false and the sweep printed a clean pass over zero real checks — a
-  # yamlfmt pass rewriting `on:` to flow style on every OTHER scheduled
-  # workflow silences all of them with no line of output. assessed >= 1
-  # is required unconditionally; self-exclusion is not an escape from it.
+  # assessed >= 1 is required unconditionally, even when the only
+  # scheduled workflow found is this detector's own (self-excluded) file:
+  # otherwise the sweep prints a clean pass over zero real checks.
   echo "scheduled-controls: $(( requested - excluded )) scheduled workflow(s) found but none could be read from the API (assessed=0). The gate did not run." >&2
   exit 2
 fi

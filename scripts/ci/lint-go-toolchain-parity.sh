@@ -5,20 +5,15 @@
 #
 # The "govulncheck toolchain parity" concern this guards: if the `vuln`
 # job's Go toolchain were pinned independently of go.mod, a
-# language-version bump (like
-# #495's `go 1.25.10`+`toolchain go1.25.13` -> `go 1.26.0`) would make
+# language-version bump would make
 # govulncheck analyse a NEWER module graph with an OLDER SDK, and the
 # vulnerability gate would fail to parse instead of failing on an
 # actual vulnerability — going dark exactly when the toolchain moves,
 # which is the one moment it matters most.
 #
-# AS SHIPPED (verified 2026-09-07 against `git blame`): every
-# `actions/setup-go` step in this file has used
-# `go-version-file: go.mod` since the job was first written — the
-# toolchain has never been independently pinned, so #495's bump alone
-# would already carry every job (including `vuln`) to go1.26 without
-# a second edit. That makes today's literal defect a non-reproduction.
-# What is NOT yet true is that this stays that way: nothing stopped a
+# Every `actions/setup-go` step uses `go-version-file: go.mod`, so a
+# go.mod bump carries every job (including `vuln`) without a second edit.
+# This gate keeps it that way: nothing else stops a
 # future edit from adding a `go-version: '1.25'` pin next to (or
 # instead of) `go-version-file`, silently reintroducing the exact
 # divergence Section D describes. This gate is that durability: it
@@ -114,12 +109,8 @@ fi
 # A Dockerfile cannot read go.mod, so its `FROM golang:X.Y.Z` is a SECOND,
 # independent declaration of the toolchain — the same divergence this gate
 # forbids in workflows, in the one place `go-version-file` cannot reach.
-# It is not hypothetical and not new: docker/README.md records F-1240
-# (audit 2026-05-12), where the Dockerfiles sat on 1.26-alpine while go.mod
-# and CI were on 1.25.x. It recurred on 2026-09-08 in the other direction —
-# go.mod moved to 1.26.0/toolchain go1.26.8 while docker/verify/Dockerfile
-# stayed on golang:1.25.13-trixie — and nothing caught it, because the
-# container is what `make prepush` runs, so a stale pin silently grades the
+# It has drifted in both directions before, and the container is what
+# `make prepush` runs, so a stale pin silently grades the
 # push with a different compiler than CI and production use.
 DOCKER_DIR="${DOCKER_DIR:-docker}"
 DOCKERFILES=()

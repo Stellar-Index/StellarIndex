@@ -67,8 +67,7 @@ echo "Checking config reference sync..."
 if [ -f internal/config/config.go ] && [ -f docs/reference/config/README.md ]; then
   # Extract every `toml:"name"` tag value from config.go. Keeps only
   # the name (no commas, no omitempty).
-  # CS-131: [a-z0-9_]+ (was [a-z_]+, which silently skipped digit-bearing
-  # tags like s3_*, sep10, sep41, phase2 — a rename of one would stay green).
+  # Digits included: tags like s3_*, sep10, sep41 and phase2 must be checked too.
   grep -oE 'toml:"[a-z0-9_]+"' internal/config/config.go | \
     sed -E 's/toml:"([a-z0-9_]+)"/\1/' | sort -u | while read -r tomlname; do
       if ! grep -qF "$tomlname" docs/reference/config/README.md; then
@@ -87,17 +86,9 @@ fi
 echo "Checking API routes vs OpenAPI..."
 if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # Forward: handlers that aren't in the spec (client misses them).
-  # CS-052: match BOTH HandleFunc("VERB /v1…") and mux.Handle("VERB /v1…")
-  # — the latter is used for middleware-wrapped routes and previously slipped
-  # past this check (that's how the undocumented staff route escaped).
-  # internal_routes_re allow-lists routes deliberately kept out of the public
-  # spec (staff/PII endpoints); add a route here with a reason to exempt it.
-  # RLT-171: '^/account/admin/' used to exempt the staff look-up on the
-  # premise it was "intentionally not public" — but it IS documented, in
-  # full, at openapi/stellar-index.v1.yaml's `/account/admin/lookup` path.
-  # The exemption never blocked publication; it only blinded this check to
-  # a route that was in the spec the whole time. Empty until a route is
-  # actually kept undocumented on purpose.
+  # Match BOTH HandleFunc("VERB /v1…") and mux.Handle("VERB /v1…"); the latter
+  # registers middleware-wrapped routes. internal_routes_re allow-lists routes
+  # deliberately kept out of the spec; empty until one is, and each needs a reason.
   internal_routes_re='^$'
   # handlePublic( and public.Handle(mux, mount credential-optional routes, handleAdmin( the operator
   # tier; tests register fixtures.
@@ -132,7 +123,7 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
       # list when we add write verbs.
       found=0
       for method in GET POST PUT PATCH DELETE; do
-        # CS-052: check both HandleFunc( and mux.Handle( registrations.
+        # Check both HandleFunc( and mux.Handle( registrations.
         if grep -qrF --exclude='*_test.go' \
           -e "HandleFunc(\"${method} /v1${route}\"" -e "Handle(\"${method} /v1${route}\"" \
           -e "handlePublic(\"${method} /v1${route}\"" -e ".Handle(mux, \"${method} /v1${route}\"" \
@@ -221,13 +212,9 @@ PY
   fi
 fi
 
-# RLT-171: a `description:` value inside a flow mapping (`{ ... }`) that
-# contains an unquoted comma splits into extra map entries at that comma.
-# Any fragment past the split with no `key: value` shape becomes a bogus
-# key with a null value, and the description itself silently truncates —
-# `description: Total supplied, underlying token base units.` parsed to
-# description "Total supplied" plus a phantom null-valued key. Quote any
-# flow-mapping description that contains a comma.
+# An unquoted comma in a flow-mapping (`{ ... }`) `description:` splits it:
+# the description truncates and the remainder becomes a null-valued key.
+# Quote any flow-mapping description that contains a comma.
 echo "Checking OpenAPI for comma-split flow-mapping descriptions..."
 if [ -f openapi/stellar-index.v1.yaml ] && command -v python3 >/dev/null 2>&1; then
   null_out=$(python3 - <<'PY' 2>&1 || true
@@ -281,9 +268,8 @@ fi
 # A `--` line above BEGIN; is not executed, so correcting one cannot
 # make an applied database diverge from a fresh one — and the checksum
 # baseline still moves in the same diff, so the edit is visible rather
-# than silent. Both headers were corrected under that rule (#357 F2/F3),
-# and there is consequently NO exemption list here: every up.sql must
-# cite its own number, with no grandfathered set to grow.
+# than silent. There is NO exemption list: every up.sql must cite its own
+# number, with no grandfathered set to grow.
 #
 # Deliberately narrow: it checks the mechanical half — a file
 # disagreeing with its own filename — not "does every `migration NNNN`
@@ -336,310 +322,64 @@ stale_patterns=(
   "stellarindex\.ctx\.io"         # old placeholder domain
   "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellarindex- prefix now — adjust if you change the policy)
   "CTX Rates"                    # old project name (now "Stellar Index")
-  "\(#1004\)"                    # CHANGELOG's rc.30 known_issuers entry cited a PR number since reused by an unrelated live issue (RSWP-065)
-  "#1001"                        # CHANGELOG's sac_wrappers entry cited a PR
-                                  # number that didn't exist yet (RSWP-062);
-                                  # #1001 is now a real, unrelated issue, so
-                                  # the reference would resolve to the wrong
-                                  # thing instead of just dangling
-  "#1002"                        # CHANGELOG's sac_wrappers entry cited a PR
-                                  # number that didn't exist yet (RSWP-063);
-                                  # #1002 is now a real, unrelated issue, so
-                                  # the reference would resolve to the wrong
-                                  # thing instead of just dangling
-  "#1083\b"                      # dangling ref (RSWP-073) — resolves to an
-                                  # unrelated live issue, never the PR that
-                                  # shipped the cursor/prewarm work it cited
-  "#1108\b"                      # dangling ref (RSWP-086) — CHANGELOG's
-                                  # r1-smoke.sh budget-bump entry never
-                                  # identified the actual PR; #1108 now
-                                  # resolves to an unrelated live issue
-  "PR #1042"                     # dangling citation — no such PR exists; #1042 resolves to an unrelated issue
-  "#1066(–|-)#1073"              # fabricated PR range (RSWP-070) that now
-                                  # collides with real, unrelated issues;
-                                  # alternation (not `.`) because the en-dash
-                                  # is 3 UTF-8 bytes and CI's grep runs C locale
-  "#1132"                        # CHANGELOG's /v1/coins/{slug} case-insensitive
-                                  # entry cited a PR number that didn't exist
-                                  # yet (RSWP-093); #1132 is now a real,
-                                  # unrelated issue, so the reference would
-                                  # resolve to the wrong thing instead of just
-                                  # dangling
-  "#1272\b"                      # coverage-matrix's R-014 entry cited this as
-                                  # the PR (RSWP-145); no PR exists for that
-                                  # commit and #1272 is now a real, unrelated
-                                  # live issue (dashboard webhook role gate)
-  "#1271\b"                      # dangling ref (RSWP-144) — coverage-matrix.md
-                                  # cited R-011's fix as "#1271", which now
-                                  # resolves to a real, unrelated open issue
-                                  # (price-alert freeze marker) rather than
-                                  # a 404
-  "#1263\b"                      # dangling ref (RSWP-139) — coverage-matrix.md's
-                                  # 2026-05-11 entry cited "#1263" both in the
-                                  # R-008 row and in the PR-list header; #1263
-                                  # now resolves to an unrelated, currently-open
-                                  # projector cursor-commit finding, not the
-                                  # ATH/day-VWAP fix. Bare pattern (not scoped
-                                  # to "R-008") so it also catches a citation
-                                  # reappearing in the header list alone
-  "#1270\b"                      # dangling ref (RSWP-143) — coverage-matrix.md's
-                                  # 2026-05-11 entry cited R-016's fix as
-                                  # "#1270" in the row and the header list;
-                                  # the number is pre-migration, so it now
-                                  # resolves to an unrelated item. Cite the
-                                  # commit (4ab6b818d) instead. Bare pattern
-                                  # for the same reason as #1263
-  "#1268\b"                      # coverage-matrix.md's 2026-05-11 entry cited
-                                  # the R-001/R-002 prewarm fix as #1268; that
-                                  # number now resolves to an unrelated item,
-                                  # so the entry cites commit 55b2a9fb3 instead
-  "Deferred #1347\b"              # STATUS.md's go-stellar-sdk v0.6 bump cited
-                                  # #1347 before it existed (RSWP-146). #1347
-                                  # is now the real "retiring a data source"
-                                  # issue, legitimately cited by number
-                                  # elsewhere (e.g. the retiring-a-source
-                                  # runbook), so the pattern is scoped to the
-                                  # original dangling phrase rather than a
-                                  # bare issue number that would also catch
-                                  # every correct future citation of it
-  "#1353"                        # remediation STATUS.md cited the actions/checkout
-                                  # v6→v7 bump PR as #1353 (RSWP-147); that number
-                                  # now resolves to an unrelated auto-filed
-                                  # ci-health-bot issue, not the PR it named
-  "#1369"                        # remediation STATUS.md cited the deferred
-                                  # tooling-groups entry as #1368 + #1369
-                                  # (RSWP-149); #1369 now resolves to an
-                                  # unrelated, already-merged W3 slice PR
-  "dependabot #1371/#1372"       # dangling ref (RSWP-151) — CHANGELOG's Go
-                                  # toolchain 1.25.12 + all-deps bump entry
-                                  # cited these as the dependabot PRs it
-                                  # superseded; #1371 and #1372 now resolve
-                                  # to real, unrelated live PRs (an open
-                                  # dependabot npm-bump PR and a closed
-                                  # audit-remediation PR), not the
-                                  # dependabot bumps this entry named
-  "R-013.*#1265"                  # coverage-matrix.md's R-013 row cited #1265
-                                  # (RSWP-141); #1265 now resolves to an
-                                  # unrelated resolveTip completeness-clamp
-                                  # finding, not the chart truncated/
-                                  # data_starts_at PR the row implies
-  "R-021.*#1264"                  # coverage-matrix.md's R-021 row cited #1264
-                                  # (RSWP-140); #1264 now resolves to an
-                                  # unrelated projector_lag_high gauge finding,
-                                  # not the handler-timeout/pq-cancel PR the
-                                  # row implies
-  "per #948"                      # dangling ref (RSWP-055) — CHANGELOG's
-                                  # "6 more detail surfaces" BreadcrumbList
-                                  # entry cited #948 as the issue behind the
-                                  # earlier assets/markets BreadcrumbList
-                                  # work; #948 now resolves to an unrelated
-                                  # live issue (ECB FX fallback), not the
-                                  # SEO work it named
-  "#39\b"                         # dangling ref (RLT-411) — the
-                                  # soroban_events decommission plan cited
-                                  # "#39" as its tracking item; #39 is
-                                  # merged PR "fix: restore main to green",
-                                  # not an issue. #803 is the real
-                                  # tracking issue.
-  "#845\b"                       # dangling ref (RSWP-050) — CHANGELOG's
-                                  # rc.21 `/sources` 24h-trade-count entry
-                                  # cited #845 twice for its `?include=stats`
-                                  # opt-in; #845 is now a real, unrelated
-                                  # live issue (explorer buildFetch bypass,
-                                  # filed 2026-09-18), not the PR that
-                                  # shipped the stats opt-in
-  "#854\b"                        # CHANGELOG's NetworkLivePanel entry cited
-                                  # this as the earlier network-strip fix
-                                  # (RSWP-052); #854 is now a real, unrelated
-                                  # live issue (Atom renderer CDATA/XSS), so
-                                  # the reference would resolve to the wrong
-                                  # thing instead of just dangling
-  "#879\b"                        # dangling ref (RSWP-053) — CHANGELOG's
-                                  # Top-markets/Markets-table null-asset
-                                  # entry cited the original Recent-trades
-                                  # fix as PR "#879"; #879 now resolves to
-                                  # an unrelated live issue (DirectoryLabel
-                                  # scam-tag case-sensitivity), not that fix
-  "\(#888\)\|shipped in #888"    # dangling ref (RSWP-054) — CHANGELOG's
-                                  # navbar mobile menu / IA-restructure,
-                                  # /signin placeholder, and forex
-                                  # placeholder entries cited "#888"; it
-                                  # now resolves to an unrelated live
-                                  # issue (Timescale job-failure alert
-                                  # arithmetic), not any of those features
-  "#970\b"                       # dangling ref (RSWP-056) — CHANGELOG's
-                                  # rc.23 sparkline7d/coins entries cited
-                                  # #970; #970 is now a real, unrelated
-                                  # issue (PATCH /v1/admin/accounts race),
-                                  # not the sparkline feature request
-  "#971\b"                        # dangling ref (RSWP-057) — CHANGELOG's
-                                  # rc.23 Massive.com forex-provider entry
-                                  # cited this as its issue; #971 now
-                                  # resolves to an unrelated live issue
-                                  # (RedisAPIKeyValidator cache eviction)
-  "#973\b"                       # dangling ref (RSWP-058) — CHANGELOG's
-                                  # rc.24 circulating_supply/market_cap_usd
-                                  # entry and its rc.23 cancellation note
-                                  # both cited "#973"; #973 now resolves to
-                                  # an unrelated live issue (dead-affordance/
-                                  # IsReservedTLD), never the feature it named
-  "\(#975\)"                     # dangling ref (RSWP-059) — CHANGELOG's
-                                  # rc.25 /v1/currencies entry cited this
-                                  # as the tracking issue; #975 now
-                                  # resolves to an unrelated, currently-open
-                                  # streaming-docs-vs-hub drift finding
-  "#1196\b"                       # dangling ref (RSWP-111) — CHANGELOG's
-                                  # cache_ops_total counter + coins/
-                                  # sources_stats entries, and the
-                                  # cache-miss-rate-high runbook's history,
-                                  # cited this as the counter's landing PR
-                                  # and as a motivating bug; #1196 is now a
-                                  # real, unrelated live issue (BigQuery
-                                  # subcommands uncapped byte billing)
-  "PR #1198"                     # dangling ref (RSWP-113) — CHANGELOG's
-                                  # coins/sources_stats cache-ops entry cited
-                                  # a PR number that didn't exist yet;
-                                  # #1198 is now a real, unrelated live issue
-                                  # (trim-galexie-archive delete-key drift)
-  "PR #1231"                     # dangling ref (RSWP-128) — CHANGELOG's
-                                  # /v1/coins/{slug} canonical asset_id
-                                  # entry cited this as its PR; #1231 is now
-                                  # a real, currently-open, unrelated issue
-                                  # (${EXTRA_FLAGS} brace-form word-split on
-                                  # direct-exec systemd units), not the
-                                  # asset_id fix it names
-  "#201\b"                        # dangling ref (RSWP-001) — semver-policy.md's
-                                  # and CHANGELOG's pkg/client SDK skeleton
-                                  # entries cited "#201" as the landing PR;
-                                  # #201 now resolves to an unrelated merged
-                                  # PR (movement-latency cadence tuning), not
-                                  # the SDK skeleton commit `a60264246`
-  "PR #1216"                     # dangling ref (RSWP-115) — CHANGELOG's
-                                  # indexer watched-sets boot-WARN entry cited
-                                  # a PR number that didn't exist yet;
-                                  # #1216 is now a real, unrelated open issue
-                                  # (window-bounded shape-guard test gap)
-  "PR #1223"                     # dangling ref (RSWP-120) — CHANGELOG's F2
-                                  # fields fiat-proxy-fallback entry cited a
-                                  # PR number that never existed; #1223 is
-                                  # now a real, unrelated open issue (supply
-                                  # reference-leg fixture test)
-  "PR #?168\b"                   # dangling ref (RSWP-043) — band.md and
-                                  # domain-traps.md's ContractCallDecoder
-                                  # cutover cited "PR 168" / "PR #168";
-                                  # #168 now resolves to an unrelated merged
-                                  # PR (volume_character rollup) — cite the
-                                  # landing commit instead
-  "PR #1227"                     # dangling ref (RSWP-124) — CHANGELOG's
-                                  # CoinGecko backoff-floor entry cited a PR
-                                  # number that didn't exist yet; #1227 is
-                                  # now a real, unrelated live issue (supply
-                                  # policy SDFReserveAccounts strkey gap)
-  "PR #1232"                     # dangling ref (RSWP-129) — CHANGELOG's
-                                  # explorer common-name 404 redirects entry
-                                  # cited a PR number that didn't exist yet;
-                                  # #1232 is now a real, unrelated live issue
-                                  # (Tier D verify-archive cron lock/watchdog gap)
-  "PR #1233"                     # dangling ref (RSWP-130) — CHANGELOG's
-                                  # HomeCurrencies/HomeTopMarkets "couldn't
-                                  # load" notice entry cited this as the
-                                  # /v1/markets panic fix; #1233 is now a
-                                  # real, unrelated open issue (galexie-
-                                  # archive-fill.sh / ORPHANS doc drift)
-  "shipped in #1251"             # dangling ref (RSWP-134) — CHANGELOG's
-                                  # /exchanges/<venue> outage-distinction
-                                  # entry cited this as the earlier home-page
-                                  # fix; #1251 is now a real, unrelated open
-                                  # issue (MEV arbitrage 2-venue guard /
-                                  # USD-notional staleness), not that fix
-  "\(PR #1254\)"                 # dangling ref (RSWP-135) — CHANGELOG's
-                                  # explorer exchanges-chart error-state
-                                  # entry cited this as its shipping PR;
-                                  # #1254 is now a real, unrelated live issue
-                                  # (config-apply-gate refuted-arm gap)
-  "PR #1255"                     # dangling ref (RSWP-136) — CHANGELOG's
-                                  # default Chainlink feed map entry cited
-                                  # a PR number that didn't exist yet;
-                                  # #1255 is now a real, unrelated live issue
-                                  # (lint-doc-links silently skipping
-                                  # undecodable markdown files)
-  "PR #1230"                     # dangling ref (RSWP-127) — CHANGELOG's
-                                  # fx_quotes/migration-0028 runbook entry
-                                  # cited a PR number that doesn't exist;
-                                  # #1230 has no corresponding PR or issue,
-                                  # so the citation 404s outright
-  "#1225\b"                      # dangling ref (RSWP-122) — CHANGELOG's
-                                  # ADR-0026 summary and /v1/ohlc
-                                  # stablecoin-fallback entries cited a PR
-                                  # number that never existed; #1225 is now
-                                  # a real, unrelated open issue (test-vacuity
-                                  # residue across several endpoints)
-  "#1226\b"                      # dangling ref (RSWP-123) — CHANGELOG's
-                                  # ADR-0026 summary entry and its
-                                  # `pkg/client` VWAP/TWAP/Pools SDK entry
-                                  # both cited this; #1226 is now a real,
-                                  # unrelated merged PR (the SDK methods
-                                  # PR itself), not the /v1/ohlc fallback
-                                  # ADR-0026 attributes it to
-  "#1217\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
-                                  # stablecoin-fiat-proxy rollout entries
-                                  # (/v1/price, F2 fields, /v1/ohlc,
-                                  # /v1/oracle/lastprice, /v1/price/tip)
-                                  # cited an internal tracking number that
-                                  # never resolved to a real PR
-  "#1218\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
-                                  # /v1/price/tip stablecoin-fiat-proxy
-                                  # entry cited an internal tracking number
-                                  # that never resolved to a real PR
-  "#1219\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
-                                  # /v1/vwap + /v1/twap and /v1/ohlc
-                                  # stablecoin-fiat-proxy entries cited an
-                                  # internal tracking number that never
-                                  # resolved to a real PR
-  "#1224\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
-                                  # /v1/oracle/prices and /v1/assets F2
-                                  # stablecoin-fiat-proxy entries cited an
-                                  # internal tracking number that never
-                                  # resolved to a real PR
-  "#1368\b"                      # dangling ref (RSWP-148) — STATUS.md's
-                                  # tooling-groups deferral cited this as a
-                                  # tracking issue before it existed; #1368
-                                  # is now a real, unrelated closed PR
-                                  # (W3 remediation slice 05)
-  "\(#1370\)"                    # dangling ref (RSWP-150) — remediation
-                                  # STATUS.md's lucide-react ^1.23 explorer
-                                  # bump note cited this as its PR; #1370 is
-                                  # now a real, unrelated dependabot PR
-                                  # (npm-minor-patch group bump)
-  "#1262\b"                      # dangling ref (RSWP-138) — coverage-matrix's
-                                  # R-007 OHLC outlier-filter entry cited a PR
-                                  # number that never existed; #1262 is now a
-                                  # real, unrelated issue
-  "PR #1041"                     # dangling ref (RSWP-067) — the
-                                  # fx-history-missing.md runbook and
-                                  # CHANGELOG's fx_quotes hypertable /
-                                  # /v1/currencies range entries cited this
-                                  # as their shipping PR; #1041 has no
-                                  # corresponding PR (repo max at the time
-                                  # was far short of it), so the citation
-                                  # 404s outright
-  "\(added in #314\)"             # dangling ref (RSWP-042) — the
-                                  # supply-refresh-error-dominant and
-                                  # supply-refresh-stalled runbooks cited
-                                  # this as the PR that added the
-                                  # asset_key label; #314 is now a real,
-                                  # unrelated merged PR (integration-suite
-                                  # 4-way sharding)
-  "PRs #263(–|-)#270"             # dangling ref (RSWP-045/RSWP-046) —
-                                  # full-history-template.md's v1-audit
-                                  # paragraph cited this range; #263 now
-                                  # resolves to an unrelated asset-registry
-                                  # dedupe fix and #270 to an unrelated
-                                  # pgBackRest/CH-snapshot alert fix, not
-                                  # the eight per-source WASM audit PRs.
-                                  # Alternation (not `.`) because the
-                                  # en-dash is 3 UTF-8 bytes and CI's grep
-                                  # runs C locale
+  # Citations whose PR/issue number now resolves to an unrelated item.
+  # Scoped to the original phrase where the number is also cited legitimately;
+  # (–|-) alternation because the en-dash is 3 UTF-8 bytes and CI greps in C locale.
+  "\(#1004\)"
+  "#1001"
+  "#1002"
+  "#1083\b"
+  "#1108\b"
+  "PR #1042"
+  "#1066(–|-)#1073"
+  "#1132"
+  "#1272\b"
+  "#1271\b"
+  "#1263\b"
+  "#1270\b"
+  "#1268\b"
+  "Deferred #1347\b"
+  "#1353"
+  "#1369"
+  "dependabot #1371/#1372"
+  "R-013.*#1265"
+  "R-021.*#1264"
+  "per #948"
+  "#39\b"
+  "#845\b"
+  "#854\b"
+  "#879\b"
+  "\(#888\)\|shipped in #888"
+  "#970\b"
+  "#971\b"
+  "#973\b"
+  "\(#975\)"
+  "#1196\b"
+  "PR #1198"
+  "PR #1231"
+  "#201\b"
+  "PR #1216"
+  "PR #1223"
+  "PR #?168\b"
+  "PR #1227"
+  "PR #1232"
+  "PR #1233"
+  "shipped in #1251"
+  "\(PR #1254\)"
+  "PR #1255"
+  "PR #1230"
+  "#1225\b"
+  "#1226\b"
+  "#1217\b"
+  "#1218\b"
+  "#1219\b"
+  "#1224\b"
+  "#1368\b"
+  "\(#1370\)"
+  "#1262\b"
+  "PR #1041"
+  "\(added in #314\)"
+  "PRs #263(–|-)#270"
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
@@ -671,12 +411,8 @@ done
 echo "Checking TODO discipline..."
 # Every TODO/FIXME/XXX in Go code must be of the form TODO(#N):
 if [ -d internal ] || [ -d cmd ]; then
-  # Match EVERY TODO/FIXME/XXX, then let the second grep exempt only the
-  # tracked `(#123)` form. The pattern used to end in `[^(]`, which meant
-  # the first grep never fired on a parenthesised TODO at all — so the
-  # exemption grep was dead weight and `TODO(later):`, `FIXME(nobody)` and
-  # a bare `// TODO` at end-of-line all passed silently. Cold audit
-  # 2026-08-04.
+  # Match EVERY TODO/FIXME/XXX, then exempt only the tracked `(#123)` form,
+  # so `TODO(later):`, `FIXME(nobody)` and a bare `// TODO` all fail.
   bad_todos=$(grep -rnE '//[[:space:]]*(TODO|FIXME|XXX)' \
     internal/ cmd/ pkg/ 2>/dev/null | \
     grep -vE '//\s*(TODO|FIXME|XXX)\(#[0-9]+\)' || true)
@@ -696,33 +432,13 @@ today=$(date -u +%s)
 stale_cut=$(date -u -r $((today - 90 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 90 * 86400))" +%F)
 fail_cut=$(date -u -r $((today - 180 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 180 * 86400))" +%F)
 
-# Iterate over 'current' docs — architecture/, operations/, adr/,
-# contributing/ (added 2026-09-02, issue #362: the contributor
-# checklists were never walked, so `add-onchain-source.md` could and did
-# drift from the wiring it prescribes) and protocols/ + methodology/
-# (added 2026-09-02, issue #359).
+# Iterate over 'current' docs: architecture/, operations/, contributing/,
+# protocols/ and methodology/. Under all but architecture/ and design/ a
+# MISSING last_verified is an error, so opting out by omitting it fails.
 #
-# Under docs/operations, docs/contributing, docs/protocols and
-# docs/methodology a MISSING last_verified is now an error, not a skip.
-# The old `continue` meant 23 operator procedures — including three of
-# the five files the #461 dangerous-instruction fix had just rewritten —
-# sat outside the freshness lint entirely: opting out was as easy as not
-# writing the frontmatter, and nothing said so. The PUBLIC trees are the
-# same trap with a worse blast radius: docs/protocols/README.md tells
-# each protocol team "each page carries a last_verified date", yet 15 of
-# 17 protocol pages and 2 of 5 methodology pages carried none, so
-# widening the scan roots alone would have been a no-op — every one of
-# them would simply have been skipped. Under docs/architecture and
-# docs/design it stays advisory (point-in-time investigations, not
-# living procedure).
-#
-# docs/adr is deliberately OUT of this find-root, not merely skipped by
-# it: ADRs are immutable records whose only real gate is §8
-# (status/superseded_by/index-row). Listing docs/adr here while its
-# missing-stamp case fell to the `*) continue` arm meant the scan
-# implied freshness coverage — 0 of 51 ADRs carry last_verified — that
-# §6 never actually gave it (T557). Add a §8 check instead if ADR
-# amendment banners ever need aging.
+# docs/adr is OUT of this find-root: ADRs are immutable and gated by §8
+# (status/superseded_by/index-row). Add a §8 check if amendment banners
+# ever need aging.
 #
 # RECORD subtrees are exempt by design: evidence/, postmortems/,
 # incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
@@ -875,19 +591,9 @@ fi
 # ─── 10. Every alert rule must have a row in the alerts catalogue ──────────
 #
 # Catalogue is docs/operations/alerts-catalog.md; every rule file's
-# `alert: <name>` must appear verbatim somewhere in that doc. Caught
-# the `stellarindex_ingestion_insert_errors` drift on 2026-04-23 —
-# the alert was live but the catalogue didn't list it.
-#
-# The grep below is name-presence only, so it never noticed that the
-# catalogue's SEVERITY column disagreed with the rules it described (190
-# of 203 rows, issue #362) — including 15 rows labelled `P3` whose rules
-# are `informational`, which alertmanager.r1.yml then routed to a
-# receiver with no delivery at all (fixed 2026-09-08: informational now
-# goes to chat-informational on BOTH apply paths, #485/#501). The
-# YAML-aware
-# scripts/ci/lint-alerts-catalog.py checks that column, and does the
-# name parity in BOTH directions across BOTH rule trees.
+# `alert: <name>` must appear verbatim somewhere in that doc. This grep is
+# name-presence only; scripts/ci/lint-alerts-catalog.py checks the SEVERITY
+# column and name parity in BOTH directions across BOTH rule trees.
 
 echo "Checking alerts-catalog drift..."
 if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; then
@@ -902,10 +608,8 @@ fi
 
 echo "Checking alerts-catalog severity parity..."
 if catalog_out=$(python3 scripts/ci/lint-alerts-catalog.py 2>&1); then
-  # Echo the self-accounting line even on the green path. A gate that
-  # prints NOTHING when it passes is indistinguishable from a gate that
-  # never ran (2026-07-24); the "checked N of M" line is what makes the
-  # difference visible in the CI log.
+  # Echo the "checked N of M" line even when green: a silent pass looks
+  # identical to a gate that never ran.
   printf '  %s\n' "$(printf '%s\n' "$catalog_out" | grep 'problem(s) found' || true)"
 else
   while IFS= read -r line; do
@@ -928,10 +632,6 @@ fi
 # scope: nothing in this repo declares their names, so enforcing them
 # would be all false positives.
 #
-# Caught `stellarindex_source_last_event_age_seconds` drift on
-# 2026-04-23 — runbook referenced a metric name that never existed.
-#
-# Widened 2026-08-29 (runbook re-verification wave K, issue #315).
 # ledgerstream-tier-both-missing.md — a P1 page — told responders to
 # read `stellarindex_indexer_ledger_lag_seconds` and
 # `stellarindex_backfill_cursor` for months. Neither has ever been
@@ -1013,9 +713,7 @@ fi
 # missing `-write` logs `"rehydrate complete" … copied=N
 # missing_in_cold=0 errors=0` and exits 0 — a success-shaped report
 # having rehydrated nothing, handed to a responder mid-P1. The same
-# omission on projector-replay rewinds no projector. Both shipped in
-# the first cut of the wave-K runbook fixes (issue #315) and were
-# caught by review, not by CI.
+# omission on projector-replay rewinds no projector.
 #
 # The gated set is DERIVED from the source (files that register the
 # shared gate or their own `-write` bool, keyed by the flagset name,
@@ -1043,8 +741,7 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
     # without -write produced NO finding, while the identical omission on
     # a one-word subcommand was caught. That is exactly the failure this
     # check exists to stop: the command reports "complete … errors=0",
-    # is success-shaped, and has written nothing (review sweep
-    # 2026-08-31).
+    # is success-shaped, and has written nothing.
     (grep -ohE 'flag\.NewFlagSet\("[a-z0-9 -]+"' "$gf" 2>/dev/null || true) | \
       sed -E 's|.*"(.*)"|\1|'
   done | sort -u > "$gated"
@@ -1097,9 +794,7 @@ fi
 #
 # Symmetric counterpart to §9 (which checks rule-file → runbook). The
 # catalog is the operator-facing index; a stale `runbooks/X.md` link
-# in it means oncall clicks through to a 404. Caught nothing yet —
-# verified clean as of 2026-04-27 — but adding the check before the
-# next runbook reorganisation introduces drift.
+# in it means oncall clicks through to a 404.
 
 echo "Checking alerts-catalog runbook link freshness..."
 if [ -f docs/operations/alerts-catalog.md ] && [ -d docs/operations/runbooks ]; then
@@ -1192,15 +887,9 @@ fi
 #
 # Fail if any user-facing incident (internal/incidents/data/*.md,
 # served by /v1/incidents) is older than 30 days AND still has
-# unchecked `[ ]` checkboxes in its body. Closes the meta-failure-
-# mode where post-mortem action items rot indefinitely: the
-# 2026-05-10 SEV-2 (redis-writes-blocked-disk-full) shipped with 4
-# `[ ]` follow-ups and 17 days later the same cascade recurred
-# (2026-05-26) with those follow-ups still unchecked. CI now
-# enforces the cadence so a future post-mortem either gets its
-# items closed within a month, or the unchecked items get
-# explicitly rewritten as accepted-debt (`[~]` is treated as
-# checked / acknowledged).
+# unchecked `[ ]` checkboxes in its body, so follow-ups that rot let the
+# same cascade recur. Close them within a month or mark them accepted
+# debt (`[~]` counts as checked).
 #
 # Date is sourced from the filename slug `<YYYY-MM-DD>-<slug>.md`
 # — matches the convention enforced by `internal/incidents`
@@ -1284,7 +973,7 @@ fi
 #
 # test/load/scenarios/lib/alertmanager.js hardcodes the default silence
 # matchers the 99-spike load scenario posts to AlertManager. This is a
-# two-sided drift risk (audit-2026-06-14 R-A20-1 and its follow-up):
+# two-sided drift risk:
 #   (a) an alertname that matches NO deployed alert -> the silence is a
 #       silent no-op and on-call pages during the planned burst (the
 #       original finding: defaults were 'APIHighLatencyP95' when the
@@ -1343,16 +1032,9 @@ fi
 
 # ─── 18. r1's ZFS `data` pool topology — ONE source of truth ───────────────
 #
-# The raidz1-vs-raidz2 split (#289) is the canonical "corrected in one
-# tree, never propagated" defect in this repo. r1's `data` pool is a
-# single-parity raidz1 vdev — live-verified 2026-07-17 and corroborated
-# by arithmetic (the ~16.8 TB footprint measured that day does not fit
-# the ~13.85 TB two parity drives would leave on these four devices) —
-# yet a year of docs, an ADR and the ansible per-region comment still
-# described it as raidz2, i.e. promised an operator a second drive of
-# margin that does not exist and sized every capacity plan off the wrong
-# usable figure. The 2026-07-17 fix reached the rule trees and two
-# runbooks and stopped there.
+# r1's `data` pool is single-parity raidz1. Docs describing it as raidz2
+# promise a second drive of margin that does not exist and size capacity
+# plans off the wrong usable figure.
 #
 # AUTHORITY: `zfs_data_pool_type` in configs/ansible/inventory/r1.example.yml
 # — the machine-readable value that would actually rebuild the pool, so
@@ -1361,7 +1043,7 @@ fi
 #
 # RULE: in the r1-scoped files below, a PARAGRAPH that names any raidz
 # level must also name the live one. That permits deliberate contrast
-# and dated history ("raidz2 at bringup; raidz1 since 2026-05-21") and
+# and dated history ("raidz2 at bringup; raidz1 since <date>") and
 # rejects what actually drifts — a bare, unqualified assertion of the
 # wrong level. Dated decision records (ADR-0016/0027, the superseded
 # first-archival-node-deployment runbook (deleted), docs/audit/**) are NOT listed:
@@ -1447,21 +1129,8 @@ fi
 
 # ─── 19. Agent-orientation docs: the claims a machine can re-derive ────────
 #
-# AGENTS.md/AGENTS.md are the first thing an agent reads, so a false
-# claim there is a defect with a blast radius of every subsequent
-# session. Two of them are mechanically checkable, and both had
-# actually drifted when this section was written (issue #326, the
-# 2026-08-29 re-sweep):
-#
-#   (a) AGENTS.md duplicates AGENTS.md's make-target block. #259 fixed
-#       `make dev` ("the full stack" — dev.yaml has only Timescale/
-#       Redis/MinIO) and `make docs-all` ("+ obs/*.go metric Name:
-#       fields" — docs-metrics is an explicit no-op) in AGENTS.md and
-#       left AGENTS.md asserting both, six months after c3b2c382 had
-#       aligned the same two files by hand. Duplicated prose drifts;
-#       principle 1 above says pick one source of truth. AGENTS.md's
-#       block must therefore be a VERBATIM subset of AGENTS.md's —
-#       shorten by dropping a line, never by rewording one.
+# AGENTS.md is the first thing an agent reads, so a false claim there
+# misleads every later session. One claim is mechanically checkable:
 #
 #   (b) The status page moved into the explorer (web/explorer/src/app/
 #       status/, stellarindex.io/status) and web/status/ became a
@@ -1478,15 +1147,7 @@ fi
 
 echo "Checking agent-orientation doc claims..."
 
-# (a) RETIRED — the two orientation docs became one.
-#
-# This used to assert that AGENTS.md's quick-start block was copied
-# VERBATIM from the other orientation doc, because the two drifted apart
-# every time one was edited alone (#326). They have since been merged into
-# a single AGENTS.md, so the duplication the check policed no longer
-# exists and the check could only ever compare a file with itself — which
-# is the vacuous-gate shape this repo has been hunting all along. Removed
-# rather than left reading green over nothing.
+# (a) retired: the two orientation docs merged into one AGENTS.md.
 #
 # If a second orientation doc is ever reintroduced, restore this check
 # with it; the parity problem it caught was real.
@@ -1622,8 +1283,8 @@ done
 # ─── 21. Phoenix's synthetic XLM SAC test-fixture id must not resurface ─────
 #
 # internal/sources/phoenix/events.go documents CDLZFC3SY… as the synthetic
-# id used across test/integration fixtures — NOT the XLM SAC on any network
-# (removed 2026-07-26, audit C4-012 follow-through). A README that
+# id used across test/integration fixtures — NOT the XLM SAC on any network.
+# A README that
 # republishes it as a verified mainnet address silently reopens the booby
 # trap that removal closed: the moment code reads it, XLM stops being XLM.
 # Fixtures are exempt; prose docs (READMEs) are not.

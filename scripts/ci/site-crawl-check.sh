@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# site-crawl-check.sh — the site-audit recurring guard (2026-07-03).
+# site-crawl-check.sh — the site-audit recurring guard.
 #
 # The July 2026 site audit found a CLASS of silent rot: pages 404ing
 # from the site's own links, canonicals pointing at dead URLs,
@@ -80,7 +80,7 @@ KEYS=$(fetch "$API/v1/issuers?limit=20" | python3 -c 'import json,sys; [print(r[
 # A fetch/parse failure and a genuinely empty issuer listing both leave
 # KEYS empty — the for loop below then iterates zero times and reports
 # nothing, so a broken listing endpoint silently skipped this whole
-# check instead of failing it (F136).
+# check instead of failing it.
 [ -n "$KEYS" ] || fail "issuer listing unfetchable or unparseable (0 keys) — cannot run the list↔detail closure check"
 for g in $KEYS; do
   CODE=$(status_of "$API/v1/issuers/$g")
@@ -107,7 +107,7 @@ for a in $ASSET_KEYS; do
 done
 
 echo "== 7. long-tail shell fallback (structurally unreached by the sitemap sample)"
-# T328: sitemap.ts deliberately excludes per-entity long tails ("unbounded
+# sitemap.ts deliberately excludes per-entity long tails ("unbounded
 # long tails served as noindex shells") so section 1's sitemap sample can
 # never land on a CF Pages Function's fallback branch. Probe one synthetic
 # id per shell-fallback Function directly (functions/*/[[path]].js): each
@@ -143,7 +143,7 @@ for path in \
 done
 
 echo "== 8. og image Function"
-# T300: the 8th CF Pages Function (functions/og/[[path]].js) renders a PNG,
+# The 8th CF Pages Function (functions/og/[[path]].js) renders a PNG,
 # not HTML, so it needs its own shape check rather than section 2's markup
 # greps.
 OG_PATH="/og/assets/native"
@@ -156,8 +156,7 @@ case "$OG_CTYPE" in
 esac
 
 echo "== 9. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
-# Q225: nothing compared the deployed build against main or measured its
-# age. The explorer's own footer (BuildBadge, components/nav/Footer.tsx)
+# Compare the deployed build against main and measure its age. The explorer's own footer (BuildBadge, components/nav/Footer.tsx)
 # stamps `title="Built <ISO time> from commit <sha>"` — read it back and
 # check it two ways: the commit is actually an ancestor of main (via
 # GitHub's compare API, read-only/unauthenticated), and the build isn't

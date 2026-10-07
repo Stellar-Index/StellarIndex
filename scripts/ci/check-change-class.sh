@@ -17,8 +17,7 @@
 #
 # THE STAKES OF GETTING THIS WRONG IN EITHER DIRECTION. Too narrow and a
 # storage/pipeline/sources/api change ships without the integration shards
-# that are its only real coverage (the exact shape of the 2026-07-01
-# sponsors/markets/blend regressions the shard matrix was built to catch).
+# that are its only real coverage.
 # Too broad and every docs/scripts-only change pays a 20-minute Docker
 # round-trip for zero additional signal — the problem this filter exists
 # to remove per the plan's measured numbers.
@@ -28,11 +27,8 @@
 # this class decides whether that suite runs AT ALL for a given diff. If a
 # package is in the first list but its directory is in neither classifier,
 # its `//go:build integration` tests compile in the unconditional compile
-# gate and are EXECUTED BY NOTHING for a change confined to that package —
-# which is how scripts/ops/fx-history-backfill's INV-3 money-invariant
-# regression (operator fx_quotes corrections must carry a positive derive
-# generation) sat in no executing gate (T424/T449), and cmd/stellarindex-ops
-# (F-1334) and internal/ops/archive (W6-tst-1) the same. `go list -tags
+# gate and are EXECUTED BY NOTHING for a change confined to that package,
+# money-invariant tests included. `go list -tags
 # integration -test -deps ./test/integration/... ./test/harness/...` shows
 # the suite transitively imports 40+ of the repo's ~53 top-level internal/
 # packages (internal/projector and internal/dispatcher among them — CA2-A38
@@ -103,7 +99,7 @@ class_web() {
 class_ansible() {
   # configs/prometheus/** and deploy/monitoring/** are read by
   # clickhouse-exporter-test.sh, which only the ansible-check job runs —
-  # a diff confined to either set ansible=false and skipped it — RLT-046.
+  # so a diff confined to either set must set ansible=true.
   grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)'
 }
 
