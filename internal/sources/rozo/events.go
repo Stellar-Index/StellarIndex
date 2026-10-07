@@ -1,18 +1,16 @@
 // Package rozo decodes Rozo intent-bridge events on Soroban.
 //
-// Currently scoped to **v1 Payment** — the only mainnet-live Rozo
-// contract at 2026-05-20. v2 Forwarder + IntentBridge and the newer
-// rozo-intents schema are pre-mainnet and documented in
-// docs/protocols/rozo.md for follow-up.
+// Scoped to **v1 Payment**, the Rozo contract found live on mainnet.
+// v2 Forwarder + IntentBridge and the newer rozo-intents schema are
+// documented in docs/protocols/rozo.md for follow-up.
 //
 // Design rationale: docs/protocols/rozo.md.
 //
-// Wiring (46e0087e8): decode.go decodes; consumer.go projects each event
-// into the canonical rozo.Event row; dispatcher_adapter.go is the
-// dispatcher Decoder; the indexer's sink persists via
-// Store.InsertRozoEvent into the rozo_events hypertable
-// (migration 0039, per-protocol table — operator-confirmed
-// 2026-05-22). See README.md §Wiring.
+// Wiring: decode.go decodes; consumer.go projects each event into the
+// canonical rozo.Event row; dispatcher_adapter.go is the Decoder; the
+// projector, this table's sole writer (ADR-0032), persists each row via
+// Store.InsertRozoEvent into the rozo_events hypertable (migration 0039,
+// a per-protocol table). See README.md §Wiring.
 package rozo
 
 import (
@@ -27,22 +25,22 @@ import (
 const SourceName = "rozo"
 
 // GenesisLedger is the ledger of the first event across all four Rozo
-// contracts (lake-derived exact genesis, 2026-07-30); rozo_events is
+// contracts (the exact genesis, derived from the lake); rozo_events is
 // projected to exactly here. protocols_registry.go's
 // ProtocolMeta.GenesisLedger for "rozo" must equal this.
 const GenesisLedger uint32 = 60_829_397
 
 // MainnetPaymentContract is the original verified deployment of the
-// v1 Payment contract on Stellar pubnet. Verified 2026-05-20 via
-// stellar.expert. Now part of [MainnetPaymentContracts] which lists
-// every C-wallet Rozo uses for bridge-out flows.
+// v1 Payment contract on Stellar pubnet, verified via stellar.expert.
+// It is part of [MainnetPaymentContracts], which lists every C-wallet
+// Rozo uses for bridge-out flows.
 //
 // Source: https://github.com/RozoAI/rozo-intents-contracts (v1).
 const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL"
 
 // MainnetPaymentContracts is the full set of Rozo bridge-out C
 // contracts on Stellar pubnet. The original three were confirmed by
-// RozoAI 2026-05-21 — all emit the same PaymentEvent / FlushEvent
+// RozoAI — all emit the same PaymentEvent / FlushEvent
 // schemas. The decoder matches PaymentEvent / FlushEvent by topic[0],
 // so adding a contract here is a watchlist concern (cross-validation
 // + scoping), not a decoder-shape change.
@@ -52,11 +50,11 @@ const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWO
 // G-wallet relayer flows handle the memo-bearing path — see
 // [MainnetRelayerAccounts].
 //
-// 4th entry (`CAFO6OUZ…`) admitted 2026-07-09 per the §0.7
-// recognition audit — it emitted exactly ONE payment_event (ledger
-// 61522543) and wasn't yet on this list. Evidence, all independently
-// verified against the ClickHouse lake on r1 (read-only: no operator
-// confirmation from RozoAI obtained for this one):
+// The 4th entry (`CAFO6OUZ…`) was admitted after a recognition audit
+// found it had emitted exactly ONE payment_event (ledger 61522543)
+// while off this list. Evidence, all independently verified against
+// the ClickHouse lake on r1 (read-only: no operator confirmation from
+// RozoAI obtained for this one):
 //
 //   - WASM hash bytewise IDENTICAL to the original three
 //     (`b56aedeaf80c3d4b7c4c2ddf3893ac47c3ecff1a0a6f19152ca993e5bb294414`,
@@ -76,15 +74,15 @@ const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWO
 //     spoof/collision (see decode.go's Classify doc for the topic-
 //     collision risk this package guards against; two OTHER
 //     contracts found in the same lake sweep — CDSXS5GK…, CCP6WOKM…
-//     — collide on the legacy `payment` symbol but have unrelated
+//     — collide on the short-form `payment` symbol but have unrelated
 //     body schemas and are correctly NOT on this list).
 //
 // Because the WASM hash is bytewise identical to the already-audited
-// hash (docs/operations/wasm-audits/rozo.md, approved 2026-05-26),
-// this contract is covered by that same audit's findings by
-// construction — no separate wasm-history walk needed. This is the
-// doc's own documented re-audit trigger ("a new Rozo deploy beyond
-// MainnetPaymentContracts"); the audit doc records the addition.
+// hash (docs/operations/wasm-audits/rozo.md), this contract is covered
+// by that same audit's findings by construction — no separate
+// wasm-history walk needed. This is the doc's own documented re-audit
+// trigger ("a new Rozo deploy beyond MainnetPaymentContracts"); the
+// audit doc records the addition.
 var MainnetPaymentContracts = []string{
 	"CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
 	"CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
@@ -94,8 +92,8 @@ var MainnetPaymentContracts = []string{
 
 // MainnetRelayerAccounts is the set of CLASSIC Stellar accounts
 // Rozo's relayer infrastructure uses to handle USDC / EURC bridge
-// flows. Confirmed by RozoAI 2026-05-21 — "those 2 addresses should
-// cover most of the txs on usdc/eurc".
+// flows. Confirmed by RozoAI: "those 2 addresses should cover most of
+// the txs on usdc/eurc".
 //
 // These are G-strkey accounts (classic accounts), not contracts.
 // They show up as either the SOURCE or DESTINATION of classic
@@ -118,12 +116,12 @@ var MainnetRelayerAccounts = []string{
 // suggested `symbol_short!("payment")` / `symbol_short!("flush")`, but
 // the DEPLOYED mainnet contract emits the full-length ScSymbols
 // "payment_event" / "flush_event" (13/11 chars — too long for
-// symbol_short!). Confirmed against the lake 2026-07-07: the three
-// gated Rozo contracts emit topic_0_sym="payment_event" (393 events),
-// zero as "payment" — so the original short-form match never fired and
-// rozo_events was empty. We match BOTH forms: the long form is what's
-// live, the short form is kept for forward-safety (contracts upgrade
-// in place; a future/other version could emit either).
+// symbol_short!). Confirmed against the lake: the three gated Rozo
+// contracts emitted topic_0_sym="payment_event" (393 events) and zero
+// as "payment", so a short-form-only match would never fire. We match
+// BOTH forms: the long form is what's live, the short form is kept for
+// forward-safety (contracts upgrade in place; a future/other version
+// could emit either).
 const (
 	EventPayment = "payment"
 	EventFlush   = "flush"
@@ -138,8 +136,8 @@ const (
 // a single string-equal comparison rather than a full SCVal
 // decode per event.
 var (
-	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // legacy short form (never observed live)
-	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // legacy short form (never observed live)
+	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // short form (never observed live)
+	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // short form (never observed live)
 
 	// The live long-form topics — what the deployed contract emits.
 	TopicSymbolPaymentEvent = scval.MustEncodeSymbol(symPaymentEvent) // topic[0] of payment events (live)
@@ -164,12 +162,12 @@ var (
 // from.clone()), PaymentEvent { … })` call suggests a 2-tuple
 // topic `(symbol_short!("payment"), from: Address)`, but that is
 // NOT what the deployed mainnet contract emits. Verified against
-// 3/3 real lake fixtures (ledgers 61859684, 63147040, 61797898;
-// §0.7 verification, 2026-07-09): every observed payment_event has
-// topic_count=1 — a single Symbol `("payment_event",)`, no
-// second topic element. `from` is carried ONLY in the body ScMap,
-// not duplicated as topic[1]. Do not rely on topic[1] for `from`;
-// decode it via DecodePayment's map lookup like every other field.
+// 3/3 real lake fixtures (ledgers 61859684, 63147040, 61797898):
+// every observed payment_event has topic_count=1 — a single Symbol
+// `("payment_event",)`, no second topic element. `from` is carried
+// ONLY in the body ScMap, not duplicated as topic[1]. Do not rely on
+// topic[1] for `from`; decode it via DecodePayment's map lookup like
+// every other field.
 // Body shape: the struct above as a ScMap (Soroban's
 // `#[contracttype]` macro lays out struct fields as a Map).
 //
@@ -191,7 +189,7 @@ type Payment struct {
 	// Payer — `from` field of PaymentEvent, read from the body
 	// ScMap. NOT duplicated in the topic: the deployed contract's
 	// topic is a 1-element `(payment_event,)` symbol only (verified
-	// 2026-07-09, see the type doc above) — there is no topic[1].
+	// against the lake, see the type doc above) — there is no topic[1].
 	From string
 
 	// Recipient — `destination` from PaymentEvent. Fixed at

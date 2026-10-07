@@ -258,14 +258,11 @@ func runOneTick(
 			}
 
 			// Run the analysis but discard its stdout output — we
-			// only need the divergence bool. The diff itself is
-			// already in the metrics labels (region pair) for ops to
-			// triage. The second return (compared) is intentionally
-			// unused here — this monitor's "error" outcome is
-			// deliberately scoped to allFailed() (see comment below);
-			// widening it to the not-compared signal used by
-			// `cross-region-check`'s exit code is a separate change
-			// to this metrics path.
+			// only need the divergence and compared bools. The diff
+			// itself is already in the metrics labels (region pair)
+			// for ops to triage. compared feeds tickOutcome's
+			// "inconclusive" label; the "error" outcome stays scoped
+			// to allFailed().
 			divergence, compared := analyseRegionResults(metric, pair, bucketFrom, bucketTo, results, io.Discard)
 
 			outcome := tickOutcome(divergence, compared, allFailed(results))

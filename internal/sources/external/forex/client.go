@@ -15,7 +15,7 @@
 // no API or schema migrations.
 //
 // Relationship to the other FX packages under internal/sources/external/:
-// this package and its sibling [frankfurter] predate the
+// this package and its sibling [frankfurter] sit outside the
 // [external.Connector] framework and keep their own bespoke worker /
 // FXQuoteWriter seam rather than implementing Streamer/Poller/Backfiller.
 // forex ("massive" in [external.Registry]) is the ACTIVE feed, run as a
@@ -26,9 +26,8 @@
 // ALSO ECB-backed like [frankfurter], so both packages read the same
 // upstream data through two independent code paths — a known, accepted
 // duplication (not yet unified into one framework; that would be a
-// behavior change, not a move). Folded from internal/sources/{forex,
-// frankfurter}/ into internal/sources/external/{forex,frankfurter}/ so
-// every off-chain FX/CEX source lives under one directory (D1 M1-3).
+// behavior change). Both live under internal/sources/external/ so every
+// off-chain FX/CEX source sits under one directory.
 package forex
 
 import (

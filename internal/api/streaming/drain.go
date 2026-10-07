@@ -18,7 +18,7 @@ import "sync"
 // downtime, and the background-worker wait that shares the deadline
 // gets nothing at all.
 //
-// Measured on r1 (2026-09-15), same binary, two restarts: 30.18s with
+// Measured on r1, same binary, two restarts: 30.18s with
 // one browser on /v1/ledger/stream, 0.21s with none.
 //
 // Why NOT http.Server.BaseContext. Deriving every request context from
@@ -34,9 +34,8 @@ import "sync"
 // starts, and hand the Drain to the stream writers through
 // [StreamOptions]. Begin and Done are safe on a nil receiver and on
 // the zero value: both report a nil channel, which in a select blocks
-// forever, so a caller that wires no Drain behaves exactly as it did
-// before this type existed. Use NewDrain for one that can actually
-// fire.
+// forever, so a caller that wires no Drain is never told to drain. Use
+// NewDrain for one that can actually fire.
 type Drain struct {
 	once sync.Once
 	ch   chan struct{}

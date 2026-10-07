@@ -2,21 +2,20 @@ package dashboardauth
 
 // Single-use enforcement for WebAuthn ceremony challenges.
 //
-// The ceremony cookie (passkey.go) is integrity-bound and — since
-// audit-2026-08-13 — time-bound. Neither property makes it
-// SINGLE-USE: an HMAC stays valid for as long as the payload lives,
-// so a captured `finish-login` request (ceremony cookie + assertion
-// body) could be re-sent for the rest of the challenge's lifetime,
-// minting a fresh session cookie every time. WebAuthn's whole replay
-// story rests on the challenge being spent exactly once; nothing in
-// the protocol enforces that for the relying party — the RP must
-// remember.
+// The ceremony cookie (passkey.go) is integrity-bound and time-bound.
+// Neither property makes it SINGLE-USE: an HMAC stays valid for as
+// long as the payload lives, so a captured `finish-login` request
+// (ceremony cookie + assertion body) could be re-sent for the rest of
+// the challenge's lifetime, minting a fresh session cookie every time.
+// WebAuthn's whole replay story rests on the challenge being spent
+// exactly once; nothing in the protocol enforces that for the relying
+// party — the RP must remember.
 //
 // So the RP remembers: after an assertion verifies, the ceremony's
 // digest claims a slot, and a second presentation of the same
 // ceremony finds the slot taken and is refused. The mechanism is
 // deliberately the same one the SEP-10 challenge replay guard uses
-// (`internal/auth/sep10/redisreplay.go`, F-1224): Redis SETNX with a
+// (`internal/auth/sep10/redisreplay.go`): Redis SETNX with a
 // TTL, claimed AFTER signature verification so bogus submissions
 // can't spend slots, and FAIL CLOSED when the store can't be reached
 // — an authentication we cannot prove is fresh is not an

@@ -79,12 +79,12 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 // data can be EITHER a simple i128 OR a map containing amount +
 // to_muxed_id — type-test before MustI128()."
 //
-// The previous i128-only decode rejected every map-shaped body with
-// ErrAmountNotI128 and dropped the whole row (2026-07-06 dropped-mints
-// finding: 37 of 54 mints on CBH4M45T…OCKF — and map-shaped mints on 8
-// of the 15 watched contracts — were lost, driving mint_total to zero
-// so `burn_total > mint_total` tripped the aggregator's dominant-burn
-// guard). Decode by Map-field-NAME (`amount`), never by position, per
+// An i128-only decode rejects every map-shaped body with
+// ErrAmountNotI128 and drops the whole row; one such decode lost 37 of
+// 54 mints on CBH4M45T…OCKF — and map-shaped mints on 8 of the 15
+// watched contracts — driving mint_total to zero so `burn_total >
+// mint_total` tripped the aggregator's dominant-burn guard. Decode by
+// Map-field-NAME (`amount`), never by position, per
 // docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	switch sv.Type {
@@ -123,13 +123,13 @@ func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 //
 // Discriminator: if topic[2] decodes as an Address, it is the legacy
 // admin-prefixed form and the counterparty is topic[2]; otherwise
-// topic[2] is the sep0011_asset String (CAP-67 / Whisk, mainnet
-// 2025-09-03) — or absent (bare spec) — and the counterparty is
-// topic[1]. Verified against the r1 lake (2026-06-15): 99.96% of
-// recent mints + 100% of clawbacks are the CAP-67 shape, which the
-// previous fixed-topic[2] decode DROPPED entirely (AsAddressStrkey
-// returns ErrScValType on the String → the whole row was lost →
-// total_supply under-counted). burn's topic[1] was correct all along.
+// topic[2] is the sep0011_asset String (CAP-67 / Whisk) — or absent
+// (bare spec) — and the counterparty is topic[1]. Verified against the
+// r1 lake: 99.96% of recent mints + 100% of clawbacks were the CAP-67
+// shape, which a fixed-topic[2] decode would DROP entirely
+// (AsAddressStrkey returns ErrScValType on the String → the whole row
+// is lost → total_supply under-counts). burn's counterparty is topic[1]
+// in every shape.
 //
 // Older / shorter topic vectors surface ErrShortTopic so the caller
 // drops the row rather than writing garbage.

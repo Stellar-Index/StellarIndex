@@ -18,12 +18,14 @@ import (
 // Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
 // JSON numbers (all far below 2^53).
 //
-// The creation and sponsorship relationships are NOT merged here. This surface is
-// the CREATOR one only — funder → created account, from the
+// The creation and sponsorship relationships are NOT merged here. This
+// surface is the CREATOR one only — funder → created account, from the
 // CreateAccount operation, immutable once it happened. The SPONSOR
-// relationship (who currently pays an entry's base reserve) is a
-// different question over a different source and is not served yet;
-// nothing in this response should be read as a sponsorship figure.
+// relationship (who pays an entry's base reserve) is a different
+// question over a different source; its history (arrangements started,
+// never the live set) is served by /v1/accounts/sponsors and
+// /v1/accounts/{g_strkey}/graph?relation=sponsored. Nothing in this
+// response should be read as a sponsorship figure.
 type AccountCreatorsView struct {
 	Creators []AccountCreatorV `json:"creators"`
 	Totals   struct {

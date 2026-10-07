@@ -19,26 +19,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// BackfillIndex fills a historical price window from an INDEX source
-// (currently CoinGecko) as oracle updates.
-//
-// This is the cascade's last resort, and it exists because the preferred
-// venues cannot reach certain windows even in principle. For 2017-11-15,
-// kraken, binance, coinbase and bitstamp each return zero trades,
-// because Binance listed XLM in 2018 and Coinbase in 2019. Two
-// windows are unreachable from venues for that reason — 2017-08-23..
-// 2018-02-15 (177 days) and everything before Kraken's floor of 2017-01-17
-// (475 days back to chain genesis).
-//
-// It writes ORACLE UPDATES, never trades. `trades` rows are venue fills
-// carrying source + ledger + tx_hash + op_index, and ADR-0033's completeness
-// claims are provable because that provenance exists per row; an index price
-// is a volume-weighted composite across venues we do not observe and has
-// none of it. Keeping the two apart is what stops a convenience backfill
-// quietly degrading a claim the project currently earns.
-// backfillIndexPlan is the validated shape of a backfill-index invocation:
-// every flag resolved, parsed and checked, so the run loop below deals only
-// with the walk itself. Splitting it out is what keeps either half readable.
 // coingeckoHourlyChunkDays is the window width at or below which
 // CoinGecko serves hourly points instead of daily ones. It is the API's
 // own threshold, not a tunable of ours.
@@ -48,6 +28,9 @@ const coingeckoHourlyChunkDays = 90
 // Daily history reaches back to 2013; hourly does not exist before this.
 var hourlyHistoryStart = time.Date(2018, time.January, 1, 0, 0, 0, 0, time.UTC)
 
+// backfillIndexPlan is the validated shape of a backfill-index invocation:
+// every flag resolved, parsed and checked, so the run loop below deals only
+// with the walk itself. Splitting it out is what keeps either half readable.
 type backfillIndexPlan struct {
 	cfgPath       string
 	source        string
@@ -123,6 +106,23 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	return plan, nil
 }
 
+// BackfillIndex fills a historical price window from an INDEX source
+// (currently CoinGecko) as oracle updates.
+//
+// This is the cascade's last resort, and it exists because the preferred
+// venues cannot reach certain windows even in principle. For 2017-11-15,
+// kraken, binance, coinbase and bitstamp each return zero trades,
+// because Binance listed XLM in 2018 and Coinbase in 2019. Two
+// windows are unreachable from venues for that reason — 2017-08-23..
+// 2018-02-15 (177 days) and everything before Kraken's floor of 2017-01-17
+// (475 days back to chain genesis).
+//
+// It writes ORACLE UPDATES, never trades. `trades` rows are venue fills
+// carrying source + ledger + tx_hash + op_index, and ADR-0033's completeness
+// claims are provable because that provenance exists per row; an index price
+// is a volume-weighted composite across venues we do not observe and has
+// none of it. Keeping the two apart is what stops a convenience backfill
+// quietly degrading a claim the project currently earns.
 func BackfillIndex(args []string) error {
 	plan, err := parseBackfillIndexArgs(args)
 	if err != nil {

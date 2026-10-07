@@ -47,7 +47,7 @@ const MagicLinkPlaintextLen = 32
 // SessionTokenLen — the random-bytes length of the session cookie
 // token. 32 bytes = 256 bits: the cookie carries this token (hex),
 // and the DB stores only sha256(token), so read-access to the
-// sessions table is not directly replayable (W1-auth-passkey-2).
+// sessions table is not directly replayable.
 const SessionTokenLen = 32
 
 // HashSessionToken returns sha256 of a session cookie token. The
@@ -91,25 +91,22 @@ const loginCodeDomain = "stellarindex/login-code/v1|"
 // codeFromHashKeyed derives the 6-digit email code from a stored
 // token hash UNDER A SERVER-SIDE SECRET.
 //
-// History (audit-2026-08-03, aggregate+dashboardauth: "the 6-digit
-// code is derivable from the stored hash"): the previous derivation
-// was an unkeyed, public function of magic_link_tokens.token_hash —
-// base32 of the hash's first 4 bytes mapped to digits. Anyone with a
-// read of that table (SQL injection on any other surface, a stolen
-// backup, a curious operator) could compute every in-flight sign-in
-// code DIRECTLY — no brute force, no email access — and mint a
-// session for any address they could trigger a login for via
-// POST /v1/auth/verify-code. The token PLAINTEXT was never
-// recoverable (preimage-safe), but the code path made that
-// irrelevant: the code was equivalent to the token, and the code was
-// public knowledge given the row.
+// Why keyed: were the code an unkeyed, public function of
+// magic_link_tokens.token_hash, anyone with a read of that table (SQL
+// injection on any other surface, a stolen backup, a curious operator)
+// could compute every in-flight sign-in code DIRECTLY — no brute force,
+// no email access — and mint a session for any address they could
+// trigger a login for via POST /v1/auth/verify-code. The token
+// PLAINTEXT is not recoverable (preimage-safe), but that would not
+// matter: the code would be equivalent to the token, and public
+// knowledge given the row.
 //
-// Now the code is HMAC-SHA256(secret, domain || token_hash) reduced
-// to 6 digits. The secret lives in config/env (never in Postgres), so
-// a database read alone yields nothing: without the secret the code
-// is uniformly unpredictable, and the existing online-guessing bounds
-// (per-token attempt cap + durable per-email lockout, C3-032) are the
-// only attack surface left — unchanged UX, one derivation swapped.
+// The code is HMAC-SHA256(secret, domain || token_hash) reduced to 6
+// digits. The secret lives in config/env (never in Postgres), so a
+// database read alone yields nothing: without the secret the code is
+// uniformly unpredictable, and the online-guessing bounds (per-token
+// attempt cap + durable per-email lockout) are the only attack surface
+// left.
 //
 // The uint32 % 10^6 reduction has negligible modulo bias (2^32 is
 // ~4295 full cycles of 10^6; the first 967296 codes appear once more

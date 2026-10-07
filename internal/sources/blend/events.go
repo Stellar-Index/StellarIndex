@@ -24,8 +24,7 @@
 // stress-prices contribute as reference points
 // on the asset detail surface, not into VWAP.
 //
-// Verified 2026-04-22 against pool/src/events.rs +
-// pool-factory/src/events.rs at clone time of
+// Verified against pool/src/events.rs + pool-factory/src/events.rs in
 // .discovery-repos/blend-contracts.
 package blend
 
@@ -41,17 +40,17 @@ import (
 const SourceName = "blend"
 
 // Event names — topic[0] of every Blend pool / pool-factory event,
-// as a Soroban Symbol on the wire. Verified 2026-04-22 against
+// as a Soroban Symbol on the wire. Verified against
 // blend-contracts-v2 commit c19abee5b9be4f49e0cda9057e87d343e5dcc095.
 //
 // The money-market / credit-risk / admin / pool-factory kinds (all
 // but the three auction ones) are also the persisted `event_kind`
 // column value in blend_positions / blend_emissions / blend_admin,
 // so their canonical definition lives in [domain.BlendEventSupply]
-// and its siblings (D8 M0-1: internal/storage/timescale validates
-// against these values and must not import upward into this package
-// to do so); the const names below are aliases so every existing
-// caller of blend.EventSupply etc. is unaffected. The three auction
+// and its siblings (internal/storage/timescale validates against
+// these values and must not import upward into this package to do
+// so); the const names below are aliases so every existing caller
+// of blend.EventSupply etc. is unaffected. The three auction
 // consts have no storage-side validation switch (blend_auctions.go
 // keeps its blend import regardless, for
 // blend.ParseReserveConfigMetadata + the API-shared blend.ReserveConfig
@@ -91,29 +90,27 @@ const (
 	// for runtime pool enumeration.
 	EventDeploy = domain.BlendEventDeploy
 
-	// V1 pool-factory (CCZD6ESM…) events — ROADMAP #89 residual,
-	// 2026-07-10. See domain.BlendEventUpdateEmissions /
-	// domain.BlendEventNewLiquidationAuction doc + this package's
-	// README "Known gap" for the evidence trail.
+	// V1 pool-factory (CCZD6ESM…) events. The evidence trail is in the
+	// domain.BlendEventUpdateEmissions / domain.BlendEventNewLiquidationAuction
+	// docs and this package's README "Known gap".
 	EventUpdateEmissions          = domain.BlendEventUpdateEmissions
 	EventNewLiquidationAuction    = domain.BlendEventNewLiquidationAuction
 	EventDeleteLiquidationAuction = domain.BlendEventDeleteLiquidationAuction
 )
 
-// Mainnet V2 contract addresses — verified 2026-04-22 via
-// stellar.expert; cross-referenced against
-// docs/discovery/dexes-amms/blend.md and the Blend Capital
-// blend-contracts-v2 deploy manifest.
+// Mainnet V2 contract addresses — verified via stellar.expert and
+// cross-referenced against docs/discovery/dexes-amms/blend.md and the
+// Blend Capital blend-contracts-v2 deploy manifest.
 const (
 	// MainnetPoolFactory is the documented Pool Factory V2. Blend was
 	// REDEPLOYED, so this is not the only factory — see MainnetPoolFactories.
 	MainnetPoolFactory = "CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU"
-	// MainnetPoolFactoryV1 is the earlier pool factory. Verified empirically
-	// from the r1 lake (2026-06-12): it emits `deploy` events with an
-	// ScVal::Address body (the blend deploy shape) and its children include
-	// 4 of the 9 known auction-emitting Blend pools (CDVQVKOY, CBP7NO6F,
-	// CDE65QK2, CAQF5KNO) — pools the V2-only gate silently dropped. Its
-	// first deploy is at ledger 51_499_915.
+	// MainnetPoolFactoryV1 is the earlier pool factory. Verified
+	// empirically from the r1 lake: it emits `deploy` events with an
+	// ScVal::Address body (the blend deploy shape) and its children
+	// include 4 of the 9 known auction-emitting Blend pools (CDVQVKOY,
+	// CBP7NO6F, CDE65QK2, CAQF5KNO) — pools a V2-only gate would silently
+	// drop. Its first deploy is at ledger 51_499_915.
 	MainnetPoolFactoryV1 = "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
 	// MainnetBackstop is the Backstop V2 singleton. Like the pool
 	// factories, the backstop was REDEPLOYED: V1 is below. Backstop
@@ -123,10 +120,10 @@ const (
 	// backstops to the pool gate registry: pool decode paths would
 	// mis-decode their bodies.
 	MainnetBackstop = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
-	// MainnetBackstopV1 — found 2026-06-12 via lake enumeration after a
-	// Dune dashboard (mootz12/blend-v2-events) surfaced the backstop
-	// event surface; profile (queue_withdrawal/gulp_emissions/…, ledgers
-	// 51.49M→62.08M) matches the backstop signature in the V1 era.
+	// MainnetBackstopV1 — found by lake enumeration after a Dune dashboard
+	// (mootz12/blend-v2-events) surfaced the backstop event surface; its
+	// profile (queue_withdrawal/gulp_emissions/…, ledgers 51.49M→62.08M)
+	// matches the backstop signature in the V1 era.
 	MainnetBackstopV1 = "CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3"
 )
 

@@ -264,12 +264,12 @@ func ParseAsset(s string) (Asset, error) {
 	if s == "native" {
 		return NativeAsset(), nil
 	}
-	// Shorthand for native (F-0024). CG/CMC users type "XLM" and
-	// expect the native Stellar asset. Accept case-insensitive XLM
-	// + any case variant of "native" as aliases. Broader slug ->
-	// asset_id resolution (USDC -> Circle, AQUA -> AQUA-G... etc)
-	// lives at the API layer via the verified-currency catalogue,
-	// not here — keeping ParseAsset pure of catalogue state.
+	// Shorthand for native. CG/CMC users type "XLM" and expect the
+	// native Stellar asset. Accept case-insensitive XLM + any case
+	// variant of "native" as aliases. Broader slug -> asset_id
+	// resolution (USDC -> Circle, AQUA -> AQUA-G... etc) lives at the
+	// API layer via the verified-currency catalogue, not here —
+	// keeping ParseAsset pure of catalogue state.
 	if strings.EqualFold(s, "XLM") || strings.EqualFold(s, "native") {
 		return NativeAsset(), nil
 	}
@@ -361,11 +361,11 @@ func (a Asset) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner.
 //
-// A SQL NULL is an ERROR, not a zero Asset (C4-068, audit-2026-07-23).
+// A SQL NULL is an ERROR, not a zero Asset.
 // [Value] refuses to write anything that fails [Validate], so a NULL in
 // an asset column never came from this type — it is a schema/query
 // defect (a LEFT JOIN that missed, a column that should be NOT NULL).
-// Returning nil and leaving `*a = Asset{}` produced an Asset with
+// Returning nil and leaving `*a = Asset{}` would produce an Asset with
 // `Type == ""`: it survives every ==/Equal comparison, formats as the
 // empty string, and only fails if a caller happens to call Validate —
 // i.e. exactly the "invalid data that reads as valid" shape this

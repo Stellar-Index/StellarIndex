@@ -7,29 +7,25 @@
 // unset so it drops out of the pending-listing predicate but
 // remains visible in the dashboard delivery log.
 //
-// F-1270 (audit-2026-05-12). Architecture: one poll loop per
-// process, configurable poll interval (default 5s), one HTTP
-// client shared across deliveries.
+// Architecture: one poll loop per process, configurable poll interval
+// (default 5s), one HTTP client shared across deliveries.
 //
-// # Concurrency contract (AGT-06, audit-2026-07-23)
+// # Concurrency contract
 //
 // The worker is safe to run alongside a second instance because the
 // STORE guarantees at-most-one-in-flight delivery per row: the
 // [DeliveryStore.ListPendingDeliveries] implementation claims rows with
 // `FOR UPDATE SKIP LOCKED` and, in the same statement, pushes
-// `next_attempt_at` 5 minutes out as a lease (F-1247, see
+// `next_attempt_at` 5 minutes out as a lease (see
 // internal/platform/postgresstore/webhook_store.go). Two workers never
 // hand the same row to two HTTP POSTs, and a worker that dies
 // mid-delivery releases the row when its lease expires.
 //
 // That guarantee is part of the DeliveryStore CONTRACT, not an
 // implementation detail: any substitute implementation MUST claim-and-
-// lease atomically. This docstring previously claimed the opposite —
-// that no SKIP LOCKED dedup existed and double-delivery was merely
-// "cosmetically harmless" — which was both false about the store and an
-// invitation to write a replacement without the primitive the design
-// depends on. MarkDelivered / MarkAttemptFailed idempotency is a
-// second line of defence, not the first.
+// lease atomically, or two workers can POST the same row twice.
+// MarkDelivered / MarkAttemptFailed idempotency is a second line of
+// defence, not the first.
 package customerwebhook
 
 import (
@@ -71,7 +67,7 @@ import (
 //     row is genuinely absent. The worker treats not-found as terminal
 //     and every other error as transient/retryable, so an implementation
 //     that flattens transport failures into ErrNotFound would silently
-//     discard deliveries (NTF-13).
+//     discard deliveries.
 //
 // It must ALSO implement [AccountStatusReader]; see that type for why
 // the requirement is enforced in [New] rather than listed here.
@@ -83,20 +79,19 @@ type DeliveryStore interface {
 }
 
 // AccountStatusReader is the account-level kill switch on the OUTBOUND
-// side (SEC-06 / RLT-420). WebhookAccountStatus returns the lifecycle
+// side. WebhookAccountStatus returns the lifecycle
 // status of the account that owns the webhook, or [platform.ErrNotFound]
 // when the webhook is gone.
 //
-// C3-010 wired the kill switch into the auth validator, so a suspended
-// account's API keys stop authenticating — but nothing in this delivery
-// path ever read account status, so a suspended or closed customer kept
-// RECEIVING their data at the endpoints they had registered. The
-// suspension was inbound-only. The worker now re-reads the status
-// immediately before it signs and POSTs.
+// The auth validator enforces the kill switch inbound, so a suspended
+// account's API keys stop authenticating — but without a status read on
+// this delivery path a suspended or closed customer would keep RECEIVING
+// their data at the endpoints they had registered. The worker re-reads
+// the status immediately before it signs and POSTs.
 //
 // It is required, not optional: [New] refuses a store that cannot answer
 // it, because a delivery path that silently skips the kill switch when
-// the capability is missing is the bug this type exists to remove. The
+// the capability is missing is exactly the gap this type exists to close. The
 // requirement is asserted at construction rather than added to
 // [DeliveryStore] because the production wiring (cmd/stellarindex-api)
 // passes a [platform.WebhookStore] interface value; promoting
@@ -153,21 +148,20 @@ const (
 	maxDrainBytes = 64 << 10 // 64 KiB
 
 	// webhookUserAgent identifies deliveries to the customer's endpoint
-	// operator so an unexpected POST can be traced back to us (RLT-450).
-	// Every other outbound fetch in the repo sets an identifying
-	// User-Agent (internal/metadata/sep1.go, internal/stellarrpc); this
-	// path was the one exception.
+	// operator so an unexpected POST can be traced back to us, as every
+	// other outbound fetch in the repo does (internal/metadata/sep1.go,
+	// internal/stellarrpc).
 	webhookUserAgent = "stellar-index/webhooks (+https://stellarindex.io)"
 )
 
-// Compile-time guard for the two-worker double-delivery invariant
-// (MEDIUM, F-1270 hardening): the worst-case serial batch time
-// (defaultBatchLimit × (defaultHTTPTimeout + markWriteTimeout)) must stay
-// strictly under the store's claim lease. Raising any of the three past
-// that point fails the build here rather than silently reintroducing the
-// double-delivery race. 25 × (10s + 1s) = 275s < 300s, with 25s of
-// margin. The mark term is in the product because the outcome write has
-// its own deadline (K025): it no longer shares the attempt's 10s.
+// Compile-time guard for the two-worker double-delivery invariant: the
+// worst-case serial batch time (defaultBatchLimit × (defaultHTTPTimeout +
+// markWriteTimeout)) must stay strictly under the store's claim lease.
+// Raising any of the three past that point fails the build here rather
+// than silently opening the double-delivery race. 25 × (10s + 1s) = 275s
+// < 300s, with 25s of margin. The mark term is in the product because
+// the outcome write has its own deadline rather than sharing the
+// attempt's 10s.
 const _ = uint(storeLeaseDuration - defaultBatchLimit*(defaultHTTPTimeout+markWriteTimeout) - time.Nanosecond)
 
 // Options tunes the worker. Zero values yield production defaults.
@@ -250,8 +244,7 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 	if !ok {
 		// Fail closed at the earliest possible point. The alternative —
 		// skipping the account check when the store cannot answer it —
-		// silently restores the inbound-only kill switch this worker was
-		// changed to close (SEC-06 / RLT-420).
+		// silently reduces the account kill switch to inbound-only.
 		panic("customerwebhook: New: store must implement AccountStatusReader (the account kill switch must not be bypassable)")
 	}
 	if opts.PollInterval <= 0 {
@@ -273,12 +266,12 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 	if opts.Clock == nil {
 		opts.Clock = time.Now
 	}
-	// RLT-223: the compile-time guard beside the defaults only covers the
+	// The compile-time guard beside the defaults only covers the
 	// DEFAULT BatchLimit and HTTPClient.Timeout. A caller-supplied Options
 	// can raise either independently — Options.BatchLimit's doc comment
 	// says explicitly "if you raise this, keep the product under the
-	// lease", which was an unenforced operator obligation, not a runtime
-	// check. effectiveTimeout mirrors attemptTimeout()'s own fallback (a
+	// lease", which alone is an unenforced operator obligation, not a
+	// runtime check. effectiveTimeout mirrors attemptTimeout()'s own fallback (a
 	// zero/absent Timeout still bounds each attempt at defaultHTTPTimeout
 	// via the attempt context, so that — not the raw client field — is
 	// the true per-attempt worst case). Fail closed at construction
@@ -444,12 +437,12 @@ func lanesByWebhook(pending []platform.WebhookDelivery) [][]platform.WebhookDeli
 	return lanes
 }
 
-// deliverOneRecovered isolates a single delivery's panic to that delivery
-// (RLT-450). Without this, tick's top-level `defer
-// recoverBackgroundWorker(...)` (cmd/stellarindex-api) only stops the whole
-// process from crashing — it still ends the poll loop permanently, so one
-// bad row (a future decode edge case, a nil dereference) would silently
-// starve every OTHER pending delivery for the rest of the process lifetime.
+// deliverOneRecovered isolates a single delivery's panic to that delivery.
+// Without this, tick's top-level `defer recoverBackgroundWorker(...)`
+// (cmd/stellarindex-api) only stops the whole process from crashing — it
+// still ends the poll loop permanently, so one bad row (a future decode
+// edge case, a nil dereference) would silently starve every OTHER pending
+// delivery for the rest of the process lifetime.
 func (w *Worker) deliverOneRecovered(ctx context.Context, d platform.WebhookDelivery) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -515,10 +508,9 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 	if !w.accountGateOpen(ctx, d) {
-		// Account-level kill switch (SEC-06 / RLT-420). The per-webhook
-		// `Enabled` flag above is the CUSTOMER's switch; this is the
-		// OPERATOR's, and until this check existed only the customer had
-		// one. accountGateOpen has already recorded or parked the row.
+		// Account-level kill switch. The per-webhook `Enabled` flag above
+		// is the CUSTOMER's switch; this is the OPERATOR's.
+		// accountGateOpen has already recorded or parked the row.
 		return
 	}
 	if len(wh.SigningKey) == 0 {
@@ -564,7 +556,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	resp, err := w.opts.HTTPClient.Do(req)
 	if err != nil {
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("network_error").Observe(time.Since(start).Seconds())
-		// RSEC-Y1: err can carry internal network detail — in particular
+		// err can carry internal network detail — in particular
 		// the SSRF dial guard's own refusal names the resolved address it
 		// blocked. last_error is stored verbatim and served by the
 		// dashboard API's deliveryDTO, so the customer gets a fixed,
@@ -666,10 +658,9 @@ func (w *Worker) classifyResponse(ctx context.Context, d platform.WebhookDeliver
 		// Redirects are DISABLED (CheckRedirect returns
 		// ErrUseLastResponse) as part of the SSRF defence, so a 3xx can
 		// never succeed on a later attempt — retrying it 15 times over
-		// ~8h is pure waste and the recorded reason used to say
-		// "transient", which is false and misdirects diagnosis. A
-		// trailing-slash 308 from nginx/Rails/Django is the common case
-		// (cold audit 2026-08-04).
+		// ~8h is pure waste, and recording it as "transient" would be
+		// false and misdirect diagnosis. A trailing-slash 308 from
+		// nginx/Rails/Django is the common case.
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("client_error").Observe(elapsed)
 		w.handleFailure(ctx, d, status,
 			fmt.Sprintf("HTTP %d (redirect not followed — register the final URL)", status),
@@ -678,9 +669,9 @@ func (w *Worker) classifyResponse(ctx context.Context, d platform.WebhookDeliver
 		// Not every 4xx is the customer's fault forever. 408, 425 and
 		// 429 are explicitly temporary in the HTTP spec, and 429 is what
 		// any endpoint behind a rate-limiting gateway returns under a
-		// burst — treating it as terminal DESTROYED the event on its
-		// first attempt, which is how a SEV-1 notification could be lost
-		// to a coincident freeze burst (cold audit 2026-08-04).
+		// burst — treating it as terminal would DESTROY the event on its
+		// first attempt, so a SEV-1 notification could be lost to a
+		// coincident freeze burst.
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("server_error").Observe(elapsed)
 		w.handleFailure(ctx, d, status,
 			fmt.Sprintf("HTTP %d (transient)", status), "server_error")
@@ -719,17 +710,17 @@ func isRetryable4xx(status int) bool {
 
 // mark runs a store write that records an attempt's OUTCOME, on a
 // context whose lifetime belongs to the write rather than to the attempt
-// it is recording (K025). Every outcome write goes through here.
+// it is recording. Every outcome write goes through here.
 //
 // The attempt context is the wrong lifetime for it twice over. Its
 // deadline starts before GetWebhook and the POST, so it expires no later
 // than the HTTP client's own timeout: a POST that times out — the
-// commonest failure there is — reached the mark with a context that was
-// already dead, MarkAttemptFailed failed on it, attempt_count never
-// advanced, and the row kept its claim lease and was re-POSTed every
-// lease interval, timing out again each time. The loop never ended on
-// its own and MaxAttempts could not end it, because no attempt was ever
-// counted. And its cancellation is the worker's shutdown signal: a
+// commonest failure there is — would reach the mark with a context that
+// is already dead, MarkAttemptFailed would fail on it, attempt_count
+// would never advance, and the row would keep its claim lease and be
+// re-POSTed every lease interval, timing out again each time. Nothing
+// would end that loop, not even MaxAttempts, because no attempt would
+// ever be counted. And its cancellation is the worker's shutdown signal: a
 // customer who was just sent an event must not be sent it again because
 // the process was stopping when the 200 came back.
 //
@@ -747,7 +738,7 @@ func (w *Worker) mark(ctx context.Context, write func(context.Context) error) er
 // missing/disabled, empty secret, un-buildable request), clearing its
 // schedule so it drops out of the pending list.
 //
-// NTF-WH-01: it must NOT silently discard the store write error. The row
+// It must NOT silently discard the store write error. The row
 // still carries the claim lease ListPendingDeliveries set (next_attempt_at
 // = now()+5m); if the terminal mark's UPDATE fails and the error is
 // dropped, attempt_count never advances and the row is re-claimed and the
@@ -873,8 +864,8 @@ func (w *Worker) setSignatureHeaders(h http.Header, wh platform.CustomerWebhook,
 }
 
 // signHMACSHA256 produces the hex-encoded HMAC-SHA-256 signature over the
-// timestamped payload `"<unix_ts>." + body` using `secret` (CS-055 —
-// signing the body alone made a captured delivery replayable forever).
+// timestamped payload `"<unix_ts>." + body` using `secret` (signing
+// the body alone would make a captured delivery replayable forever).
 // Consumers verify by recomputing HMAC-SHA-256(secret, "<X-StellarIndex-
 // Timestamp>." + rawBody), constant-time-comparing against the
 // `X-StellarIndex-Signature: sha256=…` header, AND rejecting a timestamp

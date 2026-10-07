@@ -53,7 +53,7 @@ type accountErasureRequest struct {
 }
 
 // HandleAccountDelete serves DELETE /v1/dashboard/account: erase the
-// session's account and every member of it (GH #809). Owner only, on a
+// session's account and every member of it. Owner only, on a
 // session minted within accountReauthWindow, with the slug typed back.
 func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.accountActionGate(w, r, accountRoute, "erase", maxAccountErasures)

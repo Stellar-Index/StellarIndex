@@ -1145,11 +1145,6 @@ func waitBounded(ctx context.Context, logger *slog.Logger, name string, wait fun
 	}
 }
 
-// startExternalConnectors builds the enabled off-chain connectors
-// from config and hands them to external.Run. Returns the wait
-// function the shutdown path calls to drain cleanly. A nil-op wait
-// is returned when no external sources are enabled — keeps the
-// shutdown sequence unconditional.
 // newECBPoller builds the ECB poller, applying the operator's
 // poll_interval override when set. Extracted from
 // [startExternalConnectors] so the override is unit-testable without
@@ -1175,6 +1170,11 @@ func newTiingoPoller(cfg config.TiingoVenueConfig) (*externaltiingo.Poller, erro
 	return p, nil
 }
 
+// startExternalConnectors builds the enabled off-chain connectors
+// from config and hands them to external.Run. Returns the wait
+// function the shutdown path calls to drain cleanly. A nil-op wait
+// is returned when no external sources are enabled — keeps the
+// shutdown sequence unconditional.
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	ctx context.Context,
 	cfg config.ExternalConfig,
@@ -1787,10 +1787,6 @@ func emitDiscoveryRecordFailMetricDelta(prev, current uint64, logger *slog.Logge
 	return current
 }
 
-// chExtractErrLog samples ClickHouse-extract failure WARNs: a
-// meta-version break fails EVERY ledger, so log only 1-in-256 to stay loud
-// without flooding. The Prometheus counter (errored outcome) carries the true
-// rate; this is just the human breadcrumb.
 // watchSorobanEventsSink bridges the raw-event sink's LostCount — rows
 // abandoned on a positively-classified permanent data fault or an
 // expired shutdown drain — onto
@@ -1840,6 +1836,10 @@ func emitSorobanEventsLostMetricDelta(prev, current uint64, logger *slog.Logger)
 	return current
 }
 
+// chExtractErrLog samples ClickHouse-extract failure WARNs: a
+// meta-version break fails EVERY ledger, so log only 1-in-256 to stay loud
+// without flooding. The Prometheus counter (errored outcome) carries the true
+// rate; this is just the human breadcrumb.
 var chExtractErrLog atomic.Uint64
 
 func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
@@ -2648,13 +2648,6 @@ func hashDBSweepComplete(res archivecompleteness.HashDBVerifyResult, observed in
 	return observed == int(to-from)+1 && res.Verified > 0
 }
 
-// hashDBVerifyPass (window: hashDBWindowRecent|hashDBWindowHistory, the
-// runs-counter label) runs one bounded ADR-0016 verify pass over an explicit
-// [from, to] ledger range and records/logs its outcome. It is separate
-// from hashDBVerifySweep so the same pass can run either off the live
-// tip's trailing window (hashDBVerifySweep's job) OR over an
-// operator-supplied older range that has already scrolled out of that
-// window — see runVerifyHashDBRange, the -verify-hashdb-from/-to CLI mode.
 // countNewDrift returns how many of res's drifted ledgers have not
 // already been counted into HashdbDriftTotal, marking the new ones
 // seen in the process. seen is nil for a one-off, non-repeating pass
@@ -2683,6 +2676,13 @@ func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]s
 	return newly
 }
 
+// hashDBVerifyPass (window: hashDBWindowRecent|hashDBWindowHistory, the
+// runs-counter label) runs one bounded ADR-0016 verify pass over an explicit
+// [from, to] ledger range and records/logs its outcome. It is separate
+// from hashDBVerifySweep so the same pass can run either off the live
+// tip's trailing window (hashDBVerifySweep's job) OR over an
+// operator-supplied older range that has already scrolled out of that
+// window — see runVerifyHashDBRange, the -verify-hashdb-from/-to CLI mode.
 func hashDBVerifyPass(
 	ctx context.Context,
 	logger *slog.Logger,

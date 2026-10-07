@@ -25,7 +25,7 @@ const opIndexFanoutStride = 1024
 const bandMaxFutureResolveTime = time.Hour
 
 // safeUnixEpochFloorSeconds mirrors canonical.SafeUnixSeconds's own
-// pre-2001 floor (unexported there). A raw resolve_time below it is
+// year-2001 floor (unexported there). A raw resolve_time below it is
 // garbage SafeUnixSeconds itself would have clamped to closedAt; band
 // needs the raw comparison directly (not just the clamped result) to
 // tell "garbage" apart from a resolve_time that legitimately equals
@@ -120,20 +120,19 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		return nil, nil
 	}
 	// Defensive fallback: relayer-supplied resolve_time is a u64;
-	// canonical.SafeUnixSeconds bound-checks the RAW u64 (pre-2001
-	// floor + close+24h ceiling, catching the >MaxInt64 wrap class of
-	// the router deadline_ts bug) and falls back to the ledger close
-	// on garbage. Real-world Band payloads are post-2020 UNIX seconds
-	// ≤ the close.
+	// canonical.SafeUnixSeconds bound-checks the RAW u64 (a year-2001 floor
+	// and a close+24h ceiling, catching the >MaxInt64 wrap class of the
+	// router deadline_ts overflow) and falls back to the ledger close on
+	// garbage. Real-world Band payloads are post-2020 UNIX seconds ≤ the
+	// close.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
 	// relay() (not force_relay) applies an update only while
 	// `resolve_time < ledger.timestamp + OFFSET` (ref_data.rs) — outside
 	// that, the on-chain call is a silent no-op though the tx succeeds.
-	// Clamping such a resolve_time to closedAt and still writing it let
-	// a rate the chain never applied win our `ORDER BY ts DESC`
-	// latest-read for up to one relay interval (previously up to 24h
-	// before ts was clamped instead of left future-dated: cold audit
-	// 2026-08-03). Drop it instead — see bandRelayWouldNoOp.
+	// Clamping such a resolve_time to closedAt and still writing it would
+	// let a rate the chain never applied win our `ORDER BY ts DESC`
+	// latest-read for up to one relay interval. Drop it instead — see
+	// bandRelayWouldNoOp.
 	//
 	// We can't see the per-symbol stored resolve_time the contract also
 	// gates on (on-chain state, not in the call args), so a genuine
@@ -187,13 +186,11 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 			return nil, fmt.Errorf("%w: symbol_rates[%d] %q: %w", ErrMalformedArgs, i, sym, err)
 		}
 		if !asset.IsMapped() {
-			// Oracle capture-totality (PR-2): a symbol outside the
-			// allow-lists is RECORDED verbatim as raw:<symbol> at
-			// this same vector slot, not skipped (same pattern as
-			// Reflector / RedStone). F-1234 (codex audit-2026-05-12):
-			// still count it so the unknown-symbols runbook signals
-			// on upstream coverage drift — a raw row is a mapping
-			// gap the allow-list owner has to close.
+			// Oracle capture-totality: a symbol outside the allow-lists is
+			// RECORDED verbatim as raw:<symbol> at this same vector slot, not
+			// skipped (same pattern as Reflector / RedStone). Still count it so
+			// the unknown-symbols runbook signals on upstream coverage drift — a
+			// raw row is a mapping gap the allow-list owner has to close.
 			obs.SourceUnknownSymbolsTotal.WithLabelValues("band").Inc()
 		}
 		if rate == 0 {
@@ -215,10 +212,9 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Only reachable when every slot was USD or rate 0: since the
-		// oracle capture-totality change an unmapped symbol is a raw
-		// row, not a skip, so an all-unknown vector no longer lands
-		// here.
+		// Only reachable when every slot was USD or rate 0: an unmapped
+		// symbol is a raw row, not a skip, so an all-unknown vector does not
+		// land here.
 		return nil, ErrEmptyRates
 	}
 	if relayRejected {
@@ -233,11 +229,10 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 // codes (USD is special-cased above; EUR, JPY, ...) via the same
 // symbol_rates channel. canonical.MapOracleSymbol tries fiat
 // (ADR-0010), then crypto (ADR-0014), then RWA (ADR-0028) — the one
-// shared precedence for every oracle decoder (Band used to try crypto
-// before fiat; the lists are disjoint so no row changes type) — and
-// returns a verbatim raw:<symbol> asset for anything else, so the
-// slot is recorded rather than dropped. The only error is a symbol
-// the raw validator cannot represent (impossible for an ScSymbol).
+// shared precedence for every oracle decoder — and returns a verbatim
+// raw:<symbol> asset for anything else, so the slot is recorded rather
+// than dropped. The only error is a symbol the raw validator cannot
+// represent (impossible for an ScSymbol).
 func symbolToAsset(sym string) (canonical.Asset, error) {
 	return canonical.MapOracleSymbol(sym)
 }

@@ -54,10 +54,10 @@ type Event struct {
 // replay cannot cover the requested Last-Event-ID — either because the
 // ring already evicted older events, or because the per-subscription
 // replay budget trimmed them, or because the cursor is newer than any ID
-// this process could have issued (a foreign ID space). IDs are timestamp-packed, not a per-topic
-// sequence, so a gap is otherwise unobservable to the client (Refs
-// #1035). Sent before any replay event, with no ID of its own — it
-// does not advance the client's resume cursor.
+// this process could have issued (a foreign ID space). IDs are
+// timestamp-packed, not a per-topic sequence, so a gap is otherwise
+// unobservable to the client. Sent before any replay event, with no ID
+// of its own — it does not advance the client's resume cursor.
 const EventTypeStreamGap = "stream_gap"
 
 // Generator is a goroutine-safe monotonic event-ID source. Each

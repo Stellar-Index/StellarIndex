@@ -14,14 +14,11 @@ import (
 // RateProvider is a source of USD-base fiat rates for the worker.
 //
 // It exists so `massive` — a PAID feed — is not a single point of
-// failure for every fiat-quoted pair on the platform. Measured
-// 2026-08-27: massive was the only series in
-// stellarindex_external_fx_last_quote_unix, so a subscription lapse, a
-// 429, or an unset MASSIVE_API_KEY silently broke XLM/EUR, XLM/GBP and
-// every other fiat cross once the 7-day forex-snap lookback expired.
-// The staleness alert's own comment already anticipated a fallback
-// ("re-enabling … as fallbacks naturally clears it"); nothing
-// implemented one.
+// failure for every fiat-quoted pair on the platform. When massive was
+// the only series in stellarindex_external_fx_last_quote_unix, a
+// subscription lapse, a 429, or an unset MASSIVE_API_KEY silently broke
+// XLM/EUR, XLM/GBP and every other fiat cross once the 7-day forex-snap
+// lookback expired.
 type RateProvider interface {
 	// Name is the value stamped into fx_quotes.source and used as the
 	// `source` metric label, so an operator can see WHICH feed is live.

@@ -39,7 +39,7 @@ func Jitter(d time.Duration) time.Duration {
 // Its Transport dials TCP with a 30 s OS-level keepalive. Go's net.Dialer
 // defaults to no keepalive on the underlying socket; venues that issue TCP
 // RST after their own timeout window then surface as "connection reset by
-// peer" reads instead of being detected earlier by the dialer. F-0029.
+// peer" reads instead of being detected earlier by the dialer.
 func KeepAliveHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
@@ -61,7 +61,7 @@ func KeepAliveHTTPClient() *http.Client {
 
 // ErrStreamStalled is returned by the read loop when the venue stopped
 // answering WebSocket pings — a half-open socket that TCP has not yet
-// noticed. See [Loop.PingInterval] (C2-017/C2-031, audit-2026-07-23).
+// noticed. See [Loop.PingInterval].
 var ErrStreamStalled = errors.New("stream stalled: venue stopped answering pings")
 
 // ClassifyDisconnect maps a disconnect error to a stable metric label
