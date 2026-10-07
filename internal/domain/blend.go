@@ -45,8 +45,7 @@ const (
 	// Pool-factory event.
 	BlendEventDeploy = "deploy"
 
-	// V1 pool-factory (CCZD6ESM…) events — ROADMAP #89 residual
-	// (2026-07-10). The V1 factory's pools speak a simpler,
+	// V1 pool-factory (CCZD6ESM…) events. The V1 factory's pools speak a simpler,
 	// different vocabulary than the V2 events above (no auction_type
 	// discriminator, no percent field); real-lake-bytes verified at
 	// ledgers 51,524,668 / 51,611,821 / 54,890,906. See

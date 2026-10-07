@@ -557,7 +557,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
-	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// Re-derive path (migration 0109): stamp a positive
 	// derive_generation so this rebuild's corrected values UPDATE the
 	// stored rows in place — via both BatchInsertTrades/InsertTrade below
 	// and pipeline.HandleEvent (which draws the generation from this same
@@ -1203,7 +1203,7 @@ func tallyTrade(t canonical.Trade, src string, written, failed map[string]int) {
 // Trade and sep41 events are batched (one multi-row INSERT per batch) with a
 // per-row fallback on batch failure; everything else (protocol entities) goes
 // per-row via HandleEvent. The primary CopyMerge* path and the per-row Insert*
-// fallback share the identical INV-3 generation-guarded corrective-upsert
+// fallback share the identical generation-guarded corrective-upsert
 // semantics (both bind s.deriveGeneration and merge DO UPDATE ... WHERE
 // derive_generation <= EXCLUDED), so a batch error dropping into the fallback
 // cannot change the write outcome.

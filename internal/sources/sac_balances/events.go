@@ -39,7 +39,7 @@ type Observation struct {
 	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). When a
 	// single (contract, holder) balance changes MULTIPLE times within one
 	// ledger, this is what lets the writer keep the FINAL change rather than
-	// whichever out-of-order PersistEvents worker committed last — the
-	// wrong-supply-component bug (audit-2026-07-16 C2-6).
+	// whichever out-of-order PersistEvents worker committed last, which
+	// would serve a wrong supply component.
 	IntraLedgerSeq uint32
 }

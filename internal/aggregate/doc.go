@@ -1,80 +1,20 @@
-// Package aggregate computes VWAP / TWAP / OHLC, runs outlier
-// filtering, and applies stablecoin → fiat proxy mapping over a
-// window of [canonical.Trade] values.
+// Package aggregate is the pure price math over in-memory
+// [canonical.Trade] slices: VWAP, TWAP, OHLC, outlier filtering,
+// stablecoin fiat proxying and route compositing. Callers pre-filter to
+// the window; persistence and scheduling live elsewhere
+// (docs/architecture/aggregation-plan.md has the policy chain).
 //
-// # Scope
+// VWAP is Σquote/Σbase in exact [*big.Rat]; never float.
 //
-// This package is pure functions over in-memory slices. Persistence
-// (TimescaleDB continuous aggregates), scheduling (the aggregator
-// binary's [internal/aggregate/orchestrator]), and multi-source
-// divergence detection live elsewhere. Here we only do the math.
+// The outlier filter rejects prices beyond σ × 1.4826 × MAD of the window
+// median, measured in RATIO space so a ½× print is as outlying as a 2×
+// one (ADR-0046 §1). An additive band's lower edge goes below zero above
+// 1/(σ×1.4826) relative MAD (16.9% at σ=4), after which downward prints
+// cannot be rejected; docs/methodology/vwap-aggregation.md has the band.
 //
-// See docs/architecture/aggregation-plan.md for how the orchestrator
-// composes these primitives into the policy chain (stablecoin
-// expansion → class filter → outlier filter → VWAP).
-//
-// # VWAP
-//
-// Volume-Weighted Average Price: the canonical summary of "what did
-// this asset trade at" over a window. Standard definition weights
-// each trade's price by the base-asset volume it moved:
-//
-//	VWAP = Σ(price_i × volume_i) / Σ(volume_i)
-//
-// With price_i = Qi/Bi and volume_i = Bi (base), that collapses to:
-//
-//	VWAP = Σ(Qi) / Σ(Bi)
-//
-// — total quote moved divided by total base moved. This is exact
-// arithmetic on [*big.Rat], never float. Caller chooses
-// display-decimals when they render it.
-//
-// # Outliers
-//
-// The filter drops any trade whose price deviates from the window
-// MEDIAN by more than σ × 1.4826 × MAD (median absolute deviation),
-// σ defaulting to 4. Exact rational arithmetic throughout.
-//
-// The deviation is measured in RATIO space, so the acceptance band is
-// [median²/(median + σ·scale), median + σ·scale] — a ½× print is
-// exactly as outlying as a 2× one (ADR-0046 §1's symmetry; the scale is
-// a price-space MAD). An additive price-space
-// band would put its lower edge below zero
-// above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — from where downward
-// prints stopped being rejectable at all while
-// their mirror-image up-moves still were. The same correction applies
-// to the time-local filter and to the served-VWAP guard's MAD arm
-// (6.75% at its K=10), and docs/methodology/vwap-aggregation.md
-// describes the symmetric band. On-call guidance lives in
-// docs/operations/runbooks/aggregator.md.
-//
-// # Stablecoin fiat proxy
-//
-// Quote-side stablecoin tickers map to their pegged fiat at
-// VWAP-compute time, never at decode time — see
-// [FiatProxy] / [ProxyPair] / [ProxyTrade] /
-// [ExpandTargetPair]. Decoders preserve the raw pair so a depeg
-// stays visible in the trade feed; the aggregator applies the
-// rewrite when an operator opts in via
-// orchestrator.Config.EnableStablecoinFiatProxy.
-//
-// # Triangulation
-//
-// Cross-pair chains (XLM/USD × USD/EUR = XLM/EUR) are priced by the
-// graph router — [BuildEdges] builds the edge set from the
-// freshly-cached leg VWAPs and [CombineRoutes]/[CompositeRate]
-// enumerates and composites the best route — with the X2.5 forex-snap
-// rule for chained-fiat pairs. The orchestrator's
-// [Triangulations] field drives a per-tick pass after direct-pair
-// refreshes have populated the leg cache. ([Triangulate] /
-// [TriangulateChain] are the older direct-multiply helpers, kept for
-// reference/tests but NOT on the serving path — the router is.)
-//
-// # What this package deliberately doesn't do
-//
-//   - No time-windowing. Callers pre-filter trades to the window
-//     they want before passing in.
-//   - No multi-venue weighting. Per-source weight overrides are
-//     deferred per docs/architecture/aggregation-plan.md
-//     §Deferred — every contributing source weights at 100 today.
+// Stablecoin tickers map to their pegged fiat at compute time, never at
+// decode, so a depeg stays visible in the trade feed ([FiatProxy]).
+// Cross-pair prices come from the graph router ([BuildEdges],
+// [CombineRoutes], [CompositeRate]); [Triangulate] and [TriangulateChain]
+// are not on the serving path.
 package aggregate

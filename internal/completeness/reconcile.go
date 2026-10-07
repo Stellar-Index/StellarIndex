@@ -69,7 +69,7 @@ type ProjectionGap struct {
 // BlindSpots records the raw rows a re-derive could not turn into a
 // comparable expectation at all — the rows it SKIPPED rather than counted.
 //
-// C4-059 (audit-2026-07-23). The skip is a soft-fail that deliberately
+// The skip is a soft-fail that deliberately
 // mirrors the projector's: a row the projector could not decode produced no
 // served row, and a row the re-derive cannot decode produces no expected
 // row, so ReconcileCounts sees expected == actual == 0 and reports the
@@ -238,9 +238,8 @@ func Guard(fn func()) (err error) {
 // safeMatches runs dec.Matches under the same per-event recover as
 // [safeDecode]. Matches is not the safe half of the pair: it type-asserts
 // topic vectors and reads body fields to decide ownership, so a malformed
-// row panics there just as readily as in Decode — and until now that panic
-// escaped, taking down whichever binary was reconciling (the ops path's
-// twin of the dispatcher's #371 F1). A panic is treated exactly like a
+// row panics there just as readily as in Decode, and an escaped panic
+// would take down whichever binary was reconciling. A panic is treated exactly like a
 // decode failure: the row is skipped AND recorded as a blind spot, so a
 // ledger the re-derive could not evaluate can never be certified clean.
 func safeMatches(dec Decoder, ev events.Event) (matched bool, err error) {
