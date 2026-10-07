@@ -65,8 +65,10 @@ type AssetAmount struct {
 // structs — but Blend's struct uses NAMED fields, so wire form is
 // ScvMap with three entries keyed by symbol.
 //
-// The shape is confirmed at the contract source level
-// (docs/discovery/dexes-amms/blend.md).
+// The shape is confirmed at the contract source level and against real
+// lake bytes: docs/operations/wasm-audits/blend.md ("AuctionData shape")
+// and the test/fixtures/blend/v1-pool-auctions captures pinned by
+// v1_pool_auction_test.go.
 type AuctionData struct {
 	// Bid is the map of (asset, amount) pairs the filler spends
 	// to clear the auction.

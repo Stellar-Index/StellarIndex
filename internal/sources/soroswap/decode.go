@@ -139,8 +139,8 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 		return canonical.Trade{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	// Taker: SwapEvent.to — the swap recipient, on-chain in EVERY
-	// soroswap swap since genesis. Without it soroswap would be the one
-	// venue with 0% trades.taker coverage while every sibling has 100%.
+	// soroswap swap since genesis. Without it soroswap measured 0%
+	// trades.taker coverage while every sibling venue had 100%.
 	// Best-effort per the Trade.Taker contract: a decode failure leaves
 	// it empty rather than failing the trade.
 	taker := decodeSwapTaker(r.Swap.Value)

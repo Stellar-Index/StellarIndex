@@ -85,13 +85,13 @@ const DefaultResolutionSeconds = 300
 //	topic[0] = Symbol("REFLECTOR")
 //	topic[1] = Symbol("update")
 //	topic[2] = U64(timestamp)
-//	body     = Vec<(ScVal, I128)>  (per contractevent macro expansion)
+//	body     = Map { "update_data": Vec<(ScVal, I128)> }
 //
-// The previous comment here claimed body was
-// `Map{"prices": Vec<(Asset, i128)>, "timestamp": u64}` — that is
-// wrong; the Phase-1 decoder PR (#164a) must match the shape above
-// against real fixtures captured from mainnet. See
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution for why.
+// The #[contractevent] macro wraps the non-topic field in a Map keyed by
+// field name, so the body is not a bare Vec; sdkDecodeUpdateBody pins
+// this against real mainnet fixtures. See
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution for why
+// fields are looked up by name.
 const (
 	EventTopic0 = "REFLECTOR"
 	EventTopic1 = "update"

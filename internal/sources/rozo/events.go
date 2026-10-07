@@ -136,8 +136,8 @@ const (
 // a single string-equal comparison rather than a full SCVal
 // decode per event.
 var (
-	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // legacy short form (never observed live)
-	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // legacy short form (never observed live)
+	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // short form (never observed live)
+	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // short form (never observed live)
 
 	// The live long-form topics — what the deployed contract emits.
 	TopicSymbolPaymentEvent = scval.MustEncodeSymbol(symPaymentEvent) // topic[0] of payment events (live)

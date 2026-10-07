@@ -183,10 +183,9 @@ var (
 	// ErrNotCometEvent — topic[0..1] doesn't match any known Comet
 	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
 	// future contract upgrade, or an unrelated contract entirely.
-	// NOTE: unknown kinds are rejected in Matches (classify == ""), so
-	// they land in the dispatcher's GLOBAL unmatched tally
-	// (decoder_stats_5m) — comet implements no EvictedOrphans()
-	// reporter, so the per-source
+	// NOTE: unknown kinds are rejected in Matches (classify == ""), so they
+	// land in the dispatcher's GLOBAL unmatched tally (decoder_stats_5m) —
+	// comet implements no EvictedOrphans() reporter, so the per-source
 	// `stellarindex_source_orphan_events_total{source="comet"}` series
 	// never populates and no alert fires on it. The real live signal
 	// for a new kind on the gated pool is the ADR-0033 recognition
