@@ -8,8 +8,8 @@ import (
 )
 
 // ─── T521: the Dockerfiles' golang base image must match go.mod's `go` ───
-// directive, exactly one minor apart from a prior drift (F-1240, codex
-// audit-2026-05-12): the Dockerfiles floated ahead of go.mod because
+// directive, exactly one minor apart: the Dockerfiles float ahead of go.mod
+// because
 // Dependabot's docker ecosystem bumps `docker/*.Dockerfile` independently
 // of whatever bumps go.mod. docker/README.md documents the invariant; this
 // test is the guard that catches the next drift instead of relying on a

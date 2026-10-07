@@ -184,9 +184,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// raw trades (migration 0031) and oracle_updates (0040): ADR-0034
 	// invariant 8 keeps the certified raw history forever, so a
 	// drop_after retention policy on these tables is DRIFT (a rogue 90d
-	// policy was in fact removed as drift on 2026-06-10). Assert
-	// compression is present and retention is absent — F-1334 flipped
-	// these from the old (now-invalid) assert-attached.
+	// policy was once removed as drift). Assert compression is present and
+	// retention is absent.
 	// trades compresses through 0205's custom job, which the jobs view
 	// attaches to no hypertable; the built-in policy it replaced is gone.
 	var tradesCompressionJobs int
@@ -1124,7 +1123,7 @@ func assertColumnNullable(t *testing.T, ctx context.Context, db *sql.DB, table, 
 	}
 }
 
-// TestDownsOnCompressedChunks pins INV-2684: a down on a hypertable with
+// TestDownsOnCompressedChunks pins that a down on a hypertable with
 // compressed chunks restores the schema without losing or changing rows;
 // any error, including a Timescale internal one, fails the case.
 //

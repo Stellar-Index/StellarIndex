@@ -16,11 +16,11 @@ import (
 //
 // pipeline.GatedMeta declares phoenix Factories + CreationSym "create",
 // and seed-protocol-contracts walks exactly those events — but it only
-// calls Decode on events the decoder Matches. Phoenix's Matches used to
-// reject every factory event (classifyAny had no "create" action and
-// reg.Has excludes the factory), so the walk and the live-upsert hook
-// were provably inert: a pool the factory created was fail-closed until
-// someone edited MainnetPools by hand.
+// calls Decode on events the decoder Matches. Phoenix's Matches must admit
+// factory events (classifyAny's "create" action; reg.Has excludes the
+// factory), or the walk and the live-upsert hook are inert: a pool the
+// factory created stays fail-closed until someone edits MainnetPools by
+// hand.
 //
 // Driven by the REAL lake captures under test/fixtures/phoenix/
 // factory-create (loader + shape pins: phoenix_factory_create_fixture_

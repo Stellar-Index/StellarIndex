@@ -16,7 +16,7 @@ import (
 )
 
 // TestXLMSacAsBase_PriceableThroughEveryPath reproduces the r1
-// 2026-08-28 17:42Z firing of stellarindex_assets_popular_priceless=2
+// firing of stellarindex_assets_popular_priceless=2
 // (CBIJ… $730k/7d, CAUP7… only trades against CBIJ) and pins the fix.
 //
 // The aquarius decoder writes SWAP direction (base = token_in) without

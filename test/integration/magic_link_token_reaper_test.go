@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// PRV-2 (audit-2026-08-14) — the store half of the `magic_link_tokens`
+// The store half of the `magic_link_tokens`
 // retention sweep.
 //
 // `magic_link_tokens` is durable plaintext PII (email + requested_ip)

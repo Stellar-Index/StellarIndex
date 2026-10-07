@@ -12,14 +12,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable is the MR-1
-// proven-red test (audit-2026-08-14, migration 0141). fx_quotes.rate_usd is
-// the denominator of every fiat-quoted usd_volume, yet its upsert was the
-// ONLY money-value derived writer the INV-3 fix skipped: an unguarded
-// `ON CONFLICT (ticker,bucket) DO UPDATE`, pure arrival-order
-// last-writer-wins. So an operator correction written by fx-history-backfill
+// TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable is the
+// proven-red test for migration 0141. fx_quotes.rate_usd is
+// the denominator of every fiat-quoted usd_volume, so its upsert needs the
+// same generation guard as every other derived money-value writer: an
+// unguarded `ON CONFLICT (ticker,bucket) DO UPDATE` is pure arrival-order
+// last-writer-wins, so an operator correction written by fx-history-backfill
 // (source='frankfurter-historical', gen>0) over a key the live worker owns
-// (source='massive', gen 0) was silently reverted by the next daily worker
+// (source='massive', gen 0) would be silently reverted by the next daily worker
 // refresh.
 //
 // The fix threads derive_generation through InsertFXQuoteBatch and guards

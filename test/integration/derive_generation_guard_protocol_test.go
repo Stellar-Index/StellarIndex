@@ -13,8 +13,8 @@ import (
 )
 
 // TestDeriveGenerationGuardProtocol_CorrectiveReDerive is the proven-red test
-// for the INV-3 re-derive trap extended to the PROTOCOL projector tables
-// (audit-2026-07-16 wave 2 / migration 0110). Before the fix these writers used
+// for the money re-derive trap extended to the PROTOCOL projector tables
+// (migration 0110). Without the guard these writers use
 // `ON CONFLICT (natural key) DO NOTHING` with the derived value (an i128 amount
 // scaled by token decimals, a reserve/supply/shares figure, …) OUTSIDE the
 // conflict key, so a corrected re-derive of a wrong money value silently

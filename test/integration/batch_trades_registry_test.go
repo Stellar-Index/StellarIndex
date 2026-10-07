@@ -12,16 +12,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestBatchInsertTrades_PopulatesClassicAssetRegistry is the C2-13b proof:
-// the LIVE indexer ingests trades EXCLUSIVELY through BatchInsertTrades
-// (persistWorker → batch path), which previously SKIPPED the classic-asset
-// / issuer registry hook that the single-row InsertTrade path runs. The
-// result: classic_assets + issuers permanently under-populated for every
-// batch-ingested asset.
+// TestBatchInsertTrades_PopulatesClassicAssetRegistry proves that
+// the LIVE indexer, which ingests trades EXCLUSIVELY through BatchInsertTrades
+// (persistWorker → batch path), runs the classic-asset / issuer registry hook
+// that the single-row InsertTrade path runs. Otherwise classic_assets +
+// issuers are permanently under-populated for every batch-ingested asset.
 //
 // This test drives a classic-asset trade through BOTH paths and asserts the
-// registry lands identically. Before the fix, the batch-path assertions
-// (classic_assets row present, issuers row present) fail with "no rows" —
+// registry lands identically; the batch-path assertions
+// (classic_assets row present, issuers row present) fail with "no rows" if
+// the registry hook never runs on the batch path.
 // the registry hook never ran on the batch path.
 func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

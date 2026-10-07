@@ -163,15 +163,15 @@ func TestCap67Range_StallsAtHole(t *testing.T) {
 }
 
 // TestCap67Range_FirstRunClampsToTheLakesFirstLedger is the test nets'
-// empty-archive proof (2026-09-17): a FIRST run (no watermark row) floored
+// empty-archive proof: a FIRST run (no watermark row) floored
 // at genesis against a lake that begins at ledger 2 — every net's lake,
 // ledger 1 is never exported — must derive from 2, not idle forever.
 //
-// The pre-fix path set start = floorLedger = 1 and asked ContiguousWatermark
-// for the tip from 1; with min_present = 2 > from that is a boundary hole,
-// so it answered 0, the caller's `last < start` guard read "nothing to do",
-// and the daemon re-ran that full-lake window-function scan every second
-// for months without writing a row or a journal line. This is a
+// Starting at start = floorLedger = 1 and asking ContiguousWatermark
+// for the tip from 1 fails: with min_present = 2 > from that is a boundary hole,
+// so it answers 0, the caller's `last < start` guard reads "nothing to do",
+// and the daemon re-runs that full-lake window-function scan every second
+// without writing a row or a journal line. This is a
 // real-ClickHouse test because the clamp's input IS what the lake reports
 // as its first ledger: seed [2, 6], skip 1, and read the range back through
 // the real watermark + min queries.

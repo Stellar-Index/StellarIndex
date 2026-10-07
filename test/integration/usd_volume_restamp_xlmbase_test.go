@@ -30,7 +30,7 @@ import (
 //     NULL rather than inheriting the quote-side estimate, and a stored
 //     (wrong) value is not blanked;
 //  5. the NULL population is opt-in (-fill-null) and counted either way;
-//  6. INV-3: a row at a HIGHER derive_generation is never clawed back,
+//  6. a row at a HIGHER derive_generation is never clawed back,
 //     and every rewritten row carries the run's generation;
 //  7. idempotent: an immediate re-run plans zero rows;
 //  8. the exact tiers are NOT touched by this tier (a USD-pegged quote
@@ -86,10 +86,10 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
 
-	// ── the THIN TOKEN/USDC BOOK: the #372 defect's other half ───────
+	// ── the THIN TOKEN/USDC BOOK: the defect's other half ───────
 	// A direct `<token>/USDC` market 4h later, when the XLM/USD anchor
 	// above has aged past the resolver's 1h direct-leg freshness. This is
-	// exactly the 2026-05-19 BUCK shape: the XLM leg cannot be priced,
+	// exactly the BUCK shape: the XLM leg cannot be priced,
 	// but the counterparty-authored token book CAN — so the pre-fd1860bd
 	// waterfall valued the trade through it. A restamp that fell through
 	// to the quote side (rather than reporting "the anchor declined")
@@ -192,10 +192,10 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		}
 	}
 
-	// ── the pre-fd1860bd state, imposed by hand ──────────────────────
+	// ── the pre-fix state, imposed by hand ──────────────────────
 	// HEAD's insert path already writes the anchor value, so the defect
 	// has to be re-created: row 10 valued quote-side through the token's
-	// own thin book (the 2026-05-19 BUCK shape), row 11 unpriced, row 21
+	// own thin book (the BUCK shape), row 11 unpriced, row 21
 	// carrying a wrong value the anchor cannot re-derive.
 	exec := func(t *testing.T, q string, args ...any) {
 		t.Helper()

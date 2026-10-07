@@ -8,12 +8,10 @@
 // Also hits /v1/healthz once per VU on iteration 0 to absorb the
 // TLS handshake into a non-measured request — keeps p95 honest.
 //
-// Both functions used to fire-and-forget the warmup requests: neither
-// checked the response status, so a totally unreachable/misconfigured
-// K6_TARGET (or an auth failure) silently produced a "successful"
-// setup() and the scenario burned its full multi-minute duration
-// measuring nothing useful (audit-2026-06-14 A20, harness
-// error-swallowing residual). k6 aborts the whole run when setup()
+// Both functions check the warmup response status: a totally
+// unreachable/misconfigured K6_TARGET (or an auth failure) must not produce a
+// "successful" setup() and burn the scenario's full multi-minute duration
+// measuring nothing useful. k6 aborts the whole run when setup()
 // throws, so:
 //   - tlsWarmup is the first request of every scenario's setup() — a
 //     non-2xx here means the target itself is down/misconfigured, so

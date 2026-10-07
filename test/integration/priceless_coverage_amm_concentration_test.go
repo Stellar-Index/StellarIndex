@@ -23,19 +23,18 @@ import (
 // and its classifier against a real TimescaleDB, on the four counterparty
 // populations the trades hypertable actually holds.
 //
-// T016: the concentration NUMERATOR used to require `maker IS NOT NULL
-// AND taker IS NOT NULL` while the vol7d DENOMINATOR took every row, so
-// the two were measured over DIFFERENT populations. Only the SDEX decoder
+// The concentration NUMERATOR must not require `maker IS NOT NULL
+// AND taker IS NOT NULL` while the vol7d DENOMINATOR takes every row, or the
+// two are measured over DIFFERENT populations. Only the SDEX decoder
 // records both sides; every Soroban AMM (aquarius, soroswap, phoenix,
 // comet, sushiswap_v3) leaves the resting side to the pool and records a
-// taker only — measured on r1 2026-09-19, 100% of the 27.8k 24h rows of
-// all five AMM sources have maker NULL. The share of an AMM-only asset
-// was therefore 0 BY CONSTRUCTION, the wash exclusion could never fire
-// for it, and a farm painting volume on an AMM self-selected straight
-// into the coverage alert the tripwire exists to keep honest. Two such
-// assets were live on r1 the same day, above the $10k popularity floor
-// with 0.95 / 0.9999 of their volume swapped by ONE account, both
-// reporting a 0 concentration share.
+// taker only — on r1, 100% of the 27.8k 24h rows of all five AMM sources
+// have maker NULL. The share of an AMM-only asset would then be 0 BY
+// CONSTRUCTION, the wash exclusion could never fire for it, and a farm
+// painting volume on an AMM would self-select straight into the coverage
+// alert the tripwire exists to keep honest. Two such assets were live on r1,
+// above the $10k popularity floor with 0.95 / 0.9999 of their volume
+// swapped by ONE account, both reporting a 0 concentration share.
 //
 // The four fixtures are one population each, and each pins the CORRECTED
 // share, not merely "non-zero":

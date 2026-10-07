@@ -18,7 +18,7 @@ import (
 // watchdog's per-domain SQL — the SHIPPED bytes of
 // configs/ansible/roles/archival-node/files/data-freshness.sh — against
 // a real database in which feeds have been dead long enough to fall out
-// of the windows the queries used to enumerate them.
+// of the windows the queries enumerate them from.
 //
 // The defect being pinned: the window that decided WHICH sources exist
 // was the same window that decided whether they were healthy. A source

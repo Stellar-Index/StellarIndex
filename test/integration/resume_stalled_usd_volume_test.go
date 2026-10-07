@@ -14,17 +14,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestResumeStalled_ArmsUSDVolumeResolution is the CWR-1 (audit-2026-08-14)
+// TestResumeStalled_ArmsUSDVolumeResolution is the
 // proven-red test. The resume-stalled recovery tool marches stalled cursors
 // through the SAME runBackfillChunk trade-write path as the main `backfill`
 // subcommand, so the store it opens must be armed for a trade-writing
 // re-derive — a POSITIVE derive generation (so a corrected re-derive wins the
 // writers' ON CONFLICT guard) AND the USD-volume resolvers (so on-chain DEX
-// trades resolve a real usd_volume instead of NULL). Before the fix
-// resume-stalled opened the store raw and skipped this wiring, so a re-derived
-// on-chain DEX trade landed with usd_volume=NULL at gen 0 and the A-CRIT-1
-// reDeriveNullVolumeGuard was inert (it only fires once the generation is
-// positive).
+// trades resolve a real usd_volume instead of NULL). Opened raw, the store
+// skips this wiring, so a re-derived on-chain DEX trade lands with
+// usd_volume=NULL at gen 0 and the reDeriveNullVolumeGuard is inert (it only
+// fires once the generation is positive).
 //
 // This exercises the exact seam resume-stalled now runs after timescale.Open
 // — [ingest.ArmTradeWriteStore] — then inserts an on-chain DEX (sdex) trade

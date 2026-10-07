@@ -18,12 +18,10 @@ import (
 // TestTradeInsertOutcome_NewVsDuplicate pins the diagnostic metric
 // `stellarindex_trade_insert_outcome_total{source, outcome}`: a
 // fresh trade increments outcome=new, a re-insertion (same PK)
-// increments outcome=duplicate. Live r1 evidence on 2026-05-28
-// surfaced a stuck-cursor pattern where the older counter
-// (trade_inserts_total) climbed at 157/min while the trades
-// hypertable's max(ts) was 11 h old — every attempt was an
-// ON CONFLICT DO NOTHING short-circuit. This metric makes that
-// failure mode observable.
+// increments outcome=duplicate. The older counter (trade_inserts_total) can
+// climb at 157/min while the trades hypertable's max(ts) is 11 h old — every
+// attempt an ON CONFLICT DO NOTHING short-circuit from a stuck cursor. This
+// metric makes that failure mode observable.
 func TestTradeInsertOutcome_NewVsDuplicate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

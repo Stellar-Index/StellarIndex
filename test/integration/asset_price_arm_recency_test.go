@@ -24,7 +24,7 @@ const (
 )
 
 // seedArmRecencyFixture writes one market shape per way the headline
-// USD price used to pick an older or one-sided observation over a newer
+// USD price could pick an older or one-sided observation over a newer
 // or two-sided one. XLM/USDC is a constant 0.40; every token has 7
 // decimals, so each stored vwap is the price itself.
 //
@@ -130,12 +130,11 @@ func seedArmRecencyFixture(t *testing.T, ctx context.Context, store *timescale.S
 
 // TestAssetPrice_NewestObservationAcrossArmsAndDirections pins the
 // headline USD price on BOTH surfaces that derive it — the listing
-// rollup (asset_price_snapshot) and the detail row (GetAssetBySlug). It
-// used to pick the direct-USD arm whenever that arm had ANY row in 7
-// days, and inside each arm to prefer the stored base-side direction
-// over a fresher flipped one; the direct arm never read the flipped
-// direction at all. Before the fix the five rows read 0.10, 1.00, 1.00,
-// 0.40 and 1.00, and flippedXLM's change_24h_pct read 0.00.
+// rollup (asset_price_snapshot) and the detail row (GetAssetBySlug). The price
+// must come from the NEWEST observation across arms and directions: the
+// direct-USD arm must not win merely because it has ANY row in 7 days, and a
+// fresher flipped direction must beat the stored base-side one, including for
+// flippedXLM's change_24h_pct.
 func TestAssetPrice_NewestObservationAcrossArmsAndDirections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

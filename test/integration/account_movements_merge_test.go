@@ -111,7 +111,7 @@ func TestAccountMovements_MergesCHArchiveAndPGTail(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Since inventory #1 (2026-08-08) the healthy-path note is ALWAYS
+	// The healthy-path note is ALWAYS
 	// present, stating the feed's post-P23 scope: without the cap67
 	// archive provisioned (this harness has no watermark table), the
 	// watched-token disclosure; with it, the through-ledger statement.

@@ -16,8 +16,8 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// legacyBlendReservesSQL is the BlendPoolReserves lookup EXACTLY as it stood
-// before the #504 rewrite, frozen here as the differential oracle: a
+// legacyBlendReservesSQL is the BlendPoolReserves lookup as it stood
+// before the current-state rewrite, frozen here as the differential oracle: a
 // 250,000-ledger windowed fold over stellar.ledger_entry_changes, resolving
 // the latest entry per key itself. The rewrite must agree with it row for row
 // on every reserve the window could see, while no longer reading one granule
@@ -44,11 +44,10 @@ const legacyBlendWindowLedgers = uint32(250_000)
 // stellar.ledger_entry_changes across a 250,000-ledger (~14-day) window. A
 // Blend ResData entry is REWRITTEN on nearly every pool interaction, so one
 // reserve's key alone matches tens of thousands of rows scattered through
-// that window's granules (74,834 rows for the busiest mainnet pool's USDC
-// reserve, r1 2026-09-03). The read's cost was therefore a function of pool
+// that window's granules (tens of thousands of rows for the busiest mainnet pool's USDC
+// reserve). The legacy read's cost was therefore a function of pool
 // WRITE ACTIVITY, not of how many reserves were asked for — a multi-second
-// floor under EVERY pool, which is why the small pool already sat at 78% of
-// the ceiling and the largest merely crossed it first.
+// floor under EVERY pool.
 //
 // The fix reads stellar.ledger_entries_current, whose sort key IS
 // (entry_type, key_xdr): ~one row per requested key, the same shape the three
@@ -76,7 +75,7 @@ const legacyBlendWindowLedgers = uint32(250_000)
 //     `HAVING argMax(change_type, ...) != 'removed'` carried, and that the
 //     empty-entry_xdr filter over FINAL must preserve.
 //   - assetTied: two writes in the SAME ledger, the stale one sorting FIRST
-//     in the base table. Pins audit-2026-07-16 C2-4c through the new path:
+//     in the base table. Pins the intra-ledger tie-break through the new path:
 //     the projection's version is (ledger_seq << 32) | intra_ledger_seq, so
 //     FINAL keeps the LAST intra-ledger change, exactly as the old composite
 //     argMax did.

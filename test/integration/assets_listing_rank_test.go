@@ -87,9 +87,8 @@ func seedUSDPrice(t *testing.T, ctx context.Context, db *sql.DB, nonce int, asse
 // seedRankFixture materialises the shared scenario and returns the
 // canonical asset_id per code.
 // derefOr renders a *string for an error message. The assertions below
-// compare through the pointer but used to PRINT the pointer, so a real
-// failure read "volume_24h_usd = 0x14000a6ed70" and told the reader
-// nothing about the value that was actually wrong.
+// compare through the pointer and print the value, so a failure names the
+// value that was actually wrong rather than a pointer address.
 func derefOr(p *string) string {
 	if p == nil {
 		return "<nil>"
@@ -122,7 +121,7 @@ func seedRankFixture(t *testing.T, ctx context.Context, store *timescale.Store, 
 		"CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)"); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
-	// The listing no longer derives price inside the request (#331 F1):
+	// The listing does not derive price inside the request:
 	// price_usd, the three change columns and source_count come from
 	// asset_price_snapshot (migration 0154), refreshed alongside
 	// asset_volume_24h by the aggregator's 2-minute worker. Refreshing

@@ -13,10 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestObservationIntraLedgerSeqGuard is the proven-red test for the C2-6
-// 8-worker last-writer-wins bug (audit-2026-07-16 / migration 0111): the
+// TestObservationIntraLedgerSeqGuard is the proven-red test for the
+// 8-worker last-writer-wins bug (migration 0111): the
 // PersistEvents workers (PersistWorkers=8) do NOT preserve order, and the
-// `*_observations` writers upserted with pure last-writer-wins. So when a
+// `*_observations` writers upsert with pure last-writer-wins. So when a
 // single (contract/holder, asset, ledger) changes MULTIPLE times within one
 // ledger, whichever worker commits LAST wins — which is NOT necessarily the
 // FINAL intra-ledger state. A stale intra-ledger balance could be persisted

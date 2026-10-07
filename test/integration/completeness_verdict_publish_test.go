@@ -13,11 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Findings F072 / K013 (audit 2026-09-02): the completeness verdict write
-// and the replay-rewind dirty-window delete were two independent
-// statements, and the first could not report that the CS-083 never-regress
-// guard had rejected it. A run with a -to below the stored tip therefore
-// deleted the window on the strength of a verdict that was never stored.
+// The completeness verdict write and the replay-rewind dirty-window delete
+// must not be two independent statements: the write has to report that the
+// never-regress guard rejected it, or a run with a -to below the stored tip
+// deletes the window on the strength of a verdict that was never stored.
 //
 // These tests drive [timescale.Store.PublishCompletenessVerdict] on real
 // TimescaleDB. RED on the unfixed behaviour: make the publish "upsert,

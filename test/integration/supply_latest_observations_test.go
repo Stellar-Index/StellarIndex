@@ -13,7 +13,7 @@ import (
 )
 
 // TestLatestSupplyObservations_BoundsVintage is the storage-side proof of the
-// defect fixed on 2026-09-15 and the one test that could have caught it.
+// stale-vintage defect in the listing's supply arm.
 //
 // The listing's authoritative supply arm read supply_1d — a DAILY roll-up of
 // asset_supply_history — with `bucket = max(bucket)` and no vintage bound at
@@ -52,9 +52,9 @@ func TestLatestSupplyObservations_BoundsVintage(t *testing.T) {
 	)
 	now := time.Now().UTC()
 
-	// USDC: the day-old reading that used to be served, then the live one.
+	// USDC: the day-old reading that a max(bucket) read serves, then the live one.
 	// Both are inside the bound, so the newest must win — this is the half
-	// of the contract the old max(bucket) read satisfied for the WRONG day.
+	// of the contract a max(bucket) read satisfies for the WRONG day.
 	mustInsert(t, ctx, store, usdcKey, "3548588635712599", now.Add(-26*time.Hour), 64_400_000)
 	mustInsert(t, ctx, store, usdcKey, "3763021295452262", now.Add(-4*time.Minute), 64_443_400)
 

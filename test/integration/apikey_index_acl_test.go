@@ -2,8 +2,7 @@
 
 package integration_test
 
-// Real-Redis, real-ACL coverage for the API-key lookup index
-// (findings F057 / K051, reverification 2026-09-18).
+// Real-Redis, real-ACL coverage for the API-key lookup index.
 //
 // Why this exists alongside internal/auth/key_index_test.go
 // ─────────────────────────────────────────────────────────
