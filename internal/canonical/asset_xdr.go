@@ -29,16 +29,14 @@ import (
 //     byte — stellar-core does not enforce the character rule, so
 //     control-byte and emoji codes DO occur on pubnet).
 //
-// C2-010 (audit-2026-07-23): this used to live unexported in
-// internal/sources/sdex as `xdrAssetToCanonical`, where only the decoder
-// could see it. The dispatcher census and the ClickHouse lake extractor
-// independently counted "real trades" from the same ClaimAtom slices
-// WITHOUT applying it, so every fill whose asset code the decoder
-// rejected was counted by the oracles and dropped by the writer — a
-// permanent, unresolvable reconcile discrepancy that looked like real
-// trade loss. Hoisting it to the leaf package is what lets
-// internal/sdexclaim apply the identical rule (it cannot import sdex:
-// that cycles back through internal/dispatcher).
+// It lives in this leaf package, not unexported in internal/sources/sdex,
+// because the dispatcher census and the ClickHouse lake extractor count
+// "real trades" from the same ClaimAtom slices as the decoder. Without
+// the shared rule every fill whose asset code the decoder rejected would
+// be counted by the oracles and dropped by the writer — a permanent,
+// unresolvable reconcile discrepancy that looks like real trade loss.
+// The leaf package lets internal/sdexclaim apply the identical rule (it
+// cannot import sdex: that cycles back through internal/dispatcher).
 func AssetFromXDR(a xdr.Asset) (Asset, error) {
 	switch a.Type {
 	case xdr.AssetTypeAssetTypeNative:

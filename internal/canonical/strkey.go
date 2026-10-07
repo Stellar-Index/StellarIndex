@@ -62,9 +62,9 @@ func IsClaimableBalance(s string) bool {
 
 // IsLiquidityPool reports whether s is a valid Stellar
 // liquidity-pool address (L-strkey), CRC-checked. CAP-67 / P23
-// extended SEP-41 transfer destinations to include LP addresses
-// — the cascade-window drain dry-run on 2026-05-28 surfaced this
-// as the dominant decoder-failure mode.
+// extended SEP-41 transfer destinations to include LP addresses;
+// a cascade-window drain dry-run found this the dominant
+// decoder-failure mode.
 func IsLiquidityPool(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteLiquidityPool, s)
 	return err == nil

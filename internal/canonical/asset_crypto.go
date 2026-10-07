@@ -19,9 +19,9 @@ package canonical
 
 // knownCryptoCodes is the allow-list of recognized crypto tickers.
 // Extension is a one-line change here (ADR-0014 needs no
-// amendment). Codes chosen from mainnet Reflector CEX oracle traffic
-// observed 2026-04-23 plus the largest-cap global crypto assets that
-// are likely to appear.
+// amendment). Codes chosen from observed mainnet Reflector CEX oracle
+// traffic plus the largest-cap global crypto assets that are likely to
+// appear.
 var knownCryptoCodes = map[string]struct{}{
 	"ADA": {}, "ATOM": {}, "AVAX": {}, "BCH": {}, "BNB": {},
 	"BTC": {}, "DASH": {}, "DOGE": {}, "DOT": {}, "ETH": {},
@@ -29,7 +29,7 @@ var knownCryptoCodes = map[string]struct{}{
 	"SOL": {}, "TON": {}, "TRX": {}, "UNI": {}, "USDC": {},
 	"USDT": {}, "XLM": {}, "XRP": {},
 	// Stablecoins + fiat-pegged crypto tokens published by RedStone's
-	// Stellar adapter (2026-04-24). Kept here as crypto (not fiat) so
+	// Stellar adapter. Kept here as crypto (not fiat) so
 	// the decoder stays fiat-proxy-agnostic — the aggregator converts
 	// stablecoins → fiat at VWAP time per the "stablecoin-as-fiat is
 	// aggregator policy" rule in AGENTS.md.
@@ -40,9 +40,8 @@ var knownCryptoCodes = map[string]struct{}{
 	// collapsing the two here would be exactly the eager normalisation
 	// the stablecoin rule above rejects. Whether it should ALSO proxy to
 	// fiat:USD at VWAP time is an aggregator-policy decision, taken in
-	// internal/aggregate/stablecoin.go, not here (2026-08-31: recorded
-	// as crypto only; it was arriving as `raw:USDT0` and ticketing
-	// stellarindex_ingestion_oracle_unknown_symbols).
+	// internal/aggregate/stablecoin.go, not here; it is recorded as
+	// crypto only.
 	"USDT0": {},
 	// Euro-pegged stablecoins — keep as crypto here, let the aggregator
 	// decide to map them to fiat:EUR. EURC and EUROC are one asset
@@ -51,13 +50,13 @@ var knownCryptoCodes = map[string]struct{}{
 	"EURC": {}, "EUROC": {}, "EUROB": {},
 	// Mexican Peso stablecoin (Bitso MXNe). Aggregator maps to fiat:MXN.
 	"MXNe": {},
-	// Tokenized-BTC variants published by RedStone's Stellar feeds
-	// (2026-05-22, ecc289c6b). SolvBTC is a BTC-backed crypto token — crypto,
-	// not RWA (ADR-0028 reserves `rwa` for tokenized tradfi assets).
+	// Tokenized-BTC variants published by RedStone's Stellar feeds.
+	// SolvBTC is a BTC-backed crypto token — crypto, not RWA (ADR-0028
+	// reserves `rwa` for tokenized tradfi assets).
 	// `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
 	// market and NAV observations never collide on one asset. Those
 	// two NAV feeds are quoted in their RESERVE asset, not USD —
-	// crypto:BTC and crypto:SolvBTC respectively (D8, 2026-08-29); see
+	// crypto:BTC and crypto:SolvBTC respectively; see
 	// redstone.feedRegistry for the live derivation.
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
 	// RedStone relayer expansion (ADR-0014).
@@ -74,11 +73,11 @@ var knownCryptoCodes = map[string]struct{}{
 	"savUSD_FUNDAMENTAL": {},
 	// USD-quoted SolvBTC NAV feeds (on-chain feed_ids
 	// `SolvBTC_FUNDAMENTAL/USD`, `SolvBTC.BBN_FUNDAMENTAL/USD`). These
-	// publish the NAV **in USD** (~65,430 on 2026-07-27) — a DIFFERENT
+	// publish the NAV **in USD** (~65,430 when verified) — a DIFFERENT
 	// quantity from the unsuffixed `_FUNDAMENTAL` feeds above, which
 	// publish the NAV RATIO against their reserve asset (~1.003 vs BTC
-	// and 1.0000 vs SolvBTC; verified live 2026-07-27 against
-	// api.redstone.finance AND r1 oracle_updates).
+	// and 1.0000 vs SolvBTC; verified live against api.redstone.finance
+	// AND r1 oracle_updates).
 	// Distinct codes so the two series never collide. The feed_id's
 	// `/` is normalized to `_` here because canonical codes travel as
 	// URL path segments (`/v1/assets/{id}`) where a literal `/` would

@@ -99,7 +99,7 @@ func parseOXRBoard(body []byte) (map[string]float64, time.Time, error) {
 	var board struct {
 		Timestamp int64  `json:"timestamp"`
 		Base      string `json:"base"`
-		//floatmoney:ok known debt (#600) — same float chain as frankfurter DayRates.Rates: RateProvider.LatestUSDRates hands this map to worker.go RateUSD unconverted
+		//floatmoney:ok known debt — same float chain as frankfurter DayRates.Rates: RateProvider.LatestUSDRates hands this map to worker.go RateUSD unconverted
 		Rates map[string]float64 `json:"rates"`
 	}
 	if err := json.Unmarshal(body, &board); err != nil {

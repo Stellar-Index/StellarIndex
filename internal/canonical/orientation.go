@@ -35,7 +35,7 @@ func assetCode(assetID string) string {
 // what makes XLM/USDC orient as base=XLM, quote=USDC (price in USDC),
 // while XLM/AQUA orients as base=AQUA, quote=XLM (AQUA priced in XLM).
 //
-// ISSUER-AGNOSTIC BY DESIGN (SEC-B12). Rank 3 keys on the bare asset
+// ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare asset
 // CODE, so ANY classic token calling itself "USDC" — including a scam
 // issued by an attacker — ranks as a stablecoin here. That is
 // deliberate and safe ONLY because ranking decides ORIENTATION and
@@ -72,8 +72,7 @@ func quoteRank(assetID string) int {
 
 // isXLMQuoteForm reports every canonical asset_id spelling of XLM
 // (native, crypto:XLM, the installed network's SAC wrapper), so quoteRank
-// ranks all three forms identically. GH-1100: quoteRank used to recognise
-// only "native" and the SAC address.
+// ranks all three forms identically.
 func isXLMQuoteForm(assetID string) bool {
 	return assetID == "native" || assetID == "crypto:XLM" || assetID == NativeSACContractID()
 }

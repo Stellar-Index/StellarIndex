@@ -14,7 +14,7 @@ import (
 type Currency struct {
 	Ticker  string  // upper-case ISO-4217 (USD, EUR, JPY, …)
 	Name    string  // display name ("United States Dollar")
-	RateUSD float64 //floatmoney:ok known debt (#600) — same chain as worker.go/fx_quotes.go RateUSD; 1 USD = N units of this currency
+	RateUSD float64 //floatmoney:ok known debt — same chain as worker.go/fx_quotes.go RateUSD; 1 USD = N units of this currency
 	// UpdateAt is the publication time of the refresh whose rate this
 	// is. It trails [Snapshot.PublishedAt] when the worker is HOLDING the
 	// ticker's last guarded rate (see servedSnapshot in worker.go).
@@ -28,7 +28,7 @@ type Currency struct {
 // Replaced atomically by the worker; readers always see a
 // consistent view (no torn reads).
 //
-// The snapshot the worker installs carries only what the C2-030 sanity
+// The snapshot the worker installs carries only what the sanity
 // band cleared: the band runs BEFORE the install, so a rate it refused
 // for fx_quotes is never served from here either.
 //
@@ -53,7 +53,7 @@ type Snapshot struct {
 // HistoryPoint is one daily rate datum for the 7d series.
 type HistoryPoint struct {
 	Date time.Time // YYYY-MM-DD UTC
-	//floatmoney:ok known debt (#600) — same chain as Currency.RateUSD above; 1 USD = N units on that date
+	//floatmoney:ok known debt — same chain as Currency.RateUSD above; 1 USD = N units on that date
 	RateUSD float64
 }
 
@@ -96,7 +96,7 @@ const anchorTicker = "USD"
 // nil if no historical backfill has run; the snapshot still
 // installs cleanly with an empty History7d map.
 //
-// The join is CASE-INSENSITIVE on the currency code (F033). The maps'
+// The join is CASE-INSENSITIVE on the currency code. The maps'
 // producers never agreed on a case — the primary client lower-cases
 // both, the ECB standby keys on the XML attribute (UPPER), and the
 // reused-names path in refreshOnce re-keys by Ticker (UPPER) — so an

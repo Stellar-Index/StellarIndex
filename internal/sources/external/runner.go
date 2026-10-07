@@ -22,21 +22,20 @@ import (
 // price: CEX feeds emit sub-microcent fills whose amounts are tiny
 // integers (e.g. 8 base for 1 quote), making quote/base a
 // meaningless round fraction (1/8, 1/10, …). Kept, those single
-// dust prints set the UNWEIGHTED OHLC high/low (max/min of
-// quote/base) and produced absurd wicks on the served /v1/ohlc API
+// dust prints would set the UNWEIGHTED OHLC high/low (max/min of
+// quote/base) and produce absurd wicks on the served /v1/ohlc API
 // — e.g. an XLM/USD low of $0.125 from a $0.00000001 fill — while
 // contributing ~zero real volume.
 //
-// C2-016 (audit-2026-07-23): this used to be a flat 100_000 units
-// at the external 10^8 scale — i.e. 0.001 of whatever the QUOTE
-// asset happens to be — with a docstring asserting "CEX reference
-// pairs are USD-quoted". They are not: binance/pairs.yaml and
-// bitstamp/pairs.go both configure XLM/BTC. 0.001 BTC is ~$100, so
-// the flat floor silently dropped every XLM/BTC print below roughly
-// a thousand XLM — and the drop is SIZE-BIASED, so the surviving
-// XLM/BTC volume and VWAP were systematically skewed toward large
-// trades. Denominating the floor in USD removes the bias at its
-// source instead of papering over it per-pair.
+// The floor is denominated in USD, not quote units. A flat 100_000
+// units at the external 10^8 scale is 0.001 of whatever the QUOTE
+// asset happens to be, and CEX reference pairs are not all
+// USD-quoted: binance/pairs.yaml and bitstamp/pairs.go both configure
+// XLM/BTC. 0.001 BTC is ~$100, so a flat floor would silently drop
+// every XLM/BTC print below roughly a thousand XLM — and the drop is
+// SIZE-BIASED, systematically skewing the surviving XLM/BTC volume and
+// VWAP toward large trades. Denominating the floor in USD removes the
+// bias at its source instead of papering over it per-pair.
 const dustFloorUSDMicros = 1_000
 
 // externalQuoteScale is the fixed-point scale streamed CEX amounts
@@ -50,18 +49,15 @@ const externalQuoteScale = 100_000_000
 // per-currency FX table — a real table would be false precision for
 // an order-of-magnitude dust threshold, and would rot.
 //
-// $1 is NO LONGER an upper bound across the fiat allow-list. It was
-// when this was written (2026-07-26, 32 codes, GBP/CHF ≈ $1.3 the
-// richest); e17288bd widened canonical.knownFiatCodes to the full
-// massive feed (32 → 133), which brought in KWD ≈ $3.26, BHD ≈ $2.65,
-// OMR ≈ $2.60 and KYD ≈ $1.20 (wave-D SI-OC-05).
+// $1 is NOT an upper bound across the fiat allow-list:
+// canonical.knownFiatCodes carries the full massive feed, including
+// KWD ≈ $3.26, BHD ≈ $2.65, OMR ≈ $2.60 and KYD ≈ $1.20.
 //
-// For those codes the error runs the OTHER way, and the original
-// comment had the direction backwards. Under-stating the reference
-// OVER-states the floor: assuming $1 for a $3.26 KWD makes
+// For those codes the error runs the OTHER way. Under-stating the
+// reference OVER-states the floor: assuming $1 for a $3.26 KWD makes
 // dustFloorUnits yield 0.001 whole quote units ≈ $0.00326 notional —
 // about 3.3× STRICTER than the intended $0.001, which is the
-// size-biased-dropping direction C2-016 exists to prevent. The
+// size-biased-dropping direction the USD floor exists to prevent. The
 // poorest codes (IDR, VND, KRW) still float far below a dollar and
 // still get a floor well under $0.001, which is the harmless
 // direction.
@@ -122,8 +118,8 @@ var cryptoQuoteUSDMicros = map[string]uint64{
 // noDustFloor is the floor applied when no USD reference exists for
 // a quote asset: 1 unit, i.e. only a strictly-zero quote leg counts
 // as dust. Fail-open on the DATA is the conservation-correct choice
-// here — inventing a magnitude for an unknown asset is exactly how
-// C2-016 happened, and silently discarding real prints biases every
+// here — inventing a magnitude for an unknown asset recreates the
+// flat-floor size bias, and silently discarding real prints biases every
 // served volume/VWAP downstream, whereas keeping a marginal print
 // merely leaves a visible outlier. Operators are told at start-up:
 // [Run]'s pre-flight warns once per unreferenced streamed pair.
@@ -244,7 +240,7 @@ func Run(
 	// Pre-flight every Start. Fatal config errors (empty pair list,
 	// bad endpoint URL) surface here before we spawn anything.
 	//
-	// G10-11: each Streamer.Start spawns a reconnect-forever goroutine
+	// Each Streamer.Start spawns a reconnect-forever goroutine
 	// bound to the context we hand it. If a LATER Start fails, the
 	// earlier streamers' goroutines would otherwise leak — Run returns
 	// an error, the caller never gets a wait()/cancel handle, and those
@@ -305,7 +301,7 @@ func Run(
 			// at Error with its stack); the other connectors keep running.
 			defer worker.Recover(logger, "external-poller:"+spec.Poller.Name())
 			defer wg.Done()
-			// REL-05 (audit-2026-07-23): streamerCtx, not the raw
+			// streamerCtx, not the raw
 			// parent ctx. teardown() (used when a LATER poller in
 			// this same loop fails config validation) only cancels
 			// streamerCtx — a poller goroutine bound to the raw ctx
@@ -314,7 +310,7 @@ func Run(
 			// separately cancelled, which on a startup-config error
 			// may never happen. streamerCtx is a child of ctx, so on
 			// the normal shutdown path (ctx cancelled) it propagates
-			// exactly the same as before.
+			// the cancellation unchanged.
 			runPoller(streamerCtx, spec, sink, logger)
 		}(p)
 	}
@@ -322,7 +318,7 @@ func Run(
 	// wait() blocks until every connector goroutine has shut down, then
 	// releases the derived streamer context. cancelStreamers is also
 	// the safety valve the error paths above use to avoid leaking the
-	// already-launched streamer goroutines (G10-11).
+	// already-launched streamer goroutines.
 	wait = func() {
 		wg.Wait()
 		cancelStreamers()
@@ -381,7 +377,7 @@ func warnUnreferencedDustQuotes(source string, pairs []canonical.Pair, logger *s
 // already-launched streamer goroutines have observed the cancellation
 // and exited, then returns the original error. Used by Run's poller-
 // validation error paths so a late config error doesn't leak the
-// streamer goroutines started earlier in the same call (G10-11).
+// streamer goroutines started earlier in the same call.
 func teardown(cancel context.CancelFunc, wg *sync.WaitGroup, err error) error {
 	cancel()
 	wg.Wait()
@@ -389,7 +385,7 @@ func teardown(cancel context.CancelFunc, wg *sync.WaitGroup, err error) error {
 }
 
 // drainUntilClosed reads and discards from a streamer's trade channel
-// until it closes. Used on the streamer-Start error path (G10-11):
+// until it closes. Used on the streamer-Start error path:
 // the earlier streamers were started with the now-cancelled derived
 // context, so their run loops will close their channels promptly; we
 // drain so the close — and thus the goroutine exit — is not blocked on
@@ -453,7 +449,7 @@ func forwardTrade(ctx context.Context, source string, trade canonical.Trade, sin
 	// carry no meaningful price (integer-quantised round-fraction
 	// ratios) and corrupt the OHLC high/low if ingested. The
 	// floor is resolved per QUOTE ASSET so the threshold means
-	// the same $0.001 on XLM/BTC as on XLM/USDT (C2-016).
+	// the same $0.001 on XLM/BTC as on XLM/USDT.
 	if trade.QuoteAmount.Cmp(minStreamQuoteUnits(trade.Pair.Quote)) < 0 {
 		obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
 		return true

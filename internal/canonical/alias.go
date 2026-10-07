@@ -332,9 +332,9 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 // All three are the SAME asset with the same economic value. A read
 // keyed by one form that does not try the others silently omits every
 // venue publishing under the alias — the failure this primitive exists
-// to prevent, observed live on 2026-05-29 (/v1/price?asset=native fell
-// through to a 39h-stale triangulated bucket while a fresh CEX VWAP sat
-// under `crypto:XLM`).
+// to prevent, observed live when /v1/price?asset=native fell through
+// to a 39h-stale triangulated bucket while a fresh CEX VWAP sat under
+// `crypto:XLM`.
 //
 // # Why the SAC form is LAST, deliberately
 //

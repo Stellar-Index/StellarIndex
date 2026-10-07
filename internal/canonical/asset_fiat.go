@@ -16,29 +16,25 @@ import "sort"
 // Codes chosen from ISO-4217 plus currencies the spec explicitly
 // names or that our CEX/FX connectors will price against.
 //
-// 2026-04-23: extended after observing real Reflector FX oracle
-// traffic — ARS (seen in mainnet capture under v6-2026-04-23/), plus
-// a wider set of ISO-4217 fiat codes that Reflector-operator-grade
-// FX feeds publish. Crypto tickers (BTC, ETH, SOL …) emitted by the
-// CEX feed are NOT on this list — they represent a different asset
-// class that needs its own canonical type (tracked separately,
-// outside PR 164a's scope).
+// It covers the codes seen in real Reflector FX oracle traffic (ARS
+// among them) plus a wider set of ISO-4217 fiat codes that
+// Reflector-operator-grade FX feeds publish. Crypto tickers (BTC, ETH,
+// SOL …) emitted by the CEX feed are NOT on this list — they are a
+// different asset class with their own canonical type (asset_crypto.go).
 //
-// 2026-08-27: widened to the FULL set the active massive.com FX feed
-// (internal/sources/external/forex) actually publishes into fx_quotes —
-// 132 codes observed on r1. The batch price endpoint rejects the whole
-// request on the first code it can't parse, so the /assets converter
-// could only ever offer the intersection of this list and the feed;
-// aligning them lets the converter surface every currency the feed
-// carries (~109 with live daily rates; the remainder — incl. legacy
-// pre-euro/redenominated codes like CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL
-// — are inert without a fresh rate and simply never resolve to a price).
+// It also carries the FULL set the active massive.com FX feed
+// (internal/sources/external/forex) publishes into fx_quotes — 132 codes
+// observed on r1. The batch price endpoint rejects the whole request on
+// the first code it can't parse, so the /assets converter can only ever
+// offer the intersection of this list and the feed; aligning them lets
+// the converter surface every currency the feed carries (~109 with live
+// daily rates; the remainder — incl. obsolete pre-euro/redenominated
+// codes like CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL — are inert without a
+// fresh rate and simply never resolve to a price).
 //
-// 2026-08-29: VES (Venezuelan bolívar soberano, ISO-4217 928) added —
-// the Reflector FX oracle publishes a VES slot on every event (visible
-// in the 2026-04-23 fixtures; recorded as `raw:VES` since PR #247 and
-// paged by stellarindex_ingestion_oracle_unknown_symbols on r1 v0.48.0).
-// The massive.com FX feed does NOT carry VES, so like the legacy codes
+// VES (Venezuelan bolívar soberano, ISO-4217 928) is listed because the
+// Reflector FX oracle publishes a VES slot on every event. The
+// massive.com FX feed does NOT carry VES, so like the obsolete codes
 // above it never resolves through the /assets converter; it exists so
 // the reflector-fx row is typed fiat:VES. XAU (gold) deliberately stays
 // OFF this list — it is a commodity, not a currency, and maps to

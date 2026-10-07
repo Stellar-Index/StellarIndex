@@ -39,10 +39,9 @@ const (
 // serve a contract address that resolves to nothing / a different
 // asset on the target network — see InstallNetworkPassphrase.
 //
-// Board #40 (RFP audit): both RFPs put "Contract Address" in the
-// asset-metadata table for classic assets; wallets resolve holdings
-// by contract address post-Soroban, so the classic detail must carry
-// this and a C-address lookup must land on the classic identity.
+// Classic asset metadata carries a "Contract Address": wallets resolve
+// holdings by contract address post-Soroban, so the classic detail must
+// carry this and a C-address lookup must land on the classic identity.
 //
 // Returns an error only for asset shapes with no SAC (a Soroban
 // token IS its own contract; use Asset.ContractID directly).
