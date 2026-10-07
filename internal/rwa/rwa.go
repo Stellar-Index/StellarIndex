@@ -484,11 +484,11 @@ func isOracleRWACode(code string) bool {
 // It reads EVERY asset-side input [Qualify]'s requirement-4 arms read —
 // the class, the code and the anchor asset — and must keep doing so as
 // arms are added: a pre-filter narrower than the rule it precedes is a
-// silent membership change, which is how the ISIN arm went unreached
-// for two days after it shipped (the three Franklin share classes
-// declare type `other` beside their ISINs, and the filter read only
-// the type). [TestCouldQualify_MatchesQualifyOnTheAssetSideInputs]
-// pins the match over all three inputs.
+// silent membership change. The three Franklin share classes declare
+// type `other` beside their ISINs, so a filter that read only the type
+// would leave the ISIN arm unreached.
+// [TestCouldQualify_MatchesQualifyOnTheAssetSideInputs] pins the match
+// over all three inputs.
 func CouldQualify(code, declaredAnchorType, declaredAnchorAsset string) bool {
 	return AnchorClass(declaredAnchorType) != "" ||
 		isOracleRWACode(code) ||

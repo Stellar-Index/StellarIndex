@@ -3,14 +3,9 @@
 
 // Package opsutil holds the small set of helpers shared across the
 // stellarindex-ops subcommand packages (internal/ops/{ingest,archive,
-// discovery,supply,diagnostics,chops}) — extracted alongside the
-// cmd/stellarindex-ops → internal/ops/* package split (maintainability
-// audit 2026-07-01, D1 finding M1-5). Each of these previously lived
-// in one subcommand's file (backfill.go, cross_region_check.go,
-// backfill_router.go, wasm_history.go, ledgerstream_config.go) but was
-// called directly by subcommands that now live in a different
-// package, so it moved here rather than being duplicated or forcing
-// an odd cross-bucket import.
+// discovery,supply,diagnostics,chops}). Most are called directly by
+// subcommands in more than one package, so they live here rather than
+// being duplicated or forcing an odd cross-bucket import.
 package opsutil
 
 import (
@@ -39,9 +34,9 @@ import (
 // printing an extra "subcommand: <err>" prefix line — they already
 // printed a more specific message themselves. Used in place of a bare
 // os.Exit(1) so subcommand handlers drain the fd 2 filter via
-// realMain's defer before exit (rc.77 regression: short-lived
-// subcommands printed only their first line then ate the rest because
-// the consumer goroutine behind fd 2's filter was killed mid-buffer).
+// realMain's defer before exit: a bare os.Exit kills the consumer
+// goroutine behind fd 2's filter mid-buffer, so a short-lived
+// subcommand prints only its first line and loses the rest.
 var ErrExitSilently = errors.New("exit silently")
 
 // ExitCodeError lets a subcommand report a specific positive exit
@@ -49,7 +44,7 @@ var ErrExitSilently = errors.New("exit silently")
 // normal realMain flow, so the flush() defer in
 // cmd/stellarindex-ops/main.go's realMain (SilenceSDKChecksumWarnings)
 // still runs. NEVER call os.Exit directly from a subcommand handler
-// for this — see realMain's doc comment for why (rc.77 regression).
+// for this — see realMain's doc comment for why.
 //
 // reconcile-balances is the first user: "exit code = number of
 // MISMATCHes" mirrors scripts/dev/r1-smoke.sh's "exit code = number
@@ -74,12 +69,11 @@ func (e *ExitCodeError) Unwrap() error { return e.Err }
 // WriteGate is the shared fail-closed write toggle mutating
 // stellarindex-ops subcommands register, so the CLI shares ONE
 // convention: a command previews by DEFAULT and applies changes only
-// when the operator passes -write. It replaces the old split where some
-// commands wrote UNLESS you passed -dry-run — a default-WRITE shape that
-// silently mutates a money surface the moment a flag is forgotten (the
-// INV-3 DO-NOTHING/DO-DAMAGE trap). Build with [RegisterWriteGate], gate
-// the write with [WriteGate.Enabled], and announce the mode once with
-// [WriteGate.Banner].
+// when the operator passes -write. The opposite, default-WRITE shape —
+// writing UNLESS the operator passes -dry-run — silently mutates a money
+// surface the moment a flag is forgotten. Build with [RegisterWriteGate],
+// gate the write with [WriteGate.Enabled], and announce the mode once
+// with [WriteGate.Banner].
 type WriteGate struct {
 	write  *bool
 	dryRun *bool
@@ -115,13 +109,10 @@ func RegisterWriteGate(fs *flag.FlagSet) *WriteGate {
 //
 // It exists because [RegisterWriteGate] is a convention a subcommand may
 // simply decline, and a convention that can be declined is not a safety
-// property (K015). Six mutating ingest subcommands — census-backfill,
-// backfill-router, tag-routed-via, tag-signer, seed-soroswap-pairs,
-// seed-protocol-contracts — declared neither -write nor -dry-run and
-// wrote unconditionally: there was no preview to catch a mistyped range
-// before the UPDATE ran. Getting the FlagSet and getting the gate is now
-// one call, so the next mutating subcommand cannot acquire one without
-// the other.
+// property. A mutating subcommand that declares neither -write nor -dry-run
+// writes unconditionally, with no preview to catch a mistyped range before
+// the UPDATE runs. Getting the FlagSet and getting the gate is one call, so a
+// mutating subcommand cannot acquire one without the other.
 //
 // flag.ContinueOnError matches every ops subcommand: the handler returns
 // the parse error rather than calling os.Exit, so realMain's fd-2 filter
@@ -202,9 +193,8 @@ func PrintWriteBanner(write bool) bool {
 // entire history (ledger 2..tip). fs must already be parsed. full is the
 // subcommand's own "-full" flag value (true opts into the whole history on
 // purpose); jobName and rowEstimate name the command and its approximate
-// row count in the error message. Extracted from ch-txindex-backfill
-// (GH-1192) so every windowed CH backfill enforces the same footgun guard
-// instead of only the one that happened to grow it first.
+// row count in the error message. Shared so every windowed CH backfill
+// enforces the same footgun guard.
 func RequireExplicitRange(fs *flag.FlagSet, full bool, jobName, rowEstimate string) error {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -360,23 +350,20 @@ func HistoricReadBucket(cfg config.Config, override string) (string, error) {
 // (ch-backfill, census-backfill) must go through this rather than
 // defaulting to a bucket of its own choosing.
 //
-// The defect this exists to close (found live 2026-07-25 in ch-backfill,
-// 2026-07-25 in census-backfill): the walkers defaulted to
-// cfg.Storage.S3BucketLive unconditionally, which is silently wrong for
-// exactly the ranges these commands exist to serve. The live bucket holds
-// only what galexie has exported since this node started (on r1 it is also
-// the TRIMMED one — see
-// docs/operations/r1-deployment-state.md), so a
-// historic range resolves to zero objects there. Because every ops walker
-// opts into TolerateTrailingMissing (NewBoundedLedgerStreamConfig), that
-// walk ends WITHOUT an error, and the caller records the window as DONE on
-// exit 0 — a permanent hole, recorded as success. The per-command coverage
-// checks close the second half of that trap; this closes the first.
+// The failure this closes: a walker that defaults to cfg.Storage.S3BucketLive
+// unconditionally is silently wrong for exactly the ranges these commands
+// exist to serve. The live bucket holds only what galexie has exported
+// since this node started (on r1 it is also the TRIMMED one — see
+// docs/operations/r1-deployment-state.md), so a historic range resolves
+// to zero objects there. Because every ops walker opts into
+// TolerateTrailingMissing (NewBoundedLedgerStreamConfig), that walk ends
+// WITHOUT an error, and the caller records the window as DONE on exit 0 —
+// a permanent hole, recorded as success. The per-command coverage checks
+// close the second half of that trap; this closes the first.
 //
-// It lives here rather than in one subcommand package because the two
-// callers had INDEPENDENT copies of the broken default: fixing one and
-// leaving the other is how this class survives a remediation. One seam
-// policy, one place.
+// It lives here rather than in one subcommand package so the two callers
+// cannot hold INDEPENDENT copies of the default: fixing one and leaving the
+// other is how this class survives a remediation. One seam policy, one place.
 //
 // Resolution order:
 //  1. An explicit -bucket always wins: the operator knows their layout, and
@@ -389,10 +376,10 @@ func HistoricReadBucket(cfg config.Config, override string) (string, error) {
 //     failure in a subtler shape.
 //  3. With NO seam configured (r1 today), the live bucket — unchanged.
 //     Without a seam the live bucket's floor is not knowable from config,
-//     and guessing it is what produced this whole class of bug in the
-//     first place. Silently switching the default to the archive would
-//     also break scripts/ops/ch-live-catchup.sh, which heals live-era
-//     holes and extends the tip with no -bucket at all: the archive is an
+//     and guessing it is how this whole class of failure arises.
+//     Silently switching the default to the archive would also break
+//     scripts/ops/ch-live-catchup.sh, which heals live-era holes and
+//     extends the tip with no -bucket at all: the archive is an
 //     hourly MIRROR of live, so it lags the tip by up to an hour and that
 //     timer would fail on every run until the mirror caught up. So the
 //     default stays, and the caller's coverage check is what makes a wrong
@@ -433,17 +420,14 @@ func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (s
 
 // NewBoundedLedgerStreamConfig returns the ledgerstream.Config that ops
 // subcommands should ALWAYS use when their `-to` may equal the live
-// galexie-archive tip. Always opts into TolerateTrailingMissing per
-// rc.81 (f7fc1acab diagnosis); never override that downstream.
+// galexie-archive tip. Always opts into TolerateTrailingMissing; never
+// override that downstream.
 //
-// Background: the trailing-edge missing-file failure surfaced in the
-// 2026-05-25 verify-archive bootstrap (project_62_diagnosis_2026_05_25)
-// was patched site-by-site in verify-archive and wasm-history. The
-// other ops subcommands that stream LCM (verify-decoders,
-// scan-soroban-events) used to construct ledgerstream.Config inline
-// without the flag and could hit the same trap when called with
-// `-to 0` (live tip). This helper centralises the construction so the
-// flag can't be forgotten.
+// Without that flag a walk whose range reaches the tip fails on the
+// trailing-edge missing file. Every ops subcommand that streams LCM
+// (verify-archive, wasm-history, verify-decoders, scan-soroban-events)
+// can hit that when called with `-to 0` (live tip), so this helper
+// centralises the construction and the flag can't be forgotten.
 //
 // parallel is the number of concurrent ledgerstream.Stream walkers
 // the CALLER is about to run against copies of the returned Config
@@ -452,7 +436,7 @@ func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (s
 // each on its own goroutine — see boundedWalkerBufferConfig below).
 // Single-walker callers pass 1.
 //
-// # Why this sets an explicit Buffered override (2026-07-15 -parallel OOM)
+// # Why this sets an explicit Buffered override
 //
 // Left nil, [ledgerstream.Stream] falls back to the SDK's
 // ingest.DefaultBufferedStorageBackendConfig(lpf). Because this helper
@@ -509,7 +493,7 @@ const (
 	// read-ahead depth shared across every concurrent bounded-backfill
 	// walker (ch-backfill -parallel, wasm-history -parallel,
 	// verify-archive -workers). See NewBoundedLedgerStreamConfig's doc
-	// for the 2026-07-15 OOM this replaces.
+	// for the OOM it prevents.
 	boundedWalkerBufferBudget = 200
 
 	// boundedWalkerBufferMin is the floor each walker's BufferSize is
@@ -526,7 +510,7 @@ const (
 
 	// boundedWalkerRetryLimit / boundedWalkerRetryWait mirror the SDK's
 	// own ingest.DefaultBufferedStorageBackendConfig defaults — only
-	// BufferSize/NumWorkers needed bounding for the OOM fix.
+	// BufferSize/NumWorkers need bounding.
 	boundedWalkerRetryLimit = 5
 	boundedWalkerRetryWait  = 30 * time.Second
 )

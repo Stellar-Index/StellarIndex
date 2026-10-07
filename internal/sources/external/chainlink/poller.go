@@ -80,8 +80,8 @@ func (p *Poller) clock() time.Time {
 // the RPC endpoint (must include the API key for keyed providers
 // like Alchemy) and the feed map.
 func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
-	// GH-641: pre-register the zero-valued mismatch/verify-failed series
-	// for every configured feed. Same reasoning as the divergence
+	// Pre-register the zero-valued mismatch/verify-failed series for
+	// every configured feed. Same reasoning as the divergence
 	// reference's NewChainlinkReference — FeedMap is fixed at
 	// construction, so the label set is bounded even though it is
 	// operator-config-dependent, and without seeding a feed that has
@@ -222,18 +222,17 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 	if err != nil {
 		// Do NOT mark the round emitted: a project() failure
 		// (unresolved decimals, malformed answer, non-positive
-		// post-invert price) can be transient, but the round id
-		// only changes on-chain when the feed publishes a new
-		// answer. Committing here before the row is ever built
-		// would permanently wedge the feed at this round until
-		// process restart, even though the identical round
-		// would project cleanly on a later tick (RNC26).
+		// post-invert price) can be transient, but the round id only
+		// changes on-chain when the feed publishes a new answer.
+		// Committing here before the row is ever built would
+		// permanently wedge the feed at this round until process
+		// restart, even though the identical round would project
+		// cleanly on a later tick.
 		return pollResult{err: err, pair: pair, round: rnd}, true
 	}
-	// Commit the dedup high-water mark only now that the update has
-	// actually been built — the earliest point a failure downstream
-	// of this line can no longer cause silent, permanent data loss
-	// for this round (RNC26).
+	// Commit the dedup high-water mark only now that the update has actually
+	// been built — the earliest point a failure downstream of this line can
+	// no longer cause silent, permanent data loss for this round.
 	p.Cache.commitEmit(rnd.FeedAddress, rnd.RoundID)
 	return pollResult{update: u, pair: pair, round: rnd}, true
 }
@@ -266,7 +265,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// anyCurrent tracks whether ANY feed was current this tick — emitted
 	// OR unchanged. "Unchanged" (ok=false from pollFeed) sends nothing to
 	// results, so without this the fan-in below can't tell "a sibling is
-	// fine, it just has nothing new" from "every feed failed" (#939).
+	// fine, it just has nothing new" from "every feed failed".
 	var anyCurrent atomic.Bool
 
 	var wg sync.WaitGroup
@@ -340,21 +339,20 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// signal hygiene. Per-feed errors are already logged and counted
 	// (stellarindex_chainlink_feed_polls_total) above.
 	//
-	// G10-02 (liveness): but an all-feeds-FAILED cycle is NOT a
-	// healthy skip. Pre-fix this branch returned (nil,nil,nil) even
-	// when every feed errored, so the runner bumped
-	// ExternalPollerLastSuccessUnix and the staleness gauge stayed
-	// green while the poller was actually wedged (e.g. bad endpoint,
-	// key revoked, RPC down). We now surface firstErr when there were
-	// zero successful updates AND at least one feed errored — a
-	// genuine "polled and found nothing new" cycle (firstErr == nil)
-	// still skips cleanly.
+	// Liveness: an all-feeds-FAILED cycle is NOT a healthy skip.
+	// Returning (nil,nil,nil) when every feed errored would let the
+	// runner bump ExternalPollerLastSuccessUnix and keep the
+	// staleness gauge green while the poller is actually wedged (e.g.
+	// bad endpoint, key revoked, RPC down). So surface firstErr when
+	// there were zero successful updates AND at least one feed
+	// errored — a genuine "polled and found nothing new" cycle
+	// (firstErr == nil) still skips cleanly.
 	//
-	// #939: an unchanged sibling (ok=false, nothing sent to results)
-	// is ALSO current, not a failure. Surface firstErr only when NO
-	// feed was current this tick — otherwise a stale/errored feed's
-	// error would flip a genuinely healthy tick to "error" just
-	// because its unchanged sibling had nothing new to report.
+	// An unchanged sibling (ok=false, nothing sent to results) is
+	// ALSO current, not a failure. Surface firstErr only when NO feed
+	// was current this tick — otherwise a stale/errored feed's error
+	// would flip a genuinely healthy tick to "error" just because its
+	// unchanged sibling had nothing new to report.
 	if len(updates) == 0 {
 		if firstErr != nil && !anyCurrent.Load() {
 			return nil, nil, firstErr
@@ -445,7 +443,7 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 // projecting an already-seen round before doing any of that work,
 // while deferring the actual commit until the update built from this
 // round has survived every failure point that would otherwise strand
-// it (RNC26 — see commitEmit).
+// it (see commitEmit).
 func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -459,13 +457,12 @@ func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 // commitEmit marks (feedAddr, roundID) as emitted. Callers MUST only
 // call this after the canonical.OracleUpdate for this round has been
 // successfully built (project succeeded) — never before. Marking
-// earlier (the old shouldEmit behaviour) meant a project() failure
-// (unresolved decimals, malformed answer, non-positive post-invert
-// price) permanently wedged the feed at that round: the on-chain
-// round id only advances when the feed itself publishes a new
-// answer, so a later, otherwise-healthy poll of the SAME round would
-// silently produce nothing until process restart reset the in-memory
-// cache (RNC26).
+// earlier would mean a project() failure (unresolved decimals,
+// malformed answer, non-positive post-invert price) permanently
+// wedges the feed at that round: the on-chain round id only advances
+// when the feed itself publishes a new answer, so a later,
+// otherwise-healthy poll of the SAME round would silently produce
+// nothing until process restart resets the in-memory cache.
 func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -488,8 +485,8 @@ func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 //
 // roundID is the FULL uint80 proxy round id (*big.Int) — hashing the
 // wide value means two rounds from different phases that happen to
-// share a low-64-bit aggregatorRoundId produce DISTINCT tx hashes,
-// so they don't collide on the storage PK (F-1323/G10-01).
+// share a low-64-bit aggregatorRoundId produce DISTINCT tx hashes, so
+// they don't collide on the storage PK.
 //
 // Mirrors the synthetic-hash pattern in coingecko/coinmarketcap
 // pollers — different inputs (their tickers + currency + ts vs our

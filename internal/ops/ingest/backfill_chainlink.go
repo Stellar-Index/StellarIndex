@@ -49,7 +49,7 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 // op_index, ts) plus the deterministic syntheticTxHash(feed,
 // roundId) means re-running this command over an already-backfilled
 // range is a no-op at the SAME derive_generation. InsertOracleUpdate is a
-// generation-guarded DO UPDATE (migration 0109, INV-3), not DO NOTHING —
+// generation-guarded DO UPDATE (migration 0109), not DO NOTHING —
 // so a re-run at a HIGHER generation deliberately overwrites, which is the
 // point.
 //
@@ -128,7 +128,7 @@ func backfillChainlink(args []string) error {
 			return fmt.Errorf("storage: %w", err)
 		}
 		defer func() { _ = store.Close() }()
-		// Re-derive path (INV-3 / migration 0109): stamp a positive
+		// Re-derive path (migration 0109): stamp a positive
 		// derive_generation so a corrected oracle re-derive UPDATEs the
 		// stored price in place and wins over the live gen-0 value.
 		store.SetDeriveGeneration(time.Now().Unix())

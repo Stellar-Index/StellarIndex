@@ -34,13 +34,12 @@ var (
 	// the per-account cap is already met. The store enforces the
 	// cap atomically (single CTE-gated INSERT) so concurrent
 	// requests at the boundary see this error rather than slip
-	// through a raceable pre-check. F-1248 (codex audit-2026-05-12).
+	// through a raceable pre-check.
 	ErrWebhookQuotaExceeded = errors.New("platform: webhook quota exceeded")
 
 	// ErrAPIKeyQuotaExceeded mirrors ErrWebhookQuotaExceeded for
-	// the dashboard API-key store. F-1257 (codex audit-2026-05-12):
-	// the 25-active-key/account cap is enforced atomically inside
-	// the INSERT to defeat the same race the webhook cap had.
+	// the dashboard API-key store: the per-tier active-key cap is
+	// enforced atomically inside the INSERT to defeat the same race.
 	ErrAPIKeyQuotaExceeded = errors.New("platform: api key quota exceeded")
 
 	// ErrPriceAlertQuotaExceeded mirrors ErrWebhookQuotaExceeded for

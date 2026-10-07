@@ -2,12 +2,11 @@
 //
 // The substance gate (substance.go) answers "is this a REAL market?".
 // It is structurally blind to a different question: "is this a SCAM?".
-// An issuer can run a genuinely liquid market and still be a curated-
-// directory-flagged fraud — RIO-GBNLJIYH… cleared the substance floor
-// ~40× on real trading (volume_character = market) yet is tagged
+// An issuer can run a genuinely liquid market and still be a
+// curated-directory-flagged fraud — RIO-GBNLJIYH… cleared the substance
+// floor ~40× on real trading (volume_character = market) yet is tagged
 // `unsafe`/deprecated-scam, so we published a $0.0072 price and a $540k
-// market cap on a scam token's asset page (the 2026-08-25 decision that
-// motivated this gate).
+// market cap on a scam token's asset page.
 //
 // This gate closes that class: for an asset whose ISSUER carries a
 // scam-class tag in the curated account directory (migration 0136), it
@@ -16,14 +15,10 @@
 // raw trade surfaces (/v1/ohlc, /v1/observations, /v1/history) stay
 // visible.
 //
-// WHERE IT IS CONSUMED, precisely. This comment used to say the gate
-// sat "at the price-reader seam so every reader-backed surface
-// (/v1/price, /v1/price/batch, /v1/twap, /v1/vwap, …) is covered by ONE
-// gate". That was never true of /v1/twap and /v1/vwap: they do not go
-// through the price reader at all — they compute from raw trades via
-// their own fetch — so for as long as the claim stood they served a
-// flagged issuer's aggregated price at 200 (wave-D MSP-02/EXR-04,
-// reproduced live). PR #182's merged body repeated the same claim.
+// WHERE IT IS CONSUMED, precisely. There is no single seam: /v1/twap and
+// /v1/vwap do not go through the price reader at all — they compute from raw
+// trades via their own fetch — so a gate at the price-reader seam alone would
+// leave them serving a flagged issuer's aggregated price at 200.
 //
 // The gate is consumed per-surface, and the honest way to state the
 // invariant is per-surface rather than "one seam":
@@ -62,18 +57,16 @@
 // binary that reads a closed VWAP bucket without asking a [Gate], but it
 // cannot see a handler that computes its own price.
 //
-// BOTH LEGS, always. The withholding decision is a property of the
-// MARKET, not of whichever leg the client happened to name first: a
-// price of X in a flagged issuer's asset is the flagged market's own
-// price, inverted. Keying the gate on the base alone meant
-// `?base=native&quote=<FLAGGED>` republished, at 200 and
-// unauthenticated, the exact reciprocal of the number
-// `?base=<FLAGGED>&quote=native` had just refused — together with its
-// volumes and trade counts (F002/F019/F032/T039). [ScamGate.WithheldPair]
-// folds both legs INSIDE this package so no call site can consult one
-// leg and forget the other; that fold is the thing new surfaces
-// inherit, and a hand-written `Withheld(base) || Withheld(quote)` at a
-// call site is the per-site drift it exists to prevent.
+// BOTH LEGS, always. The withholding decision is a property of the MARKET,
+// not of whichever leg the client happened to name first: a price of X in a
+// flagged issuer's asset is the flagged market's own price, inverted. Keying
+// the gate on the base alone would let `?base=native&quote=<FLAGGED>`
+// republish, at 200 and unauthenticated, the exact reciprocal of the number
+// `?base=<FLAGGED>&quote=native` had just refused — together with its volumes
+// and trade counts. [ScamGate.WithheldPair] folds both legs INSIDE this
+// package so no call site can consult one leg and forget the other; that fold
+// is the thing new surfaces inherit, and a hand-written `Withheld(base) ||
+// Withheld(quote)` at a call site is the per-site drift it exists to prevent.
 //
 // It DELIBERATELY overturns the directory's historical "display-only,
 // tags never gate pricing" invariant (asset_directory_tags.go).
@@ -371,15 +364,15 @@ func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset
 }
 
 // Withheld is the BASE-ONLY spelling of the decision. It answers HALF
-// the question and NO price-serving path asks it any more.
+// the question and NO price-serving path asks it.
 //
-// Every surface that once did was migrated to [ScamGate.WithheldPair]
-// (via internal/api/v1's scamWithheld helper): /v1/twap and /v1/chart
-// under F019/F032, and /v1/price/tip plus the closed-bucket price
-// stream — the last two — under F002/K001. internal/api/v1's
-// TestScamGateIsAskedThePairQuestion fails on any selector of this
-// method under internal/api/v1 — whatever its receiver, subpackages
-// included — outside scamWithheld's fallback, with no exemption list.
+// Every price surface asks [ScamGate.WithheldPair] instead —
+// /v1/twap, /v1/chart, /v1/price/tip and the closed-bucket price
+// stream among them — via internal/api/v1's scamWithheld helper.
+// internal/api/v1's TestScamGateIsAskedThePairQuestion fails on any
+// selector of this method under internal/api/v1 — whatever its
+// receiver, subpackages included — outside scamWithheld's fallback,
+// with no exemption list.
 //
 // It survives only because the v1.PriceScamGate interface declares it,
 // and that interface is what v1.PriceScamPairGate embeds; production
@@ -409,19 +402,20 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // have no address to flag and return false.
 //
 // The asset is resolved to its CANONICAL family form before that check
-// (canonical.CanonicalAsset), because a Stellar Asset Contract wrapper
-// is the same asset as the classic issuance it wraps while carrying no
-// G-address of its own. Without the resolution the classic check
-// rejected every SAC spelling as "nothing to flag", so a flagged
-// issuer's price stayed servable to anyone who named the wrapper's
-// C-address instead of `CODE-ISSUER` — on /v1/price, /v1/vwap,
-// /v1/twap, /v1/price/tip and /v1/chart alike, since every consultation
-// passes the raw requested asset straight through
-// (docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md, R8).
-// Resolving HERE rather than at each caller is what makes the
-// consultations agree: a new price surface inherits it — and now so
+// (canonical.CanonicalAsset), because a Stellar Asset Contract wrapper is
+// the same asset as the classic issuance it wraps while carrying no
+// G-address of its own. Without the resolution the classic check would
+// reject every SAC spelling as "nothing to flag", so a flagged issuer's
+// price would stay servable to anyone who named the wrapper's C-address
+// instead of `CODE-ISSUER` — on /v1/price, /v1/vwap, /v1/twap, /v1/price/tip
+// and /v1/chart alike, since every consultation passes the raw requested
+// asset straight through. Resolving HERE rather than at each caller is what
+// makes the consultations agree: a new price surface inherits it — and so
 // does the quote leg, which the SAC bypass would otherwise re-open one
 // orientation at a time.
+//
+// internal/api/v1's TestScamGateWithholdsSACSpellingOnEveryPriceSurface
+// pins the withholding on each of those surfaces.
 //
 // Direction matters and is one-way. A configured classic↔SAC family is
 // ordered classic-first (canonical.NewAliasRegistry), so the canonical

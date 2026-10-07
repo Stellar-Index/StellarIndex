@@ -257,12 +257,12 @@ func ContractRecognitionSources() []string {
 // contract absent from the directory needs a curated entry, while a
 // classic asset failing R2 needs its issuer to publish a file.
 //
-// The four listed after the original set exist because C2 now has two
-// arms, and a single reason covering both would tell a reader that
+// The four documented constants below exist because C2 has two arms,
+// and a single reason covering both would tell a reader that
 // recognition failed without saying which half of which arm was
 // missing — which is the one thing that determines who can act. They
-// are ADDED rather than folded into [RejectContractNotNamed], which
-// keeps its original meaning exactly: nobody named this address.
+// are kept apart from [RejectContractNotNamed], which keeps its
+// narrow meaning exactly: nobody named this address.
 const (
 	RejectNotContract      = "not_a_contract_address"
 	RejectContractNotNamed = "contract_not_named_in_directory"
@@ -641,11 +641,9 @@ func contractRecognitionOf(c ContractCandidate) (recognition, reject string) {
 // would vanish from the accounting rather than appear in it under a
 // reason.
 //
-// This set previously shipped empty because the work that built the arm
-// had no access to a primary source for any address. That is no longer
-// true for the entries below; it remains true for every address not
-// listed, and an address written from memory or inferred from a
-// dashboard screenshot is still a fabricated identity for a financial
+// An address enters this set only on a primary source. Every address
+// not listed lacks one, and an address written from memory or inferred
+// from a dashboard screenshot is a fabricated identity for a financial
 // instrument.
 //
 // Adding an entry is a code change, exactly as changing the audited
