@@ -1,10 +1,9 @@
-# external-poller error rate — the unfireable denominator (wave-D
-# ALERT-03).
+# external-poller error rate — the unfireable denominator.
 #
-# The denominator summed two selectors that differ in the `outcome`
-# label with no matcher. PromQL one-to-one matching compares the FULL
-# label signature, so the `+` yielded the empty vector unconditionally
-# and this alert could not fire at ANY error rate.
+# A denominator summing two selectors that differ in the `outcome`
+# label with no matcher is empty: PromQL one-to-one matching compares
+# the FULL label signature, so the `+` yields the empty vector
+# unconditionally and the alert cannot fire at ANY error rate.
 #
 # The firing case below carries a THIRD outcome, `skipped` (post-429
 # cooldown), at 40/min against 9 errors and 1 success. That shape is

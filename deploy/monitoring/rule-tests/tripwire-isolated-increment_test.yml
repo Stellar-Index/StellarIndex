@@ -245,7 +245,7 @@ tests:
         alertname: stellarindex_ingestion_trade_buffer_drop
         exp_alerts: []
 
-  # ══ stellarindex_ingestion_trustline_observation_drop (INV-0786) ══
+  # ══ stellarindex_ingestion_trustline_observation_drop ══
   - interval: 1m
     name: trustline_observation_drop — one isolated drop tickets
     input_series:

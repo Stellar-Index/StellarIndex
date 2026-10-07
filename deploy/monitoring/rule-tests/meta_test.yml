@@ -5,12 +5,11 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/meta_test.yml
 #
-# GH-1174: these six alerts guard the paths that would otherwise let
-# the whole alerting pipeline go silently dark (the 2026-07-29 ->
-# 2026-08-29 31-day zero-notification outage). Four of the five
-# expressions rule-equivalence.baseline waives as intentional
-# multi-vs-r1 divergences live here, and until now none of them had a
-# promtool test on EITHER tree — "intentional divergence" and
+# These six alerts guard the paths that would otherwise let
+# the whole alerting pipeline go silently dark (a 31-day
+# zero-notification outage). Four of the five expressions
+# rule-equivalence.baseline waives as intentional multi-vs-r1
+# divergences live here; without a promtool test on EITHER tree — "intentional divergence" and
 # "untested on both sides" were indistinguishable from the outside.
 
 rule_files:
@@ -93,7 +92,7 @@ tests:
         alertname: stellarindex_alertmanager_not_notifying
         exp_alerts: []
 
-  # GH-1173: alertmanager_notifications_total is per-integration, and an
+  # alertmanager_notifications_total is per-integration, and an
   # HA pair (job=alertmanager_pair) exposes one series PER REPLICA. Only
   # one replica may end up actually dispatching a given alert group, so
   # the other replica's own webhook series can sit flat at 0 forever even
@@ -113,13 +112,13 @@ tests:
         alertname: stellarindex_alertmanager_not_notifying
         exp_alerts: []
 
-  # GH-1173, receiver dimension: the webhook integration backs TWO
+  # Receiver dimension: the webhook integration backs TWO
   # receivers (deadmansswitch + alert-delivery-failure), each its own
   # series. deadmansswitch ticks every 60s; alert-delivery-failure is
   # legitimately idle because nothing has failed. Unaggregated, that
   # idle receiver's own series alone would satisfy the first arm and
-  # page permanently the moment it is wired — the exact shape the
-  # finding reported (per-(integration,receiver) match).
+  # page permanently the moment it is wired — the
+  # per-(integration,receiver) match shape.
   - interval: 1m
     name: one idle webhook receiver alongside an active one does not page
     input_series:

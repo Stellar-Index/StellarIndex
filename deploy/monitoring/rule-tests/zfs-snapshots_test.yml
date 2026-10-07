@@ -1,6 +1,6 @@
 ---
 # promtool unit tests for deploy/monitoring/rules/zfs-snapshots.yml
-# (rolling ZFS snapshots, decision 2026-08-29).
+# (rolling ZFS snapshots).
 #
 #   promtool test rules deploy/monitoring/rule-tests/zfs-snapshots_test.yml
 #

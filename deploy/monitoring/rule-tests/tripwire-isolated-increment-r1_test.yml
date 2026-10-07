@@ -1,6 +1,6 @@
 ---
-# promtool unit tests for the "any nonzero increase" TRIPWIRE class (audit
-# Q261) against the R1 OVERLAY — configs/prometheus/rules.r1/, the tree r1
+# promtool unit tests for the "any nonzero increase" TRIPWIRE class
+# (Q261) against the R1 OVERLAY — configs/prometheus/rules.r1/, the tree r1
 # actually loads. Run via:
 #
 #   promtool test rules deploy/monitoring/rule-tests/tripwire-isolated-increment-r1_test.yml
@@ -194,7 +194,7 @@ tests:
         alertname: stellarindex_ingestion_trade_buffer_drop
         exp_alerts: []
 
-  # ══ stellarindex_ingestion_trustline_observation_drop (INV-0786) ══
+  # ══ stellarindex_ingestion_trustline_observation_drop ══
   - interval: 1m
     name: trustline_observation_drop — one isolated drop tickets
     input_series:

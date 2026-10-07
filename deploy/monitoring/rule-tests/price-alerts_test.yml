@@ -126,7 +126,7 @@ tests:
         alertname: stellarindex_price_alert_eval_never_initialized
         exp_alerts: []
 
-  # ══ stellarindex_price_alert_evaluations_failing (GH-749) ═════════
+  # ══ stellarindex_price_alert_evaluations_failing ═════════
   # ── firing: every alert fails every sweep ────────────────────────
   - interval: 1m
     name: every alert erroring tickets evaluations_failing
@@ -167,7 +167,7 @@ tests:
         alertname: stellarindex_price_alert_evaluations_failing
         exp_alerts: []
 
-  # ══ stellarindex_price_alert_sweep_stale (GH-749) ═════════════════
+  # ══ stellarindex_price_alert_sweep_stale ═════════════════
   # ── firing: the last completed sweep is frozen at t=0 ────────────
   # The gauge holds a unix time; promtool's clock starts at 0, so a
   # value of 1 is "completed a sweep at t=1s" and never again.

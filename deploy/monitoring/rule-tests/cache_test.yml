@@ -3,7 +3,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/cache_test.yml
 #
-# GH-1174: rule-equivalence.baseline waives this rule's expr as an
+# rule-equivalence.baseline waives this rule's expr as an
 # intentional multi-host-vs-r1 divergence (r1 is single-node, so its
 # copy compares against its own redis_expected_slaves recording rather
 # than a fixed threshold), but nothing proved either tree's copy
@@ -47,7 +47,7 @@ tests:
         alertname: stellarindex_redis_replication_broken
         exp_alerts: []
 
-  # ── 14d-review (2026-09-27): widened past err="OOM" alone ─────────
+  # ── widened past err="OOM" alone ─────────
   # to also catch READONLY and NOREPLICAS — same customer-visible
   # shape (writes refused outright), different cause.
   - interval: 30s

@@ -133,7 +133,7 @@ tests:
         alertname: stellarindex_aggregator_supply_refresh_dormant_fleet
         exp_alerts: []
 
-  # ── sep41 rollup pinned by an absent projector cursor (GH-1153) ──
+  # ── sep41 rollup pinned by an absent projector cursor ──
   # Rollup cadence 5m. Every pass for CPINNED reports no_cursor, so its
   # fold never moves and supply reads run the full-history scan.
   - interval: 5m

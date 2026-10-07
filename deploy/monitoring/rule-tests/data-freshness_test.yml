@@ -1,7 +1,6 @@
 ---
-# promtool unit tests for stellarindex_twap_history_missing — the alert
-# (audit-2026-08-14 W1-migrations-1 / REC-01), which since audit-2026-09-02
-# F047/F116/T425 fires on TWO gauge families: stellarindex_twap_history_missing
+# promtool unit tests for stellarindex_twap_history_missing — the alert,
+# which fires on TWO gauge families: stellarindex_twap_history_missing
 # for twap_1h/twap_1d and stellarindex_cagg_history_missing for the seven
 # prices_* views that migrations 0115/0147 empty in the same breath.
 #

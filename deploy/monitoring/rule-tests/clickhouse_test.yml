@@ -5,7 +5,7 @@
 #
 # The alerts read clickhouse-server's OWN Prometheus endpoint (port
 # 9363; there is no exporter process). The state they were written for
-# is the one r1 was measured in on 2026-09-03: the stock config.xml
+# is the one r1 was measured in: the stock config.xml
 # ships the `<prometheus>` block inside an XML comment, so nothing
 # listened on 9363, Prometheus had no `clickhouse` scrape job, and
 # `up{job="clickhouse"}` did not exist. `up == 0` over an empty vector

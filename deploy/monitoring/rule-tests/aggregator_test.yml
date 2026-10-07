@@ -1,14 +1,14 @@
 ---
 # promtool unit tests for stellarindex_aggregator_outlier_storm and
-# stellarindex_aggregator_outlier_trim_fraction (2026-08-28 redesign — see
-# the rule comments in ../rules/aggregator.yml).
+# stellarindex_aggregator_outlier_trim_fraction (see the rule
+# comments in ../rules/aggregator.yml).
 #
 #   promtool test rules deploy/monitoring/rule-tests/aggregator_test.yml
 #
 # WHY THIS FILE EXISTS: the previous rule gated on the per-tick re-count
 # of prints the whole-window MAD band trimmed
-# (rate(dropped_trades_total{reason="outlier"}[10m]) > 10 for 2h). On
-# 2026-08-28 it fired for HOURS on crypto:XLM/fiat:USD and /GBP while
+# (rate(dropped_trades_total{reason="outlier"}[10m]) > 10 for 2h). It
+# fired for HOURS on crypto:XLM/fiat:USD and /GBP while
 # every venue agreed within 0.9% — the band was trimming a genuine +2%
 # step, and the counter faithfully re-counted the trimmed tail every 30 s.
 # The alert now reads VENUE DISAGREEMENT (max/min per-venue 5m VWAP), so
@@ -16,12 +16,12 @@
 # venue that leaves the others must fire (case 2), and a single venue can
 # never fire (case 3). The trim-fraction successor (cases 4–6) covers the
 # single-venue spam shape the disagreement rule cannot see; case 4's
-# gauge values are the actual filter's output on the 2026-08-14
+# gauge values are the actual filter's output on the
 # token-farm fixture, not hand-typed. Cases L1–L3 (the renamed
 # counter-based overlap gate, stellarindex_aggregator_outlier_trim_rate_
-# legacy) were retired with the rule past its 2026-09-04 overlap window.
+# legacy) were retired with that rule.
 #
-# PROVEN-RED: restore the pre-2026-08-28 counter-based expr — case 1's
+# PROVEN-RED: restore the counter-based expr — case 1's
 # venue_vwap series produce no dropped_trades_total samples, so the old
 # rule is vacuously silent there, but case 2 (venue disagreement with NO
 # counter series at all) can never fire under it — promtool reports the
@@ -38,7 +38,7 @@ tests:
   # XLM/USD steps 0.1337 → 0.1364 (+2%) on all three venues at t=20m.
   # Between venues the spread never exceeds 0.5%, so the disagreement
   # ratio stays under 1% throughout — no ticket, however long it lasts.
-  # This is the 2026-08-28 shape the counter-based rule ticketed on.
+  # This is the shape the counter-based rule ticketed on.
   - interval: 1m
     name: an agreed cross-venue step never fires
     input_series:
@@ -101,7 +101,7 @@ tests:
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
 
   # ── Case 3: a SINGLE venue can never fire, whatever it prints ──
-  # crypto:XLM/fiat:GBP has only kraken (the 2026-08-28 freeze pair,
+  # crypto:XLM/fiat:GBP has only kraken (the freeze pair,
   # sources=1). max/min − 1 is 0 for one series and the `count >= 2`
   # guard holds regardless — no ticket even across a wild ±10% swing.
   # Also proves the 1h-window series is ignored (only window="5m" gates).
@@ -119,10 +119,10 @@ tests:
         alertname: stellarindex_aggregator_outlier_storm
         exp_alerts: []
 
-  # ── Case 4: the 2026-08-14 token-farm fixture fires after 30m ──
+  # ── Case 4: the token-farm fixture fires after 30m ──
   # These are NOT hand-typed gauges. internal/aggregate/outliers_spam_test.go
   # (TestFilterOutliersLocal_TokenFarmWaveTrimShareMatchesLegacy) runs the
-  # 2026-08-14 signature — a single SDEX pair, 720 honest prints over 24h
+  # token-farm signature — a single SDEX pair, 720 honest prints over 24h
   # (one per 2 min) + a 2h wave of 480 dust self-trades whose consecutive
   # prices gap 25–37 % — through the ANCHORED time-local filter and pins:
   # window_trades{stage=class} = 1200 (the filter's input) and
@@ -314,7 +314,7 @@ tests:
                 nonstandard_decimals_assets table directly.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
-  # ── the decimals-lockstep arm (C1-050) ───────────────────────────
+  # ── the decimals-lockstep arm ───────────────────────────
   # stellarindex_nonstandard_decimals_lockstep_mismatch_total is a
   # CounterVec whose {site,asset} children are born on first use, so
   # its first sample is already 1 — the same increase()-blind shape as
@@ -463,7 +463,7 @@ tests:
                 then the runbook.
 
   # Cold boot: a 25-minute lake dial + Backfill, then 15-minute sweeps.
-  # The shape that used to ticket 15 minutes after every restart.
+  # The shape a restart-blind rule would ticket 15 minutes after every restart.
   - interval: 1m
     name: a slow cold boot followed by healthy sweeps never tickets
     input_series:
