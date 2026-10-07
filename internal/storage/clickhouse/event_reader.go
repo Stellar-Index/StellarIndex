@@ -76,7 +76,7 @@ func sqlQuoteEscapedList(ss []string) string {
 // stream). The connection-level class in openRead already caps tracked
 // per-query memory, but the in-order read pool's wide-column buffers are
 // UNDERTRACKED per query while counted in the SERVER-WIDE total: the
-// 2026-07-08 `compute-completeness -ch -source sep41_transfers` runs died at
+// `compute-completeness -ch -source sep41_transfers` runs died at
 // ANY server cap ("would use 61G" at a 64G cap, "would use 69G" at 72G) —
 // consumption scaled with available memory, so raising caps was not a fix.
 // What bounds this class's true footprint is WORK SHAPE, enforced here:
@@ -167,7 +167,7 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // correct for a counting consumer that dedups, not a bug.
 //
 // On the "FINAL + contract_id filter + wide range" trap (the protocol_reader.go
-// class, swept 2026-09-03): this query CAN express it, and one caller does.
+// class): this query CAN express it, and one caller does.
 // Census of every call site — projector.go, projected_rebuild.go,
 // completeness.go and ch_cap67_movements.go all pass useFinal=false; the sole
 // useFinal=true caller is ch_rebuild.go's sep41 dry-run, which passes the
@@ -184,10 +184,10 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 //
 // withOpArgs selects whether the read includes op_args_xdr. Only decoders that
 // consume events.Event.OpArgs need it (redstone zips write_prices feed_ids
-// from the op args — PR 166); every other decoder decodes from topics + data.
+// from the op args); every other decoder decodes from topics + data.
 // op_args_xdr is a WIDE column (the whole InvokeContract arg vector per row),
 // and reading it across the CAP-67 classic-token firehose was one of the two
-// legs of the 2026-07-08 sep41 completeness OOMs — pass false unless the
+// legs of sep41 completeness OOMs — pass false unless the
 // consuming decoder actually reads OpArgs.
 //
 // withStateWriteKeys additionally resolves each event's
@@ -240,7 +240,7 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 // String-topic protocol: phoenix publishes `("create","liquidity_pool")` as
 // two Strings, so the -ch gated prefilter — which asks this lake for
 // topic_0_sym "create" — returned zero rows over a lake that holds those
-// events from ledger 51,572,026 (F048). seed-protocol-contracts is NOT
+// events from ledger 51,572,026. seed-protocol-contracts is NOT
 // blocked here: it reads the PG landing zone, whose topic_0_sym comes from
 // tryDecodeSymbolOrString and does match Strings; that command was inert for
 // the decoder reason alone.

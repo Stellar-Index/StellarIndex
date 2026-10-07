@@ -84,7 +84,7 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 }
 
 // TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is REC-04's
-// sibling gap (#716): ContractCodeHistory trusted an EMPTY per-contract
+// sibling gap: ContractCodeHistory trusted an EMPTY per-contract
 // result from contract_instance_changes as an authoritative "never
 // upgraded", even though instanceChangesIndexAvailable is the same
 // table-global LIMIT-1 emptiness probe that cannot see partial per-contract

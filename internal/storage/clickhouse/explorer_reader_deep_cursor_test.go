@@ -10,18 +10,18 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for #484: a deep operations cursor was O(table).
+// Regression tests for: a deep operations cursor was O(table).
 //
 // The cursor arms compared the whole primary key as a TUPLE —
 // `(ledger_seq, tx_index, op_index) < (?, ?, ?)` — and ClickHouse's
 // KeyCondition does not decompose a multi-column tuple comparison, so the
-// predicate was applied AFTER the scan instead of narrowing it. #444's
+// predicate was applied AFTER the scan instead of narrowing it.'s
 // `ledger_seq >= lower` bound was then the only index-usable term on a
 // cursor page, and it bounds the read from BELOW: for `?cursor=5000000.0.0`
 // the index selected everything from ledger 4,995,000 up to the tip, i.e.
 // the whole table.
 //
-// Measured on r1 for that exact cursor (2026-09-02, read-only):
+// Measured on r1 for that exact cursor:
 //
 //	EXPLAIN ESTIMATE   old: 80 parts / 24,693,075,112 rows / 3,014,332 marks
 //	                   new:  1 part  /          4,157 rows /         1 mark
@@ -67,7 +67,7 @@ func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
 			t.Errorf("cursor predicate is not wrapped in its own parentheses (bounded=%v):\n%s", bounded, q)
 		}
 	}
-	// #444's lower bound must survive on the bounded arm — the rewrite is
+	// The tail-window lower bound must survive on the bounded arm — the rewrite is
 	// what makes that bound bite, not a replacement for it.
 	if !strings.Contains(recentOperationsQuery(true, true), "AND ledger_seq >= ?") {
 		t.Error("the bounded cursor arm lost #444's tail-window lower bound")
@@ -77,7 +77,7 @@ func TestRecentOperationsCursor_PredicateIsPrimaryIndexPrunable(t *testing.T) {
 // The row budget is the backstop for the shapes the rewrite alone cannot
 // bound (the unbounded fallback at a near-tip cursor still selects
 // [genesis, cursor]). It belongs on the CURSOR arms only: measured on r1,
-// #444's unbounded FIRST-PAGE fallback announces 217.44M rows and would be
+// the unbounded FIRST-PAGE fallback announces 217.44M rows and would be
 // refused by this ceiling, and that arm carries no caller-controlled input.
 func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.T) {
 	for _, bounded := range []bool{true, false} {

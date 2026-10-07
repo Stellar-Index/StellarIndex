@@ -11,7 +11,7 @@ import (
 )
 
 // AccountCreatorRow is one row of the account-creator league table: a
-// funder and the accounts it brought into existence (#351).
+// funder and the accounts it brought into existence.
 //
 // Two kinds of figure live here and they answer different questions.
 // AccountsCreated / FundedStroops / the ledger bounds are IMMUTABLE
@@ -61,16 +61,15 @@ type AccountCreators struct {
 // account_sponsors_rollup.go).
 const opCreateAccount = "OperationTypeCreateAccount"
 
-// P23BoundaryLedger is the first ledger of Protocol 23 (Whisk, pubnet
-// 2025-09-03) — the ledger at which the lake's record of an account
-// creation CHANGES REPRESENTATION. It does not stop there, and neither
+// P23BoundaryLedger is the first ledger of Protocol 23 (Whisk) — the ledger at which
+// the lake's record of an account creation CHANGES REPRESENTATION. It does not stop there, and neither
 // may this board.
 //
 // BELOW it a CreateAccount lands in stellar.account_movements as a
 // `create_account` movement pair (ADR-0047 D2), written by
 // `stellarindex-ops classic-movements-backfill`, whose -to flag is
 // hard-clamped below this ledger: that archive is historical-only by
-// design. Measured on r1 2026-09-07, max(ledger) for
+// design. Measured on r1, max(ledger) for
 // movement_kind='create_account' is 58,762,516 against a lake tip of
 // 64,310,629, and the count at or above this ledger is 0 — not a gap, a
 // boundary.
@@ -82,7 +81,6 @@ const opCreateAccount = "OperationTypeCreateAccount"
 // OperationTypeCreateAccount row in stellar.operations. Reading only the
 // classic arm therefore ranks creators over a population that ends at
 // this ledger — 4,715,612 creations short as of the measurement above
-// (#493).
 //
 // Same VALUE as internal/sources/classicmovements.P23StartLedger and
 // internal/storage/timescale.SEP41MovementsFloorLedger, not the same
@@ -102,7 +100,7 @@ const P23BoundaryLedger uint32 = 58_762_517
 //
 // Pinning matters because the two sides are sized by different
 // populations. The right side is one row per account that currently
-// exists — 10,928,611 rows at 3.18 GiB measured on r1 2026-09-06 at
+// exists — 10,928,611 rows at 3.18 GiB measured on r1 at
 // max_threads=2 — and it grows with the account population. The left
 // side is one row per account creation ever, and it grows with chain
 // history, which is far faster. Left to its own estimate the planner
@@ -120,7 +118,7 @@ const creatorsBoardSettings = boundedScanSettings +
 // It pins the build side for the same reason the board does, over a
 // different pair. The right side is that window's
 // OperationTypeCreateAccount rows — 936,483 in partition 63 on r1
-// 2026-09-07, growing with the creation rate — and the left side is the
+// growing with the creation rate — and the left side is the
 // window's `transfer` movements, which grow with Soroban token traffic
 // and are already two orders of magnitude larger (about 300 M per
 // partition). Unpinned, a planner estimate that swapped them would build
@@ -129,7 +127,7 @@ const creatorsBoardSettings = boundedScanSettings +
 //
 // The execution cap is the board's 1800 s rather than the walk's 600 s.
 // The cap is per window and is sized for headroom over the widest
-// measured window: post-P23 windows cost 16.0-106.9 s on r1 2026-09-07
+// measured window: post-P23 windows cost 16.0-106.9 s on r1
 // (partition 62 the widest), so 1800 s keeps roughly the 17x margin the
 // 600 s cap was chosen to give the classic arm's 24.7 s windows, on a
 // box that also runs galexie and the sibling rollups.
@@ -140,7 +138,7 @@ const creatorsP23ArmSettings = boundedScanSettings +
 // aggregation: 24,824,706 creation events in the working table collapsed
 // to 20,954,070 distinct (creator, created) pairs.
 //
-// Measured on r1 2026-09-09 at max_threads=2: 3.14 GiB / 24.5 s. That is
+// Measured on r1 at max_threads=2: 3.14 GiB / 24.5 s. That is
 // BELOW this cycle's existing peak — creatorsBoardSettings' join against
 // the live account population, 3.31 GiB — so the graph arm does not move
 // the cycle's ceiling, and the figure a future ceiling must be sized
@@ -166,7 +164,7 @@ const creatorsP23ArmSettings = boundedScanSettings +
 // boundedScanSettings and converts an aggregation that would have gone
 // to disk into a memory-limit failure. This step aggregates 24.8 M
 // creation events into 20.96 M (creator, created) pairs; with the
-// setting it died at the 8 GiB ceiling on 2026-09-09, without it the
+// setting it died at the 8 GiB ceiling, without it the
 // same aggregation completes inside 512 MiB.
 //
 // Note that in-order aggregation WAS applicable here — the working table
@@ -191,7 +189,7 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // transfer was a creation. The two clamp on opposite sides of
 // `boundary`, so their union is every ledger and their intersection is
 // empty: no creation is missed and none is counted twice. Reading only
-// the classic arm was #493 — a league table ranking over a population
+// the classic arm was — a league table ranking over a population
 // that ended a year before the tip.
 //
 // WHY THE BOUNDARY IS A PARAMETER. It is the network's P23 boundary —
@@ -201,11 +199,11 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // classic arm owned every test-net ledger (all of them sit below
 // 58,762,517) and looked for create_account movements nothing there ever
 // writes, so `created` cohorts were empty on both test nets however full
-// their archives (2026-09-17). Callers pass the config's
+// their archives. Callers pass the config's
 // movements_floor_ledger, the same knob the movements feed floors at.
 //
 // The post-P23 pairing is exact rather than approximate, and was
-// measured that way on r1 2026-09-07 over ledgers 63,000,000-63,010,000:
+// measured that way on r1 over ledgers 63,000,000-63,010,000:
 // of 6,266 distinct create_account operations, the 5,890 in SUCCESSFUL
 // transactions each match exactly one `transfer` movement leg and the
 // 376 in failed transactions match none — so joining through the
@@ -222,7 +220,7 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // scan-shaped over the whole archive. Doing that in ONE statement holds
 // two growing things at once: the dedupe hash table, one state per
 // creation in all of history, and the board join's build side, one row
-// per live account. Measured on r1 2026-09-06 the pair summed past the
+// per live account. Measured on r1, the pair summed past the
 // 8 GiB budget — 8.12 GiB in FillingRightJoinSide, with the dedupe
 // already spilled to 32 external parts and all 10,309,146,441 movement
 // rows read. Raising the ceiling would only move which cycle fails,
@@ -241,7 +239,7 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // Each arm is free on the windows the other owns: the boundary clamp is
 // a predicate on the partition key of both tables, so a window wholly on
 // the far side prunes to no parts at all — measured at 0 rows read and
-// 2-4 ms per arm on r1 2026-09-07. The cycle therefore still pays one
+// 2-4 ms per arm on r1. The cycle therefore still pays one
 // archive pass per window, not two.
 //
 // Nothing is written to a staging arm until the walk has finished, so an
@@ -329,7 +327,7 @@ func creatorsCreationArmSteps(boundary string) []rollupStep {
 		// arm emits TWO rows for it and that creator's accounts_created SILENTLY
 		// DOUBLES — no error, no gap, just a wrong number on a served board.
 		//
-		// It holds today and was re-verified read-only on r1 2026-09-08 over
+		// It holds today and was re-verified read-only on r1 over
 		// ledgers 63,000,000-63,099,999: ZERO (ledger, tx_hash, op_index) keys
 		// carry more than one leg. The detector, if this needs re-checking or a
 		// probe:
@@ -367,7 +365,7 @@ func creatorsBoardSteps() []rollupStep {
 		// directly: that table is one row per creation OPERATION, so an
 		// address recycled by one creator (create -> merge -> create ...)
 		// would otherwise be counted, and its live balance summed, once
-		// per creation instead of once per surviving address (#541). The
+		// per creation instead of once per surviving address. The
 		// inner subquery collapses to one row per pair before the live
 		// join is resolved; accounts_created/funded_stroops are immutable
 		// history and stay per-event, as documented on AccountCreatorRow.
@@ -459,7 +457,7 @@ func creatorsBoardSteps() []rollupStep {
 // orderings and ends with the one swap that serves every table at once.
 func creatorsGraphSteps() []rollupStep {
 	return []rollupStep{
-		// ── The graph arm (#351) ───────────────────────────────────────
+		// ── The graph arm ───────────────────────────────────────
 		// The board says WHO created the most. These two say WHOM — one row
 		// per distinct (creator, created) pair, held in both sort orders so
 		// each direction of the question is a primary-key range read. Same

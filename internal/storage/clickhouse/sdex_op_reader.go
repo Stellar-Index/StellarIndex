@@ -64,7 +64,7 @@ type SDEXOp struct {
 // and internal/sources/sdex both count trades only in successful txs, so the
 // re-derivation must too — otherwise it over-counts phantom fills.
 //
-// NO FINAL — deliberately (2026-07-05, the third OOM of the sdex
+// NO FINAL — deliberately (the third OOM of the sdex
 // reconcile): FINAL on a ReplacingMergeTree engages a merge across
 // ALL overlapping parts of each touched PARTITION (~1M ledgers of
 // wide body_xdr rows) even when the WHERE window is 100k ledgers —
@@ -77,7 +77,7 @@ type SDEXOp struct {
 // operations⋈operation_results join memory-bounded by spilling its
 // buckets to disk, and the successful-tx restriction is a JOIN over a
 // deduplicated derived table rather than an IN-subquery (the set-build
-// was the 10 GiB blowout of 2026-07-11 — see sdexOpsQuery). Callers
+// was the 10 GiB blowout — see sdexOpsQuery). Callers
 // re-deriving all history should still window [from,to] so the result
 // set stays bounded.
 func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SDEXOp) error) error {
@@ -105,7 +105,7 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 // The successful-tx restriction is a grace_hash INNER JOIN over a derived
 // table, not an IN-subquery: IN materialises the whole window's tx-hash set in
 // memory first (CreatingSetsTransform blew the 10 GiB query budget on a dense
-// 250k-ledger window, 2026-07-11 — the sibling contractCallOpsQuery was fixed
+// 250k-ledger window — the sibling contractCallOpsQuery was fixed
 // then, these two were not). GROUP BY tx_hash gives the derived table the SET
 // semantics IN had, so an un-merged duplicate transactions part cannot fan one
 // op row out into two — this reader takes NO FINAL, deliberately.

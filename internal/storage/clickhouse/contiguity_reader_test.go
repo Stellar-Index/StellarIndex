@@ -74,7 +74,7 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 	}
 }
 
-// TestECWindowCoverageQuery_AntiJoin pins C4-085 (audit-2026-07-23): the
+// TestECWindowCoverageQuery_AntiJoin pins that the
 // Check-2 coverage count must be evaluated PER TX-BEARING LEDGER, not as a
 // standalone cardinality of stellar.ledger_entry_changes.
 //

@@ -228,7 +228,6 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 			// actually returns (*clickhouse.Exception). It is what makes
 			// the absence DEFINITIVE, so the probe caches it and stops
 			// asking; a bare error would mean "no answer" and re-probe
-			// (C1-048).
 			return nil, &clickhouse.Exception{
 				Code: 60, Name: "UNKNOWN_TABLE",
 				Message: "Table stellar.tx_hash_index does not exist",
@@ -261,7 +260,7 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 }
 
 func TestTransactionByHashEmptyIndexFallsBackToScan(t *testing.T) {
-	// The MV-drop / TRUNCATE pathology (CI-red 2026-07-30): the index table
+	// The MV-drop / TRUNCATE pathology: the index table
 	// EXISTS but is EMPTY while stellar.transactions keeps flowing. If the
 	// probe granted authority off mere existence, every real hash would 404
 	// authoritatively. An empty index must instead read as index-UNAVAILABLE:

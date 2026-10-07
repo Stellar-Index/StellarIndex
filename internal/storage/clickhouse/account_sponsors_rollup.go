@@ -16,7 +16,7 @@ const (
 )
 
 // AccountSponsorRow is one row of the sponsor league table: an account
-// and the sponsorship arrangements it has entered into (#351).
+// and the sponsorship arrangements it has entered into.
 //
 // Every figure here is IMMUTABLE HISTORY — what this account did, not
 // what is currently in force. SponsorshipsStarted counts arrangements
@@ -108,7 +108,7 @@ const factsCTE = `
 // (creatorsP23ArmSettings) and over a far more lopsided pair. The build
 // side is that window's sponsorship operations BEFORE the gate drops the
 // failed ones — 2,475,607 rows in partition 55, the widest measured on r1
-// 2026-09-07 — and the streaming side is that window's transactions,
+// — and the streaming side is that window's transactions,
 // 318,127,649 rows in the same partition. That is 128.5 to 1 there and
 // 460 to 1 in partition 63
 // (1,129,122 operations against 519,663,457 transactions), so left to a
@@ -117,7 +117,7 @@ const factsCTE = `
 //
 // The execution cap is 1800 s rather than the walk's 600 s, matching the
 // sibling's joining arm. Gated windows measured 18.9-40.7 s on r1
-// 2026-09-07 (partition 63 the slowest; the widest by MEMORY is
+// (partition 63 the slowest; the widest by MEMORY is
 // partition 55, and the two are not the same window), so this is a 44x
 // margin on a box that also runs galexie and the sibling rollups. The
 // wider cap goes with the wider input: the streaming side grows with ALL
@@ -133,7 +133,7 @@ const sponsorsGatedArmSettings = boundedScanSettings +
 // re-derived through perTxCTE and collapsed to 4,088,814 distinct
 // (sponsor, sponsored) pairs.
 //
-// Measured on r1 2026-09-09 at max_threads=2: 4.01 GiB / 28.1 s — just
+// Measured on r1 at max_threads=2: 4.01 GiB / 28.1 s — just
 // BELOW this cycle's existing peak, the board join's 4.09 GiB, so the
 // graph arm does not move the cycle's ceiling.
 //
@@ -164,7 +164,7 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // the operations of transactions that failed (extract.go's Ops arm, by
 // design). A sponsorship arrangement inside a failed transaction never
 // took effect, and counting it puts arrangements on the board that were
-// never entered into. Measured on r1 2026-09-07, 2,426,813 of the
+// never entered into. Measured on r1, 2,426,813 of the
 // archive's 22,413,991 sponsorship operations (10.8%) sit in failed
 // transactions — 47,570 of partition 63's 563,655 Begin operations (8.4%)
 // and 251 of its 1,819 Revoke operations (13.8%), rising to 61.6% of
@@ -173,7 +173,7 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // 39,492: the revocation count was better than twice its real value, 323
 // of the 2,740 ranked accounts had every operation they were credited
 // with inside a failed transaction, and 2,408 of the 2,417 that survive
-// the correction were ranked in the wrong place (#494).
+// the correction were ranked in the wrong place.
 //
 // The gate is a join to stellar.transactions on the full (ledger_seq,
 // tx_index) transaction identity — which is that table's whole ORDER BY
@@ -184,7 +184,7 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // checked here first: it does not exist for sponsorship. Under CAP-33 the
 // is-sponsoring-future-reserves-for relationship lives only for the
 // duration of the transaction and is written to no ledger entry, so
-// measured on r1 2026-09-07 over ledgers 63,000,000-63,010,000, 0 of
+// measured on r1 over ledgers 63,000,000-63,010,000, 0 of
 // 4,745 Begin and End operations have any stellar.ledger_entry_changes
 // row at their own (ledger_seq, tx_hash, op_index) — including all 4,294
 // of them that DID apply. Only Revoke leaves an entry change (2 of 2),
@@ -210,7 +210,7 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // a 24.74-billion-row, 2.18 TiB archive joined to a second one larger
 // still, and everything it holds grows with the chain: its wall time, its
 // dedupe hash table — one argMax state per sponsorship operation in all
-// of history — and the join's build side. Measured on r1 2026-09-07 at
+// of history — and the join's build side. Measured on r1 at
 // max_threads=2, a single gated partition already costs 18.9 s /
 // 234.85 MiB (partition 40, 164,670 applied operations), 31.5 s /
 // 1.00 GiB (partition 62, 1,013,943), 40.7 s / 1.28 GiB (partition 63,
@@ -317,7 +317,7 @@ var sponsorsRollupStatements = []rollupStep{
 	     SELECT 'thru_time', toInt64(toUnixTimestamp(max(ctime))) FROM stellar.account_sponsors_ops
 	 )
 	 ` + boundedScanSettings + `, max_execution_time = 900`},
-	// ── The graph arm (#351) ───────────────────────────────────────
+	// ── The graph arm ───────────────────────────────────────
 	// The board says WHO sponsored the most. These two say WHOM — one
 	// row per distinct (sponsor, sponsored) pair, in both sort orders so
 	// each direction is a primary-key range read. Derived from the same

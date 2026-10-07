@@ -16,7 +16,7 @@ import (
 // day/week scales (an archival or a restore, not per-ledger churn) — so
 // tens of minutes of staleness is materially indistinguishable from live,
 // while each recompute is a scan of the ~586M-row ttl prefix computing
-// base64Decode per row (route-sweep 2026-07-29: running it INLINE per
+// base64Decode per row (running it INLINE per
 // request is what held GET /v1/pools/reserves in the 8s-budget 503 class;
 // the durable schema fix is the planned slim ttl_live_until projection
 // table, v0.21.4 — this cache is the serving-layer fix that works today).
@@ -175,7 +175,7 @@ func (c *ttlLivenessCache) store(verdicts map[string]TTLLiveness) {
 // a subset snapshot would evict every other pair's verdict — silently
 // re-opening the fail-open TTLUnknown→keep path for the whole registry
 // (archived pairs served as live liquidity) until the next full-set
-// refresh happened to land (cold audit 2026-08-03). The union keeps
+// refresh happened to land. The union keeps
 // store()'s replace semantics and an honest fetchedAt while never
 // shrinking coverage. Keys that leave the registry linger until
 // process restart — acceptable: the registry is grow-only in practice,

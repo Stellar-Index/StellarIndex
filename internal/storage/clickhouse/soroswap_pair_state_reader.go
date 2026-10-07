@@ -12,7 +12,7 @@ import (
 )
 
 // Soroswap pair instance-storage layout (empirically verified against
-// the r1 lake, 2026-07-05, two pairs cross-checked against the
+// the r1 lake, two pairs cross-checked against the
 // soroswap_pairs registry). The pair contract's DataKey enum is a
 // u32-repr enum, so instance-storage keys are plain ScvU32 values:
 //
@@ -66,7 +66,7 @@ type TokenDisplayMeta struct {
 // match the verified u32-keyed layout, are absent from the result —
 // callers treat absence as "reserves unavailable", never as zero.
 //
-// ARCHIVED pairs are absent too (2026-07-28). ledger_entries_current keeps a
+// ARCHIVED pairs are absent too. ledger_entries_current keeps a
 // Soroban entry's last-known value after its TTL lapses, so an unfiltered read
 // reports a dead pool's final reserves as CURRENT liquidity — phantom depth on
 // every surface that consumes this. Absence is already the honest signal for
@@ -119,7 +119,7 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 	// compute time (see ttlLivenessCache) — this reader answers "current",
 	// so an entry archived before that tip is not current. Served
 	// stale-while-revalidate: the classification behind it is a ttl-prefix
-	// scan that cannot run per request (route-sweep 2026-07-29).
+	// scan that cannot run per request.
 	if err := dropArchivedPairs(ctx, r.ttlVerdicts, out, keyByPair); err != nil {
 		return nil, err
 	}

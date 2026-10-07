@@ -48,7 +48,7 @@ func (c *probeConn) Query(context.Context, string, ...any) (driver.Rows, error) 
 }
 
 // TestProbeSchema_TransientErrorDoesNotLatch pins C1-048
-// (audit-2026-07-23). The schema probes were a plain sync.Once, so the
+// The schema probes were a plain sync.Once, so the
 // FIRST call's outcome was final for the process lifetime: a transient
 // ClickHouse error at that instant — a restart mid-deploy, a reset
 // connection, a request-context deadline — latched the probe to false and

@@ -111,7 +111,7 @@ func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit i
 	// requests ("Unknown identifier `version`"). `version` is the
 	// (ledger_seq<<32)|intra_ledger_seq RMT version that
 	// deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (D3)
-	// introduces to disambiguate same-ledger changes (C2-4c). D3 is
+	// introduces to disambiguate same-ledger changes. D3 is
 	// freeze-gated and runs after D2, so the served table is still
 	// ReplacingMergeTree(ledger_seq) with no such column — while CI's
 	// ClickHouse has the post-D3 schema.

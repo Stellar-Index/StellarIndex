@@ -158,7 +158,7 @@ func TestLecurV2RebuildScriptMatchesOperatorDDL(t *testing.T) {
 // position in the Go walk (dispatcher.EntryWalkVersion), whose fee, before,
 // after and refund changes all carry op_index -1, so no ranking over the lake's
 // columns reproduces it: d2-ordinal-reproject.sh ranked by (tx_index,
-// change_index), the retired version-1 order (#1156). Re-derive through
+// change_index), the retired version-1 order. Re-derive through
 // ch-backfill (scripts/ops/ordinal-rederive-chunks.sh) instead.
 func TestNoOpsScriptRanksLedgerEntryChangesInSQL(t *testing.T) {
 	root := lockstepRepoRoot(t)

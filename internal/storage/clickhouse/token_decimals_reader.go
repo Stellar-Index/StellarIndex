@@ -23,8 +23,8 @@ const maxSaneTokenDecimals = 38
 //
 // `decimal` is the soroban-token-sdk's own field name, and reading only
 // it was a MEASURED defect rather than a theoretical gap. Of the 17
-// Soroban contract addresses a public listing platform names on Stellar
-// (2026-09-15), SEVEN spell it `decimal` and TEN spell it `decimals`:
+// Soroban contract addresses a public listing platform names on Stellar,
+// SEVEN spell it `decimal` and TEN spell it `decimals`:
 // the SACs and token-sdk builds take the first, and every hand-written
 // token in that sample takes the second — including two tokenized
 // Treasury funds holding nine figures of supply.

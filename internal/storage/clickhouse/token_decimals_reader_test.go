@@ -137,7 +137,7 @@ func mkInstanceEntryKeys(t *testing.T, decls map[string]uint32) string {
 //
 // The soroban-token-sdk names the METADATA field `decimal`, and reading only
 // that spelling was justified on the belief that virtually every SEP-41 token
-// follows the SDK. Measured against the lake on 2026-09-15, over the 17
+// follows the SDK. Measured against the lake, over the 17
 // Soroban contract addresses a public listing platform names on Stellar:
 // SEVEN spell it `decimal` and TEN spell it `decimals`. The majority of that
 // population was returning "no usable metadata", and every caller's documented

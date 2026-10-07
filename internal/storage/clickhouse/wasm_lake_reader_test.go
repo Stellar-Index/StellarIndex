@@ -243,7 +243,7 @@ func TestContractCodeHistory_IndexedPath(t *testing.T) {
 }
 
 // TestContractWasmHash_IndexedResolvesPreCaptureContract pins the wasm
-// two-hop item's hop 1 (inventory #26, 2026-08-11): a contract whose
+// two-hop item's hop 1: a contract whose
 // instance entry predates live entry capture must resolve its current
 // executable from the genesis-complete contract_instance_changes index
 // — including the SAC verdict — without touching
@@ -312,7 +312,7 @@ func indexMissStub(legacy [][]any) *stubConn {
 	return conn
 }
 
-// TestContractCodeHistory_IndexMissFallsBackToLegacyScan (#716): a usable
+// TestContractCodeHistory_IndexMissFallsBackToLegacyScan: a usable
 // index holding no per-contract row is NOT proof the contract never
 // upgraded — instanceChangesIndexAvailable is a table-global LIMIT-1
 // emptiness probe that cannot see partial per-contract backfill coverage

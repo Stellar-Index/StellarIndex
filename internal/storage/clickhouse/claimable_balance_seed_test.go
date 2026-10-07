@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// Real AQUA — the asset the 2026-07-27 Horizon cross-check measured the
+	// Real AQUA — the asset the Horizon cross-check measured the
 	// 13.2% claimable-component gap on.
 	cbIssuer   = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 	cbAssetKey = "AQUA:" + cbIssuer
@@ -307,7 +307,7 @@ func TestClaimableSeedAssetFilter(t *testing.T) {
 	}
 }
 
-// ─── ordering / tie-breaks (the C2-4 family, on the Go side) ────────────
+// ─── ordering / tie-breaks ────────────
 
 // TestClaimableSeedReducer_LatestLedgerWins — the ordinary cross-window case:
 // the same balance written in two windows resolves to the higher ledger,
@@ -662,7 +662,7 @@ func TestClaimableIDFromKeyXDR(t *testing.T) {
 }
 
 // TestClaimableSeedWindowConstants pins the window-adaptation policy that the
-// first r1 dry-run (2026-07-27) proved wrong. That run bisected from 250,000
+// first r1 dry-run proved wrong. That run bisected from 250,000
 // all the way to the then-floor of 15,625 ledgers and STILL exceeded the
 // ClickHouse memory ceiling at [40,484,378, 40,500,002] — an airdrop-era range
 // where a few thousand ledgers mint millions of distinct claimable balances.
@@ -738,7 +738,7 @@ func TestClaimableSeedWindowPolicy(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RetractsServedClaim pins GH #712: a balance the
+// TestClaimableSeedReducer_RetractsServedClaim pins this: a balance the
 // served tier still holds as live, claimed in a later window, comes out as a
 // tombstone at the claim (served asset, zero balance, the claim's ledger and
 // close time), and survives the tombstone compaction that bounds memory. A

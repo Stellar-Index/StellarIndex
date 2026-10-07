@@ -14,8 +14,8 @@ import (
 // lakeArchiveTables are the append-only, ledger-partitioned archives a
 // rollup cycle reads. Their row counts are functions of chain history —
 // 10,309,271,697 rows / 583.54 GiB and 24,736,312,156 rows / 2.18 TiB on
-// r1 2026-09-06, and stellar.transactions carried 519,663,457 rows in
-// partition 63 alone on 2026-09-07 — so a statement that reads one of
+// r1, and stellar.transactions carried 519,663,457 rows in
+// partition 63 alone — so a statement that reads one of
 // them without a ledger window has a cost nothing bounds.
 var lakeArchiveTables = []string{
 	"stellar.account_movements",
@@ -136,7 +136,7 @@ func TestRollupCyclesWalkEveryArchiveScan(t *testing.T) {
 // the clamps name the SAME boundary, and exactly one of them takes the
 // side below it. That makes the arms a partition of the ledger axis:
 // their union is every ledger (nothing silently stops at the boundary,
-// which was #493) and their intersection is empty (no creation is
+// which was) and their intersection is empty (no creation is
 // counted twice, which would inflate every row of the board). It also
 // keeps the cost honest, because a window wholly on the far side of the
 // clamp prunes to no parts at all.
@@ -238,10 +238,10 @@ func TestRollupCyclesDeclareTheirWindowBinds(t *testing.T) {
 // contained rather than only what succeeded, so extractOps retains the
 // operations of failed transactions by design (extract.go's Ops arm). A
 // league table built straight off that table therefore credits accounts
-// for work that was rolled back — measured on r1 2026-09-07, 10.8% of the
+// for work that was rolled back — measured on r1, 10.8% of the
 // archive's sponsorship operations and about 8% of its CreateAccount
 // operations sit in failed transactions, and the served revocation count
-// was better than twice its true value (#493, #494).
+// was better than twice its true value (#493).
 //
 // So any statement reading stellar.operations must establish application
 // one of the two ways this repo has evidence for: pair the operation with
@@ -353,7 +353,7 @@ func TestRollupCyclesStageBeforeTheyExchange(t *testing.T) {
 // far harder to trace.
 //
 // Each cycle now fills four staging arms — a board, a stats table and the
-// two sort orders of its graph edges (#351) — so the pairing is no longer
+// two sort orders of its graph edges — so the pairing is no longer
 // small enough to keep straight by reading.
 func TestRollupCyclesSwapEveryStagingArmTheyFill(t *testing.T) {
 	staging := regexp.MustCompile(`stellar\.[a-z0-9_]+_staging`)
@@ -453,7 +453,7 @@ func (r *recordingExecer) Exec(_ context.Context, query string, args ...any) err
 // beyond it out of the board while the first arm's tiling still looked
 // complete.
 func TestRunRollupStepsWalksEveryWindowOnce(t *testing.T) {
-	// r1's lake tip on 2026-09-06; account_movements holds 65 partitions.
+	// r1's lake tip; account_movements holds 65 partitions.
 	const tip = 64_303_935
 	const wantWindows = 65
 

@@ -8,7 +8,7 @@ import (
 )
 
 // sampleLPEntryB64 is a real `liquidity_pool` LedgerEntry pulled from
-// the r1 lake (2026-07-06): a LibreDrone/deCent constant-product pool.
+// the r1 lake: a LibreDrone/deCent constant-product pool.
 // Cross-checked reserves/shares/fee against a live decode.
 const sampleLPEntryB64 = "A8a/3gAAAAVDAB/9TN5yNCXdEkwx8I8NDm65a8BOH7etMS7iIceaUgAAAAAAAAACTGlicmVEcm9uZQAAAAAAAH6xUQOexaHR1+O0WQhBP1t0UTn3MQ03/W9e7MUcGDgGAAAAAmRlQ2VudAAAAAAAAAAAAABrGpPCEdJc+QUisRFFw1Pek6SvFh2ULsAauCJkPhkuHAAAAB4AAAAZkxPXBQAAAABvXP+kAAAAA0pue5EAAAAAAAAAAQAAAAA="
 

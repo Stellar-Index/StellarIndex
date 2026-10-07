@@ -277,7 +277,7 @@ func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 	}
 }
 
-// ─── full-history windowed reduction (incident 2026-07-27) ───────────────
+// ─── full-history windowed reduction ───────────────
 //
 // StreamSACBalanceSeedsFullHistory now bounds the ClickHouse GROUP BY to one
 // ledger window at a time and finishes the latest-write-wins reduction in Go.

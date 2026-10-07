@@ -10,7 +10,7 @@ import (
 
 // ─── real r1 fixtures ─────────────────────────────────────────────
 //
-// Both entries were read off r1's lake on 2026-09-02 with bounded,
+// Both entries were read off r1's lake with bounded,
 // single-ledger SELECTs (see the FM-374 fix report). They are the two
 // shapes the residue actually contains.
 
@@ -66,7 +66,7 @@ func isPreImageRead(q string) bool {
 }
 
 // TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain
-// is the core of #374: a merged issuer's auth flags ARE knowable from the
+// is the core: a merged issuer's auth flags ARE knowable from the
 // `state` pre-image the merge left in its own removal ledger, and they must
 // come back labelled as historical — with the dead account's self-declared
 // home_domain DROPPED.
@@ -152,7 +152,7 @@ func TestRemovedAccountsLastKnownAuthFlags_LegacyLedgerResolvesByChangeIndex(t *
 }
 
 // TestRemovedAccountsLastKnownAuthFlags_PreImageReadIsLedgerScoped pins the
-// two structural corrections the #374 verification pass made to the original
+// two structural corrections the verification pass made to the original
 // design draft:
 //
 //  1. the pre-image read is SCOPED to the removal ledger (partition-pruned),

@@ -62,7 +62,7 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 // The successful-tx restriction is a grace_hash INNER JOIN, not an
 // IN-subquery: IN builds the whole window's tx-hash set in memory
 // (CreatingSetsTransform blew the 10 GiB query budget on a dense
-// 250k-ledger window, 2026-07-11). grace_hash spills join buckets
+// 250k-ledger window). grace_hash spills join buckets
 // to disk — the same rationale as StreamSDEXOps/StreamClassicOps.
 //
 // The FIVE bind parameters are, in order: the successful-tx SUBQUERY's from +

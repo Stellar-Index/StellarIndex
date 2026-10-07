@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The two relationships the account graph models (#351). They are
+// The two relationships the account graph models. They are
 // deliberately never summed: a creation is immutable and happens once
 // per (creator, created) pair per lifetime of the created address, while
 // a sponsorship is revocable and repeatable, and one account can
@@ -20,7 +20,7 @@ const (
 
 // AccountGraphInboundCap bounds how many INBOUND edges one direction may
 // return. Inbound is small by nature and this is a guard rail, not a
-// page: measured on r1 2026-09-09 over lake partition 63, no created
+// page: measured on r1 over lake partition 63, no created
 // account has more than 9 distinct creators (p99.99 = 4.4) and no
 // sponsored account more than 8 distinct sponsors (p99.9 = 7). The cap
 // exists so a future protocol or a pathological address cannot turn a
@@ -83,7 +83,7 @@ type AccountGraphCoverage struct {
 }
 
 // AccountGraph is one account's neighbourhood in the sponsorship and
-// account-creation graph (#351).
+// account-creation graph.
 //
 // EVERYTHING HERE IS HISTORY. A creation edge is immutable — a creation
 // never un-happens. A sponsorship edge says an arrangement was STARTED,
@@ -105,7 +105,7 @@ type AccountGraph struct {
 	// CreatedBy is normally one edge, and is a LIST rather than a single
 	// value because it genuinely can be several: an address can be
 	// created, merged away and created again, by the same funder or a
-	// different one. Measured on r1 2026-09-09, 41,358 of partition 63's
+	// different one. Measured on r1, 41,358 of partition 63's
 	// 418,016 created addresses carry more than one creation and the
 	// widest carries 29,634 — which is why the edges are collapsed to
 	// distinct pairs before they are served.
@@ -168,7 +168,7 @@ const accountGraphInboundQuery = `
 // accountGraphOutboundQuery summarises both outbound directions in one
 // round-trip. Each arm is an aggregate over a primary-key range, so its
 // cost is that account's own edges and not the table: measured on r1
-// 2026-09-09, the same shape over the busiest creator's 1,569,693 rows
+// the same shape over the busiest creator's 1,569,693 rows
 // in stellar.account_creators_ops — an upper bound, since that address
 // collapses to 193,015 edges — cost 63 ms at max_threads=2.
 //
@@ -202,7 +202,7 @@ const accountGraphOutboundQuery = `
 // off the sponsor board, which the same cycle EXCHANGEs with the edges,
 // so the number cannot describe a different cycle from the graph beside
 // it. A scan of the board's one row per distinct sponsor — 2,423 rows on
-// r1 2026-09-09, measured at 2 ms.
+// r1, measured at 2 ms.
 const accountGraphRevocationsQuery = `
 	SELECT toUInt64(sum(revocations_issued))
 	FROM stellar.account_sponsors_rollup WHERE sponsor = ?`

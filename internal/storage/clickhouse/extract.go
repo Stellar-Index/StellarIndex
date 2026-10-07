@@ -64,7 +64,7 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	// Read the ledger's transactions up front: the entry-change walk is
 	// ledger-wide and two-phase (all fee changes, then all apply-phase
 	// changes), mirroring stellar-core's commit order and
-	// dispatcher.walkLedgerEntryChanges exactly (C2-032, audit-2026-07-23).
+	// dispatcher.walkLedgerEntryChanges exactly.
 	// LedgerTransaction holds slices into lcm, so retaining them is cheap.
 	txs := make([]ingest.LedgerTransaction, 0, 64)
 	for {
@@ -429,7 +429,7 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 // events land with empty op_args_xdr, so an args-requiring decoder refuses
 // honestly at projection time instead of misattributing.
 //
-// TX-SUCCESS GATE (C2-010 sibling, audit-2026-07-23). `successful` is
+// TX-SUCCESS GATE. `successful` is
 // tx.Result.Successful(); a failed transaction contributes nothing. Pre-fix
 // this was the ONLY one of the three ledger walks with no such gate —
 // dispatcher.ProcessLedger skips failed txs outright (dispatcher.go, "Failed
@@ -541,7 +541,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 	// fills the same-named column via tryDecodeSymbolOrString. Anything
 	// FILTERING on a topic[0] name must therefore accept both encodings or
 	// it silently matches zero String-topic rows: that cost phoenix its
-	// entire factory-creation walk (F048). Use topic0Predicate in
+	// entire factory-creation walk. Use topic0Predicate in
 	// event_reader.go rather than writing `topic_0_sym IN (…)` by hand.
 	// Widening this column would mean re-extracting the whole lake.
 	var topic0Sym string
@@ -570,7 +570,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		OpArgsXDR:  opArgs, // callee-only InvokeContract args (Redstone feed_ids, etc.)
 		// Constant 1 is now a STATEMENT OF FACT, not an assumption: the only
 		// caller, extractEvents, returns early for a failed transaction
-		// (C2-010 sibling, audit-2026-07-23). Pre-fix this literal was
+		// Pre-fix this literal was
 		// stamped on every row while extractEvents had no tx-success gate at
 		// all, so the column asserted something the extractor had not checked.
 		InSuccessfulCall: 1,
@@ -582,7 +582,7 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 // trade output — not COUNT(trades), which also excludes one-side-zero fills.
 // The per-atom predicate is [sdexclaim.IsRealTrade] on both sides — the same
 // rule sdex.decodeClaimAtom applies — so the mirror this comment claims is
-// enforced by a shared function, not by inspection (C2-010, audit-2026-07-23;
+// enforced by a shared function, not by inspection (C2-010;
 // TestClaimAtomCount_LockStepWithDecoder in the dispatcher's external test
 // package pins all three against the same divergent-atom table).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.

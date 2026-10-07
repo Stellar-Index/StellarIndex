@@ -11,7 +11,7 @@ import (
 // silent — the query still compiles, still returns the right rows, and costs
 // four orders of magnitude more.
 //
-// The measured fact these encode (r1, 2026-09-03, cold, three real 50-op
+// The measured fact these encode (r1, cold, three real 50-op
 // pages of idle accounts, use_query_condition_cache=0):
 //
 //	ledger_seq IN (<50 ledgers>)        319k-508k rows /  24-38 MiB /  32-61 ms

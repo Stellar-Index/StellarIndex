@@ -25,13 +25,12 @@ import (
 //
 //   - Every tx is walked, FAILED TXS INCLUDED: a failed tx's fee debit is
 //     committed on chain, and only its operation changes are rolled back
-//     (C2-023/C2-040, audit-2026-07-23).
 //   - The walk is LEDGER-WIDE AND THREE-PHASE — every tx's fee changes,
 //     then every tx's apply-phase changes, then every tx's
 //     PostTxApplyFeeChanges — mirroring the SDK's canonical
 //     ingest.LedgerChangeReader state machine (feeChangesState →
 //     metaChangesState → postTxApplyState). stellar-core charges all fees
-//     before applying any transaction (C2-032), and protocol 23 moved the
+//     before applying any transaction, and protocol 23 moved the
 //     Soroban fee REFUND into a third ledger-wide phase applied after all
 //     transactions execute (R-A01-1; LCM V2 only, so empty pre-P23).
 //     intra_ledger_seq therefore ranks an apply-phase change above a later
@@ -64,7 +63,6 @@ import (
 // every change to a given key within one ledger. It is folded into
 // ledger_entries_current's ReplacingMergeTree version so the LAST
 // intra-ledger change to a key wins FINAL dedup deterministically
-// (audit-2026-07-16 C2-4c).
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between

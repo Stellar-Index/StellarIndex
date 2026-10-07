@@ -39,8 +39,8 @@ const holdersRollupExchangeStatement = `EXCHANGE TABLES stellar.asset_holders_ro
 // inserts below a slightly different timestamp, since they run one after
 // another). All five live tables carry the SAME computed_at once this cycle
 // swaps in — the cycle stamp holdersRollupBoard and AccountsStats compare
-// across their separate read round trips to detect a swap landing mid-read
-// (T346/T361): each read's own timestamps are internally consistent within
+// across their separate read round trips to detect a swap landing mid-read:
+// each read's own timestamps are internally consistent within
 // a cycle, but only a SHARED stamp lets a reader detect that two of its
 // queries landed in different cycles.
 func holdersRollupStatements(cycleAt time.Time) []string {
@@ -308,10 +308,10 @@ const holdersRollupMaxAge = 2 * time.Hour
 // asset_holders_rollup and asset_holders_counts are exchanged together as
 // part of RA-2's five-table atomic group, but read here as two independent
 // round trips — a swap landing between them serves a board from one cycle
-// paired with a count from another (T361). Both tables carry the same
+// paired with a count from another. Both tables carry the same
 // computed_at cycle stamp once a swap lands (holdersRollupStatements), so
 // comparing the two reads' stamps detects that; a mismatch retries the pair
-// once, matching AccountsStats' consistency check (T346).
+// once, matching AccountsStats' consistency check.
 func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {

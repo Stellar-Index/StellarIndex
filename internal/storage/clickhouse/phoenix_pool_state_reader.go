@@ -14,7 +14,7 @@ import (
 
 // Phoenix pool PERSISTENT-storage layout, derived from the protocol's
 // public Rust source (Phoenix-Protocol-Group/phoenix-contracts,
-// contracts/pool/src/storage.rs @ main, read 2026-07-29):
+// contracts/pool/src/storage.rs @ main):
 //
 //	DataKey is a #[repr(u32)] enum with a manual `TryFromVal<Env,
 //	DataKey> for Val` impl of `(*v as u32).into()` — so its storage
@@ -36,7 +36,7 @@ import (
 // throughout storage.rs), i.e. standalone contract_data entries under
 // the pool contract — NOT the contract-instance entry.
 //
-// VALIDATED ON R1 2026-07-29: all 6 storage keys for two curated pools
+// VALIDATED ON R1: all 6 storage keys for two curated pools
 // (CBHCRSVX…, CBCZGGNO…) matched real ledger_entries_current rows and
 // decoded cleanly — reserves at stroop scale + CONFIG token pairs
 // (PHO/USDC-class addresses) consistent with known pools. The layout

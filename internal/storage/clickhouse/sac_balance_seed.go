@@ -34,7 +34,7 @@ import (
 // Balance entry created before that window and idle since never emits a
 // LedgerEntryChange, so its balance is invisible to Algorithm-2 classic
 // supply — dormant contract-held (C-address) SAC balances silently drop
-// out of the SAC component. Incident 2026-07-06: ~98% of PHO sits in a
+// out of the SAC component. Incident: ~98% of PHO sits in a
 // handful of dormant Phoenix contracts, dragging PHO's Algorithm-2 total
 // 156.9% under true supply (BLND 12.4% under). This is the SAC analogue
 // of the dormant-reserve-account bootstrap that `supply
@@ -68,7 +68,7 @@ type SACBalanceSeed struct {
 // SAC / SEP-41 `Balance(Address)` contract_data entry belonging to a
 // WATCHED SAC-wrapper contract, invoking fn once per decoded entry.
 //
-// LIVENESS-FILTERED (CS-102 / archived-entry finding, 2026-07-28).
+// LIVENESS-FILTERED.
 // "Present in ledger_entries_current" is NOT "part of live ledger state":
 // Soroban archives an entry once its TTL lapses and the current-state table
 // keeps the archived value forever, so an unfiltered read hands back balances
@@ -129,7 +129,7 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 	defer func() { _ = rows.Close() }()
 
 	// Matched seeds are buffered in bounded batches so their Soroban
-	// liveness can be resolved before emission (CS-102 / archived-entry
+	// liveness can be resolved before emission (archived-entry
 	// finding). The scan itself still streams every contract_data row; only
 	// the WATCHED Balance keys — a tiny fraction — are held, so this stays
 	// memory-bounded on a network-wide read.
@@ -195,7 +195,7 @@ func streamCurrentStateSeeds(
 // ledger_entries_current keeps the archived value forever — so "present in
 // current-state" is NOT "part of live ledger state". Seeding the archived
 // value writes a balance that left the ledger years ago; that is the whole of
-// PHO's +157% vs Horizon (2026-07-28).
+// PHO's +157% vs Horizon.
 //
 // An archived key is emitted as a tombstone at its archival ledger rather than
 // dropped: a served row written while it was live (an earlier seed pass, or the
@@ -375,7 +375,7 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 // reduction is server-side WITHIN each ledger window and finished in Go across
 // them (see the Memory note below).
 //
-// Why this exists (PHO/BLND VERDICT, incident 2026-07-06 — see
+// Why this exists (PHO/BLND VERDICT — see
 // docs/architecture/supply-pipeline.md "Dormant contract-held SAC balances").
 // ledger_entries_current is fed by a ClickHouse MATERIALIZED VIEW
 // (`stellar.ledger_entries_current_mv`) that only processes rows INSERTed
@@ -390,8 +390,8 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 // contiguous + hash-chained to genesis), only the current-state PROJECTION
 // of it is incomplete below the floor.
 //
-// The final 2026-07-06 investigation confirmed this is EXACTLY the PHO/BLND
-// (and, per the 2026-07-09 residual set, EURC/KALE) gap: their biggest
+// The investigation confirmed this is EXACTLY the PHO/BLND
+// gap: their biggest
 // holders are Phoenix/Blend POOL CONTRACTS that acquired the SAC-wrapped
 // token via an ordinary SEP-41 `transfer` years before the current-state MV
 // existed and have been dormant (no further Balance-key writes) since — a
@@ -416,7 +416,7 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 // the existing seed. It is intended for the small `[supply.sac_wrappers]`
 // watched-set (a handful of contracts), never a routine/scheduled job.
 //
-// Memory (incident 2026-07-27 — the THIRD 241 on this query, and the one that
+// Memory (— the THIRD 241 on this query, and the one that
 // changed its shape). Prefiltering to the watched set was not enough. A single
 // unbounded query over the append-log carries a per-query footprint that grows
 // with the SPAN it covers: the aggregate states (one latest-write state per
@@ -506,7 +506,7 @@ const (
 	// primary-key range — the windows partition the ledger range and their
 	// reads sum to roughly the one pass the unbounded query made.
 	//
-	// 250,000 is measured, not guessed. On r1 (2026-07-27, 38 watched
+	// 250,000 is measured, not guessed. On r1 (38 watched
 	// wrappers, ClickHouse 26.5.1) against the two densest stretches of
 	// Soroban history:
 	//
@@ -540,8 +540,8 @@ const (
 // base64-decoded key — the same byte-match technique StreamContractCallOps
 // uses on body_xdr): ledger_entry_changes carries no contract_id column.
 // Without it the reduction ran over EVERY contract_data key in the
-// multi-billion-row append-log and exceeded the CH query budget twice on r1
-// (2026-07-11): first in the sort, then — with spill settings — in the
+// multi-billion-row append-log and exceeded the CH query budget twice on r1:
+// first in the sort, then — with spill settings — in the
 // wide-column read pipeline itself.
 func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 	needles := make([]string, 0, len(watched))
@@ -625,7 +625,7 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // A SINGLE argMax over a TUPLE of every projected column, keyed on the full
 // within-ledger identity tuple (ledger_seq, intra_ledger_seq, tx_hash,
 // op_index, change_index) — NOT ledger_seq alone, and not one argMax per
-// column. audit-2026-07-16 C2-4: ledger_seq is not unique per key within a
+// column. C2-4: ledger_seq is not unique per key within a
 // ledger (change_index is only a per-TRANSACTION counter — see
 // extract_entry_changes.go — so a single ledger can hold several changes to
 // the same storage key), so `argMax(col, ledger_seq)` computed INDEPENDENTLY
@@ -640,7 +640,7 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // instead of four (the ordering tuple embeds a 64-char tx_hash, so the four
 // separate argMax states carried four copies of it).
 //
-// intra_ledger_seq LEADS the within-ledger part of the tuple (C2-4c): it is the
+// intra_ledger_seq LEADS the within-ledger part of the tuple: it is the
 // per-LEDGER canonical walk position (apply order across all txs), so it
 // resolves same-ledger cross-tx writes by TRUE apply order — and it is the
 // exact same tie-break folded into ledger_entries_current's version, so this
@@ -652,7 +652,7 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 //
 // Output aliases must NOT shadow the source column names: ClickHouse resolves
 // a shadowing alias back into sibling aggregate arguments (ILLEGAL_AGGREGATION
-// — caught live 2026-07-11), hence the win_ prefixes and the tupleElement
+// — caught live), hence the win_ prefixes and the tupleElement
 // unpack in an outer SELECT.
 //
 // SETTINGS: the per-query ceiling is LOWER than the 8 GB the pre-windowing
@@ -668,7 +668,7 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // is dominated by the wide entry_xdr read, not by the aggregate states (only
 // ~32k–54k groups per window). With the threshold at 2 GB / 1 GB the read
 // alone sat above it, so the aggregator flushed a near-empty hash table on
-// every block: 116,753 temporary parts on one r1 window (2026-07-27), and
+// every block: 116,753 temporary parts on one r1 window, and
 // merging that many spilled parts is itself what exhausted the budget. Spilling
 // here made the query strictly worse; narrowing the window is what actually
 // bounds it. (max_bytes_ratio_before_external_group_by, which would clamp the
@@ -741,7 +741,7 @@ func isMemoryLimitExceeded(err error) bool {
 // lakeEntryChangeOrder is the full within-ledger identity tuple of one entry
 // change — the ordering key the server-side argMax uses, carried into Go so the
 // cross-window reduction compares winners on exactly the same terms
-// (audit-2026-07-16 C2-4 / C2-4c). Compared lexicographically:
+// Compared lexicographically:
 // ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index.
 //
 // It is deliberately NOT named for one seed: every windowed
@@ -855,9 +855,9 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 // Without this the seed reconstructs "the newest contract_data row for this
 // key" and calls it current state — but the lake keeps an archived entry's
 // last-known value forever, so a balance that left live ledger state years ago
-// is written as though it were current. Measured on r1 2026-07-28: PHO served
+// is written as though it were current. Measured on r1: PHO served
 // +156.9% against Horizon, entirely from 39 seeded holders archived since
-// 2024-11/2025-03, while the live observer's rows matched Horizon to 0.009%.
+// while the live observer's rows matched Horizon to 0.009%.
 //
 // Retracting rather than deleting also clears a balance an earlier seed pass
 // (or the live observer, before a pre-eviction archival) already served; the

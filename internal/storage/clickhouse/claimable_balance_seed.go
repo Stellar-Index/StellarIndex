@@ -22,7 +22,7 @@ import (
 // (stellar.ledger_entry_changes, ADR-0034), shaped for seeding the served
 // tier's claimable_observations hypertable (ADR-0022 / migration 0012).
 //
-// Motivation (verified on r1 2026-07-27). claimable_observations was NEVER
+// Motivation (verified on r1). claimable_observations was NEVER
 // seeded from history: it holds 997 rows with a floor of ledger 63,301,831 —
 // i.e. only what the live LedgerEntryChange observer
 // (internal/sources/claimable_balances) has seen since it started. Every
@@ -37,7 +37,7 @@ import (
 // This is the claimable analogue of the dormant-holder bootstraps that
 // `supply seed-observations` closes for account_observations (ADR-0021) and
 // `supply seed-sac-balances -full-history` closes for
-// sac_balance_observations (incident 2026-07-06). Like those it reads
+// sac_balance_observations. Like those it reads
 // AUTHORITATIVE on-chain state — the ClaimableBalanceEntry itself — so it is
 // always correct to run; the live observer supersedes a seeded row on the next
 // real change (a claim writes is_removal=true at a HIGHER ledger, which the
@@ -89,7 +89,7 @@ const (
 	// table's ORDER BY so a window is a primary-key range — the windows
 	// partition the ledger range and their reads sum to roughly one pass.
 	//
-	// The SAC seed's measurements (r1, 2026-07-27) are the calibration:
+	// The SAC seed's measurements (r1) are the calibration:
 	// 250,000 peaked at 1.48–1.75 GiB with zero spills through the densest
 	// Soroban stretches, against a 1,000,000-ledger window that died above
 	// 3.73 GiB. This scan is strictly LIGHTER per window than that one —
@@ -103,8 +103,8 @@ const (
 	// claimableSeedMinLedgerWindow is the bisection floor. It was 250k>>4
 	// (15,625) on the premise that such a window "holds a few thousand keys,
 	// and if THAT doesn't fit the window size is not the problem" — which is
-	// FALSE in the airdrop era and is exactly how the first r1 dry-run died
-	// (2026-07-27): it bisected all the way to 15,625 and still exceeded the
+	// FALSE in the airdrop era and is exactly how the first r1 dry-run died:
+	// it bisected all the way to 15,625 and still exceeded the
 	// ceiling at [40,484,378, 40,500,002], because a mass claimable-balance
 	// airdrop can mint MILLIONS of distinct balances inside a few thousand
 	// ledgers. Key density per ledger is not bounded, so the floor must be
@@ -188,7 +188,7 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 // A SINGLE argMax over a TUPLE of every projected column, keyed on the full
 // within-ledger identity tuple (ledger_seq, intra_ledger_seq, tx_hash,
 // op_index, change_index) — NOT ledger_seq alone, and NOT one argMax per
-// column. audit-2026-07-16 C2-4: ledger_seq is not unique per key within a
+// column. C2-4: ledger_seq is not unique per key within a
 // ledger, so independent per-column argMax lets ClickHouse resolve the tie
 // differently for each column and stitch a row out of two different changes —
 // entry_xdr from a still-present change and change_type from a later 'removed'
@@ -209,7 +209,7 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 //
 // Output aliases must NOT shadow the source column names: ClickHouse resolves a
 // shadowing alias back into sibling aggregate arguments (ILLEGAL_AGGREGATION —
-// caught live 2026-07-11 on the SAC seed), hence the win_ prefixes and the
+// caught live on the SAC seed), hence the win_ prefixes and the
 // tupleElement unpack in an outer SELECT.
 //
 // SETTINGS mirror the SAC seed's post-incident posture: a per-query ceiling
@@ -585,7 +585,7 @@ func claimableIDFromKeyXDR(keyXDR string) ([32]byte, bool, error) {
 // leaf helper canonical.AssetFromXDR uses.
 //
 // NOTE it deliberately does NOT go through canonical.AssetFromXDR, which
-// additionally VALIDATES the code (ASCII-alphanumeric, per C2-010). The live
+// additionally VALIDATES the code. The live
 // claimable observer applies no such rule, so routing through it here would
 // seed a strict SUBSET of what the observer records and re-open a silent gap
 // for the control-byte / non-ASCII asset codes that do occur on pubnet. The

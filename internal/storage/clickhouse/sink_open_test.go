@@ -150,7 +150,7 @@ func TestOpenSinkAcceptsMigratedDatabase(t *testing.T) {
 	}
 }
 
-// TestOpenSinkRefusesUnmigratedDatabase (T405): Ping succeeds against an
+// TestOpenSinkRefusesUnmigratedDatabase: Ping succeeds against an
 // un-migrated endpoint, so Open must refuse it by name instead of returning a
 // Sink whose first Flush fails.
 func TestOpenSinkRefusesUnmigratedDatabase(t *testing.T) {

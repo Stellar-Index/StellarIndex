@@ -18,9 +18,9 @@ type ReconcileEventStreamer struct {
 	Addr string
 	// NeedOpArgs includes the WIDE op_args_xdr column in the read. Only a
 	// decoder that consumes events.Event.OpArgs needs it (redstone's
-	// write_prices feed-id zip — PR 166); every other decoder works from
+	// write_prices feed-id zip); every other decoder works from
 	// topics + data. Reading op_args_xdr across the CAP-67 firehose was one
-	// leg of the 2026-07-08 sep41 completeness OOMs — leave false unless the
+	// leg of sep41 completeness OOMs — leave false unless the
 	// source's decoder reads OpArgs.
 	NeedOpArgs bool
 	// NeedStateWriteKeys additionally resolves events.Event.StateWriteKeys
@@ -199,7 +199,7 @@ func (w *WatermarkReader) Close() error { return w.conn.Close() }
 // hole forever. Every net's lake begins at ledger 2 (genesis ledger 1 is
 // never exported), so a first run floored at genesis must clamp up to
 // this value or it never derives anything (the test nets' empty
-// account_movements archive, 2026-09-17).
+// account_movements archive).
 func LakeMinLedger(ctx context.Context, addr string) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -221,7 +221,7 @@ func lakeMinLedgerOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 
 // substrateWindow is the per-query ledger span for the substrate audit.
 // Both substrate checks need a full sort of the range they inspect (the
-// window functions), and a whole-lake span (63M+ ledgers at 2026-06-12,
+// window functions), and a whole-lake span (63M+ ledgers,
 // growing forever) exceeds CH's 12 GiB query memory cap — first in the
 // AggregatingTransform, then (with external spill enabled) in the
 // MergingSortedTransform. Windowing is the durable fix: both properties
@@ -337,7 +337,7 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 	// certified clean by actually walking it — returning on the head problem
 	// alone (as this used to) meant every Soroban-era source published
 	// "hash-chained from genesis" over an interior that was never scanned
-	// (CODE-M #606). [from, haveMin) is provably missing already, so the walk
+	// (CODE-M). [from, haveMin) is provably missing already, so the walk
 	// starts at haveMin instead of wasting a query on it.
 	walkFrom := uint64(from)
 	if headHasProblem {

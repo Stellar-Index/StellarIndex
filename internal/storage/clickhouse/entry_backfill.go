@@ -20,7 +20,7 @@ import (
 // never overwrite it in ledger_entries_current's version comparison, while a
 // re-snapshot (equal sentinel) stays corrective. The live extract counter
 // cannot reach this value (it would require ~4.3e9 entry-changes in one
-// ledger). Mirrors timescale.SeedIntraLedgerSeq (migration 0111, C2-6); kept a
+// ledger). Mirrors timescale.SeedIntraLedgerSeq; kept a
 // local const so the lake layer takes no dependency on the served-tier package.
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
@@ -55,7 +55,7 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		// op_index, change_index), and snapshot rows all share
 		// tx_hash="" + op_index=-1. With ChangeIndex=0 every snapshot
 		// entry modified in the same ledger collapsed to ONE arbitrary
-		// survivor at merge time — the 2026-07-03 site audit measured
+		// survivor at merge time — the site audit measured
 		// >55% of the 48M-entry Phase-C snapshot already destroyed
 		// (blast radius: account-state, trustline, supply, and wasm
 		// readers). crc32(key) is deterministic, so re-runs stay
@@ -75,7 +75,7 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		Balance:     entryBalance(*post),
 		// A reconstructed snapshot is the ledger's final state for this key —
 		// it must win any same-ledger live change in ledger_entries_current's
-		// version comparison (C2-4c), so it stamps the top-of-space sentinel.
+		// version comparison, so it stamps the top-of-space sentinel.
 		IntraLedgerSeq: seedIntraLedgerSeq,
 	}, true
 }
@@ -186,7 +186,7 @@ const maxChangeIndexProbeAttempts = 1 << 20
 // (ledger_seq, tx_hash, op_index) group in rows — the exact tuple prefix the
 // table's ReplacingMergeTree ORDER BY shares change_index with. A 32-bit
 // crc32(key) base value collides between two DIFFERENT keys often enough in a
-// multi-million-row backfill (2026-07-03 site audit, SnapshotEntryRow's doc
+// multi-million-row backfill (site audit, SnapshotEntryRow's doc
 // comment) to silently drop one of them at merge time.
 //
 // Colliding rows within a group are walked in KeyXDR-sorted order — never

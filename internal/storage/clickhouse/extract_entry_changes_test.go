@@ -242,7 +242,7 @@ func TestEntryTypeName(t *testing.T) {
 }
 
 // TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins C2-032
-// (audit-2026-07-23) on the LAKE side, in lockstep with
+// on the LAKE side, in lockstep with
 // dispatcher.TestProcessLedger_FeePhasePrecedesApplyPhase.
 //
 // stellar-core charges the fee for EVERY transaction in the tx set before

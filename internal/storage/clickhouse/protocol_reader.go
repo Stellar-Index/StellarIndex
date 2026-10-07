@@ -22,7 +22,7 @@ import (
 // prunes partitions (PARTITION BY intDiv(ledger_seq,1e6)), which is what keeps
 // the daily-activity + breakdown queries fast on the 12B-row table.
 //
-// ── What "contract-scoped" actually costs (measured on r1, 2026-09-03) ──
+// ── What "contract-scoped" actually costs (measured on r1) ──
 //
 // These three raw readers are the FALLBACK path. The serving path is the
 // contract_events_daily pre-aggregation below (*Fast); the raw readers run
@@ -353,7 +353,7 @@ const protocolDailyActivityQuery = `SELECT toString(toDate(close_time)) AS d, co
 // the caller passes tip − window). Ascending by date. Complete days only:
 // the current (still-accumulating) day is excluded — its partial bucket
 // renders as a phantom activity cliff on every daily chart (the UXP-16
-// class, audit 2026-07-31). ProtocolEventBreakdown shares the same bound
+// class). ProtocolEventBreakdown shares the same bound
 // so sum(breakdown) keeps reconciling with the series-derived total.
 func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolDailyPoint, error) {
 	if len(contractIDs) == 0 {

@@ -21,7 +21,7 @@ const rollupLedgerWindow = 1_000_000
 // ceiling, spill at 4 GiB) plus a per-WINDOW execution cap.
 //
 // The cap is per window, not per cycle: the widest window measured on r1
-// 2026-09-06 took 24.7 s (stellar.operations partition 62, 819.5 M rows,
+// took 24.7 s (stellar.operations partition 62, 819.5 M rows,
 // 54.86 GiB read, max_threads=2), so 600 s leaves better than 20x
 // headroom for a contended box while still failing one wedged window
 // fast instead of spending the unit's whole TimeoutStartSec budget on it.
@@ -74,7 +74,7 @@ func windowBindArgs(lo, hi uint32, pairs int) []any {
 // also joins — the join's build side, one row per account that exists.
 // Neither shrinks on its own, so the pair outgrows any fixed ceiling as
 // the chain grows, and the ceiling only decides which cycle is the one
-// that fails. Measured on r1 2026-09-06, the creator board's single
+// that fails. Measured on r1, the creator board's single
 // statement read all 10,309,146,441 movement rows (315.97 GiB) and died
 // at 8.12 GiB in FillingRightJoinSide with its dedupe already spilled to
 // 32 external parts — the two consumers summed past the budget.

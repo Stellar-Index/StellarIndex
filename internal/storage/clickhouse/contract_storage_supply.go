@@ -130,7 +130,7 @@ func (s ContractStorageSupply) SelfConsistent() bool {
 // sits in trustlines, claimable balances and liquidity-pool reserves that this
 // reader cannot see and is not looking at. Summing a SAC's storage balances and
 // calling the result the token's supply would understate it by however much of
-// the asset never entered Soroban — measured on pubnet 2026-09-15 against KALE
+// the asset never entered Soroban — measured on pubnet against KALE
 // (CB23WRDQ…), storage held 471,938,508,419,832 against an event-derived
 // 3,224,226,487,856,012, a 6.8x understatement that carries no internal sign of
 // being wrong.
@@ -166,7 +166,7 @@ var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance en
 // The bound protects the API path, which pays a full decode per entry inside a
 // per-request budget. 25,000 sits far above the population this basis actually
 // serves — the tokens the event log cannot see are small, closed holder sets
-// (the twenty-four private-credit deal tokens measured on pubnet 2026-09-15 ran
+// (the twenty-four private-credit deal tokens measured on pubnet ran
 // 1 to 12 holders each) — and far below the largest storage-balance holder sets
 // on pubnet (~62k), which are ordinary event-emitting tokens that never reach
 // this path because their flow-derived reading answers first.
@@ -221,7 +221,7 @@ const (
 //
 // `change_type != 'removed'` drops entries the ledger has deleted. A removed
 // balance is not a zero balance we may add; it is an entry that no longer
-// exists, and eight of them were present on pubnet 2026-09-15.
+// exists, and eight of them were present on pubnet.
 const contractStorageSupplyQuery = `
 	SELECT key_xdr, entry_xdr, ledger_seq
 	FROM stellar.ledger_entries_current FINAL
@@ -260,7 +260,7 @@ type ContractStorageSupplyReader interface {
 // an addend.
 //
 // That the two agree when the log IS complete was measured, not assumed. On
-// pubnet 2026-09-15, summing storage for three event-emitting Wasm tokens
+// pubnet summing storage for three event-emitting Wasm tokens
 // reproduced their event-derived totals exactly, to the unit:
 //
 //	EUTBL    (CBGV2QFQ…)  28,327,867,109,034
@@ -576,7 +576,7 @@ func instanceStorageKeyName(key xdr.ScVal) (string, bool) {
 // The exact-length, exact-arity check is the point. `BalanceCheckpoints(Address)`
 // is a real key on the tokens this reader serves and holds a VECTOR of past
 // balances; anything that matched the symbol by PREFIX would sum a token's
-// balance history into its supply. Measured on pubnet 2026-09-15, the
+// balance history into its supply. Measured on pubnet, the
 // twenty-four private-credit deal tokens each carry one BalanceCheckpoints entry
 // per holder, so a prefix match would have roughly doubled every figure.
 func balanceKeyHolder(key xdr.ScVal) bool {

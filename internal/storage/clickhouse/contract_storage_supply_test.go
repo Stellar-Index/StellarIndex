@@ -157,7 +157,7 @@ func TestContractStorageSupplyIgnoresLookalikeKeys(t *testing.T) {
 // keeps a 6.8x understatement off the wire.
 //
 // A SAC's storage holds only the slice of a classic asset wrapped into Soroban.
-// Measured on r1 2026-09-15, KALE's storage summed to 471,938,508,419,832
+// Measured on r1, KALE's storage summed to 471,938,508,419,832
 // against an event-derived 3,224,226,487,856,012. Nothing about the storage sum
 // looks wrong on its own — which is exactly why the refusal has to be
 // structural, keyed on the instance executable, rather than a plausibility check

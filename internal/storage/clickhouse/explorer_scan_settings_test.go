@@ -6,7 +6,7 @@ import (
 )
 
 // These tests pin the per-query resource bounds on every SCAN-SHAPED explorer
-// read (route-sweep 2026-07-29). The measured fact they encode: at DEFAULT
+// read. The measured fact they encode: at DEFAULT
 // max_threads a ledger_entries_current probe fanned out over the post-D3 part
 // layout to 4.76 GiB — 40× the 89 MiB the identical probe costs at
 // max_threads = 4. Losing the SETTINGS clause from any of these queries
@@ -128,7 +128,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	// A first page carries no CURSOR clause on either arm. (Until
 	// 2026-09-02 this was asserted as "no WHERE at all", which was a
 	// faithful proxy only while the query had no lower bound either — the
-	// #444 tail-window bound is a WHERE on the first page, and is pinned
+	// tail-window bound is a WHERE on the first page, and is pinned
 	// in explorer_reader_recent_operations_test.go. The property this row
 	// actually protects — the arg count matching the clause count — is
 	// now asserted directly.)
@@ -141,7 +141,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		}
 	}
 	for _, q := range []string{recentOperationsQuery(true, true), recentOperationsQuery(true, false)} {
-		// The keyset comparison is now spelled index-prunably (#484) —
+		// The keyset comparison is now spelled index-prunably —
 		// `ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) <
 		// (?, ?))`, exactly equivalent to the tuple form it replaced. The
 		// full shape (including the forbidden tuple-only spelling) is

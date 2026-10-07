@@ -11,7 +11,7 @@ import (
 // stellar.ledgers is PARTITION BY intDiv(ledger_seq, 1000000) ORDER BY
 // ledger_seq, so `ledger_seq <= X` prunes NO partition below X — 65 of them at
 // the current tip — and the descending LIMIT 1 does not rescue it under FINAL.
-// Measured on r1 2026-09-05 from system.query_log at tip 64277149: 64,277,409
+// Measured on r1 from system.query_log at tip 64277149: 64,277,409
 // rows / 735.59 MiB / 94 ms for the unbounded predicate against 1,520 rows /
 // 14.90 KiB / 1-3 ms for this statement run verbatim. The
 // aggregator issues this once per watched asset (48 on r1) per 5-minute tick,

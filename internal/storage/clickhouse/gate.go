@@ -56,20 +56,20 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			// `max_execution_time` UNLIMITED on purpose — a legitimate FINAL
 			// stream over a full-history window runs for many minutes and we do
 			// NOT want it aborted mid-stream (see the ReadTimeout note below).
-			// What actually wedged CH on 2026-06-11 was MEMORY (the FINAL merge
+			// What actually wedged CH was MEMORY (the FINAL merge
 			// + the system.log spam loop on the full root), not wall time — so
 			// the right guard here is a per-query memory ceiling, conservative
 			// enough never to clip a healthy streaming read but low enough to
 			// fail a pathological query before it starves Postgres on the shared
 			// host. 24 GiB is still well under the CH server cap (ADR-0034;
 			// r1 has 188 GB): the sdex projection reconcile legitimately
-			// outgrew 12 GiB in 2026-07 (two OOM-failed recomputes, one with
+			// outgrew 12 GiB (two OOM-failed recomputes, one with
 			// the host otherwise idle — the wide body_xdr InOrder read, not a
 			// pathological query). max_threads bounds how many wide part
 			// streams hold buffers concurrently, which is what actually
 			// drives this class's peak.
 			"max_execution_time": 0,
-			// 24G→10G + threads 8→3 (2026-07-08): the sep41 projection
+			// 24G→10G + threads 8→3: the sep41 projection
 			// reconcile — streaming the CAP-67 firehose's wide
 			// op_args_xdr/data_xdr columns InOrder — repeatedly drove
 			// CH's SERVER-WIDE 64G OvercommitTracker cap on its own

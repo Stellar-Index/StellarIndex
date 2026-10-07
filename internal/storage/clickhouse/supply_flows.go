@@ -90,7 +90,7 @@ func WriteSupplyFlows(ctx context.Context, addr string, rows []SupplyFlowRow) er
 // lake's stellar.supply_flows via the post-P23 (CAP-67) replay — and is summed
 // as the pre-genesis opening balance (TokenSupplyBelowLedger) that the
 // aggregator seeds into sep41_supply_rollup (migration 0088, incident
-// 2026-07-06).
+// ).
 const SorobanGenesisLedger uint32 = 50457424
 
 // TokenSupply is one token's supply, summed live from supply_flows.
@@ -304,7 +304,7 @@ func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs 
 // ledgerExclusive (Σmint − Σburn − Σclawback over ledger_seq < ledgerExclusive).
 // The SEP-41 genesis-baseline seed calls it with [SorobanGenesisLedger] to read
 // the pre-Soroban opening balance the Postgres observer never captured
-// (migration 0088, incident 2026-07-06). The pre-Soroban rows are
+// The pre-Soroban rows are
 // REPLAY-DERIVED — a post-P23 core synthesized the CAP-67 unified asset events
 // for classic history (legitimate but core-version-dependent, ADR-0033).
 func (r *SupplyReader) TokenSupplyBelowLedger(ctx context.Context, contractID string, ledgerExclusive uint32) (TokenSupply, error) {
