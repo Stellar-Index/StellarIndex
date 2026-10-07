@@ -341,9 +341,7 @@ func splitPair(p string) (base, quote string, err error) {
 // incomparable as "all consistent", when in fact nothing was ever
 // checked).
 //
-// functions would obscure the simple "compare → report" flow.
-//
-//nolint:gocognit,gocyclo // linear diagnostic; splitting into smaller
+//nolint:gocognit,gocyclo // linear diagnostic; splitting it would hide the compare → report flow
 func analyseRegionResults(
 	metric crossRegionMetric,
 	pair string,

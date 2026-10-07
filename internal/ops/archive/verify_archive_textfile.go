@@ -224,16 +224,6 @@ func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uin
 	return nil
 }
 
-// readPriorVerifyArchiveTextfile parses the cumulative per-reason
-// totals out of a textfile this function's writer produced earlier.
-//
-// Best-effort by design: a missing file (first run ever, operator
-// wiped the collector dir), an unreadable one, or a malformed line
-// all degrade to "no prior state" rather than failing the run. An
-// ops binary that refused to publish metrics because it could not
-// parse its own last output would recreate the blind spot this file
-// removes. To Prometheus that degradation is an ordinary counter
-// reset.
 // readPriorVerifyArchiveLastSuccess recovers the last clean-completion
 // timestamp this writer previously recorded for tier. Best-effort for
 // the same reason as the counter reader: a missing or malformed file
@@ -267,6 +257,16 @@ func readPriorVerifyArchiveLastSuccess(path, tier string) int64 {
 	return 0
 }
 
+// readPriorVerifyArchiveTextfile parses the cumulative per-reason
+// totals out of a textfile this function's writer produced earlier.
+//
+// Best-effort by design: a missing file (first run ever, operator
+// wiped the collector dir), an unreadable one, or a malformed line
+// all degrade to "no prior state" rather than failing the run. An
+// ops binary that refused to publish metrics because it could not
+// parse its own last output would recreate the blind spot this file
+// removes. To Prometheus that degradation is an ordinary counter
+// reset.
 func readPriorVerifyArchiveTextfile(path, tier string) map[string]uint64 {
 	totals := map[string]uint64{}
 	f, err := os.Open(path) //nolint:gosec // operator-supplied path, the same one we write

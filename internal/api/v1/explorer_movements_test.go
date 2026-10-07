@@ -22,7 +22,7 @@ import (
 // the creator board's arm split (clickhouse.P23BoundaryLedger) are three
 // SEPARATE constants (import-direction rules forbid internal/storage
 // from importing internal/sources — see any of their doc comments) that
-// MUST hold the same value for explorer.Handler.assertP23NonOverlap's
+// MUST hold the same value for explorer.Handler.assertMovementsNonOverlap's
 // invariant, and for the creators cycle's two arms partitioning the
 // ledger axis, to mean anything. A package that can import all three
 // (this one) is the only place able to pin them together.

@@ -527,16 +527,14 @@ func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]
 // readTransitionJSONL appends every transition record in path's JSONL to
 // the per-contract slice in `transitions`. Returns the number of
 // transition lines successfully decoded. Reads line-by-line (not a
-// streaming json.Decoder) so a single malformed line can be skipped and
-// parsing RESYNCS at the next line, rather than treating "cannot parse
-// here" as "this file ends here": a malformed/truncated LAST
-// line is tolerated (a crashed walk may leave a half-written final
-// line — "recover what we have" beats "fail outright"), but a malformed
-// line anywhere else is a hard error, because this file is opened
-// O_APPEND across separate wasm-history runs sharing a -checkpoint-dir
-// (see newTransitionLog) and a truncated per-run start would otherwise
-// look identical to legitimate crash residue, silently dropping every
-// later run's transitions from the merge.
+// streaming json.Decoder) so it knows WHICH line failed to parse: a
+// malformed/truncated LAST line is tolerated (a crashed walk may leave a
+// half-written final line — "recover what we have" beats "fail
+// outright"), but a malformed line anywhere else is a hard error.
+// newTransitionLog truncates the file on open, so it holds one run's
+// lines and a crash can only damage the last one; an earlier malformed
+// line is corruption, and skipping it would silently drop the
+// transitions after it from the merge.
 func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (count int, extent uint32, hasExtent bool, err error) {
 	// gosec G304: path comes from -checkpoint-dir glob expansion; the
 	// merge tool is itself a privileged ops command that operators run
