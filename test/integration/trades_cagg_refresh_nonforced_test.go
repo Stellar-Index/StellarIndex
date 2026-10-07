@@ -74,7 +74,7 @@ func TestTradesCAGGRefresh_NonForcedRebuildsOnlyInvalidatedBuckets(t *testing.T)
 	size := run("-size")
 	for _, want := range []string{
 		"trades-cagg-refresh: pending prices_1d ranges=0 span=0s from=- to=- open-ended=2 source-log=1\n",
-		"trades-cagg-refresh: pending hull=[2025-03-12T13:00:00Z,2025-03-12T13:00:00Z] ledgers=[61000501,61000501] catch-up: -force=false -from 61000501 -to 61000501\n",
+		"trades-cagg-refresh: pending hull=[2025-03-12T13:00:00Z,2025-03-12T13:00:00Z] ledgers=[61000501,61000501] catch-up: -force=false -from 61000501 -to 61000501 -write\n",
 	} {
 		if !strings.Contains(size, want) {
 			t.Errorf("-size output lacks %q:\n%s", want, size)
@@ -177,7 +177,7 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 		"trades-cagg-refresh: pending twap_1d below-floor from=2023-11-09T00:00:00Z to=2025-02-27T23:59:59Z: starts before 2025-03-03T00:00:00Z, " +
 			"where twap windows reach below prices_1m's earliest bucket 2025-03-01T12:00:00Z, so -force=false refuses it; refresh it with -force=true\n",
 		"trades-cagg-refresh: pending prices_1m below-floor from=2024-01-10T13:00:00Z to=",
-		"trades-cagg-refresh: pending hull=[2025-03-04T13:00:00Z,2025-03-04T13:00:00Z] ledgers=[61000300,61000300] catch-up: -force=false -from 61000300 -to 61000300\n",
+		"trades-cagg-refresh: pending hull=[2025-03-04T13:00:00Z,2025-03-04T13:00:00Z] ledgers=[61000300,61000300] catch-up: -force=false -from 61000300 -to 61000300 -write\n",
 	} {
 		if !strings.Contains(size, want) {
 			t.Errorf("-size output lacks %q:\n%s", want, size)
