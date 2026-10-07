@@ -248,12 +248,19 @@ set.
   (`decode_ts_golden_test.go` in `reflector`, `redstone`, `band`) fail on
   any such change. When one must change, re-derive ONLY via
   `projected-rebuild` (reflector, redstone) or `ch-rebuild -contract-calls`
-  (band), never `projector-replay` (generation 0, async cursor rewind), and
-  treat clearing the stale rows (on-chain, `ledger > 0`, older derive
-  generation, in the re-derived range) and recounting `source_entry_counts`
-  and the `oracle_prices_*` caggs as part of the same change. Off-chain rows
-  (`ledger = 0`) embed `ts` in their identity and are never deduplicated
-  this way.
+  (band), never `projector-replay` (generation 0, async cursor rewind).
+  Both commands end a completed `-write` run with a sweep
+  (`Store.SweepOracleRederive`): in the run's ledger range it deletes an
+  on-chain (`ledger > 0`) row from an older derive generation when a row the
+  run itself wrote (its own generation) shares its identity with a
+  different `ts`, and decrements `source_entry_counts` by what it deleted.
+  Band's identity adds `(asset, quote)`, because nested relays in one op
+  share an `op_index`. A row with no twin from the run is never deleted;
+  op_index-shifted rows are counted for hand inspection, not deleted. A dry
+  run prints the would-delete count against any newer generation. The
+  sweep prints the swept `ts` span; refresh the `oracle_prices_*` caggs over
+  it. Off-chain rows (`ledger = 0`) embed `ts` in their identity and are
+  never deduplicated this way.
 - **`ch-rebuild`'s event pass is guarded, not forbidden, on projected
   domains.** Its one sanctioned projected use is the clean-slate repair
   above. `-write` reads every projected source's live cursor and refuses

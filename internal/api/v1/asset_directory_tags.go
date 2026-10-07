@@ -21,20 +21,20 @@ import (
 // tags remain third-party attribution that never affects the verified
 // status or the substance/decimals gates.
 //
-//  1. 2026-08-25 — a scam-class tag WITHHOLDS every published dollar
+//  1. A scam-class tag WITHHOLDS every published dollar
 //     figure on the row (price, market cap, and the listing-sourced
 //     reference/valuation pair), via suppressScamIssuerPricing below and
 //     the reader-seam
 //     pricingguard.ScamGate: a scam token must not publish a
 //     price/market-cap that lends it legitimacy, even when its market
 //     clears the substance floor (RIO-GBNLJIYH… did).
-//  2. 2026-08-29 (#356) — a scam-class tag DEMOTES the asset in the
+//  2. A scam-class tag DEMOTES the asset in the
 //     /v1/assets listing: timescale's listingRankTierExpr ranks a flagged
 //     issuer's assets below every unflagged one whatever the sort key.
 //     Withholding the numbers while still ranking the token on raw volume
-//     put a `malicious`/`unsafe` asset at #12 on the flagship /assets
-//     page. The row and its warning fields stay — we refuse to rank a
-//     flagged asset, we never hide it.
+//     put a `malicious`/`unsafe` asset at rank 12 on the flagship /assets
+//     page. The row and its warning fields stay — we refuse to
+//     rank a flagged asset, we never hide it.
 //
 // Raw trade surfaces stay visible.
 //
@@ -191,7 +191,7 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.Change7dPct = nil
 	// The withheld number must not come back as a PICTURE of itself: the
 	// last bucket of price_history_* IS the price we just refused to
-	// publish. Measured on r1 2026-08-29 — the flagged JFKBANK2 and RIO
+	// publish. Measured on r1: the flagged JFKBANK2 and RIO
 	// details served price_usd: null next to 24 hourly + 7 daily priced
 	// points, and the flagged listing rows drew a full sparkline beside
 	// their "—" price cell.
@@ -201,8 +201,7 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// `"ath": {"usd": "0.0091"}` next to `"price_usd": null` hands a
 	// client a published dollar valuation for a token the platform
 	// decided must publish none — and an anchor to expect value from,
-	// which is the legitimacy transfer this gate exists to prevent
-	// (wave-D MSP-05).
+	// which is the legitimacy transfer this gate exists to prevent.
 	withholdPriceSeriesWhenUnpriced(d)
 	// The listing-sourced second opinion is the same claim in a
 	// different field name. `listing_reference.price_usd` is a dollar
@@ -215,8 +214,7 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// and it is not enough on its own: it reads IssuerDirectoryTags,
 	// which only the caller of THIS function populates, so on any path
 	// where the two run in the wrong order that refusal sees an empty
-	// slice and the figure is published anyway (RLT-313, RLT-337). The
-	// ordering is now right on every path, and this makes the outcome
+	// slice and the figure is published anyway. This makes the outcome
 	// hold whatever the order — the tag is the authority, not the
 	// sequence.
 	//
@@ -239,13 +237,12 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 // makes the payload self-contradictory.
 //
 // It shares [priceSeriesPublishable] with the listing's sparkline
-// attach, rather than restating the rule. The two DID restate it, and
-// drifted: this function tested only `PriceUSD != nil` while
-// [sparkline7dEligible] also excluded declared-peg rows, so a
-// declared-peg asset was refused a sparkline on /v1/assets and served a
-// full price_history_24h/7d on /v1/assets/{id} — the dust series the
-// listing had just declined to draw (wave-D MSP-04). One predicate,
-// two callers, no drift.
+// attach, rather than restating the rule. Two copies drift: testing
+// only `PriceUSD != nil` here while [sparkline7dEligible] also excludes
+// declared-peg rows would refuse a declared-peg asset a sparkline on
+// /v1/assets and serve a full price_history_24h/7d on /v1/assets/{id} —
+// the dust series the listing had just declined to draw. One predicate
+// serves both callers, so they cannot drift.
 func withholdPriceSeriesWhenUnpriced(d *AssetDetail) {
 	if d == nil || priceSeriesPublishable(d) {
 		return

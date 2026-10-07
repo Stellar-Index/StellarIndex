@@ -140,15 +140,13 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		s.fillTransitivePrice(ctx, detail, asset, assetID)
 		return
 	}
-	// #28: the catalogue row's price_usd — the same 7-day catalogue SQL
-	// the LISTING enrichment reads, computed entirely outside /v1/price's
-	// gated read path — was the last aggregated-price surface that
-	// bypassed the thin-market substance gate: the listing withheld a
-	// dust-authored price (applySubstanceGateToListing) while this
-	// overlay copied the SAME price onto /v1/assets/{id} ungated, so a
-	// substanceless market kept a detail-page headline (AUDD served
-	// $0.78 bot dust on the detail while the listing correctly withheld
-	// it, 2026-08-24). Apply the SAME per-pair verdict the listing uses
+	// The catalogue row's price_usd — the same 7-day catalogue SQL the
+	// LISTING enrichment reads, computed entirely outside /v1/price's
+	// gated read path — would otherwise bypass the thin-market substance
+	// gate: the listing withholds a dust-authored price
+	// (applySubstanceGateToListing), so copying the SAME price onto
+	// /v1/assets/{id} ungated would give a substanceless market a
+	// detail-page headline. Apply the SAME per-pair verdict the listing uses
 	// (listingPriceAllowed — cached ~60s per pair, so the marginal cost
 	// is one bounded index scan per quote-class per minute). The change
 	// pills derive from that price, so a gated-out row loses them too —
@@ -204,11 +202,11 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	}
 	// Identity + activity metadata. Mirrors AssetSummary scalars so
 	// the explorer's asset-detail page can drop its parallel
-	// /v1/coins/{slug} fetch (R-018 finish — consumer migration).
+	// /v1/coins/{slug} fetch.
 	if row.Slug != "" {
 		detail.Slug = row.Slug
 	}
-	// COR-03: the ledger fields keep their zero-as-unset guard — the
+	// The ledger fields keep their zero-as-unset guard — the
 	// registry columns are `NOT NULL` with a 0 fallback and ledger 0
 	// does not exist on Stellar (genesis is ledger 1), so 0 there
 	// unambiguously means "never observed" and serving
@@ -250,9 +248,9 @@ func observationCountWire(row timescale.AssetRow) *int64 {
 //
 // The three PRICE fields (both histories and the ATH) arrive as RAW
 // prices_1m / prices_1d ratios and are normalised for a confirmed
-// non-7-decimals asset on the way out — see normalizeCatalogueUSD. They
-// used to be assigned verbatim, which put an unscaled sparkline and ATH
-// beside a price_usd the canonical path had already normalised.
+// non-7-decimals asset on the way out — see normalizeCatalogueUSD.
+// Assigned verbatim, they would put an unscaled sparkline and ATH beside
+// a price_usd the canonical path has already normalised.
 func (s *Server) applyAssetExtensionResults(detail *AssetDetail, asset canonical.Asset, r assetExtensionResults) {
 	if r.topMarketsErr == nil && len(r.topMarkets) > 0 {
 		detail.TopMarkets = topMarketsToWire(r.topMarkets)

@@ -53,11 +53,11 @@ type CachedAssetsReader struct {
 // Cache keys carry client-controlled components — notably `cursor`,
 // which is validated for SHAPE ONLY (it need merely contain the right
 // delimiter; there is no allowlist, HMAC or canonical round-trip), plus
-// free-text `q` and asset ids. Successful entries were never evicted,
-// so one anonymous caller inside the documented 6000/min budget minted
-// a permanent, full-page entry per distinct cursor — hundreds of MB per
-// minute of unreclaimable heap, walking the process to its 8G
-// MemoryMax and into a systemd restart-storm (cold audit 2026-08-03).
+// free-text `q` and asset ids. Without eviction, one anonymous caller
+// inside the documented 6000/min budget could mint a permanent,
+// full-page entry per distinct cursor — hundreds of MB per minute of
+// unreclaimable heap, walking the process to its 8G MemoryMax and into
+// a systemd restart-storm.
 //
 // The cap + oldest-first eviction matches the bounded siblings
 // (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
@@ -116,9 +116,8 @@ type assetsCacheEntry struct {
 // (cmd/stellarindex-api/main.go, `NewCachedAssetsReader(store,
 // 2*time.Minute)`) — listings are activity-ranked aggregates that don't
 // move materially in that window, and the explorer's react-query layer
-// caches client-side on top. This doc used to claim "30s is the
-// production default", four times the real refresh rate (C3-090,
-// audit-2026-07-23); change the call site and this line together.
+// caches client-side on top. Change the call site and this line
+// together.
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
 		logger:     slog.Default(),
@@ -158,7 +157,7 @@ func (c *CachedAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.L
 	// Every ListAssetsOptions dimension that changes the result set
 	// MUST appear in the key, or two requests differing only by that
 	// dimension collide and one serves the other's rows. Code is a
-	// row-narrowing filter (BACKLOG #54), so it is keyed alongside
+	// row-narrowing filter, so it is keyed alongside
 	// Issuer/Cursor/Q — and so is Type, which reaches the store now
 	// that it narrows the spine (classic vs the traded Soroban-native
 	// contracts) rather than being folded away by the handler.
@@ -343,7 +342,7 @@ type swrEntry struct {
 }
 
 // swr is the generic single-value stale-while-revalidate fetch: the
-// proven, race-clean assetsReader fetchRows logic (#22), made
+// proven, race-clean assetsReader fetchRows logic, made
 // type-parametric so every per-asset single-value asset-catalogue method
 // shares ONE implementation. Free function — Go methods can't have
 // type parameters.
@@ -486,13 +485,12 @@ func (c *CachedAssetsReader) fetchRows(
 // fetchRowsAt is fetchRows plus the OBSERVATION TIME of the rows it
 // returns, read under the same lock acquisition as the rows themselves.
 //
-// The pairing is the point. #459's first cut sampled `e.at` before
-// calling fetchRows and then paired that timestamp with whatever rows
-// came back — so a refresh landing in between returned FRESH rows
-// stamped with the STALE entry's time and `stale=true`. A caller then
-// published correct data under a wrong `as_of` and a wrong freshness
-// flag, which is the same honesty class as serving stale data as fresh,
-// just inverted. A test caught it under load; it is a race, not a flake.
+// The pairing is the point. Sampling `e.at` before calling fetchRows
+// and pairing that timestamp with whatever rows come back is a race: a
+// refresh landing in between returns FRESH rows stamped with the STALE
+// entry's time and `stale=true`. A caller would then publish correct
+// data under a wrong `as_of` and a wrong freshness flag, which is the
+// same honesty class as serving stale data as fresh, just inverted.
 //
 // A zero `at` means the rows did not come from a cache entry (cache
 // disabled, or a cold fill whose entry was not retained), which callers
@@ -606,13 +604,12 @@ func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry)
 
 // fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched
 // price-history maps. The branch structure is deliberately identical,
-// (A)/(A')/(B)/(C) in the same order — HLT-01: the two used to
-// diverge, this one missing (A') entirely, so an EXPIRED history batch
-// fell straight through to the blocking cold-leader path and every
-// caller during the refetch waited on the slow upstream. That is the
-// exact stampede-on-expiry #22 fixed for the listing rows, still live
-// on the sibling the same handler calls in the same request
-// (/v1/assets?include=sparkline fans out to both).
+// (A)/(A')/(B)/(C) in the same order. Without (A') an EXPIRED history
+// batch falls straight through to the blocking cold-leader path and
+// every caller during the refetch waits on the slow upstream: the
+// stampede-on-expiry the listing rows avoid, on the sibling the same
+// handler calls in the same request (/v1/assets?include=sparkline fans
+// out to both).
 func (c *CachedAssetsReader) fetchHistoryMap(
 	ctx context.Context,
 	op, key string,

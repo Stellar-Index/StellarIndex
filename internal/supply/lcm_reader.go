@@ -22,14 +22,14 @@ type AccountObservationLookup interface {
 	// MaxAccountObservationLedger reports how far the account OBSERVER has
 	// PROCESSED at-or-before asOfLedger — the true observer watermark, which
 	// advances every ledger the observer runs regardless of whether any
-	// watched account changed (F-1320/R-002/CS-102; storage impl reads
+	// watched account changed (the storage impl reads
 	// account_observer_watermark). NOT the last balance-change ledger: a quiet
 	// reserve account must not read as a stalled observer.
 	//
 	// Deliberately part of the REQUIRED interface rather than an optional
-	// one probed by type assertion (CS-102): a missing delegate behind an
-	// optional interface degrades silently to the old, wrong anchor and
-	// looks exactly like healthy operation. Adding a method here breaks
+	// one probed by type assertion: a missing delegate behind an
+	// optional interface degrades silently to a wrong anchor and looks
+	// exactly like healthy operation. Adding a method here breaks
 	// implementers at compile time instead, which is the point.
 	MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error)
 }
@@ -54,10 +54,9 @@ type AccountObservationRow struct {
 var ErrNoObservation = errors.New("supply: no LCM observation for at least one reserve account")
 
 // LCMReserveBalanceReader is a [ReserveBalanceReader] backed by
-// the LCM-derived `account_observations` hypertable. Replaces the
-// operator-static [ConfigReserveBalanceReader] (ec133606f) once the
-// AccountEntry observer (5e94ba76e) has been backfilled to a deep enough
-// range.
+// the LCM-derived `account_observations` hypertable. It takes over from the
+// operator-static [ConfigReserveBalanceReader] once the AccountEntry
+// observer has been backfilled to a deep enough range.
 //
 // Per ADR-0021 the static reader stays in tree as a bootstrap
 // fallback. Operators that deploy the LCM reader without a
@@ -111,19 +110,17 @@ func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accou
 // MinReserveAccountLedger implements [ReserveBalanceFreshnessReader].
 // Returns how far the account OBSERVER has progressed at-or-before
 // `asOfLedger`, provided every supplied account is actually observed.
-// F-1236 (codex audit-2026-05-12): closes the third leg of the
-// supply-snapshot freshness gate.
+// It is the third leg of the supply-snapshot freshness gate.
 //
-// CS-102 (2026-07-28), third leg. This used to return MIN(row.Ledger)
-// across the accounts — each one's LAST observation. SDF reserve accounts
-// move every few days-to-weeks by design, so that anchor went stale while
-// nothing was wrong, the gate read a stalled observer, and XLM's served
-// supply froze. Per-account last-activity measures how busy an account is,
-// not whether our data is current; the observer watermark measures the
-// latter, and a dead observer still stops advancing it for every account at
-// once.
+// The anchor is the observer watermark, not MIN over the accounts' last
+// observations. SDF reserve accounts move every few days-to-weeks by
+// design, so a per-account anchor goes stale while nothing is wrong, the
+// gate reads a stalled observer, and XLM's served supply freezes.
+// Per-account last-activity measures how busy an account is, not whether
+// our data is current; the observer watermark measures the latter, and a
+// dead observer stops advancing it for every account at once.
 //
-// The per-account probe is RETAINED — not for its ledger value, but because
+// The per-account probe exists not for its ledger value but because
 // "every configured reserve account is actually observed" is a real
 // precondition. If one is missing we cannot compute the reserve exclusion at
 // all, so the gate must stay permissive rather than bless a partial sum
@@ -139,7 +136,7 @@ func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accou
 //
 // Returns a non-nil error only on storage-side failures the
 // caller should bubble; the [XLMComputer] swallows them and
-// falls back to the legacy permissive posture so a transient
+// falls back to the permissive posture so a transient
 // query error doesn't reject an otherwise-valid snapshot.
 func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error) {
 	if len(accounts) == 0 {

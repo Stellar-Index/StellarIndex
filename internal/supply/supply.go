@@ -28,7 +28,7 @@ const (
 	// BasisXLMTotalOnly — Algorithm 1 with NO reserve accounts
 	// configured: circulating == total (nothing was excluded). Kept
 	// distinct from BasisXLMSDFReserveExclusion so the wire never
-	// claims an SDF exclusion that didn't happen (CS-010) — a
+	// claims an SDF exclusion that didn't happen — a
 	// circulating==total XLM figure labelled "sdf_reserve_exclusion"
 	// silently overstates circulating supply (and market cap) by the
 	// unsubtracted ~18-19B SDF-held stroops. Configure
@@ -49,7 +49,7 @@ const (
 	// circulating == total because the admin balance came back zero
 	// and no per-asset locked-set was configured. Kept distinct from
 	// BasisAdminExclusion so the wire never claims an admin exclusion
-	// that didn't happen (CS-010, the same reasoning as
+	// that didn't happen (the same reasoning as
 	// BasisXLMTotalOnly) — a circulating==total SEP-41 figure
 	// labelled "admin_exclusion" tells a consumer the issuer's own
 	// holdings were netted out when they were not, overstating
@@ -61,7 +61,7 @@ const (
 	// directs operators to put the admin's address in the per-asset
 	// LockedSet instead. Doing so yields BasisOverride — so an
 	// operator can tell a configured token from an unconfigured one
-	// straight off the basis field (C1-041).
+	// straight off the basis field.
 	BasisSEP41TotalOnly Basis = "sep41_total_only"
 
 	// BasisOverride — operator-configured override beat the
@@ -104,8 +104,8 @@ const (
 	// net goes NEGATIVE — i.e. only when the MINT side is under-seeded.
 	// The opposite asymmetry, a replayed historical mint with no matching
 	// burn, produces a too-LARGE total that nothing in the reading itself
-	// can detect. Measured against Horizon's all-domain totals on r1
-	// 2026-09-15: BLND +11.53% and PHO +156.79% (a single replayed
+	// can detect. Measured against Horizon's all-domain totals on r1:
+	// BLND +11.53% and PHO +156.79% (a single replayed
 	// 200,000,000-token issuance at ledger 51571763 against 77,882,787
 	// actually outstanding), while USDC, EURC, AQUA, yXLM and VELO all
 	// landed within 0.03%. That is why this basis ranks BELOW a direct
@@ -143,7 +143,7 @@ const (
 	// minted, less what was destroyed. This one measures DISTRIBUTION — the
 	// balances that exist right now. For a token whose event log is complete
 	// the two agree exactly, and that was measured rather than assumed: on
-	// pubnet 2026-09-15 three event-emitting Wasm tokens (EUTBL, USTBL,
+	// pubnet, three event-emitting Wasm tokens (EUTBL, USTBL,
 	// deJTRSY) reproduced their [BasisSEP41LakeFlows] totals to the unit.
 	//
 	// It exists for the case where they cannot agree, because one of them is
@@ -184,9 +184,9 @@ func (b Basis) String() string { return string(b) }
 // [BasisClassicTrustlineSum] misses holding DOMAINS: the lake's
 // current-state projection stamps its asset column for trustlines alone,
 // so claimable balances, liquidity-pool reserves and SAC-held contract
-// balances are absent by construction. Measured across the served set on
-// 2026-09-15 that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
-// 15.4% of USDC. [BasisContractStorageBalances] misses balance entries the
+// balances are absent by construction. Measured across the served set,
+// the omitted share was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX
+// and 15.4% of USDC. [BasisContractStorageBalances] misses balance entries the
 // lake's current-state projection never captured, such as one dormant since
 // before its coverage began.
 //
@@ -243,18 +243,17 @@ type Supply struct {
 
 	// MinComponentLedger is the oldest ledger any per-component
 	// observation contributing to this snapshot was last updated
-	// at. F-1236 (codex audit-2026-05-12): the refresher uses
+	// at. The refresher uses
 	// this to detect "snapshot stamped at fresh ledger N but
 	// constructed from per-component observations as old as M"
 	// and reject snapshots where (N - M) exceeds the operator-
 	// configured stale-component threshold.
 	//
-	// Zero = "computer didn't populate" (legacy / non-storage-
-	// backed computers like the static-config XLM reader). The
-	// refresher treats zero as "no freshness signal" and falls
-	// through to the legacy max-ledger semantics, matching the
-	// pre-F-1236 posture for deployments that haven't wired
-	// storage-backed readers yet.
+	// Zero = "computer didn't populate" (non-storage-backed
+	// computers like the static-config XLM reader). The refresher
+	// treats zero as "no freshness signal" and falls through to the
+	// max-ledger semantics, as for deployments that haven't wired
+	// storage-backed readers.
 	MinComponentLedger uint32
 
 	// SACWrappedStroops is Algorithm 2's SACWrapped component —
@@ -265,17 +264,15 @@ type Supply struct {
 	// (asset_supply_history.sac_wrapped_stroops, migration 0117).
 	//
 	// It exists so [CrossCheckSubsetBound] can run the REAL subset
-	// compare (audit E4/N-F3(b), the "(b) follow-up" of BACKLOG #59):
-	// this component and the SAC's own Algorithm-3 total measure the
-	// SAME quantity via independent data paths — a ledger-entry
+	// compare: this component and the SAC's own Algorithm-3 total
+	// measure the SAME quantity via independent data paths — a ledger-entry
 	// snapshot sum here versus an event-flow sum there — so
 	// SACWrapped > sac_total is impossible under correct accounting.
-	// Comparing the folded TotalSupply against sac_total, which is all
-	// the compare site could do before this field existed, can only
+	// Comparing the folded TotalSupply against sac_total can only
 	// catch the opposite direction.
 	//
 	// nil = "this snapshot recorded no SACWrapped component", the
-	// CS-087 unchecked state. Only [ClassicComputer.Compute] populates
+	// unchecked state. Only [ClassicComputer.Compute] populates
 	// it; Algorithm 1 (XLM), Algorithm 3 (SEP-41) and the static
 	// text-file computer have no such component and leave it nil, as do
 	// rows written before migration 0117. Consumers MUST NOT read nil

@@ -1080,13 +1080,17 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 	}
 
+	// The stale-row sweep keys on this run's own generation, so it runs only
+	// here and in projected-rebuild, never under projector-replay (gen 0).
+	serr := sweepCHRebuildOracle(ctx, os.Stderr, store, cat, enabled, *contractCalls, failed, lo, hi, store.DeriveGeneration(), write)
+
 	// ─── report ──────────────────────────────────────────────────────────
 	fmt.Printf("\n=== ch-rebuild [%d,%d] %s ===\n", lo, hi, mode)
 	rerr := reportCHRebuildCounts(os.Stdout, cat, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), parseCSVList(*requireRows), written, failed)
 	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
-	return rerr
+	return errors.Join(rerr, serr)
 }
 
 // reportCHRebuildCounts prints one row per source that wrote or failed

@@ -19,9 +19,9 @@ import (
 //
 // # The hole this fills, and the hole it must not fill
 //
-// USDT0 is the case that produced this file. It launched on Stellar on
-// 2026-09-02 and trades about a hundred dollars a day there. The
-// dust-liquidity guard therefore suppresses its market cap, and that is
+// USDT0 is the motivating case. It launched on Stellar in September 2026
+// and trades about a hundred dollars a day there. The dust-liquidity
+// guard therefore suppresses its market cap, and that is
 // the guard working: a price scraped off a $106/day market, multiplied
 // by two and a half million tokens, is a headline nobody should publish
 // and this index refuses to. Nothing below relaxes that refusal — the
@@ -60,7 +60,7 @@ import (
 //
 // Both routes are needed because the upstream publishes each asset under
 // one form or the other, with no pattern this index controls. Measured
-// against the live upstream on 2026-09-15: EURC, AQUA, SHX, VELO, BLND
+// against the live upstream: EURC, AQUA, SHX, VELO, BLND
 // and yUSDC are named by their classic ids; USDC, PYUSD, USDT0 and XLM
 // are named by their SAC addresses and not by their classic ids at all.
 // A reader supporting only one form would silently drop half the set.
@@ -476,8 +476,8 @@ func (l assetListing) entryFor(assetID string) (timescale.ListingEntry, string, 
 // It is the ONE place the rule lives. /v1/assets reaches it through
 // [assetListing.entryFor]; the /v1/rwa/assets classic arm reaches it
 // directly over the same snapshot's map. Two resolvers over one
-// directory is how a SAC-listed classic member came to be priced on one
-// surface and refused as unbound on the other (issue #514).
+// directory would let a SAC-listed classic member be priced on one
+// surface and refused as unbound on the other.
 //
 // A nil map answers every lookup with "not listed", which is the
 // fail-closed reading an unavailable snapshot needs.
@@ -728,8 +728,8 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 // in [higherClassicSupply] is sound only against a sum every balance of
 // which was minted. When the row carries an ADR-0011 observation, that
 // is the arm [classicSupplyReading] ranks above the lake, because the
-// lake over-counts replayed mints whose burns are missing (BLND +11.53%,
-// PHO +156.79% on 2026-09-15), and the valuation must not overrule the
+// lake over-counts replayed mints whose burns are missing (measured on
+// r1: BLND +11.53%, PHO +156.79%), and the valuation must not overrule the
 // supply the row itself publishes. A reading with no basis is not known
 // to be a floor, so it is kept too.
 func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) {

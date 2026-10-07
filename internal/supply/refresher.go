@@ -53,15 +53,15 @@ const (
 	OutcomeKindNoLedger         OutcomeKind = "no_ledger"         // LedgerLookup error
 	OutcomeKindNoObservation    OutcomeKind = "no_observation"    // ChainReader fell through with no static fallback either
 	OutcomeKindComputeError     OutcomeKind = "compute_error"     // computer failed for non-observation reasons
-	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // F-1236: a component observation lags the snapshot ledger past the configured threshold AND either moved since the last tick (or this is the first lagging tick), or has been frozen past [DefaultMaxDormantComponentLedgers]. Says nothing about producer liveness inside the horizon: a producer that dies with a frozen anchor reports dormant until then.
-	OutcomeKindMissingFreshness OutcomeKind = "missing_freshness" // F-1236 wave 60 (codex audit-2026-05-13): strict mode + MinComponentLedger==0 (no signal); reject rather than publish without a freshness anchor
-	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // incident 2026-07-06 / migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
-	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick; the last observation is re-stamped as current (snapshot inserted). NOT evidence the producer is alive: the anchor is a producer-wide watermark, so assets dormant together mean a producer stalled (the supply_refresh_dormant_fleet alert), and [DefaultMaxDormantComponentLedgers] bounds it per asset — past it the gate fails closed to stale_component.
+	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // a component observation lags the snapshot ledger past the configured threshold AND either moved since the last tick (or this is the first lagging tick), or has been frozen past [DefaultMaxDormantComponentLedgers]. Says nothing about producer liveness inside the horizon: a producer that dies with a frozen anchor reports dormant until then.
+	OutcomeKindMissingFreshness OutcomeKind = "missing_freshness" // strict mode + MinComponentLedger==0 (no signal); reject rather than publish without a freshness anchor
+	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
+	OutcomeKindDormant          OutcomeKind = "dormant"           // MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick; the last observation is re-stamped as current (snapshot inserted). NOT evidence the producer is alive: the anchor is a producer-wide watermark, so assets dormant together mean a producer stalled (the supply_refresh_dormant_fleet alert), and [DefaultMaxDormantComponentLedgers] bounds it per asset — past it the gate fails closed to stale_component.
 	OutcomeKindWriteError       OutcomeKind = "write_error"       // InsertSupply failed
 	OutcomeKindStaticReserve    OutcomeKind = "static_reserve"    // snapshot inserted, but its reserve balances came from the dated static map (BasisXLMSDFReserveExclusionStatic), not the live observer. Not benign: counted by the error_dominant alert so a sustained fallback pages.
 )
 
-// DefaultStaleComponentLedgers is the F-1236 freshness threshold
+// DefaultStaleComponentLedgers is the freshness threshold
 // the Refresher applies when none is operator-configured: a
 // snapshot whose MinComponentLedger lags the snapshot ledger by
 // more than 1000 ledgers (~85 min at 5s ledger close cadence)
@@ -74,13 +74,13 @@ const (
 // observer before the supply table accrues misleading rows.
 const DefaultStaleComponentLedgers uint32 = 1000
 
-// DefaultMaxDormantComponentLedgers bounds how long the F-1320
+// DefaultMaxDormantComponentLedgers bounds how long the
 // dormancy carve-out will keep re-stamping an unchanged component
 // observation as the current supply: 17280 ledgers (~24 h at 5s
 // ledger close cadence). Operators tune via
 // [WithMaxDormantComponentLedgers].
 //
-// R-002 (audit-2026-07-23, MNY-04): "MinComponentLedger unchanged
+// "MinComponentLedger unchanged
 // tick-over-tick" does NOT actually separate a dormant asset from a
 // STALLED component observer — a producer that dies stops advancing
 // its observation ledger too, and looks dormant forever. Unbounded,
@@ -90,9 +90,8 @@ const DefaultStaleComponentLedgers uint32 = 1000
 // deliberately excludes. The gap is that a dormant asset and a dead
 // observer are genuinely indistinguishable from this signal alone,
 // so we bound the benefit of the doubt in time instead of guessing:
-// inside the horizon a quiet asset keeps publishing (F-1320 stays
-// fixed); past it we can no longer defend "the last observation IS
-// the current supply", so the snapshot is refused and surfaced as
+// inside the horizon a quiet asset keeps publishing; past it we can
+// no longer defend "the last observation IS the current supply", so the snapshot is refused and surfaced as
 // stale_component (ADR-0011: we don't fabricate — and re-stamping an
 // unverified figure at the current ledger fabricates freshness on
 // the market-cap/FDV surface).
@@ -131,7 +130,7 @@ type Refresher struct {
 
 	// lastComponentLedger remembers, per asset_key, the
 	// MinComponentLedger of the most recent snapshot the gate
-	// evaluated. F-1320: the stale-component gate compares the
+	// evaluated. The stale-component gate compares the
 	// (always-advancing) chain tip against MinComponentLedger,
 	// which for a DORMANT asset (no balance changes) freezes — so
 	// the gap grows past the threshold and stays there forever,
@@ -150,12 +149,10 @@ type Refresher struct {
 // RefresherOption tunes a [Refresher].
 type RefresherOption func(*Refresher)
 
-// WithStaleComponentLedgers overrides the F-1236 (codex
-// audit-2026-05-12) freshness threshold. The Refresher rejects
+// WithStaleComponentLedgers overrides the freshness threshold. The Refresher rejects
 // a snapshot when (snap.LedgerSequence - snap.MinComponentLedger)
 // exceeds this value AND MinComponentLedger > 0 (zero means the
-// computer didn't populate the field — legacy path stays
-// unaffected). Set to 0 to disable the gate.
+// computer didn't populate the field, so the gate skips). Set to 0 to disable the gate.
 func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
 	return func(r *Refresher) {
 		r.staleComponentLedger = maxLag
@@ -163,8 +160,7 @@ func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
 }
 
 // WithStaleComponentLedgersFor sets a per-asset override of the
-// stale-component threshold. F-0040 (audit-2026-05-26):
-// low-activity governance tokens like PHO see their trustline
+// stale-component threshold. Low-activity governance tokens like PHO see their trustline
 // observer lag the snapshot ledger by ~1200 ledgers (~100 min) —
 // past the 1000-ledger global default. A per-asset override lets
 // operators relax the gate for known-low-activity assets without
@@ -186,16 +182,15 @@ func WithStaleComponentLedgersFor(assetKey string, maxLag uint32) RefresherOptio
 	}
 }
 
-// WithMaxDormantComponentLedgers overrides the R-002
-// (audit-2026-07-23) dormancy horizon: how far the snapshot ledger
+// WithMaxDormantComponentLedgers overrides the dormancy horizon: how far the snapshot ledger
 // may run ahead of a FROZEN MinComponentLedger before the Refresher
 // stops treating it as a dormant asset and starts treating it as a
 // stalled component observer (rejecting with
 // [OutcomeKindStaleComponent] rather than re-stamping the frozen
 // value at the current ledger).
 //
-// Set to 0 to disable the horizon and restore the unbounded
-// pre-R-002 posture — appropriate only for deployments that watch
+// Set to 0 to disable the horizon, leaving the dormancy carve-out
+// unbounded. That is appropriate only for deployments that watch
 // assets legitimately dormant for very long stretches AND monitor
 // their component observers by some other means, since it re-opens
 // the "dead observer looks dormant forever" hole this bound closes.
@@ -206,10 +201,10 @@ func WithMaxDormantComponentLedgers(maxDormant uint32) RefresherOption {
 }
 
 // WithStrictFreshnessRequired flips the Refresher into the
-// stricter F-1236 wave-60 (codex audit-2026-05-13) posture:
+// strict posture:
 // a snapshot whose `MinComponentLedger == 0` is rejected with
 // [OutcomeKindMissingFreshness] rather than passing the gate.
-// Default false preserves the legacy permissive interpretation
+// Default false keeps the permissive interpretation
 // of zero ("no freshness signal — let it through") so
 // deployments running the static-XLM fallback or where one of
 // the freshness producers can transiently fail (Postgres
@@ -274,7 +269,7 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		// AND static fall through) from generic compute errors so
 		// operators can chart the bootstrap-progress signal.
 		//
-		// ErrNegativeTotalMissingBaseline (incident 2026-07-06) is a
+		// ErrNegativeTotalMissingBaseline is a
 		// benign bootstrap-like state — a SAC-wrapper whose pre-Soroban
 		// opening balance hasn't been seeded yet reads Σburn > Σmint over
 		// the Soroban-era window. Route it to `missing_baseline` (excluded
@@ -293,11 +288,10 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return Outcome{Kind: kind, Err: err}
 	}
 
-	// F-1236 wave 60 (codex audit-2026-05-13): strict mode
-	// rejects snapshots that arrive with NO freshness signal
-	// (MinComponentLedger == 0), instead of the legacy
-	// permissive interpretation ("no signal — let it through").
-	// Default off: preserves backwards compat for deployments on
+	// Strict mode rejects snapshots that arrive with NO freshness
+	// signal (MinComponentLedger == 0), instead of the permissive
+	// interpretation ("no signal — let it through").
+	// Default off, for deployments on
 	// the static-XLM fallback or with transiently-failing
 	// freshness producers. Operators turn it on once every
 	// producer is wired + every reader is shown to never
@@ -312,14 +306,13 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return Outcome{Kind: OutcomeKindMissingFreshness, Err: err, Snapshot: snap}
 	}
 
-	// F-1236 (codex audit-2026-05-12): reject snapshots whose
-	// per-component observations lag the snapshot ledger by more
-	// than the configured threshold. MinComponentLedger == 0
-	// means the computer didn't populate the field (legacy
-	// path); we don't gate in that case so deployments without
-	// freshness-aware computers stay on the pre-F-1236 posture.
+	// Reject snapshots whose per-component observations lag the
+	// snapshot ledger by more than the configured threshold.
+	// MinComponentLedger == 0 means the computer didn't populate the
+	// field; we don't gate in that case, so deployments without
+	// freshness-aware computers are unaffected.
 	//
-	// F-0040 (audit-2026-05-26): per-asset overrides via
+	// Per-asset overrides via
 	// staleComponentByAsset[snap.AssetKey] win over the global
 	// staleComponentLedger when present. A zero per-asset value
 	// disables the gate for that asset alone.
@@ -348,21 +341,19 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	return Outcome{Kind: OutcomeKindOK, Snapshot: snap, BandBreach: breach}
 }
 
-// applyStaleComponentGate runs the F-1236 / F-0040 / F-1320
-// stale-component freshness gate for a computed snapshot. It returns
+// applyStaleComponentGate runs the stale-component freshness gate for a computed snapshot. It returns
 // (outcome, true) when the gate decides the tick's result — either a
 // stale-component REJECTION or a dormant-asset ACCEPT (which inserts
 // here) — and (zero, false) when the snapshot passed the gate and the
 // caller should proceed to its normal insert.
 //
-// F-0040: per-asset overrides via staleComponentByAsset win over the
-// global threshold; a zero per-asset value disables the gate for that
-// asset. F-1320: the gap is the always-advancing chain tip minus the
-// change-driven MinComponentLedger, so a DORMANT asset (no balance
-// change → MinComponentLedger frozen) would otherwise be rejected
-// forever and its supply row would silently, permanently stale (live
-// PHO: gap grew 1017 → 1324 and kept climbing). Past the threshold the
-// gate decides on the watermark alone:
+// Per-asset overrides via staleComponentByAsset win over the global
+// threshold; a zero per-asset value disables the gate for that asset.
+// The gap is the always-advancing chain tip minus the change-driven
+// MinComponentLedger, so a DORMANT asset (no balance change →
+// MinComponentLedger frozen) would otherwise be rejected forever and
+// its supply row would silently go permanently stale. Past the
+// threshold the gate decides on the watermark alone:
 //   - MinComponentLedger CHANGED since the last tick (or first-ever tick
 //     already lagging): reject, OutcomeKindStaleComponent.
 //   - MinComponentLedger UNCHANGED tick-over-tick: re-stamp the last
@@ -384,8 +375,8 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			thresholdSource = "per_asset"
 		}
 	}
-	// Gate disabled, or the computer didn't populate freshness (legacy
-	// path) → no opinion, fall through.
+	// Gate disabled, or the computer didn't populate freshness
+	// → no opinion, fall through.
 	if threshold == 0 || snap.MinComponentLedger == 0 {
 		return Outcome{}, false
 	}
@@ -415,7 +406,7 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			"first_observation", !seen)
 		return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}, true
 	}
-	// R-002 (audit-2026-07-23): the dormancy carve-out is BOUNDED. A
+	// The dormancy carve-out is BOUNDED. A
 	// frozen MinComponentLedger is exactly what a dead component
 	// observer looks like, so past the horizon we stop giving it the
 	// benefit of the doubt and fail closed rather than republish a
