@@ -124,11 +124,11 @@ func TestAggregators_HappyPath(t *testing.T) {
 	}
 }
 
-// TestAggregators_NotesHonestDegrade pins the ROADMAP #11/#29 coverage
-// caveats: a router row always carries a "these cases can't be told
-// apart" note, an auto_discovered (evidence-only, unverified) router
-// row carries the stronger "not yet attributed" note, and a vault row
-// carries no note at all (Notes is a router-kind-only concept).
+// TestAggregators_NotesHonestDegrade pins the coverage caveats: a
+// router row carries the shared-bucket note, an auto_discovered router
+// row carries only the unverified note, and a vault row carries none.
+// Every soroswap_router_swaps row now has call_path, so no note may
+// claim pending history or legacy rows inside a 24 h window.
 func TestAggregators_NotesHonestDegrade(t *testing.T) {
 	reader := &stubAggregatorsReader{
 		rows: []timescale.AggregatorRollupRow{
@@ -182,8 +182,18 @@ func TestAggregators_NotesHonestDegrade(t *testing.T) {
 	}
 
 	exec := byName["soroswap-router-aggregator-exec"]
-	if len(exec.Notes) != 2 {
-		t.Errorf("aggregator-exec Notes = %v, want exactly 2 (unverified + not-yet-attributed)", exec.Notes)
+	if len(exec.Notes) != 1 {
+		t.Errorf("aggregator-exec Notes = %v, want exactly 1 (unverified)", exec.Notes)
+	}
+
+	for _, row := range []v1.AggregatorRow{router, exec} {
+		for _, note := range row.Notes {
+			for _, stale := range []string{"re-derive", "not yet attributed", "legacy rows"} {
+				if strings.Contains(note, stale) {
+					t.Errorf("%s note %q claims %q; call_path history is complete", row.Name, note, stale)
+				}
+			}
+		}
 	}
 
 	vault := byName["defindex-vault-usdc-autocompound"]

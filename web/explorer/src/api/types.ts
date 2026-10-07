@@ -12058,16 +12058,12 @@ export interface components {
              * @description Honest coverage caveats for THIS row's stats, present for
              *     `kind: router` rows only (omitted — not an empty array —
              *     when a row has none, i.e. every `aggregator-vault` row
-             *     today). Two cases: every router row's count conflates
-             *     direct calls, calls wrapped by an unregistered contract,
-             *     and legacy rows recorded before call-path tracking
-             *     (migration 0101, 2026-07-10) — those three are
-             *     indistinguishable today; `auto_discovered: true` rows
-             *     (evidence-observed wrapper contracts, not vendor- or
-             *     WASM-audit-verified — see the registry seed migration)
-             *     additionally only count trades whose router call carried
-             *     call_path data, so a low or zero count there means
-             *     "not yet attributed", not "little volume".
+             *     today). Two cases: a router row that is not
+             *     `auto_discovered` counts direct calls and calls wrapped by
+             *     an unregistered contract together, and the two are
+             *     indistinguishable today; an `auto_discovered: true` row is
+             *     an evidence-observed wrapper contract, not vendor- or
+             *     WASM-audit-verified (see the registry seed migration).
              */
             notes?: string[];
         };
@@ -19991,7 +19987,7 @@ export interface operations {
                      *           "routed_volume_24h_usd": "18211.4052710000000000",
                      *           "last_routed_at": "2026-07-04T21:58:11Z",
                      *           "notes": [
-                     *             "routed_trades_24h combines direct calls to this router, calls wrapped by an aggregator this registry doesn't recognise, and legacy rows recorded before call-path tracking (2026-07-10) — those three cases can't be told apart yet."
+                     *             "routed_trades_24h combines direct calls to this router and calls wrapped by an aggregator this registry doesn't recognise — the two can't be told apart yet."
                      *           ]
                      *         },
                      *         {
@@ -20004,8 +20000,7 @@ export interface operations {
                      *           "routed_volume_24h_usd": "640.1100000000000000",
                      *           "last_routed_at": "2026-07-10T09:12:47Z",
                      *           "notes": [
-                     *             "Evidence-observed contract, not vendor- or WASM-audit-verified (see the registry seed migration's notes).",
-                     *             "routed_trades_24h only counts router calls recorded with call_path data (live since 2026-07-10); earlier activity through this wrapper is not yet attributed pending a queued historical re-derive — a low or zero count does not mean this router carried little volume."
+                     *             "Evidence-observed contract, not vendor- or WASM-audit-verified (see the registry seed migration's notes)."
                      *           ]
                      *         },
                      *         {

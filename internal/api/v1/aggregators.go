@@ -46,23 +46,11 @@ type AggregatorRow struct {
 }
 
 // aggregatorRowNotes returns the coverage caveat(s) for a registry
-// row, or nil when none apply. Two honest-degrade cases:
-//
-//   - auto_discovered rows (currently: the migration 0103
-//     aggregator-exec seed) are evidence-observed, not vendor- or
-//     WASM-audit-verified, AND their routed-trade count only
-//     reflects trades whose router call carried call_path (recorded
-//     since migration 0101) — older activity through this exact
-//     wrapper is invisible until the
-//     queued r1 soroswap-router call-path re-derive lands, so
-//     routed_trades_24h=0 here means "not yet attributed", not
-//     "zero volume".
-//   - kind="router" rows generally (the note is skipped for the
-//     auto_discovered case above, which already covers it) fold
-//     together direct calls, calls wrapped by an UNregistered
-//     contract, and pre-migration-0101 legacy rows with no
-//     call_path — those three cases are indistinguishable from the
-//     API today.
+// row, or nil when none apply. auto_discovered rows (the migration 0103
+// aggregator-exec seed) are evidence-observed, not vendor- or
+// WASM-audit-verified. Other router rows count direct calls and calls
+// wrapped by an unregistered contract under one name
+// (timescale.TagTradesRoutedVia), which the API cannot separate.
 func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 	switch {
 	case kind != "router":
@@ -71,17 +59,12 @@ func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 		return []string{
 			"Evidence-observed contract, not vendor- or WASM-audit-verified " +
 				"(see the registry seed migration's notes).",
-			"routed_trades_24h only counts router calls recorded with call_path " +
-				"data (live since 2026-07-10); earlier activity through this wrapper " +
-				"is not yet attributed pending a queued historical re-derive — a low " +
-				"or zero count does not mean this router carried little volume.",
 		}
 	default:
 		return []string{
-			"routed_trades_24h combines direct calls to this router, calls " +
-				"wrapped by an aggregator this registry doesn't recognise, and " +
-				"legacy rows recorded before call-path tracking (2026-07-10) — " +
-				"those three cases can't be told apart yet.",
+			"routed_trades_24h combines direct calls to this router and calls " +
+				"wrapped by an aggregator this registry doesn't recognise — the " +
+				"two can't be told apart yet.",
 		}
 	}
 }
