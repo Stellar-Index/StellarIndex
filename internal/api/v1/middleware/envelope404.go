@@ -80,8 +80,7 @@ func (e *envelope404Recorder) Flush() {
 
 // Unwrap exposes the underlying ResponseWriter so
 // http.NewResponseController can reach SetWriteDeadline / Hijack
-// on it. F-1228 (codex audit-2026-05-12). See statusRecorder.Unwrap
-// for the full rationale.
+// on it. See statusRecorder.Unwrap for the full rationale.
 func (e *envelope404Recorder) Unwrap() http.ResponseWriter {
 	return e.ResponseWriter
 }

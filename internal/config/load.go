@@ -54,7 +54,7 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 		// Unknown keys are a hard error — silent typos in config are one
 		// of the most common deployment bugs. A key on RetiredKeys is a
 		// known exception: it once existed and a deployment upgrading
-		// from an old configs/example.toml still carries it (#890), so
+		// from an old configs/example.toml still carries it, so
 		// warn instead of refusing to boot.
 		var unknown, retired []string
 		for _, k := range undec {
@@ -165,8 +165,8 @@ func retiredKeyMatch(path string) (string, bool) {
 // an `env:` tag with the env-var's value if that var is set. Returns
 // the config-path (dotted, e.g. "storage.postgres_dsn") of every
 // field an env var actually overrode, in override order — NEVER the
-// values themselves (most of these fields are secrets). CFG-01
-// (audit-2026-07-23): callers that want to know WHICH fields the
+// values themselves (most of these fields are secrets). Callers
+// that want to know WHICH fields the
 // environment silently replaced — without echoing a secret — use
 // this return value; see [LoadWithEnv] for the standard "log it at
 // boot" consumer.
@@ -198,9 +198,9 @@ func (c *Config) ApplyEnvOverrides() []string {
 	// NOTE: STELLARINDEX_S3_ACCESS_KEY / STELLARINDEX_S3_SECRET_KEY are
 	// deliberately NOT overridden here. StorageConfig.S3AccessKeyEnv holds the
 	// NAME of the env var, not its value; buildS3Client resolves it via
-	// os.Getenv(name). Overwriting the name with the value here corrupted the
-	// resolution (os.Getenv("AKIA…")→"") and silently dropped S3 static creds
-	// (audit-2026-06-14 A16-01). The fields carry no `env:` tag for the same
+	// os.Getenv(name). Overwriting the name with the value here would corrupt
+	// the resolution (os.Getenv("AKIA…")→"") and silently drop S3 static creds.
+	// The fields carry no `env:` tag for the same
 	// reason — see config.go StorageConfig.
 	if v := os.Getenv("EXCHANGERATESAPI_KEY"); v != "" {
 		c.External.ExchangeRatesApi.APIKey = v
@@ -245,11 +245,11 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.External.Chainlink.RPCUrl = v
 		// The divergence Chainlink reference is a SECOND consumer of the
 		// same Ethereum JSON-RPC endpoint (internal/divergence/chainlink.go).
-		// It historically carried its own env-less rpc_url, which silently
-		// fell back to a public RPC that now answers eth_call with a
-		// Cloudflare JS-challenge HTML page instead of JSON — so every
-		// LookupPrice failed its JSON decode and the divergence service
-		// recorded 0 chainlink rows, ever (audit 2026-06-19). Point both
+		// An env-less rpc_url of its own would silently fall back to a
+		// public RPC that answers eth_call with a Cloudflare
+		// JS-challenge HTML page instead of JSON, failing every
+		// LookupPrice's JSON decode (the divergence service recorded 0
+		// chainlink rows that way). Point both
 		// consumers at the one operator-provided endpoint so a single
 		// CHAINLINK_RPC_URL keeps the cross-check working.
 		c.Divergence.Chainlink.RPCURL = v
@@ -265,12 +265,11 @@ func (c *Config) ApplyEnvOverrides() []string {
 // instead of opening the pool and getting a confusing DB error
 // at connect time.
 //
-// CFG-01 (audit-2026-07-23): env overrides used to apply completely
-// silently — an operator debugging "why is this deployment using the
-// wrong DSN" had no signal that the environment, not the TOML file,
-// won. Logs (at Info, via the package-default slog logger — this runs
+// Logs (at Info, via the package-default slog logger — this runs
 // before the binary constructs its own obs-configured logger from
-// [Config.Obs]) the field-path list [ApplyEnvOverrides] returns.
+// [Config.Obs]) the field-path list [ApplyEnvOverrides] returns, so an
+// operator debugging "why is this deployment using the wrong DSN" can
+// see that the environment, not the TOML file, won.
 // Field VALUES are never logged, only paths — most overridden fields
 // are secrets by construction (see ApplyEnvOverrides's doc).
 func LoadWithEnv(path string) (Config, error) {

@@ -21,9 +21,9 @@ import (
 // [RateLimit] so policy-rejected requests never spend a rate-limit
 // token.
 //
-// F-1226 (codex audit-2026-05-12): the dashboard let customers
-// configure these fields but no middleware enforced them at
-// request time. A 403 reply here is the same shape as Auth's
+// The dashboard lets customers configure these fields; this is
+// where they are enforced at request time. A 403 reply here is
+// the same shape as Auth's
 // problem+json; the body carries which control rejected (ip /
 // referer / permission) so dashboard users can debug their own
 // configuration.
@@ -80,8 +80,8 @@ func KeyPolicy() Middleware {
 // freely, but an operator key deliberately narrowed at mint is confined
 // to what it was granted. There is no operator early-return — an
 // operator key that carries an explicit scope subset or permission list
-// must actually be bound by it (pre-fix it silently bypassed both,
-// re-opening the very narrowing the operator configured).
+// must actually be bound by it (an early return would silently bypass
+// both, re-opening the very narrowing the operator configured).
 func checkKeyPolicy(r *http.Request, subject auth.Subject) (string, error) {
 	if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
 		return "ip-not-allowed", err

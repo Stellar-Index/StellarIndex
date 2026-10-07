@@ -67,7 +67,7 @@ type AuthOptions struct {
 	SEP10 auth.SEP10Validator
 
 	// FailedAuthLimiter, when non-nil, throttles INVALID-credential
-	// attempts per client IP and per presented API-key prefix (C3-5).
+	// attempts per client IP and per presented API-key prefix.
 	// Auth deliberately runs before the
 	// main rate-limit middleware so per-tier limits key off the
 	// authenticated subject — but that means a rejected credential
@@ -120,7 +120,7 @@ func Auth(opts AuthOptions) Middleware {
 			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
-				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
+				rejectAuth(w, r, mode, opts, err) //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc
 				return
 			}
 			r = r.WithContext(auth.WithSubject(r.Context(), subject))
@@ -130,13 +130,13 @@ func Auth(opts AuthOptions) Middleware {
 }
 
 // rejectAuth writes the response for a failed authenticate call.
-// C3-5: throttle per-IP and per-key-prefix on a CREDENTIAL FAILURE so a bad
+// Throttle per-IP and per-key-prefix on a CREDENTIAL FAILURE so a bad
 // key/token can't be retried without bound. Server-misconfig 503s
 // (ErrNotImplemented) don't count.
 func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts AuthOptions, err error) {
 	rejected := isCredentialRejection(err)
 	if opts.FailedAuthLimiter != nil && rejected {
-		if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
+		if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc
 			obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
 			writeAuthThrottleProblem(w, retryAfter)
 			return
@@ -152,23 +152,23 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 // plumbing that must answer WITHOUT credentials, whatever `auth_mode` is.
 //
 // Auth() wraps the entire mux, and every one of these routes is registered
-// on that same mux — so before this, flipping auth_mode from `none` to
-// `apikey` made liveness probes, readiness probes, the Prometheus scrape,
-// robots.txt and the public error-documentation pages all return 401.
+// on that same mux — so without this list, flipping auth_mode from `none` to
+// `apikey` would make liveness probes, readiness probes, the Prometheus
+// scrape, robots.txt and the public error-documentation pages all return 401.
 //
 // That is not a hypothetical configuration. docs/operations/
 // launch-day-checklist.md documents the production cutover as exactly that
-// flip (`--extra-vars 'auth_mode=apikey'`), so the failure fires at the
+// flip (`--extra-vars 'auth_mode=apikey'`), so the failure would fire at the
 // moment of going live: load-balancer health checks start failing, the
 // orchestrator concludes the API is unhealthy, and monitoring goes blind at
-// precisely the point an operator most needs it. Audit SEC-01.
+// precisely the point an operator most needs it.
 //
 // /metrics is included deliberately. It is already protected by
 // loopbackOnly(), which is the correct control for a scrape endpoint — but
-// that guard was MOOT under auth, because Auth 401'd the request before it
-// ever reached the handler. Even a local Prometheus on 127.0.0.1 was blocked.
-// Exempting it here restores loopbackOnly as the actual gate rather than
-// stacking a second one that breaks the legitimate caller.
+// under auth that guard would be MOOT, because Auth would 401 the request
+// before it ever reached the handler, blocking even a local Prometheus on
+// 127.0.0.1. Exempting it here keeps loopbackOnly as the actual gate rather
+// than stacking a second one that breaks the legitimate caller.
 //
 // Nothing here reads user data or accepts input: healthz/readyz report
 // process liveness, /metrics is loopback-only, and robots.txt and /errors/*
@@ -177,10 +177,7 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 //
 // /v1/livez/lake is the lake-critical LB probe (ADR-0050): the OpenAPI
 // contract declares it `security: []` alongside healthz/readyz, and it reads
-// no caller input, so it belongs here too. It was added (#119) after this
-// list was written and missed it — under `apikey`/`sep10` mode every
-// uncredentialed probe 401'd, which is exactly the SEC-01 class this list
-// exists to prevent (api-security-3, audit 2026-08-28).
+// no caller input, so it belongs here too.
 //
 // Deliberately an exact-match list, not a prefix match: a prefix rule ("/v1/health…")
 // is how an exemption silently widens to cover a route added next to it later.
@@ -272,8 +269,8 @@ func isCredentialRejection(err error) bool {
 // applies to r and reports whether the caller is now over budget (and
 // the Retry-After seconds to advertise). The dimensions are:
 //
-//   - the resolved client IP ("failauth:"; forge-resistant XFF, F-1338;
-//     a /64 network prefix for IPv6 per SEC-15 — see [remoteIPPrefixFor]),
+//   - the resolved client IP ("failauth:"; forge-resistant XFF;
+//     a /64 network prefix for IPv6 — see [remoteIPPrefixFor]),
 //     which bounds one source's guessing across every key;
 //   - the presented API key's display prefix ("failauth-key:"; see
 //     [failedAuthKeyPrefix]), which bounds guessing aimed at ONE key
@@ -293,7 +290,7 @@ func takeFailedAuth(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (
 	// Detach from the request's cancellation — see [throttleContext]:
 	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
 	// so a caller that RSTs mid-take must not arm the fail-closed dwell
-	// clock for these shared buckets (REL-06 F059 / Q153).
+	// clock for these shared buckets.
 	takeCtx, takeCancel := throttleContext(r)
 	defer takeCancel()
 	if throttled, ra := takeFailedAuthBucket(takeCtx, limiter, "failauth:"+ip); throttled {
@@ -324,7 +321,7 @@ func failedAuthKeyPrefix(r *http.Request, mode AuthMode) string {
 // still returns. But once [ratelimit.Bucket.Take] reports
 // [ratelimit.ErrThrottleUnavailable] (sustained backend outage past the
 // dwell-time), the credential-stuffing throttle must fail CLOSED like
-// the main RateLimit middleware does (SEC-15 / C3-5): otherwise a
+// the main RateLimit middleware does: otherwise a
 // sustained Redis outage silently disables brute-force protection for
 // as long as it lasts, which is exactly when an attacker is most likely
 // to be probing.
@@ -352,7 +349,7 @@ func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key st
 }
 
 // writeAuthThrottleProblem is the 429 returned when a caller exceeds a
-// failed-auth budget (C3-5). Distinct problem type from the ordinary
+// failed-auth budget. Distinct problem type from the ordinary
 // rate-limit 429 so operators reading access logs can tell
 // credential-stuffing defence apart from ordinary request throttling.
 func writeAuthThrottleProblem(w http.ResponseWriter, retryAfter int) {
@@ -466,7 +463,7 @@ func writeAuthError(w http.ResponseWriter, err error) {
 			"Auth validator not configured",
 			"This deployment enabled an auth mode but no validator was wired into the binary.")
 	case errors.Is(err, auth.ErrAccountStatusUnavailable):
-		// auth-ks-1: the account-status kill-switch read (its Postgres
+		// The account-status kill-switch read (its Postgres
 		// backend) is degraded and no last-known status is available to
 		// ride the blip out. This is a server-side outage, NOT a bad
 		// credential — answer 503 + Retry-After so clients retry rather
@@ -558,7 +555,7 @@ func bearerOnly(r *http.Request) string {
 // details out of metrics labels (cardinality) while still
 // distinguishing clients in logs.
 //
-// SECURITY (F-1335): the rate-limit bucket MUST NOT be keyed on this
+// SECURITY: the rate-limit bucket MUST NOT be keyed on this
 // value. Because it folds in the (client-controlled) User-Agent, a
 // caller could rotate its UA on every request to mint unlimited
 // distinct identifiers — one bucket each — and bypass the per-IP

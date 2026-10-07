@@ -59,7 +59,7 @@ func resolveRemoteIP(r *http.Request) string {
 // remoteIPPrefixFor resolves the client's THROTTLE-KEY identity via
 // [ratelimit.ThrottleIPKey]: the exact address for IPv4 (unmapped, so
 // "::ffff:1.2.3.4" and "1.2.3.4" share one budget), the /64 network
-// prefix for IPv6 (SEC-15 — see ThrottleIPKey for why /64).
+// prefix for IPv6 (see ThrottleIPKey for why /64).
 //
 // This must be used ONLY for throttle/rate-limit/cap keys — never for
 // audit logging, admin display, or anything that wants the caller's
@@ -78,7 +78,7 @@ func remoteIPPrefixFor(r *http.Request) string {
 //
 // Exported for handlers that need to derive a per-IP throttle key
 // outside the middleware chain — e.g. `/v1/signup` per-IP signup
-// cap (F-1232 audit-2026-05-12). Returns "" when no IP can be
+// cap. Returns "" when no IP can be
 // resolved (well-formed requests always have one; the empty case
 // is left to the caller's policy).
 func RemoteIP(r *http.Request) string {

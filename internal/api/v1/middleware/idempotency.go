@@ -38,9 +38,9 @@ type idempotencyRecord struct {
 //
 // Process-local by design: a single API replica loses dedup across a
 // restart or across sibling replicas behind a load balancer. That's
-// an accepted trade for a mint-once endpoint (T284) — a retry that
+// an accepted trade for a mint-once endpoint — a retry that
 // lands on a different replica within the TTL mints a second
-// resource, exactly the pre-fix behaviour, never worse than it.
+// resource, as it would with no idempotency at all, never worse.
 type IdempotencyStore struct {
 	mu      sync.Mutex
 	entries map[string]idempotencyRecord
@@ -162,7 +162,7 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 // within store's TTL, instead of the handler re-running — for a
 // mint-once endpoint (API-key creation, price-alert creation) that
 // otherwise silently mints a second resource the client has no way to
-// reconcile against the first (T284).
+// reconcile against the first.
 //
 // subjectKeyFn scopes the cache to the caller (account/session) so
 // two different callers who happen to pick the same literal key
@@ -224,8 +224,8 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 // stripCORSHeaders removes the headers the CORS middleware owns so a
 // replay never carries the first request's origin decision; the
 // current request's CORS middleware sets them. The Origin token is
-// dropped from Vary, other tokens are kept. It also guards records
-// stored before this filtering existed.
+// dropped from Vary, other tokens are kept. It runs both when a
+// record is stored and when it is replayed.
 func stripCORSHeaders(h http.Header) http.Header {
 	for k := range h {
 		if strings.HasPrefix(k, "Access-Control-") {

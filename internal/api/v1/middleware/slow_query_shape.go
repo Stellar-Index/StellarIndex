@@ -17,8 +17,8 @@ import (
 //
 // The obvious fix is wrong. The Logger doc says plainly that it does
 // not log query parameters because they "may carry API keys or PII",
-// and that is not hypothetical here — issue #346 is open on customer
-// emails reaching edge logs through query strings. Logging the raw
+// and that is not hypothetical here — customer emails can reach edge
+// logs through query strings. Logging the raw
 // query to diagnose latency would create a privacy defect to fix a
 // performance one.
 //
@@ -72,7 +72,7 @@ const maxShapeValueLen = 48
 // maxShapeNameLen bounds a logged parameter NAME. Unlike a value, a
 // name is never allow-listed before it reaches the log — any
 // `name+"=<set>"` term uses the caller's own key verbatim — so without
-// this it is as unbounded a channel as the value was before
+// this it is as unbounded a channel as a value would be without
 // maxShapeValueLen.
 const maxShapeNameLen = 48
 

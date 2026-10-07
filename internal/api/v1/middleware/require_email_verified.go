@@ -16,9 +16,8 @@ import (
 // i.e. the customer signed up via `POST /v1/signup` but hasn't
 // clicked the verification link in the email yet.
 //
-// F-1218 wave 45 (codex audit-2026-05-12): closes the audit's
-// concern that "a valid-looking email string yields a usable
-// plaintext Starter key with no ownership proof". With this
+// Without it, a valid-looking email string yields a usable
+// plaintext Starter key with no ownership proof. With this
 // middleware wired, the key remains 403'd until the customer
 // proves they own the email by clicking the link, which flips
 // the flag via `/v1/signup/verify`.
