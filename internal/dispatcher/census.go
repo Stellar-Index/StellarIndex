@@ -34,11 +34,11 @@ import (
 //     priceable fills only: the decoder re-derive drops them
 //     (sdexServedCensus) and the served COUNT carries the matching
 //     priceable filter (reconTarget.countFilter). Both filters go once a
-//     full-history `ch-rebuild -sdex` has landed the historic fills. No projection oracle reads this counter.
+//     full-history `ch-rebuild -sdex` has landed the historic fills. No
+//     projection oracle reads this counter.
 //
-//     Note the lockstep test that guards this comment compares the
-//     counter to the DECODER, never to the writer — which is why the
-//     claim survived.
+//     The lockstep test that guards this comment compares the counter to
+//     the DECODER, never to the writer.
 //
 // LedgerHash / PrevLedgerHash are the header hashes for the
 // contiguity hash-chain check (prev_ledger_hash[N] == ledger_hash[N-1]).
@@ -113,7 +113,7 @@ func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { 
 		// Per-operation events only — tx-level CAP-67 fee/diagnostic
 		// events are out of scope here exactly as in the dispatcher
 		// (dispatcher.go), so the census count matches what the sink
-		// writes. G15-06: a GetTransactionEvents error (e.g. an
+		// writes. A GetTransactionEvents error (e.g. an
 		// unsupported future meta version) means we cannot count this
 		// tx's Soroban primitives — record it so the caller declines to
 		// write an authoritative substrate row for a ledger it couldn't
@@ -154,13 +154,11 @@ func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { 
 // agreeing by construction and two functions agreeing to stay in step —
 // the same reason claimAtomCount delegates to sdexclaim.IsRealTrade.
 //
-// C2-054 (audit-2026-07-23): the previous version re-stated only the
-// cheap half of the gate (Type=Contract, ContractId set, body version 0,
-// ≥1 topic) and explicitly skipped the ScVal MarshalBinary round-trip and
-// the contract-id strkey encode, while its docstring claimed "the census
-// count equals the soroban_events row count for the ledger". An event
-// that fails either of those is dropped by the sink and WAS counted by
-// the census, so the reconcile showed a phantom projector shortfall.
+// Re-stating only the cheap half of the gate (Type=Contract, ContractId
+// set, body version 0, ≥1 topic) would skip the ScVal MarshalBinary
+// round-trip and the contract-id strkey encode: an event that fails
+// either is dropped by the sink but would be counted by the census, and
+// the reconcile would show a phantom projector shortfall.
 //
 // Still NOT modelled (and deliberately so — they are per-TRANSACTION, not
 // per-event, so they cannot make one event of a tx diverge from another):
@@ -181,8 +179,7 @@ func captureEligible(ce xdr.ContractEvent) bool {
 // internal/sources/sdex.extractClaimAtoms exactly (same op types,
 // same success gating) for atom SELECTION, and delegates the per-atom
 // "is this a real trade" test to [sdexclaim.IsRealTrade], which is the
-// same predicate sdex.decodeClaimAtom enforces (C2-010,
-// audit-2026-07-23) — so the census equals the decoder's trade output by
+// same predicate sdex.decodeClaimAtom enforces — so the census equals the decoder's trade output by
 // construction, not by three files agreeing to stay in step. It does not
 // equal the trade-row count; see [Census].
 // Returns the count rather than the slice to avoid allocation in the

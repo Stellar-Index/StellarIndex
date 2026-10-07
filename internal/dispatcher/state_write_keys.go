@@ -15,7 +15,7 @@ import (
 // "decoders stay pure — the dispatcher supplies inputs" contract.
 //
 // VALUE-CHANGED, not merely written — ground-truthed on r1 ledger
-// 62056824 (2026-07-31): the RedStone adapter's write_prices REWRITES
+// 62056824: the RedStone adapter's write_prices REWRITES
 // every REQUESTED feed's entry, byte-identical for feeds its freshness
 // verifier rejected (an empty-batch push still rewrote its one requested
 // key unchanged), while an ACCEPTED feed's stored PriceData always
@@ -41,7 +41,7 @@ import (
 // extractor's skip-and-tolerate). Consumers treat StateWriteKeys as
 // best-effort input with their own arity check + fallback, so either
 // degradation sends Redstone to payload-median alignment. That fallback
-// is NOT misattribution-free: see the F1 CAVEAT in
+// is NOT misattribution-free: see the CAVEAT in
 // internal/sources/redstone/payload.go for the residual it carries and
 // the part of it these keys close.
 

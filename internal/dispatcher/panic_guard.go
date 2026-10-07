@@ -18,7 +18,7 @@ var ErrDecoderPanic = errors.New("decoder panicked")
 
 // panicSite is the ledger coordinate of the input a decoder crashed on.
 // Carried into the log line so an operator can pull the exact raw event
-// out of the ClickHouse lake and replay it against the fixed decoder.
+// out of the ClickHouse lake and replay it against the corrected decoder.
 type panicSite struct {
 	Ledger  uint32
 	TxHash  string
@@ -26,19 +26,19 @@ type panicSite struct {
 }
 
 // recordDecoderPanic converts a recovered decoder panic into the decode
-// error every dispatch seam already skips on (#371 F1).
+// error every dispatch seam already skips on.
 //
 // The problem it removes: a decoder's Matches/Decode is arbitrary source
-// code running on adversary-influenced ledger data, and an index-out-of
-// -range in one of them used to unwind through ProcessLedger, get caught
-// at LEDGER granularity in pipeline.ProcessLedger, and be returned as
-// "dispatcher panic for ledger N". That discards the outputs of EVERY
-// source for that ledger, refuses the cursor advance, and returns an
-// error the indexer's realMain turns into a process exit — so systemd
-// restarts, the same ledger is re-read from the same cursor, the same
-// decoder panics on the same event, and after StartLimitBurst restarts
-// the unit parks in `failed`. One decoder's bug is a total ingest
-// outage, indefinitely.
+// code running on adversary-influenced ledger data, and an unrecovered
+// index-out-of-range in one of them would unwind through ProcessLedger,
+// get caught at LEDGER granularity in pipeline.ProcessLedger, and be
+// returned as "dispatcher panic for ledger N". That would discard the
+// outputs of EVERY source for that ledger, refuse the cursor advance, and
+// return an error the indexer's realMain turns into a process exit — so
+// systemd restarts, the same ledger is re-read from the same cursor, the
+// same decoder panics on the same event, and after StartLimitBurst
+// restarts the unit parks in `failed`. One decoder's bug would be a total
+// ingest outage, indefinitely.
 //
 // The dispatch seams already have a policy for "this decoder cannot
 // handle this input": count it and skip that ONE input, leaving every
@@ -55,7 +55,7 @@ type panicSite struct {
 //     pushes to rawEventSink BEFORE the decoder pass, and the lake
 //     extractor (clickhouse.ExtractLedger) is decoder-independent — so
 //     the substrate keeps its genesis-to-tip claim and re-derivation
-//     after a decoder fix is `projector-replay` / `ch-rebuild`, per
+//     after a decoder change is `projector-replay` / `ch-rebuild`, per
 //     invariant 8.
 //   - The decode-error delta reaches decoder_stats via statsflush, and
 //     ADR-0033's re-derive marks the ledger a blind spot
