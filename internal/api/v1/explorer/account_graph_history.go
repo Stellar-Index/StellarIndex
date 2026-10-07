@@ -13,7 +13,7 @@ import (
 
 // AccountGraphHistoryView is the wire response for GET
 // /v1/accounts/{g_strkey}/graph/history — one account's creation and
-// sponsorship activity over time (#351), the time axis of the
+// sponsorship activity over time, the time axis of the
 // neighbourhood /v1/accounts/{g_strkey}/graph serves as a snapshot.
 //
 // EVERYTHING HERE IS HISTORY, with the same reading the graph endpoint

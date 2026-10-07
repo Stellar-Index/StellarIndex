@@ -152,10 +152,10 @@ type AccountPositionsView struct {
 	// more of the six per-protocol folds could NOT be read for this
 	// request. Absent = all six ran.
 	//
-	// C3-045 (audit-2026-07-23): each builder logs and returns an
-	// empty slice on a read error, so a response where three of six
-	// protocol reads failed was byte-identical on the wire to "this
-	// account holds no positions". That is exactly the
+	// Each builder logs and returns an empty slice on a read error, so
+	// without this field a response where three of six protocol reads
+	// failed would be byte-identical on the wire to "this account holds
+	// no positions". That is exactly the
 	// silently-incomplete-reads-as-complete shape this codebase
 	// refuses everywhere else — [positionsHonestNote] is a STATIC
 	// string about valuation semantics and says nothing about
@@ -230,16 +230,15 @@ func (h *Handler) positionsUnavailable(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) collectPositions(ctx context.Context, g string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	// collectPositions runs the six protocol folds and merges their results.
 	// The six protocol folds are INDEPENDENT reads (each its own
-	// Postgres round trip) and were run serially, so the endpoint's
-	// latency was their SUM — 1.99s warm in the 2026-08-13 sub-second
-	// audit, the last warm breach on the board. Running them
+	// Postgres round trip); run serially, the endpoint's latency was
+	// their SUM, measured at 1.99s warm. Running them
 	// concurrently makes it the MAX instead.
 	//
 	// Determinism is preserved exactly: each fold writes its own slot
 	// (positions + coverage), and both are merged afterwards in the
-	// original fixed order — so the wire output, including
-	// coverage_note's protocol ordering, is byte-identical to the
-	// serial version. Per-fold coverage collectors also avoid a data
+	// fixed fold order — so the wire output, including
+	// coverage_note's protocol ordering, is byte-identical to a
+	// serial run. Per-fold coverage collectors also avoid a data
 	// race on positionsCoverage.degraded, which is a plain append.
 	folds := []func(*positionsCoverage) []PositionEntry{
 		func(c *positionsCoverage) []PositionEntry { return h.buildBlendPositions(ctx, g, resolve, c) },
@@ -262,7 +261,7 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 			defer func() {
 				if rec := recover(); rec != nil {
 					// worker.Report moves stellarindex_worker_panics_total
-					// so the page rule + runbook fire (#368 M4); the
+					// so the page rule + runbook fire; the
 					// fold index and account stay in the local line
 					// below, out of the metric label, which must remain
 					// a bounded constant. covs[i].fail is what keeps the
@@ -305,11 +304,10 @@ type accountPositionsSnapshot struct {
 	labelsUnresolved bool
 }
 
-// AccountPositions is SWR-cached (#332 F1, 2026-09-02). The six folds ran
-// inline on the request context, with no memoisation and no flight — live on
-// r1 the endpoint measured 1.253 s then 1.148 s back-to-back, i.e. every
-// visitor paid the whole fan-out every time, while the sibling
-// /v1/accounts/{g} had been cached since 2026-07-30. It now takes the same
+// AccountPositions is SWR-cached: uncached, the six folds run on the
+// request context with no memoisation and no flight — live on r1 the
+// endpoint measured 1.253 s then 1.148 s back-to-back, every visitor
+// paying the whole fan-out every time. It takes the same
 // contract AccountActivity documents: fresh entry as-is, an expired one
 // served immediately with flags.stale + its real as_of while one detached
 // rebuild runs, and only a never-computed account waits.
@@ -394,7 +392,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 // through to a nil interface.
 func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetResolver {
 	// MUST be concurrency-safe: AccountPositions runs its six protocol
-	// folds in parallel (2026-08-13) and four of them share this one
+	// folds in parallel and four of them share this one
 	// resolver. An unguarded map here is not merely racy — concurrent
 	// map writes are a FATAL runtime throw that no recover() catches,
 	// so it would take the process down under exactly the load the

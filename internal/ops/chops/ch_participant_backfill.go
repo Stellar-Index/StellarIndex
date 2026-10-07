@@ -13,8 +13,8 @@ import (
 // chParticipantBackfill fills stellar.operation_participants (the NON-source
 // side of ADR-0038 Phase B account history) for historical ledgers by
 // re-deriving participants from stellar.operations.body_xdr IN THE CLICKHOUSE
-// LAKE — not a multi-day Galexie re-walk (this is what turns BACKLOG #59 into a
-// runnable CH-internal job). operation_participants captures live-forward only;
+// LAKE — a CH-internal job, not a multi-day Galexie re-walk.
+// operation_participants captures live-forward only;
 // stellar.operations holds the full genesis→tip history with the op body, so
 // every historical participant set is derivable without touching MinIO.
 //
@@ -29,8 +29,8 @@ import (
 // on (account, ledger_seq, tx_index, op_index)). -dry-run decodes + counts the
 // participants that WOULD be written, writing nothing. On r1 run it under
 // /usr/local/sbin/run-heavy-job.sh, serialized with other heavy CH jobs and the
-// root-<2G watchdog (heavy CH load has wedged the log channel before —
-// 2026-06-11 incident).
+// root-<2G watchdog (heavy CH load can wedge the log channel on the small
+// root partition).
 func chParticipantBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-participant-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

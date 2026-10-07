@@ -483,7 +483,7 @@ type Dispatcher struct {
 	logger *slog.Logger
 
 	// statsMu guards every read + write of the counter fields below
-	// (eventsSeen / decodeErrors / unmatchedHits / txReadErrors).
+	// (eventsSeen through uncorroboratedCalls).
 	// ProcessLedger mutates them on the dispatch goroutine while the
 	// statsflush goroutine reads them via Stats(); without this lock
 	// the concurrent map access is a fatal `concurrent map read and

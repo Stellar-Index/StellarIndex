@@ -72,8 +72,8 @@ type Flusher struct {
 	last dispatcher.Stats
 
 	// obsLast baselines the dispatcher-level Prometheus counters
-	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported,
-	// EvictedKeysUnreadable) separately from last. Those obs.Add + WARN emissions happen
+	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported, EvictedKeysUnreadable,
+	// LedgerUpgradeEntries, UncorroboratedCalls) separately from last. Those emissions happen
 	// unconditionally, before InsertDecoderStats, so they must not
 	// share a baseline with the per-source DB rows: flush
 	// deliberately holds `last` back on a write failure so the next

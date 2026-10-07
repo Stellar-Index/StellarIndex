@@ -135,8 +135,8 @@ type movementCursorParts struct {
 	// every continuation page reuses the SAME CH/PG arm boundary instead
 	// of re-reading the live (advancing) watermark. Without it, a derive
 	// advance mid-scroll moves the split under the cursor and silently
-	// drops the native/unwatched sliver between the old and new watermark
-	// (W1-chrollup-2). Valid only when HasPinnedWatermark is true (a
+	// drops the native/unwatched sliver between the old and new watermark.
+	// Valid only when HasPinnedWatermark is true (a
 	// first-page request, or a legacy 4-segment cursor, has none).
 	PinnedWatermark    uint32
 	HasPinnedWatermark bool
@@ -149,7 +149,7 @@ func encodeMovementCursor(r clickhouse.AccountMovementRow, pinnedWatermark uint3
 // parseMovementCursor decodes the opaque `?cursor=` — dotted-decimal
 // with the tx_hash segment in the middle (safe: tx_hash is a fixed
 // 64-char hex string, never contains '.'). A trailing 5th segment, when
-// present, is the pinned cap67 watermark (W1-chrollup-2); a legacy
+// present, is the pinned cap67 watermark; a legacy
 // 4-segment cursor carries none. ok=false (after a problem+json) on a
 // malformed value.
 func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (movementCursorParts, bool) {
@@ -290,26 +290,26 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if len(merged) == limit {
 		// Pin the boundary this sequence committed to (the live watermark
 		// on page 1, the already-pinned value on continuation pages) so
-		// every subsequent page reuses it (W1-chrollup-2).
+		// every subsequent page reuses it.
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed, time.Time{})
 }
 
 // movementsWatermark resolves the cap67 archive watermark that splits this
-// page between the ClickHouse archive and the Postgres tail (inventory #1).
+// page between the ClickHouse archive and the Postgres tail.
 // ONE value drives BOTH the CH ceiling and the PG floor so the arms stay
 // gap-free and double-count-free while the derive is mid-catch-up.
 //
 // The live watermark advances every derive window, so a paginated scroll
 // reuses the value page 1 pinned into next_cursor rather than moving the
-// split under the cursor (W1-chrollup-2). The pin is client-supplied, so it
+// split under the cursor. The pin is client-supplied, so it
 // is re-validated against the live value on every page: a pin above it
 // would ceiling CH at ledgers not yet derived and floor PG above them,
-// dropping that range from both arms (GH-622) — reject it as an invalid
+// dropping that range from both arms — reject it as an invalid
 // cursor. A pin at or below the live value is only ever more conservative.
 //
-// A read error fails closed to wm=0 (W1-chrollup-1): the static P23
+// A read error fails closed to wm=0: the static P23
 // boundary keeps the arms disjoint even against a fully populated archive,
 // and the wm==0 coverage note discloses the reduced post-P23 scope. A pin
 // cannot be validated then, so it is not trusted either. failed reports that
@@ -351,8 +351,8 @@ func postP23Boundary(wm uint32) uint32 {
 // watermark there would hide pre-P23 history from both arms. With wm == 0
 // (no archive, or a failed read) the ceiling is that boundary — a no-op
 // for an absent archive and a real trim for a populated one, which is what
-// stops cap67_derived rows double-listing with the tail (W1-chrollup-1).
-// The ceiling is applied as a SQL predicate, not a post-read trim (F055).
+// stops cap67_derived rows double-listing with the tail.
+// The ceiling is applied as a SQL predicate, not a post-read trim.
 // Ceiling 0 is reachable (a genesis floor with no watermark) and serves
 // nothing, hence HasMaxLedger rather than a MaxLedger>0 sentinel.
 func movementsSplit(wm uint32) (chCeiling, pgFloor uint32) {
@@ -417,11 +417,11 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // failure) takes priority — it means the response is MISSING data
 // beyond the structural scope.
 //
-// wm == 0: the cap67-derived archive (inventory #1) isn't provisioned —
+// wm == 0: the cap67-derived archive isn't provisioned —
 // post-P23 coverage is the watched-token Postgres tail only, and
 // classic XLM payment history after the boundary is absent. Saying so
 // on EVERY response is what keeps a busy XLM account's feed from
-// masquerading as complete (the GATL report, site audit 2026-08-08).
+// masquerading as complete.
 //
 // wm > 0: all assets are served through the watermark; only the sliver
 // above it (the derive follows the tip via a continuous follow daemon,
@@ -605,7 +605,7 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 // resolve to).
 //
 // The event-topic hint is attacker-influenceable and MUST be
-// cross-checked (W2-explorer-1): sep41_transfers are ingested from ANY
+// cross-checked: sep41_transfers are ingested from ANY
 // token contract (not identity-gated), so a hostile non-SAC token can
 // emit a CAP-67 transfer whose trailing sep0011 topic claims a trusted
 // asset (e.g. Circle USDC) and — rendered verbatim — impersonate that
@@ -642,7 +642,7 @@ func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID stri
 		// as the CAP-67 topic carries it) — normalize to the canonical
 		// dash form the CH side of the merge stores, so one ?asset= value
 		// matches both sides and the response's asset field doesn't flip
-		// spelling across the P23 boundary (cold audit 2026-08-03). An
+		// spelling across the P23 boundary. An
 		// unparseable name passes through verbatim (status quo).
 		return canonicalizeSACName(name), false
 	}
@@ -732,10 +732,9 @@ func canonicalizeSACName(name string) string {
 // user-facing read path — loud in observability, not a 500.
 // assertMovementsNonOverlap checks the merge invariant at the DYNAMIC
 // boundary (the cap67 watermark's Postgres floor — pgFloor): the CH arm
-// serves strictly below it, the PG arm at/above it. Generalizes the old
-// static-P23 assertion; pgFloor == P23StartLedger when the cap67
-// archive isn't provisioned, so the pre-inventory-#1 invariant is the
-// degenerate case.
+// serves strictly below it, the PG arm at/above it. pgFloor ==
+// P23StartLedger when the cap67 archive isn't provisioned, so the static
+// P23 boundary is the degenerate case.
 func (h *Handler) assertMovementsNonOverlap(chRows, pgRows []clickhouse.AccountMovementRow, pgFloor uint32) {
 	for _, row := range chRows {
 		if row.Ledger >= pgFloor {

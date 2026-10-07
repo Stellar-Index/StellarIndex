@@ -75,7 +75,7 @@ type AccountActivityView struct {
 	TradesTotal *int64            `json:"trades_total,omitempty"`
 	// TradesTotalSince, when set, is the date trades_total counts FROM —
 	// the trades compression horizon (older rows aren't per-account
-	// searchable yet; site audit 2026-08-08). Absent = all-time.
+	// searchable yet). Absent = all-time.
 	TradesTotalSince string               `json:"trades_total_since,omitempty"`
 	DefiActions      []DefiActionView     `json:"defi_actions,omitempty"`
 	BridgeTransfers  *BridgeTransfersView `json:"bridge_transfers,omitempty"`
@@ -151,7 +151,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 
 // computeAccountActivity runs the four segment reads. Each segment
 // degrades independently (absent + named in coverage_note — the
-// positions endpoint's C3-045 posture: a partial answer must never be
+// positions endpoint's posture: a partial answer must never be
 // mistakable for "this address did nothing"); only the all-segments-
 // failed case returns an error, so a transient single-store outage
 // can't poison the cache with an empty shell NOR throw away the other

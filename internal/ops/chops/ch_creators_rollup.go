@@ -16,7 +16,7 @@ import (
 // holdersRollupLockPath).
 const creatorsRollupLockPath = "/var/lib/stellarindex/ch-creators-rollup.lock"
 
-// ch-creators-rollup — #351: recompute the account-creator league table
+// ch-creators-rollup recomputes the account-creator league table
 // (funder → accounts created, with the created set's surviving accounts
 // and current XLM) into staging and atomically exchange it live
 // (deploy/clickhouse/account_creators_rollup.sql).
@@ -29,7 +29,7 @@ const creatorsRollupLockPath = "/var/lib/stellarindex/ch-creators-rollup.lock"
 // It reads that archive on both sides of the Protocol 23 boundary, where
 // a creation changes representation rather than stopping: the classic
 // create_account movements below it, and above it the CAP-67 transfer
-// paired with the CreateAccount operation in stellar.operations (#493).
+// paired with the CreateAccount operation in stellar.operations.
 // The boundary is the network's, not a constant: -config supplies
 // stellar.movements_floor_ledger (the pubnet P23 boundary on r1, the
 // chain's start on a reset testnet/futurenet, where every ledger is

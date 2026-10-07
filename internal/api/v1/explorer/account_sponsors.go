@@ -7,7 +7,7 @@ import (
 )
 
 // AccountSponsorsView is the wire response for GET /v1/accounts/sponsors
-// — the sponsor league table (#351): which accounts have paid the base
+// — the sponsor league table: which accounts have paid the base
 // reserves for other accounts' ledger entries.
 //
 // EVERY FIGURE HERE IS HISTORY. It is derived by replaying sponsorship

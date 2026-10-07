@@ -11,14 +11,14 @@ import (
 )
 
 // AccountCreatorsView is the wire response for GET /v1/accounts/creators
-// — the account-creator league table (#351): which accounts brought the
+// — the account-creator league table: which accounts brought the
 // most other accounts into existence, and what the created set holds
 // now.
 //
 // Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
 // JSON numbers (all far below 2^53).
 //
-// The two relationships #351 names are NOT merged here. This surface is
+// The creation and sponsorship relationships are NOT merged here. This surface is
 // the CREATOR one only — funder → created account, from the
 // CreateAccount operation, immutable once it happened. The SPONSOR
 // relationship (who currently pays an entry's base reserve) is a

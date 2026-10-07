@@ -682,32 +682,6 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 	}
 }
 
-// drainFinalPass makes one last best-effort NON-BLOCKING sweep over
-// whatever is immediately available in `in` once the drain deadline
-// has expired, persisting what it can under a FRESH short context
-// (the parent drainCtx is already done; passing it would fail every
-// insert instantly) and reporting exactly what's left undrained.
-// Non-blocking (default arm) so it drains the fixed buffered set and
-// exits rather than blocking on a fresh arrival. Anything this STILL
-// can't land is recoverable — under ADR-0034 every raw op is durably
-// in the ClickHouse lake — so it's surfaced at ERROR with its exact
-// ledger span for `stellarindex-ops ch-rebuild -sdex-gaps` + the
-// completeness timer, instead of becoming a silent served-tier gap.
-//
-// Count EVERY undrained event, not just trade-shaped ones:
-// oracle updates, supply observations, blend / cctp / rozo rows are
-// served-tier writes too. Trade ledger bounds come from trade-shaped
-// events (only they carry a Ledger we can range on) so the re-derive
-// hint stays actionable.
-//
-// Extracted from drainBufferedEvents' ctx.Done() case so the
-// skip-before-count ordering invariant below
-// is unit-testable by calling this function directly with a
-// pre-filled `in`, without racing the outer select's
-// ctx.Done()-vs-`<-in` non-determinism.
-//
-//nolint:contextcheck // intentional fresh context; see godoc above.
-
 // ledgerSpan tracks the min/max ledger observed across the trades a shutdown
 // drain could not persist, so the undrained-range ERROR can name the exact
 // range an operator must re-derive (`ch-rebuild -sdex-gaps`).
@@ -727,6 +701,13 @@ func (s *ledgerSpan) observe(l uint32) {
 	}
 }
 
+// drainFinalPass runs once the drain deadline has passed: a non-blocking sweep of what is
+// already buffered in `in`, persisted under a fresh drainFinalPassBudget context because the
+// parent is done. Every non-skipped event it picks up is counted and logged at ERROR with the
+// trades' ledger span, so the residual can be re-derived from the lake (`ch-rebuild -sdex-gaps`).
+// Standalone so the skip-before-count ordering is testable with a pre-filled `in`.
+//
+//nolint:contextcheck // intentional fresh context; see godoc above.
 func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, lt *lossTracker) {
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
 	defer finalCancel()

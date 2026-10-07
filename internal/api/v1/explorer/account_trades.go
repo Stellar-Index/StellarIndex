@@ -251,7 +251,7 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 
 	note := accountTradesScopeNote
 	if !horizon.IsZero() && horizon.Year() > 1971 {
-		// Compression-horizon floor (site audit 2026-08-08): trades older
+		// Compression-horizon floor: trades older
 		// than the oldest uncompressed chunk aren't index-searchable per
 		// account yet — say so instead of serving a silently-partial
 		// "all time" list. The deep-history serving path is tracked as

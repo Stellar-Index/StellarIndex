@@ -22,7 +22,7 @@ type RawSwap struct {
 	// EventIndex is the in-op index of the FIRST field event of this
 	// swap. A router multi-hop emits several 8-field swaps in one op;
 	// the buffer emits-and-clears each before the next, so each swap's
-	// first-field index is distinct — used to fan out the trade
+	// first-field index is distinct and fans out the trade
 	// op_index so the multiple trades don't collide on the trades PK
 	// (ADR-0033, same as aquarius/comet/soroswap).
 	EventIndex int
@@ -61,12 +61,12 @@ func (r *RawSwap) Complete() bool {
 // (see decodeSwap's doc: ActualReceived is the pool's INPUT echo and
 // using it corrupted prices, Q3).
 //
-// This is the sweep-time emission gate (sources-decode audit
-// 2026-08-04, finding 1): the PRE-UPGRADE pool WASM (ledgers
-// 51,019,036 → 53,134,167) emitted 7 field-events per swap — no
-// "actual received amount" — so those groups can never Complete() and
-// were dropped as orphans at sweep: ALL 5,161 pre-upgrade swaps,
-// r1-confirmed (min trades ledger for phoenix was 53,134,242).
+// This is the sweep-time emission gate: the PRE-UPGRADE pool WASM
+// (ledgers 51,019,036 → 53,134,167) emitted 7 field-events per swap —
+// no "actual received amount" — so those groups can never Complete().
+// Gating sweep on Complete() drops ALL 5,161 pre-upgrade swaps as
+// orphans (measured on r1: the earliest phoenix trades row sat at
+// ledger 53,134,242).
 // Emitting decodable groups AT SWEEP (never eagerly) keeps the current
 // era's accounting unchanged: an in-flight 8-field group still waits
 // for its full set, and only a group that aged out — meaning its era
@@ -194,8 +194,8 @@ func classify(e *events.Event) (fieldTopic string, isSwap bool) {
 	return e.Topic[1], true
 }
 
-// action is the family of Phoenix events we recognise: swap, the
-// two liquidity actions, or the two stake actions. The dispatcher
+// action is the family of Phoenix events we recognise: swap, liquidity,
+// stake, reward, governance and factory shapes, listed below. The dispatcher
 // hot path uses classifyAny so a single topic[0] match drives the
 // routing without three separate Matches() calls per event.
 type action int
@@ -215,17 +215,14 @@ const (
 	actionWithdrawLiquidityMap
 	actionBond
 	actionUnbond
-	// actionAdmin / actionInitialize are governance/lifecycle events
-	// the indexer doesn't act on today — they're surfaced through
-	// classifyAny() solely to satisfy the EVERY-event policy
-	// (project_every_event_principle, 2026-05-25). The
-	// soroban_events landing zone (ADR-0029) captures them at the
-	// raw-event level; future per-event decoders can branch on
-	// these action enum values.
+	// actionAdmin / actionInitialize are governance/lifecycle events,
+	// at most one row each: decodeAdminEvent → phoenix_admin_events and
+	// decodeInitializeEvent → phoenix_initialize. The soroban_events
+	// landing zone (ADR-0029) also keeps them at the raw-event level.
 	actionAdmin
 	actionInitialize
 	// actionWithdrawRewards / actionDistributeRewards — the stake
-	// contract's reward-claim surface (ROADMAP #89 residual). Modelled
+	// contract's reward-claim surface. Modelled
 	// into StakeChange / phoenix_stake_events same as bond/unbond.
 	actionWithdrawRewards
 	actionDistributeRewards
@@ -262,8 +259,8 @@ var topicPairActions = map[topicPair]action{
 }
 
 // classifyAny is the union of classify + liquidity / stake topic
-// matching. Returns (action, topic[1] blob) when the event is one
-// of the five Phoenix actions; (actionUnknown, "") otherwise.
+// matching. Returns (action, topic[1] blob) for any recognised action
+// ("" topic[1] for single-topic Map shapes); (actionUnknown, "") otherwise.
 //
 // Keeping the existing two-return classify() alongside this helper
 // preserves the existing call-sites (swap tests and the original
@@ -271,7 +268,7 @@ var topicPairActions = map[topicPair]action{
 // classifier — same byte-equality match work, one routing fan-out.
 func classifyAny(e *events.Event) (action, string) {
 	// NEWER Map-body swap: a SINGLE ScvSymbol("swap") topic whose body
-	// is an ScvMap of all fields (post-2026-07-02 pools, e.g.
+	// is an ScvMap of all fields (pools on the newer WASM, e.g.
 	// CBENABXP…). Checked before the two-topic String schema below —
 	// this event has only one topic. See README Q5 and
 	// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
@@ -305,7 +302,7 @@ func classifyAny(e *events.Event) (action, string) {
 	case TopicSymbolDistributeRewards:
 		// The only audited shape is ("distribute_rewards","asset"); any
 		// other topic[1] is unaudited and must surface as a recognition
-		// gap, not decode its body as an asset address (INV-2280).
+		// gap, not decode its body as an asset address.
 		if e.Topic[1] != TopicSymbolDRAsset {
 			return actionUnknown, ""
 		}
@@ -688,8 +685,8 @@ func decodeWithdrawLiquidityMap(ev *events.Event, closedAt time.Time) (Liquidity
 // (like Reflector/Soroswap). That's because the pool contract
 // calls `publish(topics, single_value)` with a scalar, and
 // soroban-sdk serializes scalar bodies as the raw ScVal directly.
-// Verified 2026-04-23 against mainnet fixtures in
-// test/fixtures/phoenix/v1-2026-04-23/.
+// Verified against the v1 mainnet capture under
+// test/fixtures/phoenix/.
 
 var (
 	decodeAddress = sdkDecodeAddress // SCVal::Address → "G..." / "C..."
@@ -747,7 +744,7 @@ type RawProvideLiquidity struct {
 	// provide_liquidity. The buffer emits-and-clears each completed
 	// action before the next, so each action's first-field index is
 	// distinct — the per-event discriminator added to the
-	// phoenix_liquidity PK by migration 0060 (F-1324) so two provides
+	// phoenix_liquidity PK by migration 0060 so two provides
 	// in one op don't collide.
 	EventIndex int
 	Pool       string
@@ -823,7 +820,7 @@ type RawWithdrawLiquidity struct {
 	TxHash  string
 	OpIndex uint32
 	// EventIndex — per-event discriminator (phoenix_liquidity PK,
-	// migration 0060 / F-1324); first field-event's in-op index.
+	// migration 0060); first field-event's in-op index.
 	EventIndex int
 	Pool       string
 	ClosedAt   time.Time
@@ -896,7 +893,7 @@ type RawStake struct {
 	TxHash  string
 	OpIndex uint32
 	// EventIndex — per-event discriminator (phoenix_stake_events PK,
-	// migration 0060 / F-1324); first field-event's in-op index.
+	// migration 0060); first field-event's in-op index.
 	EventIndex int
 	Contract   string
 	ClosedAt   time.Time
@@ -950,7 +947,7 @@ func (r *RawStake) assign(e *events.Event, fieldTopic string) error {
 
 // RawWithdrawRewards is the partial set of 2 fields observed for one
 // withdraw_rewards call from the stake contract. Real-lake bytes
-// (2026-07-10, ledgers 53588319 / 53589647, stake contracts
+// (ledgers 53588319 / 53589647, stake contracts
 // CBRGNWGAC25… / CAF3UJ45ZQJ…) confirm exactly two fields — user +
 // reward_token — no amount field on this event (see events.go's
 // package doc for where the amount actually surfaces).
@@ -959,7 +956,7 @@ type RawWithdrawRewards struct {
 	TxHash  string
 	OpIndex uint32
 	// EventIndex — per-event discriminator (phoenix_stake_events PK,
-	// migration 0060 / F-1324); first field-event's in-op index.
+	// migration 0060); first field-event's in-op index.
 	EventIndex int
 	Contract   string
 	ClosedAt   time.Time

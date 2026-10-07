@@ -156,10 +156,10 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	// Coverage, in two halves. The gate's claim is "every REQUESTED
 	// ledger was examined AND is present in CH exactly once", and the
 	// halves fail for different reasons, so they report separately.
-	// Measuring CH rows against `walked` alone let a short walk certify
+	// Measuring CH rows against `walked` alone would let a short walk certify
 	// itself: a wrong bucket or a hole tolerated by
 	// TolerateTrailingMissing shrinks both sides together, so the gate
-	// compared a subset to itself and printed OK (RLT-282).
+	// would compare a subset to itself and print OK.
 	requested := uint64(*to) - uint64(*from) + 1
 	if uint64(walked) != requested {
 		fmt.Printf("walk coverage:   MISMATCH (requested %d, walked %d)\n", requested, walked)
@@ -222,7 +222,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 // covered the whole range.
 //
 // It exists because a short walk is otherwise indistinguishable from a
-// clean one (RLT-282). Two mechanisms make short walks routine rather
+// clean one. Two mechanisms make short walks routine rather
 // than exotic:
 //
 //   - -bucket defaults to the TRIMMED live bucket, so verifying a
@@ -287,7 +287,7 @@ func gateLedger(lcm sdkxdr.LedgerCloseMeta, passphrase string) (want gateCounts,
 		trades: uint64(census.ClassicTradeEffectCount),
 	}
 	got := gateCounts{
-		tx:     uint64(len(ext.Txs)), // rows landed; Ledger.TxCount now includes unreadable txs
+		tx:     uint64(len(ext.Txs)), // rows landed; Ledger.TxCount includes unreadable txs
 		op:     uint64(ext.Ledger.OpCount),
 		events: uint64(ext.Ledger.SorobanEventCount),
 		trades: uint64(ext.Ledger.ClassicTradeEffectCount),

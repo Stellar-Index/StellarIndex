@@ -142,18 +142,17 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 		}
 		fmt.Printf("  %s  topic0=%-24q events=%d ledgers=[%d,%d]\n", g.ContractID, sym, g.Count, g.MinLedger, g.MaxLedger)
 	}
-	// Non-zero, matching the Postgres sibling verify-recognition. This
-	// returned nil no matter how many shapes were unrecognized, so the
-	// ADR-0033 "every event for every protocol" gate reported the gaps
-	// in a table and exited 0 — unusable in cron or Healthchecks.io,
-	// which is where a lake-side recognition gate belongs now that
-	// soroban_events is decommission-pending (cold audit 2026-08-04).
+	// Non-zero, matching the Postgres sibling verify-recognition. An
+	// ADR-0033 "every event for every protocol" gate that reports the
+	// gaps in a table and exits 0 is unusable in cron or Healthchecks.io,
+	// which is where a lake-side recognition gate belongs while
+	// soroban_events is decommission-pending.
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
 }
 
 // chRecognitionDispatcher builds the production decoder dispatcher
 // ch-recognition audits against: warms the factory-anchored gated registries
-// (ADR-0035) and the soroswap pair-tokens seed (NS14) from a short-lived
+// (ADR-0035) and the soroswap pair-tokens seed from a short-lived
 // Postgres store (protocol_contracts / soroswap_pairs live there even though
 // the recognition shapes themselves come from CH), then closes it.
 func chRecognitionDispatcher(ctx context.Context, cfg config.Config) (*dispatcher.Dispatcher, error) {

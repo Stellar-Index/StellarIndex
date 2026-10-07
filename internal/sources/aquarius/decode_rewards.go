@@ -8,21 +8,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// decode_rewards.go decodes the twelve rewards-gauge event kinds
-// (ROADMAP #89, 2026-07-10 topic census). AquaToken's soroban-amm
-// contract source (github.com/AquaToken/soroban-amm) that previously
-// documented this surface is no longer publicly reachable (its GitHub
-// org shows zero public repositories as of this audit) — so unlike
-// decode.go's `trade` decoder (cited against a cloned Rust source),
-// every function below is reverse-engineered directly from real r1
-// ClickHouse lake bytes (stellar.contract_events, captured 2026-07-10,
+// decode_rewards.go decodes the twelve rewards-gauge event kinds found
+// by the lake topic census. AquaToken's soroban-amm contract source
+// (github.com/AquaToken/soroban-amm), which documented this surface, is
+// not publicly reachable (its GitHub org shows zero public
+// repositories) — so unlike decode.go's `trade` decoder (cited against
+// a cloned Rust source), every function below is reverse-engineered
+// directly from real r1 ClickHouse lake bytes (stellar.contract_events,
 // contract-and-topic scoped queries). Wire TYPES, ARITY, and POSITIONS
 // are exact — every field below was read off a real decoded ScVal.
 // Business-meaning field NAMES beyond what the bytes themselves prove
 // (e.g. "is this i32 a concentrated-liquidity tick, or a reward
 // checkpoint index?") are marked BEST-EFFORT in the per-function
 // comment; treat them as informative, not authoritative, until the
-// Aquarius team confirms or the source becomes available again.
+// Aquarius team confirms them or publishes the source.
 //
 // Bodies here are Vec-shaped (Soroban's only wire representation for
 // a Rust tuple), so — same as decodeTrade's tuple body — decode is
@@ -81,7 +80,7 @@ func rewardsEnvelope(e *events.Event, kind RewardsAction, closedAt time.Time) Re
 //	topics: [Symbol("pool_state")]                          (topic_count=1)
 //	body:   Vec[U256, I32, I128]
 //
-// Verified against r1 lake bytes 2026-07-10 (pool
+// Verified against r1 lake bytes (pool
 // CD3INVPZI3UBNYU3FEMTIGUJCYQVVMD73XSAOL7FFCYOUQ34DSFUZUZT, ledger
 // 62006854): body = [<u256 accumulator>, 88499, 2372478774429]. In the
 // SAME tx a `position_update` on the same pool carries [86260 (lo),
@@ -122,7 +121,7 @@ func decodePoolState(e *events.Event, closedAt time.Time) (RewardsEvent, error) 
 //	topics: [Symbol("claim_reward"), Address(reward_token), Address(user)]  (topic_count=3)
 //	body:   Vec[I128]  (length 1: the claimed amount)
 //
-// Verified against r1 lake bytes 2026-07-10: topic[2] is always a
+// Verified against r1 lake bytes: topic[2] is always a
 // G-strkey (the claiming account); topic[1] is a C-strkey reward-token
 // address, most commonly the pool's designated reward token. Matches
 // docs.aqua.network's public description of `claim`: "claim accrued
@@ -163,7 +162,7 @@ func decodeClaimReward(e *events.Event, closedAt time.Time) (RewardsEvent, error
 //	topics: [Symbol("set_rewards_config")]  (topic_count=1)
 //	body:   Vec[U64, U128]  = [expires_at (unix seconds), amount]
 //
-// Verified against r1 lake bytes 2026-07-10: the SAME tx's
+// Verified against r1 lake bytes: the SAME tx's
 // `config_rewards` router event carries an IDENTICAL amount +
 // expires_at pair for the same pool (e.g. amount=7428124,
 // expires_at=1758341413 on both), confirming the field identities —
@@ -193,7 +192,7 @@ func decodeSetRewardsConfig(e *events.Event, closedAt time.Time) (RewardsEvent, 
 //	topics: [Symbol("position_update"), Address(user)]  (topic_count=2)
 //	body:   Vec[I32, I32, I128] = [range_from, range_to, delta]
 //
-// Verified against r1 lake bytes 2026-07-10: `delta` is SIGNED and
+// Verified against r1 lake bytes: `delta` is SIGNED and
 // observed negative on a withdrawal (the same [range_from, range_to]
 // pair reappearing with the i128 negated on a later ledger — pool
 // CD3INVPZI3UBNYU3FEMTIGUJCYQVVMD73XSAOL7FFCYOUQ34DSFUZUZT, ledgers
@@ -242,7 +241,7 @@ func decodePositionUpdate(e *events.Event, closedAt time.Time) (RewardsEvent, er
 //	topics: [Symbol("deposit"), Address(ref), Address(user)]  (topic_count=3)
 //	body:   Vec[I128, I128] = [amount_0, amount_1]
 //
-// Verified against r1 lake bytes 2026-07-10 (pool
+// Verified against r1 lake bytes (pool
 // CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7): topic[1]
 // is a CONSTANT C-strkey across every observed deposit on this pool
 // (BEST-EFFORT: a gauge/position-manager reference, not necessarily a
@@ -288,7 +287,7 @@ func decodeGaugeDeposit(e *events.Event, closedAt time.Time) (RewardsEvent, erro
 //	topics: [Symbol("claim_fees"), Address(user), Address(token_a), Address(token_b)]  (topic_count=4)
 //	body:   Vec[I128, I128] = [amount_a, amount_b]
 //
-// Verified against r1 lake bytes 2026-07-10: topic[1] is a G-strkey
+// Verified against r1 lake bytes: topic[1] is a G-strkey
 // (the claiming user — NOTE the position differs from every other
 // rewards event: user is FIRST here, not last) and topic[2]/topic[3]
 // are C-strkeys (the pool's two fee-bearing tokens). Either amount can
@@ -368,8 +367,8 @@ func decodeRewardsGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent,
 
 // decodeGaugeClaim decodes the bare `claim` event — docs.aqua.network:
 // "claim accrued AQUA rewards". Unlike every other rewards kind, the
-// body is a BARE I128, not a Vec (verified against r1 lake bytes
-// 2026-07-10 — the parsed ScVal type is ScvI128 directly).
+// body is a BARE I128, not a Vec (verified against r1 lake bytes: the
+// parsed ScVal type is ScvI128 directly).
 //
 //	topics: [Symbol("claim"), Address(user)]  (topic_count=2)
 //	body:   I128  (the claimed amount, NOT wrapped in a Vec)
@@ -403,7 +402,7 @@ func decodeGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent, error)
 //	topics: [Symbol("rewards_gauge_schedule_reward"), Address(reward_token)]  (topic_count=2)
 //	body:   Vec[U64, U64, U128] = [starts_at, ends_at, amount]
 //
-// Verified against r1 lake bytes 2026-07-10: starts_at < ends_at in
+// Verified against r1 lake bytes: starts_at < ends_at in
 // every sample (e.g. 1769788800 < 1770393600), consistent with
 // scheduling a future reward-distribution window. No user/actor
 // topic (an admin/operator action, not user-triggered).
@@ -444,7 +443,7 @@ func decodeRewardsGaugeScheduleReward(e *events.Event, closedAt time.Time) (Rewa
 //	topics: [Symbol("set_rewards_state"), Address(admin)]  (topic_count=2)
 //	body:   Vec[Bool]  (length 1: the new enabled state)
 //
-// Verified against r1 lake bytes 2026-07-10 (both `true` and `false`
+// Verified against r1 lake bytes (both `true` and `false`
 // observed). topic[1] is populated in UserAddress for schema symmetry
 // with the other kinds, though it is a pool admin/manager address
 // here, not an end-user LP.
@@ -476,7 +475,7 @@ func decodeSetRewardsState(e *events.Event, closedAt time.Time) (RewardsEvent, e
 //	topics: [Symbol("rewards_gauge_add")]  (topic_count=1)
 //	body:   Vec[Address, Address]  (length 2)
 //
-// Verified against r1 lake bytes 2026-07-10: body[0] recurs across
+// Verified against r1 lake bytes: body[0] recurs across
 // many samples (BEST-EFFORT: a shared gauge-manager/factory reference,
 // unconfirmed); body[1] varies per pool (BEST-EFFORT: the newly
 // registered gauge or reward-token contract for this pool).
@@ -501,17 +500,13 @@ func decodeRewardsGaugeAdd(e *events.Event, closedAt time.Time) (RewardsEvent, e
 
 // decodeConfigRewards decodes the ROUTER-side `config_rewards` — the
 // companion to the pool-side `set_rewards_config` (decodeSetRewardsConfig).
-// NOT one of the original 19 README-census topics (that census scanned
-// pool-only events); folded in here as the rewards family's 12th kind
-// because it was equally undecoded and directly duplicates
-// set_rewards_config's (amount, expires_at) pair per-pool — closing
-// the docs/protocols/aquarius.md line 23 gap in the same pass rather
-// than leaving a second, separately-tracked one.
+// It is the rewards family's 12th kind because it directly duplicates
+// set_rewards_config's (amount, expires_at) pair per pool.
 //
 //	topics: [Symbol("config_rewards"), Vec[Address, Address]]  (topic_count=2)
 //	body:   Vec[Address(pool), U128(amount), U64(expires_at)]
 //
-// Verified against r1 lake bytes 2026-07-10 (router
+// Verified against r1 lake bytes (router
 // CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK — the
 // canonical trust root; this topic is 100% router-scoped, confirmed
 // via a full-history contract-scoped count): body's amount + expires_at
