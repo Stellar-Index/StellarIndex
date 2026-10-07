@@ -1,14 +1,13 @@
-// lint-chaos-ci-wiring guards the fix for T430: test/chaos/ (Task #75,
-// Wave 1) shipped with a runner, scenarios and a design note that settled
-// on "nightly is enough" for CI cadence, but no workflow ever ran it — a
-// grep of .github/workflows/*.yml for 'chaos' returned zero matches. The
-// suite existed and caught nothing.
+// lint-chaos-ci-wiring keeps test/chaos/ wired into CI. The suite once
+// had a runner, scenarios and a design note that settled on "nightly is
+// enough" for CI cadence, but no workflow ran it — a grep of
+// .github/workflows/*.yml for 'chaos' returned zero matches. The suite
+// existed and caught nothing.
 //
 // This lint fails when no workflow file references the chaos runner
 // (`test/chaos/run.sh` or the `test-chaos`/`test-chaos-check` Makefile
 // targets), so a future edit that renames or removes the wiring (e.g.
-// chaos-nightly.yml) fails CI instead of silently reverting to the
-// pre-T430 state.
+// chaos-nightly.yml) fails CI instead of silently leaving the suite unexercised.
 //
 // Usage (from the repo root):
 //

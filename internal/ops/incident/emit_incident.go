@@ -106,9 +106,6 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 // Emit fans out an `incident.sev1` or `incident.resolved`
 // webhook to every subscribed dashboard hook for the given slug.
 //
-// F-1249 (codex audit-2026-05-12): pre-fix the platform shipped
-// dashboard CRUD for `incident.sev1` / `incident.resolved`
-// subscriptions but no production caller enqueued deliveries.
 // Status-page content (the source of truth for incidents) lives
 // in `internal/incidents/data/*.md` and is embedded at build-time,
 // so there is no in-process "state transition" to hook from.
@@ -126,7 +123,7 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 //     -slug <slug> -event resolved`.
 //
 // The command returns non-zero on hard input errors (bad slug, no
-// Postgres, missing config) AND — since C3-023 — when the fan-out
+// Postgres, missing config) AND when the fan-out
 // itself lost a delivery: a subscribed customer was not told about
 // the incident and no retry row exists, which the operator has to
 // know before they close the loop. A zero-subscriber fan-out is a
@@ -231,7 +228,7 @@ func Emit(args []string) error {
 	if len(subs) == 0 {
 		fmt.Fprintln(os.Stderr, "emit-incident: no dashboard hooks subscribed — fan-out was a no-op")
 	}
-	// C3-023: the operator ran this command to make customers aware of
+	// The operator ran this command to make customers aware of
 	// an incident. A partial or total fan-out failure means some of them
 	// were NOT told, and there is no retry row to drain — so the command
 	// must exit non-zero rather than printing a reassuring summary. Safe

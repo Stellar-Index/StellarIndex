@@ -14,7 +14,7 @@ import (
 // provider credential is missing. Nothing outside the process can
 // read the Sent slice, so there the mail is simply lost — while the
 // nil return is counted as result="sent" and reported to the caller
-// as delivered (RLT-321). A deployment with no credential wires
+// as delivered. A deployment with no credential wires
 // [UnconfiguredSender], whose Send is an error.
 //
 // Validation still runs — a NoopSender that accepts a

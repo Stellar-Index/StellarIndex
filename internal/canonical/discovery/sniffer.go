@@ -102,7 +102,7 @@ type Hit struct {
 	// and hand-built Hit leaves it unset). [AsyncSink] sets it
 	// explicitly when flushing an accumulated in-process-dedup delta,
 	// so a Recorder can increment event_count by the true observed
-	// volume instead of by 1 per call (CA2-A10-correct-4).
+	// volume instead of by 1 per call.
 	Count int64
 }
 
@@ -308,7 +308,7 @@ type OracleCallInput struct {
 // seam Band uses (relay/force_relay update storage without
 // publishing an event), generalized so a FUTURE event-less oracle
 // under a different function name still gets sighted instead of
-// being structurally invisible the way Band originally was.
+// being structurally invisible to the topic[0] sniffers.
 //
 // Cheap by construction: a single map lookup on functionName, no
 // SCVal parsing, no argument decoding — safe to call on every
