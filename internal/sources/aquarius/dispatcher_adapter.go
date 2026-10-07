@@ -19,11 +19,10 @@ import (
 // gate (ADR-0035/0040): the registry of Aquarius pools, anchored on
 // the router.
 type Decoder struct {
-	// reg gates Matches() on contract identity (ADR-0035/0040,
-	// CS-026). Trust root = MainnetRouter (the protocol's own
-	// registry: its add_pool events announce every pool the
-	// protocol's public API serves — verified byte-identical on
-	// 2026-07-05, docs/protocols/aquarius.md).
+	// reg gates Matches() on contract identity (ADR-0035/0040).
+	// Trust root = MainnetRouter (the protocol's own registry: its
+	// add_pool events announce every pool the protocol's public API
+	// serves — verified byte-identical, docs/protocols/aquarius.md).
 	reg *contractid.Registry
 }
 
@@ -58,7 +57,7 @@ func (*Decoder) Name() string { return SourceName }
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT
-// IDENTITY, not topic bytes (ADR-0035/0040, CS-026):
+// IDENTITY, not topic bytes (ADR-0035/0040):
 //
 //   - a pool `trade` matches ONLY when emitted by a REGISTERED
 //     Aquarius pool (curated seed + router-announced). The bare
@@ -81,12 +80,12 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
 		// Pool flow events (trade + liquidity/reserves + the
-		// rewards-gauge surface, ROADMAP #89) are gated IDENTICALLY on
-		// contract identity: they match ONLY when emitted by a
-		// REGISTERED Aquarius pool. The bare topic symbols are
-		// forgeable — a look-alike must not be able to inject
-		// fabricated reserves/liquidity/rewards any more than it
-		// could inject fabricated trades (CS-026).
+		// rewards-gauge surface) are gated IDENTICALLY on contract
+		// identity: they match ONLY when emitted by a REGISTERED
+		// Aquarius pool. The bare topic symbols are forgeable — a
+		// look-alike must not be able to inject fabricated
+		// reserves/liquidity/rewards any more than it could inject
+		// fabricated trades.
 		return d.reg.Has(ev.ContractID)
 	case EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
 		EventApplyTransferOwnership, EventCommitTransferOwnership,
@@ -95,36 +94,35 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
 		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim:
 		// The protocol-fee and kill-switch kinds share this gate: the
-		// router's lake census lists its own `set_protocol_fee`, and the
-		// pool-only gate they had silently refused every router emission.
+		// router's lake census lists its own `set_protocol_fee`, which a
+		// pool-only gate would silently refuse.
 		//
-		// Pool-EMITTABLE governance/upgrade surface (ROADMAP #89):
-		// gated on the SAME protocol trust boundary as the pool-flow
-		// kinds (reg.Has) PLUS the router trust root (reg.IsFactory).
-		// The registered Aquarius pools legitimately emit these — a
-		// protocol-wide staged WASM upgrade upgraded 320/337 pools, and
-		// pools also fire ownership/privileged-address changes and
-		// emergency-mode toggles (full-history r1 census 2026-08-17:
-		// ~1,679 pool-emitted events across these seven kinds, earliest
-		// ledger 55,363,632). Before this, gating on reg.IsFactory ONLY
-		// (the router) fail-closed every pool-emitted occurrence into an
-		// ADR-0033 recognition gap AND dropped it from Decode — real
-		// governance history (wasm-upgrade lineage, ownership transfers,
-		// trade-availability emergency toggles) silently lost. An
-		// emitter in NEITHER set (the FLAGGED parallel router CA7RQDMM
-		// and the unidentified sibling family) still fails closed
-		// exactly like its trade events do — CS-026 preserved, a visible
-		// gap, never a silent mis-attribution.
+		// Pool-EMITTABLE governance/upgrade surface: gated on the SAME
+		// protocol trust boundary as the pool-flow kinds (reg.Has) PLUS
+		// the router trust root (reg.IsFactory). The registered Aquarius
+		// pools legitimately emit these — a protocol-wide staged WASM
+		// upgrade upgraded 320/337 pools, and pools also fire
+		// ownership/privileged-address changes and emergency-mode
+		// toggles (full-history r1 census: ~1,679 pool-emitted events
+		// across these seven kinds, earliest ledger 55,363,632). Gating
+		// on reg.IsFactory alone (the router) would fail-close every
+		// pool-emitted occurrence into an ADR-0033 recognition gap AND
+		// drop it from Decode, silently losing real governance history
+		// (wasm-upgrade lineage, ownership transfers, trade-availability
+		// emergency toggles). An emitter in NEITHER set (the FLAGGED
+		// parallel router CA7RQDMM and the unidentified sibling family)
+		// fails closed exactly like its trade events do: a visible gap,
+		// never a silent mis-attribution.
 		return d.reg.Has(ev.ContractID) || d.reg.IsFactory(ev.ContractID)
 	case EventConfigRewards, EventPoolGaugeSwitchToken:
-		// Router-SCOPED governance surface (ROADMAP #89): gated on the
-		// canonical router trust root ONLY. Unlike the seven kinds
-		// above, config_rewards and pool_gauge_switch_token are 100%
-		// router-emitted — a full-history r1 census (2026-08-17) finds
-		// ZERO pool-emitted occurrences of either — so the gate stays on
+		// Router-SCOPED governance surface: gated on the canonical
+		// router trust root ONLY. Unlike the governance kinds above,
+		// config_rewards and pool_gauge_switch_token are 100%
+		// router-emitted — a full-history r1 census finds ZERO
+		// pool-emitted occurrences of either — so the gate is
 		// reg.IsFactory. A pool or foreign contract emitting these fails
-		// closed (CS-026), a visible ADR-0033 recognition gap, not a
-		// silent mis-attribution.
+		// closed, a visible ADR-0033 recognition gap, not a silent
+		// mis-attribution.
 		return d.reg.IsFactory(ev.ContractID)
 	}
 	return isAddPool(&ev) && d.reg.IsFactory(ev.ContractID)
@@ -221,7 +219,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	default:
 		// Every kind Matches() gates in is handled explicitly above. A
 		// kind that reaches here matched the identity gate but has no
-		// decode arm — fail closed (ADR-0035/CS-026) instead of forcing
+		// decode arm — fail closed (ADR-0035) instead of forcing
 		// it through decodeTrade: a trade-shaped topic on an unhandled
 		// kind would otherwise be silently misattributed as a real
 		// trade rather than surfacing as a visible gap.
