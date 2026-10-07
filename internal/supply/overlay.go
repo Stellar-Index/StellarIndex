@@ -27,7 +27,7 @@ type MetadataResolver interface {
 
 // Overlay applies the SEP-1 max_supply precedence rule on top of a
 // computed [Supply]. Wired into the /v1/assets/{id} serving path
-// (internal/api/v1/assets_f2.go) since 2026-07-05 — the resolver
+// (internal/api/v1/assets_f2.go); the resolver
 // there adapts the SEP-1 fields the applySep1Overlay step already
 // stamped on the AssetDetail, scaled from display units to raw
 // units. Per ADR-0011 the max_supply precedence chain is:

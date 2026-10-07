@@ -46,9 +46,8 @@ type CrossCheckPair struct {
 	// WrapClass selects which invariant [CrossCheckForClass] checks
 	// for this pair. Zero value ("") normalizes to [WrapClassPartial]
 	// — the safe default — via [normalizeWrapClass], so existing
-	// callers that don't set this field get the corrected
-	// 2026-07-08 behaviour automatically rather than silently
-	// reverting to the pre-fix equality compare.
+	// callers that don't set this field get the subset-bound check
+	// rather than the equality compare.
 	WrapClass WrapClass
 }
 
@@ -157,9 +156,9 @@ type CrossCheckEmitter interface {
 	// outcomes. Negative values are a caller bug ([CrossCheck] /
 	// [CrossCheckSubsetBound] always return a non-negative value).
 	//
-	// wrapClass is carried through as a metric label (2026-07-08,
-	// BACKLOG #59) so operators can see which invariant produced a
-	// given reading — purely observational: the alert threshold
+	// wrapClass is carried through as a metric label so operators can
+	// see which invariant produced a given reading. It is purely
+	// observational: the alert threshold
 	// doesn't need to filter on it, because DivergenceStroops itself
 	// is already zero in the benign partial-wrap case (see
 	// [CrossCheckSubsetBound]).

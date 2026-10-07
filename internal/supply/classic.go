@@ -46,11 +46,11 @@ type ClassicSupplyComponents struct {
 	// SAC-balance observation for this asset at-or-before the read
 	// ledger, as distinct from SACWrapped==0 meaning "no observation
 	// exists at all". [ClassicComputer.Compute] uses this to decide
-	// whether [Supply.SACWrappedStroops] is populated or left nil
-	// (RLT-248): without it, a COALESCE-to-zero sum was
-	// indistinguishable from a genuine zero reading, so the CS-087
-	// escrow-bound gate in [CrossCheckSubsetBound] was always
-	// evaluated even when nothing had actually been observed.
+	// whether [Supply.SACWrappedStroops] is populated or left nil.
+	// Without it, a COALESCE-to-zero sum is indistinguishable from a
+	// genuine zero reading, and the escrow-bound gate in
+	// [CrossCheckSubsetBound] would be evaluated even when nothing had
+	// been observed.
 	SACObserved bool
 
 	// IssuerBalance is the amount the issuer is currently holding
@@ -75,13 +75,11 @@ type ClassicSupplyComponents struct {
 
 	// MinComponentLedger is the lowest ledger any of the per-
 	// component observations contributing to this aggregate was
-	// last updated at. Used by the [Refresher] (F-1236, codex
-	// audit-2026-05-12) to detect snapshots whose components
-	// lag the snapshot ledger by more than a threshold. Readers
-	// that can compute this should populate it; readers that
-	// can't leave zero — the gate treats zero as "no freshness
-	// signal" and skips the check, preserving the pre-F-1236
-	// posture.
+	// last updated at. Used by the [Refresher] to detect snapshots
+	// whose components lag the snapshot ledger by more than a
+	// threshold. Readers that can compute this should populate it;
+	// readers that can't leave zero, which the gate treats as "no
+	// freshness signal" and skips the check.
 	MinComponentLedger uint32
 }
 
@@ -171,7 +169,7 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 	circulating.Sub(circulating, comps.IssuerBalance)
 	circulating.Sub(circulating, comps.LockedAccountBalances)
 	circulating.Sub(circulating, comps.LockedContractBalances)
-	// CS-038: clamp at zero — a locked-set exceeding total (misconfig or
+	// Clamp at zero: a locked-set exceeding total (misconfig or
 	// snapshot-freshness skew) must not publish negative circulating/market-cap.
 	if circulating.Sign() < 0 {
 		circulating.SetInt64(0)
@@ -205,7 +203,7 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		LedgerSequence:    ledger,
 		ObservedAt:        observedAt.UTC(),
 		// Carry the SACWrapped addend OUT of the fold as well as into
-		// it (audit E4/N-F3(b)): total_supply keeps including it, and
+		// it: total_supply keeps including it, and
 		// [Supply.SACWrappedStroops] additionally preserves it so the
 		// cross-check can compare it against the SAC's own Algorithm-3
 		// total — the same-quantity, two-independent-paths compare that
@@ -213,9 +211,9 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		// the returned Supply must not alias the reader's component,
 		// which a caller could otherwise mutate under us.
 		//
-		// nil unless SACObserved (RLT-248): a COALESCE-to-zero sum with
-		// no real observation must surface as the CS-087 "unchecked"
-		// state, not as a false green "escrow ≤ minted" pass.
+		// nil unless SACObserved: a COALESCE-to-zero sum with no real
+		// observation must surface as the "unchecked" state, not as a
+		// false green "escrow ≤ minted" pass.
 		SACWrappedStroops:  sacWrappedStroops(comps),
 		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
@@ -224,7 +222,7 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 // sacWrappedStroops derives [Supply.SACWrappedStroops] from the
 // reader's components: a defensive copy of SACWrapped when the reader
 // actually observed a SAC balance for this asset, nil otherwise. See
-// [ClassicSupplyComponents.SACObserved] and CS-087 in crosscheck.go.
+// [ClassicSupplyComponents.SACObserved] and [CrossCheckSubsetBound].
 func sacWrappedStroops(comps ClassicSupplyComponents) *big.Int {
 	if !comps.SACObserved {
 		return nil
