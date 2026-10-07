@@ -15,7 +15,7 @@ import (
 // Golden decode tests for the update_reserves / deposit_liquidity /
 // withdraw_liquidity surface (migration 0089). The topic+body blobs
 // below are UNTOUCHED base64 SCVals captured from the r1 ClickHouse
-// lake (stellar.contract_events) on 2026-07-06 — real production wire
+// lake (stellar.contract_events) — real production wire
 // format, decoded here to prove the reserve / amount / share i128
 // paths line up with what the pool actually emitted.
 //
@@ -330,7 +330,7 @@ func TestDecodeLiquidity_tooFewTopicsRejected(t *testing.T) {
 	}
 }
 
-// ─── adapter gating (ADR-0035/0040, CS-026) ──────────────────────
+// ─── adapter gating (ADR-0035/0040) ──────────────────────
 
 // TestDecoder_MatchesLiquidityReserves_gated pins that the new
 // liquidity/reserves events are gated on contract identity IDENTICALLY

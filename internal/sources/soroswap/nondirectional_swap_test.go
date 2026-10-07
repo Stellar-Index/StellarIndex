@@ -6,8 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden regression from the ONE undecodable-but-matched ledger the
-// 2026-07-31 soroswap completeness verify reported: mainnet ledger
+// Golden regression from the ONE undecodable-but-matched ledger a
+// soroswap completeness verify reported: mainnet ledger
 // 57,403,300, tx be7028b9…, registered pair CAM7DY… (soroswap_pairs:
 // token0=CAS3J7GY…, token1=CCW67TSZ…). The pair emitted sync
 // (event_index 6) then swap (event_index 7) whose body settled with
@@ -24,7 +24,7 @@ import (
 // re-derive counts expected-zero and the ledger verifies.
 //
 // Bytes are verbatim from the r1 ClickHouse lake
-// (stellar.contract_events, ledger_seq=57403300), fetched 2026-07-31.
+// (stellar.contract_events, ledger_seq=57403300).
 const (
 	ndPair   = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
 	ndTx     = "be7028b942c6ffa0cacdf35ae44ab1b19efa63fd04c2ee72049c3d6348594b7f"

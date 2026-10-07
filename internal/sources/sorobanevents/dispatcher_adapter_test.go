@@ -74,7 +74,7 @@ func captureableEvent(t *testing.T, ledger uint32) events.Event {
 }
 
 // TestAsyncSink_PushEventBacksPressure_BufferFull_NoDrops verifies
-// the post-2026-05-26 contract: when the channel is full, PushEvent
+// the contract: when the channel is full, PushEvent
 // blocks rather than dropping the row. This is the invariant the
 // backfill cursor relies on (cursor advances per produced ledger;
 // drops would leave un-recoverable gaps).
@@ -95,7 +95,7 @@ func TestAsyncSink_PushEventBacksPressure_BufferFull_NoDrops(t *testing.T) {
 		// detector the release->flush cycle exceeded 2s and the drain
 		// correctly gave up, losing the last batch and failing the
 		// no-drops assertion (observed: WrittenCount 6/8, one flake in
-		// CI run 30178983905, 2026-07-25; 8/8 green locally). The
+		// CI; 8/8 green locally). The
 		// invariant under test is back-pressure/no-drops, not drain
 		// latency, so the grace is not load-bearing here — pin it far
 		// above any plausible scheduler stall.
@@ -282,16 +282,15 @@ func (w *flakyWriter) callCount() int {
 }
 
 // TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands is the
-// regression test for audit-2026-07-23 REL-02/DAT-09: before the
-// fix, [AsyncSink.run]'s flush closure made exactly ONE
-// InsertSorobanEventsBatch attempt and, on ANY error — including a
-// plain transient infra fault like "connection refused" — logged a
-// Warn and permanently discarded the batch. There was no retry, no
-// lost-rows counter, and no ERROR-level signal: a sustained Postgres
-// blip silently ate a window of raw soroban_events rows with nothing
+// regression test for a flush that gives up: a flush closure in
+// [AsyncSink.run] that makes exactly ONE InsertSorobanEventsBatch
+// attempt and, on ANY error — including a plain transient infra fault
+// like "connection refused" — logs a Warn and permanently discards the
+// batch has no retry, no lost-rows counter, and no ERROR-level signal:
+// a sustained Postgres blip silently eats a window of raw soroban_events rows with nothing
 // for an operator to alert on or a range to re-derive.
 //
-// Asserts the CORRECTED behaviour: an unclassified/infra fault is
+// Asserts the behaviour: an unclassified/infra fault is
 // retried with backpressure until it lands — WrittenCount reaches the
 // full row count and LostCount stays zero — matching the ADR-0041
 // asymmetric policy the trades path already has (retry is the
@@ -331,7 +330,7 @@ func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
 }
 
 // TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried pins
-// the other half of the REL-02/DAT-09 contract: a POSITIVELY
+// the other half of the flush-retry contract: a POSITIVELY
 // classified permanent data fault (pq class 23, e.g. a unique
 // constraint violation) must be counted on LostCount and must NOT be
 // retried forever — retrying a deterministic constraint violation
@@ -518,8 +517,8 @@ func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
 	}
 }
 
-// stopRacedWriter models the exact shape of the 2026-08-28 CI failure
-// (run 33168844647): a steady-state batch write is IN FLIGHT when
+// stopRacedWriter models the exact shape of a CI failure: a
+// steady-state batch write is IN FLIGHT when
 // Stop() fires. The first call parks until its ctx is cancelled (which
 // the sink does the instant s.stopping closes) and returns ctx.Err(),
 // exactly as a real pgx INSERT does when its context is cancelled
@@ -565,8 +564,8 @@ func (w *stopRacedWriter) Calls() int {
 }
 
 // TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost pins
-// the shutdown data-loss class caught by main CI run 33168844647
-// (2026-08-28): TestAsyncSink_StopDrainsPendingRows_NoChannelClose
+// the shutdown data-loss class caught by main CI:
+// TestAsyncSink_StopDrainsPendingRows_NoChannelClose
 // failed with "WrittenCount = 6, want 10" — 10 rows minus one
 // BatchSize=4 batch — on a slow -race runner.
 //
@@ -578,7 +577,7 @@ func (w *stopRacedWriter) Calls() int {
 // soroban_events raw landing zone. The interrupted batch must instead
 // be carried into the shutdown drain and retried under DrainGrace.
 //
-// Proven red on the pre-fix code: WrittenCount = 6, LostCount = 4,
+// Proven red on the racy shutdown: WrittenCount = 6, LostCount = 4,
 // writer received 6 rows.
 func TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost(t *testing.T) {
 	t.Parallel()

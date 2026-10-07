@@ -384,7 +384,7 @@ func TestDecodeLiquidity_LargeI128(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_PopulatesEventIndex pins F-1324: the liquidity
+// TestDecodeLiquidity_PopulatesEventIndex pins that the liquidity
 // path must carry events.Event.EventIndex onto the row so two
 // same-(kind,token) liquidity events emitted by ONE operation don't
 // collapse on the comet_liquidity PK (migration 0059) via ON CONFLICT.

@@ -1,7 +1,7 @@
 package sushiswap_v3
 
 // Golden bodies captured read-only from the certified ClickHouse lake
-// (stellar.contract_events) on 2026-09-05. Each constant is the exact
+// (stellar.contract_events). Each constant is the exact
 // base64 SCVal the chain emitted — no hand-edited bytes anywhere in this
 // file, so a decode change that alters real-world behaviour fails the
 // golden tests rather than passing against a convenient fixture.

@@ -240,7 +240,7 @@ func TestRealDecoder_unknownSymbolPartialEventRecordsRawInPlace(t *testing.T) {
 	// Mixed payload — one valid fiat symbol + one unknown. The valid
 	// entry comes through exactly as before; the unknown one is now
 	// recorded verbatim as raw:NOTACURRENCY at ITS OWN vector slot
-	// (DAT-03: the raw row takes the position the pre-totality Skip
+	// (slot stability: the raw row takes the position the pre-totality Skip
 	// placeholder consumed, so the USD row's OpIndex does not move).
 	usd := xdr.ScSymbol("USD")
 	usdSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}

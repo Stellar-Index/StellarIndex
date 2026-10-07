@@ -13,7 +13,7 @@ import (
 //
 // Each fixture below is the EXACT on-chain bytes of one real event —
 // topics_xdr + data_xdr, base64 as r1's ClickHouse lake stores them in
-// stellar.contract_events — captured 2026-09-09 and cited with the
+// stellar.contract_events — cited with the
 // ledger_seq / tx_hash / op_index / event_index it came from, so any
 // reader can re-pull and re-verify it. No hand-encoded SCVals.
 //
@@ -600,7 +600,7 @@ func TestGolden_zeroEventAddressIsNotRegistered(t *testing.T) {
 }
 
 // TestGolden_earnUSDCVaultPauseRecognized pins the vault_paused /
-// vault_unpaused pair, first emitted 2026-10-01 by the audited WASM
+// vault_unpaused pair, first emitted by the audited WASM
 // 4b3d9f6b… (no upgrade). Before classify knew them they were the
 // recognition gap behind stellarindex_source_recognition_failing.
 //

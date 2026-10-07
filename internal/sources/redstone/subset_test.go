@@ -14,8 +14,8 @@ import (
 // ── Subset-filtered batch attribution (payload medians) ────────────────
 //
 // Real lake fixture: the REDSTONE event at ledger 59,258,375 (tx
-// 1e9ddc61675fe641…), captured from stellar.contract_events on
-// 2026-07-29. Its op args request feed_ids ["BTC","ETH"] but the
+// 1e9ddc61675fe641…), captured from stellar.contract_events.
+// Its op args request feed_ids ["BTC","ETH"] but the
 // adapter's freshness verifier dropped ETH, so updated_feeds carries ONE
 // entry — the class that left 1,626 events honest-blind on the full
 // completeness verify. The payload holds 3 signer packages per feed at
@@ -183,7 +183,7 @@ func amountFromInt64(t *testing.T, v int64) canonical.Amount {
 	return canonical.NewAmount(big.NewInt(v))
 }
 
-// ── Order-preserving alignment (the 2026-07-30 residual class) ────────
+// ── Order-preserving alignment (the residual class) ────────
 
 // Real lake fixture: ledger 60104689's subset batch (7 feed_ids →
 // 5 updated_feeds) where one price matches TWO candidates' medians
@@ -217,7 +217,7 @@ func TestDecode_OrderPreservingAlignment_DisambiguatesSharedMedians(t *testing.T
 		{"crypto:USDC", "fiat:USD"},
 		{"crypto:EUROC", "fiat:EUR"}, // the EUROC/EUR feed — EUR-quoted
 		{"rwa:iBENJI", "fiat:USD"},
-		// Quote corrected by D8 (2026-08-29): this fixture's price is
+		// Quote: this fixture's price is
 		// exactly 1.00000000, a NAV ratio against SolvBTC — not a
 		// $1.00 price. See feeds.go for the derivation.
 		{"crypto:SolvBTC.BBN_FUNDAMENTAL", "crypto:SolvBTC"},

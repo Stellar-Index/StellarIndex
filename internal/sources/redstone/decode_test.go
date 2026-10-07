@@ -286,7 +286,7 @@ func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 }
 
 // TestDecodeWritePrices_EventIndexPreventsSameOpCollision is the
-// regression test for DAT-06/trap-15 (audit-2026-07-23): two REDSTONE
+// regression test for a same-op collision: two REDSTONE
 // events emitted by the SAME operation (OperationIndex equal) but at
 // different positions in that operation's contract-event list
 // (EventIndex differs) used to collide, because the fanout base was
@@ -378,7 +378,7 @@ func TestDecode_MissingOpArgs(t *testing.T) {
 // registry is RECORDED verbatim as raw:<feed_id> at its own vector
 // position, not skipped. Before this change the middle entry was
 // dropped (2 updates) while BTC/ETH kept OpIndex 0/2; they STILL keep
-// 0/2 — the raw row fills slot 1 (DAT-03: no existing row moves).
+// 0/2 — the raw row fills slot 1 (no existing row moves).
 func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
 	// Three feeds: BTC (known), NOTAFEED (outside the ADR-0028
 	// registry — e.g. a 20th feed RedStone deployed), ETH (known).
@@ -439,7 +439,7 @@ func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
 }
 
 // All-unknown batch: raw rows, not ErrEmptyUpdates. This is the shape
-// of every batch during the 2026-07-24 relayer expansion (~5,600
+// of every batch during the relayer expansion (~5,600
 // events lost until feeds.go caught up and history was replayed).
 func TestDecode_AllUnknown_RecordedAsRaw(t *testing.T) {
 	body := encodeWritePricesBody(t, relayerG,
@@ -589,8 +589,8 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 
 func TestFeedRegistry_Has32Feeds(t *testing.T) {
 	// The registry must cover exactly the 32 known mainnet feeds:
-	// 19 captured 2026-05-22 (ADR-0028) + 11 from the 2026-07-24
-	// relayer expansion + USDT0, observed live on 2026-08-31. A drift
+	// 19 captured for ADR-0028 + 11 from the ledger-63624934
+	// relayer expansion + USDT0. A drift
 	// here means a feed was added/removed without updating the docs +
 	// this registry in lock-step.
 	//
@@ -617,7 +617,7 @@ func TestFeedRegistry_UniquePairs(t *testing.T) {
 	// No two feed_ids may map to the same (Base, Quote) pair: feeds
 	// arrive together in one write_prices batch, so a shared pair
 	// would interleave two different quantities into one price
-	// series. The 2026-07-24 expansion makes this live — e.g.
+	// series. The relayer expansion makes this live — e.g.
 	// `SolvBTC_FUNDAMENTAL` (NAV ratio vs BTC, ~1.003) vs
 	// `SolvBTC_FUNDAMENTAL/USD` (NAV in USD, ~65,430) MUST land on
 	// distinct base codes, and bare `EUROC` (USD-quoted) vs
@@ -634,13 +634,13 @@ func TestFeedRegistry_UniquePairs(t *testing.T) {
 }
 
 // TestDecode_2026_07_24_ExpansionFeeds is the regression test for the
-// 2026-07-24 relayer expansion (ledger 63624934): RedStone began
+// relayer expansion (ledger 63624934): RedStone began
 // publishing 11 feed_ids outside the original 19-feed registry.
 // Batches mixing old + new feeds dropped the new entries per-feed;
 // batches of ONLY new feeds failed whole with ErrEmptyUpdates —
 // "undecodable-but-matched" projection blindness (~5,600 events).
-// This all-new-feeds batch must now decode fully, with the asset /
-// quote mapping verified live 2026-07-27 (see feeds.go comments).
+// This all-new-feeds batch must decode fully, with the asset /
+// quote mapping verified live (see feeds.go comments).
 func TestDecode_2026_07_24_ExpansionFeeds(t *testing.T) {
 	feedIDs := []string{
 		"EUROC", // bare — USD-quoted, unlike registered EUROC/EUR
@@ -655,7 +655,7 @@ func TestDecode_2026_07_24_ExpansionFeeds(t *testing.T) {
 		"deJAAA_FUNDAMENTAL/USD",
 		"deJTRSY_FUNDAMENTAL/USD",
 	}
-	// Live values captured 2026-07-27 from api.redstone.finance,
+	// Live values captured from api.redstone.finance,
 	// scaled to RedStone's fixed 8 decimals.
 	prices := []*big.Int{
 		big.NewInt(1_13979753),     // EUROC in USD ≈ EUR/USD
@@ -749,7 +749,7 @@ func TestDecode_NonRedstoneTopic_Rejects(t *testing.T) {
 // wrapper and silently rejected every real event.
 //
 // Fixture: event pulled from mainnet ledger 62265977 (tx
-// 349bd590…c7a8b) on 2026-04-24 via sorobanrpc.com getEvents.
+// 349bd590…c7a8b) via sorobanrpc.com getEvents.
 // Contains one XLM price update at package_timestamp
 // 2026-04-23T12:30:06Z. Feed id from the tx's write_prices args.
 func TestDecode_RealMainnetEvent_BytesWrappedBody(t *testing.T) {
@@ -808,8 +808,8 @@ const mxneUSDMXNAt8 = int64(1_739_110_000) // 17.3911 × 1e8
 // RedStone publishes MXNe as USDMXN (~17.39 pesos/USD); our registry
 // marks it Invert, so the decoder must reciprocate to MXNe-in-USD
 // (~0.0575) — matching every other feed (quote fiat:USD) and
-// reflector-fx MXN (~0.0573, verified live 2026-07-07). Before the
-// fix this served ~17.39, implying 1 MXNe = $17.39 — a ~302× error.
+// reflector-fx MXN (~0.0573, verified live). Un-inverted
+// it serves ~17.39, implying 1 MXNe = $17.39 — a ~302× error.
 func TestDecode_MXNe_InvertedToTokenInUSD(t *testing.T) {
 	body := encodeWritePricesBody(t, relayerG,
 		[]*big.Int{big.NewInt(mxneUSDMXNAt8)}, 1_745_000_000_000, 1_745_000_060_000)
@@ -850,7 +850,7 @@ func TestDecode_MXNe_InvertedToTokenInUSD(t *testing.T) {
 	if scaled < 0.055 || scaled > 0.060 {
 		t.Errorf("MXNe-in-USD = %v, want ~0.0575 (raw USDMXN ~17.39 means the inversion did not run)", scaled)
 	}
-	// Guard explicitly against the pre-fix (un-inverted) value.
+	// Guard explicitly against the un-inverted value.
 	if updates[0].Price.BigInt().Cmp(big.NewInt(mxneUSDMXNAt8)) == 0 {
 		t.Error("MXNe price stored un-inverted (still ~17.39 pesos/USD) — the Invert path did not fire")
 	}
@@ -914,7 +914,7 @@ func TestReciprocalAtScale(t *testing.T) {
 
 // TestDecode_EmptyOnWireBatch_IsRecognizedNoOp pins the empty-batch
 // no-op semantics against REAL lake bytes (ledger 63,699,567, contract
-// CA526Y2N…, captured 2026-07-29): the adapter emits
+// CA526Y2N…): the adapter emits
 // `{updated_feeds: [], updater}` (Bytes-wrapped) when its freshness
 // verifier drops every candidate feed. ~1.5% of ALL REDSTONE events
 // ever have this shape; treating it as an error kept redstone
@@ -925,7 +925,7 @@ func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
 	const realBody = "AAAADQAAAGwAAAARAAAAAQAAAAIAAAAPAAAADXVwZGF0ZWRfZmVlZHMAAAAAAAAQAAAAAQAAAAAAAAAPAAAAB3VwZGF0ZXIAAAAAEgAAAAAAAAAAI55i1HMFV5Z4R37dzgSnns7qJjbxzw6uCHkzbmb6XRI="
 
 	// NO OpArgs — the exact production shape: empty-batch pushes often
-	// lack usable args, and the 2026-07-29 replay proved an args-gated
+	// lack usable args, and a replay proved an args-gated
 	// empty check leaves those ledgers "undecodable-but-matched". The
 	// no-op classification must not depend on args at all.
 	ev := &events.Event{
@@ -948,7 +948,7 @@ func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
 	}
 }
 
-// TestFeedRegistry_USDT0MapsToItsOwnAsset pins the 2026-08-31 fix for
+// TestFeedRegistry_USDT0MapsToItsOwnAsset pins the fix for
 // stellarindex_ingestion_oracle_unknown_symbols.
 //
 // RedStone's Stellar adapter publishes USDT0 — the omnichain USDT
@@ -985,8 +985,8 @@ func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 }
 
 // TestFeedRegistry_CountMatchesItsDocComment stops the registry's size
-// from drifting away from the number written above it. USDT0 landed in
-// 3c7e7440 (#439) and the comment kept saying 30 for two days, which is
+// from drifting away from the number written above it. A stale count
+// in a comment for even two days is
 // exactly how a doc-truth audit ends up filing a "wrong count" finding
 // against code that is itself correct.
 //
@@ -1050,7 +1050,7 @@ func decodeOneMXNe(t *testing.T, r int64) canonical.OracleUpdate {
 	return updates[0]
 }
 
-// TestDecode_MXNe_PublishedIntegerRecoverable pins INV-2590: two distinct
+// TestDecode_MXNe_PublishedIntegerRecoverable pins that two distinct
 // on-chain integers collapse to the same 8-dp reciprocal, so the row must
 // carry the publisher's integer verbatim (ADR-0003) or it is lost.
 func TestDecode_MXNe_PublishedIntegerRecoverable(t *testing.T) {

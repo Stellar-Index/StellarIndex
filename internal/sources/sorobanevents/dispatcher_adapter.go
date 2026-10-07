@@ -404,7 +404,7 @@ func (s *AsyncSink) LostCount() uint64 {
 // capped exponential backoff [flushBatch] applies to a batch insert
 // failure that is not positively classified as permanent — mirroring
 // the block-and-retry policy [internal/pipeline] applies to the
-// trades path (ADR-0041 / REL-08's asymmetric default: a drop
+// trades path (ADR-0041's asymmetric default: a drop
 // requires positive proof of permanence, retry is the default).
 const (
 	asyncSinkRetryInitialBackoff = 100 * time.Millisecond

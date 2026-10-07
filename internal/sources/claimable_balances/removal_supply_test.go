@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// This file pins the supply-drift regression from audit-2026-07-23
-// DAT-10: a claimed claimable balance must stop counting toward the
+// This file pins a supply-drift regression: a claimed claimable balance must stop counting toward the
 // served supply aggregate. Before the removal fix the observer emitted
 // nothing for a ClaimClaimableBalance, so the created amount stayed in
 // Σ claimable forever and total/circulating supply (and market cap /
@@ -127,7 +126,7 @@ func servedClaimableAggregate(obs []Observation, assetKey string) *big.Int {
 	return total
 }
 
-// TestServedAggregate_ReturnsToZeroAfterClaim is the DAT-10 money
+// TestServedAggregate_ReturnsToZeroAfterClaim is the money
 // regression: create a claimable balance, then claim it, and the
 // served Σ claimable must return to its pre-create value (zero) rather
 // than keep counting the claimed amount.
@@ -293,7 +292,7 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	// guard, so this is the one shape that reaches Decode unattributable
 	// — and a dropped removal over-reports supply forever, because the
 	// removal is the only thing that stops the claimed balance being
-	// counted. It used to return (nil, nil) (cold audit 2026-08-04).
+	// counted; it must not return (nil, nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

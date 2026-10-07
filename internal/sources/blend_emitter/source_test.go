@@ -35,7 +35,7 @@ func contractStrkeyFromSeed(t *testing.T, tag byte) string {
 // ─── Real-mainnet fixtures ────────────────────────────────────────
 //
 // All base64 topics/body blobs below were pulled DIRECTLY from the
-// certified ClickHouse raw lake (r1, HTTP :8123, 2026-07-09) — never
+// certified ClickHouse raw lake (r1, HTTP :8123) — never
 // synthesised — for the Emitter contract
 // CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR. Every
 // ledger / tx_hash / op_index / event_index cited is the exact

@@ -13,15 +13,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Regression for the 2026-08-29 r1 v0.48.0 page of
+// Regression for an r1 page of
 // stellarindex_ingestion_oracle_unknown_symbols: every reflector-fx
-// event carries a VES and an XAU slot, and since PR #247 the decoder
+// event carries a VES and an XAU slot, and the decoder
 // recorded them as raw:VES / raw:XAU (7 rows each in 2h) and bumped
 // the unknown-symbols counter on every event. The cause was the
 // allow-lists, not the decoder: VES is ISO-4217 fiat (ADR-0010) and
 // XAU is the spot-gold commodity in the rwa: namespace (ADR-0028).
 // Pins that the two slots now decode to fiat:VES / rwa:XAU at their
-// original vector positions (DAT-03: op_index unchanged, so the
+// original vector positions (op_index unchanged, so the
 // generation-guarded upsert rewrites the raw: row in place on replay)
 // and that the alert's counter no longer increments for them.
 func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
@@ -32,7 +32,7 @@ func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	bodyB64 := encodeUpdateBody(t,
 		[]xdr.ScVal{vesSv, xauSv},
 		// Synthetic magnitudes at the 14-decimal scale, NOT the live
-		// feed's: the real 2026-04-23 capture decodes to VES ≈ 2.07e-3
+		// feed's: the real mainnet capture decodes to VES ≈ 2.07e-3
 		// and XAU ≈ 4720.90, so this comment used to state values the
 		// repo's own fixtures contradict (wave-D SI-OC-05).
 		//

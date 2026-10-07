@@ -16,7 +16,7 @@ import (
 //
 // The dispatcher does not crash on a decoder panic any more: it
 // RECOVERS, counts it, skips that one input and carries on
-// (internal/dispatcher/panic_guard.go, #371 F1). That contract turns a
+// (internal/dispatcher/panic_guard.go). That contract turns a
 // mutex held across the panicking statement into something worse than
 // the original crash — the lock is never released, the NEXT event's
 // Matches blocks on RLock, and the dispatch goroutine deadlocks for the

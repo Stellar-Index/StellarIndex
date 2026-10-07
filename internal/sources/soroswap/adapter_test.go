@@ -55,7 +55,7 @@ func TestIsMainnetFactory_multiFactory(t *testing.T) {
 }
 
 func TestDecoder_Matches_pairAndFactoryTopics(t *testing.T) {
-	// Contract-gated (F-1347): topic symbols aren't unique across
+	// Contract-gated: topic symbols aren't unique across
 	// protocols, so Matches() requires the emitter to be a canonical
 	// factory (for new_pair) or a REGISTERED pair (for pair events).
 	d := NewDecoder()
@@ -349,7 +349,7 @@ func TestDecoder_Matches_skimTopic(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x42)
 	// Skim from a registered pair matches; from a foreign contract it
-	// does not (F-1347 contract gate).
+	// does not (contract gate).
 	skimFrom := func(c string) events.Event {
 		return events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSkim}, ContractID: c}
 	}

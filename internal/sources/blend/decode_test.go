@@ -413,7 +413,7 @@ func TestDecodeDeleteAuction_HappyPath(t *testing.T) {
 // ─── dispatcher.Decoder boundary ───────────────────────────────
 
 func TestDecoder_Matches(t *testing.T) {
-	// Contract-gated (ADR-0035 / F-1347): a topic match is necessary but
+	// Contract-gated (ADR-0035): a topic match is necessary but
 	// NOT sufficient — every business event must come from a REGISTERED
 	// pool, and `deploy` must come from the canonical Pool Factory. A
 	// registered pool's events match; the identical topics from an
@@ -507,7 +507,7 @@ func TestDecoder_NameAndKind(t *testing.T) {
 	}
 }
 
-// TestDecodeAuctions_PopulateEventIndex pins F-1324: each auction
+// TestDecodeAuctions_PopulateEventIndex pins that each auction
 // decode must carry events.Event.EventIndex onto the row so multiple
 // same-kind auction events emitted by ONE operation don't collapse on
 // the blend_auctions PK (migration 0058). Without it a liquidation

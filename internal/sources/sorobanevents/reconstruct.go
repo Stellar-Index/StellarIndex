@@ -72,7 +72,7 @@ func Reconstruct(row Row) (events.Event, error) {
 //
 // Prefers the COMPLETE ordered topics_xdr list (migration 0114)
 // so events with 5+ topics reconstruct with
-// every topic instead of the pre-fix cap of 4. Rows written before
+// every topic instead of capping at 4. Rows written before
 // 0114 (or by a pre-0114 binary) carry an empty TopicsXDR — fall back
 // to the fixed topic_0..3 columns, trimmed to TopicCount so events
 // that legitimately had fewer than 4 topics don't carry empty

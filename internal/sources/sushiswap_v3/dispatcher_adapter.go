@@ -340,7 +340,7 @@ func (d *Decoder) SkippedUnknownPool() int {
 // interface (mirrors soroswap.Decoder.EvictedOrphans) so a gated swap
 // dropped for want of a token mapping is surfaced to
 // obs.SourceDecodeErrorsTotal instead of vanishing with no error, log
-// or metric (GH-1307).
+// or metric.
 func (d *Decoder) UnknownContractDrops() int {
 	return d.SkippedUnknownPool()
 }

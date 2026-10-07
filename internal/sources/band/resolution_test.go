@@ -45,7 +45,7 @@ func TestStaleAlertMultiplierMatchesTheShippedBudget(t *testing.T) {
 }
 
 // measuredRelayIntervalSeconds is Band's observed mainnet cadence,
-// from r1 on 2026-09-01:
+// measured on r1:
 //
 //	changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
 //	  → 24 for crypto:USDC and 24 for crypto:XLM, i.e. hourly.

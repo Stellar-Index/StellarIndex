@@ -108,13 +108,13 @@ func TestReconstruct_RoundTripsCapture(t *testing.T) {
 	}
 }
 
-// TestReconstruct_PreservesFiveOrMoreTopics is the C2-11 regression
+// TestReconstruct_PreservesFiveOrMoreTopics is the topic-arity regression
 // guard: a Soroban event with MORE than four topics (e.g. an Aquarius
 // multi-token pool event) must round-trip through Capture →
 // Reconstruct with EVERY topic preserved — no >4→4 truncation.
 //
-// Proven-red against the pre-fix code: decodeTopics capped at a
-// [4][]byte and reconstructTopics capped want>4→4, so the
+// Proven-red against a decodeTopics capped at a
+// [4][]byte and a reconstructTopics capping want>4→4, so the
 // reconstructed Topic slice held only 4 entries and the len==6
 // assertion below fails. The end-to-end length is the tight proof —
 // Reconstruct can only emit 6 topics if Capture actually persisted all
@@ -131,8 +131,8 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 		b64SV(t, u32SV(11)),
 		b64SV(t, u32SV(22)),
 		b64SV(t, u32SV(33)),
-		b64SV(t, u32SV(44)), // topic[4] — lost by the pre-fix cap
-		b64SV(t, u32SV(55)), // topic[5] — lost by the pre-fix cap
+		b64SV(t, u32SV(44)), // topic[4] — lost by a 4-topic cap
+		b64SV(t, u32SV(55)), // topic[5] — lost by a 4-topic cap
 	}
 
 	original := events.Event{
@@ -152,8 +152,8 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 		t.Fatalf("Capture: %v", err)
 	}
 
-	// topic_count records the true arity (this was already correct
-	// pre-fix — only the topic bytes were being dropped).
+	// topic_count records the true arity (only the topic bytes are at
+	// risk of being dropped).
 	if row.TopicCount != 6 {
 		t.Errorf("row.TopicCount = %d, want 6", row.TopicCount)
 	}
@@ -172,8 +172,8 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 		t.Fatalf("Reconstruct: %v", err)
 	}
 
-	// Replay-side: every topic reconstructs, in order. Pre-fix this
-	// was 4 (topics 5+ silently dropped); post-fix it is all 6.
+	// Replay-side: every topic reconstructs, in order. A capped
+	// decoder gives 4 (topics 5+ silently dropped); it must be all 6.
 	if len(roundTripped.Topic) != len(original.Topic) {
 		t.Fatalf("Reconstruct Topic len = %d, want %d (topics 5+ dropped by the >4→4 truncation)",
 			len(roundTripped.Topic), len(original.Topic))
@@ -190,7 +190,7 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 // non-empty one must fail closed instead of silently shifting the
 // later topic down a position.
 //
-// Proven-red against the pre-fix code: reconstructTopics used a bare
+// Proven-red against a reconstructTopics that uses a bare
 // `continue` on an empty slot with no gap tracking, so this row
 // reconstructed a 2-element Topic slice (["swap","extra"], the empty
 // slot dropped and "extra" shifted from index 2 to index 1) with a

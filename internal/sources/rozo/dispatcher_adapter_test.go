@@ -41,7 +41,7 @@ func paymentEvent(t *testing.T, contractID string) events.Event {
 // paymentEventLongTopic is paymentEvent but with the LIVE long-form
 // topic[0] ScSymbol "payment_event" that the deployed mainnet contract
 // actually emits (the short-form symbol_short!("payment") never fired
-// live — the 2026-07-07 rozo_events=0 bug). Same body shape.
+// live — a rozo_events=0 bug). Same body shape.
 func paymentEventLongTopic(t *testing.T, contractID string) events.Event {
 	t.Helper()
 	ev := paymentEvent(t, contractID)
@@ -50,7 +50,7 @@ func paymentEventLongTopic(t *testing.T, contractID string) events.Event {
 }
 
 // TestClassify_LongFormPaymentEvent is the regression guard for the
-// 2026-07-07 fix: the deployed contract emits topic[0]="payment_event"
+// long-form topic: the deployed contract emits topic[0]="payment_event"
 // (full ScSymbol), which the original short-form-only match dropped,
 // leaving rozo_events empty despite 393 lake events.
 func TestClassify_LongFormPaymentEvent(t *testing.T) {

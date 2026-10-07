@@ -7,7 +7,7 @@ import (
 )
 
 // TestDecoder_MatchesRewards_gated pins that the rewards-gauge events
-// (migration 0099, ROADMAP #89) are gated on contract identity
+// (migration 0099) are gated on contract identity
 // IDENTICALLY to trade/liquidity/reserves: a REGISTERED pool matches,
 // an unregistered look-alike emitting the exact same topic does not.
 // Uses real captured bytes (see decode_rewards_test.go) for the topic
@@ -43,8 +43,8 @@ func TestDecoder_MatchesRewards_gated(t *testing.T) {
 
 // TestDecoder_MatchesAdmin_routerOnlyGated pins that the two
 // ROUTER-SCOPED governance kinds (config_rewards, pool_gauge_switch_token
-// — migration 0100, ROADMAP #89) stay gated on the CANONICAL ROUTER
-// trust root only: a full-history r1 census (2026-08-17) finds ZERO
+// — migration 0100) stay gated on the CANONICAL ROUTER
+// trust root only: a full-history r1 census finds ZERO
 // pool-emitted occurrences of either, so a registered pool (and any
 // arbitrary contract) must NOT match — see decode_admin.go's package
 // doc.
@@ -78,7 +78,7 @@ func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 				t.Errorf("registered pool incorrectly matched router-only topic %s", tc.name)
 			}
 			// The flagged parallel router deployment must still
-			// fail-closed — same CS-026 posture as its trade events.
+			// fail-closed — same posture as its trade events.
 			if d.Matches(events.Event{ContractID: flaggedRouter, Topic: tc.topic}) {
 				t.Errorf("flagged parallel router matched %s — CS-026 gap not closed", tc.name)
 			}
@@ -98,7 +98,7 @@ func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 // occurrence returned Matches()==false — an ADR-0033 recognition gap
 // that also dropped the event from Decode. This pins that a REGISTERED
 // pool AND the router now match, while a foreign contract and the
-// flagged parallel router still fail-closed (CS-026). Matches() reads
+// flagged parallel router still fail-closed. Matches() reads
 // only topic[0], so a bare topic[0] proves the gate.
 func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
 	d := NewDecoder()
@@ -131,7 +131,7 @@ func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
 			if !d.Matches(events.Event{ContractID: MainnetRouter, Topic: topic}) {
 				t.Errorf("canonical router not matched for %s", tc.name)
 			}
-			// A foreign contract must still fail-closed (CS-026).
+			// A foreign contract must still fail-closed.
 			if d.Matches(events.Event{ContractID: foreign, Topic: topic}) {
 				t.Errorf("foreign contract matched %s — CS-026 injection vector open", tc.name)
 			}

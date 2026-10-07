@@ -12,10 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Real-bytes golden tests (ROADMAP #11). Both fixtures are UNMODIFIED
+// Real-bytes golden tests. Both fixtures are UNMODIFIED
 // InvokeHostFunction operation bodies (base64 XDR) captured from the
-// certified ClickHouse lake (stellar.operations.body_xdr) on r1,
-// 2026-07-10:
+// certified ClickHouse lake (stellar.operations.body_xdr) on r1:
 //
 //   - router_toplevel_op_ledger62000296.b64
 //     tx 642bb2de2703c289f945b493714de0603170c3e5f48d1ef8c1aca96587fb98a6
@@ -26,7 +25,7 @@ import (
 //   - router_subinvocation_op_ledger62029020.b64
 //     tx da2ffe5a8651e2289408631a180cc8f6fe26247c6558bfc80dbf6d9527849cc7
 //     op 0, ledger 62,029,020 (closed 2026-04-08 18:35:46 UTC).
-//     The headline ROADMAP #11 shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
+//     The headline shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
 //     wraps an adapter (`swap_exact_tokens_for_tokens` on
 //     CAYP3UWL…TXTO) which wraps the ROUTER two levels deep. The
 //     pre-1b1e46a09 top-level-only walk never saw this call — the 8,729×
@@ -133,7 +132,7 @@ func TestRealBytes_TopLevelRouterCall(t *testing.T) {
 	if s.DeadlineTs.Year() != 58233 {
 		t.Errorf("DeadlineTs year = %d, want 58233 (garbage sentinel preserved at decode layer)", s.DeadlineTs.Year())
 	}
-	// ROADMAP #11 columns: direct call → depth 0, top_level, chain = [router].
+	// Call-chain columns: direct call → depth 0, top_level, chain = [router].
 	if s.CallDepth != 0 {
 		t.Errorf("CallDepth = %d, want 0", s.CallDepth)
 	}
@@ -187,7 +186,7 @@ func TestRealBytes_SubInvocationRouterCall(t *testing.T) {
 	if !s.DeadlineTs.Equal(time.Date(2026, 4, 8, 18, 36, 5, 0, time.UTC)) {
 		t.Errorf("DeadlineTs = %v, want 2026-04-08T18:36:05Z", s.DeadlineTs)
 	}
-	// ROADMAP #11 columns: two wrapping layers → depth 2, sub_invocation,
+	// Call-chain columns: two wrapping layers → depth 2, sub_invocation,
 	// chain = [aggregator, adapter, router].
 	wantChain := []string{
 		"CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH", // aggregator `exec`

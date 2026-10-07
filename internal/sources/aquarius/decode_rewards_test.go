@@ -8,9 +8,9 @@ import (
 )
 
 // Golden decode tests for the twelve rewards-gauge event kinds
-// (migration 0099, ROADMAP #89). Every topic/body blob below is an
+// (migration 0099). Every topic/body blob below is an
 // UNTOUCHED base64 SCVal captured from the r1 ClickHouse lake
-// (stellar.contract_events) on 2026-07-10 — real production wire
+// (stellar.contract_events) — real production wire
 // format, same capture method liquidity_decode_test.go documents.
 // Exact provenance (contract, ledger, tx) is cited per case.
 

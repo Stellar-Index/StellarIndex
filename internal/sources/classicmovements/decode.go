@@ -203,7 +203,7 @@ func decodePayment(ledger uint32, closedAt time.Time, txHash string, opIndex uin
 // resolved to the base G (baseAccountAddress) for lookup. Without it the
 // muxed routing label — the thing an exchange gives out as a deposit
 // address — is dropped entirely and /v1/accounts/{M…}/movements has no way
-// to say which rows were meant for that sub-account (GH-1118). Returns nil
+// to say which rows were meant for that sub-account. Returns nil
 // (omitted from JSON) for a non-muxed destination.
 func muxedDestinationAttrs(m xdr.MuxedAccount) map[string]any {
 	if m.Type != xdr.CryptoKeyTypeKeyTypeMuxedEd25519 {
@@ -262,7 +262,7 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 	case xdr.CryptoKeyTypeKeyTypeEd25519, xdr.CryptoKeyTypeKeyTypeMuxedEd25519:
 		// AccountId.Address() panics on an encode error; GetAddress() is the
 		// same encode with the error returned instead, which is what every
-		// caller here already unwraps via the derr/herr pattern (GH-1117).
+		// caller here already unwraps via the derr/herr pattern.
 		aid := m.ToAccountId()
 		return aid.GetAddress()
 	default:

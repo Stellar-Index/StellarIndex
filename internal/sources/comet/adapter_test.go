@@ -374,12 +374,12 @@ func TestDecoder_Decode_HappyPath_NoDetectionMetric(t *testing.T) {
 	}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026,
-// closed 2026-07-08 — this is the FLIP of the former
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (the FLIP
+// of a former
 // TestDecoder_Decode_NoContractIDDiscrimination, whose comment
 // required exactly this inversion): Comet's `("POOL", "swap")` topic
 // shape is the Balancer-v1 contract event family, shared by EVERY
-// deployment of that WASM (F-1242) — forgeable by construction. A
+// deployment of that WASM — forgeable by construction. A
 // perfect swap shape from an unregistered contract must NOT be
 // attributed to comet, while the same event from the curated pool
 // (Blend's backstop) must. Decode itself remains shape-only — the

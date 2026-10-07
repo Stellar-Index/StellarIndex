@@ -12,7 +12,7 @@ import (
 )
 
 // Golden fixtures below are VERBATIM real mainnet events pulled from
-// the ClickHouse raw lake (ADR-0034) on 2026-07-08 — ROADMAP #89b
+// the ClickHouse raw lake (ADR-0034) for a
 // decoder topic-match audit. Each carries its real ledger + tx_hash
 // for cross-reference. See docs/protocols/cctp.md for the full
 // per-topic ledger range.

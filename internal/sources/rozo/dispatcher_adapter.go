@@ -26,7 +26,7 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // wraps it as the decoder's single-event output. EventIndex is the
 // rozo_events PK discriminator (migration 0112) that keeps two events of
 // the SAME event_type emitted by ONE operation from collapsing to a single
-// row (C2-13a). idx comes from the source events.Event.EventIndex, which
+// row. idx comes from the source events.Event.EventIndex, which
 // the production dispatcher populates from the LCM and the re-derive path
 // reads back from the lake's event_index column.
 func withIndex(idx int, e Event) []consumer.Event {

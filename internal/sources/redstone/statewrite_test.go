@@ -13,7 +13,7 @@ import (
 //
 // Real lake fixture: the REDSTONE event at ledger 62,056,824 (tx
 // 40758bde24a9…), captured from stellar.contract_events +
-// stellar.ledger_entry_changes on r1, 2026-07-31. This is the FIRST of
+// stellar.ledger_entry_changes on r1. This is the FIRST of
 // the 15 ledgers the payload-median rule provably cannot attribute: the
 // op args request feed_ids [PYUSD, iBENJI_ETHEREUM_FUNDAMENTAL,
 // BENJI_ETHEREUM_FUNDAMENTAL, USTRY], the adapter's freshness verifier

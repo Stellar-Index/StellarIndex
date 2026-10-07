@@ -23,7 +23,7 @@ func encodeMapNoAmount(t *testing.T) string {
 }
 
 // Real mainnet event blobs pulled from the r1 ClickHouse lake
-// (stellar.contract_events) on 2026-07-06 for the dropped-mints
+// (stellar.contract_events) for the dropped-mints
 // finding. Contract CBH4M45T…OCKF is one of the 15 watched SEP-41
 // tokens whose sep41_supply_rollup showed burn_total > mint_total
 // (mint_total == 0): every one of its mints carries the CAP-67 MAP
@@ -54,7 +54,7 @@ const (
 )
 
 // TestDecoder_DecodeRealCAP67MapMint is the regression golden for the
-// 2026-07-06 dropped-mints finding. It feeds the REAL on-wire XDR of a
+// dropped-mints finding. It feeds the REAL on-wire XDR of a
 // mint whose body is a CAP-67 map (amount wrapped alongside
 // to_muxed_id) and proves the decoder now (a) does not drop it and
 // (b) recovers the exact i128 amount and the topic[1] recipient. Before

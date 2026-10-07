@@ -52,7 +52,7 @@ func evictionLedger(seq uint32, keys []xdr.LedgerKey) xdr.LedgerCloseMeta {
 
 // TestObserver_EvictedBalanceIsObservedAsRemoval pins the eviction half of
 // the Soroban state-archival lifecycle end to end through the real
-// dispatcher (Q119, audit-2026-09-02).
+// dispatcher.
 //
 // A SAC balance whose TTL lapses is archived at ledger close. No
 // transaction touches it, so it appears in no transaction meta and the

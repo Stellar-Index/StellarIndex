@@ -237,7 +237,7 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 }
 
 // TestDecodeUpdate_EventIndexPreventsSameOpCollision is the
-// regression test for DAT-06/trap-15 (audit-2026-07-23): two
+// regression test for a same-op collision: two
 // Reflector update events emitted by the SAME operation
 // (OperationIndex equal) but at DIFFERENT positions in that
 // operation's contract-event list (EventIndex differs) used to
@@ -293,7 +293,7 @@ func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 }
 
 // TestDecodeUpdate_OpIndexStableAcrossAllowlistState is the regression
-// test for DAT-03 (audit-2026-07-23) carried into the oracle
+// test for op-index stability carried into the oracle
 // capture-totality change: decodeUpdate's OpIndex is derived from
 // the raw update_data vector POSITION, so the rows a mixed
 // known/unknown batch produces for its KNOWN slots must carry the

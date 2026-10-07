@@ -243,7 +243,7 @@ func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 }
 
 // TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime is the
-// regression test for RLT-115. A deadline near math.MaxUint64 (a
+// regression test for a deadline overflow. A deadline near math.MaxUint64 (a
 // common "unlimited" sentinel some callers pass instead of 0) wraps
 // NEGATIVE under a bare int64(deadline) cast — landing near the 1970
 // epoch, a bogus but plausible, postgres-representable time that

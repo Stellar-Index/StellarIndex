@@ -19,7 +19,7 @@ import (
 
 // aquariusFixtureFeeBps names the per-trade protocol fee, in basis
 // points, of every pool contract captured under
-// test/fixtures/aquarius — sourced from GH-1309's reconciliation
+// test/fixtures/aquarius — sourced from a reconciliation
 // against real lake bytes. Used only by
 // TestTradeAmounts_feeIsGrossOfSoldAmount below.
 var aquariusFixtureFeeBps = map[string]int64{
@@ -28,7 +28,7 @@ var aquariusFixtureFeeBps = map[string]int64{
 	"CDE57N6XTUPBKYYDGQMXX7E7SLNOLFY3JEQB4MULSMR2AKTSAENGX2HC": 5,
 }
 
-// TestTradeAmounts_feeIsGrossOfSoldAmount settles GH-1309: is a
+// TestTradeAmounts_feeIsGrossOfSoldAmount settles the question: is a
 // decoded trade's BaseAmount (sold_amount) the taker's gross input,
 // or already net of the accompanying fee?
 //

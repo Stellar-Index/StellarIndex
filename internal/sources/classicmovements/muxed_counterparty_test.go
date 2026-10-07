@@ -153,7 +153,7 @@ func TestMuxedCounterpartiesResolveToBaseAccount(t *testing.T) {
 	})
 }
 
-// TestMuxedDestinationCarriedInAttributes pins GH-1118: baseAccountAddress
+// TestMuxedDestinationCarriedInAttributes pins that baseAccountAddress
 // resolves ToAddress to the base G for lookup, but that drops the M-strkey
 // an exchange actually addressed the deposit to, and /v1/accounts/{M…}
 // has no way to attribute the row back to that sub-account. The receiver

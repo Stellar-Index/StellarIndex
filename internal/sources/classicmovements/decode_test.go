@@ -382,7 +382,7 @@ func pathPaymentLegs(t *testing.T, ms []Movement) (src, dst Movement) {
 	return src, dst
 }
 
-// TestDecoder_pathPayment_senderLegCarriesSendAsset pins GH-1062: the
+// TestDecoder_pathPayment_senderLegCarriesSendAsset pins that the
 // sender's leg must carry the asset and amount that LEFT the sender,
 // and only the destination's leg carries the delivered asset — else the
 // sender's 'sent' feed row books an outflow in an asset it never held.
@@ -594,7 +594,7 @@ func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
 	}
 }
 
-// TestDispatcher_pathPayment_reachesBothSDEXAndMovements pins GH-1312:
+// TestDispatcher_pathPayment_reachesBothSDEXAndMovements pins that
 // one path payment is both SDEX trades (its claim atoms) and movements
 // (its sent and delivered legs), and sdex and this package both claim the two
 // path-payment op types. Whatever the registration order, the dispatcher
@@ -1134,8 +1134,8 @@ func TestProvenance_IsValid(t *testing.T) {
 
 // TestDecoder_createAccount_zeroBalance_sponsored pins the CAP-33 rule:
 // StartingBalance == 0 (sponsored reserves, Protocol 15+) is a REAL
-// account creation, not a malformed op — the 2026-07-12 backfill was
-// silently dropping every sponsored creation before this.
+// account creation, not a malformed op — dropping it silently loses every
+// sponsored creation.
 func TestDecoder_createAccount_zeroBalance_sponsored(t *testing.T) {
 	fromAddr, _ := mkAccount(t, 0x20)
 	op := mkCreateAccountOp(t, 0x21, 0)

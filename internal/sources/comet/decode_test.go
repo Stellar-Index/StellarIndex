@@ -288,7 +288,7 @@ func TestDecodeSwap_MissingBodyField_Malformed(t *testing.T) {
 	}
 }
 
-// ─── Real mainnet bytes (GH-932) ─────────────────────────────────
+// ─── Real mainnet bytes ─────────────────────────────────
 
 // cometSwapFixture mirrors internal/events.Event's wire shape, so a
 // fixture file unmarshals straight into one. Captured via getEvents
