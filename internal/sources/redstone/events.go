@@ -2,7 +2,7 @@
 // Adapter contract (one contract that owns price storage for every
 // feed + thin per-feed proxies that delegate reads).
 //
-// Wire shape, verified 2026-04-23 against the public adapter source
+// Wire shape, verified against the public adapter source
 // (.discovery-repos/redstone-public-contracts/packages/
 // stellar-connector/deployments/stellarMultiFeed/contracts/
 // redstone-adapter/src/event.rs):
@@ -49,8 +49,8 @@ const SourceName = "redstone"
 // DefaultDecimals is the RedStone-wide price scale
 // (redstone-price-feed/src/config.rs:1 — `pub const DECIMALS: u64 = 8`,
 // a single constant shared by every per-feed proxy; verified against the
-// deployed source 2026-08-03). Every feed publishes at 8 decimals
-// regardless of the underlying asset class — there is no per-feed scale.
+// deployed source). Every feed publishes at 8 decimals regardless of the
+// underlying asset class — there is no per-feed scale.
 const DefaultDecimals uint8 = 8
 
 // DefaultResolutionSeconds reflects the on-chain update cadence:
@@ -68,8 +68,7 @@ const DefaultResolutionSeconds = 24 * 60 * 60
 // only path that emits a REDSTONE-topic event. The dispatcher plumbs
 // only the InvokeContract Args slice (not the function name), so the
 // decoder cannot assert the call targeted this function BY NAME.
-// What stands in for the literal name check, layered (2026-07-31
-// hardening):
+// What stands in for the literal name check, layered:
 //
 //  1. the dispatcher/lake OpArgs PROVENANCE gate — args are attached
 //     only when the op's invoked contract IS the event's own contract,
@@ -109,25 +108,23 @@ var (
 	// expected WritePrices map shape.
 	ErrMalformedPayload = errors.New("redstone: malformed event payload")
 
-	// ErrEmptyUpdates — every decoded entry was dropped by the
-	// registry filter (all-unknown-symbol batches), so the caller
-	// gets a loud signal instead of a silently empty result.
+	// ErrEmptyUpdates — a non-empty batch decoded to no rows, so the
+	// caller gets a loud signal instead of a silently empty result.
 	//
-	// NOTE (2026-07-29): this error NO LONGER covers on-wire-empty
-	// `updated_feeds` vectors. The old doc claimed "the adapter only
-	// emits when at least one feed passes the freshness check";
-	// the lake disproves that — ~1.5% of all REDSTONE events ever
-	// are `{updated_feeds: [], updater}` no-op pushes, in every
-	// ledger band since source genesis. Those now decode to zero
-	// updates with NO error (see decodeWritePrices).
+	// It does not cover on-wire-empty `updated_feeds` vectors. The
+	// adapter does emit when no feed passes the freshness check: the
+	// lake showed ~1.5% of all REDSTONE events to be
+	// `{updated_feeds: [], updater}` no-op pushes, in every ledger band
+	// since source genesis. Those decode to zero updates with NO error
+	// (see decodeWritePrices).
 	//
-	// Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
-	// registry is no longer a reason either — it is recorded verbatim
-	// as a `raw:<feed_id>` row (canonical.AssetOracleRaw), so an
-	// all-unknown batch decodes to rows. Two paths remain: every
-	// attributed price non-positive, or every feed_id unrepresentable
-	// even as a raw asset (#291 — those slots are dropped one at a
-	// time, so only an ALL-unrepresentable batch lands here).
+	// Nor is a feed_id outside the ADR-0028 registry a reason: oracle
+	// capture-totality records it verbatim as a `raw:<feed_id>` row
+	// (canonical.AssetOracleRaw), so an all-unknown batch decodes to
+	// rows. Two paths reach this error: every attributed price
+	// non-positive, or every feed_id unrepresentable even as a raw
+	// asset (those slots are dropped one at a time, so only an
+	// ALL-unrepresentable batch lands here).
 	ErrEmptyUpdates = errors.New("redstone: empty updated_feeds vector")
 
 	// ErrMissingOpArgs — the event arrived without InvokeContract
@@ -153,10 +150,10 @@ var (
 	// config.rs), so the adapter's get_prices_from_payload errors
 	// before any event is emitted. Duplicates in args we're asked to
 	// decode therefore mean the args did NOT drive the emitting call —
-	// and pre-refusal they were an attribution-steering lever: a
-	// duplicated feed inflated the state-write subset's arity
-	// (audit F2), forcing the payload fallback on attacker-shaped
-	// candidates. Refuse the whole event.
+	// and a duplicated feed counted twice would inflate the state-write
+	// subset's arity, forcing the payload fallback on attacker-shaped
+	// candidates. Refuse the whole event (subsetFromStateWrites also
+	// counts each written feed once).
 	ErrDuplicateFeedIDs = errors.New("redstone: duplicate feed_ids in op args")
 
 	// ErrUpdaterMismatch — the event body's `updater` field disagrees
@@ -181,25 +178,22 @@ var (
 	// ErrAmbiguousSubset.
 	ErrStateWriteFeedMismatch = errors.New("redstone: op-args feed_ids disagree with the op's value-changed state-write feed set")
 
-	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride
-	// (DAT-06/trap-15, audit-2026-07-23). The synthetic OpIndex packs
-	// (OperationIndex, EventIndex, vector position) into one uint32;
-	// an EventIndex this large would spill into the next operation's
-	// synthetic range. Real REDSTONE-adjacent ops emit at most a
-	// handful of contract events, so hitting the stride means either
-	// a decoder bug or a contract emitting far more events per op
-	// than anything observed.
+	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride.
+	// The synthetic OpIndex packs (OperationIndex, EventIndex, vector
+	// position) into one uint32; an EventIndex this large would spill
+	// into the next operation's synthetic range. Real REDSTONE-adjacent
+	// ops emit at most a handful of contract events, so hitting the
+	// stride means either a decoder bug or a contract emitting far more
+	// events per op than anything observed.
 	ErrEventIndexOverflow = errors.New("redstone: EventIndex exceeds OpIndex fanout stride")
 
 	// ErrOperationIndexOverflow — e.OperationIndex is negative or large
 	// enough that the synthetic OpIndex packing
 	// (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
-	// spills past uint32. Guarded like EventIndex/vector-position (its
-	// two siblings in the packing were bounds-checked; OperationIndex was
-	// the one unguarded input — audit-2026-08-03). Unreachable on-chain
-	// (Soroban caps ops-per-tx far below the bound); a hit means a
-	// dispatcher bug feeding a bad index, which without the guard would
-	// wrap and overlap another event's op_index block on the
-	// oracle_updates PK.
+	// spills past uint32. Guarded like its two siblings in the packing,
+	// EventIndex and the vector position. Unreachable on-chain (Soroban
+	// caps ops-per-tx far below the bound); a hit means a dispatcher bug
+	// feeding a bad index, which without the guard would wrap and
+	// overlap another event's op_index block on the oracle_updates PK.
 	ErrOperationIndexOverflow = errors.New("redstone: OperationIndex exceeds OpIndex fanout bound")
 )
