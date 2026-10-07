@@ -80,7 +80,7 @@ func (h *Handler) ledgerAtOrBefore(ctx context.Context, ts time.Time) (clickhous
 		}
 		return clickhouse.LedgerHeader{}, errLedgerAtNotFound
 	}
-	after, err := h.firstCapturedClosedAfter(ctx, tip[0].Seq, ts)
+	after, err := FirstCapturedClosedAfter(ctx, h.Reader, tip[0].Seq, ts)
 	if err != nil {
 		return clickhouse.LedgerHeader{}, err
 	}
@@ -97,15 +97,20 @@ func (h *Handler) ledgerAtOrBefore(ctx context.Context, ts time.Time) (clickhous
 	return l, nil
 }
 
-// firstCapturedClosedAfter binary-searches for the lowest captured ledger
+// LedgerPager is the read FirstCapturedClosedAfter probes with.
+type LedgerPager interface {
+	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
+}
+
+// FirstCapturedClosedAfter binary-searches for the lowest captured ledger
 // whose close_time is after ts; tipSeq must be captured and close after ts.
 // Each probe reads the newest captured ledger at or below mid (a sort-key
 // range read), so a lake gap far from the answer cannot mislead the search.
-func (h *Handler) firstCapturedClosedAfter(ctx context.Context, tipSeq uint32, ts time.Time) (uint32, error) {
+func FirstCapturedClosedAfter(ctx context.Context, r LedgerPager, tipSeq uint32, ts time.Time) (uint32, error) {
 	lo, hi := uint32(0), tipSeq
 	for lo < hi {
 		mid := lo + (hi-lo)/2
-		below, err := h.Reader.RecentLedgers(ctx, 1, mid+1)
+		below, err := r.RecentLedgers(ctx, 1, mid+1)
 		if err != nil {
 			return 0, err
 		}

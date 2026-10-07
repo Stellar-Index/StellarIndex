@@ -334,9 +334,9 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 // overshoots the requested number of days by ~13-15% — the exact class of
 // bug already fixed for
 // NetworkThroughput (see explorer_reader.go's ledgersPerDayPruningEstimate
-// doc). ledgerSeqAtCloseTime binary-searches for the true boundary ledger
-// using LedgerBySeq, so it is correct regardless of the chain's actual
-// cadence.
+// doc). The floor is the lowest captured ledger closed at or after the
+// boundary, found by a close_time binary search that a lake gap cannot
+// mislead; a boundary before the lake's first ledger yields that ledger.
 func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {
@@ -346,31 +346,8 @@ func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, erro
 		return 0, nil
 	}
 	boundary := tip[0].CloseTime.AddDate(0, 0, -days)
-	return h.ledgerSeqAtCloseTime(ctx, tip[0].Seq, boundary)
-}
-
-// ledgerSeqAtCloseTime binary-searches [0, tipSeq] for the smallest ledger
-// sequence whose close_time is at or after boundary. Ledger sequences are
-// contiguous genesis→tip and close_time is monotonic in sequence, so this
-// converges in O(log2(tipSeq)) LedgerBySeq point lookups regardless of the
-// chain's actual close cadence. A boundary at or before genesis converges to
-// the lowest sequence LedgerBySeq resolves — equivalent to the "scan from
-// genesis" 0 floor, since no ledger has sequence 0.
-func (h *Handler) ledgerSeqAtCloseTime(ctx context.Context, tipSeq uint32, boundary time.Time) (uint32, error) {
-	lo, hi := uint32(0), tipSeq
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		hdr, found, err := h.Reader.LedgerBySeq(ctx, mid)
-		if err != nil {
-			return 0, err
-		}
-		if !found || hdr.CloseTime.Before(boundary) {
-			lo = mid + 1
-			continue
-		}
-		hi = mid
-	}
-	return lo, nil
+	// Close times are whole seconds, so "at or after boundary" is "after boundary-1s".
+	return FirstCapturedClosedAfter(ctx, h.Reader, tip[0].Seq, boundary.Add(-time.Second))
 }
 
 // contractAttributionTTL bounds how stale the contract → protocol map may be.

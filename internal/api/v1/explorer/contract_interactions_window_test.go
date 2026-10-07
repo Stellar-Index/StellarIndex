@@ -40,14 +40,31 @@ type ixWindowReader struct {
 	tipSeq    uint32
 	calls     int
 	lastSince uint32
+	// [holeLo, holeHi] is a lake gap when holeHi > 0.
+	holeLo, holeHi uint32
 }
 
-func (r *ixWindowReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
-	return []clickhouse.LedgerHeader{{Seq: r.tipSeq, CloseTime: ixWindowCloseTime(r.tipSeq)}}, nil
+func (r *ixWindowReader) inHole(seq uint32) bool {
+	return r.holeHi > 0 && seq >= r.holeLo && seq <= r.holeHi
+}
+
+// RecentLedgers returns the tip, or the newest held ledger below `before`.
+func (r *ixWindowReader) RecentLedgers(_ context.Context, _ int, before uint32) ([]clickhouse.LedgerHeader, error) {
+	seq := r.tipSeq
+	if before > 0 {
+		seq = min(before-1, r.tipSeq)
+	}
+	if r.inHole(seq) {
+		seq = r.holeLo - 1
+	}
+	if seq == 0 {
+		return nil, nil
+	}
+	return []clickhouse.LedgerHeader{{Seq: seq, CloseTime: ixWindowCloseTime(seq)}}, nil
 }
 
 func (r *ixWindowReader) LedgerBySeq(_ context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error) {
-	if seq == 0 || seq > r.tipSeq {
+	if seq == 0 || seq > r.tipSeq || r.inHole(seq) {
 		return clickhouse.LedgerHeader{}, false, nil
 	}
 	return clickhouse.LedgerHeader{Seq: seq, CloseTime: ixWindowCloseTime(seq)}, true, nil
@@ -187,5 +204,29 @@ func TestContractInteractions_TipReadFailureRefusesWindow(t *testing.T) {
 	if reader.ixCalls != 0 {
 		t.Fatalf("ContractInteractions called %d times, want 0 "+
 			"(a failed tip read must not fall through to a since=0 genesis-wide scan)", reader.ixCalls)
+	}
+}
+
+// A lake gap between the window boundary and the tip lies on the floor
+// search's path but far from its answer: the floor must still be exact.
+func TestWindowFloorLedger_GapFarFromBoundary(t *testing.T) {
+	const tip = uint32(60_000_000)
+	reader := &ixWindowReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		tipSeq:    tip,
+		holeLo:    59_000_000,
+		holeHi:    59_500_000,
+	}
+	h := &Handler{Reader: reader}
+	for _, days := range contractsWindowLadder {
+		got, err := h.windowFloorLedger(context.Background(), days)
+		if err != nil {
+			t.Fatalf("days %d: %v", days, err)
+		}
+		// 6s cadence: a day is exactly 14,400 ledgers, no rounding.
+		want := tip - uint32(days)*14_400
+		if got != want {
+			t.Fatalf("days %d: floor %d, want %d (hole [%d, %d])", days, got, want, reader.holeLo, reader.holeHi)
+		}
 	}
 }
