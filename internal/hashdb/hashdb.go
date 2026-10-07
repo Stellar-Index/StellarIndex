@@ -47,7 +47,7 @@
 // corrupt, but a record write is NOT atomic everywhere: with the 16-byte
 // header, 1 record in 128 straddles a 4 KiB page, and a torn record reads
 // as non-zero (permanent false drift). Atomic on copy-on-write
-// filesystems (ZFS, r1); on ext4/xfs (R2/R3) a torn record surfaces as
+// filesystems (ZFS, which r1 runs); on ext4/xfs a torn record surfaces as
 // drift, see the hashdb runbook.
 package hashdb
 
