@@ -15,6 +15,14 @@
     "audited": "2026-05-26",
     "doc": "docs/operations/wasm-audits/cctp.md"
   },
+  "0287f4ad7350935b83d94e046c0bcabc960b233dbce1531008c021b71d406a1d": {
+    "sources": [
+      "blend"
+    ],
+    "role": "factory",
+    "audited": "2026-10-07",
+    "doc": "docs/operations/wasm-audits/blend.md"
+  },
   "0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4": {
     "sources": [
       "spectra"
