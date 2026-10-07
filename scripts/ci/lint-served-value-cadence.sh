@@ -3,8 +3,8 @@
 # SCHEDULED, and its alert thresholds must be calibrated to that schedule.
 #
 # `stellarindex-ops verify-served-values` is the only check on the served
-# NUMBER rather than the pipe (CS-010: XLM market cap read +58% for weeks
-# behind an entirely green board). It writes
+# NUMBER rather than the pipe; a wrong served value can sit behind an
+# entirely green board for weeks. It writes
 # stellarindex_served_value_{ok,skipped,last_run_unix} to the node_exporter
 # textfile collector, and three alerts read those series.
 #

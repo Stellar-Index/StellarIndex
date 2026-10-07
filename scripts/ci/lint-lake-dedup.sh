@@ -4,28 +4,19 @@
 #
 # `stellar.transactions` and `stellar.operations` are
 # ReplacingMergeTree(ingested_at) archives whose duplicate rows are not
-# merged away, and not merged away in BULK. Measured on r1 2026-09-07
-# over ledgers 63,000,000-63,099,999: EVERY one of the 33,380,486
-# distinct `(ledger_seq, tx_index)` keys in `stellar.transactions`
-# carries more than one row, and `stellar.operations` runs at exactly
-# 2.0x (170,836 rows against 85,418 distinct keys over 100k ledgers).
+# merged away, and not merged away in BULK: on r1 every
+# `(ledger_seq, tx_index)` key in `stellar.transactions` has carried more
+# than one row, and `stellar.operations` has run at 2.0x.
 # A `count()`, `sum()` or `groupArray()` over either table therefore
 # reports a multiple of the truth, and a join to either MULTIPLIES the
 # other side by the duplicate count of each key it matches.
 #
-# WHY THIS EXISTS — three near-misses in one day (2026-09-07):
-#
-#   1. a sponsors board built on a naive join inflated its top account
-#      from 176,573 to 296,799;
-#   2. a verification query reported 489,253 rows dropped that were not
-#      — it had counted `stellar.operations` without deduplicating it;
-#   3. it is why the shipped sponsors gate resolves the success flag
-#      with `argMax(t.successful, t.ingested_at)` over a GROUP BY on
-#      the operation identity, rather than with a bare equality.
-#
-# None of the three is visible in a total: the inflated board still
-# summed to a plausible number, and the "dropped rows" reconciliation
-# still balanced against itself. That is what makes the class dangerous
+# WHY THIS EXISTS: a naive join inflates a leaderboard, an undeduplicated
+# count reports rows "dropped" that were not, and a bare equality on the
+# success flag needs `argMax(t.successful, t.ingested_at)` over a GROUP BY
+# on the operation identity instead. None of these is visible in a total:
+# an inflated board still sums to a plausible number, and a "dropped rows"
+# reconciliation still balances against itself. That is what makes the class dangerous
 # and what makes it worth a gate.
 #
 # ── THE RULE, stated plainly ──────────────────────────────────────────

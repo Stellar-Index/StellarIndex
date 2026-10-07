@@ -2,7 +2,7 @@
 # A script that creates a git repository must first strip the GIT_*
 # redirect variables it may have inherited.
 #
-# WHY THIS EXISTS (2026-09-09). `git init` honours an inherited GIT_DIR
+# WHY THIS EXISTS. `git init` honours an inherited GIT_DIR
 # AHEAD of its own `-C`. A git hook is invoked with GIT_DIR,
 # GIT_INDEX_FILE and friends EXPORTED, and scripts/dev/lint-changed.sh
 # dispatches changed `*-test.sh` files — which the pre-commit hook runs.

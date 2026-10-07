@@ -2,13 +2,13 @@
 # lint-migration-compat.sh — enforce migrations/README.md rule 9:
 # every up-migration must be ADDITIVE and OLD-BINARY-SAFE.
 #
-# Why this gate exists (CID-14, audit-2026-07-23):
+# Why this gate exists:
 #
 #   The deploy pipeline applies `migrate up` in the playbook's
 #   pre_tasks — BEFORE any binary is swapped. If the new binary then
 #   fails its health probe, configs/ansible/tasks/deploy-one-binary.yml
 #   rolls back the BINARY ONLY; the schema stays at the new version
-#   (CS-099 — that is deliberate policy, because down-migrations are
+#   (deliberate policy, because down-migrations are
 #   data-destructive and the pipeline cannot know what already depends
 #   on what it would revert).
 #
@@ -29,11 +29,8 @@
 #   drop-view             DROP [MATERIALIZED] VIEW
 #   add-constraint        ALTER TABLE … ADD CONSTRAINT (tightening)
 #   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
-#                         (GH #1163 — 0137's bare `DELETE FROM
-#                         comet_liquidity;` passed every other class, and
-#                         its down was `SELECT 1`: a down/up cycle after
-#                         the replay repaired the table silently deleted
-#                         the repaired rows again)
+#                         (a bare DELETE whose down is `SELECT 1`
+#                         re-deletes replay-repaired rows on a down/up)
 #
 #   Loosening operations (DROP CONSTRAINT, DROP INDEX, ADD COLUMN
 #   nullable, CREATE TABLE/INDEX/VIEW) are additive-safe and are NOT

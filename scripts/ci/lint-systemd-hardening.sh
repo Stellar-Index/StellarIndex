@@ -5,7 +5,7 @@
 #
 # The role's units are unusually consistent: nearly every one sets User=,
 # NoNewPrivileges, PrivateTmp and the Protect-Kernel/CGroup trio, and
-# every fixed-hour OnCalendar ends in UTC. The outliers issue #617 found
+# every fixed-hour OnCalendar ends in UTC. Past outliers
 # (pgbackrest-backup with no sandbox at all, node-healthcheck running as
 # root by omission, a timer firing at 02:00 host-local) all had one thing
 # in common: nothing noticed a directive that was simply absent.

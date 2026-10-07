@@ -3,8 +3,7 @@
 # range, carries an agent/vendor self-attribution marker (Co-Authored-By/
 # Claude-Session trailer, a "Generated with" footer, or a bare 🤖 marker).
 #
-# F167/F172: the only thing that ever checked for this was
-# scripts/dev/install-hooks.sh's opt-in local pre-commit hook — skippable
+# The opt-in local pre-commit hook (scripts/dev/install-hooks.sh) is skippable
 # with `git commit --no-verify`, absent unless a contributor ran `make
 # hooks`, and blind to a web-UI commit either way. This script is invoked
 # unconditionally from .github/workflows/commit-identity.yml, which carries

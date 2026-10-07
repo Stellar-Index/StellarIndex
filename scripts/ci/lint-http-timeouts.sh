@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-http-timeouts — refuse an unbounded HTTP client in production Go code.
 #
-# THE BUG CLASS (#371 F5). A client with no Timeout has NONE: a server that
+# THE BUG CLASS. A client with no Timeout has NONE: a server that
 # accepts the connection and then stops sending leaves the caller blocked
 # forever — not slow, HUNG. Two real instances shipped:
 #
@@ -15,8 +15,8 @@
 # already. The fix is a client with an explicit Timeout, so the bound
 # holds regardless of what the caller passed.
 #
-# #1256: `http.DefaultClient` was the only shape this gate matched. Three
-# other spellings of the same unbounded client passed clean: the package-
+# `http.DefaultClient` is not the only shape. Two other spellings of the
+# same unbounded client: the package-
 # level shortcuts (`http.Get`/`Post`/`Head`/`PostForm`, which use
 # DefaultClient internally), and any `http.Client{` composite literal —
 # var-declared or inline — that never sets Timeout.

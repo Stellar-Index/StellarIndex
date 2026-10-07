@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
 # render-sla-proof.sh — turn one k6 summary export into the durable,
 # self-describing SLA proof report the weekly run is supposed to leave
-# behind. Issue #378.
+# behind.
 #
-# WHY THIS EXISTS. #316 made a weekly run that measures NOTHING go red.
-# A later pass made a run that DOES measure export `summary.json` and
-# render its headline numbers into the job summary. Neither closed the
-# loop, because the step that makes the evidence DURABLE — promoting the
+# WHY THIS EXISTS. A weekly run that measures NOTHING goes red, and one
+# that does exports `summary.json` into the job summary. Neither closes
+# the loop, because the step that makes the evidence DURABLE — promoting the
 # numbers to docs/operations/sla-proof-<YYYY-MM-DD>.md, which is the only
-# thing scripts/ci/check-sla-evidence.sh counts as evidence — was a
-# manual instruction in a procedure that cannot be followed: it directs
-# the operator at a Grafana host that does not exist and at promql over
-# `k6_*` series that only exist when an unset remote-write secret is set.
-# So the feed's durable half had no implementation at all, and no dated
-# proof report has ever landed on any branch.
+# thing scripts/ci/check-sla-evidence.sh counts as evidence — cannot be a
+# manual procedure over Grafana/promql that depends on an unset secret.
 #
-# This script is that implementation. It is deterministic and offline (no
+# This script is that step. It is deterministic and offline (no
 # network, no k6, no gh), so it is exercised on every PR by
 # scripts/ci/render-sla-proof-test.sh rather than once a week.
 #
@@ -103,7 +98,7 @@ fi
 # ── Provenance gate ─────────────────────────────────────────────────────
 # Every field here answers one of "what, against what, when, by which
 # method, at which commit". A report missing any of them is a number
-# without a claim attached, which is exactly what #378 is about.
+# without a claim attached.
 missing=""
 for v in SLA_PROOF_TARGET SLA_PROOF_SCENARIO SLA_PROOF_K6_VERSION \
          SLA_PROOF_COMMIT SLA_PROOF_STARTED_AT SLA_PROOF_ENDED_AT; do
@@ -221,8 +216,7 @@ reqs = metric("http_reqs")
 # trend stats are avg,min,med,max,p(90),p(95) — p(99) is not among them,
 # so an export taken without an explicit --summary-trend-stats renders a
 # report whose p99 row reads "n/a" while the document still looks like a
-# complete proof. The real 2026-06-13 acceptance export is exactly that
-# shape. Refuse it: half a claim published as a whole one is the failure
+# complete proof. Refuse it: half a claim published as a whole one is the failure
 # mode this file exists to prevent.
 required = [
     ("http_req_duration", "p(95)", dur.get("p(95)")),

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# lint-lexicon.sh — domain-lexicon + idiom ratchet (maintainability
-# audit 2026-07-01, D2 + D6).
+# lint-lexicon.sh — domain-lexicon + idiom ratchet.
 #
 # The lexicon is docs/architecture/lexicon.md; the idiom rules are
 # docs/engineering-standards.md "Go idioms". This script enforces the

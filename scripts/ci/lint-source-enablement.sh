@@ -18,17 +18,10 @@
 #   watermark_ledger stuck one below genesis, and the served tier is
 #   permanently EMPTY. Nothing crashes, no unit fails, no alert names a cause.
 #
-#   1. sushiswap_v3 — decoder in 3f575923e, tracked by the completeness
-#      surface from that day, absent from enabled_sources until 72ad4ad4d
-#      (2026-09-09). It was the sole incomplete source of 21 and the standing
-#      cause of stellarindex_completeness_incomplete. The omission was even
-#      DECLARED, in prose, in the CHANGELOG entry that shipped it ("Not yet in
-#      the r1 enabled_sources list") — a declaration in a 26,000-line file is
-#      not a mechanism.
-#   2. upshift (#503) — found hours after fixing the first, the same shape:
-#      73/74 `upshift` string references in the deployed binaries, no
-#      projector cursor (only a gap-detector-scan one), recognition_ok:false,
-#      lake_complete:false, coverage_pct 0, watermark == genesis - 1.
+#   The symptom: no projector cursor, recognition_ok:false,
+#   lake_complete:false, coverage_pct 0, watermark == genesis - 1, and a
+#   standing stellarindex_completeness_incomplete. A CHANGELOG line saying
+#   "not yet enabled" is a declaration, not a mechanism.
 #
 # THE INVARIANT this gate enforces, in six parts. `KNOWN` is
 # internal/config/validate.go's KnownSources — the authoritative whitelist of
@@ -38,7 +31,7 @@
 # `CATALOGUE` is the compute-completeness reconciliation catalogue, i.e. the
 # set /v1/coverage publishes a verdict for. `ALWAYS_ON` is the set the
 # projector registers WITHOUT an enabled_sources entry (the sep41 domain,
-# F-1316 SKIP-SOLE-WRITER).
+# SKIP-SOLE-WRITER).
 #
 #   §1  KNOWN ⊆ ENABLED ∪ WAIVED   a runnable source is run, or declared not
 #                                  to be. THIS is the two production defects.
@@ -337,8 +330,8 @@ n_catalogue=$(count "$CATALOGUE")
 
 # ─── 6. ALWAYS_ON — projector sources with no enabled_sources entry ──
 #
-# BuildRegistry registers every Watched spec unconditionally (F-1316
-# SKIP-SOLE-WRITER: the dispatcher cedes the sep41 domain to the projector, and
+# BuildRegistry registers every Watched spec unconditionally
+# (SKIP-SOLE-WRITER: the dispatcher cedes the sep41 domain to the projector, and
 # the sep41 names are not in KnownSources so they can never legally appear in
 # enabled_sources). Those are the only catalogue entries §5 may excuse, and the
 # excuse is read from the code that grants it rather than hardcoded here.

@@ -3,7 +3,7 @@
 # configs/healthchecks/ must set TimeoutStartSec=, and no Type=oneshot unit
 # in the repo may set RuntimeMaxSec=.
 #
-# THE BUG CLASS (T592). These units are re-armed by a .timer's
+# THE BUG CLASS. These units are re-armed by a .timer's
 # OnUnitActiveSec, and systemd will not start a new instance while the
 # previous one is still running. A oneshot ExecStart with no start
 # timeout can hang forever on a wedged probe/socket, and every future
