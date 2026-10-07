@@ -51,9 +51,9 @@ import (
 //
 //   - WithSeededPairTokensDecoder seeded from
 //     timescale.LoadSoroswapPairRegistry, so the decoder boots with
-//     every previously-seen pair already in its registry — no more
-//     "skipped_unknown_pair" noise on a parallel chunk that doesn't
-//     happen to cover the original new_pair event.
+//     every persisted pair already in its registry — a parallel chunk
+//     that doesn't happen to cover the original new_pair event emits
+//     no "skipped_unknown_pair" noise.
 //   - WithPairUpsertHook bound to timescale.UpsertSoroswapPair, so
 //     newly-discovered pairs are persisted as live new_pair events
 //     stream in.
@@ -62,7 +62,7 @@ import (
 // persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
 // instead and ignores postgres entirely).
 func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
-	// Oracle-staleness policy (issue #478) is installed BEFORE any
+	// Oracle-staleness policy is installed BEFORE any
 	// decoder is built, so the first update a source persists already
 	// publishes the right budget. Overrides go in unconditionally —
 	// they are keyed by (source, asset) and a row naming a source this
