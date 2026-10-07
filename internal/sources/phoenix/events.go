@@ -229,7 +229,7 @@ const (
 	// across test/integration fixtures. There is exactly one native-XLM
 	// SAC per network, derivable from canonical.Asset.SacContractID()
 	// and pinned by internal/canonical/sac_test.go. Use
-	// aquarius.MainnetXLMSAC (CAS3J7GY…) or canonical.SacContractID.
+	// aquarius.MainnetXLMSAC (CAS3J7GY…) or canonical.XLMSacContractID.
 )
 
 // MainnetPools is the curated gated pool set (ADR-0040 §1 mechanism
@@ -241,8 +241,9 @@ const (
 // the decoder self-registers from them, so this list is a cold-start
 // warm root, the same role blend's and sushiswap_v3's curated tables
 // play, not the sole trust root. It still matters: it covers the pools
-// whose creation event is outside any window being streamed. A pool missing from BOTH this list and the factory's
-// in-window announcement fail-closes and surfaces as an ADR-0033
+// whose creation event is outside any window being streamed. A pool
+// missing from BOTH this list and the factory's in-window announcement
+// fail-closes and surfaces as an ADR-0033
 // recognition gap (visible, never silently mis-attributed).
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
