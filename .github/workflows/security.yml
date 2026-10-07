@@ -16,7 +16,7 @@ name: security
 # on every PR, so this workflow adds only the heavier scanners.
 #
 # No container-image scan: release.yml does not build or push
-# images (the ghcr.io job was dropped 2026-05-11 — no consumer).
+# images (no ghcr.io job — no consumer).
 # The trivy fs scan covers go.mod/go.sum + the Dockerfiles' base
 # images by manifest; add a `trivy image` job if/when the
 # `containers:` release job is restored.

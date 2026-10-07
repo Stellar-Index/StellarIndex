@@ -1,8 +1,7 @@
 name: reconciliation-health
 
 # Liveness/staleness watchdog for ansible-drift.yml — the ONLY
-# codified-vs-live infrastructure reconciliation in this repo
-# (reconciliation-and-monitoring-liveness, audit-2026-07-23).
+# codified-vs-live infrastructure reconciliation in this repo.
 #
 # ansible-drift.yml failing every week (or never firing at all) is
 # invisible to anyone who doesn't go looking: there is no badge or
@@ -22,7 +21,7 @@ name: reconciliation-health
 # still under both thresholds, or a history of only cancelled/skipped runs
 # all pass (exit 0).
 #
-# WHAT THIS DOES NOT SEE, measured 2026-09-07 (#496). The core reads
+# WHAT THIS DOES NOT SEE. The core reads
 # the LATEST runs whatever triggered them, and ansible-drift.yml is
 # dispatched by hand far more often than it is scheduled — 31 of its
 # 38 runs. So a green manual dispatch breaks the red streak and resets
@@ -32,10 +31,7 @@ name: reconciliation-health
 #     CI_WORKFLOW_FILE=ansible-drift.yml FAIL_RUNS=2 FAIL_HOURS=216 \
 #       scripts/ci/check-main-ci-health.sh   → exit 0, "not faulting yet"
 #
-# The claim that used to stand here — that the 2026-07-20 history shows
-# every scheduled run dying at a credential step before PLAY RECAP —
-# was true of that one run and of nothing after it, and reading it kept
-# the investigation on credentials. Treat this workflow as what it is:
+# Treat this workflow as what it is:
 # a fast red-streak trigger over ALL triggers (2 runs / 9 days), useful
 # because it fires sooner than the sweep below. The authoritative
 # "is this control still reporting" answer is the scheduled-runs-only

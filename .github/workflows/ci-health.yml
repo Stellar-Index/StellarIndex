@@ -10,12 +10,11 @@ name: ci-health
 #    opens/updates a tracking issue AND fails this run. When main goes
 #    green again it closes the issue.
 #
-# 2. DEAD SCHEDULED CONTROL (#496). A scheduled workflow exists to
+# 2. DEAD SCHEDULED CONTROL. A scheduled workflow exists to
 #    notice something and say so; when one stops working, nothing says
 #    so, because its silence is indistinguishable from "nothing to
 #    report". ansible-drift.yml is the recorded case — 0 green of 8
-#    scheduled runs from 2026-07-20 to 2026-09-07, seven weeks
-#    unnoticed, with a three-way divergence in the rollup statement cap
+#    scheduled runs over seven weeks, unnoticed, with a three-way divergence in the rollup statement cap
 #    sitting behind it. The per-workflow watchdog that was supposed to
 #    catch that (reconciliation-health.yml) read the LATEST run
 #    regardless of trigger, and the latest was a green manual dispatch,
@@ -30,12 +29,12 @@ name: ci-health
 #    scripts/ci/check-scheduled-controls-test.sh for the thresholds and
 #    the one exclusion).
 #
-#    TWO CLASSES, TWO REMEDIES (2026-09-10, #502). "No passing
+#    TWO CLASSES, TWO REMEDIES. "No passing
 #    scheduled run past N" is two states. DEAD — no scheduled run at
 #    all within N, or the workflow is disabled: the schedule stopped
 #    and NOBODY IS CHECKING, so re-arm it. FAIL — the schedule is
 #    still firing on time and every run within N was red: somebody IS
-#    checking and the answer is being ignored, so go read it (#496).
+#    checking and the answer is being ignored, so go read it.
 #    The sweep called both DEAD, so this job opened an issue headlined
 #    "a control has stopped reporting" about ansible-drift.yml, which
 #    had fired every Monday for eight weeks and named two drifted
@@ -46,7 +45,7 @@ name: ci-health
 #    a genuinely stopped control cannot hide behind "oh, that one
 #    always fails".
 #
-#    AND A THIRD, DECLARED BY THE WORKFLOW (2026-09-10, #502). FAIL
+#    AND A THIRD, DECLARED BY THE WORKFLOW. FAIL
 #    reads "this control is broken or ignored", which mislabels a
 #    workflow whose failing step IS its report. ansible-drift.yml now
 #    declares that in one marker line in its own header, naming the
@@ -194,7 +193,7 @@ jobs:
       # Two classes, two titles, because the title IS the remedy for
       # anyone reading the issue list. A control that stopped being
       # scheduled needs re-arming; a control that is scheduled and red
-      # needs somebody to read what it found (#496). The sweep can
+      # needs somebody to read what it found. The sweep can
       # report either or both, so the title is chosen per run and the
       # existing issue is retitled when the classes change.
       ISSUE_TITLE_DEAD: "Scheduled controls: a control has stopped reporting"
@@ -243,7 +242,7 @@ jobs:
           #
           # ALL THREE classes are read. Reading only `dead` is how this
           # job would silently stop tracking the classes the sweep
-          # learned to name on 2026-09-10 — a control that is still
+          # names — a control that is still
           # being scheduled and is red, and one whose red IS its report
           # — and an untracked class is an invisible one.
           # scripts/ci/check-scheduled-controls-test.sh asserts that
@@ -316,7 +315,7 @@ jobs:
             # Retitled as well as rewritten: an issue headlined "has
             # stopped reporting" about a control that is reporting and
             # failing names the wrong remedy in the one place most
-            # readers ever see (#502).
+            # readers ever see.
             gh issue edit "$existing" --title "$title" --body "$body"
             # A here-string, not a pipe: `grep -qF` stops at the first
             # match and a GitHub issue body runs to 65,536 characters, so
@@ -363,9 +362,8 @@ jobs:
           # One annotation per class, because the three need different
           # actions: re-arm a schedule that stopped, repair a control
           # that is red and should not be, or read the finding of one
-          # whose red is its report. Emitting one for another is how
-          # #502 came to tell an operator to restart a control that had
-          # never stopped.
+          # whose red is its report. Emitting one for another tells an
+          # operator to restart a control that never stopped.
           if [ -n "${DEAD}" ]; then
             echo "::error::a scheduled control has STOPPED BEING SCHEDULED (${DEAD}) — nothing is checking what it guards. Re-arm its schedule; see the dead-control tracking issue."
           fi

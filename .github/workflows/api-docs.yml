@@ -44,7 +44,7 @@ jobs:
           cp -r docs/reference/api/README.md _site/README.md
           cp -r docs/reference/api/stellar-index.v1.yaml _site/stellar-index.v1.yaml
 
-      # CID-02 / CID-06 (audit-2026-07-23): both were tag-pinned in a
+      # Both were once tag-pinned in a
       # job holding id-token:write + pages:write — a mutable major tag
       # a compromised/hijacked upstream release could move. Every other
       # actions/* use in this repo is already SHA-pinned (see

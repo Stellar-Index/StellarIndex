@@ -1,11 +1,11 @@
 name: orphan-branches
 
-# Orphan-branch tripwire (the 2026-08-27/28 priceless incident).
+# Orphan-branch tripwire.
 #
 # A fix branch was pushed with no PR and no backlog line; the next day a
 # different agent re-diagnosed the same alert from scratch and fixed it
-# differently (#254), and the orphan was found only by a manual branch
-# audit. A postmortem sat on another PR-less branch for a day (#255).
+# differently, and the orphan was found only by a manual branch
+# audit. A postmortem sat on another PR-less branch for a day.
 # The contract is CONTRIBUTING.md "No orphan work": every pushed branch gets
 # a PR in the same session. This workflow is the mechanical backstop:
 # once a day it lists every remote branch (other than main and the
@@ -16,13 +16,13 @@ name: orphan-branches
 #
 # Self-contained: ${{ github.token }} via the gh CLI, no checkout, no
 # secrets. It does NOT fail the run — the issue is the surface (a red
-# scheduled run is inbox noise, see the 2026-08-24 freeze-ratchet note).
+# scheduled run is inbox noise).
 # Branches with only a CLOSED (unmerged) PR are still listed, annotated,
 # because delete_branch_on_merge only removes merged ones.
 #
 # DISPOSITIONED BRANCHES ARE NOT ORPHANS (wave-D RD-04). This repo's
 # remediation flow is: a worktree fixer pushes `fix/issue-<N>`, then a
-# BATCH PR squashes the verified subset (#353, #364). Squash-merges
+# BATCH PR squashes the verified subset. Squash-merges
 # leave no ancestry, so a landed fix branch looks identical to a
 # forgotten one — no PR, stale against main. On the first tick where
 # they cleared the 24h grace, all 17 surviving `fix/issue-*` branches
