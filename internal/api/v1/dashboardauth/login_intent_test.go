@@ -32,11 +32,11 @@ func callbackFor(plaintext string) *http.Request {
 }
 
 // TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected is
-// the C3-030 regression: the attacker requests a magic link for their
-// OWN account and mails that link to the victim. Before the
-// login-intent binding the victim's browser followed it, took the
+// the login-CSRF regression: the attacker requests a magic link for their
+// OWN account and mails that link to the victim. Without the
+// login-intent binding the victim's browser follows it, takes the
 // attacker's session cookie, and every later action the victim
-// performed landed in the attacker's dashboard.
+// performs lands in the attacker's dashboard.
 //
 // The victim's browser must not be signed in, and — because the check
 // runs before consumption — the attacker's own token must survive so
@@ -313,10 +313,10 @@ func (r *testRig) redeems(t *testing.T, plaintext string, w *httptest.ResponseRe
 	return out.Code == http.StatusSeeOther
 }
 
-// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable (#1301) — a
+// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable — a
 // user who taps "email me a link" past the send throttle must still be
 // able to open every link that WAS mailed, in the browser that asked for
-// it. Before the fix each throttled tap wrote a decoy into a 3-slot
+// it. Without this, each throttled tap writes a decoy into a 3-slot
 // cookie, so three taps left every mailed link 403ing.
 func TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable(t *testing.T) {
 	r := newTestRig(t)

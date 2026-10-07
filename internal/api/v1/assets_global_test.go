@@ -89,7 +89,7 @@ func TestAssetGet_SlugDispatch_GlobalView(t *testing.T) {
 	}
 }
 
-// TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld pins RLT-352:
+// TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld pins that
 // the global CEX/aggregator tier (populateGlobalCryptoPrice) must be
 // held to the same substance gate as the classic /v1/assets listing and
 // /v1/price, not just the on-chain fallback tier below it. Before the
@@ -347,7 +347,7 @@ func TestAssetMetadataRouteWorks(t *testing.T) {
 // /v1/coins removed (no production consumers); deprecation-header
 // test deleted along with the routes.
 
-// TestExternalAssetList_InvalidClass_400s — RLT-210: an unrecognised
+// TestExternalAssetList_InvalidClass_400s — an unrecognised
 // asset_class must reject with 400, not silently fall through to the
 // unfiltered listing (the sibling /v1/assets?asset_class= path already
 // 400s via validAssetClass; /v1/external/assets was missing the gate).

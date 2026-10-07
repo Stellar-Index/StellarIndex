@@ -19,7 +19,7 @@ import (
 // never mint a more-privileged credential than itself" holds by
 // construction. That was true of the CUSTOMER path only: POST
 // /v1/admin/keys gated on tier alone and passed the requested scopes
-// straight into the store (security review A-2, 2026-09-17).
+// straight into the store.
 //
 // The escalation is closed, not theoretical: this very handler mints
 // `tier: operator` keys WITH an explicit scope list, so a narrowed
@@ -92,7 +92,7 @@ func TestAdminKeysCreate_NarrowedOperatorCannotMintScopeItLacks(t *testing.T) {
 	if len(sink.entries) != 0 {
 		t.Fatalf("audit entries = %d, want 0 — nothing was minted", len(sink.entries))
 	}
-	// GH-1146: a refused escalation must be countable, not just logged —
+	// A refused escalation must be countable, not just logged —
 	// a scope-narrowed key repeatedly probing for escalation otherwise
 	// generates zero telemetry an alert could fire on.
 	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")), before+1; got != want {

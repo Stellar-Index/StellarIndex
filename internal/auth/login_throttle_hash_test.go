@@ -2,10 +2,8 @@ package auth
 
 import "testing"
 
-// TestHashEmail_NormalisesBeforeHashing is the LOW finding, at the unit
-// layer: hashEmail's doc promises a digest of a "lowercased email", but
-// pre-fix it hashed the raw bytes and relied on every caller to normalise
-// first. This pins the self-enforcing invariant — case + surrounding
+// TestHashEmail_NormalisesBeforeHashing pins, at the unit layer, that
+// hashEmail does not rely on callers to normalise first: case + surrounding
 // whitespace are folded away BEFORE hashing, so every spelling of one inbox
 // maps to the same Redis key fragment (one throttle bucket).
 func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
@@ -35,7 +33,7 @@ func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
 // Case+trim alone gave `<v@x.com>` and `"n" <v@x.com>` their own 5/hour
 // budgets while all of them deliver to the same mailbox, so the per-email
 // cap — whose entire purpose is bounding inbox-bombing — was bypassable by
-// re-spelling the target (cold audit 2026-08-03).
+// re-spelling the target.
 func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 	t.Parallel()
 
@@ -61,7 +59,7 @@ func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 }
 
 // Unparseable input must never panic or collapse to a shared bucket — it
-// falls back to case+trim, which is exactly the pre-fix behaviour.
+// falls back to case+trim.
 func TestHashEmail_UnparseableFallsBackToCaseTrim(t *testing.T) {
 	t.Parallel()
 
@@ -73,7 +71,7 @@ func TestHashEmail_UnparseableFallsBackToCaseTrim(t *testing.T) {
 	}
 }
 
-// RLT-324 / RSEC-N2: a `+tag` subaddress or a gmail dot re-spelling must
+// A `+tag` subaddress or a gmail dot re-spelling must
 // share the target inbox's bucket, or an attacker mints a fresh 5/hour
 // budget per spelling and the per-email cap never engages.
 func TestHashEmail_PlusTagAndGmailDotFolding(t *testing.T) {

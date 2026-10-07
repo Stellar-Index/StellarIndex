@@ -16,7 +16,7 @@ import (
 // contract: the first presentation of a ceremony claims it, every
 // later presentation of the SAME ceremony is refused. That refusal is
 // what stops a captured `/v1/auth/passkey/finish-login` request from
-// minting a second session. audit-2026-08-13.
+// minting a second session.
 func TestRedisPasskeyCeremonyGuard_ConsumeIsOneShot(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -85,7 +85,7 @@ func TestRedisPasskeyCeremonyGuard_KeyNamespace(t *testing.T) {
 // it; a swallowed error would silently disable replay protection.
 func TestRedisPasskeyCeremonyGuard_ErrorPropagates(t *testing.T) {
 	mr := redistest.Run(t)
-	mr.Kill() // the store is now unreachable
+	mr.Kill() // the store is unreachable
 
 	claimed, err := NewRedisPasskeyCeremonyGuard(mr.Client).Consume(context.Background(), "digest", time.Minute)
 	if err == nil {

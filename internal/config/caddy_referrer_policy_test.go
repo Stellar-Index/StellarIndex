@@ -10,7 +10,7 @@ import (
 // in front of `Referrer-Policy`, if any.
 var caddyReferrerPolicyPattern = regexp.MustCompile(`(?m)^\s*(\S*)Referrer-Policy\s+"`)
 
-// TestCaddyReferrerPolicyDoesNotOverrideTheAPI pins #605: the API sets
+// TestCaddyReferrerPolicyDoesNotOverrideTheAPI pins that the API sets
 // `Referrer-Policy: no-referrer` itself
 // (internal/api/v1/middleware/security_headers.go), because
 // `/v1/auth/callback?token=…` and `/v1/signup/verify?token=…` are

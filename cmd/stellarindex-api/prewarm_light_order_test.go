@@ -34,7 +34,7 @@ func (o *orderLog) snapshot() []string {
 }
 
 // orderedAssetsReader wraps stubAssetsReader, additionally recording the
-// native/verified-asset calls T653 is about into a shared, cross-reader
+// native/verified-asset calls into a shared, cross-reader
 // order log.
 type orderedAssetsReader struct {
 	stubAssetsReader
@@ -75,12 +75,12 @@ func (r *orderedMarketsReader) SourceMarkets(ctx context.Context, source, cursor
 }
 
 // TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops is
-// the regression guard for T653.
+// the regression guard for that ordering.
 //
 // assetsReaderCtx carries a 20s budget, wholly separate from the
 // markets/pools/per-DEX/per-CEX work's 5-minute mkCtx. If the
 // native-asset and verified-asset-detail prewarm calls run AFTER that
-// ~95-line block of markets-reader calls (as they did pre-fix), most or
+// ~95-line block of markets-reader calls (the wrong order), most or
 // all of the 20s budget is gone by the time they run on a cold cache —
 // so on a real cold start they lose the race against assetsReaderCtx's
 // deadline. This asserts they instead run before any markets-reader
@@ -96,7 +96,7 @@ func TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops(t *testin
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
 	// catalogueLen large enough that catalogueFillPrewarmOptions adds
-	// nothing here — this test is about T653's call ordering, not T279.
+	// nothing here — this test is about call ordering, not catalogue fill.
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers,
 		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil, nil, noCatalogueFillTestLen)
 

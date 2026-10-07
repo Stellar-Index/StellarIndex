@@ -22,9 +22,9 @@ func (flaggedScamDirectory) DirectoryEntryByAddress(_ context.Context, _ string)
 	return timescale.DirectoryEntry{Tags: []string{"scam"}}, true, nil
 }
 
-// TestDEXTVLValueGate_CountsAFlaggedTokenOnce (GH-1054): the TVL refresh
+// TestDEXTVLValueGate_CountsAFlaggedTokenOnce : the TVL refresh
 // asks one question per reserve token — may its value be published —
-// and used to ask it once per backing quote, so a flagged issuer read as
+// and must not ask it once per backing quote, or a flagged issuer reads as
 // 2 + len(usd pegs) withheld serves per refresh for one issuer verdict.
 func TestDEXTVLValueGate_CountsAFlaggedTokenOnce(t *testing.T) {
 	token, err := canonical.NewClassicAsset("FLAG", "GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")

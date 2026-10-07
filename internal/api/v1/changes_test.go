@@ -51,9 +51,9 @@ func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entity
 // TestHandleChangeSummary_ResolvesXLMSACForm is the C4-015 proven-red
 // guard: when the change-summary worker has written the XLM rollup
 // only under the SAC C-address (a Soroban-sourced row), a caller
-// asking for /v1/changes/coin/native must still resolve it. Pre-fix
-// the candidate set for `native` was [native, crypto:XLM] — the SAC
-// form was omitted, so the lookup 404'd.
+// asking for /v1/changes/coin/native must still resolve it. Without the SAC form
+// the candidate set for `native` would be [native, crypto:XLM] — the SAC
+// form omitted, so the lookup would 404.
 func TestHandleChangeSummary_ResolvesXLMSACForm(t *testing.T) {
 	reader := &keyedChangeSummaryReader{
 		rows: map[string]timescale.ChangeSummaryRow{
@@ -398,7 +398,7 @@ func TestHandleChangeSummary_StaleFlag(t *testing.T) {
 // /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
 // (like every other money field the API serves), while the *_delta_pct
 // PERCENTAGE fields stay JSON numbers. The stub feeds the rollup's exact
-// decimal row values (GH #602) through the handler unchanged.
+// decimal row values through the handler unchanged.
 func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
 	h1, h24 := "0.20380247911865504", "0.19673099518995452"
 	hd24 := 3.784588530467602

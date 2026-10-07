@@ -7,15 +7,13 @@ import (
 	"testing"
 )
 
-// TestHubTopicRetentionIsWiredFromConfig is the wiring guard for GH-1128:
+// TestHubTopicRetentionIsWiredFromConfig is the wiring guard for:
 // streaming.Hub.SetTopicIdleTTL / SetMaxTopics have existed on the Hub
 // since it shipped — NewHub's own godoc names them as the override path —
 // but a repo-wide grep found nothing non-test calling them, so every
 // deployment silently ran the compiled-in defaults (idle TTL 15m, max
 // topics 4096) with no operator lever, the same dead-knob shape
-// AGT-dead-code (audit-2026-07-23) found and closed for
-// streaming.SetMaxConcurrentStreams and T674 closed for the tip-producer
-// ceiling.
+// streaming.SetMaxConcurrentStreams and the tip-producer ceiling.
 //
 // Read from the AST — like TestTipProducerCeilingIsWiredFromConfig in this
 // package — because the wiring lives inside run()'s server construction,

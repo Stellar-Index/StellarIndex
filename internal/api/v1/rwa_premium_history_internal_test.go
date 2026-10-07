@@ -125,7 +125,7 @@ func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 // from the pricingguard package defaults — comparing against the
 // defaults themselves would pass unconditionally regardless of whether
 // [Server.rwaPremiumDayFloorFor] ever reads the configured value at
-// all (RLT-041's finding about the prior version of this test).
+// all.
 //
 // The bucket leg is deliberately NOT the serving default and is pinned
 // separately below, with the reason.
@@ -427,7 +427,7 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 // recover was added, that panic escaped cachedRWAPremiumHistory with
 // s.rwaPremFlight still pointing at a channel nobody would ever close — every
 // later caller queued on it and /v1/rwa/premium never served again for the
-// life of the process (RLT-098, same class as GH-587). This proves the
+// life of the process. This proves the
 // single-flight gate clears and a following call is served rather than
 // hanging.
 func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *testing.T) {

@@ -30,7 +30,7 @@ import (
 // Each surface that reads across the boundary adds its constant here.
 // The creators board is on this list because it silently did NOT read
 // across it: its cycle read only the pre-P23 representation, so it
-// ranked creators over a population that ended at the boundary (#493).
+// ranked creators over a population that ended at the boundary.
 func TestP23BoundaryConstantsAgree(t *testing.T) {
 	if classicmovements.P23StartLedger != timescale.SEP41MovementsFloorLedger {
 		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != timescale.SEP41MovementsFloorLedger=%d",
@@ -126,7 +126,7 @@ func TestExplorer_AccountMovements_Merge(t *testing.T) {
 	}
 	mustDecode(t, resp, &body)
 
-	// Site audit 2026-08-08: the healthy-path note is now ALWAYS present —
+	// The healthy-path note is ALWAYS present —
 	// it discloses the post-P23 watched-token scope (classic XLM payments
 	// after P23 aren't served on this feed yet), so a busy XLM account's
 	// feed can't silently masquerade as complete.

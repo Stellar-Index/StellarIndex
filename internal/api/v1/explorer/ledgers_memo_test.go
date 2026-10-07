@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestTxSummaryView_MemoBase64_NonUTF8 pins GH-1140: a MEMO_TEXT memo is
+// TestTxSummaryView_MemoBase64_NonUTF8 pins the memo_base64 field: a MEMO_TEXT memo is
 // opaque XDR bytes, not guaranteed UTF-8. Without memo_base64, marshaling the
 // response silently replaces invalid bytes with U+FFFD — this proves the
 // wire JSON carries a lossless companion that round-trips the exact bytes.

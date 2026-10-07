@@ -38,7 +38,7 @@ func tvlTestAquaSAC(t *testing.T) (sac string, classic canonical.Asset) {
 	return sac, aqua
 }
 
-// TestDEXTVLCache_SelfListedTokenIsNotValued is the #985 regression.
+// TestDEXTVLCache_SelfListedTokenIsNotValued is a regression test.
 //
 // The pool registry is fed by the factory, and the factory lets anyone
 // pair any token, so a self-listed token's reserve magnitude AND its

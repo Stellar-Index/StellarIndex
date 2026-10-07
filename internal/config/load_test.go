@@ -74,7 +74,7 @@ metrics_listen = "127.0.0.1:9464"
 	}
 }
 
-// TestLoadReader_RedisClosedBucketChannel — RLT-347: the closed-bucket
+// TestLoadReader_RedisClosedBucketChannel — the closed-bucket
 // stream channel must be a real config key that round-trips into
 // StorageConfig, not silently dropped, so cmd/stellarindex-aggregator
 // and cmd/stellarindex-api can wire operator-chosen channel partitioning
@@ -254,8 +254,8 @@ nonsense_field = "oops"
 	}
 }
 
-// TestLoadReader_retiredKeyWarnsInsteadOfFailing — #890: deleting a field
-// from Config used to turn every self-hosted deployment whose config
+// TestLoadReader_retiredKeyWarnsInsteadOfFailing — deleting a field
+// from Config would turn every self-hosted deployment whose config
 // descended from an old configs/example.toml into a boot-fatal "unknown
 // keys" error. A key registered on cfg.RetiredKeys must be tolerated
 // (warn, not fail) while a genuinely unknown key next to it still errors.
@@ -356,7 +356,7 @@ func TestLoad_ExampleConfigValid(t *testing.T) {
 // gated behind {% if run_aggregator %} (on for r1/pubnet, off for the lean
 // test nets) — so the extractor drops jinja control lines to reconstruct the
 // r1 render (aggregator on → body present). Pins the two operator-approved
-// entries (2026-08-24): AUDD → AUD and, transitively via the AUDD↔AUDR par
+// entries: AUDD → AUD and, transitively via the AUDD↔AUDR par
 // corridor, AUDR → AUD.
 func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
@@ -428,11 +428,10 @@ func TestAnsibleFiatPegStanza_ValidAndComplete(t *testing.T) {
 
 // TestAnsibleCookieDomain_DefaultsHostOnly pins the r1 template's
 // cookie_domain jinja default against config.go's documented-safe
-// default (RSEC-A3): CookieDomain's doc says empty means a host-only
-// cookie scoped to the API host, but the shipped ansible default used
-// to silently override that with a shared-subdomain value whenever the
-// operator var was unset — every r1 deploy shipped the wide cookie by
-// default, not the documented safe one.
+// default: CookieDomain's doc says empty means a host-only
+// cookie scoped to the API host, but a shipped ansible default could
+// silently override that with a shared-subdomain value whenever the
+// operator var was unset, shipping the wide cookie by default.
 func TestAnsibleCookieDomain_DefaultsHostOnly(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -570,11 +569,11 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins A16-01
-// (audit-2026-06-14): S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env
+// TestApplyEnvOverrides_DoesNotCorruptS3KeyNames pins that
+// S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env
 // var carrying the credential (buildS3Client does os.Getenv on them), NOT the
 // value. ApplyEnvOverrides must NOT overwrite the name with the secret value —
-// doing so made os.Getenv("AKIA…")→"" and silently dropped S3 static creds.
+// doing so makes os.Getenv("AKIA…")→"" and silently dropped S3 static creds.
 func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
 	t.Setenv("STELLARINDEX_S3_ACCESS_KEY", "AKIAEXAMPLE")
 	t.Setenv("STELLARINDEX_S3_SECRET_KEY", "supersecret")
@@ -630,8 +629,7 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 }
 
-// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — CFG-01
-// (audit-2026-07-23). Asserts the corrected value: ApplyEnvOverrides
+// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — ApplyEnvOverrides
 // returns exactly the config-path of each field an env var actually
 // replaced, and nothing for vars that were unset/empty — the data
 // LoadWithEnv logs so an operator can see WHICH fields the
@@ -686,8 +684,7 @@ func TestApplyEnvOverrides_NoOverridesReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestLoadWithEnv_LogsOverriddenFieldsWithoutValues — CFG-01
-// (audit-2026-07-23). LoadWithEnv must log which fields an env
+// TestLoadWithEnv_LogsOverriddenFieldsWithoutValues — LoadWithEnv must log which fields an env
 // override touched, and must NEVER log the field's value (most
 // overridden fields are secrets by construction).
 func TestLoadWithEnv_LogsOverriddenFieldsWithoutValues(t *testing.T) {

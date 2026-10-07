@@ -1,6 +1,6 @@
 package v1_test
 
-// Home-domain identity precedence (2026-08-06). Founding case: the
+// Home-domain identity precedence. Founding case: the
 // ex-apay ETH issuer GBFXOHVAS… — its on-chain home_domain has said
 // ultracapital.xyz since Ultra Stellar acquired apay.io's wrapped
 // assets, but /v1/assets/ETH-GBFXOHVAS… rendered "apay.io" (and
@@ -58,7 +58,7 @@ func TestAssetGet_OnChainHomeDomainBeatsCuratedMap(t *testing.T) {
 
 // TestAssetGet_CuratedMapStillFillsWhenChainSilent — no explorer
 // reader wired (or the account is unobserved) keeps the curated map
-// as the working fallback; this is the pre-existing R-016 behavior
+// as the working fallback; this is the established behavior
 // the precedence change must not regress.
 func TestAssetGet_CuratedMapStillFillsWhenChainSilent(t *testing.T) {
 	issuer := testUSDCIssuer
@@ -129,10 +129,10 @@ func TestIssuerGet_OnChainBeatsCuratedMap(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_ScamSuppressionSurvivesAccountState — S-010: for a
+// TestIssuerGet_ScamSuppressionSurvivesAccountState — for a
 // flagged, unverified issuer, the self-declared identity IS the
-// impersonation. Before the 2026-08-06 reorder the suppression ran
-// ahead of the account-state enrich, which then refilled the cleared
+// impersonation. The suppression must not run
+// ahead of the account-state enrich, which would refill the cleared
 // home_domain straight from the scammer's own on-chain field.
 func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 	const scam = "GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK"
@@ -173,7 +173,7 @@ func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain — RSEC-V1 / RLT-470.
+// TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain.
 //
 // The stored column is a COPY of the AccountEntry field, and between its
 // two writers it was write-once, so a value in it is at best an older
@@ -192,7 +192,7 @@ func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
 		row: timescale.IssuerRow{
 			GStrkey: anchor,
 			// What the write-once column froze: the domain the anchor
-			// used to declare and no longer does.
+			// declared before it lapsed.
 			HomeDomain: "lapsed-former.example",
 		},
 	}

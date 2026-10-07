@@ -13,19 +13,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
-// The signup throttle mirrors ratelimit.Bucket's dwell clock (REL-06)
-// and inherited its blind spot with it: the per-IP increment ran on the
-// CALLER's context, and the throttle cannot tell a caller-cancelled call
-// from a Redis outage. A client that posts a signup and immediately RSTs
-// a few times a second therefore kept redisErrorSince armed — the 30 s
-// unbroken-success streak that disarms it can never accumulate — and
-// past the window CheckIP answered ErrThrottleUnavailable, so the signup
-// handler 503'd EVERY caller while Redis was healthy
-// (REL-06 F059, reverification-2026-09-18).
+// The signup throttle mirrors ratelimit.Bucket's dwell clock. The
+// per-IP increment must not run on the CALLER's context: the throttle
+// cannot tell a caller-cancelled call from a Redis outage. A client that
+// posts a signup and immediately RSTs a few times a second would keep
+// redisErrorSince armed — the 30 s unbroken-success streak that disarms
+// it can never accumulate — and past the window CheckIP would answer
+// ErrThrottleUnavailable, so the signup handler would 503 EVERY caller
+// while Redis was healthy.
 //
 // The second half matters just as much: an attempt that errors out is an
-// attempt that was never COUNTED, so aborting mid-flight bought
-// unlimited uncounted attempts — precisely the bulk-mint vector F-1232
+// attempt that was never COUNTED, so aborting mid-flight would buy
+// unlimited uncounted attempts — the bulk-mint vector the throttle
 // exists to close.
 //
 // Redis is HEALTHY throughout; every failure below is manufactured by
@@ -57,7 +56,7 @@ func TestRedisSignupIPThrottle_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	})
 	const ip = "203.0.113.9"
 
-	// First abort: arms the dwell clock pre-fix.
+	// First abort: would arm the dwell clock if not detached.
 	if err := tt.CheckIP(deadContext(), ip); err != nil {
 		t.Fatalf("aborted attempt returned %v, want nil — the increment must still reach a HEALTHY "+
 			"Redis; an error here is an UNCOUNTED signup attempt, which is free bulk-mint capacity", err)
@@ -99,7 +98,7 @@ func TestRedisSignupIPThrottle_AbortedAttemptsStillCountTowardTheCap(t *testing.
 
 // Blast-radius guard: detaching from the CALLER's cancellation must not
 // detach from the BACKEND's failure. A genuinely broken Redis still has
-// to arm the clock and fail closed past the window (F-0049 / F-0149).
+// to arm the clock and fail closed past the window.
 func TestRedisSignupIPThrottle_RealOutageStillFailsClosed(t *testing.T) {
 	mr := redistest.Run(t)
 	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)

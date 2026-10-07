@@ -15,8 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the task-#13 contract (2026-07-31): no user request
-// ever pays for a cold protocol-analytics build, previously-built detail
+// These tests pin the contract: no user request
+// ever pays for a cold protocol-analytics build, built detail
 // views stale-serve (never blank), and analytics degradation is explicit
 // on the wire (analytics.status) instead of masquerading as zeros.
 
@@ -91,7 +91,7 @@ func waitProtoDetailIdle(t *testing.T, s *Server, key string) {
 // full sweep builds EVERY registry protocol × every ?days= window into
 // the detail cache (each entry healthy: analytics.status "ok", bespoke
 // present) and that every rebuild observed the paired
-// stellarindex_protocol_detail_refresh metrics (the wave-88…91
+// stellarindex_protocol_detail_refresh metrics (the
 // counter+histogram pattern, asserted via obstest because per-label
 // histogram children aren't Collectors).
 func TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow(t *testing.T) {
@@ -154,7 +154,7 @@ func getProtoDetail(t *testing.T, base, name string) (int, protoDetailEnvelope) 
 }
 
 // TestHandleProtocolDetail_StaleServeNeverBlanks verifies the SWR
-// contract on the detail route: a previously-built view past its TTL is
+// contract on the detail route: a built view past its TTL is
 // served IMMEDIATELY with flags.stale + analytics.status "stale" — the
 // bespoke block never blanks — while one detached rebuild runs, after
 // which the next request is fresh again.

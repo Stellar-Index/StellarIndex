@@ -42,7 +42,7 @@ func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, 
 	return s.value, s.bucketAt, res, s.err
 }
 
-// TestHandlePriceAt pins board #46: a historical instant serves the
+// TestHandlePriceAt pins that a historical instant serves the
 // closed bucket at-or-before it with the BUCKET's own observed_at;
 // a bucket older than the 24h honesty cap 404s instead of
 // fabricating continuity; future ts and missing ts are 400s.
@@ -104,7 +104,7 @@ func TestHandlePriceAt(t *testing.T) {
 	}
 }
 
-// TestHandlePriceAt_WithheldDistinctFromNotFound pins RLT-454: a
+// TestHandlePriceAt_WithheldDistinctFromNotFound pins that a
 // reader that returns ErrPriceWithheld (the pair HAS a closed bucket
 // but the substance/scam gate refuses to publish it) must 404 with the
 // distinct errors/price-withheld type, not the generic

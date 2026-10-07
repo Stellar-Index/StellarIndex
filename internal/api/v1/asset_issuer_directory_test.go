@@ -22,7 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The exact asset from the 2026-08-24 operator report.
+// The exact asset from an operator report.
 const (
 	scamAUDIssuer = "GAIF52QZUPYCADXF7I7RNPMED7DT2B5JGPR7DEHCC5TPDPUJTMLGGAUD"
 	scamAUDDomain = "audrev-stellar.com"
@@ -136,7 +136,7 @@ func TestAssetGet_IssuerDirectoryTags_Surfaced(t *testing.T) {
 }
 
 // TestAssetGet_ScamDirectoryTag_WithholdsPrice — the scam-pricing gate
-// (2026-08-25 decision, deliberately overturning the old display-only
+// (deliberately overturning the old display-only
 // invariant): a scam-class-tagged issuer (malicious/unsafe/fraud/scam/
 // hack/phishing) has its published price_usd + market_cap WITHHELD, so a
 // scam token can't show a value that lends it legitimacy — even when its
@@ -240,7 +240,7 @@ func TestAssetList_IssuerDirectoryTags_BatchedNoN1(t *testing.T) {
 	}
 }
 
-// TestAssetGet_DirectoryReadFailure_WithholdsPrice — RLT-089. A failed
+// TestAssetGet_DirectoryReadFailure_WithholdsPrice — a failed
 // directory read means nobody checked the issuer for a scam flag, so the
 // detail page must not publish the price it would have withheld had the
 // read answered. The labels stay omitted: a failed read accuses no one.
@@ -267,8 +267,8 @@ func TestAssetGet_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
 	}
 }
 
-// TestAssetList_DirectoryReadFailure_WithholdsPrice — RLT-089, listing
-// side. The batch read failing used to skip the stamp+suppress loop for
+// TestAssetList_DirectoryReadFailure_WithholdsPrice — listing
+// side. The batch read failing must not skip the stamp+suppress loop for
 // the whole page; every issuer-bearing row must be withheld instead.
 func TestAssetList_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
 	aud, err := canonical.NewClassicAsset("AUD", scamAUDIssuer)

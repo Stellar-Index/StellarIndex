@@ -7,7 +7,7 @@ import (
 )
 
 // TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError is the store
-// contract behind the operator kill switch (GH-628): a revoke that matched
+// contract behind the operator kill switch: a revoke that matched
 // no key must be distinguishable from one that killed a credential. A nil
 // here let DELETE /v1/admin/keys/{id} answer 204 and write a key.revoke
 // audit row for a typo'd identifier while the leaked key kept working.

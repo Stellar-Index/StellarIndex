@@ -51,17 +51,13 @@ const reservationSlack = time.Minute
 // It is not the SHA-256 of the raw
 // caller-supplied base64 string, which is not a canonical identity for a
 // transaction — distinct strings decode to the same envelope, so one
-// redemption could be replayed simply by re-spelling it. Two
-// re-spellings were confirmed against this SDK to pass ReadChallengeTx +
-// VerifyChallengeTxSigners unchanged (see the CON-05 regression test):
-// swapping the order of the envelope's decorated signatures, and
-// inserting a "\n" into the base64 (Go's decoder skips "\r"/"\n"). Each
-// produced a fresh, unused dedupe key for the identical challenge, so
-// the replay guard could be walked straight past: capture one signed XDR
-// (XSS exfil from a client wallet is the threat model that motivated the
-// guard) and mint a JWT stream for the rest of the challenge window.
-// Hashing the parsed transaction removes the whole class — the identity
-// is now the transaction, not its spelling.
+// redemption could be replayed simply by re-spelling it. Reordering the
+// envelope's decorated signatures, or inserting a "\n" into the base64
+// (Go's decoder skips "\r"/"\n"), both pass ReadChallengeTx +
+// VerifyChallengeTxSigners unchanged yet yield a fresh dedupe key, so a
+// captured signed XDR (XSS exfil from a client wallet is the threat
+// model) could mint JWTs for the rest of the challenge window.
+// Hashing the parsed transaction removes the whole class.
 func challengeTxHash(tx *txnbuild.Transaction, networkPassphrase string) (string, error) {
 	h, err := tx.HashHex(networkPassphrase)
 	if err != nil {
@@ -320,8 +316,8 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 
 	// Replay defence: spend the reservation [Validator.Challenge] made
 	// for this challenge TRANSACTION — keyed on the parsed tx's
-	// canonical hash, not on the caller's spelling of the XDR (CON-05;
-	// see [challengeTxHash]). A second submission, however re-encoded,
+	// canonical hash, not on the caller's spelling of the XDR (see
+	// [challengeTxHash]). A second submission, however re-encoded,
 	// or one whose reservation was evicted, returns ErrUnauthorized
 	// before we issue a JWT. Claiming AFTER verifyClientSignatures
 	// means bogus / unsigned XDR can never burn a real reservation.

@@ -12,7 +12,7 @@ import (
 )
 
 // TestOraclePricesSpecDocumentsAsset and TestPoolsSpecDocumentsPagination
-// close RLT-127: `/v1/oracle/prices` rows always carry `asset`
+// close the gap: `/v1/oracle/prices` rows always carry `asset`
 // (handleOraclePrices builds SEP40Price{Asset: asset.String(), ...} for
 // every row — oracle_sep40.go) and `/v1/pools` serves a `pagination`
 // cursor on non-final pages, but the OpenAPI schemas for both response

@@ -14,8 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the /v1/accounts degraded contract (route-sweep
-// 2026-07-29): a wealth snapshot past its refresh TTL is SERVED — 200 +
+// These tests pin the /v1/accounts degraded contract:
+// a wealth snapshot past its refresh TTL is SERVED — 200 +
 // flags.stale + the snapshot's real as_of — never 503'd; only a process
 // that has never computed a ranking at all returns the 503 warming state.
 
@@ -38,7 +38,7 @@ func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string,
 	return clickhouse.AccountWealthSnapshot{Rows: r.rows, Basis: basis, AsOf: r.asOf, AsOfLedger: r.ledger}, r.ok
 }
 
-// TestAccountsList_AsOfLedgerIsSnapshotVintage pins #621: as_of_ledger must
+// TestAccountsList_AsOfLedgerIsSnapshotVintage pins that as_of_ledger must
 // be the ledger the served ranking was computed at, not a serve-time
 // watermark read that can be up to a whole cache TTL newer than the rows.
 func TestAccountsList_AsOfLedgerIsSnapshotVintage(t *testing.T) {

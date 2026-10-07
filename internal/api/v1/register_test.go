@@ -362,7 +362,7 @@ func TestRegister_EmptyBody(t *testing.T) {
 	}
 }
 
-// TestRegister_ThrottleReturns429 — the F-1232 per-IP signup throttle
+// TestRegister_ThrottleReturns429 — the per-IP signup throttle
 // gates /v1/register with the SAME budget as /v1/signup.
 func TestRegister_ThrottleReturns429(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
@@ -595,7 +595,7 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 // permanent active account + api_keys pair that can never authenticate
 // and that ReapSuspendedOrphans structurally cannot match.
 //
-// RED on the pre-fix ordering (Postgres key committed BEFORE the mirror,
+// RED on the wrong ordering (Postgres key committed BEFORE the mirror,
 // no suspend on failure): the api_keys row persists AND the account stays
 // active.
 func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
@@ -641,7 +641,7 @@ func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
 // unrevokable key" hazard mirror-first would otherwise introduce), and
 // the orphan account is still suspended for the reaper.
 //
-// RED on the pre-fix ordering: the mirror ran AFTER the key store, so a
+// RED on the wrong ordering: the mirror runs AFTER the key store, so a
 // key-store failure returned before any mirror write — the mirror is
 // never called (call==0) and never rolled back.
 func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
@@ -673,7 +673,7 @@ func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
 	}
 }
 
-// TestRegister_RequiresContentType is the audit-2026-08-13 F4
+// TestRegister_RequiresContentType is the CORS
 // regression: a header-less POST is a CORS *simple* request, so
 // `fetch(url, {method:"POST", mode:"no-cors"})` on any page created an
 // account + a permanent credential per visitor and burned a token from
@@ -715,7 +715,7 @@ func repoRootForRegisterDocsTest(t *testing.T) string {
 }
 
 // TestRegisterDocsCurlExamplesIncludeContentTypeHeader guards
-// CA2-A06-correct-0 / CA2-A06-harden-5: requireJSONContentType
+// that requireJSONContentType
 // (csrf.go) unconditionally 415s a header-less POST /v1/register — the
 // header is REQUIRED, not merely validated when present (a header-less
 // POST is itself a CORS *simple* request no preflight would catch), as

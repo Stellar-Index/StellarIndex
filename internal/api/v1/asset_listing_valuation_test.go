@@ -37,7 +37,7 @@ func assetListingCacheTestServer(reader AssetListingDirectoryReader) *Server {
 // inside its 60s TTL. A request that happens to trigger a refresh must
 // not be able to poison that cache for everyone else by disconnecting
 // mid-read: the read has to run on a context detached from the
-// caller's, the same way the curated cache's does (GH-523).
+// caller's, the same way the curated cache's does.
 func TestAssetListingSnapshot_ReadDoesNotInheritCallerCancellation(t *testing.T) {
 	reader := &blockingAssetListingReader{rows: map[string]timescale.ListingEntry{
 		"CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4": {

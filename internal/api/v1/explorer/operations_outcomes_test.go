@@ -109,7 +109,7 @@ func TestOpRowTxKeys(t *testing.T) {
 // when BOTH the row's ledger and its hash were asked for. That is the whole
 // point — it is not a yes-man mock. Hand it the page's exact ledger set and it
 // finds every transaction; hand it a [lo,hi] SPAN flattened into two values
-// (what opRowTxKeys used to produce) and it finds only the two endpoint
+// (the shape a span-flattening key builder would produce) and it finds only the two endpoint
 // ledgers, which is the shape of the production bug.
 type lakeOutcomeReader struct {
 	*capReader
@@ -132,7 +132,7 @@ func (r *lakeOutcomeReader) TxOutcomesByHash(_ context.Context, ledgers []uint32
 	return out, nil
 }
 
-// TestStampTxOutcomes_IdleAccountPageIsFullyStamped is the #332 F1 regression:
+// TestStampTxOutcomes_IdleAccountPageIsFullyStamped is a regression test:
 // at the explorer's own PAGE_SIZE=50, an IDLE account's page straddles millions
 // of ledgers, and keying the parent-transaction read on that SPAN instead of on
 // the page's exact ledgers made the read scale with the account's idleness
@@ -142,7 +142,7 @@ func (r *lakeOutcomeReader) TxOutcomesByHash(_ context.Context, ledgers []uint32
 // coverage note — D-PART-FAILEDTX degraded to its fallback on the DEFAULT path.
 func TestStampTxOutcomes_IdleAccountPageIsFullyStamped(t *testing.T) {
 	// 50 ops, one per ledger, ~50k ledgers apart — a real idle-account page
-	// shape (r1 2026-09-03: spans of 2.5M-42M ledgers are ordinary).
+	// shape (spans of 2.5M-42M ledgers are ordinary on r1).
 	const pageSize = 50
 	rows := make([]clickhouse.OpRow, pageSize)
 	lake := map[uint32]map[string]clickhouse.TxOutcome{}

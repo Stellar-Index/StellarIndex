@@ -67,10 +67,10 @@ func getPegAssetDetail(t *testing.T, srv *v1.Server, assetID string) v1.AssetDet
 }
 
 // TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg — the
-// detail-path half of the 2026-08-24 AUDD fix, end-to-end through
+// detail-path half of the AUDD fix, end-to-end through
 // handleAssetGet: the asset-catalogue overlay carries the dust-authored
-// $0.78 price the substance gate withholds on the listing, and pre-fix
-// applyAssetRowToDetail copied it onto the detail UNGATED — so the
+// $0.78 price the substance gate withholds on the listing, and without the gate
+// applyAssetRowToDetail would copy it onto the detail UNGATED — so the
 // listing served the $0.655 peg while the detail presented $0.78 as a
 // market price, and the nil-only peg fill never ran. With the overlay
 // gated by the same per-pair verdict, the detail now serves the
@@ -99,7 +99,7 @@ func TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg(t *testing.T) {
 	}
 }
 
-// TestAssetGet_SubstanceGate_NonPeggedDustDetailWithheld — #28
+// TestAssetGet_SubstanceGate_NonPeggedDustDetailWithheld —
 // closure for every asset, not just pegged ones: a NON-configured
 // asset whose only price is the ungated catalogue overlay now has that
 // price (and the pills derived from it) withheld on the detail path,

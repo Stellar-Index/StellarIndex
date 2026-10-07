@@ -11,7 +11,7 @@ import (
 // A pooled-liquidity protocol may be summed into the headline total, or
 // it may be left out — but it may never be left out SILENTLY.
 //
-// The failure this guards is the one sushiswap_v3 shipped with (#350).
+// The failure this guards is the one sushiswap_v3 shipped with.
 // The protocol was registered, its trades served, and its category
 // "amm" — and the TVL surface said nothing about it at all: it was
 // absent from tvl_total.excluded, so a reader adding up the headline had
@@ -47,7 +47,7 @@ func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 		// sorocredit, defindex, upshift) already carry their own
 		// exclusion for a different reason. "yield" is included because
 		// a vault's AUM is the same double-count/no-current-state-figure
-		// shape a reader would otherwise expect summed here (GH-1083).
+		// shape a reader would otherwise expect summed here.
 		if p.Category != "amm" && p.Category != "dex" && p.Category != "yield" {
 			continue
 		}

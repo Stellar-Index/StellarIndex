@@ -28,9 +28,9 @@ import (
 //
 // What that costs is a silent-divergence risk on the parts they DO
 // both state, and it has already been paid. The endpoint's
-// outlier-filter note was corrected on 2026-08-04 — /v1/vwap and
+// outlier-filter note says — /v1/vwap and
 // /v1/twap default to UNFILTERED, and volume-weighting is not an
-// outlier defence — while the page went on telling readers their VWAP
+// outlier defence — while the page must not keep telling readers their VWAP
 // was MAD-filtered. Nothing failed, because prose is not compiled.
 // The page is the copy a reader trusts, so the page was the copy that
 // was wrong.
@@ -43,7 +43,7 @@ const methodologyPagePath = "web/explorer/src/app/methodology/page.tsx"
 
 // anomaliesPagePath is the /anomalies page's REASONS list — the same
 // drift risk as /methodology, for the freeze-reason vocabulary
-// instead of the pricing vocabulary (GH-1079).
+// instead of the pricing vocabulary.
 const anomaliesPagePath = "web/explorer/src/app/anomalies/page.tsx"
 
 // freezeEventsSourcePath is mapFreezeReason's home. It is unexported
@@ -53,8 +53,8 @@ const anomaliesPagePath = "web/explorer/src/app/anomalies/page.tsx"
 // range.
 const freezeEventsSourcePath = "internal/storage/timescale/freeze_events.go"
 
-// TestAnomaliesPage_ReasonsAreReachable pins GH-1079: the /anomalies
-// page's REASONS list used to include `single_source` and `manual`,
+// TestAnomaliesPage_ReasonsAreReachable pins that the /anomalies
+// page's REASONS list must not include `single_source` and `manual`,
 // neither of which mapFreezeReason ever returns — a reader could look
 // for a freeze reason on the timeline that the automated mapper is
 // structurally incapable of writing. Every name the page lists as a
@@ -213,7 +213,7 @@ func TestMethodologyPage_ADRCitationsResolve(t *testing.T) {
 // classes" and then names them. That count and those names are the
 // endpoint's to define. If a class is added, renamed or dropped, the
 // page must move with it — otherwise a reader is handed a taxonomy
-// the API no longer uses.
+// the API does not use.
 func TestMethodologyPage_SourceClassesMatchTheEndpoint(t *testing.T) {
 	page := methodologyReadRepoFile(t, methodologyPagePath)
 	data := servedMethodology(t)

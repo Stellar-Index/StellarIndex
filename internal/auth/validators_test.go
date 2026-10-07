@@ -22,7 +22,7 @@ func TestNoopAPIKeyValidator_FailLoud(t *testing.T) {
 // stub. All three protocol functions return ErrNotImplemented;
 // the middleware translates that to 404 so an operator sees the
 // misconfiguration on the first failed request rather than
-// discovering it from a security audit later.
+// discovering it later.
 func TestNoopSEP10Validator_FailLoud(t *testing.T) {
 	v := NoopSEP10Validator{}
 	if _, err := v.Challenge(context.Background(), "GA…"); !errors.Is(err, ErrNotImplemented) {

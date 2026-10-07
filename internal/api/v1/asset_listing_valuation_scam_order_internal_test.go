@@ -16,7 +16,7 @@ import (
 // flagged issuer publishes nothing finds one file rather than a section.
 // The stubs and helpers are that file's; same package.
 
-// TestListingValuation_ScamSuppressionClearsTheListingPair — RLT-313.
+// TestListingValuation_ScamSuppressionClearsTheListingPair.
 //
 // suppressScamIssuerPricing nulled price_usd, market_cap_usd, fdv_usd, the
 // change_* set and the price series, and left the listing-sourced pair

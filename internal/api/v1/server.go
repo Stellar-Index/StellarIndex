@@ -2768,7 +2768,7 @@ type lakeHealth struct {
 // §7.3 / ADR-0050). /v1/readyz deliberately treats ClickHouse as
 // NON-critical so a lake outage degrades rather than un-readies the
 // pricing surface — but that same 200 keeps a lake-dead region in a load
-// balancer's pool for the ~21 lake-backed routes it can no longer serve.
+// balancer's pool for the ~21 lake-backed routes it cannot serve.
 // This endpoint is the complement: 200 iff the registered ClickHouse
 // checker pings; 503 when it fails OR when no lake is wired at all — a
 // lake-less deployment must never receive lake-route traffic, so absent

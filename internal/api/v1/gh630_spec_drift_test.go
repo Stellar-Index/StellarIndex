@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestMethodologySourcesUseOwnSchema pins GH-630(d): /v1/methodology's
+// TestMethodologySourcesUseOwnSchema pins that /v1/methodology's
 // `sources[]` documented the full Source schema (trade_count_24h,
 // volume_24h_usd, markets_count_24h, volume_history_24h/7d) although
 // handleMethodology never populates those — MethodologySource is the
@@ -28,7 +28,7 @@ func TestMethodologySourcesUseOwnSchema(t *testing.T) {
 	assertSameSet(t, "MethodologySource", specProps, goProps)
 }
 
-// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins GH-630(c):
+// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins that
 // BackfillCoverageRow serves density_pct, covered_ledgers,
 // expected_ledgers, gap_free_pct and coverage_snapshot_at unconditionally
 // (they are omitempty, but genuinely populated once the gap detector has
@@ -53,7 +53,7 @@ func TestDiagnosticsIngestionBackfillCoverageFieldsDocumented(t *testing.T) {
 }
 
 // TestDiagnosticsIngestionSourcesEntriesAndEnabledDocumented pins the
-// `sources[]` half of GH-630(c): SourceHealthRow serves entries_24h and
+// `sources[]` half of that: SourceHealthRow serves entries_24h and
 // enabled unconditionally (no omitempty) and the spec's inline sources
 // item schema omitted both.
 func TestDiagnosticsIngestionSourcesEntriesAndEnabledDocumented(t *testing.T) {

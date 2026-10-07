@@ -32,8 +32,8 @@ func (priceMissReader) RecentClosedSnapshots(context.Context, canonical.Asset, c
 	return []v1.PriceSnapshot{}, nil
 }
 
-// TestVWAPCacheServesTheValuesObservationTime pins RLT-357 through the
-// production adapter: every /v1/price surface that serves the
+// TestVWAPCacheServesTheValuesObservationTime pins, through the
+// production adapter, that every /v1/price surface that serves the
 // aggregator's VWAP cache must stamp observed_at with when the aggregator
 // observed the value, not when the API read it. A freeze keeps the held
 // value alive for its whole hold without rewriting it, so "the key

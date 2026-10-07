@@ -2,13 +2,13 @@ package explorer
 
 import "testing"
 
-// TestWasmCacheControl_NotDayLong pins #1070: the wasm view is served at
+// TestWasmCacheControl_NotDayLong pins that the wasm view is served at
 // /v1/contracts/{id}/wasm, keyed on contract_id, not on the wasm hash it
 // actually returns. An in-place upgrade changes the bytes behind that same
 // URL (see the sibling /code-history endpoint), so treating the route as
 // content-addressed-immutable let a CDN/browser serve pre-upgrade
 // bytecode, exports and decompile for up to a day. Without a bound, the
-// no-TTL branch previously returned "public, max-age=86400".
+// no-TTL branch would return "public, max-age=86400".
 func TestWasmCacheControl_NotDayLong(t *testing.T) {
 	got := wasmCacheControl(ContractWasmView{})
 	if got == "public, max-age=86400" {

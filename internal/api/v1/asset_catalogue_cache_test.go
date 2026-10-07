@@ -181,7 +181,7 @@ func (u *codeEchoUpstream) ListAssetsExt(_ context.Context, opts timescale.ListA
 }
 
 // TestCachedAssetsReader_CodeInCacheKey pins that the Code filter is
-// part of the ListAssetsExt cache key (BACKLOG #54 lockstep): two
+// part of the ListAssetsExt cache key: two
 // requests differing only by Code must NOT collide — each gets its own
 // upstream call + its own rows, and a repeat of the same Code hits
 // the cache.
@@ -535,10 +535,10 @@ func TestCachedAssetsReader_SWRKeepsStaleOnError(t *testing.T) {
 // ── HLT-01: the history-batch cache must have the SAME SWR posture
 // as its ListAssetsExt sibling ────────────────────────────────────
 //
-// fetchHistoryMap used to omit the (A') stale-while-revalidate branch
+// fetchHistoryMap must not omit the (A') stale-while-revalidate branch
 // entirely, so an EXPIRED history batch fell through to the blocking
 // cold-leader path and every caller waited on the slow upstream —
-// exactly the stampede-on-expiry that #22 fixed for the rows path. The
+// exactly the stampede-on-expiry the rows path already avoids. The
 // two are called from the SAME request (/v1/assets?include=sparkline),
 // so the missing branch reintroduced the latency cliff the rows fix
 // removed.
@@ -686,8 +686,8 @@ func TestCachedAssetsReader_HistorySWRKeepsStaleOnError(t *testing.T) {
 // cold fetch cached from the row a refresh replaces it with: the stub
 // moves the asset's last-seen ledger forward on every call after the
 // first, so a caller served the stale entry and a caller that waited
-// for the refresh hold DIFFERENT rows. The stub used to echo the
-// asset id and nothing else, identical before and after, which left a
+// for the refresh hold DIFFERENT rows. A stub that echoed the
+// asset id and nothing else, identical before and after, would leave a
 // stopwatch as the only thing separating those two outcomes.
 const (
 	swrAssetStaleLedger = 100
@@ -731,8 +731,8 @@ func (s *swrAssetByIDUpstream) GetAssetByAssetID(ctx context.Context, assetID st
 // for /v1/assets/{id}.
 //
 // What a stale read is served is a value, so it is asserted as one.
-// The stub used to echo the asset id and nothing else, so the row
-// before the refresh and the row after it were the same row and no
+// A stub that echoed the asset id and nothing else would make the row
+// before the refresh and the row after it the same row, and no
 // assertion here could tell a served entry from a caller handed the
 // refresh's result; the 120 ms ceiling on each read was carrying that
 // whole claim on its own, and what it actually measured was how

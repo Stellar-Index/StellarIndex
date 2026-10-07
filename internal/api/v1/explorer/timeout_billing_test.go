@@ -47,7 +47,7 @@ func billedAccountOperations(t *testing.T, h *Handler) (int, int64) {
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/operations", nil))
 	// UsageTracker's counter write runs on the shared after-response pool,
-	// not inline (GH-627), so a read right after ServeHTTP returns must
+	// not inline, so a read right after ServeHTTP returns must
 	// wait for it to land first.
 	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
 		t.Fatal("after-response pool did not drain in time")
@@ -75,7 +75,7 @@ func TestExplorerReadTimeout_DebitsMonthlyQuota(t *testing.T) {
 }
 
 // A saturation 503 shares the `…-timeout` type URL but never ran the query:
-// it stays unbillable (COR-05), so the billing split is by cause, not by URL.
+// it stays unbillable, so the billing split is by cause, not by URL.
 func TestExplorerSaturation_DoesNotDebitMonthlyQuota(t *testing.T) {
 	h := newProbeHandler(&saturatedReader{capReader: &capReader{probe: &deadlineProbe{}}}, nil)
 	h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {

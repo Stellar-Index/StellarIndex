@@ -30,8 +30,8 @@ func (r *saturationReader) AccountStateCached(context.Context, string) (clickhou
 // NOT the 500 `errors/internal` a genuine bug gets. A real internal error
 // still maps to 500 so alerts and the 5xx SLA probe stay meaningful.
 //
-// Red without the fix: pre-fix the handler only special-cased a read deadline
-// (readTimedOut), so clickhouse.ErrRefreshSaturated fell through to the 500
+// Red without the fix: if the handler only special-cased a read deadline
+// (readTimedOut), clickhouse.ErrRefreshSaturated would fall through to the 500
 // branch and the saturation subtest fails with status 500.
 func TestAccountState_GateSaturationMapsTo503(t *testing.T) {
 	cases := []struct {

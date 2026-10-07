@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// RLT-321, ansible leg. The env template used to render
+// Ansible leg of the Resend key guard. The env template must not render
 //
 //	STELLARINDEX_RESEND_API_KEY={{ vault_resend_api_key | default('') }}
 //

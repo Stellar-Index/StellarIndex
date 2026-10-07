@@ -56,7 +56,7 @@ func (s *slowWatermark) finishedCount() int {
 	return s.finished
 }
 
-// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers (RLT-095). The watermark
+// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers. The watermark
 // refresh must never run under the process-global lakeWMMu: every lake-backed
 // route calls lakeWatermark (pools_reserves, asset_supply ×3,
 // liquidity_pools ×2, lending, plus the three explorer account-state sites),
@@ -102,7 +102,7 @@ func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_ColdFailureIsRateLimited (RLT-095). A failed read must
+// TestLakeWatermark_ColdFailureIsRateLimited. A failed read must
 // stamp a retry gap. Without one, every subsequent request re-enters the
 // read — against a wedged lake (whose read is bounded only by ClickHouse's
 // 30s ReadTimeout) that is a back-to-back retry train, one per request.
@@ -120,7 +120,7 @@ func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake (RLT-095). Once
+// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake. Once
 // the TTL lapses the cached watermark is still perfectly serviceable — its
 // close time only gets older, which is exactly what flags.stale reads — so
 // the caller that happens to notice the lapse must be served from cache

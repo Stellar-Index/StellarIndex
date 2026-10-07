@@ -292,8 +292,8 @@ func TestHandleCreate_RejectsHTTPURL(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_RejectsSSRFTargets pins F-1245 (codex
-// audit-2026-05-12): webhook URLs that point at internal /
+// TestHandleCreate_RejectsSSRFTargets pins
+// the SSRF guard: webhook URLs that point at internal /
 // loopback / link-local / private / CGN / cloud-metadata
 // destinations must be rejected at registration. Userinfo-
 // embedded URLs are also rejected so an attacker can't disguise
@@ -820,7 +820,7 @@ func TestValidateWebhookName_CountsCodePoints(t *testing.T) {
 // TestValidateEvents_AcceptsTheCanonicalSet pins subscription validation
 // to platform.WebhookEventTypes(): every member is subscribable and the
 // rejection names every member, so a new type cannot be refused with a
-// message that predates it (GH-1348).
+// message that predates it.
 func TestValidateEvents_AcceptsTheCanonicalSet(t *testing.T) {
 	for _, e := range platform.WebhookEventTypes() {
 		if err := validateEvents([]string{string(e)}); err != nil {
@@ -838,7 +838,7 @@ func TestValidateEvents_AcceptsTheCanonicalSet(t *testing.T) {
 	}
 }
 
-// TestValidateWebhookURL_PortAndLength pins GH-828: a webhook URL is
+// TestValidateWebhookURL_PortAndLength pins that a webhook URL is
 // confined to the default https port and a 2048-byte ceiling, so a
 // registration cannot aim signed POSTs at an arbitrary TCP service or
 // store a multi-KiB URL that every failed attempt copies into last_error.
@@ -867,7 +867,7 @@ func TestValidateWebhookURL_PortAndLength(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_DuplicateURLConflicts pins GH-828's UNIQUE
+// TestHandleCreate_DuplicateURLConflicts pins the UNIQUE
 // (account_id, url): a second registration of the same destination is a
 // 409, not a second row fanning every event out to it again.
 func TestHandleCreate_DuplicateURLConflicts(t *testing.T) {

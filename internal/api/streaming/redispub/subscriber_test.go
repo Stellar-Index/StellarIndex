@@ -348,7 +348,7 @@ func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 // TestSubscriber_DropsNonCanonicalAssetIdentity — asset and quote are
 // echoed to SSE clients as asset_id / quote and form the Hub topic key,
 // so a forged event naming anything canonical.Asset.String() could not
-// have produced must be DROPPED (#754), not fanned out verbatim. Same
+// have produced must be DROPPED, not fanned out verbatim. Same
 // batch-then-sentinel proof as TestSubscriber_DropsForgedValueDecimal.
 func TestSubscriber_DropsNonCanonicalAssetIdentity(t *testing.T) {
 	const channel = "test:closed"
@@ -402,7 +402,7 @@ func TestSubscriber_DropsNonCanonicalAssetIdentity(t *testing.T) {
 // TestSubscriber_ForwardsOneFramePerBucket — two aggregators on one
 // channel (a restart overlap, a failover pair) each publish every
 // bucket; a delayed message can arrive after a newer bucket. The Hub
-// topic must carry each bucket once, in order (#752): a repeat of the
+// topic must carry each bucket once, in order: a repeat of the
 // newest bucket from a second producer and an older bucket are both
 // dropped, and the next bucket goes through.
 func TestSubscriber_ForwardsOneFramePerBucket(t *testing.T) {

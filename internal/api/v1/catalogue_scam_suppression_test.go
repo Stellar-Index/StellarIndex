@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// RLT-337 F3 — the catalogue row is priced on its own, so the twin's
+// The catalogue row is priced on its own, so the twin's
 // scam suppression has to be CARRIED, not merely performed.
 //
 // A catalogue row carries no issuer (projectCatalogueRow sets none, and

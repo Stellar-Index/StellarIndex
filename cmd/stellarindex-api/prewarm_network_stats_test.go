@@ -12,7 +12,7 @@ import (
 
 // /v1/network/stats (CachedNetworkStatsReader) was constructed in main but
 // never threaded into prewarmCaches/prewarmLight, so the slot was never
-// warmed (RLT-287) — the first request after every binary restart paid
+// warmed — the first request after every binary restart paid
 // the full ~485ms p95 network-wide aggregate inline instead of getting a
 // warm value.
 
@@ -49,7 +49,7 @@ func TestPrewarmLightWarmsNetworkStats(t *testing.T) {
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
 	// catalogueLen large enough that catalogueFillPrewarmOptions adds
-	// nothing here — this test is about the network-stats slot, not T279.
+	// nothing here — this test is about the network-stats slot, not catalogue fill.
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, cached, noCatalogueFillTestLen)
 
 	if got := rec.seen(); got != 1 {

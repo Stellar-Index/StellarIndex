@@ -21,7 +21,7 @@ import (
 
 // Findings F014 / K038 — /v1/markets and /v1/pools normalise (and, for
 // markets, enrich) their rows IN PLACE. Production wires the handlers to
-// a CachedMarketsReader, which used to hand every caller the cache
+// a CachedMarketsReader, which, without a copy, hands every caller the cache
 // entry's own backing array, so:
 //
 //   - the dex-nonstandard-decimals correction was re-applied on every hit
@@ -157,7 +157,7 @@ func assertSharedRowsPrices(t *testing.T, label string, prices map[string]string
 
 // TestListings_CachedRows_RepeatHitsServeTheSameLastPrice drives the
 // production handler repeatedly against ONE cache entry. Every response
-// must equal the first; pre-fix the second hit served 413200 and the
+// must equal the first; with shared rows the second hit would serve 413200 and the
 // third 41320000.
 func TestListings_CachedRows_RepeatHitsServeTheSameLastPrice(t *testing.T) {
 	cases := []struct{ name, path string }{
@@ -188,8 +188,8 @@ func TestListings_CachedRows_RepeatHitsServeTheSameLastPrice(t *testing.T) {
 }
 
 // TestListings_CachedRows_ConcurrentHitsAreRaceClean hammers one cache
-// entry from many goroutines. Under -race the pre-fix code reports a data
-// race on the shared backing array; with or without -race it serves
+// entry from many goroutines. Under -race shared rows report a data
+// race on the shared backing array; with or without -race they serve
 // compounded prices.
 func TestListings_CachedRows_ConcurrentHitsAreRaceClean(t *testing.T) {
 	for _, path := range []string{"/v1/markets?include=sparkline,inception", "/v1/pools"} {

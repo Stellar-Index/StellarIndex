@@ -129,7 +129,7 @@ func TestProtocolsList_RosterFailureOmitsNotZeros(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	// Decode the raw JSON (not v1.ProtocolsView) so the test compiles against
-	// the pre-fix wire shape too — the redness proof must not depend on the
+	// the older wire shape too — the redness proof must not depend on the
 	// new coverage_note Go field existing.
 	var env struct {
 		Data struct {

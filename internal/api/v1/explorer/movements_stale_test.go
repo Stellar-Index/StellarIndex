@@ -34,7 +34,7 @@ func movementsEnvelope(t *testing.T, wm, lakeTip uint32) (string, bool) {
 	return note, stale
 }
 
-// TestAccountMovements_StaleWhenArchiveTrailsLake pins #1299: the feed's
+// TestAccountMovements_StaleWhenArchiveTrailsLake pins this: the feed's
 // all-assets boundary is the cap67 derive watermark, so a derive that
 // stopped (or is parked at a lake hole) while the lake moved on must raise
 // flags.stale — it was hardcoded false.
@@ -49,7 +49,7 @@ func TestAccountMovements_StaleWhenArchiveTrailsLake(t *testing.T) {
 }
 
 // TestMovementsCoverageNote_DoesNotAssertUnverifiedCompleteness pins the
-// prose half of #1299: account_movements has no completeness verdict, so
+// prose half of that: account_movements has no completeness verdict, so
 // the note may name the archive boundary but must not call it complete.
 func TestMovementsCoverageNote_DoesNotAssertUnverifiedCompleteness(t *testing.T) {
 	note := movementsCoverageNote(64_400_000, "", supplyRange{})

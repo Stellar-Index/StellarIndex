@@ -29,7 +29,7 @@ import (
 //     handler dispatched on asset_class WITHOUT the parsed filters — so
 //     `?asset_class=all&code=AQUA` served the unfiltered baseline.
 //
-// Same class as #355 (include=sparkline7d dropped in this same
+// Same class as a dropped include=sparkline7d (in this same
 // handler): the parameter is accepted, the answer is plausible, and
 // nothing in the 200 reveals that the filter was never applied. These
 // tests pin the request→store mapping directly, because that is the
@@ -416,7 +416,7 @@ func volumeOf(row AssetDetail) string {
 // Pushdown, not fold-then-filter: the spine is ~199K rows walked on a
 // keyset cursor, so filtering after the fold means fetching the
 // UNFILTERED page and dropping rows in Go — a request-path scan of the
-// shape #43 moved out of handlers. `code` / `issuer` / `q` are indexed
+// shape kept out of handlers. `code` / `issuer` / `q` are indexed
 // classic_assets columns and have no other option regardless.
 func TestAssetsUnifiedTypeClassicReportsClassicArmVolume(t *testing.T) {
 	installSpineFoldRegistry(t)

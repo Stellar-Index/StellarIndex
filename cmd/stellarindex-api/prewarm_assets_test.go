@@ -11,7 +11,7 @@ import (
 
 // noCatalogueFillTestLen is a catalogueLen so far above any real
 // assetListingPrewarmLimits value (max 500) that catalogueFillPrewarmOptions
-// always returns empty — used by tests unrelated to T279 so they keep
+// always returns empty — used by tests unrelated to catalogue fill so they keep
 // exercising exactly the call set they were written against.
 const noCatalogueFillTestLen = 1 << 20
 
@@ -20,7 +20,7 @@ const noCatalogueFillTestLen = 1 << 20
 // up the cache key for 51. The prewarm never mirrored that, so the route
 // had no warm key of its own.
 //
-// Measured at the r1 origin on 2026-09-01, with ?limit=50 kept warm by
+// Measured at the r1 origin, with ?limit=50 kept warm by
 // live traffic and ?limit=51 not:
 //
 //	?limit=50  → internal Limit 51   0.007 s
@@ -114,15 +114,15 @@ func TestPrewarmAssetListingsNilReaderIsSafe(t *testing.T) {
 	prewarmAssetListings(context.Background(), discardLogger(), nil, nil, 45)
 }
 
-// TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler is the T279
+// TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler is the
 // guard: the unified (asset_class=all) landing page's catalogue phase
 // (serveCatalogueUnifiedPage) fills any shortfall below the user's limit
 // from the classic phase with a limit of (userLimit-catalogueLen)+
 // AssetsListOverfetchBy, Order=Volume24hUSDDesc — NOT the userLimit+1 key
 // assetListingPrewarmOptions warms. On the real catalogue (~45 Stellar-
 // issued rows), only userLimit 50/100/500 overrun it (5/55/455 remaining);
-// 1/5/10 never reach the classic phase at all. Pre-fix, none of these
-// catalogue-fill keys were warmed, so the explorer's default ?limit=100
+// 1/5/10 never reach the classic phase at all. Without a prewarm, none of these
+// catalogue-fill keys would be warm, so the explorer's default ?limit=100
 // landing-page load (remaining 55, Limit 56) paid the cold read on every
 // restart.
 func TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler(t *testing.T) {

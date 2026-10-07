@@ -293,11 +293,10 @@ func mustFiat(t *testing.T, code string) canonical.Asset {
 }
 
 // TestClassic_Compute_PreservesSACWrappedComponent — Algorithm 2 folds
-// SACWrapped into total_supply, and until 2026-07-25 the fold was
-// LOSSY: the component was gone by the time the snapshot reached
-// asset_supply_history, so the cross-check could only compare folded
-// totals and its escrow leg could not exist (audit E4/N-F3(b)).
-// Compute must now carry the component out alongside the fold, with
+// SACWrapped into total_supply; a lossy fold would drop the component
+// before the snapshot reaches asset_supply_history, so the cross-check
+// could only compare folded totals and its escrow leg could not exist.
+// Compute must carry the component out alongside the fold, with
 // the EXACT value the reader supplied — a truncated or rounded copy
 // would move the escrow bound and either mask a real breach or
 // manufacture one.
@@ -367,12 +366,12 @@ func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
 	}
 }
 
-// TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil — RLT-248.
+// TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil.
 // SumSACBalancesAtOrBefore's SQL COALESCEs "no sac_balance_observations
 // row found" down to a plain 0, indistinguishable from a genuine zero
 // reading. Compute must consult SACObserved rather than trust
 // SACWrapped's non-nilness, or [Supply.SACWrappedStroops] is never nil
-// and [CrossCheckSubsetBound]'s CS-087 escrow-bound gate
+// and [CrossCheckSubsetBound]'s escrow-bound gate
 // (`if classic.SACWrappedStroops != nil`) always evaluates — even for
 // an asset with literally no SAC-balance observation on record — so a
 // "checked, no violation" result is published for a leg that was never

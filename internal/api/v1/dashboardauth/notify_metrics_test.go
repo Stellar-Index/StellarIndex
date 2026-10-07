@@ -24,7 +24,7 @@ func notifyCount(t *testing.T, template, result string) float64 {
 	return testutil.ToFloat64(obs.NotifySendsTotal.WithLabelValues(template, result))
 }
 
-// TestHandleLogin_RecordsNotifySendMetric pins task #33 / W8 recon 9c for the
+// TestHandleLogin_RecordsNotifySendMetric pins the send metric for the
 // magic-link path: internal/notify had zero prometheus visibility, and
 // HandleLogin swallows the send error (returns 200 either way to avoid an
 // enumeration oracle), so a mail outage that silently kills login was invisible.

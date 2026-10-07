@@ -31,8 +31,8 @@ func pgxDialRefused() error {
 	return fmt.Errorf("failed to connect to `host=127.0.0.1 user=si database=stellarindex`: dial error (%w)", op)
 }
 
-// TestTransientStorageErr_UnreachablePostgres pins #371 F8: every substring
-// the classifier matched pre-fix ("57014", "bad connection", "broken pipe",
+// TestTransientStorageErr_UnreachablePostgres pins that every substring
+// the classifier matched before ("57014", "bad connection", "broken pipe",
 // "connection reset", "EOF") describes a connection that EXISTED and then
 // misbehaved. None of them matches a failure to ESTABLISH one — which is
 // exactly what a restarting, downed or failing-over Postgres produces, and
@@ -50,7 +50,7 @@ func TestTransientStorageErr_UnreachablePostgres(t *testing.T) {
 		"host no longer resolves":  dnsErr,
 		"wrapped host unresolved":  fmt.Errorf("query issuers: %w", dnsErr),
 		"string-only dial failure": errors.New("failed to connect to `host=db user=si`: dial error (dial tcp: connect: connection refused)"),
-		// The pre-fix arms must all still classify — this fix ADDS a
+		// The original arms must all still classify — this fix ADDS a
 		// class, it does not re-cut the existing ones.
 		"pg statement cancel": errors.New("ERROR: canceling statement due to user request (SQLSTATE 57014)"),
 		"driver bad conn":     errors.New("driver: bad connection"),
@@ -86,7 +86,7 @@ func (r *unreachableTransfersReader) ListSEP41Transfers(
 }
 
 // TestSEP41Transfers_UnreachableStorageMapsTo503 is the wire-level half of
-// #371 F8: with Postgres refusing connections, GET
+// With Postgres refusing connections, GET
 // /v1/contracts/{id}/transfers must answer the retryable 503 its handler
 // already reserves for transient storage failures — not 500.
 //

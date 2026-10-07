@@ -275,12 +275,11 @@ func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
 	})
 }
 
-// TestOverlay_RejectsBelowTotalDeclaration is the DOM-02 guard. The
-// M14 floor was CIRCULATING, but circulating is total minus the
-// issuer/admin/locked exclusions — so an issuer declaring a max that
-// sits BETWEEN circulating and total cleared the old guard while still
-// asserting the impossible max_supply < total_supply. The floor must
-// be total.
+// TestOverlay_RejectsBelowTotalDeclaration is the floor guard.
+// Circulating is total minus the issuer/admin/locked exclusions, so a
+// CIRCULATING floor would let an issuer declaring a max that sits
+// BETWEEN circulating and total through while still asserting the
+// impossible max_supply < total_supply. The floor must be total.
 func TestOverlay_RejectsBelowTotalDeclaration(t *testing.T) {
 	usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
 	// 1000 minted, 400 of it sitting on the issuer → circulating 600.

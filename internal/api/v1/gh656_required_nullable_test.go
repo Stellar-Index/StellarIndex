@@ -2,7 +2,7 @@ package v1
 
 import "testing"
 
-// TestGH656RequiredFieldsDocumented pins the `required` half of GH-656:
+// TestGH656RequiredFieldsDocumented pins the `required` half of the spec-drift check:
 // these schemas serve every listed property unconditionally (non-pointer,
 // no omitempty in the Go view struct) but the spec declared no `required`
 // at all, so a generated client typed every one of them optional.
@@ -56,7 +56,7 @@ func TestGH656RequiredFieldsDocumented(t *testing.T) {
 	}
 }
 
-// TestGH656NullablePropertiesMatchGo pins the `nullable` half of GH-656:
+// TestGH656NullablePropertiesMatchGo pins the `nullable` half of the spec-drift check:
 // these ten properties are backed by a plain Go string/int with
 // `omitempty` (never a pointer) — encoding/json OMITS a zero value, it
 // never serialises `null` — so `type: [T, "null"]` documented an outcome

@@ -202,7 +202,7 @@ func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 	}
 }
 
-// TestPriceTip_AliasResolvesXLM pins F-1340 on the tip surface:
+// TestPriceTip_AliasResolvesXLM pins, on the tip surface:
 // asset=native must resolve a LatestPrice observation published under
 // the crypto:XLM alias key (the rolling-window VWAP path being empty),
 // exactly like handlePrice's primary read. Pre-fix the tip fallback
@@ -320,7 +320,7 @@ func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
-// TestPriceTip_ReportsWithheldFromProxyLeg is [T684]: the stablecoin-
+// TestPriceTip_ReportsWithheldFromProxyLeg: the stablecoin-
 // fiat-proxy peg walk inside computeTip's fallback chain HAS a price
 // for the asset (the peg leg) and policy withholds it — the tip
 // surface must report errors/price-withheld, the same verdict
@@ -501,7 +501,7 @@ func TestPriceTip_DefaultWindowIs5s(t *testing.T) {
 
 // TestPriceTip_NonstandardDecimals_Normalizes proves /v1/price/tip — the
 // ADR-0018 "SLA surface" — correctly scales a confirmed non-7-decimals
-// leg's window VWAP. Before 2026-07-10 this endpoint had NO decline guard
+// leg's window VWAP. This endpoint once lacked a decline guard
 // at all (declineIfNonstandardDecimals's four-endpoint list omitted the
 // tip surface), so it was serving the RAW skewed ratio live and unguarded;
 // this is the regression test for that gap. Same golden shape as

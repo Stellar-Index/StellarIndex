@@ -17,7 +17,7 @@ import (
 // valid-but-aliased input (?base=crypto:XLM against native-keyed depth,
 // and vice-versa) 404'd / undercounted while the sibling form served.
 // Each test stores data under ONE alias form and queries the OTHER;
-// pre-fix each is RED (empty / not-found), post-fix GREEN (served value).
+// each must serve the value, not empty / not-found.
 
 const w2t2USDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 

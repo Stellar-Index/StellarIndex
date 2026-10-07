@@ -23,7 +23,7 @@ func newTestReplayGuard(t *testing.T) (*sep10.RedisReplayGuard, *miniredis.Minir
 }
 
 // TestRedisReplayGuard_FirstClaimSucceeds_SecondReturnsUnauthorized
-// pins F-1224: a reserved challenge hash can be claimed once; a second
+// pins that a reserved challenge hash can be claimed once; a second
 // claim returns auth.ErrUnauthorized so Verify classifies it as a
 // replay rather than issuing a fresh JWT.
 func TestRedisReplayGuard_FirstClaimSucceeds_SecondReturnsUnauthorized(t *testing.T) {
@@ -42,7 +42,7 @@ func TestRedisReplayGuard_FirstClaimSucceeds_SecondReturnsUnauthorized(t *testin
 	}
 }
 
-// TestRedisReplayGuard_AbsentReservationFailsClosed pins Q184: a claim
+// TestRedisReplayGuard_AbsentReservationFailsClosed pins that a claim
 // whose reservation is missing — never made, evicted by allkeys-lru, or
 // expired — is refused, never admitted.
 func TestRedisReplayGuard_AbsentReservationFailsClosed(t *testing.T) {

@@ -158,11 +158,11 @@ func (r *failingTipReader) ContractInteractions(_ context.Context, _ string, _ i
 	return nil, since, nil
 }
 
-// TestContractInteractions_TipReadFailureRefusesWindow is the RLT-099 / #581b
+// TestContractInteractions_TipReadFailureRefusesWindow is the
 // regression guard. windowFloorLedger must not fold a FAILED tip read into
-// the same 0 it returns for "genuinely no ledgers captured yet": the un-fixed
+// the same 0 it returns for "genuinely no ledgers captured yet": a naive
 // handler serves 200 OK with since_ledger=0 (an unbounded, genesis-wide scan)
-// on every ClickHouse tip-read error; the fixed handler refuses the request
+// on every ClickHouse tip-read error; the real handler refuses the request
 // instead of ever asking the reader to scan from ledger 0.
 func TestContractInteractions_TipReadFailureRefusesWindow(t *testing.T) {
 	reader := &failingTipReader{capReader: &capReader{probe: &deadlineProbe{}}}

@@ -23,9 +23,9 @@ func (f *fakeSessionPeeker) SessionFromContext(_ context.Context) (v1.SessionInf
 	return f.info, f.ok
 }
 
-// TestAccountUsage_SessionAuthenticated — RLT-415 / GH #796. A
+// TestAccountUsage_SessionAuthenticated — a
 // magic-link dashboard session with NO API key attached must read
-// its account's usage, not 401. Pre-fix, handleAccountUsage gated
+// its account's usage, not 401. A handleAccountUsage that gated
 // solely on auth.SubjectFrom, which a session-only request never
 // populates (only the API-key auth middleware calls auth.WithSubject
 // in production) — every signed-in dashboard user got a 401 the

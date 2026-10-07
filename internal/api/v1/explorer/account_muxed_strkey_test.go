@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// GH-1118: account_movements' address/counterparty columns are keyed on
+// The account_movements' address/counterparty columns are keyed on
 // G-strkey equality (baseAccountAddress resolves every muxed classic
 // counterparty to its base G before write), so a query using the M-strkey
 // an exchange hands out as a deposit address must resolve to the same G

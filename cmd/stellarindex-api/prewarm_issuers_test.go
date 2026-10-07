@@ -13,7 +13,7 @@ import (
 
 // /v1/issuers had no prewarm at all while CachedIssuersReader's TTL is
 // 5 minutes, so the slot expired every 5 minutes and the next caller
-// paid a full cold fill. Measured on r1 2026-09-01: 1.212s cold vs
+// paid a full cold fill. Measured on r1: 1.212s cold vs
 // 0.129s warm.
 //
 // At production's ~0.08 rps most requests arrive AFTER the TTL has

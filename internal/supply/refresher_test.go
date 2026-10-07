@@ -74,8 +74,7 @@ func TestRefresher_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRefresher_StaleComponentRejected pins F-1236 (codex
-// audit-2026-05-12): a snapshot whose MinComponentLedger lags
+// TestRefresher_StaleComponentRejected pins that a snapshot whose MinComponentLedger lags
 // the snapshot ledger by more than the threshold is rejected
 // with OutcomeKindStaleComponent. The inserter is NOT called.
 func TestRefresher_StaleComponentRejected(t *testing.T) {
@@ -162,7 +161,7 @@ func TestRefresher_StaleComponentZeroDisablesGate(t *testing.T) {
 }
 
 // TestRefresher_StrictFreshness_RejectsZeroAnchor pins the
-// F-1236 wave-60 (codex audit-2026-05-13) strict-mode gate:
+// strict-mode gate:
 // a snapshot with `MinComponentLedger == 0` (no freshness
 // anchor) is rejected with `OutcomeKindMissingFreshness` when
 // `WithStrictFreshnessRequired(true)` is wired. The inserter
@@ -256,7 +255,7 @@ func TestRefresher_StrictFreshness_DefaultOff(t *testing.T) {
 // but whose LedgerSequence tracks the (advancing) chain tip the
 // stubLedgers feeds in. It models a DORMANT asset: the chain tip
 // climbs every tick while the asset's last balance-change ledger
-// (MinComponentLedger) stays put. F-1320.
+// (MinComponentLedger) stays put.
 type dynComputer struct {
 	assetKey           string
 	minComponentLedger uint32
@@ -286,7 +285,7 @@ func (m *mutableLedgers) LatestKnownLedger(_ context.Context) (uint32, time.Time
 	return m.ledger, m.observedAt, nil
 }
 
-// TestRefresher_DormantAssetNotPermanentlyRejected pins F-1320:
+// TestRefresher_DormantAssetNotPermanentlyRejected pins that
 // a DORMANT asset (MinComponentLedger frozen because it had no
 // balance change) whose chain-tip gap grows past the threshold is
 // NOT permanently rejected. The FIRST tick that crosses the
@@ -517,14 +516,13 @@ func TestRefresher_WriteError(t *testing.T) {
 	}
 }
 
-// TestRefresher_PerAssetStaleComponentOverride pins F-0040
-// behaviour: a known-low-activity asset (PHO governance token)
+// TestRefresher_PerAssetStaleComponentOverride pins
+// per-asset override behaviour: a known-low-activity asset (PHO governance token)
 // passes the gate at a more permissive threshold while the
 // global default still rejects high-activity assets at the same
 // component lag.
 //
-// Real r1 measurement (aggregator journal 2026-05-26T00:25 +02:00):
-// PHO supply rows lagged by gap=1190 ledgers > global threshold
+// PHO supply rows lag by ~1190 ledgers, past the global threshold
 // of 1000. Per-asset override of 5000 (≈7 h) accepts the legitimate
 // snapshot without loosening the gate for XLM.
 func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
@@ -600,7 +598,7 @@ func (r *recordingInserter) InsertSupply(_ context.Context, snap Supply) error {
 }
 
 // TestRefresher_StalledObserverNotReStampedForeverAsDormant pins
-// R-002 (MNY-04, audit-2026-07-23): the F-1320 dormancy carve-out
+// that the dormancy carve-out
 // accepts a snapshot whenever MinComponentLedger is UNCHANGED
 // tick-over-tick — but a STALLED component observer (one that died
 // and stopped writing observations) produces exactly that signal,
@@ -611,7 +609,7 @@ func (r *recordingInserter) InsertSupply(_ context.Context, snap Supply) error {
 // money figure served as fresh, with nothing paging.
 //
 // The dormancy benefit-of-the-doubt is therefore BOUNDED: within the
-// horizon a quiet asset is still accepted (F-1320 stays fixed), but
+// horizon a quiet asset is still accepted, but
 // once the component anchor has been frozen for longer than the
 // horizon we can no longer defend "the last observation IS the
 // current supply", so the gate fails closed with the alertable
@@ -643,8 +641,8 @@ func TestRefresher_StalledObserverNotReStampedForeverAsDormant(t *testing.T) {
 	}
 
 	// Tick 2 — anchor frozen, gap 5000 but still INSIDE the dormancy
-	// horizon: accepted as dormant. This half guards F-1320 — the fix
-	// must bound the carve-out, not delete it.
+	// horizon: accepted as dormant. This half guards that the
+	// carve-out is bounded, not deleted.
 	ledgers.ledger = minComp + 5_000
 	if out := r.Tick(context.Background()); out.Kind != OutcomeKindDormant {
 		t.Fatalf("tick2 kind=%s want %s (in-horizon dormancy must still be accepted; F-1320 must not regress)", out.Kind, OutcomeKindDormant)
@@ -680,7 +678,7 @@ func TestRefresher_StalledObserverNotReStampedForeverAsDormant(t *testing.T) {
 
 // TestRefresher_MaxDormantComponentLedgersZeroDisablesHorizon pins
 // the operator escape hatch: passing 0 restores the unbounded
-// pre-R-002 posture for deployments that knowingly watch assets
+// posture for deployments that knowingly watch assets
 // dormant for longer than any horizon and prefer a re-stamped row
 // to a gap. Explicit opt-in, never the default.
 func TestRefresher_MaxDormantComponentLedgersZeroDisablesHorizon(t *testing.T) {

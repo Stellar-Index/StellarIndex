@@ -11,13 +11,13 @@ import (
 )
 
 // TestAPIKeyBudgetStoresAreWiredThroughTheBackendAwareConstructor is the
-// WIRING half of findings F056 / K050 / Q145.
+// WIRING half of the key-budget guard.
 //
-// Until 2026-09-19 main.go set `apiKeyBudgets.CacheInvalidator =
-// auth.NewRedisKeyCacheInvalidator(rdb)` whenever Redis was configured.
-// Under the default auth_backend=redis the key that invalidator DELs is
+// Setting `apiKeyBudgets.CacheInvalidator =
+// auth.NewRedisKeyCacheInvalidator(rdb)` whenever Redis is configured is a
+// bug: under the default auth_backend=redis the key that invalidator DELs is
 // the canonical credential, so every admin PATCH that changed an
-// override, a status or a tier permanently destroyed the account's
+// override, a status or a tier would permanently destroy the account's
 // /v1/register keys. The behavioural proof runs against real Redis and
 // Postgres in test/integration (TestAdminAccountPatch_Preserves
 // RegisterCredential_RedisBackend) through v1.NewAPIKeyBudgetStores;

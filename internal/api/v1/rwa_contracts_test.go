@@ -14,11 +14,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/assets — the CONTRACT arm (#352).
+// GET /v1/rwa/assets — the CONTRACT arm.
 //
 // The arm exists because the entities that actually hold real-world
 // assets on Stellar are invisible to the classic one. Measured on r1
-// 2026-09-10: Franklin Templeton and Spiko are both in the curated
+// a live deployment: Franklin Templeton and Spiko are both in the curated
 // directory, tagged `issuer`, with the correct domains — and both are
 // absent from the `issuers` table, so `sep1-refresh -issuer` returns
 // `sql: no rows in result set` for each. That table is written from ONE
@@ -320,7 +320,7 @@ func TestRWAContracts_DecimalsDriveTheValuation(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_UnreadScaleValuesNothingFromAnySupply pins GH-1010.
+// TestRWAContracts_UnreadScaleValuesNothingFromAnySupply pins that rule.
 //
 // The contract pipeline runs the generic listing fill first, and that fill
 // reads the precise-supply map, which is keyed by contract id for a pure
@@ -358,7 +358,7 @@ func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 			if a.Valuation.Status != v1.RWAValuationDecimalsUnknown {
 				t.Errorf("status = %q, want %q", a.Valuation.Status, v1.RWAValuationDecimalsUnknown)
 			}
-			// GH-533: decimals itself must not serve the catalogue's
+			// Decimals itself must not serve the catalogue's
 			// unread default (7) beside a supply and a status that says
 			// the scale was never read — a consumer following the field
 			// description alone (divide circulating_supply by
@@ -373,7 +373,7 @@ func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_ScanCapMakesTheTotalALowerBound pins CA2-A06-correct-3.
+// TestRWAContracts_ScanCapMakesTheTotalALowerBound pins that rule.
 // Every served row is valued, but recognised contracts the scan never
 // evaluated may be members, so the total is partial and must say so.
 func TestRWAContracts_ScanCapMakesTheTotalALowerBound(t *testing.T) {

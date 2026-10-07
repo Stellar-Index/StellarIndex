@@ -97,11 +97,10 @@ func TestValidate_DefaultPasses(t *testing.T) {
 	}
 }
 
-// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins REC-08
-// (audit-2026-08-14): the indexer/aggregator pools must ship with a
+// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins that the indexer/aggregator pools must ship with a
 // non-zero, GENEROUS SQL-side statement_timeout backstop out of the box.
-// Zero would leave those pools unbounded (the defect); a tight value would
-// clip legitimate heavy work (the rejected global-timeout fix). It must
+// Zero would leave those pools unbounded; a tight value would
+// clip legitimate heavy work. It must
 // also comfortably exceed the request-path serving bound — a background
 // runaway is expected to run far longer than any serving query before it is
 // unambiguously stuck.
@@ -231,7 +230,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{"native": "AUD"}
 		}, "classic"},
 
-		// CFG-05 (audit-2026-07-23): history_archive_url must be a
+		// history_archive_url must be a
 		// full URL like its sibling fields, not just anything
 		// url.Parse tolerates (scheme-less, empty).
 		"history archive url empty": {func(c *config.Config) { c.Stellar.HistoryArchiveURL = "" }, "history_archive_url"},
@@ -239,7 +238,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			c.Stellar.HistoryArchiveURL = "history.stellar.org/prd/core-live/core_live_001"
 		}, "history_archive_url"},
 
-		// CFG-05 (audit-2026-07-23): serving_statement_timeout must
+		// serving_statement_timeout must
 		// stay LONGER than request_timeout so the app-layer deadline
 		// fires first (defense-in-depth ordering).
 		"statement timeout equal request timeout": {
@@ -272,7 +271,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"request_timeout",
 		},
 
-		// CFG-03 (audit-2026-07-23): the two conflicting `_env`
+		// The two conflicting `_env`
 		// conventions (value-vs-name) getting swapped.
 		"redis password looks like env var name": {
 			func(c *config.Config) { c.Storage.RedisPassword = "STELLARINDEX_REDIS_PASSWORD" },
@@ -297,7 +296,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"s3_secret_key_env",
 		},
 
-		// CFG-05 (audit-2026-07-23): anomaly.thresholds / classifications
+		// anomaly.thresholds / classifications
 		// keys/values must be real anomaly.AssetClass names.
 		"anomaly thresholds unknown class": {
 			func(c *config.Config) {
@@ -320,11 +319,11 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"not a canonical asset id",
 		},
 
-		// ADR-0019 §"Freeze duration" (N-F6): the auto-unfreeze band
+		// ADR-0019 §"Freeze duration" the auto-unfreeze band
 		// must not overlap the fire band on the z axis, or a signal
 		// hovering at the trigger flaps the pair frozen/unfrozen every
 		// bucket — republishing, each time it unfreezes, the value the
-		// freeze just refused. That IS the pre-lifecycle behaviour, so
+		// freeze just refused. That is the flapping behaviour, so
 		// it must not be reachable by config.
 		"anomaly phase2 unfreeze z band overlaps the fire band": {
 			func(c *config.Config) {
@@ -346,8 +345,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"anomaly.phase2.unfreeze_confidence_min",
 		},
 
-		// CFG-05 (audit-2026-07-23): divergence.supply.refresh_interval_seconds<=0
-		// while enabled used to reach time.NewTicker(0) and panic the
+		// divergence.supply.refresh_interval_seconds<=0
+		// while enabled would reach time.NewTicker(0) and panic the
 		// aggregator at startup.
 		"divergence supply zero refresh interval while enabled": {
 			func(c *config.Config) {
@@ -374,7 +373,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"divergence.chainlink.feeds",
 		},
 
-		// ADR-0027 cold tier (2026-07-25 incident): the *_key_env pair
+		// ADR-0027 cold tier: the *_key_env pair
 		// is all-or-nothing, because EMPTY is a meaningful value here
 		// (it selects anonymous reads on the public
 		// aws-public-blockchain bucket). Half a pair would force
@@ -403,8 +402,8 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"s3_cold_secret_key_env",
 		},
 
-		// T209: the bucket field is the sole ColdTieringEnabled gate, so
-		// a bucket set without its region/endpoint used to reach
+		// The bucket field is the sole ColdTieringEnabled gate, so
+		// a bucket set without its region/endpoint would reach
 		// pipeline.NewColdDataStore with a zero-value Region — SigV4
 		// cannot sign against that. Reject at load time.
 		"cold bucket set without region": {
@@ -454,8 +453,7 @@ func TestValidate_USDPeggedClassicAssetsAccepted(t *testing.T) {
 
 func TestValidate_FiatPeggedClassicAssetsAccepted(t *testing.T) {
 	// A classic credit asset mapped to a known ISO-4217 fiat ticker is
-	// the accepted shape for a declared fiat peg (the AUDD → AUD entry
-	// operator-approved 2026-08-24).
+	// the accepted shape for a declared fiat peg (the AUDD → AUD entry).
 	c := withBad(func(c *config.Config) {
 		c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
 			"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUD",
@@ -600,10 +598,10 @@ func TestValidate_ReflectorDecimalsCeiling(t *testing.T) {
 }
 
 // TestValidate_ClickHouseProjectorSourceRequiresLiveSink locks the
-// ADR-0041 feed-switch dependency (C3-20): the projector reading
+// ADR-0041 feed-switch dependency: the projector reading
 // forward events FROM ClickHouse only makes sense if the dual-sink is
 // WRITING them. The invariant is documented on the field ("Requires
-// clickhouse_live_sink") but was never enforced — a misconfig
+// clickhouse_live_sink") and a misconfig
 // (projector_source=true, live_sink=false) would silently mis-read.
 func TestValidate_ClickHouseProjectorSourceRequiresLiveSink(t *testing.T) {
 	// The bad combo: read from CH but never write to it.
@@ -646,15 +644,14 @@ func TestValidate_ClickHouseProjectorSourceRequiresLiveSink(t *testing.T) {
 	}
 }
 
-// TestValidate_SDFReserveAccountObserverOnlyAccepted — DOM-11 / CFG-01
-// (audit-2026-07-23). SupplyConfig.Validate used to unconditionally
-// require a matching reserve_balances_stroops entry for every
-// sdf_reserve_accounts entry, which made the documented "the LCM
+// TestValidate_SDFReserveAccountObserverOnlyAccepted — SupplyConfig.Validate must not
+// unconditionally require a matching reserve_balances_stroops entry for every
+// sdf_reserve_accounts entry, else the documented "the LCM
 // AccountEntry observer covers it, no static balance needed"
-// deployment shape un-loadable — Validate() has no DB access and
+// deployment shape is un-loadable — Validate() has no DB access and
 // can't know whether the observer covers the account, so a blanket
-// requirement was strictly wrong for that (fully supported) path.
-// This asserts the corrected value: a syntactically valid G-strkey
+// requirement is wrong for that (fully supported) path.
+// This asserts a syntactically valid G-strkey
 // account with NO static balance entry passes config validation. The
 // runtime rejection for a genuinely-uncovered account still happens
 // downstream in ConfigReserveBalanceReader.ReserveBalanceTotal
@@ -668,8 +665,7 @@ func TestValidate_SDFReserveAccountObserverOnlyAccepted(t *testing.T) {
 	}
 }
 
-// TestValidate_SDFReserveAccountMalformedRejected — DOM-11
-// (audit-2026-07-23): a typo'd sdf_reserve_accounts entry is a
+// TestValidate_SDFReserveAccountMalformedRejected — a typo'd sdf_reserve_accounts entry is a
 // config mistake, not "this account happens to have zero reserves."
 // Kept as its own test (not folded into TestValidate_RejectsBadFields)
 // because SupplyConfig.Validate — unlike the lowercase validate()
@@ -714,7 +710,7 @@ func TestValidate_SDFReserveAccountBadChecksumRejected(t *testing.T) {
 	}
 }
 
-// TestValidate_CompositeReferenceBounds (A3, 2026-08-29) pins the
+// TestValidate_CompositeReferenceBounds pins the
 // `[aggregate.composite_reference]` validation: the shipped defaults
 // pass, each out-of-band knob is rejected as ErrInvalidConfig naming the
 // key, and an enabled allow-list entry without a triangulation row is
@@ -838,8 +834,8 @@ func TestMaxMarketCapVolumeRatioRejectsANegativeCeiling(t *testing.T) {
 // were parsed, defaulted and in several cases validated with hard
 // requirements while nothing outside internal/config read them. A
 // self-hosted deployment's config that set (or omitted, for
-// region.home_domain) one of these used to gate boot on a field that
-// controlled nothing. They are now on config.RetiredKeys: an old
+// region.home_domain) one of these would gate boot on a field that
+// controlled nothing. They are on config.RetiredKeys: an old
 // config carrying them boots with a warning instead of failing.
 func TestLoadReader_GH1129DeadFieldsRetired(t *testing.T) {
 	body := `
@@ -866,10 +862,10 @@ twap_window_seconds = 0
 	}
 }
 
-// TestLoadReader_GH1131DwellWindowsConfigurable — GH-1131:
+// TestLoadReader_GH1131DwellWindowsConfigurable —
 // ratelimit.WithDwellTime and middleware.WithMonthlyQuotaDwellTime were
 // documented as operator-tunable ("Operators with a stricter or looser
-// Redis-availability SLO tune this") but had no TOML key, so the #625
+// Redis-availability SLO tune this") but needed a TOML key, so the
 // alert arithmetic (rule window 10m vs the hardcoded 30s dwell) could
 // not be tuned around without a rebuild. api.rate_limit_dwell /
 // api.monthly_quota_dwell must round-trip through config.

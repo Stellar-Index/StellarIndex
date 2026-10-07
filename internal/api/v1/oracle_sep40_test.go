@@ -71,8 +71,8 @@ func TestOracleLastPrice_NotFound404(t *testing.T) {
 // not direct USD, and the aggregator's stablecoin-proxy rewrite
 // lives only in the Redis cache), the SEP-40 lastprice handler
 // falls through to the same TriangulatedPriceLooker /v1/price
-// uses. Pre-2026-05-08 the SEP-40 path skipped the fallback and
-// 404'd in steady state — caught by the prod audit.
+// uses. Without it the SEP-40 path would skip the fallback and
+// 404 in steady state.
 func TestOracleLastPrice_RedisVWAPFallback(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
 	looker := &stubTriangulatedPriceLooker{
@@ -192,13 +192,12 @@ func TestOracleXLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
-// TestOracleLastPrice_FallbackSetsStaleFlag pins the F-1339 (G2-02)
+// TestOracleLastPrice_FallbackSetsStaleFlag pins the
 // contract: when the SEP-40 lastprice handler serves any priceFallback
 // branch (Redis VWAP / stablecoin proxy / fiat cross), it MUST set
-// flags.stale=true — the chain itself is the staleness signal (F-1254).
-// Pre-fix the handler forced stale=false on these branches, shipping
-// degraded data labelled fresh exactly the way /v1/price was before
-// F-1254.
+// flags.stale=true — the chain itself is the staleness signal.
+// Forcing stale=false on these branches would ship
+// degraded data labelled fresh.
 func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 	t.Run("redis vwap fallback", func(t *testing.T) {
 		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
@@ -245,7 +244,7 @@ func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 	})
 }
 
-// TestOracleLastPrice_AliasResolvesXLM pins F-1340 on the SEP-40
+// TestOracleLastPrice_AliasResolvesXLM pins, on the SEP-40
 // lastprice surface: querying asset=native must resolve a snapshot
 // published under the crypto:XLM alias key (and vice-versa), exactly
 // like handlePrice's primary read. Pre-fix the SEP-40 surface queried
@@ -399,7 +398,7 @@ func TestOracleXLastPrice_RedisVWAPFallback(t *testing.T) {
 	}
 }
 
-// TestOracleXLastPrice_AliasResolvesXLM pins F-1340 on the SEP-40
+// TestOracleXLastPrice_AliasResolvesXLM pins, on the SEP-40
 // cross-pair surface: x_last_price(base=native, quote=fiat:USD) must
 // resolve a snapshot published under the crypto:XLM alias key, like
 // handlePrice's primary read.
@@ -429,7 +428,7 @@ func TestOracleXLastPrice_AliasResolvesXLM(t *testing.T) {
 	}
 }
 
-// TestOracleXLastPrice_FallbackSetsStaleFlag pins F-1339 on the
+// TestOracleXLastPrice_FallbackSetsStaleFlag pins, on the
 // cross-pair surface: a Redis-VWAP fallback must set stale=true.
 func TestOracleXLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
@@ -585,7 +584,7 @@ func TestOraclePrices_HappyPath(t *testing.T) {
 }
 
 // TestOraclePrices_AliasResolvesXLM is the /v1/oracle/prices analogue of
-// TestOracleLastPrice_AliasResolvesXLM (T015). Only the crypto:XLM alias
+// TestOracleLastPrice_AliasResolvesXLM. Only the crypto:XLM alias
 // form has closed buckets (CEX trades write it); the literal
 // native/fiat:USD key has none. Pre-fix, recentClosedWithStablecoinFallback
 // read only the literal form and returned an empty array here even though
@@ -740,8 +739,8 @@ type oracleFlagsEnvelope struct {
 // lastprice surface carries priceFallback's triangulated verdict: a
 // declared USD peg with no fiat:USD market is served through its XLM
 // cross, a composed value, and the envelope says so on the same flag
-// /v1/price sets. The handler used to write `Flags{Stale: stale}` alone,
-// so the composed 0.95 went out labelled `triangulated: false`.
+// /v1/price sets. Writing `Flags{Stale: stale}` alone would
+// send the composed 0.95 out labelled `triangulated: false`.
 func TestOracleLastPrice_FallbackCrossSetsTriangulated(t *testing.T) {
 	reader, usdcClassic := oracleFallbackCrossReader()
 	srv := v1.New(v1.Options{

@@ -86,7 +86,7 @@ func assertCacheUnavailable(t *testing.T, resp *http.Response) {
 // ─── /v1/oracle/latest ────────────────────────────────────────────
 
 // TestOracleLatest_CacheUnavailable503 — Redis MISCONF surfaces as
-// 503 + Retry-After (F-0086).
+// 503 + Retry-After.
 func TestOracleLatest_CacheUnavailable503(t *testing.T) {
 	reader := &stubOracleReader{err: miscOnfErr}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -99,7 +99,7 @@ func TestOracleLatest_CacheUnavailable503(t *testing.T) {
 // ─── /v1/oracle/streams ───────────────────────────────────────────
 
 // TestOracleStreams_CacheUnavailable503 — same MISCONF cascade as
-// /v1/oracle/latest, on the streams variant (F-0086 / F-0145).
+// /v1/oracle/latest, on the streams variant.
 func TestOracleStreams_CacheUnavailable503(t *testing.T) {
 	reader := &stubOracleReader{err: miscOnfErr}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -111,7 +111,7 @@ func TestOracleStreams_CacheUnavailable503(t *testing.T) {
 
 // ─── /v1/lending/pools ────────────────────────────────────────────
 
-// TestLendingPools_CacheUnavailable503 — F-0087. The handler had a
+// TestLendingPools_CacheUnavailable503 — The handler had a
 // 503 timeout path and a 500 fallthrough; MISCONF now lands on the
 // cache-unavailable 503 instead of the generic 500.
 func TestLendingPools_CacheUnavailable503(t *testing.T) {
@@ -125,7 +125,7 @@ func TestLendingPools_CacheUnavailable503(t *testing.T) {
 
 // ─── /v1/vwap ─────────────────────────────────────────────────────
 
-// TestVWAP_CacheUnavailable503 — F-0089. The TradesInRange call
+// TestVWAP_CacheUnavailable503 — The TradesInRange call
 // returning MISCONF lands on the cache-unavailable 503 branch.
 func TestVWAP_CacheUnavailable503(t *testing.T) {
 	reader := &stubHistoryReader{err: miscOnfErr}
@@ -138,7 +138,7 @@ func TestVWAP_CacheUnavailable503(t *testing.T) {
 
 // ─── /v1/observations ─────────────────────────────────────────────
 
-// TestObservations_CacheUnavailable503 — F-0090. The fiat:USD short-
+// TestObservations_CacheUnavailable503 — The fiat:USD short-
 // circuit skips storage, so this test uses a CONCRETE classic quote
 // (USDC-G…) to force the LatestTradePerSource path that actually
 // hits the cache layer.
@@ -153,7 +153,7 @@ func TestObservations_CacheUnavailable503(t *testing.T) {
 
 // ─── /v1/observations/stream ──────────────────────────────────────
 
-// TestObservationsStream_CacheUnavailable503 — F-0146. The pre-flight
+// TestObservationsStream_CacheUnavailable503 — The pre-flight
 // computeObservations call (run synchronously before switching to SSE
 // mode, so the handler can still set a non-200 status) lands on the
 // cache-unavailable 503 branch on MISCONF.
@@ -183,7 +183,7 @@ func (tipCacheUnavailablePriceReader) RecentClosedSnapshots(_ context.Context, _
 	return nil, miscOnfErr
 }
 
-// TestPriceTip_CacheUnavailable503 — F-0145. handlePriceTip's
+// TestPriceTip_CacheUnavailable503 — handlePriceTip's
 // computeTip helper now distinguishes a MISCONF surfacing from
 // PriceReader.LatestPrice from a generic internal error.
 func TestPriceTip_CacheUnavailable503(t *testing.T) {
@@ -194,7 +194,7 @@ func TestPriceTip_CacheUnavailable503(t *testing.T) {
 	assertCacheUnavailable(t, resp)
 }
 
-// TestPriceTipStream_CacheUnavailable503 — F-0146 (stream variant).
+// TestPriceTipStream_CacheUnavailable503 — stream variant.
 // The pre-stream synchronous computeTip call lands on cache-
 // unavailable 503 instead of generic 500.
 func TestPriceTipStream_CacheUnavailable503(t *testing.T) {

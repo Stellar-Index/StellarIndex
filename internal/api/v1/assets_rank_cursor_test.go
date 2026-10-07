@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// #356: the listing's ORDER BY grew a LEADING rank-tier key (flagged /
+// The listing's ORDER BY has a LEADING rank-tier key (flagged /
 // unpriced rows sort below rankable ones). The keyset cursor MUST carry
 // that key — a cursor that encodes fewer keys than the ORDER BY ranks on
 // resumes at the wrong place and drops whole tiers of rows. These pin the
@@ -19,7 +19,7 @@ import (
 // (tier first) on BOTH /v1/assets paths, and the emitted cursor is
 // accepted back by the same handler's validator.
 
-// The reported #356 row, as the store would hand it to the handler.
+// The reported row, as the store would hand it to the handler.
 // Named constants rather than inline literals — a G-strkey spelled out
 // next to a field whose name ends in "Key" trips gitleaks' generic-api-key
 // rule (it is a public issuer address, not a secret), and the sibling
@@ -95,7 +95,7 @@ func TestAssetList_NextCursorCarriesTheRankTier(t *testing.T) {
 		t.Fatalf("classic-phase next cursor = %q, want %q", cls, wantCls)
 	}
 
-	// Both must be accepted back by the handler that minted them (AGT-06
+	// Both must be accepted back by the handler that minted them (which
 	// validates cursors at the boundary), and reach the store intact.
 	for _, tc := range []struct{ path, wantInner string }{
 		{"/v1/assets?limit=1&cursor=" + url.QueryEscape(obs), obs},

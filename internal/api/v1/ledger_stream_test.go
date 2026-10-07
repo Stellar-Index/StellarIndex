@@ -175,7 +175,7 @@ func (d *deadlineCapturingCursorsReader) ListCursors(ctx context.Context) ([]tim
 	return []timescale.Cursor{c}, nil
 }
 
-// TestLedgerStream_TickIsBoundedByATimeout is the REL-01 regression:
+// TestLedgerStream_TickIsBoundedByATimeout is the regression:
 // the per-tick cursors read in the ledger-stream producer must run
 // under its OWN bounded deadline, not the raw per-connection context
 // (which RequestTimeout deliberately leaves undeadlined on `/stream`
@@ -226,12 +226,12 @@ func (c *capOrderingCursorsReader) ListCursors(context.Context) ([]timescale.Cur
 	return []timescale.Cursor{{Source: "ledgerstream", LastLedger: 1000, UpdatedAt: time.Now().UTC()}}, nil
 }
 
-// TestLedgerStream_CapRejectsBeforePreflightCompute is the REL-05
+// TestLedgerStream_CapRejectsBeforePreflightCompute is the
 // regression (pre-flight-compute ordering): a client rejected by the
 // global concurrency cap must never reach handleLedgerStream's
-// synchronous pre-flight ledgerTip read at all. Before the fix, the
-// cap was only checked inside StreamFromChannel, AFTER that read had
-// already run — so a caller already at the cap still paid for a full
+// synchronous pre-flight ledgerTip read at all. If the
+// cap were only checked inside StreamFromChannel, AFTER that read had
+// already run, a caller already at the cap would still pay for a full
 // cursors read on every rejected request, turning the cap into a
 // counter rather than an actual admission gate.
 func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These pin the #332 F4 serving contract for the /v1/liquidity-pools ranked
+// These pin the serving contract for the /v1/liquidity-pools ranked
 // listing. Measured cause: nativeLPListing held nativeLPMu across the
 // whole-`liquidity_pool`-prefix scan, so once every 60s TTL lapse the next
 // caller paid that scan on its request deadline (live: 0.825 s) and every

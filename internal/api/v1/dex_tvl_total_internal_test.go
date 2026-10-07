@@ -23,7 +23,7 @@ type tvlReconcileLeg struct {
 
 // tvlReconcileFixture mirrors tvlTestSources()'s pool reserves exactly:
 // every leg of every pool of every protocol, in base units. This is the
-// "per-pool data we already store" side of the reconciliation (#338) —
+// "per-pool data we already store" side of the reconciliation —
 // edit tvlTestSources and this must be edited in lockstep, which is the
 // whole point of keeping it a separate, independently-summed statement
 // of the same reserves.
@@ -81,7 +81,7 @@ func tvlReconcileExpected() (map[string]*big.Rat, *big.Rat) {
 }
 
 // TestDEXTVLTotal_ReconcilesAgainstPoolReserves is the acceptance
-// criterion "a reconciliation test against pool reserves" (#338). It
+// criterion "a reconciliation test against pool reserves". It
 // re-derives every protocol's figure AND the headline total straight
 // from the fixture's reserve legs, then asserts three separate things:
 //
@@ -184,7 +184,7 @@ func TestDEXTVLSnapshot_StampsTheChainHighWater(t *testing.T) {
 }
 
 // TestDEXTVLTotal_RefusesACarriedForwardProtocol is the divergence
-// check (#338): when a protocol's reserve read fails, Refresh carries
+// check: when a protocol's reserve read fails, Refresh carries
 // its PREVIOUS figure forward, and that figure cannot honestly be
 // published under this refresh's as_of. The total must drop it, name
 // it, and shrink — not absorb it and serve a total whose as_of no

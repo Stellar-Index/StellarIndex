@@ -28,7 +28,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// Coverage for the run() wiring helpers (#340 item 3). Every one of
+// Coverage for the run() wiring helpers. Every one of
 // these ran only inside run(), which no test calls, so a regression in
 // any of them shipped uncaught.
 //
@@ -302,7 +302,7 @@ func TestBuildDashboardBundle_UnconfiguredIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestDashboardKeyMirror_WiredWheneverRedisExists pins GH-966: the
+// TestDashboardKeyMirror_WiredWheneverRedisExists pins that the
 // dashboard key mirror depends on Redis alone, never on auth_backend, so a
 // key minted under redis still dies when a postgres-backend instance
 // revokes it.

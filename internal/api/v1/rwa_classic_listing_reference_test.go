@@ -12,8 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The independent listing directory held 33 recognised CLASSIC rows on
-// 2026-09-16, every one of them priced, against 17 contract rows — and
+// The independent listing directory holds many recognised CLASSIC rows,
+// all priced, alongside fewer contract rows — and
 // only the contract arm read it. A classic member the directory priced
 // was published as `reference_not_bound` beside the contract rows the
 // same directory was pricing, which is one source answering one arm of
@@ -93,7 +93,7 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 
 // The directory publishes each asset under ONE address form with no
 // pattern — some by `CODE-GISSUER`, some by the Stellar Asset Contract
-// address alone (issue #514). /v1/assets already tries both; this arm
+// address alone. /v1/assets already tries both; this arm
 // keyed on the classic id only, so a SAC-listed classic member was
 // refused as `reference_not_bound` while the snapshot in hand named
 // its address. Both surfaces now resolve through [listingEntryIn].

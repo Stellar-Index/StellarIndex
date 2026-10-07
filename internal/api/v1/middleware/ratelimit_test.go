@@ -392,9 +392,9 @@ func TestRateLimitBySubject_AnonymousUsesAnonBucket(t *testing.T) {
 }
 
 // TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass is
-// the F-1335 regression: the anonymous bucket must be keyed on the
-// resolved client IP ALONE. Pre-fix the key folded in a
-// sha256(IP|User-Agent) hash, so a client could rotate its
+// the regression: the anonymous bucket must be keyed on the
+// resolved client IP ALONE. A key that folds in a
+// sha256(IP|User-Agent) hash lets a client rotate its
 // User-Agent on every request to mint unlimited distinct buckets and
 // sail past the per-IP anonymous throttle. Here two requests from the
 // SAME IP carry DIFFERENT User-Agents; with a budget of 1 the second
@@ -436,8 +436,8 @@ func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T
 // TestRateLimit_NilKeyFnMasksIPv6To64 pins the default (nil) keyFn of
 // the single-bucket RateLimit middleware to the forge-resistant,
 // /64-masked throttle resolver — the SAME resolver the production anon
-// path uses (SEC-15). Pre-fix the default was raw RemoteIPFrom(r) (the
-// unmasked /128 read from context), so a caller could rotate its IPv6
+// path uses. A default of raw RemoteIPFrom(r) (the
+// unmasked /128 read from context) would let a caller could rotate its IPv6
 // address within a single delegated /64 to mint a fresh bucket per
 // request and bypass the per-IP limit entirely.
 //
@@ -445,7 +445,7 @@ func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T
 // with a budget of 1 the second MUST be 429'd because both mask to the
 // same key. A genuinely different /64 keeps its own budget.
 //
-// Against the pre-fix default this FAILS: RemoteIPFrom(r) reads the
+// Against a RemoteIPFrom(r)-based default this FAILS: it reads the
 // remote_ip context value (never populated here — no Logger
 // middleware), yielding an empty key, so every request bypasses the
 // limiter and the second returns 200 instead of 429.
@@ -498,7 +498,7 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 		"/metrics":             true,
 		"/robots.txt":          true,
 		"/":                    true,
-		"/errors/rate-limited": true, // RLT-167: must stay in lockstep with isUnauthenticatedInfraPath
+		"/errors/rate-limited": true, // must stay in lockstep with isUnauthenticatedInfraPath
 		"/v1/assets":           false,
 		"/v1/price":            false,
 		"/v1/metrics-fake":     false,
@@ -520,7 +520,7 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 // constructs (server.go declares it test-only), so it left this path
 // at 0% coverage: deleting the skip check inside RateLimitBySubject
 // left internal/api/v1, internal/ratelimit and cmd/stellarindex-api all
-// green (#1215).
+// green.
 func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	anonBucket := ratelimit.New(rdb, 1, time.Minute)
@@ -590,7 +590,7 @@ func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
 	}
 }
 
-// TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket is the SEC-15
+// TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket is the
 // regression: an anonymous caller's throttle key must aggregate IPv6
 // addresses to their /64 network prefix, not the full /128. Without
 // the fix, an attacker who controls an entire delegated /64 (typical
