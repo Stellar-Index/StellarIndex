@@ -152,8 +152,8 @@ var ErrGenesisBaselineNotSeeded = errors.New("supply: SEP-41 SAC wrapper's pre-S
 // Basis is BasisOverride when MaxSupplyOverrides supplied a value
 // OR the per-asset locked-set is non-empty; otherwise
 // BasisAdminExclusion when a non-zero AdminBalance was subtracted,
-// and BasisSEP41TotalOnly when nothing was excluded at all (C1-041 —
-// the wire must not claim an exclusion that didn't happen).
+// and BasisSEP41TotalOnly when nothing was excluded at all (the
+// wire must not claim an exclusion that didn't happen).
 func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)

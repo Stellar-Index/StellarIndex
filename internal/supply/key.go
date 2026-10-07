@@ -52,7 +52,7 @@ func AssetKey(a canonical.Asset) (string, error) {
 // SAC-held slice (USDC would read 40M vs ~266M real, an 85% under-read).
 // Colon-form entries are parsed too (never passed through verbatim);
 // anything unparseable or non-classic is a loud error so a config typo
-// can never silently zero a supply component again.
+// can never silently zero a supply component.
 func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {

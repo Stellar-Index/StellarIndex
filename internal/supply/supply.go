@@ -61,7 +61,7 @@ const (
 	// directs operators to put the admin's address in the per-asset
 	// LockedSet instead. Doing so yields BasisOverride — so an
 	// operator can tell a configured token from an unconfigured one
-	// straight off the basis field (C1-041).
+	// straight off the basis field.
 	BasisSEP41TotalOnly Basis = "sep41_total_only"
 
 	// BasisOverride — operator-configured override beat the
@@ -268,8 +268,7 @@ type Supply struct {
 	// measure the SAME quantity via independent data paths — a ledger-entry
 	// snapshot sum here versus an event-flow sum there — so
 	// SACWrapped > sac_total is impossible under correct accounting.
-	// Comparing the folded TotalSupply against sac_total, which is all
-	// the compare site could do before this field existed, can only
+	// Comparing the folded TotalSupply against sac_total can only
 	// catch the opposite direction.
 	//
 	// nil = "this snapshot recorded no SACWrapped component", the

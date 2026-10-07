@@ -84,8 +84,8 @@ const (
 
 	// CrossCheckOutcomeMisaligned — both snapshots loaded, but their
 	// LedgerSequences are further apart than
-	// [CrossCheckLedgerTolerance], so the invariant is not evaluable
-	// (MNY-04). Neither passes nor pages: the gauge series is CLEARED
+	// [CrossCheckLedgerTolerance], so the invariant is not evaluable.
+	// Neither passes nor pages: the gauge series is CLEARED
 	// (a stale reading must not be served as agreement) and no
 	// divergence is computed (a lagging snapshot on either side makes
 	// the subset bound meaningless in BOTH directions — a stale
@@ -283,7 +283,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
-	// MNY-04: each snapshot is the LATEST for its own asset_key, written
+	// Each snapshot is the LATEST for its own asset_key, written
 	// by its own per-asset refresher, so they can describe wildly
 	// different ledgers; CrossCheckForClass refuses such a pair rather
 	// than publish a verdict the data can't support.

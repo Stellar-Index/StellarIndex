@@ -207,7 +207,7 @@ var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil To
 
 // ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the
 // two snapshots were computed more than [CrossCheckLedgerTolerance]
-// ledgers apart (MNY-04). Comparing arbitrarily-aged totals makes both
+// ledgers apart. Comparing arbitrarily-aged totals makes both
 // invariants unsound in both directions, so there is no verdict to give.
 var ErrCrossCheckMisaligned = errors.New("supply: cross-check snapshots describe different ledgers")
 
@@ -232,7 +232,7 @@ func checkLedgerAlignment(classic, sac Supply) error {
 // equality invariant — i.e. [WrapClassFull] semantics. Equivalent to
 // `CrossCheckForClass(classic, sac, WrapClassFull)`; kept as a
 // standalone function (rather than folded into CrossCheckForClass)
-// because it predates [WrapClass] and remains the correct, unqualified
+// because it is the correct, unqualified
 // comparison for a genuinely-fully-SAC-represented asset.
 //
 // CAVEAT: the equality
@@ -329,7 +329,7 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 // default would publish a green check that verified nothing. A caller
 // reading WithinTolerance MUST read SubsetBoundChecked alongside it.
 //
-// STILL NOT A FULL RECONCILIATION (MNY-04, narrowed). What leg 2 closes
+// STILL NOT A FULL RECONCILIATION. What leg 2 closes
 // is the direction that is otherwise structurally invisible: a mint the
 // indexer never captured, or a burn it double-counted, shows up as
 // SACWrapped > sac_total instead of hiding inside the benign
@@ -414,7 +414,7 @@ func excessOver(have, bound *big.Int) *big.Int {
 // safe default — via [normalizeWrapClass]. It first refuses a
 // misaligned pair with [ErrCrossCheckMisaligned], so the aggregator's
 // [CrossCheckRefresher] and the `supply audit -cross-check` CLI share
-// one MNY-04 guard. CrossCheck / CrossCheckSubsetBound stay exported
+// one ledger-alignment guard. CrossCheck / CrossCheckSubsetBound stay exported
 // for direct unit testing of the pure comparisons.
 func CrossCheckForClass(classic, sac Supply, class WrapClass) (CrossCheckResult, error) {
 	if err := checkLedgerAlignment(classic, sac); err != nil {
