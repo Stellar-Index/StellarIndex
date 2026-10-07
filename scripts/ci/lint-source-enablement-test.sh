@@ -196,7 +196,7 @@ expect_ok 'a consistent tree passes'
 
 # ─── §1 the production defect: known, tracked, never enabled ────────
 #
-# This is sushiswap_v3 (2026-09-09) and upshift (#503) reduced to a fixture:
+# This is the sushiswap_v3 and upshift shape reduced to a fixture:
 # the decoder is in KnownSources and the completeness catalogue tracks it,
 # but no enabled_sources entry exists, so no projector ever runs for it.
 mkfixture

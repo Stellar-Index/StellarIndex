@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# commit-identity-range-test.sh — pins commit-identity-range.sh (RLT-374)
+# commit-identity-range-test.sh — pins commit-identity-range.sh
 # against the exact scenario that broke it: a brand-new branch pushed
 # under `fetch-depth: 0`, checked out detached (as actions/checkout always
 # does), with the branch's own commit ALSO present as a remote-tracking

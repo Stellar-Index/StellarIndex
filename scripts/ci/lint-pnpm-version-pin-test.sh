@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-pnpm-version-pin-test.sh — fixture test for
-# scripts/ci/lint-pnpm-version-pin.sh (T547, audit-2026-09-18).
+# scripts/ci/lint-pnpm-version-pin.sh.
 #
 # Run: bash scripts/ci/lint-pnpm-version-pin-test.sh
 set -uo pipefail

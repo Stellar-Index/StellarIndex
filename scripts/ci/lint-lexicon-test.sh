@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-lexicon-test.sh — fixture tests for the non-slog-logger zero rule in
-# scripts/ci/lint-lexicon.sh (#1258).
+# scripts/ci/lint-lexicon.sh.
 #
 # The stdlib arm of that rule was `^[[:space:]]*"log"$`, which matches only
 # a line that IS (with leading whitespace) exactly `"log"`. An aliased

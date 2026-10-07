@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # explorer-shell-fallback-check-test.sh — fixture tests for
-# scripts/ci/explorer-shell-fallback-check.sh (T329, audit-2026-09-18).
+# scripts/ci/explorer-shell-fallback-check.sh.
 #
 # Builds two throwaway trees (a synthetic `functions/` calling
 # shellFallback(context, '<path>') and a synthetic `out/`) and asserts the

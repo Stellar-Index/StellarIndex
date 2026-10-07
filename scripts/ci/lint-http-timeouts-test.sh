@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-http-timeouts-test.sh — fixture tests for the unbounded-HTTP gate
-# (scripts/ci/lint-http-timeouts.sh, #371 F5).
+# (scripts/ci/lint-http-timeouts.sh).
 #
 # The gate's value is that a hang is invisible: `http.DefaultClient` with
 # a dead peer blocks forever, and the symptom is "the backfill is slow"

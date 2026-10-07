@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ansible-clickhouse-host-gate-test.sh — the archival-node role must not
-# hard-fail on a host that has no ClickHouse (F128, audit-2026-09-02).
+# hard-fail on a host that has no ClickHouse.
 #
 # WHAT WENT WRONG. Three CH-CONFIG task files — 20-clickhouse-serving-
 # profile.yml, 21-clickhouse-drop-guard.yml, 22-clickhouse-exporter.yml —
@@ -188,7 +188,7 @@ PLAY
 # The status is on the line AFTER the `TASK [...]` banner, possibly behind
 # an interpreter-discovery WARNING, so match the status verbs explicitly.
 # Reads the whole file (no early exit): a `| head`-style stop would EPIPE
-# under pipefail (#475).
+# under pipefail.
 task_status() {
   awk -v pat="$2" '
     index($0, "TASK [") == 1 { intask = (index($0, pat) > 0); next }

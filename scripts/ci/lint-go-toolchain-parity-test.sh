@@ -64,7 +64,7 @@ mk missing ci.yml "      - uses: actions/setup-go@$(printf '1%.0s' {1..40})  # v
       - run: go build ./..."
 check "no go-version-file at all -> FAIL" 1 "$TMP/missing"
 
-# ── hardcoded go-version, no go-version-file: exactly #495's risk ────
+# ── hardcoded go-version, no go-version-file: the drift risk ───────
 mk hardcoded ci.yml "      - uses: actions/setup-go@$(printf '1%.0s' {1..40})  # v7.0.0
         with:
           go-version: '1.25'

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Self-test for the resolve-tag SemVer validation step in release.yml
-# (Q228/RNC25, audit-2026-09-18): a multi-line tag whose FIRST line is
+# a multi-line tag whose FIRST line is
 # a valid SemVer must be rejected outright, not accepted because a
 # per-line grep -Eq matched line 1 and ignored the rest.
 #

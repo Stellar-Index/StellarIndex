@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-actions-pinning-test.sh — fixture tests for the SHA-pinning gate
-# (scripts/ci/lint-actions-pinning.sh, F-1216).
+# (scripts/ci/lint-actions-pinning.sh).
 #
 # The gate spent months passing everything. Its hard-fail arm read
 # `git diff origin/main -- .github/workflows/*.yml`, which is empty on a

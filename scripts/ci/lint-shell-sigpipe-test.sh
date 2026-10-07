@@ -268,9 +268,9 @@ if [ -z "$WF_PY" ] && [ "${CI:-}" = "true" ]; then
 elif [ -z "$WF_PY" ]; then
   echo "  SKIP no python3 with PyYAML locally; CI enforces these cases"
 else
-  # The line that killed the v0.69.0 deploy, verbatim, in the shape it had
-  # before 81254dfac. `ls | sort | head -n 10` was itself the FIX for an
-  # earlier `ls | head`, and only moved the SIGPIPE from ls to sort.
+  # The line that killed a deploy, verbatim. `ls | sort | head -n 10` was
+  # itself the FIX for an earlier `ls | head`, and only moved the SIGPIPE
+  # from ls to sort.
   WF_DEPLOY=$'name: deploy\non: workflow_dispatch\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Stage migrations from the tag tree\n        run: |\n          set -euo pipefail\n          mkdir -p dist/migrations\n          echo "---"\n          ls dist/migrations/ | sort | head -n 10'   # sigpipe-ok: fixture text, scanned by the gate and never executed
   mk wfdeploy/.github/workflows deploy.yml "$WF_DEPLOY"
   check_report "the pre-fix deploy.yml line is caught, at a line that resolves" \

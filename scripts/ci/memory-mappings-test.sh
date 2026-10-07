@@ -133,7 +133,7 @@ has healthy 'stellarindex_process_memory_mappings_procs{process="clickhouse"} 2'
 has healthy 'stellarindex_process_memory_mappings_unreadable{process="clickhouse"} 0'
 has healthy 'stellarindex_process_memory_mappings_limit 1048576'
 # 47000 / 1048576 = 0.04482269… — r1's measured steady state, ~4.5 % of
-# the limit, against the 1.0 the 2026-09-10 crash reached.
+# the limit, against the 1.0 a crash reaches.
 has healthy 'stellarindex_process_memory_mappings_ratio{process="clickhouse"} 0.044823'
 
 if grep -q '^stellarindex_process_memory_mappings_updated_unix [0-9]\{10\}' \

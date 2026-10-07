@@ -172,7 +172,7 @@ catches "a baseline entry whose column was retyped is caught as stale" "$d" \
   "stale ch_float_baseline entry account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd"
 
 # The baseline is read from a *.baseline file, not the script: CI runs
-# the base ref's copy of this script (CID-03), so an inline list could
+# the base ref's copy of this script, so an inline list could
 # never shrink — the base copy calls the entry a retype PR retires stale.
 d="$(mk shrunk-baseline account_cohort_rollup.sql <<'SQL'
 -- si-apply-scope: operator

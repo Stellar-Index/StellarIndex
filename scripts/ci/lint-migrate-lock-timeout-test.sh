@@ -2,7 +2,7 @@
 # lint-migrate-lock-timeout-test.sh — regression test for GH-1166: both
 # ansible call sites of `stellarindex-migrate ... up` must set
 # PGOPTIONS with lock_timeout + statement_timeout (the DDL-lock-convoy
-# mitigation the 2026-07-18 deploy plan recorded but never wired in),
+# mitigation),
 # and must bound the whole invocation with a process-level `timeout`
 # (ansible.builtin.shell/command have no task-level timeout keyword of
 # their own).

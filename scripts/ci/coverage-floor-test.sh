@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# coverage-floor-test.sh — fixture tests for scripts/ci/coverage-floor.sh
-# (#340 item 6).
+# coverage-floor-test.sh — fixture tests for scripts/ci/coverage-floor.sh.
 #
 # A coverage gate is the easiest kind of gate to make vacuous: it reads a
 # file that is generated somewhere else, so it can silently start

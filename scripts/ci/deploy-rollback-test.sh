@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # deploy-rollback-test.sh — the deploy's rollback path must never remove a
-# binary it cannot prove it can put back (K078, audit-2026-09-02).
+# binary it cannot prove it can put back.
 #
 # deploy-one-binary.yml swaps each binary in binaries_csv in turn. When a
 # LATER binary fails its probe the rescue rolls the EARLIER ones back too
-# (CID-14), so the host lands on one consistent version set. That rollback
+# so the host lands on one consistent version set. That rollback
 # used to re-derive its restore state at rollback time: it `mv`'d every
 # recorded binary aside to .rolledback-<version> and then `mv`'d a
 # .prev-<tag> back with `ignore_errors: true`. A binary this run installed

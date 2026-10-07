@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-systemd-flag-hatch-test — proves lint-systemd-flag-hatch.sh fires on
-# the #1231 shape (brace-form hatch in a direct-exec ExecStart), passes the
+# a brace-form hatch in a direct-exec ExecStart, passes the
 # bare form and the sh -c form, refuses a vacuous tree, and passes the repo.
 set -uo pipefail
 
