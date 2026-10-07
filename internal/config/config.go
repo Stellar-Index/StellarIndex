@@ -1146,9 +1146,8 @@ type StorageConfig struct {
 	// READ-ONLY by design — we never write back; the canonical
 	// production target is `aws-public-blockchain/v1.1/stellar/
 	// ledgers/pubnet` (the AWS Open Data Sponsorship bucket). Zero-value
-	// disables tiering and the single-source path is used (default — flip
-	// the bucket field on as part of ADR-0027 §Sequencing step 3, not
-	// earlier).
+	// disables tiering and the single-source path is used (the default);
+	// per ADR-0027, enable it only together with the first bulk trim.
 	//
 	// The region is us-east-2, and us-east-1 cannot work: the SDK
 	// builds this client with UsePathStyle=true, so the REGIONAL

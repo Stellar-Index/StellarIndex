@@ -7,13 +7,13 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// The explorer lake reads run against a shared ClickHouse
-// pool; a malformed id that reaches ClickHouse still drives a FINAL scan
+// The explorer lake reads run against a shared ClickHouse pool; a
+// malformed id that reaches ClickHouse still drives a FINAL scan
 // (AssetHolders runs TWO) before any 400. These tests pin the up-front
-// validation added for P2/C3-9 (audit-2026-07-16): a malformed
-// asset_id / contract_id is rejected with 400 BEFORE the reader is
-// consulted. The stub reader returns success for every method, so an
-// unfixed handler would 200 here — the 400 proves the guard fires first.
+// validation: a malformed asset_id / contract_id is rejected with 400
+// BEFORE the reader is consulted. The stub reader returns success for
+// every method, so an unfixed handler would 200 here — the 400 proves the
+// guard fires first.
 
 func TestExplorer_AssetHolders_RejectsMalformedAsset(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{

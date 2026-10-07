@@ -17,14 +17,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin C3-1 (audit-2026-07-16): every explorer handler that reads
-// the shared ClickHouse pool (ExplorerReader) MUST bound the read in a
-// request-scoped context.WithTimeout(explorerReadTimeout) so a handful of slow
+// These tests pin that every explorer handler that reads the shared
+// ClickHouse pool (ExplorerReader) MUST bound the read in a request-scoped
+// context.WithTimeout(explorerReadTimeout) so a handful of slow
 // unauthenticated requests can't hold every connection open and wedge every
 // lake-backed endpoint (the server WriteTimeout does not cancel an in-flight
 // query). The regression these guard against is a handler passing raw
-// r.Context() — which, absent middleware, carries NO deadline — straight to the
-// reader.
+// r.Context() — which, absent middleware, carries NO deadline — straight to
+// the reader.
 
 // deadlineProbe records the deadline on the FIRST reader call a handler makes
 // (all of a handler's reads share the same context, and the first sees the full
