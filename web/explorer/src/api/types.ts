@@ -4815,8 +4815,11 @@ export interface paths {
          *     404 when `ts` is before the first captured ledger, one second or more
          *     after the ingest tip's close time (a ledger not yet captured may still
          *     close at or before it), or the answer is inside or just before a gap.
-         *     The lookup is a binary search of sort-key reads on the ledger
-         *     sequence, at most ~35 per request.
+         *     The lookup is a binary search on the ledger sequence: at most ~35
+         *     probes per request, each one sort-key read on a complete lake. A probe
+         *     that lands in a lake gap wider than 5,000 ledgers re-reads over
+         *     geometrically wider windows, which can add up to ~10 queries to that
+         *     probe.
          */
         get: operations["getLedgerAt"];
         put?: never;

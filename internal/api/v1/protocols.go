@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -1332,11 +1333,16 @@ func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protoc
 // protocolLedgerAtCloseTimeReader is the optional capability behind an
 // accurate window boundary (CA2-A06-correct-1): a ProtocolActivityReader
 // that can resolve a ledger sequence's close_time. *clickhouse.ExplorerReader
-// (the production wiring) satisfies it via LedgerBySeq; a reader that
-// doesn't degrades to the theoretical-cadence approximation below.
+// (the production wiring) satisfies it; a reader that doesn't degrades to
+// the theoretical-cadence approximation below.
 type protocolLedgerAtCloseTimeReader interface {
+	explorer.LedgerPager
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
 }
+
+// The capability is an optional type assertion, so a production reader that
+// drifted out of it would silently serve the approximation instead.
+var _ protocolLedgerAtCloseTimeReader = (*clickhouse.ExplorerReader)(nil)
 
 // protocolWindowFloor derives the raw readers' ledger cutoff AND the fast
 // reader's day-grain cutoff from ONE close_time boundary: tip's close_time
@@ -1363,7 +1369,8 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 		return fallback, protocolSinceDay(fallback, tip)
 	}
 	boundary := tipHdr.CloseTime.UTC().AddDate(0, 0, -protocolActivityWindowDays)
-	since, err := ledgerSeqAtCloseTime(ctx, closeTimeReader, tip, boundary)
+	// Close times are whole seconds, so "at or after boundary" is "after boundary-1s".
+	since, err := explorer.FirstCapturedClosedAfter(ctx, closeTimeReader, tip, boundary.Add(-time.Second))
 	if err != nil {
 		return fallback, protocolSinceDay(fallback, tip)
 	}
@@ -1371,30 +1378,6 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 		since = 1
 	}
 	return since, boundary
-}
-
-// ledgerSeqAtCloseTime binary-searches [0, tipSeq] for the smallest ledger
-// sequence whose close_time is at or after boundary. Ledger sequences are
-// contiguous genesis→tip and close_time is monotonic in sequence, so this
-// converges in O(log2(tipSeq)) point lookups regardless of the chain's
-// actual close cadence — the same technique
-// internal/api/v1/explorer/contracts_list.go's windowFloorLedger uses for
-// the sibling /v1/contracts window (CA2-A03-correct-0).
-func ledgerSeqAtCloseTime(ctx context.Context, r protocolLedgerAtCloseTimeReader, tipSeq uint32, boundary time.Time) (uint32, error) {
-	lo, hi := uint32(0), tipSeq
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		hdr, found, err := r.LedgerBySeq(ctx, mid)
-		if err != nil {
-			return 0, err
-		}
-		if !found || hdr.CloseTime.Before(boundary) {
-			lo = mid + 1
-			continue
-		}
-		hi = mid
-	}
-	return lo, nil
 }
 
 // buildProtocolView projects one registry entry + the dynamic joins
