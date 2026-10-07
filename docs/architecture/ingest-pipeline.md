@@ -239,6 +239,21 @@ set.
   projected source (`checkBackfillNotProjected` in
   `internal/ops/ingest/backfill.go`): it would be a second writer, and
   for blend it would write nothing and exit 0.
+- **Re-deriving a timestamp (`oracle_updates`).** `ts` is part of the
+  table's primary key (TimescaleDB requires the partition column in every
+  unique index), so the on-chain identity `(source, ledger, tx_hash,
+  op_index)` is NOT enforced: a decoder change that shifts the `ts` of an
+  already-stored event makes the re-derive INSERT a second row beside the
+  stale one, and nothing deletes the stale row. Per-decoder golden tests
+  (`decode_ts_golden_test.go` in `reflector`, `redstone`, `band`) fail on
+  any such change. When one must change, re-derive ONLY via
+  `projected-rebuild` (reflector, redstone) or `ch-rebuild -contract-calls`
+  (band), never `projector-replay` (generation 0, async cursor rewind), and
+  treat clearing the stale rows (on-chain, `ledger > 0`, older derive
+  generation, in the re-derived range) and recounting `source_entry_counts`
+  and the `oracle_prices_*` caggs as part of the same change. Off-chain rows
+  (`ledger = 0`) embed `ts` in their identity and are never deduplicated
+  this way.
 - **`ch-rebuild`'s event pass is guarded, not forbidden, on projected
   domains.** Its one sanctioned projected use is the clean-slate repair
   above. `-write` reads every projected source's live cursor and refuses
