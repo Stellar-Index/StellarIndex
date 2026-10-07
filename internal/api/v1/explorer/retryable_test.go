@@ -15,7 +15,7 @@ func (fakeNetTimeout) Error() string   { return "read tcp 127.0.0.1:34612->127.0
 func (fakeNetTimeout) Timeout() bool   { return true }
 func (fakeNetTimeout) Temporary() bool { return true }
 
-// Site audit 2026-08-07: /accounts/{g}/activity served "detached refresh
+// Regression: /accounts/{g}/activity served "detached refresh
 // capacity saturated" as a 500 Internal error (its handler tested only
 // readTimedOut), and /operations did the same with driver-level conn
 // i/o timeouts. Every capacity-class error must classify retryable.

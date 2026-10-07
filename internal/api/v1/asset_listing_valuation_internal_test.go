@@ -24,7 +24,7 @@ import (
 // invented strkey cannot express that claim or fail to.
 
 const (
-	// The catalogue identity. USDT0 launched on Stellar 2026-09-02 and
+	// The catalogue identity. USDT0 is a recent Stellar launch and
 	// trades ~$106/day there, so the dust-liquidity guard suppresses its
 	// market cap — the exact hole this arm exists to fill.
 	tlvUSDT0Asset = "USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q"
@@ -50,7 +50,7 @@ const (
 	// ticker.
 	tlvUSDT0Impersonator = "USDT0-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 
-	// Supply readings for USDT0 on 2026-09-15, and the reason this arm
+	// Supply readings for USDT0, and the reason this arm
 	// may not use whichever one is to hand: mint−burn over the SAC says
 	// 2,581,052.8958550 tokens, the trustline sum says 6,469.52. Valuing
 	// the second publishes a figure 400x too small.

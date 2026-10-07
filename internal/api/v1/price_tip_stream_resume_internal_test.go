@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// TestForwardTipStream_ResumeSkipsPreflightSnapshot pins Q170/T161: on a
+// TestForwardTipStream_ResumeSkipsPreflightSnapshot pins the behaviour: on a
 // Last-Event-ID reconnect, forwardTipStream must not prepend the
 // connection's freshly-computed pre-flight snapshot ahead of the Hub's
 // replayed backlog.

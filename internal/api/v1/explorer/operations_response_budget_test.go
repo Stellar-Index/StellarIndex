@@ -33,7 +33,7 @@ func garbageXDR(n int) string {
 	return strings.Repeat("Z", n)
 }
 
-// Q207: ParseLimit(500, 2000) bounds ROW count but not the response's BYTE
+// ParseLimit(500, 2000) bounds ROW count but not the response's BYTE
 // size — an op's decoded body is attacker-influenced in size. Past
 // operationsResponseByteBudget, further rows must be served UNDECODED
 // (RawXDR empty) rather than fully decoded, bounding the response to

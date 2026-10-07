@@ -435,8 +435,8 @@ func TestChart_DiscontinuousSignal(t *testing.T) {
 
 	// `timeframe=all` is the production shape and the one with no other
 	// account of itself: `truncated` is deliberately never raised for it
-	// ("everything you have" cannot be short), so before this signal a
-	// five-year hole had nothing on the wire at all.
+	// ("everything you have" cannot be short), so without this signal a
+	// five-year hole would have nothing on the wire.
 	env := getChart(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1d")
 	if !env.Data.Discontinuous {
 		t.Fatalf("discontinuous = false over %d points spanning a 25-day break", len(env.Data.Points))

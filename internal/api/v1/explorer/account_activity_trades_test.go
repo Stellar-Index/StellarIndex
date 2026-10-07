@@ -226,7 +226,7 @@ func TestAccountTrades_NilReader503_And_Timeout503(t *testing.T) {
 		t.Fatalf("nil reader: status = %d, want 503", w.Code)
 	}
 
-	// Deadline → 503 + the endpoint's own `…-timeout` type (C-F1).
+	// Deadline → 503 + the endpoint's own `…-timeout` type.
 	rec = problemRecord{}
 	h, _ = newActivityHandler(&capReader{probe: &deadlineProbe{}}, nil, &stubTradesReader{err: context.DeadlineExceeded})
 	h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, typeURL, title string, status int, detail string) {

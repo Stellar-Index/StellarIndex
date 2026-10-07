@@ -9,7 +9,7 @@ import (
 )
 
 // `unclassified` is the largest group on this breakdown after the
-// contract funds — on 2026-09-16 it carried $971,860,304.89 of a
+// contract funds — in production it carried $971,860,304.89 of a
 // $2,535,764,187.91 total, which is BENJI and USDY. The word reads as a
 // gap in OUR data. It is a statement about the ISSUERS': Franklin
 // Templeton's own SEP-1 for BENJI declares `anchor_asset_type = "other"`

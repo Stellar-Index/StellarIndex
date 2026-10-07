@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite for F002/F019/F032/T039: the scam-issuer gate was
+// Regression suite: the scam-issuer gate was
 // keyed on the BASE leg alone, so a flagged issuer's withheld price was
 // republished — exactly, as its reciprocal — by moving the asset to the
 // QUOTE side of the same request.

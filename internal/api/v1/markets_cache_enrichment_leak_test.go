@@ -9,7 +9,7 @@ import (
 )
 
 // TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests —
-// finding K038's enrichment leg (the decimals leg is F014, see
+// the enrichment leg (the decimals leg is in
 // markets_cache_shared_rows_test.go, whose production-shaped server this
 // reuses). ?include=sparkline,inception wrote volume_history_24h /
 // first_trade_at onto the rows the cache had handed out — which were the

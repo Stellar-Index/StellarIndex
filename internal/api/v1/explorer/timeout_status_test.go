@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin C-F1 (audit-2026-07-23): a lake read that blows
+// These tests pin the behaviour: a lake read that blows
 // explorerReadTimeout must be served as a 503 `…-timeout` problem+json, NOT the
 // `errors/internal` 500 every explorer handler used to emit. The live symptom
 // was GET /v1/contracts/{id}/code-history returning
@@ -126,7 +126,7 @@ func newTimeoutHandler(rec *problemRecord) *Handler {
 	return h
 }
 
-// TestExplorerReads_DeadlineMapsTo503 is the C-F1 regression guard. For every
+// TestExplorerReads_DeadlineMapsTo503 is the regression guard. For every
 // lake-backed explorer handler, a read that returns context.DeadlineExceeded
 // must produce 503 + a `…-timeout` problem type. Against the un-fixed code every
 // case yields 500 `errors/internal`.

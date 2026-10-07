@@ -271,8 +271,7 @@ func TestKeyPolicy_OperatorSubjectToOwnPermissions(t *testing.T) {
 // confined to their route families, and operator-tier subjects are
 // bound by their OWN scope list — a default operator key (empty scopes)
 // keeps full access, but a scope-narrowed operator key is confined like
-// any other tier (the defect finding 2 removed had operator subjects
-// bypass this gate entirely).
+// any other tier (operator subjects do not bypass this gate).
 func TestKeyPolicy_Scopes(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -315,7 +314,7 @@ func TestKeyPolicy_Scopes(t *testing.T) {
 	}
 }
 
-// TestClampMintScopes covers the delegation invariant (finding F-B):
+// TestClampMintScopes covers the delegation invariant:
 // a key may only mint a child no more privileged than itself.
 func TestClampMintScopes(t *testing.T) {
 	tests := []struct {

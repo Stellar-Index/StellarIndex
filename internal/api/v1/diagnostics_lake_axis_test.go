@@ -12,8 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins C6-046
-// (audit-2026-07-23). ADR-0033/ADR-0034 verdicts are TWO-AXIS:
+// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins both axes. ADR-0033/ADR-0034
+// verdicts are TWO-AXIS:
 // `lake_complete` (archive proven genesis-to-tip) and `complete` (that
 // plus the retention-scoped projection reconcile). A source is routinely
 // lake_complete=true with complete=false.

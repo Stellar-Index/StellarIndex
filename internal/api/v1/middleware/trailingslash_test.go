@@ -163,7 +163,7 @@ func TestTrailingSlashRedirect_methodAgnostic(t *testing.T) {
 	}
 }
 
-// TestTrailingSlashRedirect_exemptsRegisteredIndexRoute is the Q175
+// TestTrailingSlashRedirect_exemptsRegisteredIndexRoute is the
 // regression. `GET /errors/{$}` is registered as the mux's own
 // canonical, exact-match form of "/errors/" — not a client typo of
 // "/errors". Composed with the mux (as server.go wires it), blindly

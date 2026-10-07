@@ -9,8 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// Replay rings are allocated on first PUBLISH, not on subscribe
-// (audit-2026-09-02 F058 / K010).
+// Replay rings are allocated on first PUBLISH, not on subscribe.
 //
 // The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up
 // to maxTopics subscribed-but-silent topics. With the ring allocated

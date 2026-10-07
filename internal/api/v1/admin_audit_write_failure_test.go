@@ -18,8 +18,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// C3-067 (audit-2026-07-23).
-//
 // Every privileged mutation on this surface appends its audit row
 // best-effort: the mutation is already committed when the append runs, so a
 // failure is swallowed with a bare `logger.Warn(... "(best-effort)")`. That
@@ -142,8 +140,7 @@ func TestAdminAuditWriteFailure_StatusNotice(t *testing.T) {
 	}
 }
 
-// TestAdminKeyBudgetClampCounter is the queued admin-clamp metric
-// (audit-2026-07-23 one-liner).
+// TestAdminKeyBudgetClampCounter is the queued admin-clamp metric.
 //
 // `clampKeyBudgetsToTier` silently lowers every credential an account can
 // still authenticate with. The clamp is correct — the account no longer pays

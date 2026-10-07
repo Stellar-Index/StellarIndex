@@ -60,7 +60,7 @@ func runOnce(t *testing.T, ua string, status int, level slog.Level) *bytes.Buffe
 }
 
 // The SLA probe drives ~800 requests per endpoint per run across ten
-// endpoints every 15 minutes. Measured on r1 2026-09-16, that was
+// endpoints every 15 minutes. Measured on r1, that was
 // 287,914 API journal entries in 5.4 hours — 98% of everything the
 // journal held — which collapsed a configured 14-day retention into
 // about five hours and aged that morning's own outage out of the
@@ -105,7 +105,7 @@ func TestFailingSyntheticRequestStillReachesTheJournal(t *testing.T) {
 	}
 }
 
-// T175: a User-Agent header is entirely client-controlled, so a request
+// A User-Agent header is entirely client-controlled, so a request
 // that spoofs a synthetic prefix but actually crossed haproxy (evidenced
 // by the X-Forwarded-For hop haproxy stamps on everything it proxies —
 // see obs.IsSyntheticRequest) must keep its INFO line, exactly like any

@@ -134,7 +134,7 @@ func TestDistinctMarketsKeepsOrderAndFirstSpelling(t *testing.T) {
 // expansion emits classic quote spellings only
 // (aggregate.ExpandTargetPairWithClassicPegs skips a non-classic), so a
 // base alias can appear as a peg quote but never the reverse. Widening
-// the quote leg to a peg's SAC form — launch-plan row 1.14 — removes
+// the quote leg to a peg's SAC form removes
 // exactly that accident, and this test is what turns the property
 // structural before that happens.
 func TestUSDPeggedConstituentsAskForEachMarketOnce(t *testing.T) {

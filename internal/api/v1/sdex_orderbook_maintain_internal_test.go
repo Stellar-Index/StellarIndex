@@ -28,7 +28,7 @@ func (s *countingOfferBookReader) OfferChangesSince(ctx context.Context, from ui
 }
 
 // TestSDEXOrderBookCache_MaintainTickReloadsPeriodically pins the
-// maintainer policy the API process runs (F162): Load's "self-heal" re-load
+// maintainer policy the API process runs: Load's "self-heal" re-load
 // was documented but nothing ever called it, so a book that had gone wrong
 // below its cursor stayed wrong until the process restarted.
 func TestSDEXOrderBookCache_MaintainTickReloadsPeriodically(t *testing.T) {

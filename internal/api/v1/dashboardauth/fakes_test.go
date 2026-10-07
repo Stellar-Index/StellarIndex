@@ -332,8 +332,8 @@ type fakeTokenStore struct {
 	mu      sync.Mutex
 	tokens  map[string]platform.MagicLinkToken // hex(hash) → row
 	invites map[string]platform.Invite
-	// lockouts mirrors the login_code_lockouts table (migration 0122,
-	// C3-032): email → durable failure state, deliberately keyed by
+	// lockouts mirrors the login_code_lockouts table (migration 0122):
+	// email → durable failure state, deliberately keyed by
 	// EMAIL and not by token so the fake reproduces the property under
 	// test — a re-mint does not reset it.
 	lockouts map[string]platform.LoginCodeLockout

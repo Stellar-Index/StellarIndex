@@ -295,7 +295,7 @@ func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
 		want    string
 	}{
 		// The r1 default: both guards wired. Byte-identical to the
-		// sentence shipped before this fix — the wire shape must not
+		// original sentence — the wire shape must not
 		// move for the deployment whose claim was true.
 		{"both guards wired", nil, bothScreens},
 		// disable_substance_gate = true: the scam directory still

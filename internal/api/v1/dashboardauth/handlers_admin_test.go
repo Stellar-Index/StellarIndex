@@ -240,7 +240,7 @@ func TestAdminLookup_WritesDurableAuditRow(t *testing.T) {
 	}
 }
 
-// TestAdminLookup_MasksStaffEmailInLogSink pins W6-prv-3: the staff
+// TestAdminLookup_MasksStaffEmailInLogSink pins the behaviour: the staff
 // actor's email must be masked before it reaches the app logger (which
 // ships to Loki), consistent with the package's maskEmail policy — while
 // the durable audit_log row keeps the FULL actor_email as the intended

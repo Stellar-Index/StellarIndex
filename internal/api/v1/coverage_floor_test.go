@@ -1097,7 +1097,7 @@ func TestHistory_ReverseStoredMarketCarriesTheFloor(t *testing.T) {
 // floor, because the probe is scoped to the spellings the combine
 // requests rather than to the quote's alias family. A quote-alias fold
 // there would name the pool's first bucket as the surface's floor and
-// call the window quiet; the gap is recorded as launch-plan row 1.15
+// call the window quiet; the gap is left visible
 // instead of being papered over by a probe that spans more than the
 // read.
 
@@ -1177,8 +1177,7 @@ func fiatSeriesGet(t *testing.T, ts *testServer, base string) fiatSeriesEnvelope
 }
 
 // assertSACQuotedSeriesReadLast is the series twin of the ordering
-// [assertNoSACQuotedRead] pins on the point side. Since launch-plan row
-// 1.15 the fiat combine DOES read a declared peg's SAC wrapper — that is
+// [assertNoSACQuotedRead] pins on the point side. The fiat combine DOES read a declared peg's SAC wrapper — that is
 // where a Soroban pool's USD leg lives, and 43 assets on r1 have depth
 // under no other spelling — but it must read every established spelling
 // of every family FIRST, because a held-back bar is admitted only into a
@@ -1212,7 +1211,7 @@ func assertSACQuotedSeriesReadLast(t *testing.T, reads []string) {
 // `<AQUA SAC>/<USDC SAC>` holds bars on day 1 (n=50, high 0.50, low
 // 0.01) and on day 2.
 //
-// Served since launch-plan row 1.15: TWO bars. Day 1 is the book's
+// Served: TWO bars. Day 1 is the book's
 // alone — the pool is dropped from that bucket entirely, so its two
 // prints at 0.50 and 0.01 cannot become the bar's high and low, which is
 // what "outranks" means here — and day 2 is the pool's, because the
@@ -1279,7 +1278,7 @@ func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 // two prints setting a bar's extremes beside six million units of book
 // volume.
 //
-// Since launch-plan row 1.15 the SAC-quoted spelling IS read — that is
+// The SAC-quoted spelling IS read — that is
 // how a bucket the book cannot answer gets served at all — so what holds
 // the answer still is the per-bucket gate, not an absent read. The read
 // order is asserted instead: every established spelling first.
@@ -1312,8 +1311,8 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_SACQuotedOnlyDepthIsServed — the gap launch-plan row
-// 1.15 closed, pinned from the other side.
+// TestOHLCSeries_SACQuotedOnlyDepthIsServed — SAC-quoted-only depth is served,
+// pinned from the other side.
 //
 // One market, AQUA quoted in the USDC SAC, with a daily bar inside the
 // window; the declared peg is classic USDC. No established spelling
@@ -1436,7 +1435,7 @@ func coverageSetDiff(a, b map[string]bool) []string {
 // shorter of the two. Pinned for a SAC-declared base and for XLM's
 // three-form base, under the registry shape r1 runs.
 //
-// Since launch-plan row 1.15 the SAC-quoted market is on BOTH sides of
+// The SAC-quoted market is on BOTH sides of
 // the equality: the combine reads a declared peg's SAC wrapper, so the
 // floor measures it. The equality is what keeps the two honest — a probe
 // wider than the read reports a served-and-empty window as quiet, and a

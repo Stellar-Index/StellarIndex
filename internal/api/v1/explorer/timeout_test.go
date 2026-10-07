@@ -431,7 +431,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 			case "AssetHolders":
 				wantBudget = assetHoldersRefreshTimeout
 			case "OperationsDirectory":
-				// F062: the never-computed first page is now single-flighted
+				// The never-computed first page is single-flighted
 				// through refreshOpsDirectory, which runs the fill DETACHED
 				// on its own budget (like every sibling cold-path here) so a
 				// burst of concurrent first-page requests shares the one
@@ -444,7 +444,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// budget — still bounded, just not request-scoped.
 				wantBudget = contractDetailRefreshTimeout
 			case "NetworkThroughput":
-				// Snapshot-served (§2.6b): the year-window
+				// Snapshot-served: the year-window
 				// scan runs DETACHED on its own refresh budget so it
 				// survives the request that kicked it — still bounded,
 				// just not request-scoped.

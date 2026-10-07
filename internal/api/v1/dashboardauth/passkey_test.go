@@ -307,7 +307,7 @@ func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 	// WithResidentKeyRequirement patches two of its fields, so getting
 	// the order wrong silently drops one of these. The credential
 	// registered here is a passwordless first factor — without UV it is
-	// possession-only. audit-2026-08-13.
+	// possession-only.
 	if opts.PublicKey.AuthenticatorSelection.UserVerification != "required" {
 		t.Fatalf("userVerification = %q, want required", opts.PublicKey.AuthenticatorSelection.UserVerification)
 	}

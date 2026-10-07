@@ -13,7 +13,7 @@ import (
 // fakeEmailLocker is the in-memory analogue of [auth.RedisSignupEmailLocker]
 // for unit tests. Acquire returns true exactly once per key with a
 // per-acquire token; Release removes the key only when the token still
-// matches (the fencing compare-and-delete, F-C), so a subsequent Acquire
+// matches, so a subsequent Acquire
 // wins again. Mirrors the SETNX+CAD ownership the Redis adapter implements.
 type fakeEmailLocker struct {
 	mu   sync.Mutex

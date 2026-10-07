@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The measured defect this file guards (r1, 2026-09-12).
+// The measured defect this file guards (seen on r1).
 //
 // classic_lake_supply.go warms itself from the REQUEST path only: a listing
 // request kicks a detached refresh for classicLakeSupplyBatch of the assets it

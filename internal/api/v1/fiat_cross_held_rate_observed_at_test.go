@@ -10,14 +10,14 @@ import (
 )
 
 // TestPriceFiatCrossStampsTheOlderLeg pins the honesty of observed_at on
-// the fiat-vs-fiat path once the forex worker can HOLD a rate (F004 /
-// F026 / K032): when the sanity band refuses the upstream's new UZS bar,
+// the fiat-vs-fiat path once the forex worker can HOLD a rate:
+// when the sanity band refuses the upstream's new UZS bar,
 // the snapshot keeps the last guarded UZS rate with its ORIGINAL
 // per-currency timestamp, under a snapshot PublishedAt that has moved
 // on. Stamping the cross with PublishedAt would present a days-old rate
 // as today's — the "no stale signal" half of the finding.
 func TestPriceFiatCrossStampsTheOlderLeg(t *testing.T) {
-	// Relative to "now", not fixed calendar dates: the T650 staleness
+	// Relative to "now", not fixed calendar dates: the staleness
 	// gate refuses a snapshot leg older than its configured budget
 	// (default 76h), and a fixed past timestamp would eventually cross
 	// that budget regardless of what this test exercises. The held leg
@@ -56,7 +56,7 @@ func TestPriceFiatCrossStampsTheOlderLeg(t *testing.T) {
 	}
 }
 
-// TestPriceFiatCrossRefusesAStaleRate is the T650 regression on
+// TestPriceFiatCrossRefusesAStaleRate is the regression on
 // [Server.tryFiatCrossRate]: [forex.Cache.Latest] never expires a
 // snapshot on its own, so with no bound a stalled forex worker would
 // keep answering forever from its last good fetch — stamped with an
@@ -83,7 +83,7 @@ func TestPriceFiatCrossRefusesAStaleRate(t *testing.T) {
 	}
 }
 
-// TestPriceUSDAnchoredCrossRefusesAStaleRate is the T650 regression on
+// TestPriceUSDAnchoredCrossRefusesAStaleRate is the regression on
 // [Server.tryUSDAnchoredFiatCross]: same gap, the USD-anchored path
 // (ADR-0051). The USD leg itself is fresh — only the FX rate that
 // crosses it into BRL is stale — proving the gate looks at the FX

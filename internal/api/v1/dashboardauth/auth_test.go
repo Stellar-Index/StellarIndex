@@ -67,7 +67,7 @@ func TestGeneratedCodeMatchesHash(t *testing.T) {
 	}
 }
 
-// TestCodeDerivationIsKeyed is the regression for the audit finding
+// TestCodeDerivationIsKeyed is the regression for the finding
 // "the 6-digit code is derivable from the stored hash": the code must
 // be a function of the SERVER SECRET, not of the stored hash alone.
 // If a future refactor drops the key, two generators with different

@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The 2026-09-17 case: franklintempleton.com's SEP-1 binds BENJI on a
+// The franklintempleton.com case: its SEP-1 binds BENJI on a
 // directory-listed account and gBENJI on an account the directory never
 // listed, both on the same domain. The sibling arm admits gBENJI and
 // says so; an unlisted issuer on a domain with no listed sibling stays

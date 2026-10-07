@@ -18,7 +18,7 @@ import (
 )
 
 // newAdminClampServer wires the admin surface WITH the key-budget stores
-// (the 52105fdb residual: production wires these in
+// (production wires these in
 // cmd/stellarindex-api, and the handler must actually use them).
 func newAdminClampServer(
 	t *testing.T,
@@ -39,9 +39,9 @@ func newAdminClampServer(
 }
 
 // TestAdminAccountOverrides_TierLoweringClampsKeyBudgets is the
-// proven-red guard for the 52105fdb residual (audit-2026-07-23).
+// proven-red guard for the clamp.
 //
-// C3-014 established the full clamp: lowering the tier also lowers
+// The full clamp: lowering the tier also lowers
 // every credential the account can still authenticate with, because
 // the enforced per-minute budget is read straight off the key record
 // (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
@@ -167,7 +167,7 @@ func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
 }
 
 // TestAdminAccountOverrides_SuspendEvictsKeyCache is the proven-red guard for
-// the C3-010 kill-switch class re-opening on auth_backend=postgres.
+// the kill-switch class re-opening on auth_backend=postgres.
 //
 // The Postgres validator's cache-HIT path (auth/apikey_postgres.go
 // cacheLookup) checks only the KEY's revoked/expired fields, never the account
@@ -270,7 +270,7 @@ func TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache(t *te
 }
 
 // TestAdminAccountOverrides_OverrideChangeEvictsKeyCache is the proven-red guard
-// for F-A (audit-2026-08-14): an admin override-only PATCH must evict the
+// for the rule that an admin override-only PATCH must evict the
 // account's warm key-cache entries so the tightened ceiling is enforced now,
 // not after the Postgres validator's ~1h read-through TTL.
 //
@@ -311,7 +311,7 @@ func TestAdminAccountOverrides_OverrideChangeEvictsKeyCache(t *testing.T) {
 	}, &recordingAuditSink{})
 
 	// Tighten the monthly-quota ceiling from unmetered (0) to 1000, leaving tier
-	// and status untouched — the exact override-only PATCH from the finding.
+	// and status untouched — the exact override-only PATCH that must evict the key cache.
 	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(),
 		"abuse: cap metered volume", `{"monthly_request_quota_override":1000}`)
 	if resp.StatusCode != http.StatusOK {

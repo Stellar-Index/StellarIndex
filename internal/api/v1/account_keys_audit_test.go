@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// api-security-1 (audit 2026-08-28): POST /v1/account/keys copied an
+// POST /v1/account/keys copied an
 // operator caller's tier verbatim into the child and recorded nothing —
 // no X-Reason, no key.mint audit row — so a compromised staff credential
 // could spawn further operator credentials that the admin mint contract

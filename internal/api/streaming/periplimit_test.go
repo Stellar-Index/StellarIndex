@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// TestStream_PerIPConcurrentCap is the C3-8 regression: a single client
+// TestStream_PerIPConcurrentCap is the regression: a single client
 // IP can hold at most MaxStreamsPerIP concurrent SSE connections; the
 // (N+1)th is rejected with 503. On the unfixed code (no per-IP cap) the
 // (N+1)th would open with 200, so this fails RED without the fix.

@@ -10,8 +10,8 @@ import (
 // The grain a chart is SERVED at has to be one whose grid fits in one
 // response: the reader caps at historyMaxPoints and drops the NEWEST
 // buckets, so an over-fine pair is answered with its oldest slice and
-// the rest of the requested window silently missing (measured on
-// production 2026-09-07 at 1y/1m: 50,000 points covering 36 of 365
+// the rest of the requested window silently missing (seen in
+// production at 1y/1m: 50,000 points covering 36 of 365
 // days, ending three months before the request).
 //
 // This walks the whole prescribed timeframe table against the whole

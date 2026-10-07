@@ -39,9 +39,9 @@ func decimalsCacheFlagging(t *testing.T, flagged map[string]int) *NonstandardDec
 
 // The transitive fill is a product of RAW prices_1m ratios, and it exists
 // for Soroban-native contracts — the only asset class that can carry a
-// non-7 decimals(). It used to publish that product verbatim while every
-// sibling price surface normalised, so the one price a 9-decimals token
-// could get here read 100x low.
+// non-7 decimals(). The product must be normalised like every
+// sibling price surface, else the one price a 9-decimals token
+// could get here reads 100x low.
 //
 // The chain telescopes: whatever the hop's decimals are, they cancel, and
 // the product is off by 10^(asset decimals − 7). The "hop flagged, asset

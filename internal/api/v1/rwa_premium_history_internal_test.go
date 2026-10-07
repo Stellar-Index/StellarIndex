@@ -423,8 +423,8 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 // TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight.
 //
 // A bound candidate with s.OracleHistory left nil drives buildRWAPremiumHistory
-// straight into a nil-interface panic in rwaPremiumReferenceDays. Before the
-// recover was added, that panic escaped cachedRWAPremiumHistory with
+// straight into a nil-interface panic in rwaPremiumReferenceDays. Without the
+// recover, that panic escapes cachedRWAPremiumHistory with
 // s.rwaPremFlight still pointing at a channel nobody would ever close — every
 // later caller queued on it and /v1/rwa/premium never served again for the
 // life of the process. This proves the

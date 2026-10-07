@@ -51,7 +51,7 @@ func newAssetsLimitedServer(t *testing.T, anonLimit int, withStore bool) (*testS
 	return startHTTPTest(t, v1.New(opts).Handler()), reader
 }
 
-// TestAssetList_ChargesByThePlanSelected is the K009 regression for the
+// TestAssetList_ChargesByThePlanSelected is the regression for the
 // second surface. /v1/assets is one route and several query plans, the
 // query string picks the plan, and the limiter charged all of them one
 // token — so the volume-ranked plan (measured 18x the default) and the

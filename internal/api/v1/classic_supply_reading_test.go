@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The measured defect this file guards (r1, 2026-09-15).
+// The measured defect this file guards (seen on r1).
 //
 // The listing's "precise" supply arm read supply_1d — a DAILY roll-up of the
 // ADR-0011 supply observer — took max(bucket) with no vintage bound of any
@@ -221,8 +221,8 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	if stub.gotMaxAge != preciseSupplyMaxAge {
 		t.Errorf("freshness bound = %v, want preciseSupplyMaxAge (%v)", stub.gotMaxAge, preciseSupplyMaxAge)
 	}
-	// The bound has to be short enough to exclude the daily roll-up this arm
-	// used to read. That roll-up's newest value is the last observation of the
+	// The bound has to be short enough to exclude the daily roll-up, which this arm
+	// must not read. That roll-up's newest value is the last observation of the
 	// previous UTC day, so it spends most of its serving life past twelve
 	// hours old and reaches about twenty-seven.
 	if stub.gotMaxAge >= 12*time.Hour {

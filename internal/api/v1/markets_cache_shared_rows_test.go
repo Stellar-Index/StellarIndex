@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Findings F014 / K038 — /v1/markets and /v1/pools normalise (and, for
+// /v1/markets and /v1/pools normalise (and, for
 // markets, enrich) their rows IN PLACE. Production wires the handlers to
 // a CachedMarketsReader, which, without a copy, hands every caller the cache
 // entry's own backing array, so:

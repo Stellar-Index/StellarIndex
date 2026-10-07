@@ -2,8 +2,8 @@ package v1_test
 
 // GET /v1/rwa/assets — the funnel.
 //
-// The surface used to narrow a population of tens of thousands of SEP-1
-// attestations down to single digits and publish a refusal tally of
+// A surface that narrows a population of tens of thousands of SEP-1
+// attestations down to single digits and publishes a refusal tally of
 // three, with no way to tell a network that holds six real-world assets
 // from a pipeline discarding everything else in silence. Measured on
 // production: 6 assets served, 3 refusals reported, against
@@ -193,8 +193,8 @@ func TestRWAAssets_FunnelAccountsForTheWholePopulation(t *testing.T) {
 	checkFunnelArithmetic(t, v)
 
 	st := rwaFunnelStages(t, v)
-	// The population the surface narrows from, which nothing on the
-	// response used to state at all.
+	// The population the surface narrows from, which the
+	// response must state.
 	if got := st["issuers_with_home_domain"].Count; got != 44376 {
 		t.Errorf("issuers_with_home_domain = %d, want 44376", got)
 	}

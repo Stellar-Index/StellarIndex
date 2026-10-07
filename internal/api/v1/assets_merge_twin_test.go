@@ -11,7 +11,7 @@ import "testing"
 // Stellar-issued entry (the curated seed states fiat M2 in whole
 // units). Copying a 7-decimal stroop value onto a decimals=0 row made
 // the pair self-inconsistent, so every consumer scaling by 10^decimals
-// rendered it 10^7 too large — measured live on r1 2026-08-04: XLM's
+// rendered it 10^7 too large — seen live on r1: XLM's
 // /v1/assets row served decimals=0 with 342797138733487851, which the
 // explorer displayed as 342,797,138,733,487,872 against the ~34.3B its
 // own market_cap_usd/price_usd implies.

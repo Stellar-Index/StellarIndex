@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin W2-explorer-1 (MED security, audit-2026-08-01): the
+// These tests pin the behaviour: the
 // public, unauthenticated /v1/accounts/{g}/movements feed must NOT
 // render a SAC/asset label taken from the attacker-influenceable CAP-67
 // sep0011 event topic as a trusted identity. sep41_transfers are

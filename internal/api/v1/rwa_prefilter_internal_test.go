@@ -63,7 +63,7 @@ func (d fixedDirectory) DirectoryEntriesByAddresses(_ context.Context, addresses
 	return out, nil
 }
 
-// The 2026-09-17 finding: the sibling arm and the ISIN arm both shipped
+// The failure: the sibling arm and the ISIN arm both shipped
 // green and had zero live effect, because the scan's pre-filter read the
 // code and the anchor TYPE only. A Franklin-shaped declaration — code no
 // oracle prices, type `other`, a well-formed ISIN in anchor_asset — was

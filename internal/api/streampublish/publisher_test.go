@@ -325,7 +325,7 @@ func (panicReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset
 	panic("simulated reader fault in tickOnce")
 }
 
-// TestPublisher_Run_RecoversPanickingPollLoop proves the W4-cmd-1 fix:
+// TestPublisher_Run_RecoversPanickingPollLoop proves the fix:
 // a panic in one pair's poll goroutine (the Run fan-out at publisher.go)
 // is CONTAINED. The API binary's outer recoverBackgroundWorker wraps only
 // the goroutine that CALLS Run — it cannot catch a panic in the per-pair

@@ -453,7 +453,7 @@ func TestHandleUpdate_CrossAccount404(t *testing.T) {
 	}
 }
 
-// TestHandleUpdate_LastFiredAtOmittedWhenZero pins T153: a never-fired
+// TestHandleUpdate_LastFiredAtOmittedWhenZero pins the behaviour: a never-fired
 // alert's zero LastFiredAt must be genuinely absent from the response
 // JSON, not serialized as "0001-01-01T00:00:00Z" (omitempty is a no-op
 // on a struct-typed time.Time).
@@ -496,7 +496,7 @@ func (s *failGetStore) GetPriceAlert(ctx context.Context, id uuid.UUID) (platfor
 	return s.fakeStore.GetPriceAlert(ctx, id)
 }
 
-// TestHandleUpdate_ReloadFailureReturns500 pins T155: when the
+// TestHandleUpdate_ReloadFailureReturns500 pins the behaviour: when the
 // post-update GetPriceAlert reload fails, the handler must surface a
 // 500, not silently write 200 with a zero-value DTO.
 func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {

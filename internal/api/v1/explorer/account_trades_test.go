@@ -13,7 +13,7 @@ import (
 // partial indexes exist on 2 of 249 chunks). PoolMaxOpenConns is 25 for the
 // whole API, so ~3.1 req/s of that would hold all of it — 3% of what the
 // anonymous rate limiter permits, i.e. the limiter cannot see it. The gate
-// is what bounds it (cold audit 2026-08-04).
+// is what bounds it.
 func TestAccountTradesGate_ShedsRatherThanHoldingThePool(t *testing.T) {
 	if cap(accountTradesGate) == 0 {
 		t.Fatal("accountTradesGate is unbuffered — every request would serialise")

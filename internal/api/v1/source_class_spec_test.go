@@ -15,7 +15,7 @@ import (
 )
 
 // TestSourceClassSurfacesAgree pins every surface that names a source
-// class to the external.Class constants themselves. `bridge` was added to
+// class to the external.Class constants themselves. A `bridge` class once reached
 // the registry and the methodology glossary but not to the ?class=
 // allow-list or either spec enum, so /v1/sources served rows it refused
 // to filter by and spec-validating clients rejected /v1/methodology.

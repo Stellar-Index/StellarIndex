@@ -3,7 +3,7 @@
 
 package v1_test
 
-// F017, the ?include=sparkline7d leg. The listing's price_usd comes from
+// The ?include=sparkline7d leg. The listing's price_usd comes from
 // asset_price_snapshot, which its writer normalises for a confirmed
 // non-7-decimals token. The 7d series attached beside it comes from the
 // batch price-history reader, which returns RAW prices_1m ratios — and

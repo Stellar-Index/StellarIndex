@@ -27,7 +27,7 @@ func (deadlinePriceReader) RecentClosedSnapshots(context.Context, canonical.Asse
 	return nil, deadlineOnLiveRequestErr("read closed snapshots")
 }
 
-// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503 is the T015
+// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503 is the
 // regression guard. /v1/oracle/lastprice, /v1/oracle/prices and
 // /v1/oracle/x_last_price passed r.Context() straight to the PriceReader
 // with no per-handler budget and no handlerTimedOut branch, so a
@@ -35,7 +35,7 @@ func (deadlinePriceReader) RecentClosedSnapshots(context.Context, canonical.Asse
 // 500 — indistinguishable from a real bug, and booked as a permanent
 // availability failure rather than the retryable capacity signal a
 // deadline actually is. Each must report a retryable 503 naming the
-// specific endpoint that stalled, the same contract T049 shipped for
+// specific endpoint that stalled, the same contract as
 // /v1/markets/sources.
 func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
 	cases := []struct {

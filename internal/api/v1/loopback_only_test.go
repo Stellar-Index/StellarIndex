@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestLoopbackOnly pins C3-029/C3-106 (audit-2026-07-23). The /metrics
+// TestLoopbackOnly pins the behaviour. The /metrics
 // gate checked only that RemoteAddr was loopback — but the documented
 // topology is Caddy on the SAME HOST proxying to 127.0.0.1:3000, so a
 // misconfigured proxy that forwards public traffic presents a loopback
@@ -33,7 +33,7 @@ func TestLoopbackOnly(t *testing.T) {
 		{"private_lan_remote", "10.0.0.7:443", nil, false},
 		{"unparseable_remote", "not-an-ip", nil, false},
 
-		// The C3-029 half: loopback RemoteAddr because the proxy is on
+		// The loopback half: loopback RemoteAddr because the proxy is on
 		// the same host, but the request was RELAYED for a remote client.
 		{
 			"same_host_proxy_xff", "127.0.0.1:54321",

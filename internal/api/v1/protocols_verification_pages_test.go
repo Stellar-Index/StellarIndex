@@ -52,8 +52,8 @@ func TestProtocolVerificationPages_PointAtRealFiles(t *testing.T) {
 
 // TestProtocolVerificationPages_ProtocolWithADocLinksIt is the missing
 // half of the promise README and /protocols make. A page written for a
-// protocol used to need a second, easily-missed edit here before the API
-// linked it, and ten protocols shipped pages that /v1/protocols reported
+// protocol would need a second, easily-missed edit here before the API
+// linked it, leaving protocols whose pages /v1/protocols reported
 // as verification_page: null.
 func TestProtocolVerificationPages_ProtocolWithADocLinksIt(t *testing.T) {
 	for _, p := range protocolRegistry {

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestRequestTimeout_SetsDeadline pins the core wiring (C3-1/C3-2/P1,
-// audit-2026-07-16): a non-streaming request reaches the handler with a
+// TestRequestTimeout_SetsDeadline pins the core wiring:
+// a non-streaming request reaches the handler with a
 // context deadline roughly d out, so every handler inherits a bound even
 // when it forgets its own.
 func TestRequestTimeout_SetsDeadline(t *testing.T) {

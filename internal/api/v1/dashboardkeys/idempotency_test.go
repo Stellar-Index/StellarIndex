@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting proves T284:
+// TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting proves that
 // a client that retries POST /v1/dashboard/keys with the same
 // Idempotency-Key header (e.g. after a timed-out response) gets the
 // ORIGINAL key replayed, not a second key minted. Routed through

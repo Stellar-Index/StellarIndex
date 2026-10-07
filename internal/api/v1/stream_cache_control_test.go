@@ -13,7 +13,7 @@ import (
 // TestStreamEndpointsKeepTheRouteCacheControl asserts the Cache-Control
 // a client actually receives on a stream, through the full middleware
 // stack: the CacheControl middleware's per-route policy, not the SSE
-// writer's fallback. The writer used to overwrite it with a bare
+// writer's fallback. The writer must not overwrite it with a bare
 // `no-cache`, which permits storage and drops `private`.
 func TestStreamEndpointsKeepTheRouteCacheControl(t *testing.T) {
 	cases := []struct {

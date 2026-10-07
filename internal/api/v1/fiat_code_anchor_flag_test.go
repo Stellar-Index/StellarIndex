@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// K033/F006 — the fiat carve-out (TestFiatCodedAnchorKeepsItsValuation)
+// The fiat carve-out (TestFiatCodedAnchorKeepsItsValuation)
 // stops a SEP-1 anchor's deposit token from being flagged as an
 // impersonator, but that leaves the catalogue silent about it: nothing
 // on the wire distinguishes a recognised anchor from an arbitrary

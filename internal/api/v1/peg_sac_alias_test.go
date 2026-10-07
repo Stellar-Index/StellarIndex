@@ -98,7 +98,7 @@ func getChart(t *testing.T, url string) chartEnvelope {
 // Phoenix, Soroswap) trade the SAC wrapper, so a pool's USD leg is stored
 // quoted in the USDC SAC and never in USDC-GA5Z… — and the walk, bound to
 // the classic form alone, read the one spelling the depth is not under.
-// Measured on r1 2026-09-03: a Soroban-traded asset returned 0 chart
+// Measured on r1: a Soroban-traded asset returned 0 chart
 // points against fiat:USD while the identical window quoted in the USDC
 // SAC returned 39.
 //

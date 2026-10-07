@@ -13,7 +13,7 @@ import (
 // GET /v1/rwa/assets — the EVIDENCE behind C2's second arm, as opposed
 // to its verdict.
 //
-// These tests exist because of a production episode on 2026-09-15. The
+// These tests exist because of a production episode. The
 // listing sync completed at 17:01:21Z having written 50 good rows, and
 // the funnel went on reporting the arm closed for the next ten and a
 // half minutes — correctly, because the set in hand had been built from

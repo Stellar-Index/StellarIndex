@@ -7,7 +7,7 @@ import (
 )
 
 // TestAssetDetailResponseCache_BoundedUnderIDChurn is the regression proof
-// for W6-perf-1: enumerating many distinct asset_ids must NOT grow the cache
+// that enumerating many distinct asset_ids must NOT grow the cache
 // without limit. A long TTL is used so nothing expires — forcing the SIZE cap
 // (not expiry) to do the bounding, which is exactly the crawler/attacker
 // scenario (fresh, distinct, never-repeated ids).

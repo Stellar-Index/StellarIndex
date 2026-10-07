@@ -11,13 +11,13 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// K037: the SEP-40 single-price surfaces read the same closed prices_1m
+// The SEP-40 single-price surfaces read the same closed prices_1m
 // bucket /v1/price does, but never asked whether the pair was frozen.
 // On a frozen pair that newest bucket is the one the anomaly checker
 // refused, so lastprice/x_last_price published it to oracle integrators
 // — the consumers least able to second-guess it — while /v1/price
 // served the held last-known-good. These drive the production handlers
-// with the F013 fixture (moved bucket vs held value) and assert the
+// with the fixture (moved bucket vs held value) and assert the
 // VALUE.
 
 const (

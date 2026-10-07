@@ -16,7 +16,7 @@ import (
 // The absolute dust floor asks whether an asset's trading is SMALL. It cannot
 // ask whether the CLAIM is large against the trading there is, and the gap
 // between those two questions is where $5.89B of the listing's headline total
-// was sitting on 2026-09-15: two vanity mints from one domain, both clearing
+// was sitting in production: two vanity mints from one domain, both clearing
 // the $1,000 floor on real four-figure volume, both publishing a cap three
 // orders of magnitude past anything a recognised asset on the same surface
 // claimed.
@@ -146,8 +146,8 @@ func TestCapExceedsObservedTurnoverIsExactAtTheBoundary(t *testing.T) {
 }
 
 // TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued drives the
-// PRODUCTION listing fill over the exact row the surface served on
-// 2026-09-15: SLVR's real supply, price and volume, a multi-source price
+// PRODUCTION listing fill over the exact row the surface served:
+// SLVR's real supply, price and volume, a multi-source price
 // count so the dust floor cannot fire, and the default ceiling. This is the
 // wiring test — the pure-function cases above would all still pass against a
 // build that computed the verdict and threw it away.

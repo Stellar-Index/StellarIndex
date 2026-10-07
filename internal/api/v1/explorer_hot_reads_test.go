@@ -54,7 +54,7 @@ func (c *countingExplorerReader) counts() (holders, contracts int, since uint32)
 	return c.holderCalls, c.contractCalls, c.lastSince
 }
 
-// TestExplorer_AssetHolders_CachedAcrossRequests is the C3-002
+// TestExplorer_AssetHolders_CachedAcrossRequests is the
 // regression: repeat traffic for the same asset must not re-run the two
 // FINAL scans, and the cached response must be byte-identical to the
 // live one.
@@ -130,7 +130,7 @@ func TestExplorer_AssetHolders_LimitIsNotACacheKey(t *testing.T) {
 	}
 }
 
-// TestExplorer_ContractsDirectory_WindowQuantised is the C3-009
+// TestExplorer_ContractsDirectory_WindowQuantised is the
 // regression: an arbitrary ?days= is rounded UP onto the supported
 // ladder before it reaches the lake, and the response reports the window
 // actually aggregated rather than the one asked for.
