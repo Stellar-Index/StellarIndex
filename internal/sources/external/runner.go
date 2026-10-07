@@ -240,9 +240,9 @@ func Run(
 	// Pre-flight every Start. Fatal config errors (empty pair list,
 	// bad endpoint URL) surface here before we spawn anything.
 	//
-	// Each Streamer.Start spawns a reconnect-forever goroutine
-	// bound to the context we hand it. If a LATER Start fails, the
-	// earlier streamers' goroutines would otherwise leak — Run returns
+	// Each Streamer.Start spawns a reconnect-forever goroutine bound
+	// to the context we hand it. If a LATER Start fails, the earlier
+	// streamers' goroutines would otherwise leak — Run returns
 	// an error, the caller never gets a wait()/cancel handle, and those
 	// goroutines run until the parent ctx is cancelled (often never, on
 	// a startup-config error). We start every streamer under a DERIVED,
@@ -301,16 +301,16 @@ func Run(
 			// at Error with its stack); the other connectors keep running.
 			defer worker.Recover(logger, "external-poller:"+spec.Poller.Name())
 			defer wg.Done()
-			// streamerCtx, not the raw
-			// parent ctx. teardown() (used when a LATER poller in
-			// this same loop fails config validation) only cancels
-			// streamerCtx — a poller goroutine bound to the raw ctx
-			// would ignore that cancellation and wg.Wait() below (and
-			// in teardown) would block until the caller's own ctx is
-			// separately cancelled, which on a startup-config error
-			// may never happen. streamerCtx is a child of ctx, so on
-			// the normal shutdown path (ctx cancelled) it propagates
-			// the cancellation unchanged.
+			// The poller runs under streamerCtx, not the raw parent ctx.
+			// teardown() (used when a LATER poller in this same loop
+			// fails config validation) only cancels streamerCtx — a
+			// poller goroutine bound to the raw ctx would ignore that
+			// cancellation and wg.Wait() below (and in teardown) would
+			// block until the caller's own ctx is separately cancelled,
+			// which on a startup-config error may never happen.
+			// streamerCtx is a child of ctx, so on the normal shutdown
+			// path (ctx cancelled) it propagates the cancellation
+			// unchanged.
 			runPoller(streamerCtx, spec, sink, logger)
 		}(p)
 	}

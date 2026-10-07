@@ -39,8 +39,9 @@ const safeUnixEpochFloorSeconds = 1_000_000_000
 //     its own uint64 cast — a pre-1970 closedAt would otherwise wrap it
 //     and disable the whole guard.
 //
-// One shared copy for the three oracle decoders (reflector / band /
-// redstone).
+// The decoders share this guard rather than each hand-rolling one: band
+// and sorocredit call it, reflector and redstone its sibling
+// [SafeUnixMillis].
 func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	ceil := closedAt.Add(SafeUnixFutureWindow).Unix()
 	if ceil < 0 {

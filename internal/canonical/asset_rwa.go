@@ -40,11 +40,11 @@ var knownRWACodes = map[string]struct{}{
 	"XAUm":    {}, // Matrixdock tokenized gold (1 token ≈ 1 troy oz)
 	"deJAAA":  {}, // Centrifuge deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
 	"deJTRSY": {}, // Centrifuge deRWA token of the Janus Henderson treasury fund (JTRSY)
-	// The Reflector FX oracle's spot-gold slot (ISO-4217
-	// X-code, 1 troy oz in USD). A commodity reference, not a currency —
-	// kept OFF the fiat list (ADR-0010) and OFF crypto; it shares the
-	// rwa: namespace with XAUm but is a DISTINCT asset (spot vs the
-	// Matrixdock token). See ADR-0028.
+	// The Reflector FX oracle's spot-gold slot (ISO-4217 X-code, 1 troy
+	// oz in USD). A commodity reference, not a currency — kept OFF the
+	// fiat list (ADR-0010) and OFF crypto; it shares the rwa: namespace
+	// with XAUm but is a DISTINCT asset (spot vs the Matrixdock token).
+	// See ADR-0028.
 	"XAU": {}, // spot gold, troy ounce (Reflector FX slot)
 }
 

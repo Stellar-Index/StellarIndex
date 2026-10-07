@@ -29,10 +29,10 @@ var knownCryptoCodes = map[string]struct{}{
 	"SOL": {}, "TON": {}, "TRX": {}, "UNI": {}, "USDC": {},
 	"USDT": {}, "XLM": {}, "XRP": {},
 	// Stablecoins + fiat-pegged crypto tokens published by RedStone's
-	// Stellar adapter. Kept here as crypto (not fiat) so
-	// the decoder stays fiat-proxy-agnostic — the aggregator converts
-	// stablecoins → fiat at VWAP time per the "stablecoin-as-fiat is
-	// aggregator policy" rule in AGENTS.md.
+	// Stellar adapter. Kept here as crypto (not fiat) so the decoder
+	// stays fiat-proxy-agnostic — the aggregator converts stablecoins →
+	// fiat at VWAP time per the "stablecoin-as-fiat is aggregator
+	// policy" rule in AGENTS.md.
 	"DAI": {}, "PYUSD": {}, "USDP": {},
 	// USDT0 — the omnichain USDT representation, published by RedStone's
 	// Stellar adapter. A DISTINCT asset from `USDT`, deliberately: it is
@@ -56,8 +56,8 @@ var knownCryptoCodes = map[string]struct{}{
 	// `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
 	// market and NAV observations never collide on one asset. Those
 	// two NAV feeds are quoted in their RESERVE asset, not USD —
-	// crypto:BTC and crypto:SolvBTC respectively; see
-	// redstone.feedRegistry for the live derivation.
+	// crypto:BTC and crypto:SolvBTC respectively; see redstone.feedRegistry
+	// for the live derivation.
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
 	// RedStone relayer expansion (ADR-0014).
 	// Ethena's synthetic-dollar tokens — crypto-native

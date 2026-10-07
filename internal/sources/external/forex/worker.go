@@ -76,12 +76,12 @@ type rateGuard struct {
 	pending      float64
 
 	// Stuck-upstream tracking for the HISTORY band (the Massive ETB=44
-	// incident): a provider serving the SAME broken
-	// historical bar refresh after refresh is a documented, already-
-	// handled condition — the guard keeps refusing it — but counting
-	// every repeat under `history_deviation` would keep the rejection
-	// alert firing for days with no new information, training operators to
-	// ignore the channel. After [stuckRejectionThreshold] consecutive
+	// incident): a provider serving the SAME broken historical bar
+	// refresh after refresh is a documented, already-handled condition
+	// — the guard keeps refusing it — but counting every repeat under
+	// `history_deviation` would keep the rejection alert firing for
+	// days with no new information, training operators to ignore the
+	// channel. After [stuckRejectionThreshold] consecutive
 	// refusals of the SAME value, further repeats count under the
 	// `history_deviation_stuck` reason (excluded from the alert, still
 	// WARN-logged + graphable). Any acceptance, or a DIFFERENT rejected
@@ -91,9 +91,9 @@ type rateGuard struct {
 	stuckCount        int
 
 	// Stuck-upstream tracking for the CONFIRM VETO (the Massive UZS
-	// incident's second act): a provider persistently
-	// serving the SAME broken CURRENT bar keeps re-arming the pending
-	// slot, so every second sighting reaches the two-fetch confirm arm
+	// incident's second act): a provider persistently serving the SAME
+	// broken CURRENT bar keeps re-arming the pending slot, so every
+	// second sighting reaches the two-fetch confirm arm
 	// and is refused by the history-majority veto — correct, but the
 	// fresh `deviation_history_conflict` reason would re-page daily
 	// with no new information (the exact channel-training failure the
@@ -108,9 +108,9 @@ type rateGuard struct {
 
 	// bootstrapUnconfirmed marks a baseline seeded from a SINGLE
 	// upstream sample (the no-baseline bootstrap arm) that nothing has
-	// corroborated yet. The Massive UZS incident: at process
-	// restart the current feed served a broken 1820 (true level ≈
-	// 11,800), the bootstrap arm accepted it sight-unseen, and the
+	// corroborated yet. The Massive UZS incident: at process restart
+	// the current feed served a broken 1820 (true level ≈ 11,800),
+	// the bootstrap arm accepted it sight-unseen, and the
 	// guard then spent the rest of the day rejecting the CORRECT 7-day
 	// history against the poisoned baseline — evidence pointing the
 	// wrong way. The flag lets the history-majority heal in
@@ -211,9 +211,10 @@ type Worker struct {
 	// re-fix (a confirm clears bootstrapUnconfirmed, deliberately).
 	// Two agreeing samples from ONE broken endpoint are not two
 	// independent witnesses when ≥4 mutually-agreeing dated bars refute
-	// them. The anti-poisoning rule holds: history never SETS a baseline here — it
-	// only refuses a confirm, and a genuine devaluation confirms as
-	// soon as the trailing majority stops refuting (either it follows
+	// them. The anti-poisoning rule holds: history never SETS a
+	// baseline here — it only refuses a confirm, and a genuine
+	// devaluation confirms as soon as the trailing majority stops
+	// refuting (either it follows
 	// the move within days, or the split-level window fails the
 	// mutual-agreement test and yields no veto at all).
 	// Only touched from guardSnapshot (single-goroutine, as guards).
@@ -984,10 +985,10 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 // the same broken current bar are the upstream repeating itself, not two
 // independent witnesses; ≥4 dated bars that all disagree with them win.
 //
-// The anti-poisoning rule holds: history never SETS the baseline here — the guard
-// state is untouched except pending (re-armed on the latest candidate,
-// preserving the two-fetch shape for when the veto lifts) and the streak
-// bookkeeping. A genuine devaluation still confirms: within days the
+// The anti-poisoning rule holds: history never SETS the baseline here —
+// the guard state is untouched except pending (re-armed on the latest
+// candidate, preserving the two-fetch shape for when the veto lifts) and
+// the streak bookkeeping. A genuine devaluation still confirms: within days the
 // trailing majority either follows the move (median stops refuting) or
 // spans both levels (fails mutual agreement → no veto at all), so the
 // worst case is days of held rate during a real move the ticker's own
@@ -1025,11 +1026,11 @@ func (w *Worker) vetoConfirmByHistory(ticker string, g *rateGuard, rate float64)
 }
 
 // acceptHistoryRate is the [maxRateDeviation] sanity band applied to a
-// trailing-7d HISTORY point. Unlike [acceptRate]
-// it is READ-ONLY on the guard state — a dated historical bar is not the
-// moving "current" rate, so it must neither advance lastAccepted nor arm
-// the pending confirmation slot (doing so would let a wrong past bar
-// corrupt the baseline the current-rate band depends on).
+// trailing-7d HISTORY point. Unlike [acceptRate] it is READ-ONLY on the
+// guard state — a dated historical bar is not the moving "current" rate,
+// so it must neither advance lastAccepted nor arm the pending
+// confirmation slot (doing so would let a wrong past bar corrupt the
+// baseline the current-rate band depends on).
 //
 // It bands the point against the ticker's current accepted baseline:
 // fx_quotes.rate_usd is the denominator of every fiat-quoted usd_volume,

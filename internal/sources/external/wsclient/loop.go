@@ -26,12 +26,11 @@ import (
 const DefaultHealthyConnectionThreshold = 5 * time.Minute
 
 // DefaultPingInterval / DefaultPingTimeout bound how long a HALF-OPEN venue
-// socket can go unnoticed. A bare
-// conn.Read on the long-lived connection context blocks forever on a
-// half-open socket: no data arrives, no error is raised, and detection is
-// left to OS TCP keepalive (minutes to hours on Linux defaults) — during
-// which the streamer silently ingests nothing while every liveness signal
-// says "connected".
+// socket can go unnoticed. A bare conn.Read on the long-lived connection
+// context blocks forever on a half-open socket: no data arrives, no error
+// is raised, and detection is left to OS TCP keepalive (minutes to hours
+// on Linux defaults) — during which the streamer silently ingests nothing
+// while every liveness signal says "connected".
 //
 // The watchdog is an ACTIVE ping rather than a read deadline on purpose. A
 // read deadline cannot distinguish a wedged socket from a genuinely quiet
@@ -64,15 +63,15 @@ const DefaultReadLimit = 4 * 1024 * 1024
 // used by every external WS streamer (binance / kraken / coinbase /
 // bitstamp). It owns the dial (via [KeepAliveHTTPClient]), the read
 // loop, ctx cancellation, the capped exponential backoff with [Jitter],
-// the healthy-lifetime backoff reset, and the per-source
-// disconnect / decode-error metrics. Venues supply only their
-// subscribe frame(s) and frame parser.
+// the healthy-lifetime backoff reset, and the per-source disconnect /
+// decode-error metrics. Venues supply only their subscribe frame(s) and
+// frame parser.
 //
-// Backoff defaults: InitialBackoff 5 s,
-// MaxBackoff 60 s. Combined with the healthy-connection reset (a
-// connection that stays alive ≥ HealthyThreshold rewinds backoff to
-// InitialBackoff on its next failure), the effect is bounded 5-60 s
-// reconnect windows instead of a 60 s blanket.
+// Backoff defaults: InitialBackoff 5 s, MaxBackoff 60 s. Combined with
+// the healthy-connection reset (a connection that stays alive
+// ≥ HealthyThreshold rewinds backoff to InitialBackoff on its next
+// failure), the effect is bounded 5-60 s reconnect windows instead of a
+// 60 s blanket.
 type Loop struct {
 	// Source is the venue name stamped on metric labels + log fields
 	// (e.g. "binance").

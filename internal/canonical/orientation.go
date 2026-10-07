@@ -35,12 +35,12 @@ func assetCode(assetID string) string {
 // what makes XLM/USDC orient as base=XLM, quote=USDC (price in USDC),
 // while XLM/AQUA orients as base=AQUA, quote=XLM (AQUA priced in XLM).
 //
-// ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare asset
-// CODE, so ANY classic token calling itself "USDC" — including a scam
-// issued by an attacker — ranks as a stablecoin here. That is
-// deliberate and safe ONLY because ranking decides ORIENTATION and
-// nothing else: which side of a market is quoted in the other. It
-// never asserts the asset is worth a dollar.
+// ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare asset CODE, so ANY
+// classic token calling itself "USDC" — including a scam issued by an
+// attacker — ranks as a stablecoin here. That is deliberate and safe
+// ONLY because ranking decides ORIENTATION and nothing else: which side
+// of a market is quoted in the other. It never asserts the asset is
+// worth a dollar.
 //
 // The safety therefore rests on an invariant OUTSIDE this function:
 // every downstream substitution of a stablecoin for its fiat peg

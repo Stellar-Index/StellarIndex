@@ -81,14 +81,14 @@ var Registry = map[string]Metadata{
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter — protocol-emissions plumbing (mints/distributes
 	// BLND to backstops), same family as `blend`. No published price,
-	// never VWAP. Audited directly against the ClickHouse
-	// raw lake (no wasm-history/MinIO walk): all 469 lifetime events
-	// (465/465 `distribute` exhaustively, not sampled, plus both
-	// `drop`s and the one `q_swap`/`swap` individually) decode to the
-	// exact shape the decoder expects; the sole confirmed WASM hash
-	// (438a5528…) is SHA256-verified against the extracted bytes. The
-	// package doc's "3 observed WASM uploads" was NOT corroborated by
-	// the lake for 2 of 3 claimed ledgers — see
+	// never VWAP. Audited directly against the ClickHouse raw lake (no
+	// wasm-history/MinIO walk): all 469 lifetime events (465/465
+	// `distribute` exhaustively, not sampled, plus both `drop`s and the
+	// one `q_swap`/`swap` individually) decode to the exact shape the
+	// decoder expects; the sole confirmed WASM hash (438a5528…) is
+	// SHA256-verified against the extracted bytes. The package doc's
+	// "3 observed WASM uploads" was NOT corroborated by the lake for 2
+	// of 3 claimed ledgers — see
 	// docs/operations/wasm-audits/blend_emitter.md.
 	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/blend_emitter.md */},
 	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
@@ -122,8 +122,8 @@ var Registry = map[string]Metadata{
 	// docs/protocols/cctp.md.
 	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null. Single deploy confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
 	// Rozo v1 intent-bridge — same bridge semantics. payment / flush
-	// events from the three live v1 Payment contracts. Audited
-	// alongside CCTP — same walk.
+	// events from the three live v1 Payment contracts. Audited alongside
+	// CCTP — same walk.
 	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited via wasm-history walk [60M, 62.64M] across the original 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert. A 4th contract (internal/sources/rozo.MainnetPaymentContracts) carries the SAME wasm hash per direct lake lookup, so it's covered by this finding without a separate walk. See docs/operations/wasm-audits/rozo.md. */},
 
 	// ─── Off-chain centralised exchanges (this package's scope) ─

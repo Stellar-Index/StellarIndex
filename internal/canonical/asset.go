@@ -264,12 +264,12 @@ func ParseAsset(s string) (Asset, error) {
 	if s == "native" {
 		return NativeAsset(), nil
 	}
-	// Shorthand for native. CG/CMC users type "XLM" and
-	// expect the native Stellar asset. Accept case-insensitive XLM
-	// + any case variant of "native" as aliases. Broader slug ->
-	// asset_id resolution (USDC -> Circle, AQUA -> AQUA-G... etc)
-	// lives at the API layer via the verified-currency catalogue,
-	// not here — keeping ParseAsset pure of catalogue state.
+	// Shorthand for native. CG/CMC users type "XLM" and expect the
+	// native Stellar asset. Accept case-insensitive XLM + any case
+	// variant of "native" as aliases. Broader slug -> asset_id
+	// resolution (USDC -> Circle, AQUA -> AQUA-G... etc) lives at the
+	// API layer via the verified-currency catalogue, not here —
+	// keeping ParseAsset pure of catalogue state.
 	if strings.EqualFold(s, "XLM") || strings.EqualFold(s, "native") {
 		return NativeAsset(), nil
 	}
