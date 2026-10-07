@@ -23,10 +23,10 @@
 // where end-user attribution lives: a strategy-only decoder measured
 // ~27% coverage in a 12-hour sample cross-checked against Soroban RPC.
 //
-// Both layers' topics are matched. Topic only classifies an event; a
-// match additionally requires contract
-// identity (ADR-0035/0040): flows only from a registered vault or
-// strategy (MainnetGatedSet + protocol_contracts), factory events only
+// Both layers' topics are matched. Topic only classifies an
+// event; a match additionally requires contract identity
+// (ADR-0035/0040): flows only from a registered vault or strategy
+// (MainnetGatedSet + protocol_contracts), factory events only
 // from MainnetFactories. An unregistered emitter fails closed.
 //
 // We surface vault + strategy deposit/withdraw events for flow
@@ -77,21 +77,21 @@ const PrefixVault = "DeFindexVault"
 // EVERY-event policy requires (project_every_event_principle):
 // classify() must enumerate every topic the source can emit so the
 // dispatcher's drop-counter doesn't silently file factory events as
-// "unmatched topic." Body decode is Phase-C scope (would give us a
+// "unmatched topic." Body decode is out of scope (it would give us a
 // live notification feed for new wrapper deployments).
 const PrefixFactory = "DeFindexFactory"
 
 // Topic[1] symbols for the user-facing flow events we decode. The
-// strategy contract publishes more (harvest / keeper admin / …). The
-// vault layer reuses the same two symbols (`deposit`, `withdraw`) —
-// they're shared between layers, so neither needs its own constants.
+// strategy layer also decodes `harvest` as a StrategyFlow, and the
+// strategy contract publishes more (keeper admin / …). The vault layer
+// reuses the same two flow symbols (`deposit`, `withdraw`) — they're
+// shared between layers, so neither needs its own constants.
 const (
 	EventDeposit  = "deposit"
 	EventWithdraw = "withdraw"
-	// Strategy-layer governance / yield events that don't produce a
-	// canonical Trade today but are valid topics to recognise so
-	// classify() enumerates the full upstream event surface per the
-	// EVERY-event policy (project_every_event_principle).
+	// Strategy-layer yield event: no canonical Trade, but it decodes as a
+	// StrategyFlow (DirectionHarvest), kept apart from user deposits and
+	// withdrawals.
 	EventHarvest = "harvest"
 	// Vault-layer governance / admin events. Per the WASM audit doc:
 	//   rescue, paused, unpaused, nreceiver, nmanager, nemanager,
@@ -168,9 +168,9 @@ var (
 //
 // From is the caller moving capital — for these strategies it is
 // typically the vault/router *contract* address (a C-strkey), not
-// the end-user; end-user attribution requires correlating with the
-// same-tx vault event. It can also be a
-// plain account G-strkey; scval.AsAddressStrkey renders both.
+// the end-user; end-user attribution requires correlating with
+// the same-tx vault event. It can also be a plain account
+// G-strkey; scval.AsAddressStrkey renders both.
 //
 // Amount is the underlying-asset delta as a big-int-backed
 // canonical.Amount (i128, never truncated — ADR-0003).

@@ -694,20 +694,20 @@ func streamTiered(
 			callback,
 		)
 	}
-	// Object keys for every tiered read are
-	// computed from ONE schema — the one [walkDataStore] loads from
-	// whichever tier answers first, i.e. hot's (TieredDataStore.
-	// GetFileMetadata prefers hot). If cold's actual Galexie export
-	// used a different LedgersPerFile/FilesPerPartition/FileExtension
-	// shape, every hot-shaped key handed to cold on fallback is simply
-	// wrong for cold's layout — cold 404s exactly like hot did, and
-	// the "fallback" silently never fires. An operator who configured
-	// ColdDataStore expecting archive-range recovery gets a confusing
-	// both-tiers-missing error deep in a later Stream call instead of
-	// a clear diagnostic now. Validate both schemas agree before
-	// wrapping them — hard-fail rather than silently degrading, since
-	// a shape mismatch is a config bug the operator needs to fix, not
-	// a transient condition to route around.
+	// Object keys for every tiered read are computed from ONE schema
+	// — the one [walkDataStore] loads from whichever tier answers
+	// first, i.e. hot's (TieredDataStore.GetFileMetadata prefers
+	// hot). If cold's actual Galexie export used a different
+	// LedgersPerFile/FilesPerPartition/FileExtension shape, every
+	// hot-shaped key handed to cold on fallback is simply wrong for
+	// cold's layout — cold 404s exactly like hot did, and the
+	// "fallback" silently never fires. An operator who configured
+	// ColdDataStore expecting archive-range recovery gets a
+	// confusing both-tiers-missing error deep in a later Stream call
+	// instead of a clear diagnostic now. Validate both schemas agree
+	// before wrapping them — hard-fail rather than silently
+	// degrading, since a shape mismatch is a config bug the operator
+	// needs to fix, not a transient condition to route around.
 	hotSchema, err := datastore.LoadSchema(ctx, hot, cfg.DataStore)
 	if err != nil {
 		_ = hot.Close()

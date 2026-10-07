@@ -201,9 +201,9 @@ func supplySnapshot(args []string) error {
 	store.SetDeriveGeneration(startedAt.Unix())
 
 	// The snapshot's ObservedAt must be the chosen ledger's REAL close time
-	// — a re-derived HISTORICAL snapshot stamped with the
-	// wall-clock write-time corrupts point-in-time supply queries. The
-	// authoritative every-ledger source is ClickHouse stellar.ledgers.
+	// — a re-derived HISTORICAL snapshot stamped with the wall-clock
+	// write-time corrupts point-in-time supply queries. The authoritative
+	// every-ledger source is ClickHouse stellar.ledgers.
 	closeTimes, err := clickhouse.NewExplorerReader(ctx, *chAddr)
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("clickhouse close-time reader: %w", err))
@@ -335,26 +335,25 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 // ObservedAt. Operator-supplied -ledger wins; otherwise we use the max
 // last_ledger across all ingestion cursors.
 //
-// ObservedAt is the chosen ledger's
-// close_time from ClickHouse stellar.ledgers — NEVER time.Now(). A
-// re-derived HISTORICAL snapshot (the operator re-derives supply
-// constantly) stamped with the wall-clock write-time silently
-// corrupts point-in-time supply/observation queries. Fail-closed:
-// if the ledger has no stellar.ledgers row we return an error rather
-// than falling back to time.Now() — a real snapshot ledger (an
-// operator-named -ledger or a live ingestion cursor) MUST exist in
-// the dual-sink-populated lake, so its absence is a genuine lake gap
+// ObservedAt is the chosen ledger's close_time from ClickHouse
+// stellar.ledgers — NEVER time.Now(). A re-derived HISTORICAL
+// snapshot (the operator re-derives supply constantly) stamped
+// with the wall-clock write-time silently corrupts point-in-time
+// supply/observation queries. Fail-closed: if the ledger has no
+// stellar.ledgers row we return an error rather than falling back
+// to time.Now() — a real snapshot ledger (an operator-named
+// -ledger or a live ingestion cursor) MUST exist in the
+// dual-sink-populated lake, so its absence is a genuine lake gap
 // worth surfacing, not a wall-clock guess.
 //
-// KNOWN LIMIT: a stalled supply
-// observer can leave a component balance behind the snapshot
-// ledger; the per-component reader's at-or-before query silently
-// returns an older row. The matching long-form note lives on
-// `supplyAggregatorLedgers` in cmd/stellarindex-aggregator/main.go
-// — full fix needs per-component ledger threading into snapshot
-// acceptance (the per-row Ledger is already returned by
-// AccountObservationRow et al, so it's a refactor of the Refresher
-// + Supply shapes, not a new storage primitive).
+// KNOWN LIMIT: a stalled supply observer can leave a component
+// balance behind the snapshot ledger; the per-component reader's
+// at-or-before query silently returns an older row. The matching
+// long-form note lives on `supplyAggregatorLedgers` in
+// cmd/stellarindex-aggregator/main.go — full fix needs per-component
+// ledger threading into snapshot acceptance (the per-row Ledger is
+// already returned by AccountObservationRow et al, so it's a refactor
+// of the Refresher + Supply shapes, not a new storage primitive).
 func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
 	ledger := opLedger
 	if ledger == 0 {

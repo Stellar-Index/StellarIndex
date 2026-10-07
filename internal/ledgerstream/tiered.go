@@ -63,9 +63,8 @@ type TieredDataStore struct {
 // Metrics are the obs package-level [obs.LedgerstreamTierReadTotal] /
 // [obs.LedgerstreamColdReadDurationSeconds], registered once at process
 // boot — so there is no per-instance registry to wire and no typed-nil
-// footgun. Repeated construction across the
-// archive→live→catch-up Stream calls is safe precisely because the
-// metrics are NOT re-registered here.
+// footgun. Repeated construction across the archive→live→catch-up
+// Stream calls is safe because the metrics are NOT re-registered here.
 func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
 	return &TieredDataStore{hot: hot, cold: cold}
 }
