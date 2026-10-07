@@ -27,14 +27,13 @@ type TokenSupplyReader interface {
 // isNativeSupplyAlias reports whether a raw {asset_id} path segment names
 // XLM in any of its canonical spellings.
 //
-// It parses rather than string-matching. The literal comparison this
-// replaced (`assetID == "native" || "XLM" || "crypto:XLM"`) was
-// case-SENSITIVE, so /v1/assets/xlm/supply 404'd while
-// /v1/assets/XLM/supply returned 200 — even though canonical.ParseAsset
-// is case-insensitive and every other asset route on the server accepts
-// `xlm`. A 404 on a legitimate spelling reads to a client as "this asset
-// has no supply data", not "try different capitalisation" (cold audit
-// 2026-08-04).
+// It parses rather than string-matching: a literal comparison
+// (`assetID == "native" || "XLM" || "crypto:XLM"`) is case-SENSITIVE,
+// so /v1/assets/xlm/supply would 404 while /v1/assets/XLM/supply
+// returns 200, even though canonical.ParseAsset is case-insensitive and
+// every other asset route on the server accepts `xlm`. A 404 on a
+// legitimate spelling reads to a client as "this asset has no supply
+// data", not "try different capitalisation".
 //
 // The XLM SAC contract address is deliberately NOT routed here even
 // though canonical.AssetAliases lists it: the SAC's token supply is how
@@ -139,7 +138,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling (P1, audit-2026-07-16): the ClickHouse
+	// Per-request DB ceiling: the ClickHouse
 	// supply_flows sum (and the native ledger-header read) run against
 	// the shared explorer pool; a bounded context releases the pool
 	// connection on a slow scan. 8s matches the sibling raw-scan
@@ -309,7 +308,7 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 // keyed by: a Soroban C-strkey is itself; a classic asset ("CODE-ISSUER") is
 // resolved to its Stellar-Asset-Contract by deterministic derivation — the SAC
 // address is a pure function of (asset, pubnet passphrase), valid even before
-// the SAC is deployed (canonical.Asset.SacContractID, board #40). sac_wrappers
+// the SAC is deployed (canonical.Asset.SacContractID). sac_wrappers
 // is deliberately NOT consulted: an entry can only equal the derived SAC or
 // point supply at another contract. Only unparseable ids and shapes with no
 // SAC (fiat:*) fail to resolve.

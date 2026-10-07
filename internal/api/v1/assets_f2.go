@@ -88,7 +88,7 @@ type VolumeReader interface {
 
 // SorobanVolumeReader is OPTIONALLY implemented by the wired
 // [VolumeReader] to provide the XLM-anchored 24h USD volume for
-// pure-Soroban SEP-41 assets (fce3e2eef). The plain Volume24hUSDForAsset only
+// pure-Soroban SEP-41 assets. The plain Volume24hUSDForAsset only
 // sees the insert-time `usd_volume` column — populated when a trade's
 // quote is a USD-pegged classic — so a Soroban token that trades against
 // XLM or another SEP-41 token reports a bogus "0". This variant keeps the
@@ -127,9 +127,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// IMPORTANT: pass asset.String() to populateVolume24h — the
 	// canonical wire form trades.base_asset stores — NOT
 	// supply.AssetKey(asset). The two diverge for native: AssetKey
-	// returns "XLM" (ADR-0011), trades stores "native". A
-	// pre-2026-05-04 bug passed the supply key and the volume
-	// lookup never matched the trade rows.
+	// returns "XLM" (ADR-0011), trades stores "native", so passing
+	// the supply key makes the volume lookup match no trade rows.
 	var (
 		snap             supply.Supply
 		haveSnap         bool
@@ -154,7 +153,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 					// the stellarindex_worker_panics_total page rule
 					// reads, so a populator that starts panicking on
 					// every request is visible to an operator rather
-					// than only to whoever greps the logs (#368 M4).
+					// than only to whoever greps the logs.
 					worker.Report(s.logger, "api-asset-detail-populator", p)
 				}
 			}()
@@ -163,7 +162,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 	run(func() { volFailed = s.populateVolume24h(ctx, detail, asset) })
 	run(func() { changeFailed = s.populateChange24h(ctx, detail, asset) })
-	// F-1271: inline price_usd independent of supply availability so
+	// Inline price_usd independent of supply availability so
 	// wallet UIs that just want the price don't pay a second /v1/price
 	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD, plus the
 	// venue count captured here for the dust-liquidity valuation guard.
@@ -202,10 +201,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		// token (ADR-0003; migration 0005's total_supply >= 0).
 		//
 		// Bounded by tokenMetadataReadTimeout, like every other best-effort
-		// token-metadata read (#371 F9). This one runs AFTER the wg.Wait
-		// barrier, on the handler goroutine, so pre-fix a slow supply_flows
-		// sum extended /v1/assets/{id} by its full duration on top of the
-		// parallel phase — for an overlay whose failure mode is simply a null
+		// token-metadata read. This one runs AFTER the wg.Wait barrier, on
+		// the handler goroutine, so unbounded a slow supply_flows sum would
+		// extend /v1/assets/{id} by its full duration on top of the parallel
+		// phase — for an overlay whose failure mode is simply a null
 		// total_supply.
 		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 		defer scancel()
@@ -261,8 +260,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // (it only sees the insert-time usd_volume, which XLM-quoted Soroban
 // trades never populate), so when the reader exposes the XLM-anchored
 // [SorobanVolumeReader] variant we use it — it values the XLM-legged
-// trades at their own minute's XLM/USD on top of any USD-pegged legs
-// (fce3e2eef). A Soroban lookup ERROR falls back to the plain reader so a
+// trades at their own minute's XLM/USD on top of any USD-pegged legs.
+// A Soroban lookup ERROR falls back to the plain reader so a
 // transient failure of the richer path can't zero out a figure the plain
 // path could still supply; that figure omits the XLM-legged trades, so it is
 // served flagged as a lower bound. Reports whether the plain read failed.
@@ -363,8 +362,7 @@ func supplyObservationStale(snap supply.Supply, now time.Time) bool {
 
 // populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice
 // path. Idempotent: if the asset-catalogue overlay or another caller already
-// set PriceUSD, this is a no-op (the two paths can't fight). F-1271
-// (audit-2026-05-12).
+// set PriceUSD, this is a no-op (the two paths can't fight).
 //
 // Returns the number of DISTINCT venues that backed the price — the liquidity
 // signal populateMarketCap needs for the dust-liquidity valuation guard. 0
@@ -451,8 +449,7 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 //
 // An unverified ticker collision refuses outright: a look-alike of a verified
 // currency must not publish price × supply as a headline valuation — see the
-// matching guard in fillRowMarketCap (listing path) for the full rationale
-// (2026-08-04: XRP-GBXRPL45… published a $109.5M cap under XRP's ticker).
+// matching guard in fillRowMarketCap (listing path) for the full rationale.
 // Single-venue sub-floor trading refuses as low liquidity. The turnover
 // ceiling tests the computed figure, so each caller applies
 // [capExceedsObservedTurnover] to its own.
@@ -559,8 +556,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			// and can breach the ceiling on its own even when circulating supply
 			// did not — maxSupply > circulatingSupply is the common case for an
 			// issuer with a declared cap above what has vested. Flagging here too
-			// (RWC-535) matches the mc branch above: a withheld fdv_usd with no
-			// flag was indistinguishable from "no max_supply on record".
+			// matches the mc branch above: a withheld fdv_usd with no flag would
+			// be indistinguishable from "no max_supply on record".
 			detail.MarketCapLowLiquidity = true
 		} else {
 			// FDV is the cap computed over MAX supply, so it is the larger
@@ -587,7 +584,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 // the handler's tryStablecoinFiatProxy fallback at the reader-call
 // level: when the literal lookup misses, walk the operator's
 // usd_pegged_classic_assets and rewrite asset/fiat:USD to
-// asset/<peg>. Same shape as the handler-side fallback in 6505934b5;
+// asset/<peg>. Same shape as the handler-side fallback;
 // here it lives at the F2-population layer where the handler's
 // priceFallback isn't reachable (the supply / change-24h paths
 // bypass the /v1/price handler entirely).
@@ -652,7 +649,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		return usdPriceLookup{price: snap.Price, sources: len(sources)}
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
-	// handler-side fix in 6505934b5 / tryStablecoinFiatProxy). Already
+	// handler-side tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
 	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
 	if ok && proxy.Price != "" {

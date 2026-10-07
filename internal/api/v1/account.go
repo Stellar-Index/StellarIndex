@@ -132,7 +132,7 @@ type SessionPeeker interface {
 //
 // `billable` is the one column with the same meaning on both paths:
 // the request units the monthly quota counts (ok + 4xx; never 429 or
-// platform-caused 5xx (COR-05), though not a timed-out read — see
+// platform-caused 5xx, though not a timed-out read — see
 // middleware.billableClass). Sum it by `date` to reconcile against a
 // quota 429's `month_to_date`.
 type UsageRow struct {
@@ -311,16 +311,15 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // (fresh deployment / worker not yet swept). Any day the rollup
 // reader is missing entirely (a worker-outage gap, not "zero
 // traffic") is backfilled from the legacy reader rather than
-// silently dropped (Q160).
+// silently dropped.
 //
-// Subject keying calls [middleware.UsageKeyForSubject] directly (HLT-01:
-// this used to reimplement the derivation inline, which could silently
-// drift from the writer's copy) so the writer + both readers stay in
+// Subject keying calls [middleware.UsageKeyForSubject] directly rather
+// than re-deriving the key inline, so the writer + both readers stay in
 // lock-step (`id:<Identifier>` — the OWNER ACCOUNT — with `key:<KeyID>`
 // only for credentials carrying no owner reference). The account key is
 // what makes this endpoint's name true: the rows cover every key the
 // account holds, not just the one that authenticated the call, and they
-// survive a key rotation (RLT-404). The `?from=` / `?to=` query params
+// survive a key rotation. The `?from=` / `?to=` query params
 // are reserved in the OpenAPI spec but ignored — every successful
 // response is the trailing 30-day window today; full from/to honouring
 // lands when an operator surface needs it.
@@ -329,10 +328,8 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // precedence as [Server.handleAccountMe]: a session identifies the
 // account directly, so it reads under that account's key
 // (`id:acct:<slug>`, via [usageKeyForSession]) without needing the caller
-// to also hold an API key (GH #796 / RLT-415 — every signed-in dashboard
-// user with only a session cookie used to 401 here, and the frontend
-// silently swallowed it into an empty usage page). Anonymous callers
-// (neither session nor API key) receive 401.
+// to also hold an API key. Anonymous callers (neither session nor API
+// key) receive 401.
 //
 // Backend-absent posture: the handler returns `[]` in the
 // wire-shape envelope (200 OK with an empty data array). Callers
@@ -392,7 +389,7 @@ func usageKeyForSession(accountSlug string) string {
 
 // readUsageRollup reads the per-endpoint rollups for the subject and
 // backfills any day the rollup worker produced NO row for at all from
-// the legacy per-day reader (Q160), so a worker-outage gap in the
+// the legacy per-day reader, so a worker-outage gap in the
 // middle of the 30-day window doesn't silently vanish from the
 // response — only "the rollup reader itself produced nothing usable"
 // (unwired, read error, or zero rows) falls back to the legacy shape
@@ -497,10 +494,9 @@ func legacyUsageRow(d UsageDay) UsageRow {
 // Operator-tier callers keep tier inheritance (this is the staff
 // rotation path) but pay the admin-write price for it: X-Reason is
 // required (400 without) and the mint lands a "key.mint" audit row
-// naming the actor, exactly as POST /v1/admin/keys does. Pre-fix an
-// operator credential could spawn further operator credentials here
-// with no reason and no audit trail (api-security-1, audit
-// 2026-08-28).
+// naming the actor, exactly as POST /v1/admin/keys does. Without that,
+// an operator credential could spawn further operator credentials here
+// with no reason and no audit trail.
 func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -748,7 +744,7 @@ func (s *Server) recordAccountKeyRevokeAudit(
 
 // appendKeyAudit stamps the request-derived fields (UA, IP, timestamp)
 // onto entry and appends it best-effort, counting a sink failure under
-// the given AdminAuditWriteFailuresTotal surface label (C3-067).
+// the given AdminAuditWriteFailuresTotal surface label.
 func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surface, what string) {
 	entry.UserAgent = r.UserAgent()
 	entry.Timestamp = time.Now().UTC()
@@ -765,13 +761,11 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 // defaultAccountKeyQuota is the self-service active-key ceiling one
 // caller identifier may hold when [Options.AccountKeyQuota] is unset.
 //
-// 25 is the repo's own pre-existing key cap — the flat
-// `MaxKeysPerAccount` the dashboard mint shipped with before F-1257
-// replaced it with the tier ladder ([platform.Tier.MaxActiveKeys], free
-// 25 → partner 250). Reusing that number rather than picking a new one
-// means the bound is provably above what any legitimate caller holds
-// (nobody rotates into 25 concurrent self-service credentials) while
-// still turning an unbounded mint loop into a 409 — the conservative
+// 25 is the free tier's rung of the dashboard tier ladder
+// ([platform.Tier.MaxActiveKeys], free 25 → partner 250). Reusing that
+// number rather than picking a new one keeps the bound above what any
+// legitimate caller holds (nobody rotates into 25 concurrent
+// self-service credentials) while still turning an unbounded mint loop into a 409 — the conservative
 // direction on a surface where the alternative is an operator-visible
 // regression for a paying customer. Operators tune per deployment via
 // [Options.AccountKeyQuota].
@@ -780,13 +774,13 @@ const defaultAccountKeyQuota = 25
 // mintAccountKey issues a self-service key under the per-identifier
 // active-key cap. Returns false when it has already written the response.
 //
-// C3-015 (audit-2026-07-23): POST /v1/account/keys minted on every call
-// with no count check, so one authenticated caller could mint keys in a
+// Without a count check one authenticated caller could mint keys in a
 // loop, each a live credential and a permanent Redis record. The cap is
 // enforced by the store in the same critical section as the write
 // ([auth.RedisAPIKeyStore.CreateCapped]), mirroring the dashboard path's
 // atomic maxKeys gate: a handler-side count followed by a separate
-// Create let a concurrent burst all read the same count below the cap.
+// Create would let a concurrent burst all read the same count below the
+// cap.
 //
 // An unverifiable count fails CLOSED (503, no mint): the cap exists
 // precisely because an unbounded mint is the abuse.
@@ -843,8 +837,7 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 // — that's only retrievable at Create time, by design).
 //
 // Anonymous → 401. Store unavailable → 503. Authenticated callers
-// always get a list (possibly empty if all their keys were
-// previously revoked, though revocation isn't shipped today).
+// always get a list, possibly empty.
 //
 // Sorted by CreatedAt ascending so customers see their original
 // signup key first and rotated keys later.
@@ -943,7 +936,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	// revokeKeyEverywhere (admin_keys.go, GH-978) also clears the
+	// revokeKeyEverywhere (admin_keys.go) also clears the
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
