@@ -11,7 +11,7 @@ import (
 )
 
 // Router attribution — the live half of migration 0025's
-// trades.routed_via design (BACKLOG #29 Phase B).
+// trades.routed_via design.
 //
 // Why a periodic sweep instead of tagging at router-persist time:
 // the same-tx `trades` rows for a soroswap-router call are written

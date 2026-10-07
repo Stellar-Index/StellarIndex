@@ -52,22 +52,14 @@
 #   BASE_SHA — the comparison base (PR base sha, or the push event's
 #              `before` sha). Unset/zero → check is skipped (first
 #              push / manual local run without history context).
+#        ./scripts/ci/lint-replay-plan.sh --list-projected
+#   prints the projected source names the advisory checks against.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
 BASE_SHA="${BASE_SHA:-}"
 ZERO_SHA="0000000000000000000000000000000000000000"
-
-if [[ -z "$BASE_SHA" || "$BASE_SHA" == "$ZERO_SHA" ]]; then
-  echo "lint-replay-plan: no BASE_SHA — skipping (nothing to diff against)."
-  exit 0
-fi
-if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-  echo "lint-replay-plan: BASE_SHA ${BASE_SHA} not in local history — skipping." \
-       "(checkout fetch-depth too shallow?)"
-  exit 0
-fi
 
 # Watched paths — the files whose content decides what ingestion writes.
 # Git pathspecs: `*` crosses `/`, so internal/sources/*/ reaches both
@@ -137,30 +129,113 @@ has_replay_plan() {
 # gate's job is to make the plan exist, and only a human knows whether an
 # unusual command is the clean-slate exception.
 #
-# The source names are DERIVED from the projector registry (resolving
-# each `case <pkg>.Source<X>:` through that package's constant), never
-# listed here — a list here would be the same drift this whole gate
-# exists to prevent. The count is printed so a derivation that silently
-# resolves nothing is visible rather than reading as "all clear".
+# The source names are DERIVED from the SourceSpec registry, never listed
+# here: a list here would be the same drift this whole gate exists to
+# prevent. A spec is projected iff it has a non-nil Projector (AGENTS.md
+# invariant 7), either as a `{ Name: …, Projector: … }` literal or through
+# a `func <helper>(name …) SourceSpec` whose body sets both. Each
+# `<pkg>.<Const>` name resolves through the import block to that package's
+# string constant. Anything the parser cannot resolve is an error, not a
+# skip: a derivation that silently drops names checks nothing.
+SPEC_REGISTRY=internal/pipeline/source_spec.go
+
+# shellcheck disable=SC2016  # awk program, not a shell expansion
+SPEC_AWK='
+function field(s, key,    v) {
+  if (!match(s, "(^|[{ \t,])" key ":[ \t]*[^ \t,}]+")) return ""
+  v = substr(s, RSTART, RLENGTH)
+  sub("^.*" key ":[ \t]*", "", v)
+  return v
+}
+function emit(tok,    a) {
+  if (tok ~ /^"[^"]+"$/) { gsub(/"/, "", tok); print "LIT " tok; return }
+  if (tok !~ /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/) { print "ERR line " FNR ": unrecognised Name expression: " tok; return }
+  split(tok, a, ".")
+  if (imp[a[1]] == "") { print "ERR line " FNR ": " a[1] " is not an internal/ import"; return }
+  print "REF " imp[a[1]] " " a[2] " " tok
+}
+FNR == NR {
+  if ($0 ~ /^import \(/) { inimp = 1; next }
+  if (inimp && $0 ~ /^\)/) { inimp = 0; next }
+  if (inimp && $0 ~ /"[^"]+"/) {
+    n = split($0, f, /[ \t]+/); k = (f[1] == "") ? 2 : 1
+    path = f[n]; gsub(/"/, "", path)
+    alias = (f[k] ~ /^"/) ? path : f[k]; sub(/.*\//, "", alias)
+    dir = path; if (sub(/^.*\/internal\//, "internal/", dir)) imp[alias] = dir
+    next
+  }
+  if ($0 ~ /^func [A-Za-z_][A-Za-z0-9_]*\([A-Za-z_][A-Za-z0-9_]* .*\) SourceSpec \{/) {
+    h = $0; sub(/^func /, "", h); p = h; sub(/\(.*/, "", h)
+    sub(/^[^(]*\(/, "", p); sub(/ .*/, "", p); param[h] = p; inh = 1; next
+  }
+  if (inh && $0 ~ /^}/) { inh = 0; next }
+  if (inh) {
+    pv = field($0, "Projector"); if (pv != "" && pv != "nil") projhelper[h] = 1
+    if (field($0, "Name") == param[h]) namedby[h] = 1
+  }
+  next
+}
+/^var specs = \[\]SourceSpec\{/ { inspecs = 1; seen = 1; depth = 1; next }
+!inspecs { next }
+{
+  line = $0; sub(/\/\/.*/, "", line)
+  start = (depth == 1 && line ~ /^[ \t]*\{/)
+  if (start) { nm = ""; proj = 0; inentry = 1 }
+  if (inentry && (depth == 2 || start)) {
+    v = field(line, "Name"); if (v != "") nm = v
+    v = field(line, "Projector"); if (v != "" && v != "nil") proj = 1
+  }
+  if (depth == 1 && !start && line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*\(/) {
+    h = line; sub(/^[ \t]*/, "", h); sub(/\(.*/, "", h)
+    if (h in projhelper) {
+      if (!(h in namedby)) print "ERR line " FNR ": helper " h " does not set Name from its first parameter"
+      else { arg = line; sub(/^[^(]*\(/, "", arg); sub(/[,)].*/, "", arg); emit(arg) }
+    }
+  }
+  o = gsub(/\{/, "{", line); c = gsub(/\}/, "}", line); depth += o - c
+  if (inentry && depth == 1) {
+    inentry = 0
+    if (proj) { if (nm == "") print "ERR line " FNR ": projected spec with no Name"; else emit(nm) }
+  }
+  if (depth <= 0) inspecs = 0
+}
+END { if (!seen) print "ERR no `var specs = []SourceSpec{` block" }
+'
+
+# projector_source_names — one projected source name per line, sorted.
+# Returns 1 with the reason on stderr when the registry cannot be read.
 projector_source_names() {
-  local reg=internal/projector/registry.go pkg const
-  [[ -r "$reg" ]] || return 0
-  grep -oE 'case [a-z0-9_]+\.Source[A-Za-z]*:' "$reg" |
-    sed -E 's/^case //; s/:$//' |
-    while IFS=. read -r pkg const; do
-      # `<Const> = "<value>"` in the source package the case refers to.
-      grep -rhoE "${const}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "internal/sources/${pkg}" 2>/dev/null |
-        sed -E 's/.*"([^"]+)".*/\1/'
-    done | LC_ALL=C sort -u
+  local reg="$SPEC_REGISTRY" parsed kind dir const tok gf vals names=""
+  [[ -r "$reg" ]] || { echo "$reg is missing" >&2; return 1; }
+  parsed="$(awk "$SPEC_AWK" "$reg" "$reg")"
+  while read -r kind dir const tok; do
+    case "$kind" in
+      LIT) names="${names}${dir}"$'\n' ;;
+      ERR) echo "$reg: $dir $const $tok" >&2; return 1 ;;
+      REF)
+        vals=""
+        for gf in "$dir"/*.go; do
+          [[ -f "$gf" && "$gf" != *_test.go ]] || continue
+          vals="${vals}$(grep -oE "(^|[^A-Za-z0-9_])${const}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "$gf" |
+            grep -oE '"[^"]+"' | tr -d '"' || true)"$'\n'
+        done
+        vals="$(grep -v '^$' <<<"$vals" | LC_ALL=C sort -u || true)"
+        if [[ -z "$vals" || "$vals" == *$'\n'* ]]; then
+          echo "$reg: cannot resolve $tok to one string constant in $dir" >&2
+          return 1
+        fi
+        names="${names}${vals}"$'\n'
+        ;;
+    esac
+  done <<<"$parsed"
+  grep -v '^$' <<<"$names" | LC_ALL=C sort -u || true
 }
 
-# warn_wrong_replay_command <trailer-lines>
+# warn_wrong_replay_command <trailer-lines> <projected-names>
 warn_wrong_replay_command() {
-  local trailers="$1" names count line name
-  names="$(projector_source_names)"
+  local trailers="$1" names="$2" count line name
   count="$(grep -c . <<<"$names" || true)"
   echo "lint-replay-plan: cross-checked the declared plan against $count projector source name(s)"
-  [[ "$count" -gt 0 ]] || return 0
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     grep -qE '(^|[[:space:]])(backfill|ch-rebuild)([[:space:]]|$)' <<<"$line" || continue
@@ -175,6 +250,31 @@ warn_wrong_replay_command() {
     done <<<"$names"
   done <<<"$trailers"
 }
+
+if [[ "${1:-}" == "--list-projected" ]]; then
+  projector_source_names
+  exit
+fi
+
+if [[ -z "$BASE_SHA" || "$BASE_SHA" == "$ZERO_SHA" ]]; then
+  echo "lint-replay-plan: no BASE_SHA — skipping (nothing to diff against)."
+  exit 0
+fi
+if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+  echo "lint-replay-plan: BASE_SHA ${BASE_SHA} not in local history — skipping." \
+       "(checkout fetch-depth too shallow?)"
+  exit 0
+fi
+
+# Derived on every run, not only when a plan is declared, so the PR that
+# moves or reshapes the registry is the one that goes red.
+if ! projected="$(projector_source_names)" || [[ -z "$projected" ]]; then
+  echo "lint-replay-plan: FAIL — derived no projected source names from $SPEC_REGISTRY."
+  echo "  The registry moved or changed shape. Re-aim projector_source_names in"
+  echo "  scripts/ci/lint-replay-plan.sh; an empty set would let the wrong-command"
+  echo "  advisory pass every plan while checking nothing."
+  exit 1
+fi
 
 changed="$(changed_watched "$BASE_SHA" HEAD)"
 if [[ -z "${changed//[[:space:]]/}" ]]; then
@@ -193,7 +293,7 @@ if has_replay_plan "$log_body"; then
   # ${var//…} has no line anchor, so the suggested parameter expansion
   # cannot express this (see lint-docs.sh for the same annotation).
   sed 's/^/  /' <<<"$declared"
-  warn_wrong_replay_command "$declared"
+  warn_wrong_replay_command "$declared" "$projected"
   exit 0
 fi
 
@@ -220,8 +320,8 @@ Add a trailer to a commit message in the range:
 
 The command comes from the replay decision rule in
 docs/architecture/ingest-pipeline.md ("The replay decision rule") — NOT
-from memory. A projected source (anything with a case in
-internal/projector/registry.go) replays with projector-replay or
+from memory. A projected source (a SourceSpec with a Projector in
+internal/pipeline/source_spec.go) replays with projector-replay or
 projected-rebuild; `backfill` is a MinIO walk and is never the answer.
 
 e.g.
