@@ -78,7 +78,9 @@ func writeCSVPage(w http.ResponseWriter, r *http.Request, p csvPage) error {
 		h.Set("X-StellarIndex-Flags", strings.Join(p.flags, ", "))
 	}
 	for k, v := range p.headers {
-		h.Set(k, v)
+		if v = headerSafe(v); v != "" {
+			h.Set(k, v)
+		}
 	}
 	w.WriteHeader(http.StatusOK)
 	cw := csv.NewWriter(w)
@@ -96,6 +98,34 @@ func writeCSVPage(w http.ResponseWriter, r *http.Request, p csvPage) error {
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// asciiFold spells the non-ASCII punctuation a served note uses in ASCII.
+var asciiFold = map[rune]string{
+	'\u2010': "-", '\u2011': "-", '\u2012': "-", '\u2013': "-", '\u2014': "-", '\u2212': "-",
+	'\u2018': "'", '\u2019': "'", '\u201C': `"`, '\u201D': `"`,
+	'\u2026': "...", '\u2264': "<=", '\u2265': ">=", '\u00A0': " ",
+}
+
+// headerSafe renders s as one line of printable ASCII: known punctuation is
+// folded, any other non-ASCII rune becomes '?', and CR, LF and every other
+// control character become a space (runs collapsed), so no value can split
+// or smuggle a header.
+func headerSafe(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 0x20 && r < 0x7f:
+			b.WriteRune(r)
+		case asciiFold[r] != "":
+			b.WriteString(asciiFold[r])
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0):
+			b.WriteByte(' ')
+		default:
+			b.WriteByte('?')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // plainNumber is a decimal that a spreadsheet reads as a number, not a

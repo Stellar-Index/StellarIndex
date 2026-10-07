@@ -64,6 +64,30 @@ func TestCSVSafeCell(t *testing.T) {
 	}
 }
 
+func TestHeaderSafe(t *testing.T) {
+	cases := map[string]string{
+		"plain note; ledger 5":                               "plain note; ledger 5",
+		"P23 on — transfers only":                            "P23 on - transfers only",
+		"x\r\nSet-Cookie: y":                                 "x Set-Cookie: y",
+		"a\tb\x00c\x7fd\u0085e":                              "a b c d e",
+		"\u201cq\u201d \u2018s\u2019 \u2026 \u22651 \u22642": `"q" 's' ... >=1 <=2`,
+		"bad\xffutf8 €":                                      "bad?utf8 ?",
+		"\u2028line\u2029sep\u00a0nbsp ":                     "?line?sep nbsp",
+		"\r\n":                                               "",
+	}
+	for in, want := range cases {
+		got := headerSafe(in)
+		if got != want {
+			t.Errorf("headerSafe(%q) = %q, want %q", in, got, want)
+		}
+		for i := 0; i < len(got); i++ {
+			if got[i] < 0x20 || got[i] > 0x7e {
+				t.Errorf("headerSafe(%q) byte %d = %#x, not printable ASCII", in, i, got[i])
+			}
+		}
+	}
+}
+
 // csvMovementsHandler serves AssetMovements behind the real Cache-Control
 // middleware so the test sees the headers a CDN would.
 func csvMovementsHandler(reader *assetArmReader, limit int, jsonBody *AssetMovementsView) http.Handler {
@@ -119,6 +143,17 @@ func TestAssetMovementsCSV(t *testing.T) {
 	}
 	if got := rec.Header().Get("X-StellarIndex-Through-Ledger"); got != fmt.Sprint(wm) {
 		t.Errorf("X-StellarIndex-Through-Ledger = %q, want %d", got, wm)
+	}
+	// The lower bound names what it excludes: the JSON's coverage_note,
+	// folded to ASCII (the note carries an em dash).
+	var page AssetMovementsView
+	jsonRec := httptest.NewRecorder()
+	csvMovementsHandler(reader, 1, &page).ServeHTTP(jsonRec, httptest.NewRequest(http.MethodGet, "/v1/assets/native/movements?limit=1", nil))
+	if !strings.Contains(page.CoverageNote, "—") {
+		t.Fatalf("fixture note has no non-ASCII rune to fold: %q", page.CoverageNote)
+	}
+	if got, want := rec.Header().Get("X-StellarIndex-Coverage-Note"), strings.ReplaceAll(page.CoverageNote, "—", "-"); got != want {
+		t.Errorf("X-StellarIndex-Coverage-Note = %q, want %q", got, want)
 	}
 
 	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()

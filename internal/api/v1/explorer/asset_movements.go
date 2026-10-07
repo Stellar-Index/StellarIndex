@@ -124,7 +124,11 @@ func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request,
 		columns:    assetMovementsCSVColumns,
 		rows:       make([][]string, len(v.Movements)),
 		nextCursor: v.NextCursor,
-		headers:    map[string]string{"X-StellarIndex-Through-Ledger": strconv.FormatUint(uint64(v.ThroughLedger), 10)},
+		headers: map[string]string{
+			"X-StellarIndex-Through-Ledger": strconv.FormatUint(uint64(v.ThroughLedger), 10),
+			// A lower bound must name what it excludes; the CSV has no envelope.
+			"X-StellarIndex-Coverage-Note": v.CoverageNote,
+		},
 	}
 	for _, f := range []struct {
 		name string

@@ -567,7 +567,8 @@ export interface paths {
          *     formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
          *     number) is prefixed with `'`. The next page is the `Link` header's
          *     `rel="next"`; the true flags (`stale`, `degraded`, `lower_bound`,
-         *     `under_review`) are listed in `X-StellarIndex-Flags`. JSON stays the
+         *     `under_review`) are listed in `X-StellarIndex-Flags`, and
+         *     `coverage_note` is `X-StellarIndex-Coverage-Note`. JSON stays the
          *     default; both representations send `Vary: Accept`, and the CSV is
          *     `Cache-Control: private, no-store`.
          */
@@ -14557,6 +14558,8 @@ export interface operations {
                     "X-StellarIndex-Flags"?: string;
                     /** @description text/csv only: the JSON's `through_ledger`. */
                     "X-StellarIndex-Through-Ledger"?: number;
+                    /** @description text/csv only: the JSON's `coverage_note` (what a `lower_bound` page excludes) as one line of printable ASCII: non-ASCII punctuation is folded (an em dash becomes `-`), other non-ASCII characters become `?`. */
+                    "X-StellarIndex-Coverage-Note"?: string;
                     [name: string]: unknown;
                 };
                 content: {

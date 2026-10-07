@@ -104,6 +104,7 @@ var DefaultCORSExposedHeaders = []string{
 	"Link",
 	"X-StellarIndex-Flags",
 	"X-StellarIndex-Through-Ledger",
+	"X-StellarIndex-Coverage-Note",
 }
 
 // CORS returns middleware that applies W3C CORS headers based on
