@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// RLT-430 class guard.
+// Class guard: every catalogue consumer warms the gates.
 //
 // warmCatalogueGates / applyGatedOptions give a re-derive the gate the live
 // indexer runs with (curated set ∪ protocol_contracts).
@@ -138,7 +138,7 @@ func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 //
 // Every gated source is anchored to PUBNET contract identities (ADR-0035),
 // so filterCatalogueByNetwork drops all of them on testnet / futurenet
-// (#483). The warm is therefore a no-op there — and, decisively, its
+// . The warm is therefore a no-op there — and, decisively, its
 // FAIL-CLOSED leg cannot fire: applyGatedOptions refuses a gated catalogue
 // entry with no warmed options, and on a test net there is no such entry,
 // so even an entirely empty options map is accepted. compute-completeness

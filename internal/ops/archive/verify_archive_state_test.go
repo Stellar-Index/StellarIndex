@@ -156,7 +156,7 @@ func TestResolveIncrementalFrom(t *testing.T) {
 			want:          100,
 		},
 		{
-			// DAT-09: `-tier all` writes its outcome under "chain" +
+			// `-tier all` writes its outcome under "chain" +
 			// "checkpoint" and never under "all", so reading the raw
 			// flag value found nothing and restarted from genesis.
 			name: "tier all → resumes from the chain/checkpoint high-water",
@@ -194,7 +194,7 @@ func TestResolveIncrementalFrom(t *testing.T) {
 			want:          2,
 		},
 		{
-			// REL-05: strict cross-run boundary mode. -safety-overlap 0
+			// Strict cross-run boundary mode. -safety-overlap 0
 			// must resume at last-verified + 1 so the first chunk's
 			// FirstPrevHash is exactly the saved LastVerifiedHash.
 			name: "safety overlap 0 → resumes strictly AFTER last verified",
@@ -217,7 +217,7 @@ func TestResolveIncrementalFrom(t *testing.T) {
 	}
 }
 
-// TestResolveIncremental_strictBoundaryHashLinesUp is the REL-05
+// TestResolveIncremental_strictBoundaryHashLinesUp is the
 // regression in the terms the operator actually hits: with
 // -safety-overlap 0 the saved LastVerifiedHash must be exactly the
 // hash checkResumeFromHash sees as the first chunk's FirstPrevHash

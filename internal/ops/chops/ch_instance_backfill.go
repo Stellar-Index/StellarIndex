@@ -21,7 +21,7 @@ import (
 // DDL's operator contract). Same r1 cautions as the sibling backfills:
 // serialize, run under run-heavy-job.sh, resume with the printed -from —
 // including the same implicit-full-run refusal (a bare invocation needs
-// an explicit -from/-to or -full; GH-1192).
+// an explicit -from/-to or -full).
 func chInstanceBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-instance-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

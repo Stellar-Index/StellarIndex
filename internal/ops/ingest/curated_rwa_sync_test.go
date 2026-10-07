@@ -228,13 +228,13 @@ func TestCuratedRWAFetch_RefusesAnIncompleteOrShortResult(t *testing.T) {
 // TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult pins the
 // fail-closed half of the drop.
 //
-// A row the curator printed that this run cannot read used to be
-// counted and skipped: the run exited 0 and published the survivors.
-// The cache is replaced series-whole, so that does not merely fail to
+// A row the curator printed that this run cannot read must not be
+// counted and skipped, exiting 0 and publishing the survivors.
+// The cache is replaced series-whole, so that would not merely fail to
 // add the unread row — it DELETES the month already cached and serves
 // the hole, and when the unread row is the newest month the headline
-// is re-dated to an older one and understates. Nothing was red
-// anywhere. So a result this run could only read part of is now a
+// is re-dated to an older one and understates. Nothing would be red
+// anywhere. So a result this run could only read part of is a
 // refusal, before anything is written.
 func TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult(t *testing.T) {
 	goodTotal := []map[string]any{
@@ -547,7 +547,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 			t.Errorf("textfile lacks %q:\n%s", want, s)
 		}
 	}
-	// The old gauge claimed an execution cost; a read has none, and the
+	// A gauge that claims an execution cost is wrong; a read has none, and the
 	// name must not survive to be graphed as one.
 	if strings.Contains(s, "execution_cost_credits") {
 		t.Errorf("textfile still exposes execution_cost_credits:\n%s", s)

@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// RLT-266: `backfill` failed open on a PARTIAL walk. It errored only on
-// walked == 0, while its two siblings (chops.backfillCoverage,
-// censusCoverage) fail any short walk. The scenario is the issue's own:
+// `backfill` must not fail open on a PARTIAL walk by erroring only on
+// walked == 0: its two siblings (chops.backfillCoverage,
+// censusCoverage) fail any short walk. The scenario:
 // -from 62,800,000 -to 62,900,000 against the hourly-mirrored archive,
 // whose top ~720 ledgers are not mirrored yet. ledgerstream tolerates
 // the miss (it is within 65,536 of the walk's own `to`), the walk ends
-// without an error at 99,280 of 100,001, and the chunk used to refresh
+// without an error at 99,280 of 100,001, and the chunk would refresh
 // the CAGGs, log "chunk complete" and exit 0.
 func TestBackfillChunkCoverage_PartialWalkFails(t *testing.T) {
 	t.Parallel()
@@ -33,7 +33,7 @@ func TestBackfillChunkCoverage_PartialWalkFails(t *testing.T) {
 	}
 }
 
-// F-0159's total-miss refusal must survive the rewrite, message shape
+// The total-miss refusal must survive, message shape
 // included (it names the bucket, which is the usual culprit).
 func TestBackfillChunkCoverage_ZeroWalkStillFails(t *testing.T) {
 	t.Parallel()

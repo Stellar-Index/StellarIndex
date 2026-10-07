@@ -13,7 +13,7 @@ import (
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 )
 
-// F050: ch-rebuild's BackfillSafe gate has two legs, and only the first
+// ch-rebuild's BackfillSafe gate has two legs, and only the first
 // is reachable from a test of the entry point.
 //
 //   - leg 1 asks about the sources the operator NAMED, before the config
@@ -92,7 +92,7 @@ func funcBodyFrom(src, name string) string {
 
 // The gate refuses a `-write` with no -sources (the whole catalogue holds
 // unaudited decoders), so a runbook that prescribes one prescribes a
-// command that cannot run. Two operations docs did (F050 follow-up):
+// command that cannot run. Two operations docs did:
 // history-completeness-plan.md §2.2 (`-sdex-gaps … -write`, which also
 // lacked the -sdex its pass needs) and sep41-mint-recovery.md §3
 // (`ch-rebuild -sep41 -write -contracts …`). This drives the corrected

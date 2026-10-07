@@ -45,22 +45,22 @@ func walkedChunk(idx int, c opsutil.RangeChunk, firstPrev, last sdkxdr.Hash) chu
 	}
 }
 
-// TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying is the
-// RLT-281 regression.
+// TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying pins
+// the all-Done resume case.
 //
 // A prior run that marked every chunk Done and still left InProgress
 // behind is a run that failed AT OR AFTER the post-walk proofs — the
 // cross-chunk stitch and the checkpoint-anchor decision run after the
 // last chunk is marked Done, and a real boundary chain break leaves
-// exactly this state. verifyArchiveLCMWalk used to read resumeChunks'
-// nil verdict directly and `return 0, "", nil`: a zero-ledger success.
-// Its caller's textfile defer keys on retErr == nil, so
-// stellarindex_verify_archive_last_success_unix advanced for a run
+// exactly this state. If verifyArchiveLCMWalk read resumeChunks'
+// nil verdict directly and `return 0, "", nil`, that would be a zero-ledger
+// success. Its caller's textfile defer keys on retErr == nil, so
+// stellarindex_verify_archive_last_success_unix would advance for a run
 // that anchored nothing, holding the run-stale page green, and
-// updateTierState cleared the InProgress record that was the only
+// updateTierState would clear the InProgress record that was the only
 // remaining trace of the failed run.
 //
-// The corrected value is the FULL plan: every chunk, in plan order.
+// The correct value is the FULL plan: every chunk, in plan order.
 func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -71,8 +71,8 @@ func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 	}
 
 	// Precondition: this is genuinely the all-Done state, i.e. the
-	// input on which the pre-fix caller returned a zero-ledger
-	// success. Without this the test could pass vacuously on a state
+	// input on which a caller trusting the nil verdict returns a
+	// zero-ledger success. Without this the test could pass vacuously on a state
 	// that never reached the defective branch.
 	if keep, _, reason := resumeChunks(st, "checkpoint", 2, 3000, 3, chunks); keep != nil {
 		t.Fatalf("precondition: want the all-Done verdict from resumeChunks, got %d chunk(s) (%s)", len(keep), reason)
@@ -117,8 +117,8 @@ func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	}
 }
 
-// TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked is the
-// RLT-265 admission rule: a chunk recorded Done by a binary that never
+// TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked pins the
+// boundary-evidence admission rule: a chunk recorded Done by a binary that never
 // persisted its boundary terms cannot supply either side of a
 // cross-chunk boundary, so skipping it would leave that boundary
 // unchecked in every run. It is re-walked instead — self-healing,
@@ -128,7 +128,7 @@ func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
 	chunks := threeChunkPlan()
 	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
-	// markChunkDone is the pre-RLT-265 recording: Done + the terminal
+	// markChunkDone is the legacy recording: Done + the terminal
 	// hash, no FirstPrevHash and no verified count.
 	st = markChunkDone(st, "checkpoint", 0, hashByte(0x11), now)
 
@@ -142,10 +142,10 @@ func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
 	}
 }
 
-// ─── RLT-265: the cross-chunk chain proof must survive a resume ────
+// ─── The cross-chunk chain proof must survive a resume ────
 
 // TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught is the
-// RLT-265 regression, and its first assertion is the contrast that
+// skipped-chunk regression, and its first assertion is the contrast that
 // makes the second non-vacuous: the SAME stitchChunks, over the chunks
 // this run walked, cannot see the break at all.
 //
@@ -174,7 +174,7 @@ func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) 
 	live := []chunkResult{chunk1, chunk2}
 	liveIdxs := []int{1, 2}
 
-	// Contrast: what the walk used to hand stitchChunks. Adjacent to
+	// Contrast: the live results alone, as a naive walk would hand stitchChunks. Adjacent to
 	// each other, so clean — the break is invisible.
 	if err := stitchChunks(live); err != nil {
 		t.Fatalf("precondition: the live results alone must stitch clean (that is the blindness "+
@@ -215,9 +215,9 @@ func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) 
 
 // TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses is the
 // other half: a resumed walk whose chunks DO chain must not be failed.
-// Pre-fix this shape produced a spurious gap — stitchChunks compared
-// chunk 0 (ends 1000) against chunk 2 (starts 2001) because the
-// skipped chunk 1 was simply absent from the slice.
+// Over the live results alone this shape produces a spurious gap —
+// stitchChunks compares chunk 0 (ends 1000) against chunk 2 (starts 2001)
+// because the skipped chunk 1 is simply absent from the slice.
 func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -234,7 +234,7 @@ func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
 	live := []chunkResult{chunk0, chunk2}
 	liveIdxs := []int{0, 2}
 
-	// Contrast: the pre-fix input reports a gap between two chunks
+	// Contrast: the live-only input reports a gap between two chunks
 	// that are not adjacent, on a chain that is in fact intact.
 	if err := stitchChunks(live); err == nil {
 		t.Fatal("precondition: the live results alone should report a spurious boundary gap")
@@ -327,7 +327,7 @@ func TestVerifyArchiveState_StitchSurvivesTheStateFile(t *testing.T) {
 		t.Fatalf("stitch over the re-read state failed on an intact chain: %v", err)
 	}
 
-	// A pre-RLT-265 state file has no "stitch" key at all.
+	// A legacy state file has no "stitch" key at all.
 	legacy := `{"tiers":{"chain":{"last_verified_ledger":1000,"in_progress":` +
 		`{"from":2,"to":3000,"workers":3,"chunks":[{"idx":0,"from":2,"to":1000,"done":true,` +
 		`"last_verified_hash":"` + hashToHex(hashByte(0xaa)) + `"}]}}}}`
@@ -463,7 +463,7 @@ func TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked(t *testing.T)
 // TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof pins the
 // corrected doc claim on ChunkProgress.LastVerifiedHash, which said it
 // was "used for the cross-run chain-continuity proof" while no code
-// read it (RLT-265). Which field is load-bearing has to be mechanical,
+// read it. Which field is load-bearing has to be mechanical,
 // not a comment: an operator debugging a boundary failure who edits
 // the wrong field gets no signal at all.
 //
@@ -520,8 +520,8 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	}
 }
 
-// TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger is the
-// RLT-283 regression. Under TolerateTrailingMissing a chunk's walk can
+// TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger pins the
+// trailing-missing case. Under TolerateTrailingMissing a chunk's walk can
 // end short of To and still be marked Done, so LastVerifiedHash holds
 // the hash of Stitch.LastSeq, not of To. The field doc must say so: an
 // operator reading the state file by hand is the field's only consumer.

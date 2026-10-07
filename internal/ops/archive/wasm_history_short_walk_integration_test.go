@@ -13,14 +13,14 @@ import (
 )
 
 // TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved is the
-// RLT-282 regression guard for the wasm-history site of the
+// regression guard for the wasm-history site of the
 // "a short walk reads as full coverage" class.
 //
 // Shape of the defect it pins. workerResult.upperEnd is documented as
 // "last ledger the worker actually saw (inclusive)" and is what
 // mergeWasmHistories uses to CLOSE each watched contract's open WASM
 // range — i.e. it becomes the ToLedger of the coverage range printed
-// in the tool's stdout JSON. It used to be assigned from the REQUESTED
+// in the tool's stdout JSON. A buggy version assigns it from the REQUESTED
 // chunk bound (b.To) before the walk started and never re-assigned, so
 // a walk that stopped early published the requested bound as observed
 // coverage: "contract C ran wasm hash H through ledger <to>" for a

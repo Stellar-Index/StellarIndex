@@ -43,7 +43,7 @@ import (
 //     restore or a reconcile against a 30-day floor the data does not
 //     have.
 //
-//     Superseded in part on 2026-09-07, and left standing rather than
+//     Superseded in part, and left standing rather than
 //     rewritten because the reasoning above is why the correction has a
 //     shape at all: migration 0156 attaches a 90-day policy to
 //     `prices_1m` ALONE, `scheduled => false`, so on a deployment that
@@ -56,11 +56,11 @@ import (
 //     `internal/storage/timescale/retention_policy_test.go` fails if
 //     that set widens.
 //
-// Two more sites were added 2026-09-04 for the same class with a
+// Two more sites pin the same class with a
 // different contradicting witness: the tree rather than r1. The
 // backfill's continuous-aggregate refresh set skipped prices_1m and
 // prices_15m, justified in two places by a 30-day retention migration
-// 0031 removed on 2026-05-14 and then by "nothing reads at that
+// 0031 removed and then by "nothing reads at that
 // resolution" — which /v1/ohlc, /v1/chart and /v1/history all
 // contradict, each serving both grains over a caller-chosen window.
 // The behaviour is fixed and the set is pinned structurally in
@@ -141,7 +141,7 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				// de-drifted.
 				"the 90-day retention on raw trades drops chunks before the policy's natural cadence picks them up",
 				// Backfill refreshes twap_* after prices_1m now, so the
-				// order is load-bearing (GH-687).
+				// order is load-bearing.
 				"ORDER IS DEFENSIVE, not load-bearing today",
 			},
 			required: []string{
@@ -170,7 +170,7 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				"a window nothing reads at that resolution",
 				"the 90-day raw-trades retention will drop the just-",
 				// Seven was the prices_* subset; twap_*, dex_volume_by_pair_1d
-				// and oracle_prices_* went unrefreshed under it (GH-687).
+				// and oracle_prices_* went unrefreshed under it.
 				"All seven price CAGGs are refreshed (migration 0002)",
 			},
 			required: []string{

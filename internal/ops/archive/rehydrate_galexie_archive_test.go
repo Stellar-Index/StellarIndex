@@ -169,13 +169,13 @@ func TestRehydratePaths_TerminatesAtUint32Max(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_TransientColdErrorIsNotMissing is the DAT-09
+// TestRehydrateFiles_TransientColdErrorIsNotMissing is the
 // regression: a transient cold-tier fault (Exists errors, or GetFile
 // fails despite Exists having just confirmed presence) must be
 // counted as an error — NOT as "missing" — so the command's
 // `errs > 0` non-zero exit actually fires. Silently folding a
 // transient fault into "missing" both mislabels a real infra problem
-// as a data gap and (previously) still exited 0.
+// as a data gap and could still exit 0.
 func TestRehydrateFiles_TransientColdErrorIsNotMissing(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{}} // nothing in hot
 	cold := &fakeRehydrateStore{
@@ -321,15 +321,15 @@ func TestParseRehydrateFlags(t *testing.T) {
 		dry     bool
 	}{
 		{
-			// Fail-closed write-gate (W8.15c): -write opts into writing to
+			// Fail-closed write-gate : -write opts into writing to
 			// hot, so dryRun is false.
 			name: "write opts in",
 			args: []string{"-config", "/tmp/x.toml", "-from", "100", "-to", "200", "-write"},
 			from: 100, to: 200, dry: false,
 		},
 		{
-			// The DEFAULT is now a fail-closed dry run — no -write means no
-			// writes, the reversal of the old default-WRITE convention.
+			// The DEFAULT is a fail-closed dry run — no -write means no
+			// writes, the reverse of a default-WRITE convention.
 			name: "defaults are a fail-closed dry run",
 			args: []string{"-from", "1", "-to", "2"},
 			from: 1, to: 2, dry: true,

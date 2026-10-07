@@ -44,8 +44,8 @@ func catalogueSource(t *testing.T, cat []reconSource, name string) reconSource {
 	return reconSource{}
 }
 
-// TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts pins F071.
-// Before the fix neither source declared contractIDs, so an unhandled
+// TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts pins contract ownership.
+// Without declared contractIDs an unhandled
 // topic on a Rozo payment contract or on the Blend backstop fell into the
 // system-wide `unattributed` bucket and the source's own recognition_ok
 // was structurally unable to go false — the 2026-07-07 rozo blind spot's
@@ -143,7 +143,7 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 	}
 }
 
-// TestCatalogue_RecognitionPinsMatchDecoderIdentity holds the F071 pins in
+// TestCatalogue_RecognitionPinsMatchDecoderIdentity holds the recognition pins in
 // step with each decoder's own identity gate. contractIDs is not only the
 // recognition owner map: ch-rebuild and ch-reproject use it as a HARD
 // per-event filter and the re-derive uses it as the lake prefilter. A pin

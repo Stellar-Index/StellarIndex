@@ -14,9 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// TestCatalogue_SoroswapReDeriveIsContractScoped (#805): soroswap is the
+// TestCatalogue_SoroswapReDeriveIsContractScoped: soroswap is the
 // first catalogue source, and a failing prior projection verdict re-floors it
-// at genesis (CS-095). With no contract scope that re-derive streamed every
+// at genesis. With no contract scope that re-derive streamed every
 // contract event from genesis to tip. The entry must scope the lake read to
 // the soroswap gate — every factory plus every pair the (RPC-seeded) decoder
 // holds — and exclude a look-alike emitting the same topics.

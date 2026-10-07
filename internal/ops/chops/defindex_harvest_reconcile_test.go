@@ -138,7 +138,7 @@ func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 	}
 
 	// The EXPECTED side for defindex_flows, summed over the catalogue's ACTUAL
-	// kinds. Pre-fix this omits harvest and returns 0; post-fix it returns 1.
+	// kinds. Without the harvest kind this returns 0; with it, 1.
 	expected := completeness.SumKinds(byKind, flowsTarget.kinds...)
 	if got := expected[harvestLedger]; got != servedRowCount {
 		t.Fatalf("expected defindex_flows rows at ledger %d = %d, want %d — "+
@@ -149,7 +149,7 @@ func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 
 	// End to end: with the served tier holding exactly the one harvest row, the
 	// per-ledger reconcile must find NO gap (the r1 verdict flips green with no
-	// data change). Pre-fix, ReconcileCounts sees expected=0 vs served=1 and
+	// data change). Without it, ReconcileCounts sees expected=0 vs served=1 and
 	// reports a phantom-row gap — the 974-mismatch verdict in miniature.
 	served := map[uint32]int{harvestLedger: servedRowCount}
 	if gaps := completeness.ReconcileCounts(expected, served); len(gaps) != 0 {

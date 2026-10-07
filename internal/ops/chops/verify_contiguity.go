@@ -106,7 +106,7 @@ func verifyContiguity(args []string) error {
 
 	total := ledgerGaps + ecDeficiency
 	// A check narrowed out via -check must not report as "0" — that reads
-	// identically to "ran, found zero" (GH-1195). checkFieldValue prints
+	// identically to "ran, found zero". checkFieldValue prints
 	// SKIPPED for the check(s) not requested, and checks_run= makes a
 	// pasted report self-describing about its own coverage.
 	fmt.Printf("\nverify-contiguity: summary check1_missing_ledgers=%s check2_deficiency=%s check2_backfill_pending=%s checks_run=%s\n",
@@ -212,7 +212,7 @@ func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 
 // independentTipShortfallTolerance is the safety margin between the
 // independent tip and the ClickHouse lake's own max ledger before a
-// verifier fails closed (GH-1180). Mirrors run-compute-completeness.sh's
+// verifier fails closed. Mirrors run-compute-completeness.sh's
 // 100-ledger margin for the same reason: the served/lake tier legitimately
 // trails the live cursor by seconds under normal load, so a shortfall
 // below this is expected lag, not truncation.
@@ -220,7 +220,7 @@ const independentTipShortfallTolerance = 100
 
 // independentTip is one reading of the tip from a source OTHER than the
 // ClickHouse table under audit. A verifier that took its bound from
-// stellar.ledgers' own max(ledger_seq) (GH-1180) can never observe a
+// stellar.ledgers' own max(ledger_seq) can never observe a
 // restore that died short or a stalled ingest, because the missing
 // ledgers are also missing from the range it checks.
 type independentTip struct {
@@ -293,7 +293,7 @@ func historyArchiveTip(ctx context.Context, archiveURL string) (uint32, error) {
 
 // resolveVerifyTo decides a verifier's resolved -to given the ClickHouse
 // lake's own max ledger and one independent tip, failing closed rather
-// than silently certifying a truncated lake as PASSED (GH-1180). Pure —
+// than silently certifying a truncated lake as PASSED. Pure —
 // no I/O — so it is unit-testable without ClickHouse or Postgres.
 func resolveVerifyTo(toolName, tipSource string, chMax, independentTip uint32) (uint32, error) {
 	if independentTip > chMax && independentTip-chMax > independentTipShortfallTolerance {

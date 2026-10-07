@@ -249,7 +249,7 @@ func TestHorizonRetryAfter(t *testing.T) {
 	}
 }
 
-// ─── countVerified: GH-1186 "did an actual comparison happen" tally ───────
+// ─── countVerified: "did an actual comparison happen" tally ───────
 
 func TestCountVerified(t *testing.T) {
 	cases := []struct {
@@ -327,7 +327,7 @@ func TestPrintReconcileReport_AllMatchZeroExitCode(t *testing.T) {
 	}
 }
 
-// TestPrintReconcileReport_CountsErrors pins the input to the C2-15 fail-open
+// TestPrintReconcileReport_CountsErrors pins the input to the fail-open
 // guard: the report must surface the ERROR count so a mostly-errored run can be
 // failed (an all-errored run verified nothing and must NOT exit clean).
 func TestPrintReconcileReport_CountsErrors(t *testing.T) {
@@ -349,7 +349,7 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 	}
 }
 
-// TestPrintReconcileReport_StaleMergedHeld is the MNY-04 regression: a
+// TestPrintReconcileReport_StaleMergedHeld is the stale-merged regression: a
 // MERGED_OR_ABSENT account where we still hold a positive balance must be
 // counted separately (not silently folded into the report-only
 // MERGED_OR_ABSENT bucket), and a MERGED_OR_ABSENT account with a ZERO
@@ -374,10 +374,9 @@ func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
 	}
 }
 
-// TestReconcileExitError pins the consolidated exit decision (reviewer #4: the
-// C2-15 and F4 exit branches were previously untested at the command level) and
-// the C2-15 Horizon-split (reviewer #2: truth outages are outcomeTruthUnavailable
-// and NOT in `errored`, so a Horizon rate-limit episode can't fail a healthy
+// TestReconcileExitError pins the consolidated exit decision at the
+// command level, including the error-rate branch, and the Horizon-split (truth
+// outages are outcomeTruthUnavailable and NOT in `errored`, so a Horizon rate-limit episode can't fail a healthy
 // -sample gate).
 func TestReconcileExitError(t *testing.T) {
 	cases := []struct {
@@ -392,22 +391,22 @@ func TestReconcileExitError(t *testing.T) {
 		{"clean sample pass", 0, 0, 100, 100, 100, 0.25, 0, false, 0},
 		{"mismatches exit with count", 3, 0, 100, 100, 100, 0.25, 0, true, 3},
 		{"mismatch count capped at 255", 900, 0, 1000, 1000, 1000, 0.25, 0, true, 255},
-		// C2-15: our-side error rate
+		// our-side error rate
 		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, 100, 70, 0.25, 0, true, 255},
 		{"our-error rate at threshold stays clean", 0, 25, 100, 100, 75, 0.25, 0, false, 0},
 		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, 100, 70, 0.25, 0, true, 4},
-		// C2-15 Horizon-split: truth-unavailable is NOT in `errored`, so a run
+		// Horizon-split: truth-unavailable is NOT in `errored`, so a run
 		// with 70 match + 30 truth-dark has errored=0 → passes the rate guard.
 		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, 100, 70, 0.25, 0, false, 0},
-		// GH-1186: verified nothing, in either mode
+		// verified nothing, in either mode
 		{"sample verified nothing fails", 0, 0, 100, 100, 0, 0.25, 0, true, 255},
 		{"single -account verified nothing fails (GH-1186 — no longer exempt)", 0, 0, 1, 1, 0, 0.25, 0, true, 255},
 		{"single -account TRUTH_UNAVAILABLE-only fails (the prior hole)", 0, 0, 1, 1, 0, 0.25, 0, true, 255},
 		{"empty request (requested=0) is clean — nothing was ever asked for", 0, 0, 0, 0, 0, 0.25, 0, false, 0},
-		// GH-1186: incomplete coverage (cancelled mid-sample) fails even
+		// incomplete coverage (cancelled mid-sample) fails even
 		// though what WAS checked all matched.
 		{"cancelled mid-sample with partial matches still fails on incomplete coverage", 0, 0, 4, 10, 4, 0.25, 0, true, 255},
-		// MNY-04: stale MERGED_OR_ABSENT-with-held-balance fails even with 0 mismatches
+		// stale MERGED_OR_ABSENT-with-held-balance fails even with 0 mismatches
 		{"stale merged-held balance fails", 0, 0, 100, 100, 100, 0.25, 2, true, 2},
 		{"stale merged-held balance with a mismatch keeps the mismatch code", 5, 0, 100, 100, 100, 0.25, 2, true, 5},
 	}
@@ -432,7 +431,7 @@ func TestReconcileExitError(t *testing.T) {
 
 // TestPrintReconcileReport_TruthUnavailableNotCountedAsError pins that a
 // truth-source outage is tallied separately and NOT returned as an our-side
-// error (so it can't feed the C2-15 rate).
+// error (so it can't feed the error rate).
 func TestPrintReconcileReport_TruthUnavailableNotCountedAsError(t *testing.T) {
 	results := []reconcileResult{
 		{Account: "G1", Outcome: outcomeMatch},
@@ -453,7 +452,7 @@ func TestPrintReconcileReport_TruthUnavailableNotCountedAsError(t *testing.T) {
 	}
 }
 
-// ─── -sample frame: tip-relative floor + rotating seed (GH-1096) ───────────
+// ─── -sample frame: tip-relative floor + rotating seed ───────────
 
 func TestReconcileSampleFloor_TrailsTip(t *testing.T) {
 	const window = defaultReconcileRecentLedgers

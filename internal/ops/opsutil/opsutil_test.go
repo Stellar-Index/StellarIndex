@@ -260,7 +260,7 @@ func TestWriteGate_RequireStatedMode(t *testing.T) {
 var dryRunFlagDecl = regexp.MustCompile(`Bool\(\s*"dry-run"`)
 
 // TestNoOpsSubcommandDeclaresADryRunOptOut is the structural guard for the
-// default-WRITE shape (#868): a subcommand that declares its own -dry-run
+// default-WRITE shape: a subcommand that declares its own -dry-run
 // and no -write writes unless the operator remembers to opt out. Mutating
 // subcommands build their FlagSet with NewMutatingFlagSet instead.
 func TestNoOpsSubcommandDeclaresADryRunOptOut(t *testing.T) {

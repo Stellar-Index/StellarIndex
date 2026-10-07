@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestIncidentEventKey_StableAcrossRuns — GH-968: the key a re-run is
+// TestIncidentEventKey_StableAcrossRuns: the key a re-run is
 // deduplicated on must not carry the emit time (the payload's `at`), or a
 // re-run after a partial fan-out re-pages every subscriber. It must still
 // separate the SEV-1 from the resolution of the same incident.

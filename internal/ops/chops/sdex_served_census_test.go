@@ -76,7 +76,7 @@ func sdexTestDecode(t *testing.T, ledger uint32, opIndex int, claims []xdr.Claim
 	return outs
 }
 
-// GH-933: the SDEX decoder keeps one-side-zero fills and fans claims out on a
+// The SDEX decoder keeps one-side-zero fills and fans claims out on a
 // 1024 op_index stride. The served tier holds no duplicate primary key (ON
 // CONFLICT DO NOTHING), and the census counts only priceable fills: one-side-
 // zero fills are stored, but ledgers written before they were admitted hold
@@ -123,7 +123,7 @@ func TestSDEXServedCensus_CountsOnlyPriceableFills(t *testing.T) {
 	}
 }
 
-// GH-933: every SDEX projection oracle in chops must count through the one
+// Every SDEX projection oracle in chops must count through the one
 // served-tier projection. Two consumers diverged: ch-reproject counted raw
 // decoder output (no Validate, no PK dedup) and labelled the unstorable
 // one-side-zero fills "recovered loss"; verify-reconciliation and the legacy

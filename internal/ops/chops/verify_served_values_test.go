@@ -21,7 +21,7 @@ import (
 
 // TestRunServedValueChecks_TolerancesAndOutages exercises the three
 // outcome classes against stub servers: within tolerance (ok),
-// drifted beyond tolerance (fail — the CS-010 class), and
+// drifted beyond tolerance (fail), and
 // ground-truth outage (SKIPPED, NaN rel_err — a dark truth source
 // must not read as a served-value failure, AND must not read as a
 // pass either: skipped never sets ok, closing the F5 fail-open where

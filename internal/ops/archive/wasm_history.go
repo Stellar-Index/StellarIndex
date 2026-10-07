@@ -1261,7 +1261,7 @@ func recordInstanceRemoval(
 }
 
 // recordWasmTransition advances a contract's history when its
-// executable hash differs from the previously seen one. First-seen
+// executable hash differs from the one seen before. First-seen
 // opens an initial range; same-hash repeats are no-ops.
 //
 // When tlog is non-nil, the transition is also appended to the

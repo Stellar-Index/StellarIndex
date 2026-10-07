@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestRollupCLIsSerializeOnTheirLock pins GH-1188: ch-creators-rollup,
+// TestRollupCLIsSerializeOnTheirLock pins that ch-creators-rollup,
 // ch-sponsors-rollup and ch-cohort-rollup must refuse to run while another
 // invocation of the SAME job already holds its lock, exactly as
 // ch-holders-rollup does (TestAcquireHoldersRollupLockSerializesConcurrentRuns).

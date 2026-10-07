@@ -64,11 +64,11 @@ func TestSorobanEraFloor_NetworkAware(t *testing.T) {
 	}
 }
 
-// TestRunRecognitionScan_ScanErrorFailsClosed pins C2-5 (RFC-8
-// detector-fail-open): a recognition scan ERROR — CH unreachable, a query
+// TestRunRecognitionScan_ScanErrorFailsClosed pins
+// detector fail-closed: a recognition scan ERROR — CH unreachable, a query
 // timeout, or the load-heaviest DistinctTopicShapes hitting the CH memory
-// cap — must FAIL CLOSED. The unfixed compute-completeness logged the error
-// and continued with an empty gap slice; the per-source loop reads that as
+// cap — must FAIL CLOSED. Logging the error and continuing with an empty
+// gap slice would read, in the per-source loop, as
 // "no recognition gaps" → recognition_ok=true, and with substrate ∧
 // projection clean writes lake_complete=true / complete=true to
 // completeness_snapshots — a FALSE "complete" verdict on the public
@@ -132,7 +132,7 @@ func TestRunRecognitionScan_CleanScanPassesGapsThrough(t *testing.T) {
 }
 
 // TestRecognitionGlobalExcludeSyms_ExcludesFirehoseNotClassicToken pins
-// GH-1295: the global CH recognition census must exclude
+// The global CH recognition census must exclude
 // clickhouse.FirehoseExcludeSyms (ClassicTokenTopic0Syms minus set_admin),
 // never the full ClassicTokenTopic0Syms. Excluding set_admin wholesale hid
 // the Blend/Comet pool-level set_admin collision on the shared "POOL" topic,
@@ -165,7 +165,7 @@ func TestWatchedSep41RecognitionShapes_EmptyWatchListScansNothing(t *testing.T) 
 	}
 }
 
-// TestProjectionDelta_PerLedgerCatchesNetting pins the CS-084 fix:
+// TestProjectionDelta_PerLedgerCatchesNetting pins per-ledger netting:
 // a real drop in one ledger masked by a phantom overcount in another
 // nets to Δ=0 under a totals compare — the strict per-ledger default
 // must catch it.
@@ -233,8 +233,8 @@ func TestProjectionDelta_AggregateModeToleratesShift(t *testing.T) {
 	}
 }
 
-// TestProjectionDelta_VintageSplitClosesNettingHole pins the phoenix #15 split
-// (W1-flowcompleteness-3): an aggregate-waiver source with a boundary
+// TestProjectionDelta_VintageSplitClosesNettingHole pins the vintage split:
+// an aggregate-waiver source with a boundary
 // keeps the netting tolerance BELOW the boundary but reconciles STRICT above
 // it, so a real post-boundary drop can no longer net against a pre-boundary
 // phantom the way a full-window aggregate lets it.
@@ -274,7 +274,7 @@ func TestProjectionDelta_VintageSplitClosesNettingHole(t *testing.T) {
 	}
 }
 
-// TestProjectionDelta_WaiverWithoutBoundaryIsStrict is the gh#669 reflector-dex
+// TestProjectionDelta_WaiverWithoutBoundaryIsStrict is the reflector-dex
 // worked example: a drop of 3 at 63,004,102 and 3 phantoms at 63,001,900. A
 // full-window netting compare reports Σ|Δ| = 0 and complete=true; a waiver with
 // no boundary must reconcile strict and report 6.
@@ -297,11 +297,11 @@ func TestProjectionDelta_WaiverWithoutBoundaryIsStrict(t *testing.T) {
 // sources with a documented ledger-keying reason may opt out of strict
 // per-ledger reconcile, and every opt-out must carry its vintage boundary.
 func TestReconciliationCatalogue_AggregateWaiversAreBounded(t *testing.T) {
-	// phoenix RETIRED its opt-out 2026-08-21: the eventLedgerCarrier
+	// phoenix has no opt-out: the eventLedgerCarrier
 	// own-ledger attribution counts sweep-rescued 7-field-era trades at
-	// their first-field ledger, so the shift the netting absorbed no
-	// longer exists — proven strict (0 mismatched ledgers, totals
-	// 246,725 == 246,725) before removal. Phoenix reconciles strict
+	// their first-field ledger, so there is no shift for netting to
+	// absorb — proven strict (0 mismatched ledgers, totals
+	// 246,725 == 246,725). Phoenix reconciles strict
 	// per-ledger; re-adding it to this allowlist requires a NEW
 	// documented ledger-keying reason, not the old one.
 	//
@@ -409,15 +409,15 @@ func TestProjectionFoundProblem(t *testing.T) {
 // compute-completeness computed it (`retentionStart = tip - 1_500_000`, applied
 // to any source with a trades target). It exists only so the tests below can
 // prove the blind band that floor created — production must never derive a
-// floor from tip again (DAT-09 / N-F2).
+// floor from tip.
 func oldRetentionStart(tip uint32) uint32 { return tip - 1_500_000 }
 
 // TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow pins
-// DAT-09 / N-F2. The projection floor was `tip - 1_500_000` — a hardcoded ~100d
-// retention assumption that has been WRONG since migration 0031 removed the
+// the data-derived floor. A projection floor of `tip - 1_500_000` is a hardcoded
+// ~100d retention assumption, WRONG since migration 0031 removed the
 // retention policy on `trades` ("operator wants every raw trade preserved
 // forever"). The served tier keeps everything it was ever given, so a real
-// served-tier loss older than ~100 days sat permanently outside the reconcile
+// served-tier loss older than ~100 days would sit permanently outside the reconcile
 // scope: Δ=0, projection_ok=true, complete=true, over a hole. The floor must
 // instead come from the served tier's OWN data (MIN(ledger) for that target).
 func TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow(t *testing.T) {
@@ -454,7 +454,7 @@ func TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow(t *testi
 		t.Errorf("detail must localize the loss to ledger %d, got: %s", hole, detail)
 	}
 
-	// And prove the fixture is the real defect: under the pre-fix floor the
+	// And prove the fixture is the real defect: under a fixed tip-1.5M floor the
 	// SAME data reconciles clean, because the hole is outside the scope.
 	oldScope := projectionScope{From: oldFloor, To: tip}
 	if d, _ := projectionDelta(src, "trades",
@@ -463,7 +463,7 @@ func TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow(t *testi
 	}
 }
 
-// TestTargetScope_PerTargetNotPerSource — the pre-fix floor was applied at
+// TestTargetScope_PerTargetNotPerSource — a floor applied at
 // SOURCE level (`hasTradesTarget(src)`), so a trades source's FULL-HISTORY
 // tables (soroswap_skim_events, phoenix_liquidity, comet_liquidity) were
 // un-verified below tip-1.5M too, purely because a sibling table was named
@@ -520,8 +520,9 @@ func TestTargetScope_IncrementalOnlyRaises(t *testing.T) {
 	}
 }
 
-// TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict pins INV-5:
-// the served (`complete`) axis silently regressed from false to TRUE.
+// TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict pins the
+// guard that stops the served (`complete`) axis silently flipping from false
+// to TRUE.
 //
 // completeness-incremental.sh passes `-from = min(watermark)`, but
 // watermark_ledger is the LAKE (substrate∧recognition) axis, which sits AT tip
@@ -666,9 +667,9 @@ func TestClipCounts_BoundsTheExpectedSideToTheTargetScope(t *testing.T) {
 
 // TestSourceSubstrateOK pins the F1 consumer fail-open fix (reviewer CONFIRMED):
 // the per-source substrate verdict must fail a high-genesis source when the lake
-// reports a COVERAGE failure (empty/tail → problem = tip). Pre-fix, an empty
-// lake reported problem=2 and soroswap (genesis 50_746_266) read `2 < 50.7M =
-// true`, certifying substrate-OK on an empty lake.
+// reports a COVERAGE failure (empty/tail → problem = tip). Without that, an
+// empty lake would report problem=2 and soroswap (genesis 50_746_266) would
+// read `2 < 50.7M = true`, certifying substrate-OK on an empty lake.
 func TestSourceSubstrateOK(t *testing.T) {
 	const soroswap = uint32(50_746_266)
 	const tip = uint32(63_000_000)
@@ -698,7 +699,7 @@ func TestSourceSubstrateOK(t *testing.T) {
 }
 
 // fakeSubstrateLake returns a substrateScanner reproducing the two
-// clickhouse.SubstrateProblem behaviours the F073/RLT-123 regression tests
+// clickhouse.SubstrateProblem behaviours the head-guard truncation tests
 // exercise: an endpoint-presence head guard that returns immediately when the
 // requested `from` is below the lake's true floor (mirroring
 // substrateHeadProblem's early return, which sits ABOVE the windowed walk),
@@ -724,7 +725,7 @@ func fakeSubstrateLake(haveMin uint32, calls *[]struct{ from, to uint32 }, inter
 }
 
 // TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis pins
-// F073 (CONFIRMED, STILL-OPEN at re-verification): a single global scan
+// that a single global scan
 // reused across every source returns only the FIRST (lowest) problem in the
 // whole queried range, so a hole below a high-genesis source's own start
 // silently masks a SECOND, LATER hole INSIDE that source's own range —
@@ -745,7 +746,7 @@ func TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis(t *test
 	// Contrast (test setup sanity): the OLD architecture called the scanner
 	// ONCE at the run's global floor and reused the result for every source.
 	// That single call surfaces the LOWER hole and reads as clean for
-	// genesis=55M — the exact F073 mechanism.
+	// genesis=55M — the exact mechanism.
 	globalProblem, globalHas, _, gerr := scan(context.Background(), floor, tip)
 	if gerr != nil {
 		t.Fatalf("scan: %v", gerr)
@@ -774,7 +775,7 @@ func TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis(t *test
 }
 
 // TestSubstrateForGenesis_GlobalHeadTruncationDoesNotSkipASourcesOwnWalk pins
-// RLT-123 (adjudicator FALSE-POSITIVE, skeptic OVERTURNED, final STILL-OPEN):
+// Head-guard truncation:
 // SubstrateProblem's endpoint-presence head guard fires on ANY truncation at
 // the low end of the QUERIED range and returns immediately, before the
 // windowed contiguity/hash walk ever runs. Scanning once at the run's GLOBAL
@@ -796,7 +797,7 @@ func TestSubstrateForGenesis_GlobalHeadTruncationDoesNotSkipASourcesOwnWalk(t *t
 
 	// Contrast (test setup sanity): the OLD architecture's single global call
 	// at the run's floor trips the head guard immediately and NEVER reaches
-	// the interior walk — the exact RLT-123 mechanism.
+	// the interior walk — the exact head-guard truncation mechanism.
 	globalProblem, globalHas, _, gerr := scan(context.Background(), floor, tip)
 	if gerr != nil {
 		t.Fatalf("scan: %v", gerr)
@@ -827,7 +828,7 @@ func TestSubstrateForGenesis_GlobalHeadTruncationDoesNotSkipASourcesOwnWalk(t *t
 
 // TestSubstrateForGenesis_MemoizesByScanFloorAndSkipsWhenFloorExceedsTip
 // pins the efficiency + -skip-substrate contract substrateForGenesis adds on
-// top of the F073/RLT-123 fix: two sources sharing a scan floor must not
+// top of the head-guard truncation fix: two sources sharing a scan floor must not
 // re-query the lake, and floor > tip (-skip-substrate: this run scanned no
 // substrate at all) must not query it either.
 func TestSubstrateForGenesis_MemoizesByScanFloorAndSkipsWhenFloorExceedsTip(t *testing.T) {
@@ -1050,7 +1051,7 @@ func TestFloorsToRecord_EmptyTargetEarnsNoFloor(t *testing.T) {
 }
 
 // TestFloorsToRecord_IncrementalScopeCannotBankAFloorAboveTheServedMin is the
-// GH-671 sub-item 2 regression. An incremental run (projectionFloor resuming
+// Clipped-scope regression. An incremental run (projectionFloor resuming
 // from a prior watermark, or a whole-pass `-pass` reconcile) clips a target's
 // scope ABOVE its true served minimum, so the run has no evidence about the
 // range below the clip. Banking scopes[i].From there anyway hands
@@ -1172,9 +1173,9 @@ func TestSubstrateClaim_IncrementalRunCannotUpgradeAFailingLakeVerdict(t *testin
 }
 
 // TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts — `-skip-substrate`
-// scans NOTHING, and used to publish substrate_ok=true unconditionally: a
-// failing lake verdict was cleared by an operator convenience flag with zero
-// evidence. It must now carry the prior verdict instead.
+// scans NOTHING, and would otherwise publish substrate_ok=true unconditionally: a
+// failing lake verdict would be cleared by an operator convenience flag with zero
+// evidence. It must carry the prior verdict instead.
 //
 // scanFrom > hi is how the caller encodes "no scan happened".
 func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
@@ -1210,8 +1211,8 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 // recOK reads true both when this run's shape scan genuinely found nothing
 // unrecognized AND when -skip-recognition ran no scan at all (the skip's
 // nil-gaps result is indistinguishable from a clean one at the recOK
-// boolean). Pre-fix, the published per-source detail said nothing in either
-// case, so "complete: substrate + recognition + projection verified to tip"
+// boolean). Without that split, the published per-source detail says nothing in
+// either case, so "complete: substrate + recognition + projection verified to tip"
 // could describe a source whose recognition axis was never re-proven this
 // run. recognitionClaim must render the two cases differently.
 func TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven(t *testing.T) {
@@ -1312,7 +1313,7 @@ func TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark(t *testing.T)
 // ─── Replay-rewind dirty windows (the carried-claim invalidation gap) ───
 
 // TestDirtyReconcileFloor_ReplayRewindForcesTheRangeBackIntoScope pins the
-// 2026-07-31 finding: a projector-replay that rewinds BELOW a source's
+// A projector-replay that rewinds BELOW a source's
 // watermark rewrites served rows the carried projection claim
 // (projectionClaim rule 3) still certifies, and the daily driver's
 // `-from = min(watermark)` never re-examines them — which is exactly how
@@ -1329,7 +1330,7 @@ func TestDirtyReconcileFloor_ReplayRewindForcesTheRangeBackIntoScope(t *testing.
 	// The 07-30 replay shape: rewound to 62.27M with the cursor at 63.55M.
 	dirty := timescale.ProjectionDirtyWindow{Source: "cctp", From: 62_270_000, To: 63_550_000}
 
-	// Pre-fix behaviour, for contrast: the incremental floor alone sits at
+	// The watermark-only floor, for contrast: the incremental floor alone sits at
 	// the watermark, so targetScope excludes the entire rewound range and
 	// projectionClaim rule 3 carries the stale prior claim over it.
 	preFix := targetScope(genesis, true, genesis, watermark, tip)
@@ -1431,8 +1432,8 @@ func (stubCallEvent) EventKind() string { return "stub.call" }
 // recordFloors runs while projection_ok is certified on a ledger with a
 // provably-dropped row.
 //
-// expectedProjection's comment used to assert this could not happen ("the
-// census oracles soft-fail per claim, never per row"). It was false.
+// One might assume this cannot happen ("the census oracles soft-fail per
+// claim, never per row"); it can.
 func TestDecodeContractCallTree_MalformedCallNetsToZero(t *testing.T) {
 	const badLedger uint32 = 51_000_123
 	op := clickhouse.ContractCallOp{
@@ -1491,11 +1492,11 @@ func TestDecodeContractCallTree_CleanTreeIsNotBlind(t *testing.T) {
 }
 
 // TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap pins
-// W1-flowcompleteness-1: before the fix, the topic-matched sources
-// (soroswap/aquarius/phoenix/... — empty contractIDs) never appeared in
-// ownerOf, so a dropped/altered topic on one of THEIR pools fell into
-// `unattributed` and their per-source recognition axis was STRUCTURALLY unable
-// to fail — recognition_ok stayed true over a real drop. The fix folds the
+// Without the registries, the topic-matched sources
+// (soroswap/aquarius/phoenix/... — empty contractIDs) never appear in
+// ownerOf, so a dropped/altered topic on one of THEIR pools falls into
+// `unattributed` and their per-source recognition axis is STRUCTURALLY unable
+// to fail — recognition_ok stays true over a real drop. The test pins folding the
 // factory-child (protocol_contracts) and soroswap-pair registries into ownerOf
 // so a gap on a registered pool attributes to its owning source and caps it.
 //
@@ -1549,11 +1550,11 @@ func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T
 	}
 }
 
-// TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts pins #668:
+// TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts pins carry-not-assert:
 // -skip-recognition runs no scan at all, so `attributed` is always empty and
 // the fixed function must not fall back to reading that as recOK=true. It
 // must instead read the PRIOR verdict, exactly as substrateClaim already
-// does for -skip-substrate (C4-057) — confirming a clean prior that reached
+// does for -skip-substrate — confirming a clean prior that reached
 // this tip, and refusing to upgrade a missing, failing, or stale one.
 func TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts(t *testing.T) {
 	const (
@@ -1562,7 +1563,7 @@ func TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts(t *testing.
 	)
 
 	// No prior verdict at all: must not assert recognition_ok=true with zero
-	// evidence (this is the exact worked example in #668 — a never-seeded or
+	// evidence (this is the exact worked example — a never-seeded or
 	// freshly-decommissioned source under -skip-recognition).
 	if ok, problems := sourceRecognitionOK(genesis, hi, nil, true, priorProjection{}); ok {
 		t.Errorf("-skip-recognition with no prior verdict must not publish recognition_ok=true, got ok=true problems=%v", problems)
@@ -1693,7 +1694,7 @@ func TestProjectionFloor_NonPassIsTheUnchangedIncrementalFloor(t *testing.T) {
 // pass that looks complete. -source would re-introduce the per-source
 // re-invocation whose repeated 60s recognition scan is the timeout; -from would
 // truncate the full-range substrate/recognition proofs; -skip-substrate would
-// skip the full-tip proof that clears the CS-083 low-tip flap; -skip-recognition
+// skip the full-tip proof that clears the low-tip flap; -skip-recognition
 // would carry a stale recognition verdict.
 func TestValidatePassFlags_RejectsTheKnobsItReplaces(t *testing.T) {
 	// A clean pass validates.
@@ -1762,8 +1763,8 @@ func TestComputeCompleteness_RequiresStatedMode(t *testing.T) {
 // detectFloorLoss. An incremental run that scanned only [subScanFrom,tip] and
 // carried the [genesis,subScanFrom] prefix must FAIL substrate when the lake no
 // longer holds the source's genesis ledger (a capacity-archive DROP PARTITION
-// below the carried floor). Before the fix there was no such detector and
-// substrate_ok/lake_complete stayed true over an absent prefix.
+// below the carried floor). Without such a detector
+// substrate_ok/lake_complete would stay true over an absent prefix.
 func TestSubstrateFloorLoss(t *testing.T) {
 	const genesis = 50_746_266
 	const watermark = 63_000_000 // incremental -from floor: scan carried [genesis,watermark]
@@ -1790,7 +1791,7 @@ func TestSubstrateFloorLoss(t *testing.T) {
 	}
 }
 
-// ─── CS-095: a red source must be re-verifiable by the deployed nightly ───
+// ─── A red source must be re-verifiable by the deployed nightly ───
 
 // passProjectionVerdict composes the four pure decisions the -pass driver makes
 // for ONE single-target source, in the driver's own order and with the driver's
@@ -1821,7 +1822,7 @@ func passProjectionVerdict(genesis, hi uint32, expected, actual map[uint32]int, 
 	return ok, servedFrom, claim
 }
 
-// r1's sushiswap_v3 as measured 2026-09-09: the pool factory was deployed at
+// r1's sushiswap_v3 as measured: the pool factory was deployed at
 // ledger 61,487,379 and nobody traded through it for 5,716 ledgers, so the
 // served tier's oldest trade is 61,493,095 and there are ZERO trades below it.
 const (
@@ -1837,13 +1838,13 @@ func sushiCounts() map[uint32]int {
 	return map[uint32]int{sushiFirstTrade: 3, 62_000_000: 4, 63_500_000: 7, sushiTip: 1}
 }
 
-// TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed pins CS-095.
+// TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed pins re-verification of a repaired source.
 //
-// sushiswap_v3 entered the catalogue with zero served rows (#350: "no rows are
+// sushiswap_v3 entered the catalogue with zero served rows ("no rows are
 // served until an operator enables it and runs the history replay"), so its
 // first -pass verdict was an EARNED projection_ok=false — expected 81,175
 // against served 0. The operator then enabled it and replayed to tip. On r1
-// 2026-09-09 it was STILL complete=false with every other axis green
+// it then stayed complete=false with every other axis green
 // (lake_complete, substrate_ok, recognition_ok true, coverage_pct 1, watermark
 // at tip) and projection_verified_from=61,493,095.
 //
@@ -1877,7 +1878,7 @@ func TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed(t *testing.T) {
 }
 
 // TestPassProjection_RealHoleStillReadsIncomplete is the other direction, and
-// the one that proves CS-095 did not weaken the alert: the SAME source shape
+// the one that proves the re-verify did not weaken the alert: the SAME source shape
 // with a genuine projection hole must still fail — and now fails on EVIDENCE
 // (rule 1, naming the offending ledger) rather than on a carried verdict.
 func TestPassProjection_RealHoleStillReadsIncomplete(t *testing.T) {
@@ -1908,7 +1909,7 @@ func TestPassProjection_RealHoleStillReadsIncomplete(t *testing.T) {
 }
 
 // TestPassProjection_NeverBackfilledSourceStillReadsIncomplete is the upshift
-// adversarial fixture from 2026-09-09: the lake holds the source's events, the
+// adversarial fixture: the lake holds the source's events, the
 // served tier holds NOTHING, the watermark sits at genesis-1 and coverage is 0.
 // An empty target floors at genesis and must reconcile expected>0 against
 // served=0 and FAIL. "There is no data, so there is nothing to check" is the
@@ -1942,7 +1943,7 @@ func TestPassProjection_NeverBackfilledSourceStillReadsIncomplete(t *testing.T) 
 }
 
 // TestProjectionFloor_CleanPriorKeepsTheCheapResume pins the COST half of
-// CS-095: only a RED source pays the full re-verify. A source whose prior
+// Only a RED source pays the full re-verify. A source whose prior
 // projection verdict is clean keeps resuming at its watermark, so the nightly
 // pass's workload is unchanged for every green source in the catalogue — the
 // property that keeps this fix from re-introducing the timeout -pass exists to
@@ -1958,7 +1959,7 @@ func TestProjectionFloor_CleanPriorKeepsTheCheapResume(t *testing.T) {
 	}
 }
 
-// TestProjectionWithoutEvidence pins #607: expected ∅ vs served ∅ must not
+// TestProjectionWithoutEvidence pins the empty-evidence guard: expected ∅ vs served ∅ must not
 // publish projection_ok=true. It feeds the real reconcile primitives for a
 // source whose served tier is empty and whose re-derive expects nothing (a
 // wrong or redeployed contract identity) and asserts the claim is refused,
@@ -1990,7 +1991,7 @@ func TestProjectionWithoutEvidence(t *testing.T) {
 
 // TestAuditedSources_LockstepWithCatalogue holds /v1/coverage's denominator
 // (completeness.AuditedSources, which the API can import) equal to the set of
-// sources this catalogue publishes verdicts for (#607), under each config gate.
+// sources this catalogue publishes verdicts for, under each config gate.
 func TestAuditedSources_LockstepWithCatalogue(t *testing.T) {
 	withSEP41 := testConfigWithAllSources()
 	withSEP41.Supply.WatchedSEP41Contracts = []string{"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"}
@@ -2015,7 +2016,7 @@ func TestAuditedSources_LockstepWithCatalogue(t *testing.T) {
 	}
 }
 
-// TestEventCensusLoss pins #806's per-source verdict on the contract_events
+// TestEventCensusLoss pins the per-source verdict on the contract_events
 // census: a short partition inside an event-reading source's range fails it at
 // the first affected ledger (never below its genesis); a short partition wholly
 // below its genesis, or a source that reads stellar.operations rather than
@@ -2202,7 +2203,7 @@ func TestProjectionClaim_Rule2NamesScopeNotOverclaim(t *testing.T) {
 	}
 }
 
-// INV-0210 PR B: a carried prefix is only as proven as its least-proven
+// A carried prefix is only as proven as its least-proven
 // target. completeness_target_floors records a target only after a clean
 // reconcile reached its bottom edge, so a present target without such a
 // floor was never reconciled over the prefix a carry would vouch for.

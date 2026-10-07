@@ -3,7 +3,7 @@
 
 package chops
 
-// F075's last leg. scripts/ops/ch-rebuild-projected.sh knew when it had left
+// The last leg. scripts/ops/ch-rebuild-projected.sh knows when it has left
 // a window EMPTY and printed the command that tells the ADR-0033
 // completeness verdict about it — but it did not run the command, so the
 // obligation existed only for as long as it took an operator to read
@@ -15,7 +15,7 @@ package chops
 // ch_rebuild_projected_script_test.go) and pin the filing itself: every
 // state that leaves a window emptied FILES one projection dirty window for
 // exactly the deleted sources, a state that empties nothing files none
-// (#408), and a filing that fails is loud rather than silent.
+//, and a filing that fails is loud rather than silent.
 
 import (
 	"os"
@@ -108,7 +108,7 @@ func TestChRebuildProjectedScript_PendingDirtyWindowIsFiledBeforeRecovery(t *tes
 	if got, want := run.sequence(), "record@60000000 preflight@60000000 psql write@60000000 preflight@61000000 psql write@61000000"; got != want {
 		t.Errorf("call trace = %q, want %q (the filing must precede the recovery it describes)", got, want)
 	}
-	// F072's contract: only the verdict that discharges the obligation may
+	// The contract: only the verdict that discharges the obligation may
 	// retract it. A successful recovery clears the local marker, nothing else.
 	if strings.TrimSpace(run.dirty) != "" {
 		t.Errorf("$DIRTY after a successful recovery = %q, want empty", run.dirty)

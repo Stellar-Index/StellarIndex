@@ -41,7 +41,7 @@ func TestLakeExitCode(t *testing.T) {
 	}
 }
 
-// ─── resolveVerifyTo: fail-closed against an independent tip (GH-1180) ────
+// ─── resolveVerifyTo: fail-closed against an independent tip ────
 
 func TestResolveVerifyTo(t *testing.T) {
 	cases := []struct {
@@ -159,7 +159,7 @@ func TestHistoryArchiveTip(t *testing.T) {
 	}
 }
 
-// ─── lakeCheckLine / lakeChecksRunLabel: SKIPPED vs. zero (GH-1195) ───────
+// ─── lakeCheckLine / lakeChecksRunLabel: SKIPPED vs. zero ───────
 
 func TestLakeCheckLineDistinguishesSkippedFromZero(t *testing.T) {
 	skipped := lakeCheckLine("hash_chain", false, "0 broken link(s)")

@@ -36,7 +36,7 @@ postgres_dsn = "postgres://good:good@localhost/stellarindex?sslmode=disable"
 // it sails past config load and fails later at the ColdTieringEnabled
 // gate with a completely different ("cold tier not configured") error,
 // never mentioning postgres_dsn. So this assertion is red on the
-// pre-fix code and green after.
+// code that ignores the override and green after.
 func TestTrimGalexieArchive_HonorsEnvOverride(t *testing.T) {
 	cfgPath := writeArchiveConfig(t)
 	t.Setenv("STELLARINDEX_POSTGRES_DSN", "mysql://injected-but-invalid")

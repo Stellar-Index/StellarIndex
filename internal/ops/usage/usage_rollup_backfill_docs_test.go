@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// TestUsageRollupBackfillUsageDocumentsWriteFlag pins RLT-405 (audit
-// 2026-09-18): the usage-rollup-backfill package doc's worked example
+// TestUsageRollupBackfillUsageDocumentsWriteFlag pins that the usage-rollup-backfill package doc's worked example
 // must include -write. opsutil.RegisterWriteGate defaults to dry-run,
 // so an operator who copy-pastes the documented invocation verbatim
 // gets a silent no-op scan rather than the recovery they asked for.

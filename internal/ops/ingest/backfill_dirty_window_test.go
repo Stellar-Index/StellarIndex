@@ -41,7 +41,7 @@ func memoisedGate(verdict error) *replayGateOnce {
 	return g
 }
 
-// TestBackfillRecordsDirtyWindowBeforeFirstWrite pins INV-2600: a backfill
+// TestBackfillRecordsDirtyWindowBeforeFirstWrite pins the dirty-window-first rule: a backfill
 // that rewrites served rows for a range records a dirty window covering that
 // range before its dispatcher (the only path to a write) exists, and never
 // gets that far if recording fails.
@@ -188,7 +188,7 @@ func (f *fakeProjectorCursorStore) GetCursor(_ context.Context, source, sub stri
 	return timescale.Cursor{Source: source, Sub: sub, LastLedger: last}, nil
 }
 
-// TestRawBackfillBelowProjectorCursor pins INV-2638: a soroban-events backfill
+// TestRawBackfillBelowProjectorCursor pins the below-cursor case: a soroban-events backfill
 // (projector reading Postgres soroban_events) records a dirty window over the
 // full [from,to] of every projected source with a cursor, whatever the cursor
 // position (it can move during the backfill), and names the projector-replay

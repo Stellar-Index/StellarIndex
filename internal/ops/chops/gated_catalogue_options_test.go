@@ -114,10 +114,10 @@ func bareCatalogue(t *testing.T) []reconSource {
 }
 
 // TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract pins
-// RLT-430. The re-derive catalogue built every gated decoder bare, so a
-// contract admitted only through protocol_contracts was decoded by the live
-// indexer and rejected by every re-derive: phantom served rows on the
-// completeness axis, and a truncate + `ch-rebuild -write` that rebuilt the
+// that a bare re-derive catalogue does not reject registry contracts. A
+// contract admitted only through protocol_contracts is decoded by the live
+// indexer and would be rejected by every bare re-derive: phantom served rows on the
+// completeness axis, and a truncate + `ch-rebuild -write` that rebuilds the
 // table without them.
 //
 // Lockstep over pipeline.GatedSourceNames(), not a hand-kept list: a ninth
@@ -215,7 +215,7 @@ func TestApplyGatedOptions_EmptyRegistryIsTheBareCatalogue(t *testing.T) {
 
 // TestApplyGatedOptions_FailsClosedOnAMissingSource — GatedRegistryOptions
 // returns an entry for EVERY gated source, so a missing key is a wiring
-// bug. Keeping the bare decoder for it would silently restore RLT-430.
+// bug. Keeping the bare decoder for it would silently reintroduce phantom rows.
 func TestApplyGatedOptions_FailsClosedOnAMissingSource(t *testing.T) {
 	opts := warmedLike()
 	delete(opts, comet.SourceName)

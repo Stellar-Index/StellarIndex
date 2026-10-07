@@ -39,7 +39,7 @@ func runChainlinkDrain(t *testing.T, store *failingOracleStore, walk error, dryR
 // TestDrainChainlinkUpdates_DroppedRoundFailsTheRun: a round the writer
 // rejects is counted and logged, but the run must not exit 0 on a clean
 // walk — the command is idempotent by tx hash, so a zero exit over dropped
-// rounds is never re-run (#1185).
+// rounds is never re-run.
 func TestDrainChainlinkUpdates_DroppedRoundFailsTheRun(t *testing.T) {
 	t.Parallel()
 	store := &failingOracleStore{fail: map[string]bool{"b": true}}

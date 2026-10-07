@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestWalkCoverage is the RLT-282 regression guard for the rule every
-// galexie-walking subcommand in this package now applies before it
+// TestWalkCoverage guards the rule every
+// galexie-walking subcommand in this package applies before it
 // reports on what it saw: DELIVERED must equal REQUESTED.
 //
 // The defect it pins is not "the gate lacked a check" — ch-gate had
@@ -129,7 +129,7 @@ func funcBody(t *testing.T, file, fn string) string {
 }
 
 // TestChGate_GatesOnRequestedCoverage pins the ch-gate call site of the
-// RLT-282 rule. REQUESTED there is -to minus -from plus one; DELIVERED
+// coverage rule. REQUESTED there is -to minus -from plus one; DELIVERED
 // is `walked`, incremented once per LedgerCloseMeta the census walk
 // hands back. The guard has to run before the PASSED banner, and the
 // ClickHouse row count has to be measured against the requested span —

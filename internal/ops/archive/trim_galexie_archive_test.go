@@ -40,8 +40,8 @@ func TestParseTrimFlags_Defaults(t *testing.T) {
 	}
 }
 
-// TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused is the REL-05
-// regression: --no-verify-upstream disables the ONLY check that the
+// TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused is the
+// refusal regression: --no-verify-upstream disables the ONLY check that the
 // cold tier actually holds the files hot is about to lose, so it must
 // NOT be usable on its own — a second explicit acknowledgement flag
 // (--i-have-verified-cold-out-of-band) is required.
@@ -188,7 +188,7 @@ func TestMinMaxInt(t *testing.T) {
 	}
 }
 
-// ─── the 2026-07-25 "trim can never trim" regression ─────────────
+// ─── the "trim can never trim" regression ─────────────
 //
 // trim-galexie-archive enumerated the hot bucket with ONE
 // `hot.ListFilePaths(ctx, datastore.ListFileOptions{})` call. The SDK
@@ -410,16 +410,16 @@ func trimTestOpts(olderThan uint32, maxFiles int) trimOpts {
 }
 
 // TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap is THE regression for
-// 2026-07-25. 3000 objects across 6 partitions of 500; cutoff 1250.
+// the SDK key cap. 3000 objects across 6 partitions of 500; cutoff 1250.
 //
-// Pre-fix (one unbounded ListFilePaths call) this yields
+// With one unbounded ListFilePaths call this yields
 // files_enumerated=1000, candidates=0, skipped_too_fresh=999 — the
 // 1000 keys the SDK returns are the lexicographically-first ones,
 // which with Galexie's descending hex names are `.config.json` plus
 // ledgers 2999..2001. Every one is above the cutoff. Same shape, same
-// off-by-one-from-.config.json, as the r1 run.
+// off-by-one-from-.config.json, as a real r1 run.
 //
-// Post-fix: every one of the 1250 sub-cutoff files is found, and the
+// With paging: every one of the 1250 sub-cutoff files is found, and the
 // three partitions that sit entirely above the cutoff are never read.
 func TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap(t *testing.T) {
 	t.Parallel()
@@ -433,7 +433,7 @@ func TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap(t *testing.T) {
 	}
 
 	// The corrected value: EVERY ledger below the cutoff, no more, no
-	// fewer. Pre-fix this list was empty.
+	// fewer. An unpaged listing leaves this list empty.
 	if got, want := ledgerSetOf(t, plan.candidates), ledgerSeq(0, 1249); !slices.Equal(got, want) {
 		t.Errorf("candidates cover %d ledgers (%v…) — want all 1250 of 0..1249. Pre-fix this was 0 candidates: the 1000-key cap only ever showed the newest ledgers",
 			len(got), got[:min(5, len(got))])
@@ -619,10 +619,9 @@ func TestPlanTrim_PropagatesListErrors(t *testing.T) {
 }
 
 // TestListHotPartitions_PagesPastOneThousandCommonPrefixes: MaxKeys
-// caps CommonPrefixes at 1000 exactly as it caps objects. r1 has 995
-// partitions today and gains one every 64000 ledgers — #1001 lands at
-// ledger 64,000,000, roughly three weeks past 2026-07-25 at ~15k
-// ledgers/day. An unpaged delimited listing would reintroduce the very
+// caps CommonPrefixes at 1000 exactly as it caps objects. r1 has 995+
+// partitions and gains one every 64000 ledgers — #1001 lands at
+// ledger 64,000,000. An unpaged delimited listing would reintroduce the very
 // bug this change removes, one level up.
 func TestListHotPartitions_PagesPastOneThousandCommonPrefixes(t *testing.T) {
 	t.Parallel()

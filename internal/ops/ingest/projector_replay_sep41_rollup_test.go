@@ -27,7 +27,7 @@ func (f *fakeSEP41RollupResetter) ResetSEP41SupplyRollupFold(_ context.Context, 
 }
 
 // TestResetSEP41RollupAfterReplay_ResetsOnlyForTheSEP41SupplySource is
-// the regression for finding F024 (audit 2026-09-02): a replay of the
+// the regression for a stale rollup: a replay of the
 // sep41_supply source re-drives rows a held-row retry gave up on
 // (quarantined) or corrects rows already written, exactly at-or-below
 // the ledger the cursor is rewound below. AdvanceSEP41SupplyRollup only

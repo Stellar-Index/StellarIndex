@@ -398,8 +398,8 @@ func sep1Candidates(
 // about us. Counting those would make the verdict a property of the network, not
 // of the run: on testnet, where nearly every home_domain is junk, a healthy
 // run went 19 ok / 731 failed every hour, tripped the guard, and its unwind
-// kept the junk off the ladder so the next run was the same. Previously-
-// reached domains failing en masse is a regression, and that is not a
+// kept the junk off the ladder so the next run was the same. Domains reached
+// on earlier runs failing en masse is a regression, and that is not a
 // property of the issuer population. When that verdict lands the run does
 // two things no silent backoff would:
 //

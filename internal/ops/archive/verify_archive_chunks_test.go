@@ -172,7 +172,7 @@ func TestCheckResumeFromHash_BadHex(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors is the DAT-11
+// TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors is the
 // regression: a chunk that processed zero ledgers is excluded from
 // the pairwise comparison, but the check is re-targeted at the
 // nearest non-empty neighbours on EITHER side — it must NOT be
@@ -183,7 +183,7 @@ func TestCheckResumeFromHash_BadHex(t *testing.T) {
 func TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
-		{Idx: 1, Verified: 0}, // empty chunk — masked a real gap in the old behaviour
+		{Idx: 1, Verified: 0}, // empty chunk — a real gap this must not mask
 		{Idx: 2, FirstSeq: 300, FirstPrevHash: hashFrom(0xBB), LastSeq: 399, LastHash: hashFrom(0xCC), Verified: 100},
 	}
 	err := stitchChunks(results)
@@ -242,17 +242,17 @@ func TestStitchChunks_TrailingEmptyChunkPasses(t *testing.T) {
 	}
 }
 
-// ─── #282 (repair): a boundary divergence must be PAGEABLE ─────────
+// ─── a boundary divergence must be PAGEABLE ─────────
 
-// TestStitchChunks_BoundaryBreakIsPageable pins the half of #282 the
-// first cut missed. A divergence landing on a worker-chunk BOUNDARY
+// TestStitchChunks_BoundaryBreakIsPageable pins the boundary half of the
+// divergence-page rule. A divergence landing on a worker-chunk BOUNDARY
 // (rather than inside a chunk) aborted the run without ever touching
 // obs.VerifyArchiveMismatchesTotal — so the P1
 // stellarindex_stellar_archive_divergence page, which selects that
 // counter, could not fire for it. It surfaced only as the
 // severity-TICKET stellarindex_verify_archive_unit_failed, which is
 // exactly the "a genuine archive-correctness event pages nobody"
-// defect #282 exists to remove. With the r1 units' 12 workers there
+// defect the P1 counter exists to remove. With the r1 units' 12 workers there
 // are ~11 such boundaries in every nightly run.
 //
 // Asserts the whole loop the page depends on rather than the

@@ -225,7 +225,7 @@ func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uin
 }
 
 // readPriorVerifyArchiveLastSuccess recovers the last clean-completion
-// timestamp this writer previously recorded for tier. Best-effort for
+// timestamp this writer recorded earlier for tier. Best-effort for
 // the same reason as the counter reader: a missing or malformed file
 // degrades to "never succeeded" (0), which makes the staleness alert
 // fire rather than go quiet — the safe direction for a signal whose

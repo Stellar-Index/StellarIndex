@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestWasmWalkCoverage pins the RLT-282 coverage rule for wasm-history.
+// TestWasmWalkCoverage pins the coverage rule for wasm-history.
 // REQUESTED is -to minus -from plus one; DELIVERED is totalScanned, the
 // sum of the per-worker ledger counts. An unbounded walk (-to 0, the
 // live tail) has no requested count and is exempt.

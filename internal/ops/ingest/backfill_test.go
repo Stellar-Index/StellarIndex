@@ -86,7 +86,7 @@ func TestBackfill_RejectsMissingFlags(t *testing.T) {
 // source list contains an unsafe source — and that the error
 // message names the source so they know which audit to run.
 // TestBackfill_AllSorobanSourcesPass confirms the gate accepts
-// every audited on-chain Soroban source. As of 2026-04-29 all 8
+// every audited on-chain Soroban source. All 8
 // sources (soroswap, phoenix, aquarius, comet, reflector-{dex,cex,
 // fx}, redstone, band) have completed their WASM-history audits
 // (see docs/operations/wasm-audits/) and should pass cleanly.
@@ -241,7 +241,7 @@ func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
 // The error message in the gate test relies on getting the FULL
 // unsafe list back, not just the first one.
 func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
-	// As of 2026-04-29 every on-chain Soroban source has been
+	// Every on-chain Soroban source has been
 	// audited; use a synthetic typo'd source to exercise the
 	// fail-closed Lookup-fallback path. Same shape as the gate
 	// test above.
@@ -263,8 +263,8 @@ func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
 	}
 }
 
-// TestIsKnownSupplyObserverName — F-1243 wants `stellarindex-ops
-// backfill accounts` to fail with a supply-observer-aware error
+// TestIsKnownSupplyObserverName — `stellarindex-ops
+// backfill accounts` must fail with a supply-observer-aware error
 // rather than the generic "WASM-hash audit pending" message
 // (which is misleading for these names — they're not Soroban
 // sources at all). Pin the closed set so a future supply-observer
@@ -291,8 +291,8 @@ func TestIsKnownSupplyObserverName(t *testing.T) {
 	}
 }
 
-// TestCheckBackfillSources_TailoredErrors — F-1243 wants the
-// supply-observer error message to differ from the WASM-audit one
+// TestCheckBackfillSources_TailoredErrors — the
+// supply-observer error message must differ from the WASM-audit one
 // so operators don't waste time auditing decoders for sources
 // that aren't Soroban sources at all.
 func TestCheckBackfillSources_TailoredErrors(t *testing.T) {
@@ -408,7 +408,7 @@ func TestParseBackfillFlags_Parallel(t *testing.T) {
 // fakeCAGGRefresher is a DB-free caggRefresher: canned
 // LedgerRangeToTimeRange + per-view RefreshContinuousAggregate
 // results, so refreshCAGGsForChunk's failure-aggregation logic
-// (DAT-09 / REL-08) is exercisable without live Postgres.
+// is exercisable without live Postgres.
 type fakeCAGGRefresher struct {
 	tsFrom, tsTo time.Time
 	rangeErr     error
@@ -488,8 +488,8 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestRefreshCAGGsForChunk_ViewFailurePropagates is the DAT-09 / REL-08
-// regression: a single failing CAGG view must make the WHOLE function
+// TestRefreshCAGGsForChunk_ViewFailurePropagates is the
+// view-failure regression: a single failing CAGG view must make the WHOLE function
 // return a non-nil error (previously it logged and returned nil),
 // so the caller does not advance the durable cursor past an
 // unmaterialised chunk. Every OTHER view must still be attempted —
@@ -532,7 +532,7 @@ func TestRefreshCAGGsForChunk_AllSucceedIsNil(t *testing.T) {
 }
 
 // TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds is the
-// GH-687 regression. A chunk that wrote trades and oracle rows must
+// all-aggregates regression. A chunk that wrote trades and oracle rows must
 // refresh every aggregate rooted on either table — not only the seven
 // prices_* rungs — because none of their policies reach a historical
 // range: twap_1h 4 h, twap_1d and dex_volume_by_pair_1d 7 d,
@@ -648,7 +648,7 @@ func TestRefreshCAGGsForChunk_NoTradesIsNil(t *testing.T) {
 // time. It stands in for TimescaleDB's actual behaviour on that
 // overlap — an immediate 55P03 to the loser, which the real store
 // retries for a fixed ~3s budget and then surfaces as a hard error,
-// fatal to the chunk per DAT-09 / REL-08.
+// fatal to the chunk.
 type serialisationProbeRefresher struct {
 	tsFrom, tsTo time.Time
 
@@ -780,9 +780,8 @@ func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
 	}
 }
 
-// TestParseBackfillFlags_WriteGate pins the fail-closed mode contract
-// (#868): backfill used to WRITE unless -dry-run was passed. Omitting both
-// flags now refuses, -dry-run previews, and only -write applies.
+// TestParseBackfillFlags_WriteGate pins the fail-closed mode contract:
+// omitting both flags refuses, -dry-run previews, and only -write applies.
 func TestParseBackfillFlags_WriteGate(t *testing.T) {
 	cfgPath := writeMinimalConfig(t, []string{"sdex"})
 	base := []string{"-config", cfgPath, "-from", "100", "-to", "200"}

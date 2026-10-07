@@ -4,7 +4,7 @@
 package chops
 
 // `ch-rebuild -record-dirty-window` is the record an emptied clean-slate
-// window owes the ADR-0033 completeness verdict (F075). What it writes has
+// window owes the ADR-0033 completeness verdict. What it writes has
 // to be exactly right to be worth anything: one row PER SOURCE (the table
 // is keyed by source and the verdict looks its window up by the source it
 // is verifying), under a catalogue name, over the emptied range, with a

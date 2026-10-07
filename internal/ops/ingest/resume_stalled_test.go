@@ -18,7 +18,7 @@ import (
 
 // TestParseStalledCursor covers every branch of the sub_source parser
 // + skip-reason path. Inputs are crafted to mirror the actual cursor
-// shapes seen in production (per the 2026-05-28 r1 stall sweep).
+// shapes seen in production.
 func TestParseStalledCursor(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -184,7 +184,7 @@ func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 }
 
 // TestResumeChunkFrom_SequentialReproducesOriginalCursorSub is the
-// AGT-01 / DAT-12 / REL-09 regression: at parallel<=1 (the default),
+// sequential-resume regression: at parallel<=1 (the default),
 // runOneCursorPlan must key the resumed chunk on the ORIGINAL declared
 // `from` so backfillCursorSub reproduces the exact sub_source of the
 // stalled cursor row — advancing that row in place — rather than a
@@ -340,7 +340,7 @@ func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
 		})
 	}
 
-	// anyPlanNeedsClassicGate must fire for a MIXED plan too (DAT-11) —
+	// anyPlanNeedsClassicGate must fire for a MIXED plan too —
 	// not just classic-only — or the classicGapGate is never built and
 	// gateMixedPlan always sees classic.available=false.
 	mixedOnly := []stalledCursorPlan{{sources: []string{"aquarius", "sdex"}}}
@@ -353,14 +353,14 @@ func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
 	}
 }
 
-// TestGateAgainstDataGaps_HappyPath puts the F-0020 cascade signature
+// TestGateAgainstDataGaps_HappyPath puts a cascade-gap signature
 // + a false-positive cursor + an SDEX-only cursor through the gate
 // and pins the expected post-gate skip state. The whole point of
 // this commit: false positives go from "actionable" to "skip" with
 // a self-explanatory reason, real-gap cursors stay actionable.
 func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	gaps := []timescale.LedgerGap{
-		{Start: 62642781, End: 62735517, Size: 92737}, // F-0020 gap 1
+		{Start: 62642781, End: 62735517, Size: 92737}, // cascade gap
 	}
 	plans := []stalledCursorPlan{
 		{
@@ -502,7 +502,7 @@ func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
 	}
 }
 
-// TestGateAgainstDataGaps_MixedPlanChecksBothSides is the DAT-11
+// TestGateAgainstDataGaps_MixedPlanChecksBothSides is the mixed-plan
 // regression: a plan with BOTH a Soroban decoder and an SDEX decoder
 // must not be skipped as a cursor-inventory false positive on a clean
 // soroban_events check alone — the SDEX side needs its own
@@ -666,8 +666,8 @@ func TestSdexGapTarget(t *testing.T) {
 // pure CPU work.)
 //
 // Filter precedence: source-prefix → min-lag → source-filter (decoder
-// portion only — see matchesSourceFilter / AGT-08). -max-resumes is
-// NOT part of this chain any more: it is applied by applyMaxResumesCap
+// portion only — see matchesSourceFilter). -max-resumes is
+// NOT part of this chain: it is applied by applyMaxResumesCap
 // AFTER the data-gap gate, so it is covered by
 // TestApplyMaxResumesCap_AppliesAfterGate instead.
 func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
@@ -754,8 +754,8 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 	}
 }
 
-// TestMatchesSourceFilter_DecoderPortionOnly is the AGT-08 regression:
-// the filter must match only the decoder-CSV portion of sub_source,
+// TestMatchesSourceFilter_DecoderPortionOnly is the decoder-portion
+// regression: the filter must match only the decoder-CSV portion of sub_source,
 // never the numeric <from>-<to> range prefix.
 func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
 	cases := []struct {
@@ -779,8 +779,8 @@ func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
 	}
 }
 
-// TestApplyMaxResumesCap_AppliesAfterGate is the AGT-08 regression for
-// the OTHER half of the finding: the cap must count only genuinely
+// TestApplyMaxResumesCap_AppliesAfterGate pins the cap
+// placement: the cap must count only genuinely
 // actionable (non-skip) plans, and any actionable plan past the cap
 // is marked skip (not silently dropped or, worse, never gathered).
 func TestApplyMaxResumesCap_AppliesAfterGate(t *testing.T) {
@@ -833,9 +833,8 @@ func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
 
 // contains is a substring check for test assertions. Duplicated from
 // internal/ops/diagnostics' hubble_check_test.go (same package-local
-// test-helper pattern) rather than shared — both are trivial,
-// test-only, and pre-date the cmd/stellarindex-ops -> internal/ops/*
-// package split (maintainability audit 2026-07-01, D1 finding M1-5).
+// test-helper pattern) rather than shared — both are trivial
+// and test-only.
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -845,7 +844,7 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestNewDataGapGateContext_HasDeadline is the RLT-409 regression: the
+// TestNewDataGapGateContext_HasDeadline is the bounded-gate regression: the
 // data-gap gate queries (the per-decoder and classic gap scans) must
 // run under a bounded context, not the raw SIGINT/SIGTERM rootCtx,
 // because a full-table scan can wedge resume-stalled indefinitely with

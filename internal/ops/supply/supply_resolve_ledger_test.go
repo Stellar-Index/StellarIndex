@@ -46,8 +46,8 @@ func (f *fakeCloseTimeReader) LatestLedgerAtOrBefore(_ context.Context, maxSeq u
 // M4-callers proof for the ops-supply caller. resolveSnapshotLedger must
 // stamp ObservedAt with the chosen ledger's REAL close_time (resolved from
 // stellar.ledgers via the close-time reader) — NEVER time.Now(). The fixture
-// close time is deliberately ~2.5y stale, so a wall-clock stamp (the pre-fix
-// bug: both branches returned time.Now().UTC()) is unmistakable. A re-derived
+// close time is deliberately ~2.5y stale, so a wall-clock stamp (returning
+// time.Now().UTC() from both branches) is unmistakable. A re-derived
 // historical supply snapshot stamped with the write-time corrupts every
 // point-in-time supply/observation query.
 //

@@ -128,8 +128,8 @@ func TestChRebuildProjectedScript_DeletesOnlySourcesTradeOfCanRewrite(t *testing
 	}
 }
 
-// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable is GH-768
-// item 3: the trades DELETE above is only 1 of the 12 DELETE statements
+// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable is the
+// per-arm check: the trades DELETE above is only 1 of the 12 DELETE statements
 // window_delete_sql emits — the other 11 clear per-source ancillary
 // tables (aquarius_admin, blend_positions, ...) inside a per-source case
 // arm. A source/table pair deleted there but absent from ch-rebuild's

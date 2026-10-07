@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestVerifyWalkCoverage is the RLT-282 regression guard for
+// TestVerifyWalkCoverage guards the delivered-equals-requested rule for
 // verify-decoders. REQUESTED is -to minus -from plus one; DELIVERED is
 // totalLedgers, incremented once per LedgerCloseMeta handed to the
 // dispatcher.

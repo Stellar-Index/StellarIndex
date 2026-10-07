@@ -14,9 +14,9 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// F144. The cross-anchor mirror is filled by its own periodic job, so
+// The cross-anchor mirror is filled by its own periodic job, so
 // the newest checkpoints the LCM walk reaches have no mirror file yet
-// and never did. Measured on r1 2026-09-19: the mirror holds
+// and never did. Measured on r1: the mirror holds
 // 1,007,807 of the 1,007,807 checkpoint files between ledger 63 and
 // its high-water 64,499,647 — no hole anywhere — while the nightly
 // tier-B run walked to 64,501,171 and logged `matched=325 missed=23`.
@@ -191,7 +191,7 @@ func TestReadArchiveMirrorCoverage_SkipsNonCheckpointLeaves(t *testing.T) {
 
 func TestCheckpointWatermark_StopsAtWhatTheMirrorCouldAnchor(t *testing.T) {
 	t.Parallel()
-	// The r1 numbers of 2026-09-19: the walk reached 64,501,171 and
+	// The r1 numbers: the walk reached 64,501,171 and
 	// the mirror held nothing above 64,499,647.
 	const (
 		walkReached = uint32(64501171)
@@ -240,7 +240,7 @@ func TestApplyCheckpointTierState_DoesNotCertifyAnUnanchoredSpan(t *testing.T) {
 
 func TestCheckpointAnchorReached_NothingAnchoredIsInconclusive(t *testing.T) {
 	t.Parallel()
-	// DAT-09 under the coverage taxonomy: a walk that ran entirely
+	// Under the coverage taxonomy, a walk that ran entirely
 	// above the mirror's high-water matched nothing and missed
 	// nothing, and must not pass as a clean anchor run.
 	if err := checkpointAnchorReached(0, 0, 12); err == nil {

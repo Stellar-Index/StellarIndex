@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// RLT-189 — the periodic idle-tick diagnostic line's min-present read
+// The periodic idle-tick diagnostic line's min-present read
 // (LakeMinLedger) is purely diagnostic: nothing in the follow loop derives
 // from it. cap67IdleLogTick must therefore swallow a failing read into the
 // log line rather than let it propagate as a catchUp error — a propagated
