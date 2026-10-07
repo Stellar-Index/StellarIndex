@@ -93,7 +93,7 @@ func TestClassifyCheckpointAnchor_CoverageEdgesAreAsymmetric(t *testing.T) {
 	// own floor, which a mirror that fills upward from genesis can
 	// never legitimately do — that absence is a hole, not a fill lag.
 	root := mirrorFixture(t, 127, 191)
-	cov := readArchiveMirrorCoverage(root)
+	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	if !cov.Known || cov.Floor != 127 || cov.HighWater != 191 {
 		t.Fatalf("mirror coverage = %+v, want floor 127 high-water 191 known", cov)
 	}
@@ -130,7 +130,7 @@ func TestClassifyCheckpointAnchor_HoleInsideTheMirrorIsStillAMiss(t *testing.T) 
 	// is a genuine hole — exactly what ADR-0017 contract 3 forbids and
 	// what -fail-on-missed must keep catching.
 	root := mirrorFixture(t, 127, 255)
-	cov := readArchiveMirrorCoverage(root)
+	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	got, err := classifyCheckpointAnchor(root, 191, anchorHashFor(191), cov)
 	if err != nil {
 		t.Fatalf("classifyCheckpointAnchor(191): %v", err)
@@ -144,7 +144,7 @@ func TestClassifyCheckpointAnchor_HoleInsideTheMirrorIsStillAMiss(t *testing.T) 
 func TestClassifyCheckpointAnchor_DivergenceStillAborts(t *testing.T) {
 	t.Parallel()
 	root := mirrorFixture(t, 127)
-	cov := readArchiveMirrorCoverage(root)
+	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	ours := sha256.Sum256([]byte("a hash the archive did not sign"))
 	if _, err := classifyCheckpointAnchor(root, 127, ours, cov); err == nil {
 		t.Fatal("classifyCheckpointAnchor returned nil for a hash that disagrees with the " +
@@ -158,7 +158,7 @@ func TestClassifyCheckpointAnchor_UnknownCoverageToleratesNothing(t *testing.T) 
 	// outside coverage": with no measurable span every absence stays a
 	// miss, which is the behaviour before the span existed.
 	root := filepath.Join(t.TempDir(), "no-such-mirror")
-	cov := readArchiveMirrorCoverage(root)
+	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	if cov.Known {
 		t.Fatalf("coverage of a missing mirror = %+v, want unknown", cov)
 	}
@@ -183,7 +183,7 @@ func TestReadArchiveMirrorCoverage_SkipsNonCheckpointLeaves(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "ledger", "ff", "ff", "ff"), 0o755); err != nil {
 		t.Fatalf("mkdir empty branch: %v", err)
 	}
-	cov := readArchiveMirrorCoverage(root)
+	cov := readArchiveMirrorCoverage(root, mirrorLedger)
 	if !cov.Known || cov.Floor != 127 || cov.HighWater != 191 {
 		t.Errorf("mirror coverage = %+v, want floor 127 high-water 191 known", cov)
 	}
@@ -257,5 +257,31 @@ func TestCheckpointAnchorReached_NothingAnchoredIsInconclusive(t *testing.T) {
 	// A checkpoint-free range (short walk between checkpoints).
 	if err := checkpointAnchorReached(0, 0, 0); err != nil {
 		t.Errorf("checkpointAnchorReached(0, 0, 0) = %v, want nil", err)
+	}
+}
+
+// The fill job maintains ledger/ only, so history/ can stop far below
+// ledger/'s high-water. Tier D reads history/*.json: measuring its
+// coverage from ledger/ turned every unfilled history file into a "missed"
+// checkpoint and failed the weekly run.
+func TestPeerSelfTally_HistoryAbsenceAboveHistoryTreeIsUnmirrored(t *testing.T) {
+	t.Parallel()
+	root := mirrorFixture(t, 127, 191, 255)
+	dir := filepath.Join(root, "history", "00", "00", "00")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "history-0000007f.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write history file: %v", err)
+	}
+
+	cov := readArchiveMirrorCoverage(root, mirrorHistory)
+	if !cov.Known || cov.Floor != 127 || cov.HighWater != 127 {
+		t.Fatalf("history coverage = %+v, want floor 127 high-water 127 known", cov)
+	}
+	var self peerSelfTally
+	self.compare(root, "history/00/00/00/history-000000ff.json", 255, historyCheckpoint{}, cov)
+	if self.missed != 0 || self.unmirrored != 1 {
+		t.Fatalf("tally = %+v, want 0 missed 1 unmirrored", self)
 	}
 }
