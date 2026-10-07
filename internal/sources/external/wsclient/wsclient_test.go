@@ -72,7 +72,7 @@ func TestClassifyDisconnect_BoundedReasonLabels(t *testing.T) {
 // websocket.Dial must have a Transport with a custom DialContext that sets
 // TCP keepalive, and HTTP/2 must stay disabled. Without the dialer, dead
 // TCP connections take Linux's default (~2h) to be detected, surfacing as
-// "connection reset by peer" reads instead of being preempted. F-0029.
+// "connection reset by peer" reads instead of being preempted.
 func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
 	c := KeepAliveHTTPClient()
 	if c == nil {
@@ -90,7 +90,7 @@ func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
 	}
 }
 
-// TestLoop_PingStallDropsConnection pins C2-017/C2-031 (audit-2026-07-23):
+// TestLoop_PingStallDropsConnection pins half-open detection:
 // a HALF-OPEN venue socket must be detected by the loop itself, not left
 // to OS TCP keepalive (minutes-to-hours on Linux defaults).
 //
@@ -153,7 +153,7 @@ func TestLoop_PingStallDropsConnection(t *testing.T) {
 	}
 }
 
-// TestLoop_DialTimeoutBoundsSilentUpgrade pins GH-996: a venue that
+// TestLoop_DialTimeoutBoundsSilentUpgrade pins the dial deadline: a venue that
 // completes TCP (and, in production, TLS) but never answers the HTTP
 // upgrade must fail the dial attempt within DialTimeout. The transport's
 // timeouts stop at TLS and the ping watchdog starts only after Dial
@@ -206,7 +206,7 @@ func TestLoop_DialTimeoutBoundsSilentUpgrade(t *testing.T) {
 }
 
 // TestLoop_DialTimeoutDoesNotLimitConnection guards the other side of
-// GH-996: the dial deadline must cover only the handshake. A connection
+// the dial deadline: it must cover only the handshake. A connection
 // that outlives DialTimeout must keep delivering frames.
 func TestLoop_DialTimeoutDoesNotLimitConnection(t *testing.T) {
 	const dialTimeout = 100 * time.Millisecond

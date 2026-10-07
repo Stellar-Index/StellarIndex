@@ -226,12 +226,12 @@ func TestRun_RejectsNonPositivePollInterval(t *testing.T) {
 }
 
 // TestRun_LatePollerConfigErrorDoesNotDeadlock is the regression test
-// for REL-05 (audit-2026-07-23): runPoller goroutines used to be
-// bound to the raw parent ctx, while teardown() (triggered when a
+// for a startup deadlock: if runPoller goroutines are bound to the raw
+// parent ctx, teardown() (triggered when a
 // LATER poller in the same Run call fails config validation) only
 // cancels the derived streamerCtx. An earlier poller's goroutine
 // bound to the raw ctx never observes that cancellation, so
-// teardown's wg.Wait() — and thus Run() itself — would hang forever
+// teardown's wg.Wait() — and thus Run() itself — hangs forever
 // whenever the caller's own ctx isn't independently cancelled (the
 // normal case for a startup-time config error, matched here by
 // context.Background()).

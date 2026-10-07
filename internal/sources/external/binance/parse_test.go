@@ -208,9 +208,9 @@ func TestFormatTxHash_64CharsHex(t *testing.T) {
 	}
 }
 
-// A 12-byte symbol pushes the live seed one byte past the hash, which
-// used to drop aggID's last digit: ten consecutive aggTrades shared one
-// trades PK and all but one were overwritten. It must be refused.
+// A 12-byte symbol pushes the live seed one byte past the hash; truncating
+// would drop aggID's last digit: ten consecutive aggTrades share one
+// trades PK and all but one are overwritten. It must be refused.
 func TestParseAggTradeFrame_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	// Only the symbol's length matters; the pair is any valid one.
 	pm := map[string]canonical.Pair{"1000PEPEUSDT": buildPairMap(t)["XLMUSDT"]}

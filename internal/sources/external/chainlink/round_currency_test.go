@@ -177,7 +177,7 @@ func TestPollOnce_carriedForwardRoundRefused(t *testing.T) {
 	}
 }
 
-// #939: a stale sibling contributing zero updates must not flip a tick
+// A stale sibling contributing zero updates must not flip a tick
 // to "error" when another feed is CURRENT this tick — and "current"
 // means emitted OR unchanged, not just emitted. Unchanged sends nothing
 // to PollOnce's fan-in, so without tracking it separately the stale
@@ -226,7 +226,7 @@ func TestPollOnce_staleFeedBesideUnchangedSiblingStaysGreen(t *testing.T) {
 	}
 }
 
-// #939 counterpart: with NO current feed at all (every feed stale), the
+// Counterpart: with NO current feed at all (every feed stale), the
 // tick is a genuine failure and must still surface the error.
 func TestPollOnce_allFeedsStaleReturnsError(t *testing.T) {
 	t.Parallel()

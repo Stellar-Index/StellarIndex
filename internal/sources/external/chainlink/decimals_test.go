@@ -135,7 +135,7 @@ func testPair(base, quote string) canonical.Pair {
 
 // TestPollOnce_decimalsAbsentAdoptsOnChain — a feed spec with no
 // decimals adopts the contract's decimals(). The fake publishes at 18;
-// the pre-fix poller stamped DefaultDecimals (8) on the row, so every
+// a config-trusting poller would stamp DefaultDecimals (8) on the row, so every
 // downstream scale of this feed would have been 10^10 off.
 func TestPollOnce_decimalsAbsentAdoptsOnChain(t *testing.T) {
 	t.Parallel()

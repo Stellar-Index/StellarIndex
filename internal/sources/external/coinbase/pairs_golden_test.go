@@ -9,10 +9,9 @@ import (
 // TestDefaultPairs_GoldenSet pins the EXACT Coinbase product set, mirroring
 // binance's TestDefaultPairs_GoldenSet.
 //
-// Why this exists (review 2026-08-27): coinbase had only
-// TestDefaultPairList_matchesDefaultPairs, a cardinality tautology that
-// compares the projection against its own source — deleting a product from
-// DefaultPairs left the whole suite green. Binance had a real golden guard and
+// Why this exists: TestDefaultPairList_matchesDefaultPairs alone is a
+// cardinality tautology that compares the projection against its own
+// source — deleting a product from DefaultPairs leaves that suite green. Binance had a real golden guard and
 // coinbase did not, so a venue-coverage change to coinbase was effectively
 // untested while the identical change to binance was pinned.
 //
@@ -41,8 +40,8 @@ func TestDefaultPairs_GoldenSet(t *testing.T) {
 	type bq struct{ base, quote canonical.Asset }
 	golden := map[string]bq{
 		"XLM-USD": {crypto("XLM"), usd},
-		// XLM-EUR verified online on the Coinbase products API before adding
-		// (2026-08-27): XLM/EUR was being served from only two venues, so one
+		// XLM-EUR verified online on the Coinbase products API before adding:
+		// XLM/EUR was being served from only two venues, so one
 		// going quiet dropped source_count to 1 and tripped the phase-2 freeze.
 		"XLM-EUR": {crypto("XLM"), eur},
 		"BTC-USD": {crypto("BTC"), usd},

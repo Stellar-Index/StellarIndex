@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// F-0029: NewStreamer's default backoff is 5 s — large enough to
+// NewStreamer's default backoff is 5 s — large enough to
 // avoid hammering Binance on a venue-wide outage, small enough that
 // the per-cycle data-loss window is ~5 s on a healthy connection.
 // Pre-fix it was 1 s (defaults) but with no reset path, so in

@@ -141,7 +141,7 @@ func TestParseFrame_SubscribeAckAccepted(t *testing.T) {
 	}
 }
 
-// TestParseFrame_SubscribeRejectedReported pins GH-995 (2): a
+// TestParseFrame_SubscribeRejectedReported pins rejection reporting: a
 // success:false ack is the venue saying the pair does not exist, and
 // must reach the streamer with the venue's own error text.
 func TestParseFrame_SubscribeRejectedReported(t *testing.T) {
@@ -160,7 +160,7 @@ func TestParseFrame_SubscribeRejectedReported(t *testing.T) {
 	}
 }
 
-// TestParseFrame_SkippedEntriesReported pins GH-995 (1): every entry
+// TestParseFrame_SkippedEntriesReported pins skip reporting: every entry
 // buildTrade refuses inside a well-formed frame is reported with its
 // reason, the good entries still come through, and dust is not a skip.
 func TestParseFrame_SkippedEntriesReported(t *testing.T) {
@@ -297,8 +297,8 @@ func TestDecimalStringToScaledInt_KrakenPrecision(t *testing.T) {
 	}
 }
 
-// A 12-byte symbol pushes the live seed one byte past the hash, which
-// used to drop trade_id's last digit so ten consecutive fills shared
+// A 12-byte symbol pushes the live seed one byte past the hash; truncating
+// would drop trade_id's last digit so ten consecutive fills share
 // one trades PK. It must be refused.
 func TestBuildTrade_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	// Only the symbol's length matters; the pair is any valid one.

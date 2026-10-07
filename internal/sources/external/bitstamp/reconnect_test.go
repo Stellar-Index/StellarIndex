@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// F-0029: Bitstamp shares the same backoff drift as Binance — see
+// Bitstamp shares the same backoff drift as Binance — see
 // the equivalent test in the binance package for full context.
 func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
 	s := NewStreamer(nil)

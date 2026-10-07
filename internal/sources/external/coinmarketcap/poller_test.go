@@ -110,7 +110,7 @@ func TestPollOnce_HappyPath(t *testing.T) {
 }
 
 // An empty 200 must come back as a non-nil empty slice: nil is the runner's
-// "skipped" convention and would refresh the staleness clock (#940).
+// "skipped" convention and would refresh the staleness clock.
 func TestPollOnce_EmptyDataIsNotASkip(t *testing.T) {
 	srv := newTestServer(t, `{"status": {"error_code": 0, "error_message": null}, "data": {}}`, http.StatusOK)
 	defer srv.Close()
@@ -315,8 +315,7 @@ func TestPollOnce_PartialCoverage_SplitsIntoTwoRequests(t *testing.T) {
 	}
 }
 
-// TestPollOnce_IDModeUsesNumericIDs — F-1237 (codex audit-
-// 2026-05-13): when the poller is configured with `CMCIDs`,
+// TestPollOnce_IDModeUsesNumericIDs — when the poller is configured with `CMCIDs`,
 // the upstream request must use `id=<numeric>,...` instead of
 // `symbol=<TICKER>,...`. Captures the actual query the test
 // server received and asserts the returned price for the
@@ -438,8 +437,8 @@ func TestPollInterval_Default(t *testing.T) {
 // coinmarketcap_id entries (USDT0 is on the crypto allow-list with a
 // CoinGecko id and no CMC id), so wiring CMCIDs from the real catalogue
 // reproduces the partial-coverage shape live: some tickers resolve to
-// `id=`, at least one falls back to `symbol=`. Fails today (pre-fix)
-// because a single request set both selectors together.
+// `id=`, at least one falls back to `symbol=`. A single request setting
+// both selectors together fails it.
 func TestPollOnce_ShippedSeed_NeverMixesSelectors(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

@@ -146,7 +146,7 @@ func TestRegistry_FailClosedOnUnknown(t *testing.T) {
 	}
 }
 
-// TestRegistry_Registered pins the accessor GH-1285 needs: Lookup's
+// TestRegistry_Registered pins the accessor scale checks need: Lookup's
 // zero-value fallback makes "unregistered" and "registered, scale
 // unset" indistinguishable through AmountScaleDecimals() alone, so a
 // caller that must tell them apart (commonAmountScaleDecimals) needs

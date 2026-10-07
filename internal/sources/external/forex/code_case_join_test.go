@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// The rates<->names join and currency-code case (F033, audit-2026-09-02).
+// The rates<->names join and currency-code case.
 //
-// buildSnapshot joined the two maps with `names[code]` — an exact-case
+// A `names[code]` join in buildSnapshot is an exact-case
 // lookup between maps whose producers never agreed on a case:
 //
 //	primary rates   lower  (client.go lower-cases C:USDEUR -> "eur")

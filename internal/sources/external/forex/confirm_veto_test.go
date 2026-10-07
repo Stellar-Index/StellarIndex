@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// uzsBars is the trailing-7d series from the 2026-08-24 Massive UZS
+// uzsBars is the trailing-7d series from the Massive UZS
 // incident: seven mutually-agreeing bars around the true ~11,800 level
 // (median 11817.69).
 func uzsBars(today time.Time) []HistoryPoint {
@@ -40,7 +40,7 @@ func currentDayRate(batch []FXQuote, ticker string, day time.Time) float64 {
 }
 
 // TestPersistSnapshot_BrokenCurrentFeedNeverRepoisonsPostHeal is the
-// 2026-08-24 Massive UZS incident's SECOND act, end to end. The
+// Massive UZS incident's SECOND act, end to end. The
 // restart-heal fixed the poisoned bootstrap baseline, but the current
 // feed KEPT serving the broken ~1820 bar (true level ≈ 11,800): the
 // deviation arm rejected it into pending, and the next fetch of the

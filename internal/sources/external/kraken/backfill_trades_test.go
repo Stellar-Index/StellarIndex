@@ -84,7 +84,7 @@ func mustAsset(t *testing.T, id string) canonical.Asset {
 }
 
 // TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request
-// deadline on the /Trades pagination loop (#371 F5).
+// deadline on the /Trades pagination loop.
 //
 // The loop only checks ctx BETWEEN pages, and `stellarindex-ops
 // backfill` hands it the process root context — which has no deadline.
@@ -155,7 +155,7 @@ func TestFetchKrakenTrades_OversizedBodyRefused(t *testing.T) {
 	}
 }
 
-// TestFetchKrakenTrades_MalformedCursorRejected pins #937 item 3: /Trades
+// TestFetchKrakenTrades_MalformedCursorRejected pins cursor validation: /Trades
 // sends `last` as a quoted nanosecond string. If Kraken ever flips it to
 // an unquoted number (as /OHLC's `last` already is), json.Unmarshal into
 // the string `last` var must be observed, not swallowed — a swallowed

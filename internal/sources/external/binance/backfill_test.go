@@ -395,8 +395,8 @@ func mustPairMapBF(t *testing.T) map[string]canonical.Pair {
 	return m
 }
 
-// A 9-byte symbol pushes the candle seed one byte past the hash, which
-// used to drop closeMs's last digit so neighbouring candles overwrote
+// A 9-byte symbol pushes the candle seed one byte past the hash; truncating
+// would drop closeMs's last digit so neighbouring candles overwrite
 // each other on the trades PK. Backfill must refuse it before walking
 // rather than per-candle-skip it into an empty result.
 func TestBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {

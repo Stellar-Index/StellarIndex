@@ -414,10 +414,10 @@ func (p *Poller) cooldownRemaining() time.Duration {
 // exponentially on consecutive 429s — `hint` (parsed Retry-After)
 // is treated as a floor, not a ceiling. Clamped to MaxBackoff.
 //
-// Why both: pre-fix the Retry-After branch took the hint at face
-// value (clamped to MinBackoff) and bypassed the doubling. CoinGecko's
+// Why both: a Retry-After branch that takes the hint at face
+// value (clamped to MinBackoff) bypasses the doubling. CoinGecko's
 // free tier returns Retry-After values consistently below MinBackoff
-// (commonly 30 s), so clamping landed us at exactly MinBackoff = 60 s
+// (commonly 30 s), so clamping lands us at exactly MinBackoff = 60 s
 // forever — which matches the runner's PollInterval = 60 s, producing
 // one 429 per minute indefinitely (observed live on r1 for
 // a full day). The right behaviour for sustained throttling is to

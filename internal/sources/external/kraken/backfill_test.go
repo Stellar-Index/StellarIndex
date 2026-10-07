@@ -390,7 +390,7 @@ func TestKrakenBackfill_UndecodableLastCursorErrors(t *testing.T) {
 	}
 }
 
-// "RENDER/USD" leaves a 33-byte candle seed, which used to drop the
+// "RENDER/USD" leaves a 33-byte candle seed; truncating it would drop the
 // close time's last digit so neighbouring candles could share one
 // trades PK. Backfill must refuse it before walking rather than
 // per-candle-skip it into an empty result.

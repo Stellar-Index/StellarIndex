@@ -12,7 +12,7 @@ import (
 // static display labels, so the refresh must still install the rates —
 // labelled by ticker — rather than leave the feed empty until the
 // primary returns. The warm path already reuses cached names; this
-// pins the one-time cold path that used to return before cache.Set.
+// pins the one-time cold path, which must not return before cache.Set.
 func TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92, "UZS": 11800},

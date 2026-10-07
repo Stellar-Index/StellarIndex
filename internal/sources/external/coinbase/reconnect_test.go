@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// G10-03 (F-0029 port): Coinbase shares the same healthy-connection
-// backoff drift that Binance/Bitstamp were fixed for. NewStreamer's
+// Coinbase shares the same healthy-connection backoff concern as
+// Binance/Bitstamp. NewStreamer's
 // default backoff is 5 s. This test pins the defaults so a drive-by
 // edit can't silently regress them.
 func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {

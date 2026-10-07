@@ -86,7 +86,7 @@ func TestRunPoller_MetricLabels(t *testing.T) {
 
 // A 200 that decodes to zero rows (non-nil empty slices) reached upstream but
 // delivered nothing: it must not count as success or refresh the staleness
-// clock, or a bad slug reads green forever (#940).
+// clock, or a bad slug reads green forever.
 func TestRunPoller_EmptyResultIsNotSuccess(t *testing.T) {
 	source := "metric-test-empty-200"
 	p := &scriptedPoller{

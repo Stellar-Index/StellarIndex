@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// G10-03 (F-0029 port): Kraken shares the same healthy-connection
-// backoff drift that Binance/Bitstamp were fixed for. NewStreamer's
+// Kraken shares the same healthy-connection backoff concern as
+// Binance/Bitstamp. NewStreamer's
 // default backoff is 5 s — large enough to avoid hammering Kraken on a
 // venue-wide outage, small enough that the per-cycle data-loss window
 // is ~5 s on a healthy connection. This test pins the defaults so a
