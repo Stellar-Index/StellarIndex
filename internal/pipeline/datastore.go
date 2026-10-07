@@ -31,12 +31,12 @@ const liveTailRetryWait = 500 * time.Millisecond
 // which the SDK retries forever without consuming attempts. See
 // ledgerstream.Config.LiveRetryBudget for the mechanism.
 //
-// #371 F3: this used to be an accident rather than a decision. The SDK
-// pairs RetryWait with RetryLimit=5, so shortening RetryWait to 500ms
-// above for tip latency also shortened MinIO-fault tolerance to 5 ×
-// 500ms = **2.5 seconds**. MinIO is a local systemd unit that restarts
-// for upgrades and config applies; a restart of a couple of minutes
-// therefore killed stellarindex-indexer over and over until systemd's
+// The budget is an explicit decision rather than a by-product of the
+// tip-latency setting. The SDK pairs RetryWait with RetryLimit=5, so a
+// 500ms RetryWait alone caps MinIO-fault tolerance at 5 × 500ms =
+// **2.5 seconds**. MinIO is a local systemd unit that restarts for
+// upgrades and config applies; a restart of a couple of minutes would
+// then kill stellarindex-indexer over and over until systemd's
 // StartLimit parked the unit in `failed` — taking ingest, the CH live
 // sink, hashdb and the projector down with it, and needing a human
 // `systemctl reset-failed` to come back.
@@ -82,8 +82,8 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 		// Trailing-edge tolerance: bounded backfills routinely race
 		// the live tip — Galexie writes partition files lazily, so a
 		// chunk_to set hours into the future hits "object missing"
-		// errors at the trailing edge. The 2026-05-26 soroban-events
-		// fill walk failed exactly this way on chunk 11. Setting the
+		// errors at the trailing edge. A soroban-events fill walk
+		// failed exactly this way on chunk 11. Setting the
 		// tolerance flag here applies it to every consumer of this
 		// helper (currently: stellarindex-ops backfill, the live
 		// indexer's bounded archive-then-live preamble). Has no
@@ -127,8 +127,8 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 		// from the ambient AWS chain, which on r1 holds local MinIO's
 		// keys (the hot tier authenticates through it) and so signs
 		// every cold request to real AWS with them —
-		// `InvalidAccessKeyId ... does not exist in our records`,
-		// diagnosed 2026-07-25. See pipeline.NewColdDataStore.
+		// `InvalidAccessKeyId ... does not exist in our records`.
+		// See pipeline.NewColdDataStore.
 		out.ColdDataStoreFactory = func(ctx context.Context) (datastore.DataStore, error) {
 			return NewColdDataStore(ctx, cfg.Storage)
 		}

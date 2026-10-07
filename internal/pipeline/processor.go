@@ -87,7 +87,7 @@ func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 		obs.SourceOrphanEventsTotal.WithLabelValues(source).Add(float64(delta))
 	}
 	// A completed, priced event dropped for want of a pair/pool token
-	// mapping (GH-1307): the body decoded cleanly, so it never touches
+	// mapping: the body decoded cleanly, so it never touches
 	// the DecodeErrors path above, but it is the same class of lost
 	// data — count it against the same budget rather than leaving it
 	// with no signal at all.
@@ -100,7 +100,7 @@ func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 	}
 	// Non-directional swaps are a recognized non-trade class, not lost
 	// data (ADR-0033 expected-zero) — their own counter, not folded into
-	// DecodeErrors (T070: the getter had no production reader at all).
+	// DecodeErrors.
 	for source, n := range after.NonDirectionalSwaps {
 		delta := n - before.NonDirectionalSwaps[source]
 		if delta <= 0 {
