@@ -46,7 +46,7 @@
 // same time. The dense-array layout has no inter-record metadata to
 // corrupt, but a record write is NOT atomic everywhere: with the 16-byte
 // header, 1 record in 128 straddles a 4 KiB page, and a torn record reads
-// as non-zero (permanent false drift). Atomic on copy-on-write
+// as non-zero (permanent false drift). Writes are atomic on copy-on-write
 // filesystems (ZFS, which r1 runs); on ext4/xfs a torn record surfaces as
 // drift, see the hashdb runbook.
 package hashdb
