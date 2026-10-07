@@ -40,13 +40,12 @@ groups:
 
 
       # ─── the notification layer watches ITSELF ────────────────────
-      # Added after the 2026-07-29 → 2026-08-29 outage: Alertmanager
-      # delivered ZERO notifications for 31 days and nothing reported it.
-      # The reload had succeeded, so stellarindex_alertmanager_config_bad
-      # (above) stayed silent — an empty URL variable makes Alertmanager
-      # DROP a receiver's config block rather than error, so every path,
-      # deadman's switch included, became a black hole that looks exactly
-      # like a healthy quiet system.
+      # Alertmanager can deliver ZERO notifications for weeks with nothing
+      # reporting it (measured: 31 days). The reload succeeds, so
+      # stellarindex_alertmanager_config_bad (above) stays silent — an
+      # empty URL variable makes Alertmanager DROP a receiver's config
+      # block rather than error, so every path, deadman's switch included,
+      # becomes a black hole that looks exactly like a healthy quiet system.
       #
       # These three close the three ways that can happen: the process is
       # gone, the process is up but fanning out to nobody, or it is
@@ -80,17 +79,17 @@ groups:
         # THE CANARY. stellarindex_deadmansswitch fires permanently with
         # repeat_interval 1m, so the webhook integration must tick ~30x
         # an hour forever. Zero notifications over 15m therefore means
-        # the fan-out is dead, NOT that the estate is quiet. This is the
-        # rule that would have caught the 31-day outage on day one: the
-        # webhook counter sat at exactly 0 the entire time.
+        # the fan-out is dead, NOT that the estate is quiet. In a 31-day
+        # silent outage the webhook counter sits at exactly 0 the entire
+        # time, so this catches it on day one.
         #
-        # Both arms are needed. During the outage the webhook series was
-        # PRESENT and flat at 0 (first arm), while the discord series was
+        # Both arms are needed. In that outage the webhook series is
+        # PRESENT and flat at 0 (first arm), while the discord series is
         # entirely ABSENT (the shape the second arm catches).
         #
-        # sum() with no `by` is load-bearing (GH-1173):
+        # sum() with no `by` is load-bearing:
         # alertmanager_notifications_total is per-integration, and the
-        # webhook integration now backs TWO receivers (deadmansswitch +
+        # webhook integration backs TWO receivers (deadmansswitch +
         # alert-delivery-failure), each its own series. Unaggregated, the
         # deadman's ~30/hr keeps ITS series nonzero while
         # alert-delivery-failure's own series sits at 0 whenever nothing
@@ -155,14 +154,13 @@ groups:
             out-of-band alarm. Set its URL in
             /etc/default/alertmanager-secrets and re-run apply.sh.
 
-      # ─── F-0085 (audit-2026-05-26): exporter-down meta-alerts ─────
-      # The 2026-05-10 SEV-2 cascade exposed a blindness pattern: the
-      # `stellarindex_redis_writes_blocked` alert watches
-      # `redis_rdb_last_bgsave_status == 0`, but during the cascade
-      # redis_exporter itself was DOWN — so the metric never reached
-      # Prometheus, the alert evaluated `absent_gauge == 0` (no_data),
-      # and never fired. The dependent alert was structurally unable
-      # to surface the incident.
+      # ─── exporter-down meta-alerts ────────────────────────────────
+      # A blindness pattern: the `stellarindex_redis_writes_blocked`
+      # alert watches `redis_rdb_last_bgsave_status == 0`, but when
+      # redis_exporter itself is DOWN the metric never reaches
+      # Prometheus, the alert evaluates `absent_gauge == 0` (no_data),
+      # and never fires. The dependent alert is structurally unable
+      # to surface the incident (seen in a disk-full Redis cascade).
       #
       # These four meta-alerts close that gap for every exporter
       # whose absence would silence a downstream alert family:
@@ -171,7 +169,7 @@ groups:
       #   pgbackrest_exporter → backup-failed + backup-none-24h
       #   minio               → galexie-archive + archive-completeness
       #
-      # Pattern matches the F-0107 validated shape: `up == 0` catches
+      # Pattern: `up == 0` catches
       # the exporter being scraped-but-failing, and
       # `absent_over_time(up{...}[5m]) == 1` catches the scrape target
       # disappearing from service-discovery entirely (so the up series
