@@ -37,7 +37,7 @@ type SoroswapLiquidityEvent struct {
 
 // InsertSoroswapLiquidity appends one Soroswap liquidity event row,
 // idempotent on the (ledger_close_time, pair, ledger, tx_hash,
-// op_index, event_index, action) PK. Uses the INV-3 generation-guarded
+// op_index, event_index, action) PK. Uses the generation-guarded
 // corrective upsert (migration 0110 pattern, same as trades /
 // soroswap_skim_events): a corrected re-derive lands in place when its
 // generation is >= the stored one; a live gen-0 replay can never

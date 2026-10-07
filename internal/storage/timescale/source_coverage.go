@@ -95,9 +95,8 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 	// PG-side abort is what actually prevents in-flight scans
 	// accumulating across cycles. It MUST be the gap detector's own
 	// [gapDetectorStatementTimeoutMS] (13 min, under the 15-min Go
-	// per-target budget) — NOT the 2h ops/verify constant this call
-	// used until 2026-08-28, which let every over-budget count outlive
-	// its Go context as a 2h orphan backend (r1 incident 2026-08-28).
+	// per-target budget), NOT the 2h ops/verify constant: that would let
+	// every over-budget count outlive its Go context as a 2h orphan backend.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers begin: %w", err)

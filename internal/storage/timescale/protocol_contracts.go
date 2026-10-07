@@ -138,11 +138,11 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 // to their own path. The table+column are HARD-CODED here (never from the
 // request), so the formatted query carries no injected SQL.
 //
-// Aquarius was previously listed as "pair-keyed, no per-contract column" and so
-// its /v1/protocols/aquarius roster read 0 contracts despite being the most
-// active AMM (14.9k events/24h, 300+ pools). aquarius_liquidity (migration 0089)
-// carries the emitting POOL contract_id AND the pool's token identities, so
-// aquarius now has a per-pool roster source that also renders a pair (2026-07-07, a9f2e301c).
+// aquarius_liquidity (migration 0089) carries the emitting POOL contract_id AND
+// the pool's token identities, so aquarius has a per-pool roster source that
+// also renders a pair. Treating it as "pair-keyed, no per-contract column" would
+// read 0 contracts for the most active AMM (14.9k events/24h and 300+ pools when
+// measured).
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
@@ -179,8 +179,7 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
 	// oracle_updates, so the generic unfiltered DISTINCT below would return
 	// EVERY oracle's contracts for each source. Their pinned contracts emit
-	// into oracle_updates.contract_id — scope by the source column (a9f2e301c,
-	// 2026-07-07: band/reflector/redstone previously read 0 contracts).
+	// into oracle_updates.contract_id — scope by the source column.
 	switch source {
 	case "band", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
 		return s.listContractsFilteredBySource(ctx, "oracle_updates", "contract_id", source)
@@ -216,7 +215,7 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 // its roster IS its count, so the caller counts the roster.
 //
 // sorocredit deploys one Collateral-<uuid> CHILD CONTRACT per opened position
-// (116,124 on r1, 2026-09-03 — ~23x the enumerating paths' LIMIT 5000). Each
+// (116,124 on r1 when measured — ~23x the enumerating paths' LIMIT 5000). Each
 // child is announced exactly once, by the NewCollateralContract event
 // credit_positions holds (migration 0090), and the decoder claims a child's
 // events only from an announced child (ADR-0035), so DISTINCT over that one
@@ -236,7 +235,7 @@ func sourceContractCountQuery(source string) (query string, ok bool) {
 // query issued) for a source with no count-only path.
 //
 // Deliberately unwindowed: this is the lifetime contract set, not a window's
-// activity. 170 ms over credit_positions on r1 (2026-09-03), and the API
+// activity. It measured 170 ms over credit_positions on r1, and the API
 // serves it from its prewarmed roster-count cache, so it never runs on a
 // request path.
 func (s *Store) CountSourceContracts(ctx context.Context, source string) (int64, bool, error) {

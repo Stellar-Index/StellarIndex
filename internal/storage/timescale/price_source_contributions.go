@@ -37,8 +37,8 @@ type PriceSourceContribution struct {
 //
 // Consequently the unguarded volume_usd never overwrites a prior
 // value (no in-place regression risk), but also never corrects one —
-// which is why this table is NOT part of the INV-3
-// generation-guarded corrective-upsert family.
+// which is why this table is NOT part of the generation-guarded
+// corrective-upsert family.
 //
 // Every row is validated before any is written: a row without a
 // positive whole-second Window fails the whole batch with

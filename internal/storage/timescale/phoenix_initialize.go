@@ -23,7 +23,7 @@ type PhoenixInitializeEvent struct {
 
 // InsertPhoenixInitialize lands one initialize event, idempotent on the
 // (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK
-// with the INV-3 generation-guarded corrective upsert (migration 0110).
+// with the generation-guarded corrective upsert (migration 0110).
 //
 // Defensive: rejects an empty Pool / TxHash / Token, a zero
 // LedgerCloseTime, and a TokenSlot outside {'a','b'}.

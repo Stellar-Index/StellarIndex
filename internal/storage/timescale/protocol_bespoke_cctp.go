@@ -16,35 +16,28 @@ import (
 // Two data-honesty rules every query below encodes:
 //
 //  1. VALUE ROWS ARE READ RAW — one transfer per stored event row, no
-//     per-(tx, op) collapse. An earlier vintage of this file collapsed
-//     every flow CTE to one row per (tx_hash, op_index) with max(amount):
-//     a workaround for the 19,366 legacy event_index-0 twin rows (the
-//     pre-migration-0112 decode vintage duplicated by the 07-30 replay).
-//     Those twins were DELETED from r1 on 2026-07-31 (lake-grounded twin
-//     investigation; comet/blend/sep41 verified clean the same night), so
-//     the dedup rule's reason is gone — and keeping it would silently
-//     HALVE a future genuine batched double-transfer in one op (the 0112
-//     class exists on the wire: the lake census that night found
+//     per-(tx, op) collapse. cctp_events' PK discriminates on
+//     event_index and the projector writes one row per event, so every
+//     row is a real transfer. Collapsing per (tx_hash, op_index) with
+//     max(amount) would silently HALVE a genuine batched double-transfer
+//     in one op: the class exists on the wire (a lake census found
 //     same-op same-type groups among admin events — attester_enabled ×2,
-//     remote_token_messenger_added ×23 in single ops — so value events
-//     CAN legitimately double up too, even though none do today). A dedup
-//     rule must not outlive its reason: cctp_events' PK now discriminates
-//     on event_index, the projector writes one row per event, and every
-//     row is a real transfer.
+//     remote_token_messenger_added ×23 in single ops), so value events
+//     CAN legitimately double up too, even though none do today.
 //
 //  2. mint_and_forward IS NOT A SEPARATE TRANSFER. Every mint_and_forward
 //     op also emits mint_and_withdraw for the SAME funds (0 forward-only
-//     ops), and the forward amount is exactly 10× the withdraw amount on
-//     all 13,651 pairs (r1, 2026-07-30) — the forward event restates the
+//     ops), and the forward amount was exactly 10× the withdraw amount on
+//     all 13,651 pairs measured on r1 — the forward event restates the
 //     value at the LOCAL 7-decimal SAC scale while mint_and_withdraw
 //     carries the CANONICAL 6-decimal amount the SAC leg was verified
 //     against. Inbound sums use mint_and_withdraw ONLY; summing both
 //     would count the same transfer 11× over. This is a real semantic
-//     rule about the protocol's event vocabulary, NOT twin dedup — it
-//     survives the raw-read change above. Outbound deposit_for_burn is the
-//     same canonical scale: its amount equals the same-tx BurnMessage
-//     amount the 6-decimal destination mints (cctp
-//     TestDepositForBurnAmount_IsCanonicalSixDecimals).
+//     rule about the protocol's event vocabulary, NOT twin dedup, so it
+//     holds under raw reads. Outbound deposit_for_burn is the same
+//     canonical scale (cctp TestDepositForBurnAmount_IsCanonicalSixDecimals):
+//     its amount equals the same-tx BurnMessage amount the 6-decimal
+//     destination mints.
 //
 // Source-chain attribution (inbound): the same-op message_received row's
 // message_body carries the CCTP BurnMessage; hex chars 33..72 are the low
@@ -58,7 +51,7 @@ import (
 // All division is exact NUMERIC — never a float literal (ADR-0003). Every
 // query is either window-bounded (ts > now() - $1::interval) or an
 // explicitly all-time aggregate over the tiny cctp_events table
-// (~33k rows post-deletion — full scans are trivially cheap, and the whole
+// (~33k rows — full scans are trivially cheap, and the whole
 // block is built under the window-keyed protocol-detail cache).
 
 // cctpSeriesNameInbound / …Outbound are the direction-stable total-series
@@ -73,9 +66,9 @@ const (
 )
 
 // cctpMintsCTE returns the inbound-transfers subquery: one RAW row per
-// stored mint_and_withdraw event (see file-doc rule 1 — the legacy twins
-// are deleted, and collapsing per (tx, op) would halve a genuine batched
-// double-transfer in one op). windowed appends the $1::interval bound.
+// stored mint_and_withdraw event (see file-doc rule 1 — collapsing per
+// (tx, op) would halve a genuine batched double-transfer in one op).
+// windowed appends the $1::interval bound.
 func cctpMintsCTE(windowed bool) string {
 	q := `SELECT tx_hash, op_index, ts, amount
 	   FROM cctp_events
@@ -157,10 +150,9 @@ func cctpWindowKPIQuery() string {
 // mint_recipient otherwise — the per-(tx, op) GROUP BY here is the
 // forward-restatement pairing of file-doc rule 2 (a mint_and_forward row
 // restates its sibling mint_and_withdraw, so the pair must resolve to ONE
-// recipient), not twin dedup, and it survives the raw-read change.
-// count(DISTINCT r) then makes the "unique recipients" KPI genuinely
-// distinct addresses (the pre-fix count(*) counted recipient-bearing OPS,
-// mislabelled as unique addresses).
+// recipient), not twin dedup. count(DISTINCT r) then makes the "unique
+// recipients" KPI genuinely distinct addresses; a count(*) would count
+// recipient-bearing OPS instead.
 func cctpAllTimeKPIQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(false) + `), b AS (` + cctpBurnsCTE(false) + `)

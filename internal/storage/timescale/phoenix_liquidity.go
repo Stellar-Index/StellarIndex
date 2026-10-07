@@ -48,7 +48,7 @@ type PhoenixLiquidityChange struct {
 	OpIndex    uint32
 	// EventIndex is the first field-event's in-op index — the per-event
 	// discriminator added to the phoenix_liquidity PK by migration 0060
-	// (F-1324) so two provides/withdraws in one op don't collide.
+	// so two provides/withdraws in one op don't collide.
 	EventIndex   uint32
 	Action       PhoenixLiquidityAction
 	Sender       string
@@ -61,13 +61,12 @@ type PhoenixLiquidityChange struct {
 
 // InsertPhoenixLiquidityChange appends one phoenix_liquidity row,
 // idempotent on the (ledger_close_time, pool, ledger, tx_hash,
-// op_index, action, event_index) PK (event_index added by migration
-// 0060 / F-1324 so two provides/withdraws in one op don't collide).
-// Re-running the indexer over the same range or replaying a backfill
-// writes the same rows; ON CONFLICT DO UPDATE guarded by
-// derive_generation (INV-3 / migration 0110) corrects the row in
-// place on a higher-or-equal-generation replay and no-ops a stale
-// lower-generation one.
+// op_index, action, event_index) PK (event_index, from migration 0060,
+// keeps two provides/withdraws in one op from colliding). Re-running
+// the indexer over the same range or replaying a backfill writes the
+// same rows; ON CONFLICT DO UPDATE guarded by derive_generation
+// (migration 0110) corrects the row in place on a higher-or-equal-
+// generation replay and no-ops a stale lower-generation one.
 //
 // Defensive: rejects empty Pool / TxHash / Sender, an invalid
 // Action, and empty NUMERIC amounts (AmountA / AmountB are NOT NULL)
@@ -108,10 +107,10 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 		shares = sql.NullString{String: e.SharesAmount, Valid: true}
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the per-leg amounts (amount_a/amount_b/shares)
 	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it. Replaces the old DO NOTHING no-op.
+	// replay can never revert it.
 	const q = `
         INSERT INTO phoenix_liquidity (
             pool, ledger, ledger_close_time, tx_hash, op_index,
@@ -177,10 +176,9 @@ type PhoenixPoolFlow struct {
 // This is the READ side of the Phoenix liquidity-depth signal
 // InsertPhoenixLiquidityChange captures. Phoenix has no post-state reserve
 // snapshot and no published price, so the figures are native-token
-// base-unit WINDOW deltas, not absolute reserves or USD TVL. (Phoenix is
-// contract-identity gated — the curated-set gate, 2026-07-02, earlier than
-// Comet's 2026-07-08 gate — so unlike Comet these figures carry no
-// historical-rows-may-predate-the-gate caveat.)
+// base-unit WINDOW deltas, not absolute reserves or USD TVL. Phoenix is
+// contract-identity gated (curated set, gated before Comet), so unlike Comet
+// these figures carry no historical-rows-may-predate-the-gate caveat.
 //
 // Empty-safe: returns (nil, nil) when no liquidity events were captured in
 // the window. windowDays <= 0 is treated as 90.

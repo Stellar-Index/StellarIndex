@@ -25,21 +25,21 @@ const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 
 // MinLedger returns the smallest ledger present in a per-source table over
 // [from, to] — where that target's served data ACTUALLY begins. It is the
-// lower bound of the ADR-0033 Claim 2b projection reconcile (chops.targetScope),
-// replacing the old hardcoded `tip - 1_500_000` floor which certified only the
-// last ~100 days while the served tier holds full history (DAT-09/N-F2).
+// lower bound of the ADR-0033 Claim 2b projection reconcile (chops.targetScope);
+// a hardcoded floor such as `tip - 1_500_000` would certify only the last ~100
+// days while the served tier holds full history.
 //
 // No reconcile target has a retention policy (verified against the migrations
-// and r1, 2026-07-25 — 0031 removed it from trades / prices_1m / prices_15m and
-// 0040 from oracle_updates), so a RISING value here is unambiguously served-tier
-// LOSS, not a drop_chunks artifact. Migration 0156 adds one on prices_1m
-// (90 days, shipped disabled) and does not weaken that: prices_1m is a
-// continuous aggregate keyed on `bucket`, has no `ledger` column and is not
-// among the reconcile targets (chops.reconciliation_catalogue — raw event and
-// trade tables only). chops.detectFloorLoss makes exactly that
-// comparison against the durable floor in completeness_target_floors
-// (migration 0116), which is why this value must stay a raw observation and not
-// be clamped or defaulted. Returns ok=false if no rows.
+// and r1: 0031 removed it from trades / prices_1m / prices_15m and 0040 from
+// oracle_updates), so a RISING value here is unambiguously served-tier LOSS,
+// not a drop_chunks artifact. Migration 0156 adds one on prices_1m (90 days,
+// created disabled) and does not weaken that: prices_1m is a continuous
+// aggregate keyed on `bucket`, has no `ledger` column and is not among the
+// reconcile targets (chops.reconciliation_catalogue — raw event and trade
+// tables only). chops.detectFloorLoss makes exactly that comparison against
+// the durable floor in completeness_target_floors (migration 0116), which is
+// why this value must stay a raw observation and not be clamped or
+// defaulted. Returns ok=false if no rows.
 //
 // Identifiers are interpolated — callers MUST pass compile-time-trusted values
 // (same discipline as CountRowsByLedger / ADR-0030).

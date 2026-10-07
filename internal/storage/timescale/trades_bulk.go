@@ -134,7 +134,7 @@ type BulkBackfillResult struct {
 	Path BulkBackfillPath
 	// Attempted is the number of storable, intra-batch-deduped rows the
 	// writer presented to Postgres. It is NOT len(trades): unstorable rows
-	// (the SDEX one-side-zero fill, INV-6) and intra-batch PK duplicates are
+	// (the SDEX one-side-zero fill) and intra-batch PK duplicates are
 	// dropped first, exactly as [Store.BatchInsertTrades] drops them.
 	Attempted int
 	// Copied is the number of rows the COPY streams reported landing. Zero
@@ -162,7 +162,7 @@ type BulkBackfillResult struct {
 // If the probe finds ANYTHING, this does not COPY. It hands the ORIGINAL,
 // unmodified buffer to [Store.BatchInsertTrades] and returns
 // [BulkBackfillPathUpsert]. Behaviour on a non-empty range is therefore
-// bit-for-bit today's behaviour, including the INV-3 generation guard and the
+// bit-for-bit the batch path's behaviour, including the generation guard and the
 // per-source outcome metrics.
 //
 // ROW IDENTITY. The rows this writes are the rows [Store.BatchInsertTrades]
@@ -187,9 +187,9 @@ type BulkBackfillResult struct {
 // counters (obs.TradeInsertsTotal, and obs.SourceInsertErrorsTotal for a row
 // that fails Validate) count the recovered rows twice, which is the correct
 // reading of "attempts" and is confined to this error path. The result
-// reports the fallback. (`ch-rebuild` already refuses a window the live projector's cursor
-// is inside — checkCHRebuildLiveOverlap — so this is the belt to that
-// braces.)
+// reports the fallback. (`ch-rebuild` already refuses a window the live
+// projector's cursor is inside — checkCHRebuildLiveOverlap — so this is
+// the belt to that braces.)
 func (s *Store) BulkBackfillTrades(ctx context.Context, trades []canonical.Trade, opts BulkBackfillOptions) (BulkBackfillResult, error) {
 	if len(trades) == 0 {
 		return BulkBackfillResult{Path: BulkBackfillPathCopy}, nil
@@ -642,7 +642,7 @@ func (s *Store) bulkTradeValues(rows []canonical.Trade, usd []sql.NullString) []
 //
 // ORDER BY source mirrors the batch path: a mixed-source buffer row-locks one
 // tally row per source, and a deterministic order is what keeps two writers
-// from forming an AB/BA cycle on them (2026-07-09).
+// from forming an AB/BA cycle on them.
 func (s *Store) bumpBulkSourceCounts(ctx context.Context, rows []canonical.Trade) error {
 	perSource := make(map[string]int64, 4)
 	for i := range rows {

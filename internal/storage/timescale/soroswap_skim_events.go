@@ -36,9 +36,8 @@ type SoroswapSkimEvent struct {
 // idempotent on the (ledger_close_time, ledger, tx_hash, op_index,
 // event_index) PK. Re-running the indexer or a backfill over the
 // same range writes the same rows; ON CONFLICT DO UPDATE guarded by
-// derive_generation (INV-3 / migration 0110) corrects the row in
-// place on a higher-or-equal-generation replay and no-ops a stale
-// lower-generation one.
+// derive_generation (migration 0110) corrects the row in place on a
+// higher-or-equal-generation replay and no-ops a stale lower one.
 //
 // Defensive: rejects empty ContractID / TxHash / Amount0 / Amount1
 // and a zero LedgerCloseTime (the partition column — NULL/zero would
@@ -67,10 +66,10 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 		return fmt.Errorf("timescale: InsertSoroswapSkimEvent: Amount1 is empty (contract=%s ledger=%d)", e.ContractID, e.Ledger)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the skimmed amounts (amount_0 / amount_1) lands
 	// in place when its generation is >= the stored one; a live gen-0 replay
-	// can never revert it. Replaces the old DO NOTHING no-op.
+	// can never revert it.
 	const q = `
         INSERT INTO soroswap_skim_events (
             ledger_close_time, ledger, tx_hash, op_index, event_index,

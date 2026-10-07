@@ -114,10 +114,10 @@ func (s *Store) InsertCreditPosition(ctx context.Context, e CreditPosition) erro
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditPosition: TxHash is empty")
 	}
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// re-derive with a higher-or-equal generation UPDATEs the decoded value
 	// columns in place; a lower generation (a live gen-0 replay) can never
-	// revert a correction. Replaces the old DO NOTHING no-op.
+	// revert a correction.
 	const q = `
         INSERT INTO credit_positions (
             collateral_contract, position_uuid, position_name, owner,
@@ -154,7 +154,7 @@ func (s *Store) InsertCreditStatement(ctx context.Context, e CreditStatement) er
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditStatement: TxHash is empty")
 	}
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of `amount` (or any decoded column) lands in place
 	// when its generation is >= the stored one; a live gen-0 replay can never
 	// revert it.
@@ -204,7 +204,7 @@ func (s *Store) InsertCreditSettlement(ctx context.Context, e CreditSettlement) 
 	if err != nil {
 		return err
 	}
-	// INV-3 generation-guarded corrective upsert (migration 0110).
+	// Generation-guarded corrective upsert (migration 0110).
 	const q = `
         INSERT INTO credit_settlements (
             collateral_contract, position_uuid, statement_uuid,
@@ -252,7 +252,7 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	if err != nil {
 		return err
 	}
-	// INV-3 generation-guarded corrective upsert (migration 0110).
+	// Generation-guarded corrective upsert (migration 0110).
 	const q = `
         INSERT INTO credit_events (
             event_type, collateral_contract, asset, account, amount, attributes,
@@ -362,8 +362,8 @@ const creditSettlementsAnalyticsQuery = `
 // canonical.Amount (never int64 — ADR-0003).
 //
 // Empty-safe: returns (nil, nil) when no credit_* row exists in the window,
-// so the bespoke block omits the panel cleanly (r1's credit_* tables are
-// empty until the sorocredit projector-replay runs post-deploy).
+// so the bespoke block omits the panel cleanly (the credit_* tables stay
+// empty until the sorocredit projector-replay has run).
 // windowDays <= 0 is treated as 90.
 func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*CreditAnalyticsSummary, error) {
 	if windowDays <= 0 {

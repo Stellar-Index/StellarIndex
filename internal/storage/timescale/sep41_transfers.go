@@ -49,9 +49,8 @@ type SEP41TransferRow struct {
 
 // InsertSEP41TransferBatch persists rows via a single multi-row
 // INSERT. On the full PK the ON CONFLICT arm is DO UPDATE guarded by
-// derive_generation (INV-3 / migration 0110): a higher-or-equal-
-// generation replay corrects the row in place, a stale
-// lower-generation one is a no-op.
+// derive_generation (migration 0110): a higher-or-equal-generation
+// replay corrects the row in place; a stale lower one is a no-op.
 func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41TransferRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -60,11 +59,11 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 		return err
 	}
 
-	// INV-3 (migration 0110): the batch upsert below is now ON CONFLICT DO
-	// UPDATE, and Postgres rejects a single statement that presents the same
-	// conflict key twice ("cannot affect row a second time") — which the old
-	// DO NOTHING silently absorbed. Collapse intra-batch conflict-key
-	// duplicates (last-wins) before building the statement.
+	// The batch upsert below is ON CONFLICT DO UPDATE (migration 0110), and
+	// Postgres rejects a single statement that presents the same conflict
+	// key twice ("cannot affect row a second time"), which DO NOTHING would
+	// silently absorb. Collapse intra-batch conflict-key duplicates
+	// (last-wins) before building the statement.
 	insertRows := dedupeSEP41TransferRows(rows)
 
 	const ncols = 13
@@ -182,9 +181,9 @@ func sep41TransferKeyOf(r *SEP41TransferRow) sep41TransferConflictKey {
 
 // dedupeSEP41TransferRows collapses rows that collide on the sep41_transfers
 // conflict key, keeping the LAST copy of each key (the latest redelivery) in
-// first-seen order. Required because the INV-3 batch upsert (migration 0110)
-// uses ON CONFLICT DO UPDATE, which Postgres rejects when one statement
-// presents the same conflict key twice; the old DO NOTHING tolerated it.
+// first-seen order. Required because the batch upsert (migration 0110) uses
+// ON CONFLICT DO UPDATE, which Postgres rejects when one statement presents
+// the same conflict key twice (DO NOTHING would tolerate it).
 //
 // Copy-on-write: the common case (no intra-batch duplicate) returns the input
 // slice untouched and allocates nothing.
@@ -304,25 +303,25 @@ const SEP41TransferLadderBudget = 3 * time.Second
 //
 // Full history stays reachable: a contract whose page none of the
 // [sep41TransferLookbackLadder] rungs can fill falls through to an
-// unbounded read — the same query this method has always issued. That
-// fallback is cheap for a genuinely low-volume contract, whose rows the
-// planner reaches through sep41_transfers_contract_from_idx (1.3s at
-// limit=100 on r1 for a contract with 21k rows in the newest chunk),
-// but NOT for every contract that reaches it: a contract with a large
-// history and fewer than `limit` rows in the widest rung still takes
-// the same per-chunk sort that produced the timeout. The ladder
-// mitigates the timeout class for contracts that are busy now; it does
-// not eliminate it, and that residual class pays the ladder first, so
-// its fallback runs on the caller's remaining time — at least 5s of the
-// 8s it used to have. The root cause — no index yielding one contract's
-// rows in ledger_close_time DESC order — is only removed by a
-// (contract_id, ledger_close_time DESC) index together with an ORDER BY
-// the compressed chunks can serve (the read also orders by op_index,
-// which compress_orderby lacks, so a compressed chunk still sorts its
-// whole segment); the index is heavy DDL on a
-// hypertable of hundreds of millions of rows and belongs in its own
-// migration with the by-hand CONCURRENTLY step r1 needs (migrations
-// 0083 / 0106 set that convention).
+// unbounded read. That fallback is cheap for a genuinely low-volume
+// contract, whose rows the planner reaches through
+// sep41_transfers_contract_from_idx (1.3s at limit=100 on r1 for a
+// contract with 21k rows in the newest chunk), but NOT for every
+// contract that reaches it: a contract with a large history and fewer
+// than `limit` rows in the widest rung still takes the same per-chunk
+// sort that times out. The ladder mitigates the timeout class for
+// contracts that are busy now; it does not eliminate it, and that
+// residual class pays the ladder first, so its fallback runs on the
+// caller's remaining time — at least 5s of the handler's 8s deadline.
+// The root cause — no index yielding one contract's rows in
+// ledger_close_time DESC order — is only removed by a (contract_id,
+// ledger_close_time DESC) index together with an ORDER BY the
+// compressed chunks can serve (the read also orders by op_index, which
+// compress_orderby lacks, so a compressed chunk still sorts its whole
+// segment); the index is heavy DDL on a hypertable of hundreds of
+// millions of rows and belongs in its own migration with the by-hand
+// CONCURRENTLY step r1 needs (migrations 0083 / 0106 set that
+// convention).
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
@@ -630,25 +629,25 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 		limit = 200
 	}
 
-	// QUERY SHAPE (site audit 2026-08-08): two index-friendly arms
-	// UNION'd, not `from_addr = $2 OR to_addr = $2` — the same OR
-	// disease account_trades.go documents. The OR can't ride either
-	// address-leading partial index in output order, so on the 30/32
-	// COMPRESSED sep41_transfers chunks (no btrees) the planner
-	// decompress-scanned every chunk, blew the statement timeout, and
-	// the movements handler soft-failed the tail — which is why busy
-	// accounts' /movements silently stopped at the P23 boundary. Each
-	// arm walks its own partial index (from_addr/to_addr, ledger DESC)
+	// QUERY SHAPE: two index-friendly arms UNION'd, not
+	// `from_addr = $2 OR to_addr = $2` — the same OR disease
+	// account_trades.go documents. The OR can't ride either
+	// address-leading partial index in output order, so on the COMPRESSED
+	// sep41_transfers chunks (no btrees; 30 of 32 when measured) the
+	// planner decompress-scanned every chunk and blew the statement
+	// timeout, and the movements handler soft-failed the tail, silently
+	// stopping busy accounts' /movements at the P23 boundary. Each arm
+	// walks its own partial index (from_addr/to_addr, ledger DESC)
 	// newest-first and stops after one page; the outer merge picks the
 	// page. Direction filters collapse to arm selection: sent = the
 	// from-arm alone, received = the to-arm alone, self = one from-arm
 	// with to = from.
 	// floorLedger is the DYNAMIC lower bound (exclusive semantics via
 	// >=): the cap67 movements watermark + 1 once the lake-derived
-	// archive (inventory #1) is following — the archive serves
-	// everything at/below the watermark for ALL assets, so this tail
-	// only needs (watermark, tip]. Never below the P23 boundary: the
-	// classic_derived archive owns everything before it.
+	// archive is following — the archive serves everything at/below the
+	// watermark for ALL assets, so this tail only needs (watermark,
+	// tip]. Never below the P23 boundary: the classic_derived archive
+	// owns everything before it.
 	if fl := MovementsFloor(); floorLedger < fl {
 		floorLedger = fl
 	}
