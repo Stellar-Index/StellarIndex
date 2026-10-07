@@ -35,13 +35,11 @@ import (
 //
 // LAST, not first: the reader orders `ts DESC` under the LIMIT and
 // reverses to ascending, so truncation drops the OLDEST rows and the
-// surviving slice runs up to the window end (F-1319 — the previous
-// `ORDER BY ts ASC LIMIT` computed a busy 24h VWAP from a slice that
-// stopped near the window START and never reached the present). This
-// doc said "first N" for both revisions and was wrong after F-1319;
-// which end survives is exactly what a client needs to know to
-// interpret a truncated price, so it is stated here and in the
-// OpenAPI description.
+// surviving slice runs up to the window end. An `ORDER BY ts ASC LIMIT`
+// would compute a busy 24h VWAP from a slice that stops near the window
+// START and never reaches the present. Which end survives is exactly
+// what a client needs to know to interpret a truncated price, so it is
+// stated here and in the OpenAPI description.
 type VWAPResult struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`
@@ -110,11 +108,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// dex-nonstandard-decimals: /v1/vwap computes entirely from raw
-	// trades at query time (no CAGG involved), so — unlike /v1/price and
-	// /v1/ohlc's multi-bar series mode — it no longer needs the decline
-	// guard. The price is normalized below via aggregate.AdjustPrice
-	// instead of declined. See docs/operations/runbooks/
-	// dex.md "Root cause analysis".
+	// trades at query time (no CAGG involved), so the price is normalized
+	// below via aggregate.AdjustPrice rather than declined. See
+	// docs/operations/runbooks/dex.md "Root cause analysis".
 
 	// Clamped to a closed-bucket boundary per ADR-0015 — guarantees
 	// cross-region answer agreement — whether `to` was defaulted or
@@ -137,7 +133,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// time windows, so it always scans trades on-query — the
 	// aggregator binary's pre-computed rollups feed `/v1/price`'s
 	// closed-bucket surface (ADR-0015), not this endpoint.
-	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): /v1/vwap
+	// Per-request DB ceiling: /v1/vwap
 	// scans raw `trades` on every query (no CAGG), so without a
 	// bounded context a slow scan holds its pool connection until the
 	// client gives up. 8s matches the sibling raw-scan endpoints
@@ -178,7 +174,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		aggregate.ResolveDecimals(s.NonstandardDecimals, base),
 		aggregate.ResolveDecimals(s.NonstandardDecimals, quote))
 
-	// No cross-reference verdict (GH-1045): the worker's verdict compares
+	// No cross-reference verdict: the worker's verdict compares
 	// the aggregator's shortest-window VWAP now, and this value is computed
 	// here from raw trades over a caller-chosen [from, to), so the verdict
 	// never saw it — the same reason /v1/price/at carries none.
@@ -283,7 +279,7 @@ func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 // problem+json has already been written (client-abort, cache-unavailable,
 // or generic internal error) and the caller must return immediately.
 // Pulled out to keep handleVWAP under the funlen budget while preserving
-// the cache-unavailable branch added for F-0089.
+// the cache-unavailable branch.
 func (s *Server) fetchVWAPTrades(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
@@ -323,12 +319,11 @@ func (s *Server) fetchVWAPTrades(
 // pairs — so it is served by COMBINING every constituent of
 // [Server.usdPeggedConstituents], which is exactly the set the /v1/ohlc
 // series path combines and the set the live aggregator computes its VWAP
-// over. See [Server.fiatCombinedTrades] for the C1-024 divergence that
-// replaced (the point path used to take the FIRST non-empty peg, so the same
-// `?quote=fiat:USD` question answered differently depending on whether you
-// asked for a point or a series).
+// over. Taking the FIRST non-empty peg instead would answer the same
+// `?quote=fiat:USD` question differently depending on whether you asked
+// for a point or a series; see [Server.fiatCombinedTrades].
 //
-// A non-fiat quote walks the XLM dual-form alias pairs (F-1340) and takes
+// A non-fiat quote walks the XLM dual-form alias pairs and takes
 // the FIRST form with trades — the exact gate [Server.ohlcSeriesWithAliases]
 // applies on the series side, so the point and series paths resolve a
 // valid-but-aliased input (e.g. ?base=crypto:XLM&quote=USDC, whose SDEX

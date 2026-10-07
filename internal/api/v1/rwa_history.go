@@ -98,7 +98,7 @@ const rwaHistoryTTL = 10 * time.Minute
 // (cachedRWAValueHistory's leader branch), so a budget past the
 // blanket request deadline can never fire — the middleware's timeout
 // answers first and this handler's own unavailable-response branch
-// never runs (RLT-043).
+// never runs.
 const rwaHistoryBudget = maxHandlerBudget
 
 // rwaHistoryMaxPoints caps the served point count per series. The daily

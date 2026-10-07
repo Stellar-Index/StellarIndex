@@ -55,11 +55,9 @@ import (
 // readiness probes) keep the backend in service while operators
 // see the per-check breakdown in the response body.
 //
-// F-1275 (codex audit-2026-05-13): pre-wave-110 every check was
-// effectively critical — a Redis outage would 503 readyz and
-// HAProxy would drain every healthy API backend even though
-// Timescale fallback kept the actual customer-facing surface
-// serving correctly.
+// Treating every check as critical would let a Redis outage 503
+// readyz and make HAProxy drain every healthy API backend even though
+// the Timescale fallback keeps the customer-facing surface serving.
 type ReadyChecker interface {
 	Ping(ctx context.Context) error
 	Name() string
@@ -72,13 +70,12 @@ type ReadyChecker interface {
 // to be at least this value and not dirty; otherwise its code is
 // serving against a schema older or more partial than it assumes.
 //
-// REC-06 (audit-2026-08-14): the ansible deploy runs `stellarindex-migrate
-// up` before swapping binaries, so schema>=binary on the normal path —
-// but nothing asserted that at RUNTIME. A deploy passing migrations_skip,
-// a hot-swapped binary, or a golang-migrate dirty leftover left the binary
-// serving against a stale/partial schema while /v1/healthz and /v1/readyz
-// stayed 200 — the exact "partial-outage while healthz 200" shape the
-// deploy-time guard aimed to prevent, but only at deploy time.
+// The ansible deploy runs `stellarindex-migrate up` before swapping
+// binaries, so schema>=binary on the normal path, but the deploy alone
+// asserts nothing at RUNTIME. A deploy passing migrations_skip, a
+// hot-swapped binary, or a golang-migrate dirty leftover would leave the
+// binary serving against a stale/partial schema while /v1/healthz and
+// /v1/readyz stay 200.
 // [NewSchemaVersionChecker] closes the runtime gap as a CRITICAL readiness
 // check: a schema/binary mismatch drains the backend from the load
 // balancer (503) instead of silently under-serving behind a green probe.
@@ -97,10 +94,10 @@ const ExpectedSchemaVersion uint = 212
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
 // mid-file, breaking golang-migrate's one-transaction-per-file guarantee
 // (migrations/README.md's "Transactions" convention; 0030 is the corpus's
-// one exception, cold audit 2026-08-04). golang-migrate wraps every OTHER
+// one exception). golang-migrate wraps every OTHER
 // migration in Postgres's implicit transaction, so a dirty flag at any
 // version NOT in this set means the failed attempt rolled back cleanly and
-// the schema is intact at version-1 — GH-1159. Only these versions leave a
+// the schema is intact at version-1. Only these versions leave a
 // genuinely unknown/partial schema when dirty.
 var nonAtomicMigrationVersions = map[uint]bool{30: true}
 
@@ -122,7 +119,7 @@ type schemaVersionChecker struct {
 	expected uint
 }
 
-// NewSchemaVersionChecker builds the REC-06 schema-head readiness check.
+// NewSchemaVersionChecker builds the schema-head readiness check.
 // Critical()==true: a binary/schema mismatch must drain the backend, not
 // keep serving stale/partial data behind a green probe.
 func NewSchemaVersionChecker(reader SchemaVersionReader) ReadyChecker {
@@ -142,7 +139,7 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 	}
 	// Every OTHER migration runs in one implicit transaction, so a dirty
 	// flag means Postgres rolled the failed attempt back and the applied
-	// schema is really at version-1 (GH-1159). The dirty ROW itself still
+	// schema is really at version-1. The dirty ROW itself still
 	// needs an operator `force`, tracked separately and non-critically by
 	// schemaDirtyChecker — it must not by itself drain the backend.
 	effective := version
@@ -159,7 +156,7 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 // it surfaces a dirty schema_migrations row as a readyz "degraded" flag
 // (visible to operators) without draining the backend, for the atomic
 // migrations where a dirty flag means a clean rollback rather than a
-// half-applied schema — see [nonAtomicMigrationVersions] and GH-1159.
+// half-applied schema — see [nonAtomicMigrationVersions].
 type schemaDirtyChecker struct {
 	reader SchemaVersionReader
 }
@@ -244,9 +241,9 @@ type Server struct {
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
 	// lakeWMMu guards the cached entry ONLY and is never held across the
-	// lake read (RLT-095, 2026-09-19 — it used to be, so every caller on
-	// every lake-backed route queued behind one ClickHouse round-trip on a
-	// non-context-aware mutex and burned its own deadline). lakeWMFlight
+	// lake read: holding it would queue every caller on every lake-backed
+	// route behind one ClickHouse round-trip on a non-context-aware mutex,
+	// burning each caller's own deadline. lakeWMFlight
 	// coalesces concurrent refreshes onto one detached read;
 	// lakeWMNextTry is the negative cache — the earliest a new read may
 	// start after a failed one, so a wedged lake is retried once per
@@ -264,19 +261,18 @@ type Server struct {
 	ledgerStreamAt     time.Time
 	ledgerStreamFlight singleflight.Group
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed
-	// calls for the same (asset, quote) pair onto one upstream read —
-	// HO-344: /v1/price, /v1/oracle/lastprice and /v1/oracle/x_last_price
-	// each drove their own DB round trip per request with nothing
-	// deduplicating a burst of identical requests for a hot pair. See
-	// readPriceWithAliasesServed in price.go.
+	// calls for the same (asset, quote) pair onto one upstream read, so a
+	// burst of identical /v1/price, /v1/oracle/lastprice and
+	// /v1/oracle/x_last_price requests for a hot pair costs one DB round
+	// trip. See readPriceWithAliasesServed in price.go.
 	priceReadFlight singleflight.Group
 	// Cached top-N native (CAP-38) liquidity-pool listing — a
 	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
 	// Go; cached so the listing endpoint doesn't re-scan per request
 	// (see handleLiquidityPools in liquidity_pools.go).
 	// nativeLPMu guards the entry itself and is NEVER held across the
-	// scan (#332 F4, 2026-09-02 — it used to be, so the first caller
-	// after every TTL lapse paid the scan inline and the rest queued).
+	// scan: holding it would make the first caller after every TTL lapse
+	// pay the scan inline while the rest queue.
 	// nativeLPFillMu collapses concurrent COLD fills onto one scan;
 	// nativeLPRefreshing admits one detached rescan at a time.
 	nativeLPMu         sync.Mutex
@@ -288,7 +284,7 @@ type Server struct {
 	// protocolFast{Mu,Settled,OK} cache the daily-pre-aggregation probe —
 	// but only once it produced a DEFINITIVE answer (see fastActivity).
 	// Deliberately NOT a sync.Once: Once would latch a transient first-probe
-	// error as "unavailable" for the process lifetime (the C1-048 class).
+	// error as "unavailable" for the process lifetime.
 	protocolFastMu      sync.Mutex
 	protocolFastSettled bool
 	protocolFastOK      bool
@@ -299,9 +295,9 @@ type Server struct {
 	protoDetailCache  map[string]protoDetailEntry
 	protoDetailFlight map[string]chan struct{}
 	// Last-good cache for the bespoke analytics block INSIDE that detail
-	// view. The block is built last, so it used to inherit whatever was
-	// left of the rebuild's budget and got dropped from the page when
-	// that ran out (§2.6b). Zero value ready — see
+	// view. The block is built last, so without this cache it inherits
+	// whatever is left of the rebuild's budget and drops from the page
+	// when that runs out. The zero value is ready to use; see
 	// protocol_bespoke_cache.go.
 	protocolBespokeCache bespokeCache
 	// Prewarmed SWR cache for the per-source contract_count on
@@ -320,9 +316,9 @@ type Server struct {
 	classicSupplyFlight chan struct{}
 	// classicSupplyAttemptAt advances on EVERY refresh attempt, success or
 	// failure — unlike classicSupplyAt, which advances only on success. Without
-	// it a failing refresh left the cache permanently stale, so every request
-	// retried the heavy query and paid the full request timeout (the 2026-07-21
-	// /v1/assets 15s latch). It gates retries to classicSupplyRetryGap.
+	// it a failing refresh leaves the cache permanently stale, so every request
+	// retries the heavy query and pays the full request timeout. It gates
+	// retries to classicSupplyRetryGap.
 	classicSupplyAttemptAt time.Time
 	// Per-asset TTL cache for the lake-flows classic supply reading — the
 	// figure that includes the claimable-balance, LP-reserve and SAC-held
@@ -403,24 +399,24 @@ type Server struct {
 	contractIndex contractProtocolIndex
 	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
 	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
-	// refuse to serve it (T650). See fxCrossStale's doc comment.
+	// refuse to serve it. See fxCrossStale's doc comment.
 	fxCrossMaxAge time.Duration
 	// fxFixings binds closed-bucket FX legs; nil leaves those crosses unserved.
 	fxFixings       *fxFixingCache
 	explorerHandler *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 
-	// readyz single-flight cache (inventory #26) — see handleReadyz.
+	// readyz single-flight cache — see handleReadyz.
 	// readyzFlight is non-nil while a round is being computed; waiters
 	// select on it (or their own ctx) instead of blocking on readyzMu,
-	// so the mutex is never held across the probe IO (GH-587).
+	// so the mutex is never held across the probe IO.
 	readyzMu     sync.Mutex
 	readyzAt     time.Time
 	readyzCode   int
 	readyzBody   []byte
 	readyzFlight chan struct{}
 
-	// livez/lake single-flight cache (#310) — see handleLivezLake.
-	// livezLakeFlight mirrors readyzFlight (GH-587).
+	// livez/lake single-flight cache — see handleLivezLake.
+	// livezLakeFlight mirrors readyzFlight.
 	livezLakeMu     sync.Mutex
 	livezLakeAt     time.Time
 	livezLakeCode   int
@@ -437,7 +433,7 @@ type Server struct {
 	// streamRevalidate re-runs the auth/policy/quota gates for an open
 	// stream at each heartbeat; see [Server.buildStreamRevalidator].
 	streamRevalidate func(*http.Request) bool
-	// tipProducers is the shared tip-stream producer registry (RT-1):
+	// tipProducers is the shared tip-stream producer registry:
 	// one compute loop per distinct (asset, quote, window) publishing
 	// into the hub, refcounted by open /v1/price/tip/stream
 	// connections. See price_tip_producers.go.
@@ -466,7 +462,7 @@ type Server struct {
 	sacReserveOnce     sync.Once
 	coverageFloorCache *coverageFloorCache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
-	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
+	// global view's three-tier fallback chain.
 	// Nil-safe: handleGlobalAsset returns a view without the price
 	// block when not wired — the slug still resolves to a catalogue
 	// entry, networks[] still populates, and consumers can drill
@@ -532,9 +528,9 @@ type Server struct {
 	// requestTimeout bounds every non-streaming request's context via
 	// the RequestTimeout middleware (see Handler). Defaulted in New to
 	// [defaultRequestTimeout] when Options.RequestTimeout is unset; zero
-	// (middleware omitted) only under Options.DisableRequestTimeout. The
-	// durable chokepoint behind C3-1/C3-2/P1 (audit-2026-07-16) — every
-	// handler inherits a deadline even when it forgets its own.
+	// (middleware omitted) only under Options.DisableRequestTimeout. It is
+	// the durable chokepoint: every handler inherits a deadline even when
+	// it forgets its own.
 	requestTimeout time.Duration
 }
 
@@ -601,7 +597,7 @@ type Options struct {
 	// Network is the Stellar network this deployment serves
 	// (config [stellar] network: pubnet / testnet / futurenet; empty =
 	// pubnet). /v1/coverage uses it to report which protocol sources do
-	// not exist on this network instead of counting them incomplete (#483);
+	// not exist on this network instead of counting them incomplete;
 	// the reference listings use it to omit pubnet-only entries.
 	Network string
 	// ReadyChecks are polled by /readyz. Order matters only for
@@ -660,10 +656,9 @@ type Options struct {
 	RWAPremiumSubstance pricingguard.SubstancePolicy
 	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
-	// JSONB column populated by `stellarindex-ops sep1-refresh`.
-	// Pre-2026-05-29 this was a live HTTPS fetch (MetadataResolver);
-	// the live path dominated /v1/assets/{id} p95 (~4s long tail) so
-	// it's now cron-only.
+	// JSONB column populated by `stellarindex-ops sep1-refresh`. It is
+	// cron-populated rather than fetched live because a live HTTPS fetch
+	// dominated /v1/assets/{id} p95 (~4s long tail).
 	Sep1Cache Sep1CachedReader
 
 	// CORS, when non-nil, is inserted above RateLimit in the
@@ -685,11 +680,10 @@ type Options struct {
 	// /v1/account/keys path. Zero (the default) selects
 	// [defaultAccountKeyQuota]; a negative value disables the check.
 	//
-	// C3-015 (audit-2026-07-23): the self-service mint had no cap at
-	// all, so a single authenticated caller could mint keys in a loop
-	// until Redis filled — while the parallel dashboard mint path
-	// (dashboardkeys.HandleCreate) has enforced a tier-aware ceiling
-	// since F-1257. It is a flat cap rather than a tier ladder because
+	// Without a cap a single authenticated caller could mint keys in a
+	// loop until Redis filled; the parallel dashboard mint path
+	// (dashboardkeys.HandleCreate) enforces a tier-aware ceiling. It is a
+	// flat cap rather than a tier ladder because
 	// this surface's Subjects carry no platform tier: main.go disables
 	// the route entirely under `auth_backend=postgres`, so every caller
 	// that reaches it authenticated through the Redis validator, whose
@@ -741,17 +735,16 @@ type Options struct {
 	// 60 keys per minute per IP, ~3,600/hour). This throttle
 	// hardens specifically against the signup-bulk-mint abuse
 	// vector — typical wiring is a 5/hour-per-IP Redis bucket.
-	// Nil keeps the legacy "trust the global rate limit alone"
-	// behaviour. F-1232 (audit-2026-05-12).
+	// Nil leaves signup to the global rate limit alone.
 	SignupIPThrottle SignupIPThrottle
 
 	// APIKeyBudgets are the credential stores a TIER CHANGE has to
 	// clamp. Wired so PATCH /v1/admin/accounts/{id} can enforce a
 	// tier-lowering on the keys the account can actually
-	// authenticate with, instead of only writing accounts.tier
-	// (52105fdb residual, audit-2026-07-23: the enforced per-minute
-	// budget is read straight off the key record, so an operator
-	// demoting Pro→Free left every existing key at 10_000/min).
+	// authenticate with, instead of only writing accounts.tier. The
+	// enforced per-minute budget is read straight off the key record, so
+	// a tier-only write would leave every existing key of a Pro→Free
+	// demotion at 10_000/min.
 	//
 	// Zero value disables the admin-side clamp: the tier write still
 	// lands and the endpoint reports keys_clamped=0, so a deployment
@@ -909,7 +902,7 @@ type Options struct {
 	Change24h Change24hReader
 
 	// PriceAt, when non-nil, backs GET /v1/price/at — point-in-time
-	// closed-bucket VWAP for cost-basis/PnL tooling (board #46).
+	// closed-bucket VWAP for cost-basis/PnL tooling.
 	PriceAt PriceAtReader
 
 	// ChangeSummary, when non-nil, backs GET /v1/changes/{entity_type}/{id}.
@@ -944,9 +937,9 @@ type Options struct {
 	// SEP41Transfers, when non-nil, backs GET
 	// /v1/contracts/{contract_id}/transfers. Production wiring is
 	// timescale.Store directly (it implements ListSEP41Transfers).
-	// Nil makes the endpoint return 503. F-0021 closure
-	// (audit-2026-05-26): per-account net-position queries — the
-	// Stellar moat feature CG/CMC structurally cannot offer.
+	// Nil makes the endpoint return 503. It backs per-account
+	// net-position queries — the Stellar moat feature CG/CMC
+	// structurally cannot offer.
 	SEP41Transfers SEP41TransfersReader
 
 	// Cursors, when non-nil, backs GET /v1/diagnostics/cursors.
@@ -1002,7 +995,7 @@ type Options struct {
 
 	// SoroswapPairs, when non-nil, supplies soroswap's contract list
 	// on /v1/protocols* from the soroswap_pairs registry (its pair
-	// set carries token identities and predates protocol_contracts).
+	// set carries token identities).
 	// Production wiring is timescale.Store directly
 	// (LoadSoroswapPairRegistry). Nil serves soroswap with an empty
 	// contract list / zero count.
@@ -1100,7 +1093,7 @@ type Options struct {
 	// rate that [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
 	// will serve (config pricing_guard.fx_cross_max_age_hours). Anything
 	// older is refused rather than served with a fresh-looking
-	// observed_at (T650). 0 (the default here when a caller doesn't set
+	// observed_at. 0 (the default here when a caller doesn't set
 	// it) falls back to [defaultFXCrossMaxAge] (76h) — the same budget
 	// aggregate.composite_reference.fx_max_age_hours uses for the
 	// identical fx_quotes staleness profile.
@@ -1216,9 +1209,8 @@ type Options struct {
 	// KeyPolicy, when non-nil, runs AFTER Auth and BEFORE RateLimit.
 	// Enforces the per-key policy fields the dashboard surfaces
 	// (IP allowlist, Referer allowlist, per-endpoint permissions)
-	// against the authenticated Subject. F-1226 (codex
-	// audit-2026-05-12): pre-fix these were accepted at key
-	// creation but no middleware enforced them at request time.
+	// against the authenticated Subject. Without it these fields are
+	// accepted at key creation but never enforced at request time.
 	// Anonymous subjects pass through unchanged; the policy data
 	// only ships on Subjects produced by the Postgres validator.
 	// Typically constructed via middleware.KeyPolicy().
@@ -1244,9 +1236,8 @@ type Options struct {
 
 	// MonthlyQuota, when non-nil, is inserted BEFORE rate-limit so
 	// a request that exceeds the per-key monthly cap returns 429
-	// without spending a rate-limit token. F-1226 (codex audit-
-	// 2026-05-12). Wire-up: middleware.MonthlyQuota(usageCounter,
-	// …). Skipped when nil — the cap is opt-in per validator (only
+	// without spending a rate-limit token. Wire-up:
+	// middleware.MonthlyQuota(usageCounter, …). Skipped when nil — the cap is opt-in per validator (only
 	// Postgres-backed keys carry `Subject.MonthlyQuota`).
 	MonthlyQuota middleware.Middleware
 
@@ -1254,15 +1245,15 @@ type Options struct {
 	// a denied (429) request doesn't update the dashboard's "last
 	// seen" column for the rejected attempt. The middleware
 	// itself fires post-handler with a Redis-SETNX debounce, so
-	// per-request cost is one Redis SETNX even on cache hit. F-1226
-	// (codex audit-2026-05-12) wave 39. Skipped when nil — opt-in
-	// per deployment (requires both Postgres keys store + Redis).
+	// per-request cost is one Redis SETNX even on cache hit. Skipped
+	// when nil — opt-in per deployment (requires both Postgres keys
+	// store + Redis).
 	TouchUsage middleware.Middleware
 
 	// RequireEmailVerified, when non-nil, is inserted AFTER auth
 	// and BEFORE rate-limit. It rejects API-key callers whose
 	// `EmailVerifiedAt` is zero AND whose identifier indicates a
-	// `/v1/signup` origin. F-1218 wave 45 (codex audit-2026-05-12).
+	// `/v1/signup` origin.
 	// Opt-in per deployment — production wiring gates this on
 	// `cfg.API.SignupRequireEmailVerification` so existing keys
 	// keep working through the rollout window.
@@ -1354,9 +1345,9 @@ type Options struct {
 	// StatusServices names the BACKGROUND services this deployment
 	// runs, and therefore the only ones /v1/status reports a heartbeat
 	// for and rolls `overall` up from. Empty defaults to
-	// {"indexer","aggregator"} — the pubnet shape, unchanged. The lean
-	// test nets run no aggregator, and before #328 its permanent
-	// "unknown" pinned overall at "degraded" forever.
+	// {"indexer","aggregator"} — the pubnet shape. The lean test nets run
+	// no aggregator, whose permanent "unknown" would otherwise pin
+	// overall at "degraded" forever.
 	StatusServices []string
 
 	// DashboardAuth, when non-nil, mounts the customer-dashboard
@@ -1382,7 +1373,7 @@ type Options struct {
 	// Backed by `internal/platform/postgresstore.WebhookStore`; the
 	// delivery worker that drains the queue runs in
 	// `internal/customerwebhook` and is orthogonal to these
-	// handlers. F-1270 (audit-2026-05-12).
+	// handlers.
 	DashboardWebhooks DashboardAuthMounter
 
 	// DashboardPriceAlerts, when non-nil, mounts the dashboard's
@@ -1498,9 +1489,8 @@ type Options struct {
 	// markets/pools/pairs last_price fields) scales its served ratio
 	// by 10^(dec_base-dec_quote) for any pair with a leg the cache
 	// has confirmed as non-7-decimal (aggregate.AdjustPrice). Nil
-	// disables normalization — every request serves the raw ratio,
-	// the pre-guard behaviour. See [NonstandardDecimalsCache] and
-	// docs/operations/runbooks/dex.md.
+	// disables normalization — every request serves the raw ratio. See
+	// [NonstandardDecimalsCache] and docs/operations/runbooks/dex.md.
 	NonstandardDecimals *NonstandardDecimalsCache
 
 	// GlobalPrice, when non-nil, powers the price block on
@@ -1553,11 +1543,11 @@ func New(opts Options) *Server {
 		globalPrice:        newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
 		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
-		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
-		// old 30s TTL the cache expired for 30 of every 60 seconds
-		// between prewarm passes, so every probe landing in that window
-		// (the status page polls /v1/assets/native every 30s) paid the
-		// full cold-rebuild cost and inflated API p95/p99 (see CHANGELOG).
+		// selfPrewarmAssetEndpoints cadence (60s) with margin — a 30s TTL
+		// leaves the cache expired for 30 of every 60 seconds between
+		// prewarm passes, so every probe landing in that window (the status
+		// page polls /v1/assets/native every 30s) pays the full cold-rebuild
+		// cost and inflates API p95/p99.
 		// 120s = one full prewarm interval of headroom; matches the
 		// sibling F2-path caches (1–2 min TTL, same 60s prewarm).
 		// Underlying data updates per-minute at fastest; 120s staleness
@@ -1626,17 +1616,12 @@ var defaultStatusServices = []string{"indexer", "aggregator"}
 // {indexer, aggregator}.
 //
 // Both halves must apply the SAME transform or the config value passes
-// validation and then matches nothing. That is what happened until
-// 2026-08-31 (wave-D RD-05): validation lower-cased before its
-// allow-list check while this function only trimmed, and the heartbeat
-// map is keyed by Prometheus `job` labels stripped of the
-// `stellarindex-` prefix — always lower-case. So
-// `status_services = ["Indexer"]` booted clean, then reported
-// `"status": "unknown"` on every /v1/status request forever, pinning
-// `overall` at degraded and the explorer's status page at amber. The
-// operator debugging it finds a value that passed validation and
-// matches the documented vocabulary — the exact symptom #328 added
-// this list to remove.
+// validation and then matches nothing. The heartbeat map is keyed by
+// Prometheus `job` labels stripped of the `stellarindex-` prefix, which
+// are always lower-case, so a trim-only transform would let
+// `status_services = ["Indexer"]` boot clean and then report
+// `"status": "unknown"` on every /v1/status request, pinning `overall`
+// at degraded and the explorer's status page at amber.
 func statusServicesOr(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
@@ -1848,33 +1833,31 @@ func (s *Server) middlewareStack() []stackEntry {
 	// middleware, clients that auto-append (axios with `/v1/`
 	// baseURL, OpenAPI codegens, mistyped curl) hit a dead 404.
 	// 308 preserves method+body so POST/DELETE don't degrade.
-	// MUST sit INSIDE CORS (site-audit S-009): when it ran outside,
-	// the 308 carried no Access-Control-Allow-Origin, so a browser
-	// fetch of a trailing-slash URL died at the redirect — exactly
+	// MUST sit INSIDE CORS: outside it, the 308 carries no
+	// Access-Control-Allow-Origin, so a browser fetch of a
+	// trailing-slash URL dies at the redirect — exactly
 	// as dead as the 404 this middleware exists to prevent.
 	stack = append(stack, stackEntry{"TrailingSlashRedirect", middleware.TrailingSlashRedirect(s.mux)})
 	// ResolveRoute pre-matches the route pattern via a read-only
 	// mux.Handler lookup, BEFORE Auth/KeyPolicy/MonthlyQuota/RateLimit
 	// can reject the request short of the mux. Those gates run outside
-	// obs.CaptureRoute (wired innermost), so a gate-rejected request
-	// used to leave UsageTracker's endpointFamily() with no route
-	// info at all and bucket it under "unmatched" (Q177) — this fills
+	// obs.CaptureRoute (wired innermost), so without this a
+	// gate-rejected request would leave UsageTracker's endpointFamily()
+	// with no route info and bucket it under "unmatched". This fills
 	// that gap without moving any gate's position.
 	stack = append(stack, stackEntry{"ResolveRoute", middleware.ResolveRoute(s.mux)})
 	// RequestTimeout bounds every non-streaming request's context so
 	// EVERY handler inherits a deadline even when it forgets to wrap its
-	// own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16).
+	// own DB/ClickHouse read.
 	//
 	// It sits OUTSIDE the whole credential/quota/limit block rather than
-	// just above CaptureRoute (C3-102, audit-2026-07-23). In the inner
-	// position, Auth / KeyPolicy / RequireEmailVerified / MonthlyQuota /
-	// RateLimit / UsageTracker / SessionAuth all ran OUTSIDE the deadline
-	// — their Redis and Postgres round-trips were bounded only by
-	// go-redis's 3 s default and the http.Server WriteTimeout, which does
-	// not cancel anything in flight. A slow store therefore held a request
-	// goroutine well past the timeout this middleware exists to enforce,
-	// and the comment claimed "EVERY handler inherits a deadline" while
-	// the pre-handler stack did not.
+	// just above CaptureRoute. In the inner position, Auth / KeyPolicy /
+	// RequireEmailVerified / MonthlyQuota / RateLimit / UsageTracker /
+	// SessionAuth would all run OUTSIDE the deadline, their Redis and
+	// Postgres round-trips bounded only by go-redis's 3 s default and the
+	// http.Server WriteTimeout, which does not cancel anything in flight.
+	// A slow store could then hold a request goroutine well past the
+	// timeout this middleware exists to enforce.
 	//
 	// It stays INSIDE CORS/TrailingSlashRedirect (both allocation-free and
 	// I/O-free) so a preflight still short-circuits without a timer. The
@@ -1888,7 +1871,7 @@ func (s *Server) middlewareStack() []stackEntry {
 	// request past it.
 	//
 	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage does NOT use
-	// context.WithoutCancel at all (GH-627): [middleware.AfterResponse]
+	// context.WithoutCancel at all: [middleware.AfterResponse]
 	// flushes the response to the client first, then runs the counter/
 	// touch write on the shared after-response worker pool under its own
 	// context.Background()-derived bound, off the request goroutine
@@ -1909,7 +1892,7 @@ func (s *Server) middlewareStack() []stackEntry {
 	}
 	// KeyPolicy runs after Auth (so the Subject is on context) but
 	// before RateLimit (so a policy-denied 403 never spends a
-	// rate-limit token). F-1226 (codex audit-2026-05-12).
+	// rate-limit token).
 	if s.KeyPolicy != nil {
 		stack = append(stack, stackEntry{"KeyPolicy", s.KeyPolicy})
 	}
@@ -1922,15 +1905,13 @@ func (s *Server) middlewareStack() []stackEntry {
 	}
 	// Usage tracker runs OUTSIDE both quota and rate-limit so it
 	// observes BOTH kinds of 429 rejection and records them under the
-	// per-endpoint `throttled` class. It used to sit INSIDE
-	// MonthlyQuota, so a quota denial — which returns without calling
-	// next — was counted nowhere at all, and a capped customer's usage
-	// report showed zero traffic instead of a wall of throttling (cold
-	// audit 2026-08-03; the comments here and in internal/usage
-	// claimed both 429 classes stayed visible). The LEGACY per-day
+	// per-endpoint `throttled` class. Inside MonthlyQuota, a quota
+	// denial — which returns without calling next — would be counted
+	// nowhere, and a capped customer's usage report would show zero
+	// traffic instead of a wall of throttling. The LEGACY per-day
 	// total (the MonthlyQuota input) still excludes 429s and 5xx other
 	// than a timed-out read — see
-	// middleware.billableClass (COR-05) — so a counted quota-429
+	// middleware.billableClass — so a counted quota-429
 	// cannot feed back into the quota it was denied by, and neither a
 	// throttled request nor an outage on our side eats billing quota.
 	// Best-effort; failures log at debug and never block.
@@ -1939,8 +1920,7 @@ func (s *Server) middlewareStack() []stackEntry {
 	}
 	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
 	// on context) but BEFORE rate-limit (so a quota-rejected
-	// request doesn't also spend a per-minute token). F-1226
-	// (codex audit-2026-05-12).
+	// request doesn't also spend a per-minute token).
 	if s.MonthlyQuota != nil {
 		stack = append(stack, stackEntry{"MonthlyQuota", s.MonthlyQuota})
 	}
@@ -1952,7 +1932,7 @@ func (s *Server) middlewareStack() []stackEntry {
 	// doesn't bump the dashboard's "last seen" column for the
 	// rejected attempt. Wraps next.ServeHTTP — the actual touch
 	// fires post-handler with a SETNX debounce so per-request
-	// cost is bounded. F-1226 (codex audit-2026-05-12) wave 39.
+	// cost is bounded.
 	if s.TouchUsage != nil {
 		stack = append(stack, stackEntry{"TouchUsage", s.TouchUsage})
 	}
@@ -2001,11 +1981,10 @@ var proxyForwardHeaders = []string{
 //  2. The request carries NO proxy-forwarding header.
 //
 // (2) is what makes this guard actually defend the case its own name
-// implies (C3-029/C3-106, audit-2026-07-23). The documented topology is
-// Caddy running ON THE SAME HOST proxying to 127.0.0.1:3000, so a
-// misconfigured Caddy that forwards public traffic presents a LOOPBACK
-// RemoteAddr and sails through a RemoteAddr-only check — the guard was
-// inert against exactly the failure it was written for. Caddy's
+// implies. The documented topology is Caddy running ON THE SAME HOST
+// proxying to 127.0.0.1:3000, so a misconfigured Caddy that forwards
+// public traffic presents a LOOPBACK RemoteAddr and sails through a
+// RemoteAddr-only check. Caddy's
 // reverse_proxy sets X-Forwarded-For (and Host/Proto) by default, and so
 // does every other mainstream proxy, so their presence distinguishes
 // "someone's request relayed to us" from "the local scraper called us".
@@ -2074,10 +2053,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/issuers", s.handleIssuersList)
 	s.mux.HandleFunc("GET /v1/issuers/{g_strkey}", s.handleIssuer)
 
-	// Per-contract SEP-41 transfer audit-trail. F-0021 closure
-	// (audit-2026-05-26): every transfer / approve / set_admin /
-	// set_authorized event for a watched SEP-41 contract, with
-	// optional ?from= / ?to= address filters. Unlocks per-account
+	// Per-contract SEP-41 transfer audit-trail: every transfer /
+	// approve / set_admin / set_authorized event for a watched SEP-41
+	// contract, with optional ?from= / ?to= address filters. Unlocks per-account
 	// net-position queries — the Stellar moat feature CG/CMC
 	// structurally cannot offer.
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/transfers", s.handleSEP41Transfers)
@@ -2100,7 +2078,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// detail. Static registry always serves; dynamic joins degrade.
 	s.mux.HandleFunc("GET /v1/protocols", s.handleProtocolsList)
 	s.mux.HandleFunc("GET /v1/protocols/{name}", s.handleProtocolDetail)
-	// Per-pool DEX TVL drill-down (#338): the pools + legs behind the
+	// Per-pool DEX TVL drill-down: the pools + legs behind the
 	// `tvl` block, served from the same in-process snapshot.
 	s.mux.HandleFunc("GET /v1/protocols/{name}/tvl", s.handleProtocolTVL)
 
@@ -2117,8 +2095,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/ledger/stream", s.handleLedgerStream)
 
 	// Network explorer (ADR-0038) — read the certified ClickHouse lake.
-	// Handler implementations live in internal/api/v1/explorer (D1 M1-7
-	// extraction); this is still the sole place they're mounted.
+	// Handler implementations live in internal/api/v1/explorer; this is
+	// the sole place they're mounted.
 	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
 	s.mux.HandleFunc("GET /v1/ledgers/at", s.explorerHandler.LedgerAt)
 	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
@@ -2136,7 +2114,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.underReview(s.explorerHandler.AccountState))
 	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
 	s.mux.HandleFunc("GET /v1/accounts/stats", s.explorerHandler.AccountsStats)
-	// Account-creator league table (#351). A literal segment, so it wins
+	// Account-creator league table. A literal segment, so it wins
 	// over the {g_strkey} wildcard below exactly as /stats does.
 	s.mux.HandleFunc("GET /v1/accounts/creators", s.explorerHandler.AccountCreators)
 	s.mux.HandleFunc("GET /v1/accounts/sponsors", s.explorerHandler.AccountSponsors)
@@ -2146,7 +2124,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/positions", s.explorerHandler.AccountPositions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/trades", s.explorerHandler.AccountTrades)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/activity", s.explorerHandler.AccountActivity)
-	// The sponsorship + account-creation graph for one account (#351) —
+	// The sponsorship + account-creation graph for one account —
 	// the per-account counterpart of the two league tables above, and the
 	// only surface that answers the inbound question "where did this
 	// account come from".
@@ -2196,7 +2174,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Asset catalogue.
 	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)
 	// /v1/external/assets — non-Stellar assets (fiat + reference-only coins)
-	// split off /v1/assets (LC-001). /v1/assets is Stellar-only.
+	// split off /v1/assets. /v1/assets is Stellar-only.
 	s.mux.HandleFunc("GET /v1/external/assets", s.handleExternalAssetList)
 	s.mux.HandleFunc("GET /v1/external/assets/{slug}", s.handleExternalAssetGet)
 	// ServeMux already prefers the static /v1/assets/verified over
@@ -2215,7 +2193,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the aggregator ships.
 	s.mux.HandleFunc("GET /v1/price", s.handlePrice)
 
-	// Point-in-time closed bucket at-or-before ts (board #46) +
+	// Point-in-time closed bucket at-or-before ts +
 	// multi-horizon change strip (1h/24h/7d/30d) — both back onto the
 	// same finest-CAGG point-in-time reader.
 	s.mux.HandleFunc("GET /v1/price/at", s.handlePriceAt)
@@ -2340,7 +2318,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// aggregation policy (VWAP method, outlier filters,
 	// stablecoin proxy, source classes, ADR refs). Mirrors what
 	// the explorer's /methodology HTML page documents, in a form
-	// transparency consumers can parse. R-023.
+	// transparency consumers can parse.
 	s.mux.HandleFunc("GET /v1/methodology", s.handleMethodology)
 
 	// SAC wrapper resolution — operator-config map of
@@ -2354,7 +2332,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// internal/rwa definition, with its aggregates and the rule that
 	// produced it. Identity is always (code, issuer): a code alone is
 	// not an asset here, because anyone can issue a token called
-	// anything. #352.
+	// anything.
 	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
 	s.mux.HandleFunc("GET /v1/rwa/history", s.handleRWAHistory)
 	// The hand-vetted stablecoin set (catalogue class=stablecoin with a
@@ -2382,10 +2360,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// mint a key for ANOTHER identifier; audit-logged via Options.Audit.
 	s.handleAdmin("POST /v1/admin/keys", s.handleAdminKeysCreate)
 	// Operator surface: revoke ANOTHER identifier's key — the leaked-key
-	// kill switch (C3-010, audit-2026-07-23). Self-service revoke needs
-	// the customer's own credential, so before this there was no
-	// operator path to stop a compromised key. X-Reason + audit-logged
-	// "key.revoke".
+	// kill switch. Self-service revoke needs the customer's own
+	// credential, so an operator needs this path to stop a compromised
+	// key. It requires X-Reason and audit-logs "key.revoke".
 	s.handleAdmin("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
 	// Operator surface: per-account tier + status + rate-limit /
 	// monthly-quota overrides (admin Phase 1.5). Same TierOperator gate as
@@ -2402,8 +2379,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.handleAdmin("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
 	s.handleAdmin("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
 	s.handleAdmin("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
-	// Retired (INV-0907): same 410 for every method/body so the route
-	// can never again distinguish a known email from a new one.
+	// Retired: it returns the same 410 for every method and body, so the
+	// route cannot distinguish a known email from a new one.
 	s.handlePublic("POST /v1/signup", s.handleSignupRetired)
 	// Open registration — the curl-first agent onboarding path:
 	// creates a free-tier platform account + first API key in one
@@ -2427,7 +2404,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	if s.DashboardKeys != nil {
 		s.DashboardKeys.Mount(s.mux, s.publicRoutes)
 	}
-	// Dashboard webhook-management routes (F-1270). Same
+	// Dashboard webhook-management routes. Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.DashboardWebhooks != nil {
 		s.DashboardWebhooks.Mount(s.mux, s.publicRoutes)
@@ -2464,8 +2441,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// where indexable content lives, with their own robots.txt
 	// directives. Without this handler Cloudflare's auto-managed
 	// robots.txt is served on GET but the API origin returns 404
-	// on HEAD — flagging the inconsistency is what surfaced this
-	// gap in the 2026-05-09 audit.
+	// on HEAD.
 	s.mux.HandleFunc("GET /robots.txt", s.handleRobotsTxt)
 
 	// /.well-known/security.txt — RFC 9116 disclosure metadata.
@@ -2478,9 +2454,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// /errors/{slug} — dereferenceable RFC 9457 (7807) problem `type`
 	// URIs. Every problem+json response we emit carries
 	// type="https://api.stellarindex.io/errors/<slug>", and RFC 9457 says
-	// that URI SHOULD resolve to documentation of the error. Site-audit S6:
-	// all ~179 of them 404'd — i.e. we published dead documentation links at
-	// exactly the moment an integrator is debugging a failure. This serves a
+	// that URI SHOULD resolve to documentation of the error; a 404 there is a
+	// dead documentation link at exactly the moment an integrator is
+	// debugging a failure. This serves a
 	// self-describing page (the slug, humanised, plus a pointer at the full
 	// reference) so the type is dereferenceable without maintaining 179
 	// hand-written docs.
@@ -2501,7 +2477,7 @@ type healthResponse struct {
 	Checks []checkResult `json:"checks,omitempty"`
 	// StatusRoot points consumers at /v1/status for the rich
 	// rollup that covers ingest lag, supply, oracle freshness,
-	// and per-pair SLA latency — F-1210 (codex audit-2026-05-12).
+	// and per-pair SLA latency.
 	// Static "/v1/status" today; surfaced here so a probe
 	// consumer following only /healthz / /readyz can still find
 	// the SLA-truth endpoint without out-of-band knowledge.
@@ -2519,10 +2495,9 @@ type checkResult struct {
 // as the process is running + mux is serving. Does NOT touch the
 // database or Redis — those are the readiness probe's job.
 //
-// F-1210 (codex audit-2026-05-12): /healthz and /readyz are
-// deliberately scoped to the serving-plane (process, postgres,
-// redis). They do NOT report ingest lag, supply state, oracle
-// freshness, or per-pair SLA latency. The rich rollup lives at
+// /healthz and /readyz are deliberately scoped to the serving-plane
+// (process, postgres, redis). They do NOT report ingest lag, supply
+// state, oracle freshness, or per-pair SLA latency. The rich rollup lives at
 // `/v1/status`, which aggregates Prometheus-backed signals. The
 // scoping is intentional: liveness probes (k8s, systemd) must
 // not flap when a backfill stalls or when one source goes silent;
@@ -2546,20 +2521,18 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // check. The k8s liveness-probe timeout is typically 1s — blowing
 // past it flaps the pod.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	// Single-flight + 1s result cache (inventory #26, audit 2026-08-03:
-	// /v1/readyz is unauthenticated and unlimited — LB probes must never
-	// be throttled — but every call fanned Pings across all checkers,
-	// each holding DB pool slots up to 2s, so unauthenticated spam could
-	// exhaust the shared pool, r1-confirmed). Concurrent callers now
-	// share ONE check round per second. A readiness answer up to 1s old
-	// is at least as truthful as a point-in-time probe.
+	// Single-flight + 1s result cache: /v1/readyz is unauthenticated and
+	// unlimited (LB probes must never be throttled), and every round fans
+	// Pings across all checkers, each holding DB pool slots up to 2s, so
+	// uncached unauthenticated spam could exhaust the shared pool.
+	// Concurrent callers share ONE check round per second. A readiness
+	// answer up to 1s old is at least as truthful as a point-in-time probe.
 	//
 	// readyzMu is held only to read/write the cache and flight fields,
-	// never across the check round itself (GH-587): the round used to
-	// run under the lock, so every queued caller — on an unauthenticated,
-	// rate-limit-exempt route — blocked on it for up to the 2s check
-	// budget. The round now runs detached in fillReadyz; callers that
-	// arrive while one is in flight wait on its done channel and can
+	// never across the check round itself: under the lock, every queued
+	// caller on an unauthenticated, rate-limit-exempt route would block
+	// for up to the 2s check budget. The round runs detached in
+	// fillReadyz; callers that arrive while one is in flight wait on its done channel and can
 	// abandon it via their own request context instead of the mutex.
 	s.readyzMu.Lock()
 	if time.Since(s.readyzAt) < time.Second && s.readyzBody != nil {
@@ -2602,7 +2575,7 @@ func writeReadyz(w http.ResponseWriter, code int, body []byte) {
 // fillReadyz runs one readyz check round and publishes the result,
 // releasing the single-flight gate on every exit including a panic —
 // a flight left set would wedge every later /v1/readyz behind a
-// channel nobody closes (the GH-587 class).
+// channel nobody closes.
 func (s *Server) fillReadyz(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -2681,11 +2654,10 @@ func (s *Server) computeReadyz() (int, []byte) {
 			results[i] = r // distinct indices — no mutex needed
 
 			// Publish the outcome as an alertable gauge. The check
-			// already runs on every readiness round; before this, its
-			// result existed only as JSON on /v1/readyz, so nothing
-			// could page on a dependency going away (#371 F2 —
-			// ClickHouse is the one dependency on r1 with no exporter
-			// of its own, and it is the raw lake).
+			// already runs on every readiness round, but as JSON on
+			// /v1/readyz alone nothing could page on a dependency going
+			// away. ClickHouse, the raw lake, has no exporter of its own
+			// on r1.
 			up := 0.0
 			if r.OK {
 				up = 1
@@ -2695,11 +2667,10 @@ func (s *Server) computeReadyz() (int, []byte) {
 	}
 	wg.Wait()
 
-	// F-1275 (codex audit-2026-05-13): split fail-cases into
-	// critical (503) vs non-critical (200 with status="degraded").
-	// Pre-wave-110 a Redis outage would 503 readyz and HAProxy
-	// would drain every healthy API backend even though Timescale
-	// fallback kept the customer-facing surface serving correctly.
+	// Split fail-cases into critical (503) vs non-critical (200 with
+	// status="degraded") so a Redis outage cannot 503 readyz and make
+	// HAProxy drain every healthy API backend while the Timescale
+	// fallback keeps the customer-facing surface serving.
 	criticalFailed := false
 	anyFailed := false
 	for i, r := range results {
@@ -2797,32 +2768,30 @@ type lakeHealth struct {
 // §7.3 / ADR-0050). /v1/readyz deliberately treats ClickHouse as
 // NON-critical so a lake outage degrades rather than un-readies the
 // pricing surface — but that same 200 keeps a lake-dead region in a load
-// balancer's pool for the ~21 lake-backed routes it can no longer serve
-// (the 2026-08-20 multi-region audit's worst explorer-failover gap).
+// balancer's pool for the ~21 lake-backed routes it can no longer serve.
 // This endpoint is the complement: 200 iff the registered ClickHouse
 // checker pings; 503 when it fails OR when no lake is wired at all — a
 // lake-less deployment must never receive lake-route traffic, so absent
 // fails closed. Point lake-route LB monitors here; leave pricing
 // monitors on /v1/readyz.
 //
-// Single-flight + 1s result cache (#310, audit 2026-08-29). #266 gave
-// this route readyz's infra exemptions — no auth, no anonymous rate
-// limit, correct for LB probes — but readyz's safety under those
-// exemptions comes from its single-flight cache, which this route
-// lacked: EVERY anonymous request ran a fresh `LakeTipLedger` query
-// against ClickHouse under a 5s timeout, so unmetered concurrent probes
-// were an amplifier pointed at the lake, worst exactly when the lake was
-// already struggling. Concurrent callers now share ONE ping round per
-// second, exactly like handleReadyz; a liveness answer up to 1s old is
-// at least as truthful as a point-in-time probe.
+// Single-flight + 1s result cache. This route shares readyz's infra
+// exemptions (no auth, no anonymous rate limit, correct for LB probes),
+// which are only safe behind a single-flight cache: without one, EVERY
+// anonymous request would run a fresh `LakeTipLedger` query against
+// ClickHouse under a 5s timeout, making unmetered concurrent probes an
+// amplifier pointed at the lake, worst exactly when the lake is already
+// struggling. Concurrent callers share ONE ping round per second,
+// exactly like handleReadyz; a liveness answer up to 1s old is at least
+// as truthful as a point-in-time probe.
 //
 // livezLakeMu is held only to read/write the cache and flight fields,
-// never across the ping round (GH-587): the round used to run under the
-// lock, so every queued caller on this unauthenticated, rate-limit-exempt
-// route blocked on it for up to the 5s ping budget against a 1s TTL —
-// during exactly the lake outage the route exists to surface. The round
-// now runs detached in fillLivezLake; queued callers wait on its done
-// channel and can abandon it via their own request context.
+// never across the ping round: under the lock, every queued caller on
+// this unauthenticated, rate-limit-exempt route would block for up to
+// the 5s ping budget against a 1s TTL, during exactly the lake outage
+// the route exists to surface. The round runs detached in
+// fillLivezLake; queued callers wait on its done channel and can
+// abandon it via their own request context.
 func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	s.livezLakeMu.Lock()
 	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {
@@ -2857,7 +2826,7 @@ func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 
 // fillLivezLake runs one lake-ping round and publishes the result,
 // releasing the single-flight gate on every exit including a panic —
-// mirrors fillReadyz (GH-587).
+// mirrors fillReadyz.
 func (s *Server) fillLivezLake(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -2975,12 +2944,12 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleErrorDoc serves a dereferenceable page for one RFC 9457 problem
-// `type` slug (site-audit S6). The slugs are self-descriptive
-// (account-not-found, rate-limited, invalid-max-age), so a page that echoes
-// the slug humanised plus a link to the full reference is genuinely useful
-// to an integrator who followed the `type` URI from an error body — far
-// better than the 404 they previously hit. Content-negotiated: JSON for API
-// clients, a minimal HTML page for a browser.
+// `type` slug. The slugs are self-descriptive (account-not-found,
+// rate-limited, invalid-max-age), so a page that echoes the slug humanised
+// plus a link to the full reference is genuinely useful to an integrator
+// who followed the `type` URI from an error body — far better than a 404.
+// Content-negotiated: JSON for API clients, a minimal HTML page for a
+// browser.
 func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
 	// The slug is URL-path input; constrain it to the closed kebab-case
 	// charset every real error type uses. Anything else can't be one of
@@ -2999,7 +2968,7 @@ func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	human := humaniseErrorSlug(slug)
 	typeURI := "https://api.stellarindex.io/errors/" + slug
-	// This handler content-negotiates on Accept (#1070): a shared cache
+	// This handler content-negotiates on Accept: a shared cache
 	// keying solely on the URL would happily serve one representation to a
 	// client that asked for the other for the full max-age=3600 window.
 	w.Header().Add("Vary", "Accept")
@@ -3054,7 +3023,7 @@ var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // API actually emits (every literal problem-type URI across the non-test
 // Go sources). A slug outside this set matches errorSlugRE's charset but
 // names no real error type — a retired or mistyped one must not be
-// reflected as a live 200 page (RLT-218).
+// reflected as a live 200 page.
 var knownErrorSlugs = map[string]struct{}{
 	"account-activity-timeout":        {},
 	"account-closed":                  {},

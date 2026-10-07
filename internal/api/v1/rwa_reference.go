@@ -698,7 +698,7 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	//nolint:gosec,contextcheck // G118 / contextcheck:
 	// intentional detached fill — the waking caller's own ctx must not
 	// abort a fill every other single-flighted caller depends on; see
-	// fillRWAReferences's doc comment (GH-587).
+	// fillRWAReferences's doc comment.
 	go s.fillRWAReferences(done)
 
 	select {
@@ -718,15 +718,16 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 // fillRWAReferences runs the oracle-stream read and unconditionally
 // releases the single-flight gate, even on panic, before returning.
 //
-// It used to run inline on the waking caller's ctx with the release at
-// the tail of a straight-line function: a panic out of LatestOracleStreams
-// or rwaReferenceSnapshotFrom (recovered one frame up, by net/http's
-// per-request handler) left rwaRefFlight pointing at a channel nobody
-// would ever close, so every later call queued on it until its own
-// deadline and /v1/rwa/assets never served a real answer again for the
-// life of the process (GH-587). Detached onto its own budget for the same
-// reason oracleFetchBudget is: the fill is shared by every queued caller,
-// so one caller's disconnect must not abort it for the rest.
+// If it ran inline on the waking caller's ctx with the release at the
+// tail of a straight-line function, a panic out of LatestOracleStreams or
+// rwaReferenceSnapshotFrom (recovered one frame up, by net/http's
+// per-request handler) would leave rwaRefFlight pointing at a channel
+// nobody would ever close, so every later call would queue on it until
+// its own deadline and /v1/rwa/assets would never serve a real answer
+// for the life of the process. It is detached onto its own budget for
+// the same reason oracleFetchBudget is: the fill is shared by every
+// queued caller, so one caller's disconnect must not abort it for the
+// rest.
 func (s *Server) fillRWAReferences(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -822,10 +823,10 @@ func rwaApplyReference(
 		// rule /v1/assets uses ([listingEntryIn]): the `CODE-GISSUER`
 		// id first, then the Stellar Asset Contract address derived
 		// from it. The directory publishes each asset under ONE of
-		// those forms with no pattern (measured 2026-09-15: EURC, AQUA
-		// and SHX by classic id; USDC, PYUSD and USDT0 by SAC only), so
-		// a classic-only key refused a SAC-listed member as unbound
-		// while the snapshot in hand named its address (issue #514).
+		// those forms with no pattern (measured: EURC, AQUA and SHX by
+		// classic id; USDC, PYUSD and USDT0 by SAC only), so a
+		// classic-only key would refuse a SAC-listed member as unbound
+		// while the snapshot in hand names its address.
 		//
 		// Never the code: this network carries twenty-six assets coded
 		// BENJI and one of them is Franklin Templeton's. A code-keyed
@@ -853,10 +854,10 @@ func rwaApplyReference(
 		//
 		// Reading it here is not a new kind of evidence, it is the
 		// SAME evidence reaching a row the surface was not offering it
-		// to. Measured 2026-09-16: the directory held 33 recognised
-		// classic rows, every one of them priced, against 17 contract
-		// rows — so two-thirds of it was being read by nothing while
-		// this arm reported rows as unpriced beside it.
+		// to. Measured on r1, the directory held 33 recognised classic
+		// rows, every one of them priced, against 17 contract rows — so
+		// two-thirds of it would otherwise be read by nothing while rows
+		// beside it were reported as unpriced.
 		rwaApplyListingReference(a, listing, notFound, now)
 		return
 	}

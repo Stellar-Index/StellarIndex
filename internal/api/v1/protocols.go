@@ -17,9 +17,9 @@ import (
 // protocolDetailTTL is the freshness horizon of a cached
 // /v1/protocols/{name} detail. Past it the entry is NOT dropped: it is
 // served STALE (flags.stale + analytics.status="stale") while a detached
-// single-flight rebuild runs — a previously-built page must never blank
-// back to a cold 503 (2026-07-31: under replay load every on-demand
-// build died at the request ceiling and pages lost their visual suites).
+// single-flight rebuild runs — an already-built page must never blank
+// back to a cold 503 (under replay load an on-demand build can die at
+// the request ceiling and the page would lose its visual suites).
 // 20 minutes pairs with the prewarm sweep in cmd/stellarindex-api (a
 // full registry × windows sweep measured ~3–6 min of build work; the
 // worker re-sweeps 10 min after each sweep ends, so entries are
@@ -29,7 +29,7 @@ import (
 const protocolDetailTTL = 20 * time.Minute
 
 // protocolDetailRefreshTimeout bounds one detached detail rebuild.
-// Measured on r1 UNDER replay load (2026-07-31, upper bounds): the
+// Measured on r1 UNDER replay load (upper bounds): the
 // bespoke tier is ~1.9s for soroswap 90d (raw-KPI 0.96s + window-KPI
 // 0.48s dominant) and ~0.4s for cctp; the lake-analytics fills are
 // seconds-class. 90s is generous headroom for contention spikes while
@@ -56,11 +56,11 @@ func (s *Server) protoDetailInitLocked() {
 //   - fresh entry → served as-is (stale=false).
 //   - entry past protocolDetailTTL → served immediately (stale=true)
 //     while ONE detached rebuild runs on its own budget — a
-//     previously-built page is never blanked by a slow/failing rebuild.
+//     built page is never blanked by a slow/failing rebuild.
 //   - never built → wait for the detached single-flight build up to the
 //     caller's deadline. The build itself is NOT bound to that deadline
-//     (the 2026-07-31 failure: builds bound to request contexts died
-//     under replay load and the cache never filled), so a request that
+//     (builds bound to request contexts die under replay load and the
+//     cache never fills), so a request that
 //     times out 503s but the build completes and the retry lands warm.
 //
 // The key is the full request-shape key from protocolDetailCacheKey —
@@ -108,10 +108,9 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 //     with rctx.Err() still nil) — is cached only when no HEALTHY entry
 //     exists (registry-only beats 503 for a stone-cold key, and a
 //     degraded entry may be refreshed by another degraded build). A
-//     previously-good entry is NEVER displaced by a degraded build:
-//     before this guard covered fast failures, one prewarm sweep during
-//     a ClickHouse outage blanked every protocol page's analytics while
-//     stamping the entries fresh.
+//     good entry is NEVER displaced by a degraded build: otherwise one
+//     prewarm sweep during a ClickHouse outage would blank every
+//     protocol page's analytics while stamping the entries fresh.
 //
 // Every rebuild (request-kicked or prewarm) observes the paired
 // stellarindex_protocol_detail_refresh_{total,duration_seconds} metrics.
@@ -128,11 +127,11 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		// protoDetailRefreshLocked keeps returning the dead channel to
 		// every later request and to the prewarm sweep, each of which
 		// then waits on a close that will never come, and no rebuild of
-		// that protocol's page can ever start again.
+		// that protocol's page can ever start.
 		//
 		// A panicking build counts as "degraded", not "ok": it produced
 		// no page, so the entry-displacement rule below must not run and
-		// a previously-HEALTHY cached page must survive. That is why the
+		// an already-HEALTHY cached page must survive. That is why the
 		// guard sits here rather than around build alone.
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -287,7 +286,7 @@ type ProtocolActivityReader interface {
 }
 
 // protocolFastActivityReader is the OPTIONAL capability the daily
-// pre-aggregation adds (BACKLOG #43). The handler type-asserts for it
+// pre-aggregation adds. The handler type-asserts for it
 // and probes availability (caching only definitive answers — see
 // fastActivity); deployments without the contract_events_daily table
 // stay on the raw scans transparently.
@@ -394,7 +393,7 @@ type ProtocolStatsReader interface {
 }
 
 // SoroswapPairsReader exposes the soroswap_pairs registry — Soroswap's
-// equivalent of protocol_contracts (its pair set predates the unified
+// equivalent of protocol_contracts (its pair set is older than the unified
 // registry and carries token identities the decoder needs). Production
 // wiring is timescale.Store.LoadSoroswapPairRegistry. Nil reader →
 // the soroswap contract list/count serves empty.
@@ -465,7 +464,7 @@ type ProtocolsView struct {
 	// figure is TVLTotal, which is a different thing entirely.
 	TotalProtocols int `json:"total_protocols"`
 	// TVLTotal is the reconciled headline pooled-liquidity total across
-	// the protocols carrying a `tvl` block on this same response (#338).
+	// the protocols carrying a `tvl` block on this same response.
 	// Absent on cold start and when no protocol has a TVL derivation.
 	TVLTotal *DEXTVLTotalView `json:"tvl_total,omitempty"`
 	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
@@ -624,12 +623,12 @@ const (
 )
 
 // ProtocolAnalyticsStatus makes analytics degradation explicit on the
-// wire. Before it, a failed bespoke build or lake fill silently omitted
-// the block / zeroed events fields — indistinguishable client-side from
-// a protocol with genuinely no activity (the 2026-07-31 replay-load
-// failure). Clients: "ok" → trust the analytics; "stale" → real data, a
-// refresh is in flight (AsOf says how old); "unavailable" → absence
-// means degraded, render a hint, not a zero.
+// wire. Without it, a failed bespoke build or lake fill would silently
+// omit the block / zero events fields — indistinguishable client-side
+// from a protocol with genuinely no activity. Clients: "ok" → trust the
+// analytics; "stale" → real data, a refresh is in flight (AsOf says how
+// old); "unavailable" → absence means degraded, render a hint, not a
+// zero.
 type ProtocolAnalyticsStatus struct {
 	// Status is ok | stale | unavailable.
 	Status string `json:"status"`
@@ -767,7 +766,7 @@ func protocolsCoverageNote(omitted []string) string {
 // deliberate — each admitted window is a distinct cached scan over the
 // projected tables on an unauthenticated endpoint, so arbitrary values
 // would be an amplification surface (the same reasoning as the explorer
-// contracts ladder, C3-009). ok=false ⇒ a problem+json 400 was written.
+// contracts ladder). ok=false ⇒ a problem+json 400 was written.
 func protocolBespokeWindowDays(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("days")
 	switch raw {
@@ -872,9 +871,8 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 // completeness verdict can each fail independently of the lake/bespoke
 // halves (a roster count read, the stats union, or the completeness
 // snapshot list can error while the rest of the build is healthy), so
-// their health feeds the same status instead of degrading silently — a
-// verdict-read error used to be indistinguishable from "no snapshot
-// exists" (CA2-A06-correct-5).
+// their health feeds the same status instead of degrading silently, so a
+// verdict-read error stays distinguishable from "no snapshot exists".
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
@@ -976,10 +974,10 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 // the base roster so a contract already present isn't doubled.
 // ok=false means the read failed and the returned roster is a swallowed-error
 // EMPTY, not a true empty — the caller must fold it into analytics.status
-// rather than let a failed roster read build a "ok" detail page (CA2-A06-harden-3:
-// a roster read error previously vanished into the same empty-roster shape as
-// a genuinely contract-less protocol, so buildProtocolDetail stamped the page
-// "ok" and the SWR cache overwrote a healthy cached entry with contract_count 0).
+// rather than let a failed roster read build an "ok" detail page (otherwise
+// a roster read error looks like a genuinely contract-less protocol, the page
+// is stamped "ok" and the SWR cache overwrites a healthy cached entry with
+// contract_count 0).
 func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, bool) {
 	rows, err := s.rosterErr(ctx, meta)
 	if err != nil {
@@ -1117,8 +1115,8 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// The three lake reads are independent (~5s each on a cold cache) and
 	// write disjoint fields of the view (ActivitySeries+EventsTotal /
 	// EventBreakdown / Contracts[].Events), so run them concurrently rather
-	// than serially — cutting the cold-path from ~15s to ~5s (audit
-	// 2026-06-19 item 8; the cache + prewarm make repeat hits instant, this
+	// than serially — cutting the cold-path from ~15s to ~5s (the
+	// cache + prewarm make repeat hits instant, this
 	// keeps the detached rebuild fast). All three share ONE plan (one tip
 	// read, one fast-vs-raw decision) so the series and breakdown can't
 	// split across the fast/raw sources and de-reconcile. The breakdown's
@@ -1134,11 +1132,11 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	// carries: the analytics block is marked incomplete and must not
 	// displace a healthy cached entry.
 	//
-	// Series and breakdown run as ONE fill, not two: each used to try its
-	// own fast query and fall back to raw independently, so a fast
+	// Series and breakdown run as ONE fill, not two: if each tried its
+	// own fast query and fell back to raw independently, a fast
 	// breakdown timeout could pair a fast (day-grain) series with a raw
 	// (ledger-window) breakdown — different windows from the same build,
-	// silently breaking sum(EventBreakdown)==EventsTotal (CA2-A06-correct-2).
+	// silently breaking sum(EventBreakdown)==EventsTotal.
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-protocol-series-breakdown-fill")
@@ -1203,13 +1201,12 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 // two windows differ (day-grain vs ledger-window) and the wire's
 // sum(EventBreakdown)==EventsTotal invariant assumes one shared window.
 //
-// Before this, protocolBreakdown and protocolSeries each tried fast and
-// fell back to raw independently: a fast breakdown timeout with a
-// succeeding fast series left the breakdown on the ~104-day raw window
-// while the series stayed on the ~90-day fast window, so the typed
-// breakdown sum could exceed EventsTotal without either fill reporting a
-// failure (CA2-A06-correct-2). Now EITHER fast query erroring forces BOTH
-// onto raw together.
+// EITHER fast query erroring forces BOTH onto raw together. If
+// protocolBreakdown and protocolSeries each fell back independently, a
+// fast breakdown timeout with a succeeding fast series would leave the
+// breakdown on the ~104-day raw window while the series stayed on the
+// ~90-day fast window, so the typed breakdown sum could exceed
+// EventsTotal without either fill reporting a failure.
 //
 // The breakdown groups by topic[0]'s denormalized symbol (topic_0_sym),
 // which the lake only populates when topic[0] is a plain Symbol SCVal.
@@ -1331,7 +1328,7 @@ func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protoc
 }
 
 // protocolLedgerAtCloseTimeReader is the optional capability behind an
-// accurate window boundary (CA2-A06-correct-1): a ProtocolActivityReader
+// accurate window boundary: a ProtocolActivityReader
 // that can resolve a ledger sequence's close_time. *clickhouse.ExplorerReader
 // (the production wiring) satisfies it; a reader that doesn't degrades to
 // the theoretical-cadence approximation below.
@@ -1421,7 +1418,7 @@ func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
 }
 
 // protocolTVLsAndTotal reads the per-protocol TVL snapshot together with
-// the reconciled headline total from the SAME refresh cycle (RLT-235):
+// the reconciled headline total from the SAME refresh cycle:
 // reading them via two separate calls (Snapshot() then Total(), each
 // its own critical section) can straddle a concurrent Refresh() and
 // pair one cycle's per-protocol figures with a different cycle's total.
@@ -1468,7 +1465,7 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 // shape [Completeness]'s field doc describes) and a successful read;
 // ok=false is reserved for a read ERROR, so a caller can distinguish
 // "genuinely no snapshot" from "the snapshot read failed" instead of both
-// collapsing to the identical nil map (CA2-A06-correct-5) — the same
+// collapsing to the identical nil map — the same
 // split protocolEvents24h already makes for its own reader. stale is
 // independent of ok: it is false whenever there is nothing to be stale
 // about (nil reader or a failed read), true only when a successful
@@ -1529,13 +1526,12 @@ func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]Proto
 // protocolContractsFromProjectionErr is the registry-empty fallback: the
 // distinct contracts from name's projected table (nil/empty when the source
 // has no per-contract table), surfacing a read error rather than swallowing
-// it. aquarius now populates here from aquarius_liquidity (2026-07-07, #91 —
-// previously read 0 pools despite being the busiest AMM); the oracles
+// it. aquarius populates here from aquarius_liquidity; the oracles
 // (band/reflector-*/redstone) populate from their pinned contracts in
-// oracle_updates via a source-scoped query (#91 — they read 0 before). Only
+// oracle_updates via a source-scoped query. Only
 // sdex is op-keyed (no contract) and truly has no roster here. This is the
 // `SELECT DISTINCT … LIMIT 5000` served-tier scan the roster-count cache
-// exists to keep off the unauthenticated request path (W1.3).
+// exists to keep off the unauthenticated request path.
 func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	ids, err := s.ProtocolContracts.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {
@@ -1551,7 +1547,7 @@ func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name st
 
 // soroswapContractsErr projects the soroswap_pairs registry into the
 // unified contract shape (pair strkey as the instance, token pair
-// attached, no factory column — the pairs table predates ADR-0035),
+// attached, no factory column — the pairs table is older than ADR-0035),
 // surfacing a read error rather than swallowing it. Nil reader → a
 // genuine empty roster (not an error).
 func (s *Server) soroswapContractsErr(ctx context.Context) ([]ProtocolContractView, error) {
@@ -1589,9 +1585,8 @@ func protocolSinceDay(sinceLedger, tip uint32) time.Time {
 // available on this deployment. The probe answer is cached only when it
 // is DEFINITIVE (table missing, or rows found) — a transient ClickHouse
 // blip on the FIRST probe must not latch the raw 12B-row scans for the
-// process lifetime (the C1-048 class; the schemaProbe in
-// internal/storage/clickhouse is the founding precedent for why a
-// sync.Once is the wrong primitive here). A non-definitive answer
+// process lifetime (the schemaProbe in internal/storage/clickhouse
+// shows why a sync.Once is the wrong primitive here). A non-definitive answer
 // degrades THIS call to the raw readers and re-probes next time.
 func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	fast, ok := s.ProtocolActivity.(protocolFastActivityReader)
@@ -1608,9 +1603,9 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 		return fast
 	}
 
-	// Unsettled: probe WITHOUT holding protocolFastMu (GH-587). A
-	// non-definitive answer never settles, so a wedged ClickHouse used
-	// to re-probe under the lock on every call, serialising every
+	// Unsettled: probe WITHOUT holding protocolFastMu. A
+	// non-definitive answer never settles, so a wedged ClickHouse would
+	// otherwise re-probe under the lock on every call, serialising every
 	// concurrent detail build's fast-vs-raw decision behind one stuck
 	// probe. Concurrent unsettled probes may race here; only a
 	// definitive answer is ever recorded, so the race costs at most a

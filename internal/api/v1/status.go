@@ -145,11 +145,10 @@ type StatusLatency struct {
 	WindowSecs int     `json:"window_secs"`
 
 	// Targets are echoed so the status page renders the same numbers the
-	// roll-up judges against. They used to live only as literals in
-	// StatusPageClient.tsx, which is how the page came to draw two red
-	// SLO bars underneath a green "All systems operational" banner
-	// (site-audit S31) — the frontend knew the targets and the roll-up
-	// did not.
+	// roll-up judges against. If they lived only as literals in
+	// StatusPageClient.tsx, the page could draw red SLO bars underneath a
+	// green "All systems operational" banner: the frontend would know the
+	// targets and the roll-up would not.
 	P95TargetMs float64 `json:"p95_target_ms"`
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
@@ -325,8 +324,8 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 // always-on supply observers (trustlines, sep41_supply, sep41_transfers,
 // sac_balances, liquidity_pools, claimable_balances) emit events but
 // carry no `enabled` config flag, because they are wired into the indexer
-// rather than configured. Measured on r1 2026-09-01, that produced a
-// public status page reading "26 / 25".
+// rather than configured. Measured on r1, that produced a public status
+// page reading "26 / 25".
 //
 // The population is every scraped stellarindex_source_enabled series,
 // whichever binary emits it: the indexer publishes the gauge for its
@@ -651,7 +650,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	// Background-service heartbeats — the services this deployment
-	// declares it runs (s.statusServices; #328).
+	// declares it runs (s.statusServices).
 	// A nil map here means "we could not look", and the wire cannot say so:
 	// heartbeatServices renders every declared service "unknown" either way,
 	// and rollupOverall turns that into "degraded". Backend-unreachable and
@@ -659,11 +658,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// reader, who sees `degraded` and reasonably concludes the indexer is
 	// sick.
 	//
-	// That is not hypothetical. Diagnosed 2026-09-08: BOTH test nets report
+	// That is not hypothetical. Diagnosed on BOTH test nets: each reports
 	// `overall: degraded` permanently while every unit is active, because
 	// neither runs Prometheus (`:9090` unreachable, unit not installed), so
 	// PrometheusStatusBackend.Heartbeats always errors. On r1 the backend
-	// works and this path never shows, which is why it went unexplained.
+	// works and this path never shows.
 	//
 	// The conservatism is deliberate and correct — refusing to claim "ok"
 	// when nothing is known beats a false all-clear. What is missing is the
@@ -699,15 +698,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	out.IncidentsStatus = incidentsStatusFor(incidents, incErr)
 
 	// Compute overall from the worst-case per-service state and the
-	// backend-canary signals. F-0055: previously any service in
-	// "unknown" silently rolled up to overall="ok" because we only
-	// degraded inside the success branches of each loop. Now the
-	// rollup explicitly handles the unknown floor — if every
-	// service is unknown, overall is "unknown" (not "ok").
+	// backend-canary signals. The rollup explicitly handles the unknown
+	// floor — if every service is unknown, overall is "unknown" (not
+	// "ok").
 	backendErr := hbErr != nil || latErr != nil || freErr != nil || incErr != nil
 	pageFiring := incErr == nil && incidents.PageCount > 0
 	// A breached latency SLO is degradation by definition — see
-	// rollupOverall's godoc (site-audit S31).
+	// rollupOverall's godoc.
 	latencyBreached := latErr == nil && out.Latency.breached()
 	out.Overall = rollupOverall(out.Services, backendErr, pageFiring, latencyBreached)
 
@@ -737,9 +734,9 @@ func unknownServices(names []string) []StatusService {
 // map being nil because the query failed — leaves it "unknown", which is
 // partial visibility rather than an all-clear.
 //
-// Only the declared services are graded (#328): a service this deployment
+// Only the declared services are graded: a service this deployment
 // does not run has no heartbeat by design, and reporting it forever
-// "unknown" pinned `overall` at "degraded" on every lean test net.
+// "unknown" would pin `overall` at "degraded" on every lean test net.
 func heartbeatServices(names []string, hb map[string]time.Time) []StatusService {
 	now := time.Now().UTC()
 	out := make([]StatusService, 0, len(names))
@@ -774,21 +771,21 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 //     OR services are in a mixed known state (e.g. one ok + one
 //     unknown — partial visibility is honest degradation, not "ok").
 //
-// The latency input is site-audit S31: the roll-up previously judged
-// only service LIVENESS (api/indexer/aggregator "last seen Ns ago"),
-// so it reported "All systems operational · Every service is reporting
-// healthy" while the very same response carried p95 840ms against a
-// 200ms target and p99 2096ms against 500ms — both rendered in red
-// directly beneath the green banner. A status page that contradicts
-// its own panels is worse than no status page.
+// The latency input exists because a roll-up that judges only service
+// LIVENESS (api/indexer/aggregator "last seen Ns ago") reported "All
+// systems operational · Every service is reporting healthy" while the
+// very same response carried p95 840ms against a 200ms target and p99
+// 2096ms against 500ms — both rendered in red directly beneath the green
+// banner. A status page that contradicts its own panels is worse than no
+// status page.
 // TICKET incidents are deliberately NOT an input, and the omission is worth
 // stating because the payload invites the question: `incidents.active_count`
 // sits in the same response as `overall`, so a reader can see "ok" beside 8
-// active incidents. Measured on r1 2026-09-08: overall ok, 30 ticket + 1
+// active incidents. Measured on r1: overall ok, 30 ticket + 1
 // informational alerts firing, 0 page. That is the rule working — `page` is
 // the severity that means customers are affected, `ticket` means someone
-// should look during working hours — but it is one step from the S31 finding
-// above, where a green banner sat over red panels. If `overall` is ever meant
+// should look during working hours — but it is one step from the latency case
+// above, where a green banner sits over red panels. If `overall` is ever meant
 // to reflect open tickets, that is a change to what "ok" PROMISES on a public
 // surface, not a tuning knob; it belongs in a decision, not a patch.
 //
@@ -801,9 +798,8 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 //
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than
-//     a definite negative one. F-0055: this branch was missing
-//     pre-fix, which caused overall=ok during full metrics-backend
-//     outages.
+//     a definite negative one. Without this branch, a full
+//     metrics-backend outage would read overall=ok.
 //   - "ok": every service is ok and no canary signal trips.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool

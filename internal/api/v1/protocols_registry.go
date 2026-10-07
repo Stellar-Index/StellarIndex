@@ -178,14 +178,14 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		EventKinds: []string{
 			"defindex.strategy.deposit", "defindex.strategy.withdraw",
 			// strategy.harvest — strategy yield realised into the vault
-			// (audit 2026-08-04 finding 4; direction=harvest, migration
-			// 0138). The decoder emits it and the sink persists it to
-			// defindex_flows, so it is part of this source's decoded
+			// (direction=harvest, migration 0138). The decoder emits it
+			// and the sink persists it to defindex_flows, so it is part
+			// of this source's decoded
 			// vocabulary and must be listed here for the API to report it.
 			"defindex.strategy.harvest",
 			"defindex.vault.deposit", "defindex.vault.withdraw",
-			// vault.dfees — per-asset protocol-fee distributions (W5.2;
-			// body shape proven from real lake blobs 2026-08). One
+			// vault.dfees — per-asset protocol-fee distributions
+			// (body shape proven from real lake blobs). One
 			// decoded event per distributed_fees entry, persisted to
 			// defindex_fees (migration 0146).
 			"defindex.vault.dfees",
@@ -221,7 +221,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		Description: "Band Protocol oracle — reference rates observed from relay()/force_relay() invocations (the contract emits no events).",
 		// Band's first on-chain write. Not discoverable from contract_events —
 		// Band emits no events — so this comes from contract_instance_changes
-		// and the WASM audit; see reconciliation_catalogue.go (#361/#363).
+		// and the WASM audit; see reconciliation_catalogue.go.
 		GenesisLedger: 50_842_736,
 		EventKinds:    []string{"band.update"},
 	},

@@ -32,8 +32,8 @@ func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 // (e.g. CAPTCHA, proof-of-work, federated denylist) without
 // touching the global path.
 //
-// F-1232 (audit-2026-05-12): the global anonymous bucket allows
-// 60/min per IP — plenty for browsing the public surfaces but
+// The global anonymous bucket allows 60/min per IP — plenty for
+// browsing the public surfaces but
 // 60 signups/min/IP is also 3,600 keys/hour per IP, well above
 // any legitimate signup rate. Tightening here closes the
 // bulk-mint vector without affecting other anonymous traffic.
@@ -46,7 +46,7 @@ type SignupIPThrottle interface {
 	CheckIP(ctx context.Context, ip string) error
 }
 
-// signupIPThrottleOK runs the F-1232 per-IP signup throttle check.
+// signupIPThrottleOK runs the per-IP signup throttle check.
 // Returns true when the request should proceed, false when the
 // handler has already written the response (429 on quota
 // exhaustion). Falls open on Redis errors so a transient backend
@@ -83,7 +83,7 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 		// hint matches [auth.DefaultSignupThrottleDwellTime];
 		// clients that obey Retry-After will naturally space
 		// retries far enough apart to ride out a typical Redis
-		// fail-over. F-0049 / F-0149 (audit-2026-05-27).
+		// fail-over.
 		w.Header().Set("Retry-After", "30")
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)

@@ -12,14 +12,14 @@ import (
 // carry a SEP-1 attestation down to the assets served.
 //
 // WHY IT EXISTS. The served set is small by construction and the
-// population it is drawn from is not. Measured on production
-// 2026-09-10, GET /v1/rwa/assets served six assets and a refusal tally
-// of three, over a table holding 59,303 issuer accounts, 44,376 of them
-// with a home_domain and 14,635 with a fetched SEP-1 payload. Nothing
-// in the response distinguished "the network holds six real-world
-// assets" from "the pipeline discarded fourteen thousand candidates
-// without saying so", and the only way to tell the two apart was a
-// database session.
+// population it is drawn from is not. Measured on production, GET
+// /v1/rwa/assets served six assets and a refusal tally of three, over a
+// table holding 59,303 issuer accounts, 44,376 of them with a
+// home_domain and 14,635 with a fetched SEP-1 payload. Without the
+// funnel nothing in the response distinguishes "the network holds six
+// real-world assets" from "the pipeline discarded fourteen thousand
+// candidates without saying so", and the only way to tell the two apart
+// is a database session.
 //
 // A refusal tally cannot close that gap on its own: it reports
 // requirements that were EVALUATED, and the stages that discard most of
@@ -420,14 +420,12 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 	// the issuer's own publication: dead, parked, or serving no SEP-1
 	// document. Nobody here can fetch a file that is not there.
 	//
-	// They were published as one bucket under the operator's name until
-	// the drain that emptied the first one proved how few of them it
-	// was: measured on production 2026-09-12, 40,838 domain-bearing
-	// issuers held no payload and exactly ONE of them had never been
-	// attempted. Naming all 40,838 an unfetched backlog overstated both
-	// this index's reachable coverage and the operator's share of the
-	// gap, on a page whose whole purpose is saying who can move a
-	// number.
+	// They are split because the second dominates: measured on
+	// production, 40,838 domain-bearing issuers held no payload and
+	// exactly ONE of them had never been attempted. Naming all of them an
+	// unfetched backlog would overstate both this index's reachable
+	// coverage and the operator's share of the gap, on a page whose
+	// whole purpose is saying who can move a number.
 	//
 	// What the split cannot say is WHY a reached domain served nothing:
 	// no per-attempt outcome is stored, so a 404, a dead name, a TLS
