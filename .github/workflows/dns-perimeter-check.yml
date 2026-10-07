@@ -1,6 +1,6 @@
 name: dns-perimeter-check
 
-# DNS / email perimeter drift tripwire (#334).
+# DNS / email perimeter drift tripwire.
 #
 # The email perimeter lives OUTSIDE this repo, in Cloudflare DNS, where
 # none of the repo's gate machinery can see it. That is precisely how the

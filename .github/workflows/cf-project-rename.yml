@@ -1,8 +1,6 @@
 ---
-# One-shot: retire the `stellarindex-showcase` CF Pages project name
-# (task #23 from the 2026-07-02 principal taskboard — recorded until
-# now only as a comment in explorer-deploy.yml). Cloudflare Pages
-# projects cannot be renamed in place, so this is create-new + move
+# One-shot: retire the `stellarindex-showcase` CF Pages project name.
+# Cloudflare Pages projects cannot be renamed in place, so this is create-new + move
 # custom domains + repoint DNS, staged so an operator can verify the
 # new project serves BEFORE the outward-facing domain move:
 #
@@ -49,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
-      # deployment-authorization (audit-2026-07-23): this job holds
+      # This job holds
       # CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID and (in the
       # `cutover` and `delete-old` stages) detaches/reattaches the
       # apex domain and deletes a Pages project — real production DNS
@@ -67,8 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Assert the production approval gate is configured
-        # deploy-approval-gate (audit-2026-07-23, CID-20 / deployment-
-        # authorization): mirrors deploy.yml's and explorer-deploy.yml's
+        # Deploy-approval gate: mirrors deploy.yml's and explorer-deploy.yml's
         # preflight — refuse to run any stage while the declared
         # environment has no `required_reviewers` rule. Runs before any
         # Cloudflare API call, in every stage (create-and-deploy is the

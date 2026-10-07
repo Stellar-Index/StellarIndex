@@ -27,7 +27,7 @@ name: release
 # and multi-arch Docker builds were adding ~3-5 min of CI burn per
 # release tag for no return. To re-enable: restore the `containers:`
 # job (search the git log for "release: drop ghcr.io push") and
-# the `packages: write` permission. Decision: 2026-05-11, operator.
+# the `packages: write` permission.
 
 on:
   push:
@@ -53,13 +53,12 @@ permissions:
   # permissions block). Granting write here handed it to every job in the
   # workflow, including the matrix that compiles untrusted-adjacent input.
   contents: read
-  # RLT-375 (audit-2026-09-18): resolve-tag queries the Actions API for
+  # resolve-tag queries the Actions API for
   # the tagged commit's CI conclusion before anything is built or
   # published — read-only, same least-privilege posture as `contents`.
   actions: read
-  # F-1296 (codex audit-2026-05-13): `id-token: write` was removed
-  # here when nothing consumed the OIDC JWT. It is now granted —
-  # but only at JOB level on the `release` job (see its
+  # `id-token: write` is not granted here; it is granted only
+  # at JOB level on the `release` job (see its
   # `permissions:` block), whose "Sign SHA256SUMS" and "Attest build
   # provenance" steps are the only OIDC consumers. The build matrix
   # + resolve-tag jobs still cannot mint an OIDC token.
@@ -80,7 +79,7 @@ jobs:
       is_prerelease: ${{ steps.out.outputs.is_prerelease }}
     steps:
       - id: out
-        # F-1298 (codex audit-2026-05-13): inputs through `env:`,
+        # Inputs go through `env:`,
         # never interpolated `${{ inputs.* }}` into the shell.
         # Pre-fix `tag="${{ inputs.tag }}"` would have shell-
         # expanded a malicious tag like `"; cat /etc/passwd; echo "v1.0.0`
@@ -95,7 +94,7 @@ jobs:
           else
             tag="$REF_NAME"
           fi
-          # Q228/RNC25 (audit-2026-09-18): `grep -Eq '^...$'` anchors
+          # `grep -Eq '^...$'` anchors
           # per LINE, not per string — a multi-line $tag whose first
           # line is a valid SemVer still matches, and the extra lines
           # would ride along into GITHUB_OUTPUT verbatim. Reject any
@@ -187,9 +186,8 @@ jobs:
           - stellarindex-migrate
           - stellarindex-sla-probe
         goos: [linux]
-        # arm64 dropped 2026-05-08 — every region (R1/R2/R3 plan) is
-        # amd64. Re-add when an arm64 host is provisioned. See memory:
-        # feedback_release_cadence.md.
+        # No arm64: every region (R1/R2/R3 plan) is amd64. Re-add when
+        # an arm64 host is provisioned.
         goarch: [amd64]
     steps:
       - name: Checkout at tag
@@ -271,7 +269,7 @@ jobs:
         run: ls -la dist/
 
       - name: Package the tag's migrations alongside the binaries
-        # artifact-integrity-verification (audit-2026-07-23): deploy.yml
+        # deploy.yml
         # applies this tag's migrations as DDL on production, but it
         # fetched them from the `repos/…/tarball/<tag>` API — an
         # UNSIGNED path, while the binaries beside them were covered by
@@ -302,11 +300,8 @@ jobs:
           cat SHA256SUMS
 
       - name: Install cosign
-        # cosign v3 (BACKLOG #51b, deliberate migration): the v3.9.2 pin-back
-        # on 2026-07-09 was a stop-the-bleed revert after cosign v3 (shipped
-        # only via installer v4+) broke the release twice in one day — see
-        # commits cbcd9326 and 18338540. Both root causes are fixed below,
-        # not worked around: no explicit --oidc-issuer (v3's own signing
+        # cosign v3 (shipped only via installer v4+). Two settings keep it
+        # from breaking the release: no explicit --oidc-issuer (v3's own signing
         # config resolves the ambient GitHub OIDC issuer; an explicit flag
         # conflicts with it) and an explicit --bundle output (the artifact
         # contract is pinned in the workflow instead of riding whatever
@@ -477,7 +472,7 @@ jobs:
           if [ "${{ needs.resolve-tag.outputs.is_prerelease }}" = "true" ]; then
             PRE="--prerelease"
           fi
-          # CID-21 (audit-2026-07-23): a published release must be
+          # A published release must be
           # immutable — the same tag can only ever ship one set of
           # bytes. Pre-fix, a manual re-run of this job for a tag that
           # already had a release DELETED it and re-created it from

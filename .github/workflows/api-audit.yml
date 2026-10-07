@@ -3,7 +3,7 @@ name: api-audit
 # Smoke-audits every documented public /v1/* endpoint against
 # api.stellarindex.io using the same example values published in
 # the OpenAPI spec. Catches the documentation-vs-implementation
-# drift class reported 2026-05-08 (Scalar default test requests
+# drift class (Scalar default test requests
 # returning 400 because the published examples used short asset
 # symbols against handlers that strict-validate canonical IDs).
 #

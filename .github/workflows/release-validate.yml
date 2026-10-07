@@ -26,7 +26,7 @@ name: release-validate
 on:
   pull_request:
     paths:
-      # Narrowed 2026-05-08 — `cmd/**` was triggering release-validate
+      # Narrowed: `cmd/**` triggered release-validate
       # on every routine config-wiring PR, burning ~60 runs/day. The
       # "does the new binary cross-compile?" question is already
       # answered by ci.yml's `go build ./...`. release-validate is
@@ -80,7 +80,7 @@ jobs:
             echo "::error::No binaries discovered under cmd/"
             exit 1
           fi
-          # SEC-07 (audit-2026-07-23): a PR can add cmd/<name>/main.go
+          # A PR can add cmd/<name>/main.go
           # with an arbitrary directory name. Reject anything outside
           # [a-zA-Z0-9-] HERE, before it is ever written to
           # $GITHUB_OUTPUT and substituted into a later step's shell —
@@ -105,9 +105,9 @@ jobs:
           CGO_ENABLED: '0'
           GOOS: linux
           GOARCH: amd64
-          # SEC-07 (audit-2026-07-23): route the discovered list through
+          # Route the discovered list through
           # env: — never `${{ }}` interpolated straight into the shell
-          # (F-1298 pattern, matching deploy.yml). Pre-fix
+          # (matching deploy.yml). Pre-fix
           # `done <<< "${{ steps.discover.outputs.binaries }}"` spliced
           # the raw discovered text into the GENERATED SHELL SCRIPT
           # before bash ever parsed it: a crafted
