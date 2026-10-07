@@ -15,7 +15,7 @@ import (
 // The cursor arms compared the whole primary key as a TUPLE —
 // `(ledger_seq, tx_index, op_index) < (?, ?, ?)` — and ClickHouse's
 // KeyCondition does not decompose a multi-column tuple comparison, so the
-// predicate was applied AFTER the scan instead of narrowing it.'s
+// predicate was applied AFTER the scan instead of narrowing it. The
 // `ledger_seq >= lower` bound was then the only index-usable term on a
 // cursor page, and it bounds the read from BELOW: for `?cursor=5000000.0.0`
 // the index selected everything from ledger 4,995,000 up to the tip, i.e.

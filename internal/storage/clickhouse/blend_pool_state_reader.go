@@ -63,25 +63,23 @@ type BlendReserveState struct {
 //   - VERSION RESOLUTION is the same composite the old argMax spelled
 //     out. The table is ReplacingMergeTree(version) with
 //     version = (ledger_seq << 32) | intra_ledger_seq, so FINAL keeps the
-//     LAST change in canonical intra-ledger order. That is what
-//
-// C2-4c requires: a ResData entry is commonly
-//
-//	  rewritten several times inside ONE ledger, and a ledger_seq-only
-//	  tie-break serves an arbitrary MID-ledger reserve state.
-//	- THE REMOVED-KEY DROP keeps only rows whose entry_xdr is NON-EMPTY,
-//	  applied to the row FINAL kept. (Spelled without the empty-string
-//	  literal on purpose: gofumpt's doc-comment reformatter rewrites a
-//	  doubled apostrophe to a typographic quote, silently, and the
-//	  result is fmt-STABLE — so the corruption survives every later
-//	  check. The SQL itself is in a raw string and is unaffected.) A 'removed' change carries only its key (see
-//	  entryChangeRow), so an empty entry_xdr on the winning row means
-//	  "this key's final change was a removal". The filter must NOT run
-//	  before the collapse — filtering removals out first is what let an
-//	  earlier same-ledger update RESURRECT a deleted key, the exact bug
-//	  the old HAVING existed to avoid — so
-//	  optimize_move_to_prewhere_if_final is pinned OFF rather than left
-//	  to the server default.
+//     LAST change in canonical intra-ledger order, which matters because
+//     a ResData entry is commonly rewritten several times inside ONE
+//     ledger, and a ledger_seq-only tie-break serves an arbitrary
+//     MID-ledger reserve state.
+//   - THE REMOVED-KEY DROP keeps only rows whose entry_xdr is NON-EMPTY,
+//     applied to the row FINAL kept. (Spelled without the empty-string
+//     literal on purpose: gofumpt's doc-comment reformatter rewrites a
+//     doubled apostrophe to a typographic quote, silently, and the
+//     result is fmt-STABLE — so the corruption survives every later
+//     check. The SQL itself is in a raw string and is unaffected.) A
+//     'removed' change carries only its key (see entryChangeRow), so an
+//     empty entry_xdr on the winning row means "this key's final change
+//     was a removal". The filter must NOT run before the collapse —
+//     filtering removals out first is what let an earlier same-ledger
+//     update RESURRECT a deleted key, the exact bug the old HAVING
+//     existed to avoid — so optimize_move_to_prewhere_if_final is pinned
+//     OFF rather than left to the server default.
 //
 // max_threads / max_memory_usage are the shared guard rails the sibling
 // readers pin (see ttlLivenessBatchQuery): the read is cheap, and a

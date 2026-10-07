@@ -164,7 +164,7 @@ func fetchOpEntryChanges(ctx context.Context, conn driver.Conn, batch []events.E
 // ReplacingMergeTree parts by keeping the row with the LATEST
 // ingested_at — the exact FINAL-merge semantics of
 // ReplacingMergeTree(ingested_at). Keeping the FIRST-seen row (the
-// pre- behaviour) could resurrect a stale pre-correction row
+// earlier behaviour) could resurrect a stale pre-correction row
 // after a re-ingest, because read order among duplicate parts is not
 // version order. Split out pure for unit tests.
 type opChangeAccumulator struct {

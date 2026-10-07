@@ -214,8 +214,7 @@ func (s *spyDecoder) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer
 //
 //   - tx2 is FAILED with a committed fee debit — the dispatcher used to skip
 //     the whole tx before its entry-change walk while the lake walked it,
-//
-// so the two disagreed by exactly the failed-tx fee set;
+//     so the two disagreed by exactly the failed-tx fee set;
 //   - tx1 has both an apply-phase change and a later tx's fee change competing
 //     for the same key — the per-tx walk ranked the fee last;
 //   - both txs carry PostTxApplyFeeChanges — the P23 Soroban refund phase

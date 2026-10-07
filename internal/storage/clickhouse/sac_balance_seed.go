@@ -416,7 +416,7 @@ func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32,
 // the existing seed. It is intended for the small `[supply.sac_wrappers]`
 // watched-set (a handful of contracts), never a routine/scheduled job.
 //
-// Memory (— the THIRD 241 on this query, and the one that
+// Memory (the THIRD 241 on this query, and the one that
 // changed its shape). Prefiltering to the watched set was not enough. A single
 // unbounded query over the append-log carries a per-query footprint that grows
 // with the SPAN it covers: the aggregate states (one latest-write state per

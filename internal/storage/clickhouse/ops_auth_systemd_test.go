@@ -14,7 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// ───: the ops-batch identity must not reach a live daemon ──────
+// The ops-batch identity must not reach a live daemon ──────
 //
 // [opsAuth] takes the low-priority `ops_batch` identity from the
 // PROCESS ENVIRONMENT, and docs/operations/clickhouse-ops-batch-profile.md
@@ -189,7 +189,7 @@ func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving ma
 	case u.runsAnyOf(opsBinary) || u.reachesOpsViaScript(scripts):
 		// Running the ops CLI, directly or through a shipped script, IS
 		// the batch tier: it MUST resolve to ops_batch whether or not it
-		// sources the file (#113, — batch units that sourced nothing
+		// sources the file (#113: batch units that sourced nothing
 		// ran at CH `default`/serving priority and matched no arm here).
 		if auth != batchWant {
 			violation = fmt.Sprintf("%s runs stellarindex-ops (directly or via a shipped script) but would authenticate as %+v, want %+v.\n"+

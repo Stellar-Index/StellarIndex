@@ -513,7 +513,9 @@ func chunkStrings(ids []string, n int) [][]string {
 // the SQL text does not scale: past ~3,400 ids it exceeds `max_query_size`,
 // and at 2,000 ids per chunk the bloom filter's false-positive rate compounds
 // (1-(1-0.01)^2000 ≈ 1), degenerating each chunk into a near-full scan of the
-// wide `attributes` column that blows `max_memory_usage`.
+// wide `attributes` column that blows `max_memory_usage`. An IN-list
+// overflow failed the WHOLE window's lookup, leaving every claim
+// unresolved.
 //
 // So ids are passed as a ClickHouse EXTERNAL TABLE
 // (`clickhouse.WithExternalTable`, native-protocol side-channel, not

@@ -247,8 +247,8 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 		return xdr.Hash{}, false, err
 	}
 	// ledger_entries_current, not the changes log: the current-state MV
-	// folds every insert (immune to the snapshot-row merge-loss defect,
-	//) and (entry_type, key_xdr) is a PK-prefix
+	// folds every insert (immune to the snapshot-row merge-loss defect)
+	// and (entry_type, key_xdr) is a PK-prefix
 	// lookup instead of a bloom-filtered scan.
 	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -915,7 +915,7 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 // derivation is not.
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
 	// Bound the scan by the contract's own active ledgers (sub-second
-	//). Unbounded, this is the quiet-contract reverse
+	// reads). Unbounded, this is the quiet-contract reverse
 	// read-in-order trap that contract_active_ledgers exists to fix:
 	// `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the whole
 	// key range backwards for a contract with few events, and this

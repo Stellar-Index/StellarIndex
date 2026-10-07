@@ -267,8 +267,8 @@ type ExplorerReader struct {
 	// per-(contract, ledger) activity index,
 	// deploy/clickhouse/contract_active_ledgers.sql). Present + non-empty
 	// → ContractEventsRecent bounds its scan to the contract's active
-	// ledgers (quiet-contract cold reads drop from ~9s to ms — site audit
-	// /08); absent → the unbounded reverse walk, exactly as
+	// ledgers (quiet-contract cold reads drop from ~9s to ms — site audit);
+	// absent → the unbounded reverse walk, exactly as
 	// before the index existed. requireRows, like tx_hash_index: per-
 	// contract emptiness is served as an authoritative "no events", so an
 	// existing-but-empty index (MV dropped / TRUNCATE) must read as
@@ -1024,7 +1024,7 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 // ever truncated by it.
 //
 // The cursor arms carry recentOperationsCursorPredicate (index-prunable, and
-// the reason that bound now actually bites — see) plus
+// the reason that bound now actually bites) plus
 // recentOperationsCursorRowCeiling. Both are documented on their consts.
 func recentOperationsQuery(hasCursor, bounded bool) string {
 	return recentOperationsSQL(hasCursor, bounded, true, false)
@@ -1076,7 +1076,7 @@ func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
 //
 // Why it matters: KeyCondition
 // does NOT decompose a 3-column tuple comparison, so in the old form the ONLY
-// index-usable predicate on a cursor page was's `ledger_seq >= lower` —
+// index-usable predicate on a cursor page was the `ledger_seq >= lower` —
 // which selects everything ABOVE the cursor, i.e. essentially the whole table.
 // `EXPLAIN ESTIMATE` for `?cursor=5000000.0.0` selected 80 parts /
 // 24,693,075,112 rows / 3,014,332 marks; the same page in this form selects
@@ -1221,7 +1221,7 @@ type ThroughputBucket struct {
 // It is ONLY ever used to size a `ledger_seq >` predicate as a PARTITION-PRUNING
 // HINT — never as a semantic window boundary. Overshooting is safe (it just
 // scans a little wider); undershooting would silently truncate real data.
-// Using it as the boundary was chart bug: a ledger-count window
+// Using it as the boundary was a chart bug: a ledger-count window
 // lands mid-day, so the first toStartOfDay bucket was a partial day rendered as
 // a real drop, and a "30 day" window actually spanned ~34.6 days.
 const ledgersPerDayPruningEstimate = 17280

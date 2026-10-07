@@ -235,7 +235,7 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	}
 	q := conn.queries[0]
 
-	//: the reserve state comes from the current-state projection, whose
+	// The reserve state comes from the current-state projection, whose
 	// sort key IS (entry_type, key_xdr) — so the probe reads ~one row per
 	// requested key. Folding the latest entry per key out of the CHANGES
 	// table instead costs a window scan whose size tracks pool ACTIVITY, and

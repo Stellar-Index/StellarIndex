@@ -89,8 +89,7 @@ func WriteSupplyFlows(ctx context.Context, addr string, rows []SupplyFlowRow) er
 // that predates Soroban lives BELOW this ledger — captured in the ClickHouse
 // lake's stellar.supply_flows via the post-P23 (CAP-67) replay — and is summed
 // as the pre-genesis opening balance (TokenSupplyBelowLedger) that the
-// aggregator seeds into sep41_supply_rollup (migration 0088, incident
-// ).
+// aggregator seeds into sep41_supply_rollup (migration 0088, incident).
 const SorobanGenesisLedger uint32 = 50457424
 
 // TokenSupply is one token's supply, summed live from supply_flows.
