@@ -841,5 +841,149 @@
     "role": "stake",
     "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "06f4207b0c9ef78cc595e075ded8fa40e73fdb8346e5f9281068a2d4ba1e5037": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "1c64fa2c9e2db303fb14cc8fa9aa7f6d0d326633b90f87b5bc4a1e76704e2741": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "2491b9b663f647bdb5ff358c3bbe6ddd4e9a43bfbe8edebccd26ca71ad2e84b8": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "26c495019afb7448f690a82d6e66d8fab1ad3fd3e7b4aec7d554209966c9d19d": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "2c2b3c9756f372092f9120393b41b1b6a5aa5546de169d1100daf370e1c880d8": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "8844a760cf16788117b2a5a91d736794b3869c302aee47f8fbbcd0cc1a1096fd": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "8cf10d1439a9ed1f8d27606cadcdae7555851c40ef0e6e4bb1ffe2f8ebcd7658": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "a67ad7715ecb3e174a1afe731d9f534e616dac3d5b115781762ec531c2ce1d30": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "b04880dfbe7630b17cec60403669123987fa0ef6b91e418b30fb68180ac4f93b": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "c99539b023df4a28d7857d33ca4c915c2e20fec04f12b125132b84fbdf94dad3": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "router",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "12fca5a7a96577273b6d4184cf9c984036cda0e8f0594747e7b2933dced37ee6": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "155a17b9929ffb1f9e84bd6ef5c00a4d613c1ab5f4ad4c502d84515250cc2907": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "1d728cc08869f01b7c8c994f91d505e3576a150a072b96f8d3401c5ef2b430d2": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "22dff7242d2bc0ea4a4727b4b2cac33b188304d5945740ad24d8a33a5d22741e": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "3c030c6e93ac973cf26e39947176c85a2bf61210e9c1f98ce638b963da948c96": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "baabbdd1d1816be62751880621a323168525f839442de5f4c1ce1c1a0ebf42b1": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "bb79374086c981f6937907516ba98af68aadf005bc34f0a18a863e7d02d37b48": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "d691135aade93ff0f7c229e009cde042130a05124cf7202b03d11246b4f9b473": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
   }
 }

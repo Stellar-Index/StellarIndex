@@ -1,6 +1,6 @@
 ---
 title: Aquarius WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-08
 status: ratified — v2 per-cohort walk complete
 source: aquarius
 backfill_safe: true
@@ -134,12 +134,12 @@ might gain concentrated-tick info).
 ## WASM timeline
 
 Output from `stellarindex-ops wasm-history` for the **router**
-(CBQDHNBF...) over the post-Soroban window — full archive on r1,
+(CBQDHNBF…) over the post-Soroban window — full archive on r1,
 walked 2026-04-29:
 
 ```json
 {
-  "contract": "CBQDHNBF...",
+  "contract": "CBQDHNBF…",
   "ranges": 6 distinct WASM hashes (router upgrades — informational only)
 }
 ```
@@ -265,6 +265,48 @@ strings:
 
 All 3 include `trade` + the 3 non-trade event
 names in their data sections.
+
+## Per-hash string check — 18 more hashes, 2026-10-08
+
+`projected-rebuild -source aquarius` refused on 22 hashes that registry
+contracts ran and `audited_wasm.json` did not list: 12 pool builds and 10
+builds of the router (`CBQDHNBF…`). Bytes came from
+`stellar.ledger_entries_current` (`entry_type = 'contract_code'`, key =
+LedgerKey CONTRACT_CODE + hash, base64), the same query as the phoenix audit;
+each blob was byte-searched on r1 for the literals the decoder watches
+(`internal/sources/aquarius/events.go`):
+
+- pool: `trade`, `deposit_liquidity`, `withdraw_liquidity`, `update_reserves`;
+- router: `config_rewards`, `set_rewards_config`.
+
+All 10 router builds carry both router literals (35 – 47 KB). 8 pool builds
+carry all four pool literals. 4 pool builds (`29eb1047…`, `2e6f1dae…`,
+`64ef0bc6…`, `f5bdd7c4…`) carry `trade`, `deposit_liquidity` and
+`withdraw_liquidity` but not `update_reserves`; they are NOT audited here.
+
+| hash | role | contracts | first ledger |
+| --- | --- | --- | --- |
+| `2c2b3c97…` | router | 1 | 52,728,375 |
+| `a67ad771…` | router | 1 | 53,552,355 |
+| `26c49501…` | router | 1 | 55,363,489 |
+| `8cf10d14…` | router | 1 | 56,505,099 |
+| `b04880df…` | router | 1 | 57,711,543 |
+| `2491b9b6…` | router | 1 | 58,357,191 |
+| `8844a760…` | router | 1 | 58,786,777 |
+| `1c64fa2c…` | router | 1 | 62,338,092 |
+| `06f4207b…` | router | 1 | 62,891,025 |
+| `c99539b0…` | router | 1 | 64,735,058 |
+| `bb793740…` | pool | 27 | 57,697,718 |
+| `3c030c6e…` | pool | 40 | 58,786,852 |
+| `baabbdd1…` | pool | 267 | 58,786,917 |
+| `1d728cc0…` | pool | 13 | 62,433,116 |
+| `12fca5a7…` | pool | 37 | 62,875,836 |
+| `d691135a…` | pool | 275 | 64,735,740 |
+| `22dff724…` | pool | 45 | 64,735,965 |
+| `155a17b9…` | pool | 41 | 64,736,662 |
+
+A string check does not see topic order or body shape. These 18 are in
+`audited_wasm.json`.
 
 ## Caveats
 
