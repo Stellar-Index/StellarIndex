@@ -23,12 +23,10 @@ import (
 // gate exists to close, because a header-less POST (e.g.
 // navigator.sendBeacon with an empty-type Blob, or fetch with
 // mode:"no-cors") is itself a CORS *simple* request that issues no
-// preflight to refuse. Both endpoints previously drifted on this: the
-// presence-form `if ct != ""` skipped the check entirely for a
-// header-less request, silently minting a credential + relaying a
-// verification email per visitor and burning a token from the per-IP
-// throttle the two endpoints share (audit 2026-08-13 F4, 2026-08-14
-// W1-flow-register-1).
+// preflight to refuse. A presence-form `if ct != ""` would skip the
+// check entirely for a header-less request, silently minting a
+// credential + relaying a verification email per visitor and burning a
+// token from the per-IP throttle the two endpoints share.
 //
 // Returns true when the request carries Content-Type: application/json
 // and the caller may proceed; otherwise it writes a 415 problem
