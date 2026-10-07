@@ -21,9 +21,11 @@ fail=0
 asserts=0
 
 # run <class> <file> [<file> ...] — via argv (no stdin involved)
+# argv cases detach stdin: the script drains any non-tty stdin, which an
+# inherited open pipe never closes.
 run() {
   local class="$1"; shift
-  OUT="$(bash "$CHECK" "$class" "$@" 2>&1)"
+  OUT="$(bash "$CHECK" "$class" "$@" 2>&1 </dev/null)"
   RC=$?
 }
 
@@ -223,10 +225,10 @@ expect "stdin: a mixed diff containing one storage file DOES trigger integration
 
 # ── Fail-closed on malformed calls ──────────────────────────────────
 
-OUT="$(bash "$CHECK" 2>&1)"; RC=$?
+OUT="$(bash "$CHECK" 2>&1 </dev/null)"; RC=$?
 expect "no class argument at all → usage error, not a silent skip" 2
 
-OUT="$(bash "$CHECK" not-a-real-class "internal/storage/x.go" 2>&1)"; RC=$?
+OUT="$(bash "$CHECK" not-a-real-class "internal/storage/x.go" 2>&1 </dev/null)"; RC=$?
 expect "unknown class name → usage error" 2
 
 OUT="$(: | bash "$CHECK" integration 2>&1)"; RC=$?

@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -206,7 +207,7 @@ func affected(list string, touched map[string]bool) []string {
 // commentOnly reports whether f differs from its base version only in
 // comments that the compiler and test runner ignore.
 func commentOnly(base, f string) (bool, error) {
-	old, err := exec.Command("git", "show", base+":"+f).Output() //nolint:gosec // base and f come from git diff in CI
+	old, err := exec.CommandContext(context.Background(), "git", "show", base+":"+f).Output() //nolint:gosec // base and f come from git diff in CI
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -312,7 +313,7 @@ func gitLines(args ...string) ([]string, error) {
 }
 
 func cmdOutput(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...) //nolint:gosec // callers pass git or go with fixed verbs
+	cmd := exec.CommandContext(context.Background(), name, args...) //nolint:gosec // callers pass git or go with fixed verbs
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
