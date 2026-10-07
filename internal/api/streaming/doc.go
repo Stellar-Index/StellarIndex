@@ -20,9 +20,8 @@
 // order, not id order. Buffered REPLAY on [Hub.Subscribe] is merged by
 // id across every subscribed topic before it is queued, so a resuming
 // multi-topic subscriber's replay never walks the `id:` line backwards
-// at a topic boundary (#1033); it may still precede a
-// [EventTypeStreamGap] marker when the replay could not cover the
-// requested cursor (#1035).
+// at a topic boundary; it may still precede a [EventTypeStreamGap]
+// marker when the replay could not cover the requested cursor.
 //
 // Slow subscribers are dropped, not blocked. When the per-subscriber
 // channel is full, the offending subscription is closed; the client
@@ -45,7 +44,7 @@
 //
 // Topics are reaped, not kept forever. Topic keys come from the
 // request on /v1/price/stream, so an unbounded map is an
-// unauthenticated memory-exhaustion lever (REL-05). A topic with no
+// unauthenticated memory-exhaustion lever. A topic with no
 // subscribers is dropped once it has nothing left to offer — right
 // away if it was never published to, or after [DefaultTopicIdleTTL]
 // if it still holds a replay buffer. [DefaultMaxTopics] is the

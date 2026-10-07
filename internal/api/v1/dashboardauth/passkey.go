@@ -22,8 +22,7 @@ package dashboardauth
 // HMAC (keyed by the same server secret that keys the 6-digit code
 // derivation, domain-separated) provides exactly that.
 //
-// Integrity alone is not enough, and audit-2026-08-13 found both
-// gaps live:
+// Integrity alone is not enough; two more properties are required:
 //
 //   - The ceremony must EXPIRE server-side. The cookie's MaxAge is a
 //     client-side hint; an attacker's HTTP client simply ignores it.
@@ -130,7 +129,7 @@ func (h *Handlers) webAuthn() (*webauthn.WebAuthn, error) {
 	// ValidateLogin / CreateCredential — dead code. The ceremony then
 	// has no server-side lifetime at all: the cookie's MaxAge=300 is
 	// a browser hint, and a captured cookie replayed by a plain HTTP
-	// client is honoured forever. audit-2026-08-13 (HIGH).
+	// client is honoured forever.
 	//
 	// TimeoutUVD (the "user verification discouraged" variant) is set
 	// to the same value for completeness; we require UV everywhere
@@ -257,16 +256,12 @@ func (h *Handlers) readPasskeyCeremonyCookie(r *http.Request, wantPurpose string
 	if ceremony.Purpose != wantPurpose {
 		return passkeyCeremony{}, errInvalid
 	}
-	// A MISSING expiry is refused, not waved through. The previous
-	// `!IsZero() && …` spelling meant an unstamped ceremony lived
-	// forever — which is exactly what shipped, because the library
-	// never stamped one (see [Handlers.webAuthn]). Requiring the
-	// stamp makes that failure mode impossible to reintroduce
-	// silently: a config regression locks passkeys out rather than
-	// quietly issuing eternal challenges. The one visible cost is at
-	// deploy time — ceremonies begun by the previous binary carry no
-	// expiry and are refused, so a sign-in in flight across the
-	// restart must be retried. audit-2026-08-13.
+	// A MISSING expiry is refused, not waved through. A
+	// `!IsZero() && …` spelling would let an unstamped ceremony live
+	// forever, and the library stamps none unless told to (see
+	// [Handlers.webAuthn]). Requiring the stamp means a config
+	// regression locks passkeys out rather than quietly issuing
+	// eternal challenges.
 	if ceremony.Session.Expires.IsZero() || !ceremony.Session.Expires.After(h.cfg.Now()) {
 		return passkeyCeremony{}, errInvalid
 	}
@@ -297,9 +292,9 @@ func passkeyCeremonyDigest(c passkeyCeremony) string {
 
 // passkeyCeremonyReserveGuard is the optional capability a ceremony
 // guard exposes when its spent-set lives in a store that can EVICT
-// under memory pressure — Redis under R1's allkeys-lru. Such a guard
+// under memory pressure — Redis under allkeys-lru, as on r1. Such a guard
 // cannot treat "marker absent == fresh": an evicted spent-marker would
-// re-open the replay window (W1-auth-passkey-1). Instead it RESERVEs
+// re-open the replay window. Instead it RESERVEs
 // the ceremony at begin and, at finish, claims it only if the
 // reservation still exists, so an evicted reservation fails CLOSED (no
 // session) rather than freeing the slot for a captured request. The
@@ -343,7 +338,7 @@ func (h *Handlers) reserveCeremony(ctx context.Context, c passkeyCeremony) error
 //
 // An evictable guard (Redis/allkeys-lru) claims through its begin-time
 // RESERVATION so an evicted marker fails closed instead of re-opening
-// the replay window (W1-auth-passkey-1); a non-evicting guard uses its
+// the replay window; a non-evicting guard uses its
 // plain spent-set. Both paths report a replay as
 // [errPasskeyCeremonyReplayed] and a store outage as a wrapped error.
 func (h *Handlers) consumeCeremony(ctx context.Context, c passkeyCeremony) error {
@@ -455,7 +450,7 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 	ceremony := passkeyCeremony{Purpose: "register", Session: *session}
 	// Reserve the ceremony BEFORE handing the challenge to the browser
 	// so its single-use claim survives an allkeys-lru eviction of the
-	// spent-set (W1-auth-passkey-1). A store outage here fails closed:
+	// spent-set. A store outage here fails closed:
 	// no challenge is issued that finish couldn't safely consume.
 	if err := h.reserveCeremony(r.Context(), ceremony); err != nil {
 		h.cfg.Logger.Error("reserve passkey ceremony", "err", err, "user_id", sc.User.ID)
@@ -475,13 +470,13 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 // the storage CHECK (`length(name) <= 100`, migration 0140) accepts.
 //
 // Truncation is by RUNES, not bytes. Postgres `length()` counts
-// CHARACTERS, so a byte slice was wrong twice over: it clipped a
-// perfectly legal 100-character CJK name to 33 characters, and — the
-// real bug — it could cut mid-rune and hand Postgres invalid UTF-8,
-// which Postgres refuses. That surfaced as a 500 AFTER the
-// authenticator had already burned a resident-credential slot for a
-// credential the server then never stored: the user is left with a
-// dead passkey on their device and no row here. audit-2026-08-13.
+// CHARACTERS, so a byte slice would be wrong twice over: it would clip
+// a perfectly legal 100-character CJK name to 33 characters, and —
+// worse — it could cut mid-rune and hand Postgres invalid UTF-8, which
+// Postgres refuses. That surfaces as a 500 AFTER the authenticator has
+// already burned a resident-credential slot for a credential the
+// server then never stores: the user is left with a dead passkey on
+// their device and no row here.
 func passkeyDisplayName(raw string) string {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -510,10 +505,10 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 	}
 	// MaxBytesReader, not LimitReader: a LimitReader hitting its cap
 	// returns (n, nil) — the read SUCCEEDS with a silently truncated
-	// body, so the "body too large" branch below was unreachable and
-	// an oversize attestation surfaced as "malformed JSON" instead.
-	// MaxBytesReader is the repo-wide pattern and returns a real
-	// error at the cap. audit-2026-08-13.
+	// body, so the "body too large" branch below would be unreachable
+	// and an oversize attestation would surface as "malformed JSON"
+	// instead. MaxBytesReader is the repo-wide pattern and returns a
+	// real error at the cap.
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPasskeyBodyBytes))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "request body too large", r.URL.Path)
@@ -627,7 +622,7 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 	// omitted from the options JSON entirely, the browser falls back
 	// to its own default ("preferred"), and the UV bit is never
 	// verified — passwordless sign-in degrades to possession of the
-	// authenticator alone. audit-2026-08-13.
+	// authenticator alone.
 	assertion, session, err := wa.BeginDiscoverableLogin(
 		webauthn.WithUserVerification(protocol.VerificationRequired),
 	)
@@ -640,7 +635,7 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 	// Reserve BEFORE issuing the challenge — see the matching note in
 	// HandlePasskeyBeginRegister. This is what lets finish-login fail
 	// closed when the spent-set is evicted instead of re-minting a
-	// session for a captured request (W1-auth-passkey-1).
+	// session for a captured request.
 	if err := h.reserveCeremony(r.Context(), ceremony); err != nil {
 		h.cfg.Logger.Error("reserve passkey ceremony", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
@@ -777,7 +772,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 
 	// A successful passkey login proves the account owner is present —
 	// retire the durable email-code failure counter exactly as the
-	// email doors do (C3-032). Best-effort.
+	// email doors do. Best-effort.
 	if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), matchedUser.Email); err != nil {
 		h.cfg.Logger.Warn("clear login code lockout", "err", err, "user_id", matchedUser.ID)
 	}

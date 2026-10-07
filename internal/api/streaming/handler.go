@@ -38,7 +38,7 @@ const drainWriteDeadline = time.Second
 
 // maxConcurrentStreams caps simultaneous SSE connections across all stream
 // endpoints, so a flood of connections can't exhaust file descriptors /
-// goroutines (CS-013 / F4). Generous by default (legit fan-out is small on
+// goroutines. Generous by default (legit fan-out is small on
 // a single host); tune via SetMaxConcurrentStreams. <= 0 disables the cap.
 var maxConcurrentStreams int64 = 8192
 
@@ -62,14 +62,14 @@ func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 // this package whose own pre-flight work (before switching into SSE
 // mode) is itself expensive.
 //
-// REL-05 (pre-flight-compute ordering): [StreamFromChannel] already
+// Pre-flight-compute ordering: [StreamFromChannel] already
 // admits before doing anything else, but a caller like
 // handleObservationsStream runs its OWN synchronous compute (the
 // initial event) BEFORE ever calling StreamFromChannel — so a client
-// already at its concurrency cap still paid for that full compute
+// already at its concurrency cap would still pay for that full compute
 // before being rejected. Calling TryAcquireStreamSlot at the very top
 // of the handler, before that compute, closes the gap: admission is
-// now the very first thing that happens, full stop.
+// the very first thing that happens, full stop.
 //
 // The returned release MUST be called exactly once (typically via
 // `defer release()` immediately after a successful acquire, covering
@@ -92,7 +92,7 @@ func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(
 // [Hub.Subscribe], whose topic key is client-supplied on
 // /v1/price/stream. Admitting first is what makes the caps bound Hub
 // memory and not just socket count: a refused connection must never
-// mint a topic (REL-05).
+// mint a topic.
 //
 // The returned release MUST be called exactly once when the stream
 // ends; it is idempotent.
@@ -104,7 +104,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 		http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	// Per-IP cap (C3-8): the global cap alone lets one client hold the
+	// Per-IP cap: the global cap alone lets one client hold the
 	// entire budget, so a single stalled/hostile address can starve the
 	// streams for everyone. Give each client its own small ceiling.
 	releaseIP, ok := acquireIPStreamSlot(r)
@@ -122,7 +122,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 }
 
 // acquireGlobalStreamSlot reserves one slot against
-// [maxConcurrentStreams] (CS-013), so a connection flood can't exhaust
+// [maxConcurrentStreams], so a connection flood can't exhaust
 // FDs/goroutines. A cap of <= 0 disables the ceiling but still counts
 // the stream, so activeStreams stays truthful.
 func acquireGlobalStreamSlot() (release func(), ok bool) {
@@ -208,7 +208,7 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 	// `topics` — client-controlled on /v1/price/stream — so a
 	// connection the caps are going to refuse must never get that far;
 	// otherwise the caps bound sockets while the topic map grows
-	// unchecked (REL-05).
+	// unchecked.
 	release, ok := admitStream(w, r)
 	if !ok {
 		return
@@ -253,8 +253,8 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 // StreamFromChannelPreAdmitted is [StreamFromChannel] for a caller
 // that already reserved its concurrency-cap slot via
 // [TryAcquireStreamSlot] — e.g. because it has its own expensive
-// pre-flight compute that must run AFTER admission, not before
-// (REL-05). Unlike StreamFromChannel, this does NOT acquire (or
+// pre-flight compute that must run AFTER admission, not before.
+// Unlike StreamFromChannel, this does NOT acquire (or
 // release) a slot itself: the caller's own TryAcquireStreamSlot +
 // deferred release own that lifecycle end to end. Calling this
 // instead of StreamFromChannel after a manual TryAcquireStreamSlot
@@ -320,7 +320,7 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	//
 	// retry: precedes :connected so a client that reconnects mid-way
 	// through the prelude (or one that only reads the first frame)
-	// still picks up the reconnection-delay hint (Refs #1035).
+	// still picks up the reconnection-delay hint.
 	setWriteDeadline()
 	if _, err := fmt.Fprintf(w, "retry: %d\n\n:connected\n\n", DefaultRetry.Milliseconds()); err != nil {
 		return
@@ -414,10 +414,10 @@ func streamLifetime(maxLifetime time.Duration) time.Duration {
 // response body is terminated properly: writeStream returns, the
 // handler returns, and net/http finishes the chunked body. The client
 // then sees a complete response and an EventSource reconnects on its
-// normal schedule. That is the difference this makes — before the
-// drain existed the process exited on top of the open connection and
-// the reverse proxy logged `reading: unexpected EOF` against a
-// truncated response (r1, 2026-09-15 16:26:14).
+// normal schedule. That is the difference this makes — without the
+// drain the process would exit on top of the open connection and the
+// reverse proxy would log `reading: unexpected EOF` against a
+// truncated response, as r1's proxy did.
 //
 // The final frame is an SSE COMMENT rather than a named event on
 // purpose. A comment is spec-legal, ignored by every conforming client,

@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// Per-IP concurrent-SSE-connection cap (C3-8 / CS-013).
+// Per-IP concurrent-SSE-connection cap.
 //
 // The global cap ([maxConcurrentStreams]) bounds TOTAL concurrent
 // streams, but on its own it lets a single client hold open the entire

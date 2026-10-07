@@ -32,20 +32,17 @@ type FanoutStore interface {
 // subscriber and inserts a pending delivery row, which the worker
 // then drains.
 //
-// F-1249 (codex audit-2026-05-12): pre-fix the codebase shipped
-// the dashboard CRUD + worker + runbook but no production caller
-// inserted delivery rows. Customers could register hooks that
-// never fired.
+// Without a caller of Publish no delivery row is ever inserted, so a
+// customer could register a hook that never fires.
 //
 // The event that triggered fan-out is already durable in its own
 // table (freeze_events, incidents, divergence_runs), so a fan-out
-// failure never blocks the producer. It is NOT, however, invisible:
-// C3-023 (audit-2026-07-23) found `Publish` returning nothing at
-// all, so a fan-out that enqueued zero of five subscribers looked
-// identical to a successful one from the caller's side and the only
-// trace was a WARN line. Publish now reports a [PublishResult] plus
-// an error whenever any delivery was lost, and every loss also
-// increments [obs.CustomerWebhookFanoutFailuresTotal].
+// failure never blocks the producer. It is NOT, however, invisible: if
+// Publish returned nothing, a fan-out that enqueued zero of five
+// subscribers would look identical to a successful one from the
+// caller's side, with a WARN line as the only trace. Publish reports a
+// [PublishResult] plus an error whenever any delivery was lost, and
+// every loss also increments [obs.CustomerWebhookFanoutFailuresTotal].
 type Fanout struct {
 	store  FanoutStore
 	logger *slog.Logger
@@ -63,7 +60,7 @@ type PublishResult struct {
 
 	// Suppressed counts deliveries the store REFUSED by policy — today,
 	// the owning account was suspended or closed between the subscriber
-	// resolve and the insert (SEC-06 / RLT-420). It is deliberately its
+	// resolve and the insert. It is deliberately its
 	// own field rather than a Failed: Failed means "a customer LOST this
 	// event and nothing will re-derive it", which is alertable, and
 	// folding a deliberate withholding into it would page an operator
@@ -105,13 +102,13 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 // A suspended or closed account is not a subscriber and never appears
 // in `subs`: the account kill switch is enforced inside
 // ListWebhooksSubscribedTo, and again inside EnqueueDelivery for the
-// window between the two (SEC-06 / RLT-420). A refusal from that second
+// window between the two. A refusal from that second
 // gate lands in [PublishResult.Suppressed] and is NOT an error — the
 // event was withheld deliberately, not lost.
 //
 // The error never obliges the caller to fail its own work — the
 // triggering event is durable in its own table — but it MUST be
-// acted on (C3-023): the aggregator's hot paths log it at ERROR with
+// acted on: the aggregator's hot paths log it at ERROR with
 // the event type + counts, and `stellarindex-ops emit-incident`
 // surfaces it to the operator's shell. Every loss is also counted on
 // [obs.CustomerWebhookFanoutFailuresTotal] so a fan-out that is
@@ -241,7 +238,7 @@ func (f *Fanout) enqueueOne(
 // enqueue REFUSED by policy rather than one LOST to a failure. The only
 // policy today is the account kill switch: the owning account is
 // suspended or closed, so we must not queue — let alone deliver — that
-// customer's events (SEC-06 / RLT-420).
+// customer's events.
 //
 // Matched behaviourally rather than with errors.Is so the narrow
 // [FanoutStore] seam keeps its "no concrete store import" property; this

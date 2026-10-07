@@ -146,7 +146,7 @@ var subscribeOutcomes = []string{
 // subscribeChannelSize and subscribeChannelSendTimeout are passed to
 // PubSub.Channel explicitly instead of taking go-redis's defaults (100
 // messages / 1 minute), so the buffer this Subscriber runs on is a
-// documented choice, not an implicit library default (GH-753).
+// documented choice, not an implicit library default.
 const (
 	subscribeChannelSize        = 100
 	subscribeChannelSendTimeout = time.Minute
@@ -265,7 +265,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 // since one bad message must not stop the subscriber from processing
 // the next.
 //
-// Defense-in-depth (F2): r1's Redis has no AUTH (network isolation is
+// Defense-in-depth: r1's Redis has no AUTH (network isolation is
 // the primary control), so a host-adjacent process could PUBLISH a
 // forged closed-bucket event onto the channel. Before this event
 // reaches SSE clients we (1) bound every field — a non-numeric,
@@ -554,7 +554,7 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 // test in this package's test suite verifies the format stays in
 // sync. The window is part of the key so the aggregator's per-window
 // publishes (r1: 5m/1h/24h) land on separate topics instead of
-// interleaving on one (cold audit 2026-08-03, r1-confirmed).
+// interleaving on one.
 func topicForPair(asset, quote string, windowSeconds int64) string {
 	return "closed:" + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
 }

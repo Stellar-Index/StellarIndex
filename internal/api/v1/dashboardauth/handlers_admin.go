@@ -59,13 +59,13 @@ type AdminLookupResponse struct {
 // adminLookupRequest is the staff look-up query. It travels in the request
 // BODY, never the query string.
 //
-// PRV F2 (#346): a customer's email address in a URL is copied verbatim into
-// every access log, proxy log, browser-history entry and Referer header along
-// the path. The edge redaction added in 7843f129 masks OUR Caddy log, but it
-// cannot reach a staff member's browser history, an upstream CDN's log, or a
-// Referer header sent to a third-party origin — so the address has to stop
-// TRAVELLING in the URL, not merely stop being written down at the one hop we
-// happen to control. A POST body is recorded by none of them.
+// A customer's email address in a URL is copied verbatim into every access
+// log, proxy log, browser-history entry and Referer header along the path.
+// Edge redaction masks OUR Caddy log, but it cannot reach a staff member's
+// browser history, an upstream CDN's log, or a Referer header sent to a
+// third-party origin — so the address has to stop TRAVELLING in the URL,
+// not merely stop being written down at the one hop we happen to control.
+// A POST body is recorded by none of them.
 //
 // This is also why the handler does not fall back to r.URL.Query(): a
 // tolerated query parameter is an un-redacted channel that would silently
@@ -154,14 +154,13 @@ func lookupQueryKind(email string) string {
 }
 
 // recordAdminLookupAudit persists the "staff.customer.lookup" audit row
-// (C3-056, audit-2026-07-23). Pre-fix this surface recorded a staff read
-// of another customer's PII — account tier/status/billing email plus
-// every user's email and last-login — with a single `Logger.Info` line,
-// while every sibling admin surface (`admin_accounts.go`,
-// `admin_keys.go`, `status_notices.go`) wrote a durable
-// [platform.AuditEntry]. A log line is not a privacy audit trail: it is
-// rotated on a short retention, is not queryable per-account, and is
-// absent from the dashboard's audit view.
+// for a staff read of another customer's PII — account tier/status/billing
+// email plus every user's email and last-login — as a durable
+// [platform.AuditEntry], as every sibling admin surface
+// (`admin_accounts.go`, `admin_keys.go`, `status_notices.go`) does. A log
+// line is not a privacy audit trail: it is rotated on a short retention,
+// is not queryable per-account, and is absent from the dashboard's audit
+// view.
 //
 // Best-effort, matching the sibling contract: the read has already
 // happened by the time this runs, so a sink failure logs at WARN and
@@ -204,9 +203,8 @@ func (h *Handlers) recordAdminLookupAudit(
 		Timestamp:   h.cfg.Now(),
 	}
 	if err := h.cfg.Audit.Append(r.Context(), entry); err != nil {
-		// C3-067's counter, C3-056's surface: the PII read already
-		// happened and cannot be un-done, so the only honest response is
-		// to make the missing row visible.
+		// The PII read already happened and cannot be un-done, so the
+		// only honest response is to make the missing row visible.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceStaffLookup).Inc()
 		h.cfg.Logger.Warn("staff customer lookup: audit append failed (best-effort)",
 			"err", err, "account_id", acct.ID, "actor", maskEmail(sc.User.Email))

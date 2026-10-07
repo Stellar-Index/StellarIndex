@@ -15,18 +15,17 @@ import (
 // LoginIntentCookieName is the short-lived cookie that binds a
 // magic link to the browser that asked for it.
 //
-// C3-030 (audit-2026-07-23) — login CSRF. Before this cookie
-// existed, `GET /v1/auth/callback` minted a session from a token
-// carried purely in the query string, and `sessionSameSite()`
-// returns Lax, which *permits* top-level cross-site GET
-// navigation. So an attacker could request a magic link for their
-// OWN account and mail that link to a victim: the victim's browser
-// followed it, got the attacker's session cookie, and every
-// subsequent action the victim took (minting an API key, attaching
-// a payment method) landed in the attacker's dashboard. That is
-// the classic login-CSRF shape and neither the token's
-// single-use-ness nor its 15-minute TTL touches it — the attacker
-// is happy to spend a fresh token per victim.
+// Login CSRF. Without this cookie, `GET /v1/auth/callback` would
+// mint a session from a token carried purely in the query string,
+// and `sessionSameSite()` returns Lax, which *permits* top-level
+// cross-site GET navigation. So an attacker could request a magic
+// link for their OWN account and mail that link to a victim: the
+// victim's browser would follow it and get the attacker's session
+// cookie, and every subsequent action the victim took (minting an
+// API key, attaching a payment method) would land in the attacker's
+// dashboard. That is the classic login-CSRF shape and neither the
+// token's single-use-ness nor its 15-minute TTL touches it — the
+// attacker is happy to spend a fresh token per victim.
 //
 // The binding: `POST /v1/auth/login` stamps this cookie with a
 // random per-browser id and mints a token whose second half is a
@@ -35,8 +34,8 @@ import (
 // verifies against the presenting browser's id. The attacker cannot
 // set a cookie on the victim's browser for the API's own host (the
 // __Host- prefix refuses one planted from a sibling host) and cannot
-// compute a tag without the server secret, so their link can no
-// longer be completed anywhere but their own browser.
+// compute a tag without the server secret, so their link cannot be
+// completed anywhere but their own browser.
 //
 // Deliberately distinct from [SessionCookieName] so a browser that
 // holds both can't have one surface's credential read as the
