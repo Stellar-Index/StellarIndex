@@ -146,3 +146,42 @@ func TestIdempotency_SameKeyOnDifferentPathRunsHandler(t *testing.T) {
 		t.Fatalf("handler runs = %d, want 2", n)
 	}
 }
+
+func TestIdempotency_ReplayUsesCurrentRequestCORS(t *testing.T) {
+	store := NewIdempotencyStore(time.Minute)
+	h := CORS(CORSOptions{AllowedOrigins: []string{"https://a.example", "https://b.example"}})(
+		Idempotency(store, func(*http.Request) string { return "acct" })(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+			})))
+	do := func(key, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/x", nil)
+		req.Header.Set(IdempotencyKeyHeader, key)
+		req.Header.Set("Origin", origin)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+	do("k1", "https://a.example")
+	rr := do("k1", "https://b.example")
+	if rr.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatal("second request was not a replay")
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://b.example" {
+		t.Fatalf("replay ACAO = %q, want https://b.example", got)
+	}
+	if !strings.Contains(strings.Join(rr.Header().Values("Vary"), ","), "Origin") {
+		t.Fatalf("replay lost Vary: Origin: %v", rr.Header().Values("Vary"))
+	}
+	rr = do("k1", "https://evil.example")
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("disallowed origin replay ACAO = %q, want none", got)
+	}
+
+	// A record stored before CORS filtering existed must not reintroduce the bug.
+	store.put("acct:POST /v1/x:k2", 201, http.Header{"Access-Control-Allow-Origin": {"https://a.example"}, "Vary": {"Origin"}}, nil)
+	rr = do("k2", "https://b.example")
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://b.example" {
+		t.Fatalf("legacy record replay ACAO = %q", got)
+	}
+}

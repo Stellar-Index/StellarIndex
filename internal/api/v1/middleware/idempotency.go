@@ -215,15 +215,48 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 			rec := &idempotencyRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			if rec.status >= 200 && rec.status < 300 {
-				store.put(cacheKey, rec.status, rec.Header().Clone(), append([]byte(nil), rec.buf.Bytes()...))
+				store.put(cacheKey, rec.status, stripCORSHeaders(rec.Header().Clone()), append([]byte(nil), rec.buf.Bytes()...))
 			}
 		})
 	}
 }
 
+// stripCORSHeaders removes the headers the CORS middleware owns so a
+// replay never carries the first request's origin decision; the
+// current request's CORS middleware sets them. The Origin token is
+// dropped from Vary, other tokens are kept. It also guards records
+// stored before this filtering existed.
+func stripCORSHeaders(h http.Header) http.Header {
+	for k := range h {
+		if strings.HasPrefix(k, "Access-Control-") {
+			delete(h, k)
+		}
+	}
+	var kept []string
+	for _, v := range h.Values("Vary") {
+		for _, tok := range strings.Split(v, ",") {
+			if tok = strings.TrimSpace(tok); tok != "" && !strings.EqualFold(tok, "Origin") {
+				kept = append(kept, tok)
+			}
+		}
+	}
+	if len(kept) == 0 {
+		h.Del("Vary")
+	} else {
+		h.Set("Vary", strings.Join(kept, ", "))
+	}
+	return h
+}
+
 func replayIdempotentResponse(w http.ResponseWriter, rec idempotencyRecord) {
 	dst := w.Header()
-	for k, vs := range rec.header {
+	for k, vs := range stripCORSHeaders(rec.header.Clone()) {
+		if k == "Vary" {
+			for _, v := range vs {
+				dst.Add(k, v)
+			}
+			continue
+		}
 		dst[k] = vs
 	}
 	dst.Set("Idempotency-Replayed", "true")
