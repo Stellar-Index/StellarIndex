@@ -20,7 +20,7 @@ func (panicPoller) PollOnce(context.Context, []canonical.Pair) ([]canonical.Trad
 	panic("simulated poller fault in PollOnce")
 }
 
-// TestRun_RecoversPanickingPoller proves the W4-cmd-1 fix: a panic in a
+// TestRun_RecoversPanickingPoller proves that a panic in a
 // poller's tick (the per-connector goroutine Run fans out) is CONTAINED.
 // The poller's immediate first doPoll panics; the guard recovers it, the
 // goroutine unwinds, and Run's wait() returns — instead of the panic

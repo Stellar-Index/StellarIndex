@@ -26,8 +26,7 @@ import (
 // future value that is wrong in the same way.
 
 // staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier — the
-// `10 ×` that used to sit in the oracle-stale rule expression and now
-// lives in the budget gauge the rule reads. The mirror is pinned by
+// `10 ×` that lives in the budget gauge the oracle-stale rule reads. The mirror is pinned by
 // TestStaleAlertMultiplierMatchesTheShippedBudget rather than trusted,
 // because the two together decide when band tickets.
 const staleAlertMultiplier = 10

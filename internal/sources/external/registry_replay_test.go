@@ -6,7 +6,7 @@ import (
 )
 
 // ReplayBackfillSafe is BackfillSafe over the PROJECTOR source namespace
-// (finding F050). The cases pin each of its three branches and, above
+// The cases pin each of its three branches and, above
 // all, that the fall-through is BackfillSafe's own fail-closed answer.
 func TestReplayBackfillSafe(t *testing.T) {
 	t.Parallel()

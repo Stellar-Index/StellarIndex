@@ -215,8 +215,8 @@ func TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable(t *testing.T) 
 // the LiquidityPoolEntry and emits 'state' + 'removed' (key only, no
 // entry payload) with NO 'updated' row. The after-reserves are zero by
 // construction, so both legs must be emitted at the full prior reserve
-// — this used to be misread as ErrEntryChangesUnavailable, dropping a
-// real on-chain withdrawal AND firing a false fidelity alarm.
+// — this must not be misread as ErrEntryChangesUnavailable, which would drop a
+// real on-chain withdrawal AND fire a false fidelity alarm.
 func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x97)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -255,8 +255,8 @@ func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 // one-sided withdrawal: core computes each leg as
 // floor(shares*reserve/totalShares), so a small withdrawal from a
 // lopsided pool legitimately pays out on B and rounds A to zero. Only
-// the zero leg is dropped — the whole op used to be rejected as
-// ErrMalformedMovement, losing the real B-side payout.
+// the zero leg is dropped — the op is not rejected as
+// ErrMalformedMovement, which would lose the real B-side payout.
 func TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x99)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -426,10 +426,9 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 		t.Fatalf("DecodeCAP0038Revocation: %v", err)
 	}
 	// Two assets liquidated => FOUR movements: a pool-exit leg and a
-	// claimable-balance-create leg for each. This assertion used to read
-	// `want 2` — it pinned the pool-exit legs only, which is the shape
-	// that made the created balances unresolvable. The per-asset
-	// fan-out it was really testing is unchanged and still checked below.
+	// claimable-balance-create leg for each. Counting the pool-exit legs
+	// alone (2) would leave the created balances unresolvable. The
+	// per-asset fan-out is checked below.
 	if len(movements) != 4 {
 		t.Fatalf("got %d movements, want 4 (a withdraw leg + a create leg per liquidated asset)", len(movements))
 	}

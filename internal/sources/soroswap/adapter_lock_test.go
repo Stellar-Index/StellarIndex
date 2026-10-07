@@ -23,8 +23,8 @@ import (
 // life of the process with /metrics still answering, the unit still
 // `active` and the cursor frozen. systemd sees nothing to restart.
 //
-// Decode used to hold d.mu across `d.buf.absorb(...)` with a bare
-// Unlock on the line below, which is exactly that shape. The panic
+// Holding d.mu across `d.buf.absorb(...)` with a bare Unlock on the
+// line below is exactly that shape. The panic
 // source here (a nil correlation buffer — the one pointer dereferenced
 // inside the critical section) is a stand-in: the property under test
 // is that ANY panic raised while the decoder lock is held still leaves

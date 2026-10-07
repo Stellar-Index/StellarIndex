@@ -388,10 +388,10 @@ func (s *AsyncSink) WrittenCount() uint64 {
 
 // LostCount returns the total number of rows permanently lost — a
 // batch that either hit a positively-classified permanent data fault
-// or never landed before shutdown gave up on it (soroban_events is the raw catch-all landing zone and
-// used to drop a failed batch outright with only a Warn log; a
-// sustained infra fault silently ate whole windows of raw events with
-// no operator-visible signal and no re-derive hint). Operators alert
+// or never landed before shutdown gave up on it (soroban_events is the raw catch-all landing zone, so a
+// sustained infra fault would otherwise silently eat whole windows of
+// raw events with no operator-visible signal and no re-derive hint).
+// Operators alert
 // on this rising the same way they do on the trades path's
 // SourceInsertErrorsTotal{kind="dropped"}.
 func (s *AsyncSink) LostCount() uint64 {
@@ -543,9 +543,9 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // fires (so shutdown isn't held hostage by a stuck write) and the
 // rows that have not landed are RETURNED so the worker can carry
 // them into drainOnStop, which retries them under DrainGrace. They
-// used to be abandoned right here — so a Stop() that raced a healthy
+// are not abandoned here — a Stop() that raced a healthy
 // in-flight write (the write's own ctx is cancelled, it returns
-// context.Canceled) counted a whole batch as lost on every restart
+// context.Canceled) would otherwise count a whole batch as lost on every restart
 // or deploy, which
 // TestAsyncSink_StopDrainsPendingRows_NoChannelClose catches as "WrittenCount =
 // 6, want 10" (10 rows minus one BatchSize=4 batch). During the

@@ -289,8 +289,8 @@ func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 // regression test for a same-op collision: two REDSTONE
 // events emitted by the SAME operation (OperationIndex equal) but at
 // different positions in that operation's contract-event list
-// (EventIndex differs) used to collide, because the fanout base was
-// OperationIndex ALONE. The fix must incorporate EventIndex too, so
+// (EventIndex differs) must not collide, so the fanout base cannot be
+// OperationIndex ALONE. It must incorporate EventIndex too, so
 // two events within one op get disjoint 1024-wide OpIndex blocks.
 func TestDecodeWritePrices_EventIndexPreventsSameOpCollision(t *testing.T) {
 	const pkgTs = uint64(1_745_000_000_000)

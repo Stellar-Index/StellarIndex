@@ -229,7 +229,7 @@ func TestKrakenBackfill_DetectsDepthHorizonStraddle(t *testing.T) {
 
 	from := time.Unix(requestedFromSec, 0).UTC()
 	// `to` is well inside the served window, so every returned candle
-	// is within [from, to) and would previously have been accepted
+	// is within [from, to) and must not be accepted
 	// with err=nil despite covering none of the requested history.
 	to := time.Unix(horizonStartSec+10*hourSec, 0).UTC()
 

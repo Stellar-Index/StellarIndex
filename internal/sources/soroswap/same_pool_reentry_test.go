@@ -10,7 +10,7 @@ import (
 
 // A route that re-enters ONE pair inside one op shares a groupKey
 // (ledger, tx, op, pair) across both swaps. With non-contiguous emission
-// (swap1, swap2, sync1, sync2) the second swap used to overwrite the
+// (swap1, swap2, sync1, sync2) the second swap must not overwrite the
 // first in place: one trade instead of two, and the lost one never
 // counted as an orphan. The first swap must be rotated out and emitted
 // on its own — decodeSwap reads only the swap body — and both trades

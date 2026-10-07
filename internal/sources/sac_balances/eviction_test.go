@@ -56,7 +56,7 @@ func evictionLedger(seq uint32, keys []xdr.LedgerKey) xdr.LedgerCloseMeta {
 //
 // A SAC balance whose TTL lapses is archived at ledger close. No
 // transaction touches it, so it appears in no transaction meta and the
-// observer used to never hear about it: the holder's last write stood as
+// observer would never hear about it: the holder's last write stood as
 // their current balance forever and the served SAC supply component stayed
 // permanently above the truth. The observer must see it as a removal — the
 // same absorbing "no longer live state" a deleted entry produces.

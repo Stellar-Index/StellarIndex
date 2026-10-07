@@ -226,13 +226,13 @@ func TestObserver_DecodeRemoved(t *testing.T) {
 	}
 }
 
-// TestObserver_CanonicalizesDashFormAssetKey is the W1-supply-1
-// regression. An operator may configure a SAC wrapper's asset_key in
+// TestObserver_CanonicalizesDashFormAssetKey is a
+// regression test. An operator may configure a SAC wrapper's asset_key in
 // the documented canonical CODE-ISSUER (dash) wire form — the same form
 // [supply].watched_classic_assets uses for the trustline / claimable /
 // LP observers, which canonicalize to CODE:ISSUER (colon) via
-// supply.CanonicalizeWatchedClassic. Before the fix, NewObserver copied
-// the asset_key verbatim, so the emitted Observation carried the dash
+// supply.CanonicalizeWatchedClassic. If NewObserver copied
+// the asset_key verbatim, the emitted Observation carried the dash
 // form and the SAC-held slice never joined the same classic asset's
 // colon-form supply in derivation → the asset was UNDER-reported. The
 // observer must canonicalize the asset_key to the colon form the sibling

@@ -181,11 +181,8 @@ func TestInvertScaled(t *testing.T) {
 	}
 	got := InvertScaled(v, 6)
 	// 1/1.0825 = 0.9237875288… — the 6dp digit is followed by .5288, so
-	// half-up gives 923788. This assertion previously read 923787 and
-	// described it as "truncated at 6dp": it was pinning the truncation
-	// bias fixed in MNY-06, not an intended value. Updated deliberately —
-	// unlike a test that encodes documented behaviour, this one encoded
-	// the defect.
+	// half-up gives 923788. Truncating to 923787 would be a
+	// truncation bias, not an intended value.
 	if got.String() != "923788" {
 		t.Errorf("InvertScaled(1.0825) = %s, want 923788 (0.9237875288… rounded half-up)", got)
 	}
