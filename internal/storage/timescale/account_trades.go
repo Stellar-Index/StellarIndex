@@ -13,14 +13,13 @@ import (
 //
 // ACCOUNT ATTRIBUTION — what the table actually holds: `trades` has no
 // source_account column (verified against migrations/ and the live r1
-// schema, 2026-07-30). The per-row account attribution is:
+// schema). The per-row account attribution is:
 //
 //   taker — the acting account: the tx-level source for sdex, the
 //           user/sender address for aquarius, phoenix, and comet, and
-//           the SwapEvent `to` recipient for soroswap (captured since
-//           the 2026-07-30 decoder fix; verified 100% taker coverage on
-//           new rows 2026-07-31 — soroswap rows ingested BEFORE that
-//           date carry NULL unless re-derived).
+//           the SwapEvent `to` recipient for soroswap (verified 100%
+//           taker coverage on new rows; soroswap rows ingested before
+//           the decoder captured `to` carry NULL unless re-derived).
 //   maker — the resting-offer account (sdex only).
 //
 // Both are NULL for off-chain CEX/FX rows (ledger=0 — no Stellar
@@ -100,12 +99,11 @@ func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 //
 // The two COALESCE expressions MUST carry explicit aliases. Without them
 // PostgreSQL names both output columns `coalesce`, so the outer SELECT's
-// reference to `usd_volume` resolved against nothing and the statement
-// failed at PLAN time — meaning GET /v1/accounts/{id}/trades returned 500
-// for every account, always, and had never served a row. The only test
-// asserted substrings of the query STRING and never executed SQL, so
-// `make test` could not see it (cold audit 2026-08-04, reproduced against
-// r1: `pq: column "usd_volume" does not exist ... (42703)`).
+// reference to `usd_volume` resolves against nothing and the statement
+// fails at PLAN time (`pq: column "usd_volume" does not exist ...
+// (42703)`) — GET /v1/accounts/{id}/trades would return 500 for every
+// account. A test that only asserts substrings of the query STRING cannot
+// see this; it needs real SQL execution.
 const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
@@ -133,7 +131,7 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 // each value once regardless of arm count.
 func accountTradesQuery(hasCursor bool) string {
 	// $2 is always the compression-horizon ts floor computed by
-	// tradesUncompressedHorizon (#1157): the per-account partial indexes
+	// tradesUncompressedHorizon: the per-account partial indexes
 	// exist only on UNCOMPRESSED chunks — a compressed chunk has no
 	// btree, so an arm that descends into one decompress-scans it (~46k
 	// buffers/chunk; 16.4M buffers ≈ 8s measured proving a ZERO-trade
@@ -170,7 +168,7 @@ const tradesHorizonFailClosedWindow = 24 * time.Hour
 // of the NEWEST COMPRESSED chunk — not the start of the oldest
 // uncompressed one.
 //
-// The two are not interchangeable (#1157): compression is not a time
+// The two are not interchangeable: compression is not a time
 // prefix. An old chunk can sit uncompressed (a stuck compression job, a
 // late-arriving backfill) while everything after it has already
 // compressed, and min(range_start) over uncompressed chunks then picks
@@ -191,12 +189,12 @@ const tradesHorizonFailClosedWindow = 24 * time.Hour
 // policy compresses another chunk. Fails CLOSED — a short recent window
 // (tradesHorizonFailClosedWindow), NOT epoch — on a catalog lookup
 // error: epoch means "no floor", which sends the read straight into the
-// unindexed full-history scan that caused the original 8s-timeout/503
-// incident (site audit 2026-08-08). AccountTrades and
-// computeAccountActivity already render any non-zero, post-1971 horizon
-// as an honest "showing trades since <date>" / trades_total_since
-// coverage note, so failing closed degrades into that same channel
-// instead of silently serving as if all history were indexed.
+// unindexed full-history scan, which on r1 hit the 8s timeout and
+// returned 503. AccountTrades and computeAccountActivity already render
+// any non-zero, post-1971 horizon as an honest "showing trades since
+// <date>" / trades_total_since coverage note, so failing closed degrades
+// into that same channel instead of silently serving as if all history
+// were indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()
@@ -289,11 +287,11 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 // CountAccountTrades returns the address's attributed trade count
 // (taker or maker side, each row once) SINCE the returned horizon —
 // the compression boundary below which the per-account partial indexes
-// don't exist (site audit 2026-08-08: the previous all-time OR count
-// decompress-scanned all 248 compressed chunks, ~8s, and was what the
-// activity endpoint's trades_total burned its budget on). The OR here
-// stays deliberate: with the ts floor the scan is confined to indexed
-// uncompressed chunks, where a bitmap-or counts each row once.
+// don't exist (an all-time OR count decompress-scanned all 248
+// compressed chunks in ~8s when measured, burning the activity
+// endpoint's trades_total budget). The OR here stays deliberate: with
+// the ts floor the scan is confined to indexed uncompressed chunks,
+// where a bitmap-or counts each row once.
 func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
 	horizon := s.tradesUncompressedHorizon(ctx)
 	const q = `SELECT count(*) FROM trades WHERE (taker = $1 OR maker = $1) AND ts >= $2`

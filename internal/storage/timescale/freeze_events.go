@@ -35,7 +35,7 @@ type FreezeEventSink struct {
 	// no-ops don't fire). Production wiring: the aggregator
 	// binary plugs a customerwebhook.Fanout.Publish closure so
 	// dashboard-registered hooks subscribed to `anomaly.freeze`
-	// receive a callback. F-1249 (codex audit-2026-05-12).
+	// receive a callback.
 	onFreeze FreezeHook
 }
 
@@ -77,10 +77,10 @@ type FreezeEventSinkOption func(*FreezeEventSink)
 
 // WithFreezeHook installs a post-insert side-effect closure.
 // Invoked AFTER a successful row insert (idempotent no-ops
-// don't fire). F-1249 (codex audit-2026-05-12): wired by the
-// aggregator binary to bridge into customerwebhook.Fanout.Publish
-// so dashboard hooks subscribed to `anomaly.freeze` get
-// callbacks. Best-effort — hook panics/errors don't propagate.
+// don't fire). Wired by the aggregator binary to bridge into
+// customerwebhook.Fanout.Publish so dashboard hooks subscribed
+// to `anomaly.freeze` get callbacks. Best-effort — hook
+// panics/errors don't propagate.
 func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.onFreeze = hook
@@ -137,14 +137,14 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		frozenValueArg = "0"
 	}
 
-	// F-1250 (codex audit-2026-05-12): atomic dedupe under
-	// concurrent RecordFreeze calls. Two aggregator workers
-	// racing on the same (asset, quote) pair used to both pass
-	// the `WHERE NOT EXISTS` check and each insert a still-firing
-	// row, leaving duplicate open rows for the same pair —
-	// every recovery worker now had to clear N rows instead of 1.
+	// Atomic dedupe under concurrent RecordFreeze calls. Without
+	// it, two aggregator workers racing on the same (asset, quote)
+	// pair could both pass the `WHERE NOT EXISTS` check and each
+	// insert a still-firing row, leaving duplicate open rows for
+	// the same pair — every recovery worker would then have to
+	// clear N rows instead of 1.
 	//
-	// The fix: wrap the check + insert in a transaction guarded
+	// So the check + insert run in a transaction guarded
 	// by `pg_advisory_xact_lock` keyed on a stable hash of
 	// (asset, quote). The lock is process-local to the txn so
 	// it auto-releases on COMMIT/ROLLBACK and never strands the
@@ -192,11 +192,10 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: commit: %w", err)
 	}
-	// F-1249 (codex audit-2026-05-12): fire the post-insert hook
-	// only when a row was actually appended. The idempotency check
-	// + ON CONFLICT DO NOTHING means RowsAffected==0 is the
-	// "already firing, this is just a TTL refresh" path; firing
-	// the webhook then would spam subscribers.
+	// Fire the post-insert hook only when a row was actually appended.
+	// The idempotency check + ON CONFLICT DO NOTHING means
+	// RowsAffected==0 is the "already firing, this is just a TTL
+	// refresh" path; firing the webhook then would spam subscribers.
 	if s.onFreeze != nil {
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
 			// The original value, not frozenValueArg: "0" is this column's
@@ -210,9 +209,9 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 // SaveLadder persists the ADR-0019 lifecycle state onto the currently-firing
 // `freeze_events` row for (asset, quote). Implements freeze.LadderStore.
 //
-// Migration 0119. The ladder — hold_until / extensions_used / escalated /
-// corroborated — used to live only in the aggregator's memory and in the
-// Redis marker's JSON, so a Redis flush took an ESCALATED freeze (one
+// Migration 0119. Held only in the aggregator's memory and in the Redis
+// marker's JSON, the ladder — hold_until / extensions_used / escalated /
+// corroborated — would let a Redis flush take an ESCALATED freeze (one
 // ADR-0019 holds "until manual unfreeze") down with it. This is the durable
 // copy, written on every lifecycle transition by freeze.Writer.MarkHold.
 //
@@ -220,8 +219,8 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 //
 //   - No INSERT. RecordFreeze owns row creation and is the only path that
 //     may open a row; a SaveLadder that could insert would race it and open
-//     a second firing row for one pair — the F-1250 class this file already
-//     serialises against.
+//     a second firing row for one pair — the duplicate-open-row race
+//     RecordFreeze's advisory lock serialises against.
 //   - No row → [ErrNotFound], NOT a silent nil. The freeze fired before
 //     0119, RecordFreeze's insert failed (best-effort by contract), the
 //     operator just closed the row out from under a tick — or, the case
@@ -229,8 +228,8 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 //     new binary is already running, in which case EVERY ladder write
 //     matches nothing and the durable ladder simply is not there when a
 //     flush needs it. The caller cannot act on any of these (the write is
-//     best-effort), but it must be able to COUNT them; returning nil made
-//     the whole failure mode invisible.
+//     best-effort), but it must be able to COUNT them; returning nil would
+//     make the whole failure mode invisible.
 //
 // Idempotent and monotonic in practice: every write is the whole current
 // state, so a lost write is corrected by the next tick's write.
@@ -891,11 +890,10 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 // freezes (recovered_at IS NULL), using the same partial index
 // ListFreezeEvents' firingOnly arm selects on.
 //
-// It exists because /v1/anomalies used to derive its firing_count as
-// `len(ListFreezeEvents(ctx, true, 500))` — a LIMIT-capped page, so a
-// freeze storm of any size reported exactly 500 (C1-051,
-// audit-2026-07-23). A count is also strictly cheaper: no row
-// materialisation, no detail JSONB read.
+// It exists because deriving /v1/anomalies' firing_count as
+// `len(ListFreezeEvents(ctx, true, 500))` — a LIMIT-capped page — would
+// report a freeze storm of any size as exactly 500. A count is also
+// strictly cheaper: no row materialisation, no detail JSONB read.
 func (s *Store) CountFiringFreezes(ctx context.Context) (int64, error) {
 	const q = `SELECT count(*) FROM freeze_events WHERE recovered_at IS NULL`
 	var n int64
@@ -1017,10 +1015,10 @@ func mapFreezeReason(decision anomaly.Decision) string {
 		return "outlier_storm"
 	}
 	// Defensive fall-through for a decision shape this mapper doesn't
-	// recognize. 'other', NOT 'manual' (audit 2026-07-31): 'manual' is
-	// reserved for genuinely operator-initiated freezes, so defaulting
-	// to it recorded any unrecognized automated decision as a human
-	// action on the anomalies timeline. Vocabulary extended by
+	// recognize. 'other', NOT 'manual': 'manual' is reserved for
+	// genuinely operator-initiated freezes, so defaulting to it would
+	// record any unrecognized automated decision as a human action on
+	// the anomalies timeline. Vocabulary extended by
 	// migration 0124.
 	return "other"
 }

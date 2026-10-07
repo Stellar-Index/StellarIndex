@@ -26,8 +26,8 @@ const (
 	BackstopDraw              BlendBackstopEventType = "draw"
 	BackstopRwZoneAdd         BlendBackstopEventType = "rw_zone_add"
 	// BackstopRwZone is the V1 backstop's reward-zone-update event —
-	// V2 renamed it to `rw_zone_add`. Added 2026-07-09 (migration
-	// 0095) alongside BackstopRwZoneRemove.
+	// V2 renamed it to `rw_zone_add`. Admitted by migration 0095
+	// alongside BackstopRwZoneRemove.
 	BackstopRwZone       BlendBackstopEventType = "rw_zone"
 	BackstopRwZoneRemove BlendBackstopEventType = "rw_zone_remove"
 )
@@ -73,7 +73,7 @@ type BlendBackstopEvent struct {
 // on the PK (ledger_close_time, ledger, tx_hash, op_index, event_index).
 // Re-running the indexer or a replay over the same range writes the
 // same rows. ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// `derive_generation <= EXCLUDED.derive_generation`: a replay
 // at an equal-or-higher generation OVERWRITES the stored value
 // columns, a lower-generation one is refused. Idempotent in row count,
 // NOT inert in value — the corrective upsert exists so a re-derive can
@@ -104,10 +104,10 @@ func (s *Store) InsertBlendBackstopEvent(ctx context.Context, e BlendBackstopEve
 		attrs = marshaled
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the i128 amounts (amount / amount2) or the other
 	// decoded columns lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_backstop_events (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,

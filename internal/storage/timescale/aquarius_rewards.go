@@ -18,8 +18,7 @@ import (
 type AquariusRewardsKind string
 
 // Rewards-gauge event kinds — see internal/sources/aquarius/README.md
-// (ROADMAP #89) for the per-kind lifetime counts + wire-shape
-// citations.
+// for the per-kind lifetime counts + wire-shape citations.
 const (
 	AquariusRewardsPoolState           AquariusRewardsKind = "pool_state"
 	AquariusRewardsClaimReward         AquariusRewardsKind = "claim_reward"
@@ -71,7 +70,7 @@ type AquariusRewardsEvent struct {
 // contract_id, ledger, tx_hash, op_index, event_kind, event_index) PK
 // — a projector-replay over the same range writes the same rows.
 // ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// `derive_generation <= EXCLUDED.derive_generation`: a replay
 // at an equal-or-higher generation OVERWRITES the stored value
 // columns, a lower-generation one is refused. Idempotent in row count,
 // NOT inert in value — the corrective upsert exists so a re-derive can
@@ -105,10 +104,10 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 		amount = sql.NullString{String: e.Amount.String(), Valid: true}
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the reward `amount` (or user_address /
 	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO aquarius_rewards_events (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -139,10 +138,10 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 
 // ─── Read side: rewards-gauge analytics for the Aquarius bespoke block ───
 //
-// The v0.12 decoders (this file's Insert side) shipped with nowhere
-// serving the resulting 7.3M+-row full-history backfill. These reads back
-// aquarius_rewards_events for internal/storage/timescale/protocol_bespoke.go
-// (aquariusRewardsBlocks), which augments the Aquarius DEX bespoke block —
+// These reads serve the full-history aquarius_rewards_events table (7.3M+
+// rows when measured) that this file's Insert side writes, for
+// internal/storage/timescale/protocol_bespoke.go (aquariusRewardsBlocks),
+// which augments the Aquarius DEX bespoke block —
 // see docs/protocols/aquarius.md "Rewards + governance analytics surface".
 
 // aquariusRewardsAllKinds is the ordered set of the twelve rewards-gauge

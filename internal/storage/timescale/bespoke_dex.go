@@ -1,16 +1,15 @@
 package timescale
 
-// Split out of protocol_bespoke.go (2026-07-30) so per-category visual
-// suites can be built in parallel without colliding on one file. Shared
-// types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the
-// scan helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built
+// in parallel without colliding on one file. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
+// helpers stay in protocol_bespoke.go.
 //
 // ─── DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet /
 //     sdex) ───────────────────────────────────────────────────────────────
 //
 // Three data tiers, chosen per query so nothing scans the 300M+-row trades
-// hypertable unbounded (every figure below ground-truthed READ-ONLY on r1,
-// 2026-07-30):
+// hypertable unbounded (every figure below ground-truthed READ-ONLY on r1):
 //
 //  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true) — the
 //     daily per-(source, pair) rollup. Backs the >1-day windows: KPIs,
@@ -44,11 +43,10 @@ package timescale
 //     (dexRawWindowOK) and the omission is Noted on the block.
 //
 // taker coverage: aquarius/phoenix/comet/sdex stamp taker on 100% of
-// rows; soroswap has stamped taker since its 2026-07-30 decoder fix
-// (verified 100% on new rows, 2026-07-31) — rows ingested before that
-// date carry NULL unless re-derived, so trader metrics stay DATA-DRIVEN:
-// served when the window has taker-stamped rows, omitted (with a Note)
-// when it observably has none.
+// rows; soroswap's current decoder stamps taker on 100% of new rows, but
+// rows an earlier decoder ingested carry NULL unless re-derived, so
+// trader metrics stay DATA-DRIVEN: served when the window has
+// taker-stamped rows, omitted (with a Note) when it observably has none.
 //
 // Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
 // never ad-hoc pricing. At 24h the XLM legs valuation left unpriced are
@@ -124,13 +122,13 @@ const dexXLMLegUnvalued = `COALESCE(CASE WHEN COALESCE(sum(sum_xlm_base),0) + CO
 		           / 10000000::numeric, 7)::text END, '')`
 
 // dexHourlyBucketWindow is the shared "trailing interval" predicate every
-// source_volume_1h reader binds against its own $N::interval placeholder
-// (GH-1113). A strict `>` against now() — never `>=`, and never a
-// date_trunc()-rounded floor — so every reader selects the SAME set of
-// hourly buckets for the same nominal window; sourceVolumeHistory used to
-// round its floor down to the top of the hour, which pulled in one extra
-// bucket (25 vs this file's 24) and reported a different 24h volume for
-// the same source and window than dexWindowKPIQuery/dexActivitySeriesQuery.
+// source_volume_1h reader binds against its own $N::interval placeholder.
+// A strict `>` against now() — never `>=`, and never a date_trunc()-rounded
+// floor — so every reader selects the SAME set of hourly buckets for the
+// same nominal window. Rounding the floor down to the top of the hour
+// would pull in one extra bucket (25 vs this file's 24) and report a
+// different 24h volume for the same source and window than
+// dexWindowKPIQuery/dexActivitySeriesQuery.
 func dexHourlyBucketWindow(intervalParam int) string {
 	return fmt.Sprintf("bucket > now() - $%d::interval", intervalParam)
 }
@@ -765,10 +763,9 @@ func (s *Store) dexSinceTotalsKPIs(ctx context.Context, blk *BespokeBlock, sourc
 // dexOmissionNotes appends the honest omission notes for surfaces this
 // source/window combination cannot serve. The trader-metrics note is
 // DATA-DRIVEN (takersZero — observed from the window's rows), not a
-// static per-source claim: the old hard-coded "soroswap captures no
-// taker" note went stale the day the decoder fix landed (2026-07-30,
-// 100% coverage on new rows verified 2026-07-31) and would have
-// disclaimed real data on the wire indefinitely.
+// static per-source claim: a hard-coded "soroswap captures no taker" note
+// goes stale the moment a decoder starts stamping takers, and would then
+// disclaim real data on the wire indefinitely.
 func (s *Store) dexOmissionNotes(blk *BespokeBlock, windowDays int, raw, takersZero bool) {
 	if raw && takersZero {
 		blk.Notes = append(blk.Notes, fmt.Sprintf(

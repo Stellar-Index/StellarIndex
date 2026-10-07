@@ -183,7 +183,7 @@ const listingRecognitionMaxAge = "48 hours"
 // hourly pass since has faithfully re-copied the same frozen number with
 // a brand-new `synced_at`, and a bound measured on `synced_at` would
 // launder it as fresh forever. This is the same distinction
-// internal/divergence/coingecko.go's staleness gate draws (CS-089), and
+// internal/divergence/coingecko.go's staleness gate draws, and
 // the same reason it rejects rather than trusts.
 //
 // A MISSING `priced_at` is likewise REJECTED, never waved through, for
@@ -290,7 +290,7 @@ func (s *Store) ReplaceListingDirectory(
 	// row a second time"), which would freeze the sync until the upstream
 	// happened to fix itself. Collapse duplicates last-wins before
 	// chunking, exactly as [dedupDirectoryEntriesByAddress] does for the
-	// curated directory (RA-3).
+	// curated directory.
 	entries = dedupListingEntriesByAddress(entries)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -542,7 +542,7 @@ func (s *Store) listingDirectoryCensus(ctx context.Context) (ListingDirectoryCen
 // `CODE-GISSUER` id, or the C-strkey of the Stellar Asset Contract that
 // (code, issuer) deterministically derives — and a reader that saw only
 // one form would miss whichever one the platform happened to publish.
-// Live proof of both halves (2026-09-15): the listing names EURC, AQUA,
+// Live proof of both halves, when checked: the listing named EURC, AQUA,
 // SHX, VELO, BLND and yUSDC by their classic ids, and USDC, PYUSD,
 // USDT0 and XLM by their SAC addresses ONLY.
 //

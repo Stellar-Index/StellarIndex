@@ -23,8 +23,8 @@ import (
 // NOT reach prices_<g>_pair_bucket_idx — a ScalarArrayOpExpr on the
 // leading index columns is planned as a bucket-ordered scan with the
 // pair as a post-filter, so proving a sparse or absent direction empty
-// walks every chunk. Measured on r1 against prices_1d (2026-09-03,
-// EXPLAIN ANALYZE): the array form ran 5 666 ms and touched ~4.2M rows
+// walks every chunk. Measured on r1 against prices_1d (EXPLAIN
+// ANALYZE): the array form ran 5 666 ms and touched ~4.2M rows
 // for XLM/USD; this form — one correlated `min(bucket)` per (form,
 // form, direction) combination, each an equality lookup the index
 // satisfies as an Index Only Scan — ran 6.9 ms with 20 ms planning and

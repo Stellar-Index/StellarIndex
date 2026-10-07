@@ -13,28 +13,28 @@ import (
 )
 
 // asset_price_snapshot — the per-asset headline-price rollup behind the
-// GET /v1/assets listing (#331 F1).
+// GET /v1/assets listing.
 //
-// The listing used to DERIVE its price column per request: twelve
+// Deriving the listing's price column per request means twelve
 // `DISTINCT ON … FROM prices_1m` CTEs (four USD-quoted lookbacks, four
 // XLM-quoted lookbacks each reading both stored directions, four
 // XLM/USD scalar lookups) materialised for EVERY asset, on every
 // uncached variant, whatever page was asked for. Measured on r1
-// 2026-09-02 (`pg_stat_statements`, since 2026-07-06): the unfiltered
-// listing statement ran 8,019 times at mean 2,400 ms / max 10,295 ms,
-// touching 380,324 shared buffers per call to return ~116 rows; three
-// sibling shapes add 10,500 more calls at 1.5–2.1 s. `EXPLAIN (ANALYZE,
-// BUFFERS)` on `?limit=50` at HEAD: 1,830 ms, 348,442 buffer hits,
-// 51 MB of `external merge` temp spill — of which the eight
-// `DISTINCT ON` CTEs were 1,353 ms (the 7-day `asset_vs_xlm` arm alone
-// was 881 ms and owned the whole disk sort).
+// (`pg_stat_statements`) in that shape: the unfiltered listing
+// statement ran 8,019 times at mean 2,400 ms / max 10,295 ms, touching
+// 380,324 shared buffers per call to return ~116 rows; three sibling
+// shapes added 10,500 more calls at 1.5–2.1 s. `EXPLAIN (ANALYZE,
+// BUFFERS)` on `?limit=50`: 1,830 ms, 348,442 buffer hits, 51 MB of
+// `external merge` temp spill — of which the eight `DISTINCT ON` CTEs
+// were 1,353 ms (the 7-day `asset_vs_xlm` arm alone was 881 ms and
+// owned the whole disk sort).
 //
 // So the derivation ([assetPriceCTEs]) runs here instead, off the
 // request path, and the aggregator folds it into one small keyed-on-PK
 // table on the same cadence the sibling volume rollup already runs at.
 // The listing then LEFT JOINs `asset_price_snapshot`.
-// Same pattern, same reasons, as migration 0087 (`asset_volume_24h`,
-// e0fbbbc3b) and 0149 (`asset_volume_character`).
+// Same pattern, same reasons, as migration 0087 (`asset_volume_24h`)
+// and 0149 (`asset_volume_character`).
 //
 // Why a plain worker-maintained table and not the two alternatives:
 //
@@ -497,8 +497,8 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64
 }
 
 // RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets
-// listing LEFT JOINs — asset_volume_24h (migration 0087, e0fbbbc3b) and
-// asset_price_snapshot (migration 0154, #331 F1) — and atomically
+// listing LEFT JOINs — asset_volume_24h (migration 0087) and
+// asset_price_snapshot (migration 0154) — and atomically
 // replaces their contents.
 //
 // One transaction, on purpose: the two rollups are joined onto the same
@@ -523,7 +523,7 @@ func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	// connection that shares the primary with the customer-facing API.
 	//
 	// work_mem — the 7-day asset_vs_xlm DISTINCT ON sorts ~48k rows and
-	// does not fit r1's 32 MB session default: measured 2026-09-02 it
+	// does not fit r1's 32 MB session default: measured on r1 it
 	// spilled `external merge Disk: 51,072 kB` EVERY pass, which at a
 	// 2-minute cadence is ~37 GB/day of temp write+read. 96 MB removes
 	// the spill (64 MB does not) and takes the refresh from 1,765-2,021

@@ -1,9 +1,9 @@
 package timescale
 
-// Split out of protocol_bespoke.go (2026-07-30) so per-category visual
-// suites can be built in parallel without colliding on one file. Shared
-// types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the
-// scan helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built
+// in parallel without colliding on one file. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
+// helpers stay in protocol_bespoke.go.
 
 // bespokeLending builds the Blend lending bespoke block: PER-ASSET net
 // supplied (supply + supply_collateral − withdraw − withdraw_collateral) and
@@ -12,8 +12,8 @@ package timescale
 // sign is the event_kind, not the value — so net positions are signed sums of
 // the gross magnitudes, and they are only ever summed WITHIN one asset
 // (cross-asset sums mix per-token decimals — see the count-first block
-// comment below; the old headline cross-asset "Net supplied/borrowed" KPIs
-// and per-pool Util% were dropped 2026-07-31 for exactly that reason).
+// comment below; that is why there is no cross-asset "Net
+// supplied/borrowed" headline KPI and no per-pool Util%).
 // Confirmed on r1: event_kind ∈ {supply, withdraw, supply_collateral,
 // withdraw_collateral, borrow, repay, flash_loan}; token_amount +
 // b_or_d_amount are both ≥ 0.
@@ -71,7 +71,7 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	return blk, nil
 }
 
-// ─── Blend visual-suite extensions (2026-07-30) ─────────────────────────
+// ─── Blend visual-suite extensions ──────────────────────────────────────
 //
 // Everything below is COUNT-first on purpose: blend_positions /
 // blend_backstop_events rows mix many tokens at per-asset decimals, and no
@@ -79,7 +79,7 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 // raw amounts across rows would be a meaningless (and dishonest) number.
 // Amounts appear only where a single row's single asset is shown (the
 // flash-loan table) or where an existing surface already scopes a sum
-// per-asset. Ground-truthed on r1 2026-07-30: blend_positions 973,390 rows
+// per-asset. Ground-truthed on r1: blend_positions 973,390 rows
 // (2024-05-02 →), 15 pools; blend_backstop_events 93,243 rows;
 // blend_auctions 9,908 rows.
 //
@@ -480,7 +480,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 
 	// Scheduled-settlement volume per bucket (the protocol's dominant
 	// recurring flow). Native USDC base units, not USD. Name is
-	// window-stable ("Settlement volume", previously "Daily settlement
+	// window-stable ("Settlement volume", not "Daily settlement
 	// volume"): the grain — hourly at the 24h window, daily otherwise —
 	// lives in the point timestamps (the CCTP series convention).
 	series, err := s.scanDailySeries(ctx, creditSettlementSeriesQuery(windowDays), since)
@@ -566,7 +566,7 @@ func creditPositionsOpenedSeriesQuery(windowDays int) string {
 // credit_positions is the only credit_* table with a real owner column
 // (credit_events carries no owner — see the migration 0090 shapes), so
 // the all-time unique-users figure is honestly scoped to position opens.
-// Deliberately NOT window-bounded (r1 2026-07-30: 105,896 rows — a
+// Deliberately NOT window-bounded (measured on r1: 105,896 rows — a
 // trivially cheap aggregate under the window-keyed detail cache).
 func creditAllTimePositionsKPIQuery() string {
 	return `

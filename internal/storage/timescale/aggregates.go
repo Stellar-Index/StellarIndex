@@ -46,9 +46,8 @@ const (
 // message from it via [HistoryGranularityList], so the accepted set
 // and the enumeration callers are shown cannot disagree. The API's
 // 400 bodies for `/v1/chart` and `/v1/history/since-inception` quote
-// the same helper for the same reason — the enumeration used to be
-// hand-copied into all three, and a hand-copied list is how the two
-// drift apart in the first place.
+// the same helper for the same reason: an enumeration hand-copied into
+// all three is how the lists drift apart.
 //
 // Adding a rung here is adding a rung the backfill has to
 // materialise: TestCAGGsLiveForeverCoversEveryServedGranularity fails
@@ -947,25 +946,24 @@ type Vwap1mRow struct {
 //
 // It reads BOTH stored orientations. The decoder keeps each trade in
 // the venue's observed ordering (see [dirVWAP]), so the same market
-// lands in the CAGG as both (A,B) and (B,A) rows. This query filtered
-// `base_asset = $1 AND quote_asset = $2` alone until 2026-08-31
-// (wave-D UNAUTH-DOS-9, first reported unactioned as R-076), which
-// silently dropped every minute the market traded only in the flipped
-// orientation — so /v1/oracle/prices returned a sparse series with
-// unexplained gaps, and for a predominantly-flipped pair returned
-// `200 []` for an asset /v1/oracle/lastprice priced without
-// difficulty. Two endpoints on the same declared SEP-40 surface
-// disagreed about whether the asset had any history at all.
+// lands in the CAGG as both (A,B) and (B,A) rows. Filtering
+// `base_asset = $1 AND quote_asset = $2` alone would silently drop
+// every minute the market traded only in the flipped orientation — so
+// /v1/oracle/prices would return a sparse series with unexplained
+// gaps, and for a predominantly-flipped pair `200 []` for an asset
+// /v1/oracle/lastprice prices without difficulty: two endpoints on the
+// same declared SEP-40 surface disagreeing about whether the asset has
+// any history at all.
 //
 // `LIMIT $3` is a ROW cap ([bucketRowCap]) — a bucket holds at most
 // two rows, so it still bounds the walk to the requested number of
 // buckets; [scanCombinedVwap1mRows] trims any partial tail.
 //
-// Deliberately still NOT given the literal `bucket >=` lower bound or
+// Deliberately NOT given the literal `bucket >=` lower bound or
 // the 14-day existence gate its [RecentClosedVWAP1mCombined] sibling
 // carries. Those would change what this documented public endpoint
 // SERVES (a dormant asset's last N closed buckets becoming an empty
-// array) — an owner decision, and out of scope for a correctness fix.
+// array) — an owner decision, not a query-shape choice.
 // Folding the two directions is not that: it makes the endpoint
 // report the buckets it always claimed to.
 //
@@ -973,9 +971,8 @@ type Vwap1mRow struct {
 // '1 minute' <= now()`. The two are semantically identical, but the
 // second applies a function to the indexed column, so the planner cannot
 // use the bucket index or prune chunks at plan time and the read
-// degrades on a large prices_1m (wave-D UNAUTH-DOS-3). Its sargable
-// sibling [recentClosedVWAP1mCombinedTemplate] already had the right
-// form.
+// degrades on a large prices_1m. Its sargable sibling
+// [recentClosedVWAP1mCombinedTemplate] uses the same form.
 //
 // Hoisted to a package-level const for the same reason: the sargability
 // regression tests in closed_vwap_at_test.go assert over the package's
@@ -1246,15 +1243,13 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 //
 // It reads BOTH stored orientations for the same reason
 // [recentClosedVWAP1mForPairQuery] does — the CAGG holds the same
-// market as both (A,B) and (B,A) rows. This query filtered
-// `base_asset = $1 AND quote_asset = $2` alone until 2026-08-31
-// (wave-D UNAUTH-DOS-9, the second reader the finding itself missed).
-// Single-orientation reading understated the anchor in two distinct
-// ways: for a bucket holding both directions it returned ONE leg's
-// VWAP as if it were the bucket's, ignoring the other leg's volume —
-// a wrong number, silently — and for a bucket holding only the
-// flipped leg it matched nothing, so change_24h_pct simply vanished
-// from the response.
+// market as both (A,B) and (B,A) rows. Filtering
+// `base_asset = $1 AND quote_asset = $2` alone would misstate the
+// anchor in two distinct ways: for a bucket holding both directions it
+// would return ONE leg's VWAP as if it were the bucket's, ignoring the
+// other leg's volume — a wrong number, silently — and for a bucket
+// holding only the flipped leg it would match nothing, so
+// change_24h_pct would simply vanish from the response.
 //
 // `LIMIT 2` is the row cap for ONE bucket (a bucket holds at most two
 // rows). When the newest qualifying bucket has a single row, the
@@ -1541,12 +1536,11 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// combine is deterministic across regions.
 	// Find the latest closed bucket via the (base,quote,bucket DESC)
 	// index — one fast max() per direction, UNIONed — then point-read +
-	// combine just that bucket's 1-2 rows. The earlier form scanned the
-	// pair's ENTIRE prices_1m history (back to 2015) before LIMIT 1,
-	// which measured ~1s warm and ballooned to ~9s under load (it drove
-	// a latency-burn incident on 2026-06-19).
+	// combine just that bucket's 1-2 rows. Scanning the pair's ENTIRE
+	// prices_1m history (back to 2015) before LIMIT 1 measured ~1s warm
+	// and ~9s under load.
 	//
-	// PERF (two layers, both required — 2026-06-20 latency-burn incident):
+	// PERF (two layers, both required):
 	//
 	//  1. The "closed bucket" predicate MUST be `bucket <= now() - 1min`, NOT
 	//     `bucket + 1min <= now()`. The latter is a function on the indexed
@@ -1561,37 +1555,38 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	//     time, collapsing planning to ~2ms. The literal is our own UTC
 	//     timestamp — no injection surface.
 	//
-	// A single bounded query — NO unbounded fallback. An earlier two-tier
-	// (bounded → unbounded) made the no-data case slow again: the handler
-	// reads native/fiat:USD as an alias on every XLM query, that synthetic
-	// pair has zero rows, so the bounded miss fell through to the slow
-	// all-chunk scan finding nothing. A pair with no closed bucket in the
-	// window returns ErrNoRows, which the price handler already resolves via
-	// its Redis-triangulation / last-trade fallback chain — the right path
-	// for a synthetic pair, and the honest answer for a genuinely-dead asset
-	// (a stale "latest" is not a current price).
+	// A single bounded query — NO unbounded fallback. A two-tier
+	// (bounded → unbounded) form would make the no-data case slow: the
+	// handler reads native/fiat:USD as an alias on every XLM query, that
+	// synthetic pair has zero rows, so the bounded miss would fall through
+	// to the slow all-chunk scan finding nothing. A pair with no closed
+	// bucket in the window returns ErrNoRows, which the price handler
+	// already resolves via its Redis-triangulation / last-trade fallback
+	// chain — the right path for a synthetic pair, and the honest answer
+	// for a genuinely-dead asset (a stale "latest" is not a current price).
 	//
-	// 2026-07-06 empty-alias latency incident: the two layers above make the
-	// EMPTY pair cheap only WARM. The value walk's max() arms still have to
-	// PROVE emptiness across the whole (generous, ~400-day) literal window —
-	// min/max short-circuits when a matching row exists, but a truly-empty
+	// Empty aliases: the two layers above make the EMPTY pair cheap only
+	// WARM. The value walk's max() arms still have to PROVE emptiness
+	// across the whole (generous, ~400-day) literal window — min/max
+	// short-circuits when a matching row exists, but a truly-empty
 	// (base,quote) forces touching every chunk in the window to conclude "no
 	// rows". COLD (post-ARC-eviction, decompressing hundreds of old chunks)
-	// that is minutes, not milliseconds, and /v1/price?asset=native timed out
-	// on the native/fiat:USD alias probe BEFORE the fast crypto:XLM/fiat:USD
-	// alias was ever tried. So gate the value walk behind a cheap
-	// recent-existence probe bounded to the last latestVWAPGateWindow: a
-	// populated pair short-circuits at the first row (one recent chunk); a
-	// truly-empty pair proves emptiness over only ~2 weeks of recent (hot,
-	// mostly-uncompressed) chunks and returns ErrNoRows. The gate — NOT the
-	// value walk's window — is the freshness horizon: a pair with no closed
-	// 1-minute bucket in a fortnight is not "currently priced", and the
-	// handler's fallback chain surfaces its last trade with an honest
-	// observed_at. Reordering the handler's aliases can't fix this (it just
-	// moves the empty walk onto the SDEX native/<asset> pairs); the gate
-	// makes the empty case cheap for EVERY pair. On a gate HIT the value walk
-	// below is byte-identical to the pre-incident path (combined-direction,
-	// literal-cutoff pruned) and returns the same recent bucket as before.
+	// that is minutes, not milliseconds, and /v1/price?asset=native would
+	// time out on the native/fiat:USD alias probe BEFORE the fast
+	// crypto:XLM/fiat:USD alias was ever tried. So gate the value walk
+	// behind a cheap recent-existence probe bounded to the last
+	// latestVWAPGateWindow: a populated pair short-circuits at the first
+	// row (one recent chunk); a truly-empty pair proves emptiness over
+	// only ~2 weeks of recent (hot, mostly-uncompressed) chunks and
+	// returns ErrNoRows. The gate — NOT the value walk's window — is the
+	// freshness horizon: a pair with no closed 1-minute bucket in a
+	// fortnight is not "currently priced", and the handler's fallback
+	// chain surfaces its last trade with an honest observed_at. Reordering
+	// the handler's aliases can't fix this (it just moves the empty walk
+	// onto the SDEX native/<asset> pairs); the gate makes the empty case
+	// cheap for EVERY pair. On a gate HIT the value walk below is the same
+	// ungated walk (combined-direction, literal-cutoff pruned) and returns
+	// the same recent bucket it would without the gate.
 	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
 	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
 	if err != nil {
@@ -1613,17 +1608,17 @@ const latestVWAPWindow = 400 * 24 * time.Hour
 
 // latestVWAPGateWindow bounds the cheap recent-existence probe
 // [LatestClosedVWAP1mForPair] runs BEFORE its combined-direction value
-// walk (2026-07-06 empty-alias latency incident). It is the price
-// surface's freshness horizon: a pair with no closed 1-minute VWAP
-// bucket in the last two weeks is treated as "not currently priced" —
-// the read returns [sql.ErrNoRows] and the /v1/price handler resolves it
-// via its Redis-triangulation / last-trade fallback chain. Two weeks is
-// generous for an on-chain price surface whose freshness contract is
-// minutes, yet small enough that PROVING a pair empty touches only a
-// fortnight of recent (hot, mostly-uncompressed) prices_1m chunks —
-// cheap even cold — instead of the value walk's ~400-day span. It MUST
-// stay < [latestVWAPWindow]: on a gate HIT the value walk (bounded by the
-// wider window) always finds the just-confirmed recent bucket.
+// walk. It is the price surface's freshness horizon: a pair with no
+// closed 1-minute VWAP bucket in the last two weeks is treated as "not
+// currently priced" — the read returns [sql.ErrNoRows] and the /v1/price
+// handler resolves it via its Redis-triangulation / last-trade fallback
+// chain. Two weeks is generous for an on-chain price surface whose
+// freshness contract is minutes, yet small enough that PROVING a pair
+// empty touches only a fortnight of recent (hot, mostly-uncompressed)
+// prices_1m chunks — cheap even cold — instead of the value walk's
+// ~400-day span. It MUST stay < [latestVWAPWindow]: on a gate HIT the
+// value walk (bounded by the wider window) always finds the
+// just-confirmed recent bucket.
 const latestVWAPGateWindow = 14 * 24 * time.Hour
 
 // recentClosedVWAP1mExistsTemplate is the recent-existence gate query.
@@ -1696,7 +1691,7 @@ func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, 
 // so <token>/USDC has zero rows) that is a cold full-history walk, and
 // the proxy repeats it for EVERY peg. Gating each peg on this cheap
 // bounded probe lets the proxy skip empty pairs before the walk — the
-// same 2026-07-06 empty-alias latency fix, applied at the proxy layer.
+// same empty-alias gate, applied at the proxy layer.
 // A hit means a live proxy pair (do the `LatestPrice` read, whose VWAP
 // path is itself gated + fast); a miss means skip the peg.
 func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error) {
@@ -1816,7 +1811,7 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	// on [Store.VWAPsForPair1m].
 	//
 	// Each minute carries its USD notional (volume_usd, NULL when unpriced)
-	// so the refresher can build USD-volume bars (#1108); the policy lives
+	// so the refresher can build USD-volume bars; the policy lives
 	// there, not in this read.
 	const q = `
         SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
@@ -2074,7 +2069,7 @@ type OHLCBar struct {
 	//
 	// It is here because BaseVolume and QuoteVolume are sums of
 	// SMALLEST-UNIT amounts, and the smallest unit is a per-SOURCE
-	// scale (CS-040: on-chain DEX legs are 7-decimal stroops, CEX 8,
+	// scale (on-chain DEX legs are 7-decimal stroops, CEX 8,
 	// the FX pollers 6). A bar is therefore a quantity in units that
 	// only its contributing sources identify, and a caller that sums
 	// bars from different markets — internal/api/v1's fiat combine is
@@ -2087,7 +2082,7 @@ type OHLCBar struct {
 
 // OHLCSeries returns chronologically-ordered (oldest-first) OHLC
 // bars from the CAGG matching `granularity` for the half-open
-// window [from, to). Used by /v1/ohlc's multi-bar mode (F-0071).
+// window [from, to). Used by /v1/ohlc's multi-bar mode.
 //
 // Bucket rule: the CAGG's native bucket size IS the interval, so
 // rows map 1:1 to bars — no SQL-side re-bucketing. Callers that
@@ -2103,11 +2098,11 @@ type OHLCBar struct {
 // When `limit` caps the row count, the query orders DESC and takes the
 // LIMIT so the cap keeps the NEWEST buckets in the window, then reverses
 // to the ascending order this method's contract promises — mirrors
-// [Store.TradesInRange] (F-1319). The previous `ORDER BY bucket ASC
-// LIMIT` kept the OLDEST `limit` buckets, so an explicit window wider
-// than `limit` intervals silently served history starting at `from` and
-// never reaching `to` — a stale slice for exactly the wide-window
-// request a caller sizes `limit` down to bound.
+// [Store.TradesInRange]. An `ORDER BY bucket ASC LIMIT` would keep the
+// OLDEST `limit` buckets, so an explicit window wider than `limit`
+// intervals would silently serve history starting at `from` and never
+// reaching `to` — a stale slice for exactly the wide-window request a
+// caller sizes `limit` down to bound.
 //
 // Σ(quote) (and a flipped row's base leg) is the stored `volume_quote`
 // (migration 0187), exact at any size and counting zero-leg trades on
@@ -2153,7 +2148,7 @@ func (s *Store) OHLCSeries(
 	// Doing it inline keeps the whole read in one grouping pass — a
 	// second CTE joined back on bucket costs 1.34x on r1, this costs
 	// 1.005x (29911 -> 30076, 30 days of 1h on the flagship pair,
-	// EXPLAIN 2026-09-05, plan only).
+	// EXPLAIN plan only).
 	// #nosec G201 — table + interval are derived from the validated
 	// HistoryGranularity enum, not user input. See Validate.
 	q := fmt.Sprintf(`
@@ -2364,9 +2359,8 @@ func (s *Store) OHLCSeriesReBucketed(
 	// it MUST NOT come from untrusted input. The accepted pairings
 	// are the folded rows of [OHLCRoutes]: the same table the API
 	// routes from, so no interval can be routed here that this check
-	// refuses. (A hand-kept copy of this list never learnt 2h, 12h,
-	// 3d and 2w, and every request at those widths 500d until it was
-	// replaced by the table — launch plan W8-17.)
+	// refuses. (A hand-kept copy of this list would drift: a width the
+	// router learns but the copy does not 500s on every request.)
 	if !ohlcFoldDeclared(sourceGranularity, outInterval) {
 		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: fold %s→%q is not declared in OHLCRoutes", sourceGranularity, outInterval)
 	}
@@ -2386,7 +2380,7 @@ func (s *Store) OHLCSeriesReBucketed(
 	// Across source buckets there are as many rows as the out_interval
 	// spans, so that fold is a real N-way union and gets its own grouping
 	// over the unnested arrays, joined back on out_bucket. Cost on r1
-	// (1h -> 4h, 30 days, flagship pair, EXPLAIN 2026-09-05, plan only):
+	// (1h -> 4h, 30 days, flagship pair, EXPLAIN plan only):
 	// 31003 -> 38892, 1.25x. Unioning at the pre-fold grain instead —
 	// which forces the row-level CTE to materialise — measured 2.08x.
 	// #nosec G201 — table comes from the validated enum;
@@ -2397,8 +2391,8 @@ func (s *Store) OHLCSeriesReBucketed(
 	if limit > 0 {
 		// DESC + LIMIT keeps the NEWEST `limit` out-buckets when the window
 		// holds more than that many; reversed to ascending below. Same
-		// F-1319 shape as [Store.OHLCSeries] — the previous `ORDER BY
-		// out_bucket ASC LIMIT` kept the OLDEST `limit` buckets.
+		// shape as [Store.OHLCSeries] — an `ORDER BY out_bucket ASC LIMIT`
+		// would keep the OLDEST `limit` buckets.
 		args = append(args, limit)
 		q += fmt.Sprintf(" ORDER BY out_bucket DESC LIMIT $%d", len(args))
 	} else {
@@ -2548,12 +2542,12 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 // [Store.PairMarketSubstance], whose window always ends now.
 //
 // It exists because a trailing-from-now measurement says nothing about
-// a historical instant (finding T038). /v1/price/at and the
-// /v1/price/changes horizons serve the bucket at-or-before `ts`, and
-// whether THAT bucket came from a market of substance is a question
-// about the hours before `ts`: a pair that is thick today may have
-// been attacker-seeded dust at `ts`, and a pair that is dormant today
-// may have been deep and honest at `ts`.
+// a historical instant. /v1/price/at and the /v1/price/changes
+// horizons serve the bucket at-or-before `ts`, and whether THAT bucket
+// came from a market of substance is a question about the hours before
+// `ts`: a pair that is thick today may have been attacker-seeded dust
+// at `ts`, and a pair that is dormant today may have been deep and
+// honest at `ts`.
 //
 // `g` is the grain the three legs are counted at, and only the two
 // grains with a stated serve floor are accepted:

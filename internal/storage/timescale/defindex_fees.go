@@ -28,7 +28,7 @@ type DefindexFee struct {
 
 // InsertDefindexFee lands one dfees distribution entry, idempotent on
 // the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index, fee_index) PK with the INV-3 generation-guarded
+// event_index, fee_index) PK with the generation-guarded
 // corrective upsert (migration 0110 convention): a corrected re-derive
 // of token/amount lands in place when its generation is >= the stored
 // one; a live gen-0 replay can never revert it.

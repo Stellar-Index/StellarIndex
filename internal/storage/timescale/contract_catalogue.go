@@ -16,7 +16,7 @@ import (
 // …)`. That gate is right for those callers and is documented as such:
 // discovered_assets holds ~117k contracts because SEP-41 event discovery
 // catches anything emitting token events, and an asset LISTING wants the
-// ones with a market. Measured on r1 2026-08-28, it admits 60 of them.
+// ones with a market. Measured on r1, it admitted 60 of them.
 //
 // It is wrong for this caller, and not marginally. A tokenized treasury
 // or money-market fund is held, not traded: it can carry a nine-figure

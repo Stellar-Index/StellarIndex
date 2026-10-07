@@ -59,11 +59,11 @@ func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEv
 		return fmt.Errorf("timescale: InsertBlendAdminEvent: marshal attributes: %w", err)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the decoded columns (admin / asset / target and
 	// the attributes jsonb, which carries i128 amounts like
 	// min_collateral / supply_cap) lands in place when its generation is >=
-	// the stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
+	// the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_admin (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,

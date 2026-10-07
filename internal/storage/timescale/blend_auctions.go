@@ -64,10 +64,9 @@ func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 // Idempotent on (ledger, tx_hash, op_index, ts, event_kind,
 // event_index) — re-running over the same range corrects the row in
 // place rather than producing duplicates. event_index (migration
-// 0058 / F-1324) is the per-event discriminator so multiple auction
-// events emitted by one operation don't collide; the ON CONFLICT arm
-// is DO UPDATE guarded by derive_generation (INV-3 / migration 0110),
-// not the old DO NOTHING.
+// 0058) is the per-event discriminator so multiple auction events
+// emitted by one operation don't collide; the ON CONFLICT arm is DO
+// UPDATE guarded by derive_generation (migration 0110), not DO NOTHING.
 //
 // Per docs/discovery/dexes-amms/blend.md the auction lifecycle
 // produces multiple rows in this table:
@@ -88,12 +87,12 @@ func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEve
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendNewAuction: lot: %w", err)
 	}
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the decoded columns (bid / lot i128 amounts,
 	// percent, block) lands in place when its generation is >= the stored
 	// one; a live gen-0 replay can never revert it. event_kind is part of the
 	// conflict key, so a 'new' row only ever conflicts with another 'new' row
-	// — the SET touches exactly this writer's columns. Replaces DO NOTHING.
+	// — the SET touches exactly this writer's columns.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
@@ -153,10 +152,10 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 		return fmt.Errorf("timescale: InsertBlendFillAuction: lot: %w", err)
 	}
 	fillPct := e.FillPercent.String() // i128 → numeric column accepts text
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the decoded columns (fill_percent, bid/lot i128
 	// amounts, filler, block) lands in place when its generation is >= the
-	// stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
+	// stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
@@ -202,10 +201,10 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 // InsertBlendDeleteAuction writes a `delete_auction` row. No body
 // fields — body is the unit value () on the wire.
 func (s *Store) InsertBlendDeleteAuction(ctx context.Context, e blend.DeleteAuctionEvent) error {
-	// INV-3 generation-guarded corrective upsert (migration 0110). A delete
+	// Generation-guarded corrective upsert (migration 0110). A delete
 	// row carries no body amounts, but a corrected re-derive of its decoded
 	// identity columns still lands in place; a live gen-0 replay can never
-	// revert it. Replaces DO NOTHING.
+	// revert it.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,

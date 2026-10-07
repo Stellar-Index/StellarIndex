@@ -62,7 +62,7 @@ type CometLiquidityEvent struct {
 	OpIndex         uint32
 	// EventIndex is the contract event's index within its operation —
 	// the per-event discriminator added to the comet_liquidity PK by
-	// migration 0059 (F-1324) so two same-(kind,token) events from one
+	// migration 0059 so two same-(kind,token) events from one
 	// op don't collide.
 	EventIndex   uint32
 	Kind         CometLiquidityKind
@@ -75,10 +75,10 @@ type CometLiquidityEvent struct {
 // InsertCometLiquidity appends one Comet liquidity event row,
 // idempotent on the (ledger_close_time, contract_id, ledger,
 // tx_hash, op_index, event_kind, token, event_index) PK (event_index
-// added by migration 0059 / F-1324 so two same-(kind,token) events
+// added by migration 0059 so two same-(kind,token) events
 // from one op don't collide). Re-running the indexer or a backfill
 // over the same range writes the same rows. ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// `derive_generation <= EXCLUDED.derive_generation`: a replay
 // at an equal-or-higher generation OVERWRITES the stored value
 // columns, a lower-generation one is refused. Idempotent in row count,
 // NOT inert in value — the corrective upsert exists so a re-derive can
@@ -121,10 +121,10 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 		poolAmountIn = sql.NullString{String: e.PoolAmountIn.String(), Valid: true}
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the i128 amounts (amount / pool_amount_in) or
 	// direction / caller lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO comet_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash, op_index,
@@ -186,14 +186,12 @@ type CometTokenFlow struct {
 // This is the READ side of the Comet liquidity-depth signal InsertCometLiquidity
 // captures. Comet has no post-state reserve snapshot and no published price,
 // so the figures are native-token base-unit WINDOW deltas — not absolute
-// reserves or USD TVL. Comet is contract-identity gated as of 2026-07-08
-// (curated one-pool allowlist, CS-026 closed): the decoder's Matches() now
-// requires the emitting contract to be in comet.MainnetGatedSet, so a
-// look-alike Balancer-v1 deployment can no longer land NEW rows. Rows dated
-// before the gate shipped were captured by the prior topic-only-match
-// decoder and were not retroactively re-verified, so historical rows may
-// predate the gate (see docs/protocols/comet.md); callers surface that
-// caveat.
+// reserves or USD TVL. Comet is contract-identity gated (curated one-pool
+// allowlist): the decoder's Matches() requires the emitting contract to be
+// in comet.MainnetGatedSet, so a look-alike Balancer-v1 deployment cannot
+// land NEW rows. Rows an earlier topic-only-match decoder captured were not
+// retroactively re-verified, so historical rows may not have passed the
+// gate (see docs/protocols/comet.md); callers surface that caveat.
 //
 // Empty-safe: returns (nil, nil) when no liquidity events were captured in
 // the window. windowDays <= 0 is treated as 90.

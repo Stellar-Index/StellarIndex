@@ -99,8 +99,8 @@ type MarketDay struct {
 //
 // `prices_1m` has the serving gate's own grain, and its reach is a
 // DEPLOYMENT SETTING rather than a property of the schema: migration
-// 0002 gave it a 30-day retention, 0031 removed that on 2026-05-14, and
-// 0156 attached a 90-day policy to that view alone — shipped
+// 0002 gave it a 30-day retention, 0031 removed that, and 0156
+// attached a 90-day policy to that view alone — created
 // `scheduled => false`, dropping nothing until an operator arms it, and
 // then dropping every day forever. A series whose history silently
 // truncates the day a job is armed is not a series, so the floor is not
@@ -141,7 +141,7 @@ type MarketDay struct {
 // in-function `const q`) so its sargability can be pinned by a
 // query-shape test the way [closedVWAPAtOrBeforeQueryTemplate] and
 // [recentClosedVWAP1mForPairQuery] already are — an in-function query
-// is invisible to those guards however careful the author (RLT-042).
+// is invisible to those guards however careful the author.
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member

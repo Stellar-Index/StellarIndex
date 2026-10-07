@@ -31,7 +31,7 @@ type AquariusKillSwitchEvent struct {
 
 // InsertAquariusKillSwitch lands one circuit-breaker toggle, idempotent
 // on the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) PK with the INV-3 generation-guarded corrective upsert
+// event_index) PK with the generation-guarded corrective upsert
 // (migration 0110).
 //
 // Defensive: rejects an empty ContractID / TxHash, a zero

@@ -71,10 +71,9 @@ type AquariusLiquidityEvent struct {
 // (ledger_close_time, contract_id, ledger, tx_hash, op_index,
 // event_index, token_index) PK — a projector-replay or ch-rebuild over
 // the same range writes the same rows. The upsert is generation-guarded
-// DO UPDATE (INV-3), NOT the DO NOTHING this comment used to claim: a
-// re-derive at a HIGHER derive_generation lands its correction in place,
-// while a lower generation can never revert one. DO NOTHING is what made
-// corrected re-derives silently no-op (the re-backfill treadmill).
+// DO UPDATE, NOT DO NOTHING: a re-derive at a HIGHER derive_generation
+// lands its correction in place, while a lower generation can never
+// revert one. DO NOTHING would make corrected re-derives silently no-op.
 //
 // Defensive: rejects an empty ContractID / TxHash, an empty reserve
 // vector, and a negative reserve before touching the DB.
@@ -89,12 +88,12 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 		return errors.New("timescale: InsertAquariusReserves: empty reserve vector")
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the post-state `reserve` lands in place when its
 	// generation is >= the stored one; a live gen-0 replay can never revert
 	// it. Each fanned row carries a distinct token_index (a conflict-key
-	// component), so one statement never repeats a key — no intra-batch dedup
-	// needed. Replaces the old DO NOTHING no-op.
+	// component), so one statement never repeats a key — no intra-batch
+	// dedup needed.
 	const q = `
         INSERT INTO aquarius_reserves (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -163,12 +162,12 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 		return fmt.Errorf("timescale: InsertAquariusLiquidity: shares must be >= 0 (got %s)", e.Shares)
 	}
 
-	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// Generation-guarded corrective upsert (migration 0110): a
 	// corrected re-derive of the per-leg `amount` / `shares` lands in place
 	// when its generation is >= the stored one; a live gen-0 replay can never
 	// revert it. Each fanned row carries a distinct token_index (a
-	// conflict-key component), so one statement never repeats a key — no
-	// intra-batch dedup needed. Replaces the old DO NOTHING no-op.
+	// conflict-key component), so one statement never repeats a key —
+	// no intra-batch dedup needed.
 	const q = `
         INSERT INTO aquarius_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash,
