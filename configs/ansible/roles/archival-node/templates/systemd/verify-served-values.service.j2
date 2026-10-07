@@ -83,11 +83,11 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
-# Backstop only — twice the tool's own -timeout, which is what actually
-# bounds the run. This catches the case that deadline cannot: a block the
-# run context does not reach, so the unit fails rather than pinning the
-# timer.
-TimeoutStartSec=3min
+# Backstop only, above the tool's own worst case: two read passes of
+# -timeout around the 6-minute drift recheck wait (~9min). This catches the
+# case that deadline cannot: a block the run context does not reach, so the
+# unit fails rather than pinning the timer.
+TimeoutStartSec=15min
 
 [Install]
 WantedBy=multi-user.target
