@@ -1,37 +1,12 @@
-// Package consumer defines the transport-neutral ingest contract:
-// the [Event] sum-type interface that every source's emitted value
-// implements.
+// Package consumer defines [Event], the sum-type interface every value a
+// source emits implements. Decoders on the dispatcher path and the
+// off-chain connectors in internal/sources/external send on a
+// `chan consumer.Event`; internal/pipeline sinks it, type-switching on
+// the concrete type to attribute each row to its source.
 //
-// [Event] is the type the indexer's event sink type-switches on to
-// attribute each row to its source. Concrete shapes — e.g.
-// `soroswap.TradeEvent`, `reflector.UpdateEvent`,
-// `external.TradeEvent` — are defined in the source packages and
-// all satisfy this interface.
+// New on-chain sources register a dispatcher Decoder, never a goroutine
+// with its own RPC client (docs/architecture/ingest-pipeline.md).
 //
-// Every value emitted by a decoder, whether dispatched through the
-// [internal/dispatcher] hot path or produced by an
-// [internal/sources/external] connector goroutine, lands on a
-// `chan consumer.Event` and gets sunk by
-// `internal/pipeline` (driven from `cmd/stellarindex-indexer`).
-//
-// # Ingest is dispatcher-based
-//
-// Production ingest runs Galexie MinIO → internal/ledgerstream →
-// internal/dispatcher → per-source decoders. New on-chain sources register a
-// [github.com/Stellar-Index/StellarIndex/internal/dispatcher.Decoder]
-// (or OpDecoder / ContractCallDecoder / LedgerEntryChangeDecoder) —
-// never a per-source goroutine with its own RPC client. See
-// docs/architecture/ingest-pipeline.md for the binding rules.
-//
-// Off-chain CEX/FX venues DO run per-venue goroutines, but through
-// the sibling framework in `internal/sources/external/` — not
-// through anything in this package.
-//
-// # Invariants for Event values
-//
-//   - Every emitted event wraps a fully-formed value from
-//     [internal/canonical] — never a partial / unvalidated
-//     struct.
-//   - Amount fields are *big.Int via canonical.Amount. See
-//     ADR-0003.
+// An Event always wraps a fully validated internal/canonical value, and
+// its amounts are canonical.Amount (ADR-0003).
 package consumer

@@ -1,7 +1,6 @@
-// Package middleware has the HTTP middleware the v1 API Server wraps
-// its mux in. Order (outermost first, per
-// `internal/api/v1/server.go`'s `Server.middlewareStack`), with every
-// optional entry wired:
+// Package middleware has the HTTP middleware the v1 Server wraps its mux
+// in, composed by [Chain] in declaration order. Outermost first, with
+// every optional entry wired:
 //
 //	RequestID → HTTPMetrics → Logger → Recoverer → SecurityHeaders →
 //	CacheControl → Envelope404 → CORS → TrailingSlashRedirect →
@@ -9,38 +8,12 @@
 //	RequireEmailVerified → UsageTracker → MonthlyQuota → RateLimit →
 //	TouchUsage → SessionAuth → ETag → CaptureRoute
 //
-// CORS, RequestTimeout, PublicRoutes + Auth, KeyPolicy,
-// RequireEmailVerified, UsageTracker, MonthlyQuota, RateLimit,
-// TouchUsage and SessionAuth are present only when configured.
-// TestMiddlewareStackMatchesPackageDoc (package v1) fails when this list
-// and the built stack disagree.
+// CORS through SessionAuth, except the always-on ETag and CaptureRoute,
+// are wired only when configured. TestMiddlewareStackMatchesPackageDoc
+// fails when this list and Server.middlewareStack disagree.
 //
-// Each middleware is a tiny file. They're composable via [Chain]
-// which wraps them innermost-last so the request-path order matches
-// the declaration order.
-//
-// # Request context keys
-//
-// Middleware inject values into the request context via the keys in
-// `context.go`. Handlers read them via the `FromRequest`-style
-// accessors (e.g. [auth.SubjectFrom]); never reach into the
-// context bag directly.
-//
-// # Auth
-//
-// [Auth] is the unified authentication middleware. It selects an
-// `auth.AuthMode` (`anonymous` / `apikey` / `sep10`) per
-// `[api].auth_mode`, identifies the subject via the configured
-// validator (an `auth.APIKeyValidator` or `auth.SEP10Validator`
-// from the parent package), stamps the resulting `auth.Subject` on
-// the request context, and lets the rate-limit middleware key on
-// it for per-tier budgets. SEP-10 challenge / verify endpoints are
-// served by the v1 server directly, not by this middleware.
-//
-// # Deliberately small
-//
-// This package does NOT wrap a router. CORS support is intentionally
-// minimal — exact-match origin allow-list plus wildcard, no dynamic
-// origin reflection beyond that. Callers wanting per-route policies
-// or pattern matching should reach for rs/cors instead.
+// [Auth] picks the subject per `[api].auth_mode` (anonymous, apikey,
+// sep10) and stamps it on the context; handlers read context values only
+// through accessors such as [auth.SubjectFrom]. CORS is an exact-match
+// allow-list plus wildcard, nothing more.
 package middleware

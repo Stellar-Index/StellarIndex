@@ -17,7 +17,7 @@ import (
 // usd_volume_restamp_xlmbase.go repairs the on-chain DEX rows whose XLM
 // leg is the BASE one. These two tiers repair the
 // populations either side of it, through the same machinery: the same
-// run, the same walk, the same chunk driver, the same INV-3 guard, the
+// run, the same walk, the same chunk driver, the same generation guard, the
 // same `-fill-null` opt-in, the same fail-closed dry run. What each one
 // supplies is a planner — which rows, and what the live insert path
 // computes for them.

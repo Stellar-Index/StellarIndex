@@ -59,7 +59,7 @@ func NewFixedWindowCounter(rdb redis.Cmdable, window time.Duration, nowFn func()
 //
 // Returns — the post-increment count.
 //
-// REL-05 (audit-2026-07-23): as a client-side INCR-then-EXPIRE pair the
+// As a client-side INCR-then-EXPIRE pair the
 // EXPIRE was both non-atomic and best-effort, so any dropped connection
 // / MISCONF / OOM between the two calls left a TTL-less key behind. Those
 // keys are never revisited (the bucket suffix moves on with the clock),
