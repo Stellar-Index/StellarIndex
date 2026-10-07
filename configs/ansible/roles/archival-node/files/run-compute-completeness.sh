@@ -79,10 +79,13 @@ fi
 # mismatched ledgers" that were simply not drained yet).
 TIP=$(( TIP - 100 ))
 
-# PASS_TIMEOUT (EnvironmentFile) grants a one-off larger budget, e.g. for a
-# from-genesis re-verify; it must stay below the unit's 180 min pass budget
-# (TimeoutStartSec=34200 is that plus a 23400 s lock wait).
-PASS_TIMEOUT="${PASS_TIMEOUT:-120m}"
+# -pass runs sources serially with sep41 and soroswap-router last, so a budget
+# below the sum starves the same tail every day: on r1 two consecutive 120m
+# passes both ran out inside soroswap-router (band 33m, aquarius 28m, the
+# recognition pre-scan 25m under concurrent load). PASS_TIMEOUT
+# (EnvironmentFile) overrides it; it must stay below the unit's 180 min pass
+# budget (TimeoutStartSec=54000 is that plus a 43200 s lock wait).
+PASS_TIMEOUT="${PASS_TIMEOUT:-170m}"
 
 # Arguments replace `-pass -timeout $PASS_TIMEOUT`: compute-completeness-sdex
 # .service passes `-source sdex -timeout 360m` and compute-completeness-sep41
