@@ -41,7 +41,7 @@
 
 all:
   vars:
-    # Supply-chain checksums (F-1291/F-1293 — role asserts fail-fast
+    # Supply-chain checksums (role asserts fail-fast
     # without these; same pinned versions across every pubnet region).
     minio_release_sha256:               "5025057c694f6623c3601be7a81de7639920f96930998085b239590496ecc4e8"
     mc_release_sha256:                  "ebc6ee59019a7c82bbfdd7d0ae47658cc44fc90075d5bcbe4128766543f3c3cc"
@@ -79,7 +79,7 @@ all:
     # dual-sink can leave a hole, and this timer is the only thing that
     # heals one. There is deliberately NO role default — each network
     # has its own ceiling and a wrong value fails silently in both
-    # directions (#371 F10) — so state it here. Re-check whenever the
+    # directions — so state it here. Re-check whenever the
     # bulk-backfill ceiling moves: the value is `-to` of the last
     # certified ch-backfill range, plus one.
     stellarindex_ch_live_era_from: 62894001
@@ -109,9 +109,8 @@ all:
     # r1's LIVE topology, and the AUTHORITY every r1-scoped doc is
     # linted against (scripts/ci/lint-docs.sh §18). It deliberately
     # differs from the role default (raidz2 — the right shape for a
-    # FRESH archival node): the live pool has been raidz1 since
-    # ~2026-05-21, confirmed by the 2026-07-17 live r1 review
-    # (commit ca2f4748) and by arithmetic — the footprint measured that day
+    # FRESH archival node): the live pool is raidz1, confirmed by a
+    # live r1 review and by arithmetic — the measured footprint
     # (~16.8 TB across ClickHouse/MinIO/pgBackRest/Postgres) does not
     # fit raidz2's ~13.85 TB ceiling on these four drives. Rebuilding
     # r1 as raidz2 would hand back a pool too small for its own data.
@@ -119,18 +118,17 @@ all:
     zfs_data_pool_name:  "data"
 
     # ───── Roles colocated on this host ────────────────────────────
-    # stellar-core + stellar-rpc were REMOVED from r1 on 2026-04-23
-    # — galexie carries its own embedded captive-core, the indexer
-    # reads MinIO directly, and the public API is /v1/*, not /rpc.
-    # The role's stellar-rpc task + templates were deleted on
-    # 2026-05-22 (no longer in our architecture); see
+    # r1 runs neither stellar-core nor stellar-rpc — galexie carries its
+    # own embedded captive-core, the indexer reads MinIO directly, and
+    # the public API is /v1/*, not /rpc. The role has no stellar-rpc
+    # task (not in our architecture); see
     # docs/operations/r1-deployment-state.md §"Architecture after
     # 2026-04-23 trim". run_stellar_core flips to true only when
     # validating Phase-3 validator work.
     run_postgres:        true
     # Only after pg_wal is on data/postgres/wal (v0.92.1): 05-postgres.yml
     # refuses it while pg_wal is on the 49 GB root. 2GB forced 84% of
-    # checkpoints (measured 2026-09-15); see postgresql.conf.j2.
+    # checkpoints (measured on r1); see postgresql.conf.j2.
     postgres_max_wal_size: "16GB"
     run_stellar_core:    false
     run_galexie:         true
@@ -168,7 +166,7 @@ all:
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
       - "ssh-ed25519 AAAA... ops@stellarindex.io"   # replace
-    # No role default any more (audit-2026-07-23 SEC-network): SSH grants
+    # No role default: SSH grants
     # root here, so every inventory states its own answer. Replace with
     # the operator VPN / jump-host CIDR(s). A world-open port additionally
     # needs `ssh_world_open_ack: true` right here — see inventory/r1.yml.

@@ -86,7 +86,7 @@ tests:
         exp_alerts: []
 
   # ── guard: the allow-list excludes low-volume Soroban sources ─────
-  # phoenix is NOT in the F-1208 per-source-class list of this alert; a
+  # phoenix is NOT in the per-source-class list of this alert; a
   # flat 20 minutes on phoenix must be judged by the 24h low-volume
   # sibling, not this one.
   - interval: 1m
@@ -1182,13 +1182,13 @@ tests:
         alertname: stellarindex_ingestion_duplicate_flood
         exp_alerts: []
 
-  # ── the post-restart shape (#302): a source whose ONLY inserts since
+  # ── the post-restart shape: a source whose ONLY inserts since
   # process start were duplicates never creates the outcome="new" child
   # (WithLabelValues is call-site-seeded per source, and `source` is
-  # config-dependent so internal/obs does not pre-seed it). The old
-  # `and on (source) … == 0` join needed that child to EXIST, so the
-  # alert was silent in exactly its target scenario. `unless on (source)
-  # … > 0` treats absent and zero alike. Red on the pre-fix rule
+  # config-dependent so internal/obs does not pre-seed it). An
+  # `and on (source) … == 0` join needs that child to EXIST, so it is
+  # silent in exactly the target scenario. `unless on (source)
+  # … > 0` treats absent and zero alike. Red on the join form
   # (got: []).
   - interval: 1m
     name: an absent outcome-new child still tickets after a restart
@@ -1270,8 +1270,8 @@ tests:
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
 
   # ── guard: the fraction arm — busy parity morning, 2% of flow ─────
-  # The 2026-07-31 sdex wrapper-morning shape: 60 unit-ratio trades in
-  # 30m would trip the old absolute threshold, but they are 2% of the
+  # The sdex wrapper-morning shape: 60 unit-ratio trades in
+  # 30m would trip an absolute threshold, but they are 2% of the
   # source's flow so the >50% arm must keep it silent.
   - interval: 1m
     name: unit-ratio trades at a small fraction of flow raise nothing
@@ -1550,12 +1550,12 @@ tests:
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
-  # ── guard: restart with no scan due (2026-08-29 09:55Z r1 false-fire)
+  # ── guard: restart with no scan due (an r1 false-fire shape)
   # The seeded schedule (persisted scan cursor) defers every scan for
-  # hours after a deploy restart, so no Inc() runs; until the process
-  # pre-registered the runs_total series at 0 the whole family was
-  # absent and the absent_over_time[15m] clause read "no scan due yet"
-  # as "detector dead". Series present at 0 for 30m + a fresh
+  # hours after a deploy restart, so no Inc() runs; without the
+  # process pre-registering the runs_total series at 0 the whole family
+  # is absent and the absent_over_time[15m] clause reads "no scan due
+  # yet" as "detector dead". Series present at 0 for 30m + a fresh
   # last_success stamp (re-emitted from the cursor) must stay silent.
   - interval: 1m
     name: a restarted detector with runs_total pre-registered at 0 and no scan due raises nothing
@@ -1584,11 +1584,11 @@ tests:
         alertname: stellarindex_ingest_gap_detector_silent
         exp_alerts: []
 
-  # ══ stellarindex_ingestion_ch_live_sink_errors (#371 F6) ══════════
+  # ══ stellarindex_ingestion_ch_live_sink_errors ══════════
   # `errored` is a DIFFERENT fault class from `dropped`: the sink's
   # bounded queue never saw the ledger, because either
   # clickhouse.ExtractLedger failed on it (a decode/meta-version break)
-  # or the sink's own Add/Flush errored. It had no alert of any kind.
+  # or the sink's own Add/Flush errored. No other alert covers it.
   #
   # ── firing: a single extract failure tickets ──────────────────────
   # A meta-version break fails every ledger in lock-step, but the

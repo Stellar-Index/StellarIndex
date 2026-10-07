@@ -2,10 +2,9 @@
 # sla-proof-from-probe-test.sh — fixture tests for the probe-aggregate SLA
 # proof generator (scripts/ops/sla-proof-from-probe.sh).
 #
-# The defect this closes: the weekly SLA proof had exactly one source, a
-# k6 soak against a target that does not exist, so no dated proof report
-# has ever landed on any branch and the scheduled run was red for weeks.
-# The generator aggregates the probe series that were already there — and
+# Why the generator exists: a k6 soak needs a target that does not exist,
+# so the weekly SLA proof is built from the probe series that are already
+# there — and
 # the whole risk of doing that is publishing a number that is not what it
 # says it is. Percentiles do not average; a window with holes is not a
 # clean window; a loopback probe is not an end-to-end measurement. So
@@ -18,7 +17,7 @@
 # server on loopback rather than reaching a real Prometheus.
 #
 # The base fixture, test/sla-probe/extract-2026-09-15.json, is a REAL
-# capture from r1's Prometheus (2026-09-15, 7-day window, read through an
+# capture from r1's Prometheus (7-day window, read through an
 # ssh port-forward) rather than an invented approximation, so the label
 # sets, the host label, the 18 API builds inside the window and the
 # breaching runs are the ones the live system produced.
@@ -227,10 +226,10 @@ for family in ("p95_max", "p99_max", "avail_min", "samples_avg"):
     doc["series"][family] = []
     write("no_" + family, doc)
 
-# One CELL unevaluable while every family is present (#513). The family
+# One CELL unevaluable while every family is present. The family
 # refusal above cannot see these; the verdict is computed per cell, and
-# before the fix a cell the series could not fill rendered "n/a" and
-# counted as a pass. Each fixture is `clean` with exactly one headline
+# a cell the series cannot fill must not render "n/a" and count as a
+# pass. Each fixture is `clean` with exactly one headline
 # cell broken, one family at a time and one failure shape at a time —
 # a missing row, a non-numeric value, a NaN, an infinity from a zero
 # denominator — so any single shape regressing is named by its case.
@@ -267,7 +266,7 @@ cell = copy.deepcopy(clean)
 set_cell(cell, "avail_time_weighted", "price", "+Inf")
 write("cell_avail_inf", cell)
 
-# `zero_sample_run` (#740) — one run in four recorded no samples for
+# `zero_sample_run` — one run in four recorded no samples for
 # /price and published availability 0; the other three read 100 %. Time
 # weighting gives 75 %. The legacy sample-count pair still says 100 %,
 # because a zero-sample run carries zero weight in it; a renderer that
@@ -483,12 +482,12 @@ else
   fail=$((fail + 1))
 fi
 
-# ── One unevaluable cell is not a pass (#513) ───────────────────────────
+# ── One unevaluable cell is not a pass ───────────────────────────
 # Every family is present, so none of the family refusals above fires;
 # exactly one headline cell cannot be evaluated. The refusal is per
-# family but the verdict is per cell, and before the fix that cell read
-# "n/a" and contributed nothing to the conjunction — the week read PROVEN
-# with part of one endpoint's SLA unmeasured. Each shape must render
+# family but the verdict is per cell; read as "n/a" contributing nothing
+# to the conjunction, that cell would make the week PROVEN with part of
+# one endpoint's SLA unmeasured. Each shape must render
 # (a real measurement is retained), read NOT PROVEN, and name the cell.
 for shape in cell_p95_missing cell_p99_nonnumeric cell_p99_nan \
              cell_avail_missing cell_avail_inf cell_endpoint_unmeasured; do

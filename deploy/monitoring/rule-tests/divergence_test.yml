@@ -105,11 +105,10 @@ tests:
   # `stellarindex_oracle_staleness_budget_seconds` series on the SAME
   # label set as `stellarindex_oracle_last_update_unix`, because that is
   # what production carries: obs.RecordOracleUpdate emits the two
-  # together (#478). Before that, the budget was computed inside the
-  # expression from the {source}-only resolution gauge, and the rule
-  # needed `ignoring(asset) group_left()` to bridge the label mismatch.
+  # together, so the rule needs no `ignoring(asset) group_left()` to
+  # bridge a {source}-only resolution gauge.
   #
-  # A fixture that keeps only the resolution series now goes empty —
+  # A fixture that keeps only the resolution series goes empty —
   # which is exactly the intended failure: the rule must read the
   # per-asset budget, never re-derive a threshold of its own.
 
@@ -285,11 +284,10 @@ tests:
                 or a signal of oracle failure — check the oracle's own status page.
 
   # ── the no-behaviour-change boundary: an un-overridden asset ───────
-  # The point of #478 is that adding a per-asset budget must not move a
+  # The point of per-asset budgets is that adding one must not move a
   # single existing alert. So this pins the exact minute an asset with
   # NO override goes off, against the default budget of 3000 s
-  # (10 × reflector's 300 s resolution — the same arithmetic the old
-  # expression did inline).
+  # (10 × reflector's 300 s resolution).
   #
   # time() starts at 0 in a promtool test and last_update_unix is
   # pinned at 0, so the age IS the eval time: the condition first turns
@@ -338,11 +336,11 @@ tests:
   # (9 h) against the 3000 s (50 min) source default, because DAI is a
   # peg asset Reflector publishes only on movement — observed gaps to
   # 7 h, breaching the default on 11.6% of evaluations with nothing
-  # broken (#478).
+  # broken.
   #
   # 8 h of silence is well past the default and well inside the
-  # override. Under the old per-source threshold this pair would have
-  # been ticketing for over seven hours by now.
+  # override. A per-source threshold would have this pair ticketing for
+  # over seven hours.
   - interval: 1m
     name: an overridden asset stays quiet inside its widened budget
     input_series:
@@ -351,7 +349,7 @@ tests:
       - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
         values: '32400+0x560'
       # The source still declares 300 s, and that is the point: this
-      # case only means something because the pre-#478 threshold
+      # case only means something because the per-source threshold
       # (10 × 300 = 3000 s) is present in the fixture and the rule
       # ignores it in favour of the pair's own budget.
       - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex"}'
@@ -485,9 +483,9 @@ tests:
         alertname: stellarindex_divergence_refresh_error_dominant
         exp_alerts: []
 
-  # ══ stellarindex_divergence_no_reference (CS-088) ═════════════════
+  # ══ stellarindex_divergence_no_reference ═════════════════
   # ── firing: every pair blind, zero ok outcomes ────────────────────
-  # And the CS-088 point in one fixture: no_reference is NEITHER
+  # And the alert's point in one fixture: no_reference is NEITHER
   # refresh_error NOR ok, so the error-dominant sibling must stay
   # silent while this one fires — the "silent checker" case only this
   # alert can see.
