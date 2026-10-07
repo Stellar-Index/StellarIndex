@@ -73,13 +73,13 @@ func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args
 	}
 }
 
-// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins CODE-M:
-// substrateHeadProblem used to short-circuit SubstrateProblem before the
-// contiguity/hash-chain walks ran, so a head-truncated lake with a REAL
-// interior gap reported only the (harmless, expected) head problem and never
-// found the gap. Fixture: ledgers [2,1000), head truncated at 500 (haveMin),
-// plus an interior gap at 700 within the present portion. Pre-fix this must
-// return the head problem (499) without ever inspecting 700; post-fix it must
+// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins the interior walk:
+// substrateHeadProblem must not short-circuit SubstrateProblem before the
+// contiguity/hash-chain walks run, or a head-truncated lake with a REAL
+// interior gap would report only the (harmless, expected) head problem and never
+// find the gap. Fixture: ledgers [2,1000), head truncated at 500 (haveMin),
+// plus an interior gap at 700 within the present portion. Short-circuiting would
+// return the head problem (499) without ever inspecting 700; it must instead
 // walk [500,1000] and surface the interior gap at 700.
 func TestSubstrateProblem_WalksInteriorDespiteHeadTruncation(t *testing.T) {
 	const from, to = uint32(2), uint32(1000)
@@ -116,12 +116,12 @@ func TestSubstrateQueryLo(t *testing.T) {
 		wlo, from uint64
 		want      uint64
 	}{
-		// The FINDING: an incremental -from run's first window. Pre-fix this
-		// returned `from` (63_300_000) and the seam link at `from` went
-		// unchecked; the fix returns from-1 so the link is evaluated.
+		// An incremental -from run's first window. Returning
+		// `from` (63_300_000) would leave the seam link at `from`
+		// unchecked; returning from-1 evaluates the link.
 		{"lower-boundary seam is checked (the finding)", 63_300_000, 63_300_000, 63_299_999},
 		// A full scan from the default floor still checks its seam link at
-		// ledger 2 (prev_hash(2) == ledger_hash(1)) — previously missed.
+		// ledger 2 (prev_hash(2) == ledger_hash(1)).
 		{"full-scan floor (from=2) checks the link at ledger 2", 2, 2, 1},
 		// The chain genesis has no predecessor: no underflow, no phantom link.
 		{"chain genesis (from=1) does not underflow", 1, 1, 1},
@@ -172,9 +172,9 @@ func TestWatermark(t *testing.T) {
 		{"interior gap above from", 100, 200, 150, 100, 149}, // hole at 150 → 149
 		// THE FIX — hole exactly at `from` (100 absent, 101..200 present). The SQL
 		// yields firstGap==0 (the present set {101,…,200} is internally contiguous)
-		// and minPresent==101 (the smallest ledger >= from). Pre-fix, the two-arg
-		// watermark ignored minPresent and returned chMax (200), so the projector
-		// scanned past the missing ledger 100 and dropped its sep41 rows. Now the
+		// and minPresent==101 (the smallest ledger >= from). Without the guard, the two-arg
+		// watermark would ignore minPresent and return chMax (200), so the projector
+		// would scan past the missing ledger 100 and drop its sep41 rows. The
 		// minPresent>from guard stalls at from-1 (99).
 		{"HOLE AT from itself → stall at from-1", 100, 200, 0, 101, 99},
 		// Hole at `from` AND an interior gap co-exist above it (100 absent;
@@ -213,8 +213,8 @@ func TestSubstrateCountIntact(t *testing.T) {
 	full := uint64(to) - uint64(from) + 1
 
 	// The exact failure scenario: two missing ledgers straddling the window 1
-	// / window 2 seam at 5_000_001..5_000_002. Pre-fix, SubstrateProblem only
-	// checked `present > 0`, which is true here — a real hole reads as intact.
+	// / window 2 seam at 5_000_001..5_000_002. A SubstrateProblem that only
+	// checks `present > 0` would pass here — a real hole would read as intact.
 	if substrateCountIntact(from, to, full-2) {
 		t.Fatalf("substrateCountIntact(present=%d, full=%d) = true, want false — a seam-straddling hole must not read as intact", full-2, full)
 	}
@@ -258,7 +258,7 @@ func TestSubstrateHeadProblem(t *testing.T) {
 		})
 	}
 	// The regression itself: an EMPTY lake must NOT green a high-genesis source.
-	// Pre-fix this returned `from` (2); `2 < 50_746_266` was true = greened.
+	// Returning `from` (2) would be wrong: `2 < 50_746_266` is true = greened.
 	// The problem ledger must be ≥ any source genesis so `problem < genesis` is
 	// false for all (soroswap genesis = 50_746_266).
 	if p, has, _ := substrateHeadProblem(from, to, false, 0); !has || p < 50_746_266 {

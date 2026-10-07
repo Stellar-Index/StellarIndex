@@ -48,8 +48,8 @@ func holdersRollupLake(t *testing.T, listed bool, boardAt, tableAt time.Time) *s
 // not be served as the current holders board — ok=false sends AssetHolders
 // to the live per-request scans instead.
 //
-// Proven red against the pre-fix holdersRollupBoard, which never judged
-// computed_at's age: it returned ok=true with the 3h-old balance=200/total=500.
+// Red against a holdersRollupBoard that never judges
+// computed_at's age: it returns ok=true with the 3h-old balance=200/total=500.
 func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, true, stale, stale)}
@@ -69,7 +69,7 @@ func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 // holders" only for a CURRENT cycle. Under a wedged rollup, an asset issued
 // since the last cycle would otherwise be served as having no holders.
 //
-// Proven red against the pre-fix holdersRollupBoard: ok=true, total=0.
+// Red against a holdersRollupBoard that never judges age: ok=true, total=0.
 func TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, stale)}

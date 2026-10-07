@@ -29,11 +29,10 @@ import (
 // itself, so adding one is a deliberate act with a written reason
 // rather than an oversight.
 //
-// Why a guard and not a fix: audited 2026-09-01 against HEAD and live
-// production, every existing scan is already correct — see the
+// Why a guard and not a fix: every existing scan is already correct — see the
 // exemption table below for the per-query verdict. The gap was never
-// the code; it was that #305's squash merge deleted the tests proving
-// it (issue #339), leaving the property unpinned.
+// the code; it was that a squash merge deleted the tests proving
+// it, leaving the property unpinned.
 
 // scanningOracleReads are the reads in oracle.go that do NOT key by
 // canonical asset, each with the reason it is nonetheless safe.

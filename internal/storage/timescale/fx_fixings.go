@@ -46,7 +46,7 @@ const (
 )
 
 // FXFixingBinding is what one ticker binds to at a bucket end: an fx_fixings
-// row, or on the pre-fixings daily arm an fx_quotes day as a daily bar.
+// row, or on the daily arm (no fixings) an fx_quotes day as a daily bar.
 type FXFixingBinding struct {
 	FXFixing
 	Resolution string // FXResolutionHourly or FXResolutionDaily
@@ -181,7 +181,7 @@ const fxFixingStoreMaxAge = 76 * time.Hour
 // fxFixingSnapAtOrBefore is the fixings arm of [Store.FXQuoteAtOrBefore]:
 // the pair priced from each leg's fixing at or before cutoff − lag. It
 // returns [ErrNoFXQuote] unless every leg has a fixing, so the caller keeps
-// its fx_quotes path for the pre-fixings era.
+// its fx_quotes path for the era before fixings.
 func (s *Store) fxFixingSnapAtOrBefore(ctx context.Context, pair canonical.Pair, cutoff time.Time) (*big.Rat, time.Time, string, error) {
 	tickers := fxSnapTickers(pair)
 	if len(tickers) == 0 {
@@ -198,7 +198,7 @@ func (s *Store) fxFixingSnapAtOrBefore(ctx context.Context, pair canonical.Pair,
 	return fxSnapFromRows(pair, rows)
 }
 
-// fxFixingDailyArm binds the pre-fixings era. A ticker takes it iff cutoff
+// fxFixingDailyArm binds the era before fixings. A ticker takes it iff cutoff
 // is before its first fixing's bar_end or it has no fixings; a miss after
 // the first fixing is a gap inside the era and stays a miss.
 func (s *Store) fxFixingDailyArm(ctx context.Context, tickers []string, cutoff time.Time, out map[string]FXFixingBinding) error {

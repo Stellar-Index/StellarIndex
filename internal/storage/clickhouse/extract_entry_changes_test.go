@@ -135,7 +135,7 @@ func TestOwnerAndAsset_AccountOwnedEntries(t *testing.T) {
 }
 
 // TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins pins the
-// audit-2026-07-16 C2-4c writer contract: extractEntryChanges stamps a
+// writer contract: extractEntryChanges stamps a
 // per-LEDGER monotonic intra_ledger_seq on every change in canonical walk order
 // so that (a) when the SAME key is changed twice in one ledger the LATER change
 // carries the HIGHER seq — the tie-breaker ledger_entries_current's
@@ -241,7 +241,7 @@ func TestEntryTypeName(t *testing.T) {
 	}
 }
 
-// TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins C2-032
+// TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins fee-phase ordering
 // on the LAKE side, in lockstep with
 // dispatcher.TestProcessLedger_FeePhasePrecedesApplyPhase.
 //

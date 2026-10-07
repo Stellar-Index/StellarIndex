@@ -117,10 +117,10 @@ func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit i
 	// ClickHouse has the post-D3 schema.
 	//
 	// Probing (once per process) makes the query correct on both: `version`
-	// gives true C2-4c same-ledger-last-wins resolution where it exists;
+	// gives true same-ledger-last-wins resolution where it exists;
 	// `ledger_seq` matches the pre-D3 engine exactly and carries the same
 	// same-ledger-tie limitation FINAL already has there. When D3 lands on
-	// R1 the probe flips and pools get C2-4c automatically, no code change.
+	// R1 the probe flips and pools get it automatically, no code change.
 	// The trailing removal (empty entry_xdr) is dropped by `HAVING e != ''`.
 	versionKey := "ledger_seq"
 	if r.ledgerEntriesVersioned(ctx) {

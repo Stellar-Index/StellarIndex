@@ -95,7 +95,7 @@ func TestTTLLiveUntilDDLIsShapeGuarded(t *testing.T) {
 		fmt.Sprintf("length(tryBase64Decode(key_xdr)) = %d", ttlLedgerKeyLen),
 		fmt.Sprintf("length(tryBase64Decode(entry_xdr)) = %d", ttlEntryLen),
 		// The composite ReplacingMergeTree version (same as
-		// ledger_entries_current, audit-2026-07-16 C2-4c).
+		// ledger_entries_current).
 		"bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq",
 		// Source filter.
 		"entry_type = 'ttl'",

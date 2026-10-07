@@ -74,7 +74,7 @@ type UpshiftVaultEvent struct {
 // InsertUpshiftVaultEvent appends one Upshift vault event row,
 // idempotent on the (ledger_close_time, contract_id, ledger, tx_hash,
 // op_index, event_index) PK. ON CONFLICT … DO UPDATE guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (DAT-04, migration
+// `derive_generation <= EXCLUDED.derive_generation` (migration
 // 0110 convention): a replay at an equal-or-higher generation
 // OVERWRITES the stored value columns, a lower-generation one is
 // refused. Idempotent in row COUNT, deliberately not inert in VALUE —

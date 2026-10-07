@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Regression tests for F112: stellar.account_activity's "exact upper bound
+// Regression tests for stellar.account_activity's "exact upper bound
 // by construction" invariant (deploy/clickhouse/account_activity.sql) only
 // holds once the Step-2 windowed backfill has covered every account, and the
 // bound it feeds is a HARD `ledger_seq <=` on the account-history readers —

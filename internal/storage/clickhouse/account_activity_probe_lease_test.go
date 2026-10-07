@@ -12,9 +12,9 @@ import (
 // accountActivityLake models ONE ClickHouse under ONE long-lived reader for
 // stellar.account_activity: a watermark table that starts holding rows and
 // can be TRUNCATEd (rows removed, object still present) under the running
-// process — the same "empties mid-process" shape F119 fixed for
+// process — the same "empties mid-process" shape the probe lease covers for
 // tx_hash_index, exercised here through accountActivityAvailable /
-// accountActivityWatermark, F120's second cited call site. Query-shape
+// accountActivityWatermark, a second call site. Query-shape
 // classifiers (isAccountActivityProbe, isAccountActivityLookup) are shared
 // with explorer_reader_watermark_test.go.
 type accountActivityLake struct {
@@ -38,9 +38,9 @@ func (l *accountActivityLake) respond(q string) (driver.Rows, error) {
 	}
 }
 
-// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins F120
-// against its SECOND cited site (accountActivityAvailable, explorer_reader.go
-// pre-fix ~1256-1300): the requireRows lease landed for F119 is the SAME
+// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins the lease
+// against its SECOND site, accountActivityAvailable in explorer_reader.go:
+// the requireRows lease is the SAME
 // shared primitive every requireRows probe goes through, not a special case
 // wired only for tx_hash_index. Absent the lease, a positive verdict here
 // would never be re-confirmed for the process lifetime: the probe query

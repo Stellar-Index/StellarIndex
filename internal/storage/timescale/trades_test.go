@@ -10,7 +10,7 @@ import (
 )
 
 // TestSortTradesByConflictKey_FullKeyOrder is the regression test for
-// the 2026-07-08 CEX batch-insert deadlock storm: two concurrent
+// the CEX batch-insert deadlock storm: two concurrent
 // `BatchInsertTrades` callers whose batches share overlapping trades
 // PK rows must acquire Postgres row locks in the SAME order, or a
 // same-keys-different-order lock acquisition is a textbook AB/BA
@@ -26,7 +26,7 @@ import (
 // times and asserts the sorted output order is IDENTICAL every time —
 // proving `ts` is used as a real tiebreaker rather than left to
 // sort.Slice's unspecified (non-stable) order for tied elements, which
-// is exactly the gap the 2026-07-05 fix left open.
+// is exactly the gap a partial-key sort leaves open.
 func TestSortTradesByConflictKey_FullKeyOrder(t *testing.T) {
 	base := time.Date(2026, 7, 8, 18, 12, 0, 0, time.UTC)
 	mk := func(source string, ledger uint32, txHash string, opIndex uint32, tsOffsetSeconds int) canonical.Trade {

@@ -78,16 +78,16 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 // Check-2 coverage count must be evaluated PER TX-BEARING LEDGER, not as a
 // standalone cardinality of stellar.ledger_entry_changes.
 //
-// The pre-fix form ran two independent scans and subtracted them:
+// A naive form would run two independent scans and subtract them:
 //
 //	SELECT uniqExact(ledger_seq) FROM stellar.ledgers            WHERE … AND tx_count > 0
 //	SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes WHERE …
 //
 // Entry-change rows exist for tx_count == 0 ledgers (protocol upgrades,
-// config/base-reserve changes), so those ledgers inflated the second count
+// config/base-reserve changes), so those ledgers inflate the second count
 // while never appearing in the first — inside a 1,000,000-ledger window they
-// cancelled genuinely-uncovered tx-bearing ledgers one-for-one and Check 2,
-// the hard gate above -ec-floor, reported zero deficiency on a real gap.
+// cancel genuinely-uncovered tx-bearing ledgers one-for-one and Check 2,
+// the hard gate above -ec-floor, reports zero deficiency on a real gap.
 //
 // This asserts the structural property that makes that cancellation
 // impossible: the coverage count is a uniqExactIf over stellar.ledgers'
@@ -106,12 +106,12 @@ func TestECWindowCoverageQuery_AntiJoin(t *testing.T) {
 		t.Errorf("coverage scan is not anchored on the tx-bearing ledgers set:\n%s", q)
 	}
 	// ledger_entry_changes may appear ONLY as the membership subquery's
-	// source. A second top-level scan of it is the pre-fix shape.
+	// source. A second top-level scan of it is the naive shape.
 	if n := strings.Count(q, "stellar.ledger_entry_changes"); n != 1 {
 		t.Errorf("stellar.ledger_entry_changes referenced %d times, want exactly 1 (membership subquery only):\n%s", n, q)
 	}
-	// The exact pre-fix statement must be gone: an unrestricted uniqExact
-	// over entry_changes is what counted tx_count == 0 ledgers as coverage.
+	// The naive statement must not appear: an unrestricted uniqExact
+	// over entry_changes would count tx_count == 0 ledgers as coverage.
 	if strings.Contains(q, "uniqExact(ledger_seq) FROM stellar.ledger_entry_changes") {
 		t.Errorf("pre-fix standalone entry-changes cardinality is still present:\n%s", q)
 	}

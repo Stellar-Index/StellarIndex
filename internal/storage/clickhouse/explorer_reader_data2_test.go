@@ -9,8 +9,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Query-shape regressions for the wave-4 ch-query-semantics findings (CHQ-1,
-// CHQ-2). Both are ReplacingMergeTree over-count / mis-cap defects whose live
+// Query-shape regressions for two ch-query-semantics defects.
+// Both are ReplacingMergeTree over-count / mis-cap defects whose live
 // proof against real un-merged parts lives in test/integration (tagged
 // integration); the stubConn harness cannot model RMT merge semantics, so
 // these assert the emitted SQL carries the dedup / distinct-cap construct the

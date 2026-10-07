@@ -8,7 +8,7 @@ import (
 )
 
 // A row without a whole-second window must be refused before anything is
-// written: an unattributed row is exactly the collapse GH #763 describes.
+// written: an unattributed row is exactly the collapse this guards against.
 // The Store has no database, so reaching the INSERT would panic.
 func TestInsertPriceSourceContributions_RefusesAMissingWindow(t *testing.T) {
 	s := &Store{}

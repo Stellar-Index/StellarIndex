@@ -198,7 +198,7 @@ func TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix(t *testing.T) {
 	}
 }
 
-// TestCreditSettlementSumsScopedToUSDC guards INV-2586: settled_amount is
+// TestCreditSettlementSumsScopedToUSDC guards that settled_amount is
 // only summable within one debt asset, and the rows the USDC sum leaves short
 // (non-USDC or undecoded primary leg, extra legs) must be counted so the
 // served volume can be flagged a lower bound.

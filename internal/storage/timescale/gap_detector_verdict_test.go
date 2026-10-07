@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestGapVerdictTrustworthy pins CODE-M #803: a zero-gap FindPerSourceLedgerGaps
+// TestGapVerdictTrustworthy pins that a zero-gap FindPerSourceLedgerGaps
 // result for a target whose density comes from a DistinctLedgerCountSQL
 // override (soroban-events, from ledger_ingest_log rather than the table
 // itself) must NOT be trusted as "clean" unless the census also saw positive

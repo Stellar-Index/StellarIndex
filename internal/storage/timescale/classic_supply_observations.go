@@ -284,7 +284,7 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 // its siblings only overwrite when `(walk_version, intra_ledger_seq) <=
 // EXCLUDED` — so
 // the read path was the asymmetric half. That asymmetry is exactly the
-// shape of audit C2-4c, where `ReplacingMergeTree(ledger_seq)` ties
+// shape of a known defect, where `ReplacingMergeTree(ledger_seq)` ties
 // between a `state` before-image and its `updated` after-image and
 // serves whichever it happens to keep; that one is costing a full
 // ordinal re-derive. Fixing the cheap half here pre-emptively.
@@ -378,7 +378,7 @@ type LPReserveObservation struct {
 
 // InsertLPReserveObservation — keyed on (pool_id, asset_key).
 // One change to a pool produces TWO row writes (one per asset
-// side); the LP-reserve observer (liquidity_pools, Task #55) emits both.
+// side); the LP-reserve observer (liquidity_pools) emits both.
 func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObservation) error {
 	if o.PoolID == "" {
 		return errors.New("timescale: InsertLPReserveObservation: PoolID is empty")

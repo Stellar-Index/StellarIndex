@@ -264,7 +264,7 @@ func substrateQueryLo(wlo, from uint64) uint64 {
 // hash-chain break (prev_hash != the prior ledger's ledger_hash). Returns
 // (0, false) when the substrate is intact over the whole range — i.e. the lake
 // is provably continuous + hash-linked, the strongest "we captured everything"
-// claim. This is the cheap, re-runnable form of the one-shot #7 certification.
+// claim. This is the cheap, re-runnable form of the one-shot certification.
 //
 // Both checks run over a per-ledger dedup (GROUP BY ledger_seq, argMax by
 // ingested_at) so ReplacingMergeTree duplicate parts don't create false breaks.
@@ -471,8 +471,8 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 // The minPresent guard closes a silent-data-loss blind spot: firstGap only finds
 // INTERIOR gaps between present ledgers >= from, so when `from` ITSELF is absent
 // the smallest present ledger is from+1 and {from+1, from+2, …} is internally
-// contiguous → firstGap == 0. The old form then returned chMax, and the projector
-// scanned right over the missing `from` and upserted its cursor past it —
+// contiguous → firstGap == 0. Returning chMax would let the projector
+// scan right over the missing `from` and upsert its cursor past it —
 // permanently dropping that ledger's projected (sole-writer sep41 mint/burn/
 // transfer) rows from the served tier. minPresent = min(ledger_seq >= from); when
 // it exceeds `from` there is a hole at the lower boundary, so we stall at from-1

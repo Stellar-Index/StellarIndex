@@ -283,7 +283,7 @@ func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 // ledger window at a time and finishes the latest-write-wins reduction in Go.
 // These exercise that Go half: it must reproduce, ACROSS windows, exactly the
 // ordering the server-side argMax applies WITHIN one — in particular the
-// audit-2026-07-16 C2-4 within-ledger tie-break, which is what stops a deleted
+// within-ledger tie-break, which is what stops a deleted
 // balance being resurrected into the supply seed.
 
 func seedOrd(ledger, intra uint32, tx string, op int32, changeIdx uint32) lakeEntryChangeOrder {
@@ -328,10 +328,10 @@ func TestSACSeedOrderAfter(t *testing.T) {
 		{"identical is not after", base, base, false},
 		{"higher ledger wins", seedOrd(50_000_001, 0, "aa", 0, 0), base, true},
 		{"lower ledger loses", seedOrd(49_999_999, 9999, "zz", 99, 99), base, false},
-		// C2-4: ledger_seq alone does NOT order intra-ledger changes.
+		// ledger_seq alone does NOT order intra-ledger changes.
 		{"same ledger, higher intra_ledger_seq wins", seedOrd(50_000_000, 8, "aa", 0, 0), base, true},
 		{"same ledger, lower intra_ledger_seq loses", seedOrd(50_000_000, 6, "zz", 99, 99), base, false},
-		// Legacy / pre-C2-4c rows carry intra_ledger_seq = 0, so the tuple
+		// Legacy / pre-intra_ledger_seq rows carry intra_ledger_seq = 0, so the tuple
 		// must fall through to (tx_hash, op_index, change_index).
 		{"intra tie, higher tx_hash wins", seedOrd(50_000_000, 0, "bb", 0, 0), seedOrd(50_000_000, 0, "aa", 9, 9), true},
 		{"intra+tx tie, higher op_index wins", seedOrd(50_000_000, 0, "aa", 1, 0), seedOrd(50_000_000, 0, "aa", 0, 9), true},
@@ -395,13 +395,13 @@ func TestSACSeedReducer_LatestLedgerWins(t *testing.T) {
 	}
 }
 
-// TestSACSeedReducer_SameLedgerRemovalWins is the C2-4 case, now on the Go
+// TestSACSeedReducer_SameLedgerRemovalWins is the within-ledger tie-break case on the Go
 // side: one key changed TWICE in ONE ledger — live at the lower
 // intra_ledger_seq, removed at the higher. The removal is the genuine latest
 // state, so the emitted seed must be a retraction (IsRemoval=true,
 // Balance=0), never the stale live balance. Getting this backwards
 // resurrects a deleted balance into the SAC supply seed (the exact
-// 2026-07-16 finding).
+// resurrection bug).
 func TestSACSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	keyXDR := seedKeyFor(t)
 	ct := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)

@@ -29,7 +29,7 @@ type EntryChange struct {
 	Entry       *xdr.LedgerEntry
 }
 
-// streamEntryChangesQuery backs StreamEntryChanges. FINAL (audit DAT-10):
+// streamEntryChangesQuery backs StreamEntryChanges. FINAL:
 // stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a
 // re-derived/re-ingested window leaves un-merged duplicate PARTS —
 // byte-identical rows bar ingested_at — until a background merge, and
@@ -150,9 +150,9 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 // *int64 (confirmed against a real r1 query during implementation;
 // gate.go's TotalLedgers/rowCount follow the same uint64 convention).
 //
-// uniqExact(ledger_seq, tx_hash, op_index, change_index), not count()
-// (audit DAT-10): stellar.ledger_entry_changes is ReplacingMergeTree, so a
-// re-derived window's un-merged duplicate parts inflated this probe's count
+// uniqExact(ledger_seq, tx_hash, op_index, change_index), not count():
+// stellar.ledger_entry_changes is ReplacingMergeTree, so a
+// re-derived window's un-merged duplicate parts inflate this probe's count
 // until a background merge — a false fidelity signal (a window could read
 // as "fidelity present, N rows" from duplicate parts alone, or over-report
 // how much was captured). uniqExact counts the table's actual PRIMARY KEY
@@ -175,7 +175,7 @@ func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32
 }
 
 // countOpScopedEntryChangesQuery backs CountOpScopedEntryChanges — see its
-// doc comment for the uniqExact-over-count() dedup rationale (audit DAT-10).
+// doc comment for the uniqExact-over-count() dedup rationale.
 const countOpScopedEntryChangesQuery = `
 	SELECT uniqExact(ledger_seq, tx_hash, op_index, change_index)
 	FROM stellar.ledger_entry_changes

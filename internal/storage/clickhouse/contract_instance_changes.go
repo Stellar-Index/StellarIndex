@@ -30,7 +30,7 @@ const (
 // ledger_entry_changes is ReplacingMergeTree(ingested_at), so a window a
 // corrected re-ingest touched can hold the stale part beside the fix. Both
 // would land in one INSERT whose target rows tie on their DEFAULT now()
-// ingested_at, leaving the pre-fix wasm_hash free to survive the collapse.
+// ingested_at, leaving the stale wasm_hash free to survive the collapse.
 // FINAL is bounded by the same ledger_seq window predicate.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`

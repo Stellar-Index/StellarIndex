@@ -107,7 +107,7 @@ func TestRemovedAccountsLastKnownAuthFlags_ResolvesPreImageWithoutTheDeadDomain(
 		t.Errorf("as-of ledger = %d, want %d (the removal ledger)", f.AsOfLedger, residueRemovedAt)
 	}
 	// The entry really does carry "qstocks.org"; a merged account must not
-	// keep advertising a domain nothing can check any more.
+	// keep advertising a domain nothing can check.
 	if f.HomeDomain != "" {
 		t.Errorf("home_domain = %q, want empty — a merged account's self-declared identity is not servable", f.HomeDomain)
 	}

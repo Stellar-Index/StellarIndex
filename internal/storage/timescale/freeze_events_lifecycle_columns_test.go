@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestListFreezeEvents_SurfacesLifecycleColumns pins GH-1125:
-// ListFreezeEvents used to select only the recover/detail columns,
-// never migration 0119's hold_until/extensions_used/escalated/
+// TestListFreezeEvents_SurfacesLifecycleColumns pins that
+// ListFreezeEvents selects, beyond the recover/detail columns,
+// migration 0119's hold_until/extensions_used/escalated/
 // corroborated — the only fields that distinguish a 10-minute hold
 // from a freeze that has climbed the extension ladder to ESCALATED.
 func TestListFreezeEvents_SurfacesLifecycleColumns(t *testing.T) {

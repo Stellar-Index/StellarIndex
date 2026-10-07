@@ -56,7 +56,7 @@ func TestInsertSupply_RequiresCirculatingSupply(t *testing.T) {
 
 // TestInsertSupply_RejectsCirculatingAboveTotal — circulating is total
 // minus exclusions for every computer, so circulating > total is a bug
-// that must fail before the DB call rather than be served (GH #1015).
+// that must fail before the DB call rather than be served.
 // Equality is the no-exclusion case and must still reach the DB.
 func TestInsertSupply_RejectsCirculatingAboveTotal(t *testing.T) {
 	s := &Store{}
@@ -87,7 +87,7 @@ func TestInsertSupply_RejectsCirculatingAboveTotal(t *testing.T) {
 
 // TestSupplyCAGGIsRefreshable — `supply snapshot -ledger` refreshes
 // supply_1d after a re-derive older than its 7-day policy window, which
-// the allow-list must accept (GH #991).
+// the allow-list must accept.
 func TestSupplyCAGGIsRefreshable(t *testing.T) {
 	if SupplyCAGG.Name != "supply_1d" {
 		t.Fatalf("SupplyCAGG.Name = %q, want supply_1d (migration 0066)", SupplyCAGG.Name)
@@ -179,7 +179,7 @@ func TestAssembleSupply_SACWrappedRoundTrips(t *testing.T) {
 // non-classic algorithm) has SQL NULL here. It MUST assemble to nil,
 // not to zero: zero is a meaningful component value and the escrow
 // bound 0 ≤ sac_total holds vacuously, so a zero coercion would report
-// a green, "checked" cross-check that verified nothing (CS-087).
+// a green, "checked" cross-check that verified nothing.
 func TestAssembleSupply_NullSACWrappedStaysNil(t *testing.T) {
 	got, err := assembleSupply("USDC:GA1", time.Now(), "100", "90",
 		sql.NullString{}, "issuer_exclusion", 1, sql.NullString{Valid: false})

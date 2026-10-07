@@ -7,8 +7,7 @@ import (
 )
 
 // [pairMarketQuery] — the single-pair summary behind /v1/pairs — must
-// keep two shape properties. Both were absent until 2026-09-03, and
-// their absence made /v1/pairs the slowest route on r1: a per-route p99 of
+// keep two shape properties. Their absence makes /v1/pairs the slowest route on r1: a per-route p99 of
 // 4,875-4,950 ms against ADR-0009's 500 ms target, measured in 6-hour
 // windows both during and well away from any load event, so chronic rather
 // than an artefact. The cost is per-REQUEST, not per-cold-slot: five
@@ -25,7 +24,7 @@ import (
 // (base_asset, quote_asset, ts|bucket DESC) from an OR of two different
 // equality pairs, so it falls back to the bare time index and applies
 // the pair test as a post-index filter. This is the same defect
-// [TestBothDirectionReadersUseUnionNotOr] guards for prices_1m (#441);
+// [TestBothDirectionReadersUseUnionNotOr] guards for prices_1m;
 // PairMarket carried it on BOTH prices_1m subqueries AND on the trades
 // scan, and was missed by that sweep because it is not driven by
 // `ORDER BY bucket DESC LIMIT n`.
@@ -136,7 +135,7 @@ func TestPairMarketQueryShape(t *testing.T) {
 	// `bucket DESC` alone is not one once a bucket holds both
 	// orientations — native/USDC has 1,270 such buckets in a day on r1 —
 	// so which leg won was planner-defined. Same tiebreaker, and same
-	// reasoning, as #441.
+	// reasoning, as the prices_1m readers.
 	if !strings.Contains(q, "ORDER BY bucket DESC, base_asset LIMIT 1") {
 		t.Error("pairMarketQuery's last_price sort lacks the base_asset tiebreaker. " +
 			"With both directions present in one bucket the winner would be " +

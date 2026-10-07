@@ -250,8 +250,8 @@ func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 // reference data that must never become interpretation input, and the
 // /v1/mev feed publicly names accounts on that evidence.
 //
-// This assertion was RED on origin/main at 0f13aa14: PR #305's squash
-// merge silently reverted PR #248's predicate.
+// A squash merge once silently reverted this predicate, leaving the
+// assertion red.
 func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{
 		cols: []string{"source", "contract_id", "ledger", "tx_hash", "op_index", "asset", "quote", "ts"},
@@ -417,7 +417,7 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	if !strings.Contains(stmt.sql, "ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO UPDATE") {
 		t.Errorf("InsertMEVEvent lost its idempotency arm — a re-scanned window would mint duplicate public accusations:\n%s", stmt.sql)
 	}
-	// Only evidence that CONTAINS the stored legs may replace them (#1248).
+	// Only evidence that CONTAINS the stored legs may replace them.
 	if !strings.Contains(stmt.sql, "WHERE (EXCLUDED.detail -> 'legs') @> (mev_events.detail -> 'legs')") {
 		t.Errorf("InsertMEVEvent's conflict update is not guarded by legs containment:\n%s", stmt.sql)
 	}
@@ -519,7 +519,7 @@ func TestListMEVEvents_KindFilterPlaceholderOrder(t *testing.T) {
 // range means the 50-row default, NOT a silent clamp to the ceiling —
 // the same convention as ListIssuers / ListFreezeEvents /
 // ListDivergenceLatest — and the ceiling itself must still be reachable.
-// The doc comment used to claim "capped at 500", which is what a caller
+// A doc comment claiming "capped at 500" would mislead: that is what a caller
 // asking for 1000 would NOT get.
 func TestListMEVEvents_LimitNormalisation(t *testing.T) {
 	cols := []string{

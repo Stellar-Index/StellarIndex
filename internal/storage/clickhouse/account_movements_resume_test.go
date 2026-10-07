@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins RLT-296's
+// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins the
 // storage half: what a PARTIALLY sent batch leaves behind must be sound
 // for the max(ledger) resume every caller checkpoints on.
 //

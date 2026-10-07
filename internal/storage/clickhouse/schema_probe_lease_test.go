@@ -69,13 +69,13 @@ func (l *liveTxLake) respond(q string) (driver.Rows, error) {
 }
 
 // TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative
-// pins F119. probeSchema used to LATCH a positive verdict for the process
-// lifetime, so the requireRows guard protected only a cold start: an
+// pins the lease. Without it probeSchema would LATCH a positive verdict for the process
+// lifetime, so the requireRows guard protects only a cold start: an
 // operator TRUNCATEing (or DROP+recreating) stellar.tx_hash_index ahead of
-// a ch-txindex-backfill left every already-running API process holding
-// settled=true/present=true, every index lookup missed, and every miss was
+// a ch-txindex-backfill leaves every already-running API process holding
+// settled=true/present=true, every index lookup misses, and every miss is
 // served as an AUTHORITATIVE 404 for a transaction that exists — until a
-// restart. The verdict is now a lease: the SAME reader, with no restart,
+// restart. The verdict is a lease: the SAME reader, with no restart,
 // must stop treating misses as authoritative once the lease runs out.
 func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
@@ -131,7 +131,7 @@ func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t 
 }
 
 // TestProbeSchema_PositiveLeaseIsNotAPerRequestProbe is the cost half of
-// F119: the lease must not put a probe on every request. Inside one lease
+// the lease: it must not put a probe on every request. Inside one lease
 // window any number of reads share ONE probe; each further window costs
 // exactly one more.
 func TestProbeSchema_PositiveLeaseIsNotAPerRequestProbe(t *testing.T) {

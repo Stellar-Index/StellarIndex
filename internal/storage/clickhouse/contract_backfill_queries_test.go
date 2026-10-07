@@ -162,7 +162,7 @@ func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) 
 
 	// FINAL on the RMT source: without it a corrected re-ingest's stale part
 	// rides the same INSERT as the fix and ties it on the target's now()
-	// version, so code-history can serve the pre-fix wasm_hash.
+	// version, so code-history can serve the stale wasm_hash.
 	if !strings.Contains(q, "FROM stellar.ledger_entry_changes FINAL\n\tWHERE ledger_seq BETWEEN ? AND ?") {
 		t.Errorf("contractInstanceBackfillQuery must read `stellar.ledger_entry_changes FINAL` bounded by the window predicate:\n%s", q)
 	}

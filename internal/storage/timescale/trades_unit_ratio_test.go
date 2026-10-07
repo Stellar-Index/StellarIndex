@@ -11,7 +11,7 @@ import (
 )
 
 // TestIsDexUnitRatioTrade covers the pure predicate in isolation —
-// the 2026-07-07 Phoenix incident signature (on-chain, base_amount ==
+// the Phoenix incident signature (on-chain, base_amount ==
 // quote_amount, both nonzero) vs. the cases it must NOT flag.
 func TestIsDexUnitRatioTrade(t *testing.T) {
 	tests := []struct {

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// ─── the bounded exclusive-lock wait (2026-09-10 convoy) ─────────────────
+// ─── the bounded exclusive-lock wait (lock convoy) ─────────────────
 //
 // r1, 00:12–00:31 UTC: a restamp's decompress_chunk could not have its
 // AccessExclusiveLock because a cold-start aggregator read held

@@ -13,7 +13,7 @@ import (
 )
 
 // TestTopic0Predicate_MatchesBothTopicEncodings is the fast default-suite
-// guard for the lake half of F048 (the executing proof against a real
+// guard for the lake half of the string-topic prefilter (the executing proof against a real
 // ClickHouse is
 // test/integration/contract_events_string_topic_prefilter_test.go).
 //

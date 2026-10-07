@@ -12,17 +12,15 @@ import (
 )
 
 // TestResetSEP41SupplyRollupFoldDoc_NamesBothCallers is the regression
-// for the residual half of finding F107 (audit 2026-09-02, duplicate of
-// F024's core defect, which internal/ops/ingest's
-// resetSEP41RollupAfterReplay + reportSEP41RollupReset already fixed):
-// [Store.ResetSEP41SupplyRollupFold]'s own docstring described only
-// `ch-rebuild -sep41 -write` as a caller, even after `stellarindex-ops
-// projector-replay -source sep41_supply` became the second one. An
+// for the docstring half of the fold-reset gap (internal/ops/ingest's
+// resetSEP41RollupAfterReplay + reportSEP41RollupReset cover the code half):
+// [Store.ResetSEP41SupplyRollupFold]'s own docstring must name both
+// `ch-rebuild -sep41 -write` and `stellarindex-ops
+// projector-replay -source sep41_supply` as callers. An
 // operator reading the function's doc to decide whether a recovery path
 // needs a fold reset would see exactly one prescribed command and could
 // reasonably conclude the projector's replay path was exempt — which is
-// the same "docstring undersells its own callers" gap the audit's
-// skeptic pass called out by name.
+// the same "docstring undersells its own callers" gap.
 //
 // Read the doc comment from the AST rather than grep the raw source so
 // the assertion is anchored to the function's actual doc comment (and

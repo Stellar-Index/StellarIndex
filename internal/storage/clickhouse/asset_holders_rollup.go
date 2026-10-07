@@ -67,10 +67,10 @@ func holdersRollupStatements(cycleAt time.Time) []string {
 	return append(stmts, holdersRollupExchangeStatement)
 }
 
-// holdersBoardSteps is the two FINAL scans AssetHolders used to run
-// per-request (inventory #4) — trustline assets' per-asset top-N by
+// holdersBoardSteps is the two FINAL scans AssetHolders would otherwise run
+// per-request — trustline assets' per-asset top-N by
 // balance, and native XLM (every account holds it in its AccountEntry) —
-// now run once per cycle instead.
+// here run once per cycle instead.
 func holdersBoardSteps(at string) []string {
 	return []string{
 		`INSERT INTO stellar.asset_holders_rollup_staging (asset, rank, account_id, balance, computed_at)

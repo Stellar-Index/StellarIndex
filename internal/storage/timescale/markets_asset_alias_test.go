@@ -9,9 +9,9 @@ import (
 )
 
 // The ?asset= filter on /v1/markets must match EVERY alias form the
-// requested asset's trades keyed under (F-1340): XLM lives under
+// requested asset's trades keyed under: XLM lives under
 // `native`, `crypto:XLM`, and its SAC C-address depending on the venue,
-// so the pre-fix scalar `p.base_asset = $5 OR p.quote_asset = $5`
+// so a scalar `p.base_asset = $5 OR p.quote_asset = $5`
 // structurally omitted the crypto:XLM-keyed CEX markets from an
 // ?asset=native query (and vice-versa). The fix binds $5 as the full
 // alias text[] and matches with ANY-membership on each leg.
@@ -19,7 +19,7 @@ import (
 // bindArrayValue renders whatever $5 arg the builder bound to its
 // Postgres array literal. Under the pgx stdlib driver a Go []string is
 // bound directly as a text[] (no wrapper), so the builder binds the full
-// alias set as a []string. On the pre-fix builder — or any regression
+// alias set as a []string. On a scalar builder — or any regression
 // that binds a scalar `= $5` — $5 is a bare string, not a []string, which
 // fails the assertion cleanly: that is the redness proof.
 func bindArrayValue(t *testing.T, arg any) string {
@@ -92,7 +92,7 @@ func TestBuildDistinctPairsQuery_NoAssetBindsEmptyArray(t *testing.T) {
 
 	// DistinctPairsExt / SourceMarkets pass asset="" — $5 must bind an
 	// EMPTY array so the cardinality($5)=0 short-circuit disables the
-	// filter (an unfiltered directory scan, unchanged from pre-fix).
+	// filter (an unfiltered directory scan, unchanged).
 	_, args := buildDistinctPairsQuery(since, "", "", "", 100, MarketsOrderPair)
 	bound := bindArrayValue(t, args[4])
 	if strings.ContainsAny(bound, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {

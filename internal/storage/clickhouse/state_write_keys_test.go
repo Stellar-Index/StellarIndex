@@ -102,12 +102,12 @@ func TestChangedWriteKeysForContract(t *testing.T) {
 }
 
 // A corrupt entry_xdr on a row that SHARES its key with parseable rows
-// must exclude the KEY, not just drop the ROW. Pre-fix the corrupt
-// pre-image (`state`) row below was silently skipped, so the
-// identical-value rewrite looked like a no-pre-image write and the key
-// was promoted to "changed" — the documented "parse failure excludes
+// must exclude the KEY, not just drop the ROW. Otherwise the corrupt
+// pre-image (`state`) row below would be silently skipped, so the
+// identical-value rewrite would look like a no-pre-image write and the key
+// would be promoted to "changed" — the documented "parse failure excludes
 // the key" rule (which the dispatcher twin enforces via its bad-set)
-// was violated exactly where it matters: a lost pre-image can turn an
+// would be violated exactly where it matters: a lost pre-image could turn an
 // adapter-REJECTED feed into an "accepted" one.
 func TestChangedWriteKeysForContract_CorruptPreImageExcludesSharedKey(t *testing.T) {
 	cidA := xdr.ContractId{0xAA, 0x01}

@@ -11,7 +11,7 @@ import (
 
 // ProvenanceCAP67Derived stamps account_movements rows derived from the
 // lake's CAP-67 transfer events by `stellarindex-ops ch-cap67-movements`
-// (inventory #1) — the post-P23 continuation of the classic_derived
+// — the post-P23 continuation of the classic_derived
 // archive, covering EVERY asset including the deliberately-unwatched
 // native XLM SAC. The provenance split is what lets the movements
 // handler floor its Postgres tail at this feed's watermark.

@@ -23,7 +23,7 @@ import (
 // it. It had no test in this package — only the interface fake in
 // internal/pricingguard/substance_test.go, which never sees the SQL.
 //
-// Two mutations were live and uncaught (audit-2026-09-02 #340 item 7):
+// Two mutations would otherwise go uncaught:
 //
 //   - dropping `AND bucket <= now() - INTERVAL '1 minute'` lets the
 //     IN-PROGRESS bucket into the measurement, so a market can be pushed
@@ -31,7 +31,7 @@ import (
 //     servable yet — the gate opens on activity the price read cannot
 //     even see.
 //   - dropping one of the two direction arms measures half the market
-//     (the recurring UNAUTH-DOS-9 / MNY-06 class), so a genuinely
+//     (a recurring direction-fold class), so a genuinely
 //     two-sided pair is withheld, or a one-sided-the-wrong-way pair reads
 //     as dead.
 //

@@ -8,7 +8,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestAccountListings_ArmsPageAccountKeyedTables pins the 2026-08-28
+// TestAccountListings_ArmsPageAccountKeyedTables pins the
 // rewrite of the account listing arms (r1: `AccountOperations deadline
 // exceeded` 503s, 14×/24h, for an account with 11,925 sourced + 26,064
 // participant ops).

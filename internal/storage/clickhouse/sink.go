@@ -160,8 +160,8 @@ type LedgerEntryChangeRow struct {
 	// tx-changes-after), phase 3 every tx's post-apply fee changes (P23
 	// Soroban refunds), phase 4 the ledger's evicted keys. This mirrors the SDK's canonical
 	// ingest.LedgerChangeReader state machine and dispatcher's
-	// walkLedgerEntryChanges exactly. This doc previously described a
-	// PER-TRANSACTION order, which mis-ranked tx1's apply-phase change below
+	// walkLedgerEntryChanges exactly. A
+	// PER-TRANSACTION order would mis-rank tx1's apply-phase change below
 	// tx2's fee change. It is the
 	// intra-ledger tie-breaker folded into stellar.ledger_entries_current's
 	// ReplacingMergeTree version (version = ledger_seq<<32 | intra_ledger_seq),
@@ -221,7 +221,7 @@ type LedgerExtract struct {
 	// ledger's Events/SorobanEventCount undercount. The indexer meters
 	// all three on stellarindex_ch_live_sink_read_undercount_total (a
 	// meta-version break drops EVERY tx's events in lock-step, which
-	// would otherwise look like a run of clean empty ledgers — G15-06).
+	// would otherwise look like a run of clean empty ledgers).
 	TxReadErrors      int
 	TxEventReadErrors int
 
@@ -260,7 +260,7 @@ type LedgerExtract struct {
 // ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already
 // at maxBufferLedgers and the flush that should have drained it is failing (a
 // sustained ClickHouse outage). The incoming extract is DROPPED rather than
-// appended, capping heap growth on the shared host (G12-01). It is a distinct
+// appended, capping heap growth on the shared host. It is a distinct
 // sentinel so callers (the LiveSink worker) can count it as a bounded DROP, not
 // a write ERROR — the ch-live-catchup gap-scan timer heals the hole later.
 var ErrBufferFull = errors.New("clickhouse: sink buffer full — extract dropped (bounded-drop, heals via ch-live-catchup)")
@@ -287,8 +287,8 @@ type Sink struct {
 }
 
 // SetMaxBufferLedgers caps how many ledgers' worth of rows the Sink will hold
-// in memory before [Add] starts dropping incoming extracts with [ErrBufferFull]
-// (G12-01). The cap bounds heap growth during a sustained ClickHouse outage,
+// in memory before [Add] starts dropping incoming extracts with [ErrBufferFull].
+// The cap bounds heap growth during a sustained ClickHouse outage,
 // where every Flush fails and would otherwise keep the buffers intact while the
 // worker keeps appending. 0 (the default) means unbounded — correct for
 // backfill Sinks, whose caller retries the SAME range on flush failure rather
@@ -316,9 +316,9 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
-			// G12-04: `max_execution_time` is a TIME limit (seconds), not a
-			// memory bound — the prior "keep memory modest" comment was wrong,
-			// and 0 = UNLIMITED, which is exactly what let a heavy FINAL
+			// `max_execution_time` is a TIME limit (seconds), not a
+			// memory bound — it does not keep memory modest,
+			// and 0 = UNLIMITED, which is exactly what lets a heavy FINAL
 			// gate/reconcile read wedge CH. This Sink is the WRITE
 			// path (cheap appends), so a generous-but-finite ceiling is purely a
 			// safety net against a pathological INSERT…SELECT; the read-path caps
@@ -431,7 +431,7 @@ func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[stri
 // is reached. Any error other than [ErrBufferFull] comes from that inline
 // flush: e is buffered and stays buffered for the next Flush.
 //
-// G12-01 bounded-drop: if a finite cap is set (SetMaxBufferLedgers) and the
+// Bounded drop: if a finite cap is set (SetMaxBufferLedgers) and the
 // buffer is already AT the cap, the incoming extract is DROPPED and
 // [ErrBufferFull] is returned — the buffer is NOT grown. This only happens once
 // the cap is reached, which (given flushEvery < cap) means flushes have been
@@ -613,11 +613,11 @@ func (s *Sink) flushEvents(ctx context.Context) error {
 
 // flushChanges writes stellar.ledger_entry_changes.
 //
-// G12-03 CLOSED (AGT-08): Extract.Changes IS populated — extractEntryChanges
+// Extract.Changes IS populated — extractEntryChanges
 // walks the per-op LedgerEntry changes (ADR-0038 Phase C, see extract.go) and
 // stellar.ledger_entry_changes is a live table, read by StreamEntryChanges for
-// the ADR-0047 Phase 4 movement reconstruction. The comment this replaces
-// still asserted the opposite ("ALWAYS empty ... a no-op in practice ... do not
+// the ADR-0047 Phase 4 movement reconstruction. Do not assume the opposite
+// ("ALWAYS empty ... a no-op in practice ... do not
 // assume stellar.ledger_entry_changes is populated"), which is exactly the
 // claim a reader would use to decide the table can be ignored.
 func (s *Sink) flushChanges(ctx context.Context) error {

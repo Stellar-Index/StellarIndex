@@ -80,8 +80,8 @@ func TestTradeUSDVolume_PopulatedForExternalUSDPaths(t *testing.T) {
 		},
 		{
 			// FX pollers stamp 1e6, NOT the CEX 1e8 (registry
-			// AmountDecimals: 6; CS-040 / audit 2026-07-31): 500_000
-			// raw units are $0.50. The pre-fix hard-coded 8 valued
+			// AmountDecimals: 6): 500_000
+			// raw units are $0.50. A hard-coded 8 would value
 			// this 100× low ($0.005).
 			name:   "exchangeratesapi + fiat:USD → 1e6 → $0.50",
 			source: "exchangeratesapi",
@@ -443,7 +443,7 @@ func TestTradeUSDVolume_Phase2_ResolverError(t *testing.T) {
 	}
 }
 
-// TestTradeUSDVolume_L76XLMBaseAnchor covers ROADMAP #37 / L7.6:
+// TestTradeUSDVolume_L76XLMBaseAnchor covers
 // a pure-Soroban SEP-41 token traded against XLM where the pool
 // stores base=XLM, quote=TOKEN — the orientation tier 3 (quote-side
 // FX resolution) can't cover, since TOKEN has no direct USD-pegged
@@ -520,14 +520,12 @@ func TestTradeUSDVolume_L76XLMBaseAnchor(t *testing.T) {
 // though the trade's base asset would also satisfy tier 4's
 // isXLMAsset check.
 //
-// This test used to assert the OPPOSITE — "tier 3 must win over tier 4" —
-// and its own fixture is why that was wrong. It trades 1.0 XLM (priced
+// Tier 3 must NOT win over tier 4 here; the fixture shows why. It trades 1.0 XLM (priced
 // $0.12) for 5,000 AQUA (priced $0.001 = $5.00): the two legs of a SINGLE
-// trade differ by 42x, so at least one rate is wrong, and the old
-// assertion picked the thin on-chain token over XLM.
+// trade differ by 42x, so at least one rate is wrong, and preferring
+// tier 3 would pick the thin on-chain token over XLM.
 //
-// That is the choice that produced the $8,559,224 row measured on r1
-// (2026-08-04): tier 3's token price is usually tier 3b's bridge,
+// That choice produced an $8,559,224 row on r1: tier 3's token price is usually tier 3b's bridge,
 // `token/XLM x XLM/USD`, read out of prices_1m — which is a continuous
 // aggregate over `trades`. For a token with no honest market the bridge
 // rate is whatever the last trader wrote, so an attacker self-deals once
@@ -644,7 +642,7 @@ func TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution(t *testing.T) {
 		aqua.String(): "0.001",
 	}}
 	// The fixture's legs must be economically COHERENT (5M AQUA at
-	// $0.001 ≈ the 5,000 USDC quote side): since the task-#32 leg
+	// $0.001 ≈ the 5,000 USDC quote side): because of the leg
 	// cross-check, a fixture whose legs disagree by 10^6 — the shape of
 	// a poisoned rate, not of any real trade — is deliberately valued
 	// off its smaller leg, which is not what this test is about.
@@ -886,12 +884,12 @@ func TestStore_WouldPopulateUSDVolume(t *testing.T) {
 	}
 }
 
-// ─── tier 2b: USD-pegged BASE leg (2026-07-22) ───────────────────────
+// ─── tier 2b: USD-pegged BASE leg ───────────────────────
 
 // TestTradeUSDVolume_Tier2bUSDBase — a `USDC/TOKEN`-oriented on-chain
-// market carries its USD value in base_amount. The waterfall used to
-// inspect only the quote leg, so these fell through every tier and
-// inserted NULL (43,277 on-chain trades on 2026-07-17 alone).
+// market carries its USD value in base_amount. The waterfall must not
+// inspect only the quote leg, or these fall through every tier and
+// insert NULL (43,277 on-chain trades in one day).
 func TestTradeUSDVolume_Tier2bUSDBase(t *testing.T) {
 	t.Parallel()
 	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
@@ -936,7 +934,7 @@ func TestTradeUSDVolume_Tier2bUSDBase(t *testing.T) {
 // TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate — when BOTH
 // a USD-pegged base and a quote-side FX rate are available, the exact
 // dollar amount wins. The FX route is an estimate through a VWAP; on
-// 2026-07-17 the two agreed to 0.69% on average across 111,617 trades
+// one measured day the two agreed to 0.69% on average across 111,617 trades
 // but diverged up to 134.92%, and the error is the VWAP's.
 func TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate(t *testing.T) {
 	t.Parallel()
@@ -1050,7 +1048,7 @@ func TestBaseAnchorEligible(t *testing.T) {
 // TestTradeUSDVolume_Tier4bClassicBaseAnchor — a token/token trade
 // whose QUOTE leg has no resolvable price is valued off its BASE leg.
 // This is the path that takes on-chain coverage from 87.5% to 99.2%
-// of the remaining unpriced trades (measured 2026-07-22): for a 6T/F8
+// of the remaining unpriced trades (measured): for a 6T/F8
 // trade where F8 has no usable market, 6T does.
 func TestTradeUSDVolume_Tier4bClassicBaseAnchor(t *testing.T) {
 	t.Parallel()
@@ -1254,7 +1252,7 @@ func mustAsset(t *testing.T, s string) canonical.Asset {
 }
 
 // TestTradeUSDVolumeViaFX_LegCrossCheck is the fake-XMR incident
-// regression (2026-08-11, task #32): an attacker planted an
+// regression: an attacker planted an
 // INDUSX/XLM bridge rate for the cost of the dust floor, and two
 // trades with NO XLM leg were stamped ~$91M each off the poisoned
 // quote-side rate (real value <$0.01). When BOTH legs resolve and

@@ -11,7 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestSinkBufferCapBoundedDrop verifies the G12-01 bounded-drop: once the
+// TestSinkBufferCapBoundedDrop verifies the bounded drop: once the
 // in-memory buffer reaches maxBufferLedgers (a sustained-CH-outage proxy, since
 // the cap is only reached when flushes are failing), Add DROPS the incoming
 // extract with ErrBufferFull instead of growing the buffer unbounded.

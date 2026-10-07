@@ -7,8 +7,7 @@ import (
 )
 
 // TestCCTPEventType_IsValid_AllTwentySixKinds guards the THIRD gating
-// layer the type's godoc warns about (board #31, re-confirmed
-// 2026-07-08 / ROADMAP #89b, and again 2026-07-09 / #89c): Classify
+// layer the type's godoc warns about (re-confirmed more than once): Classify
 // (decoder), IsValid (this file), and the SQL CHECK (migrations
 // 0038/0070/0092/0094) must all agree on the same set, or
 // InsertCCTPEvent silently rejects a decoded event before it ever

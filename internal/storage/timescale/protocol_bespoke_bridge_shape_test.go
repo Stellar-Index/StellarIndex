@@ -44,13 +44,13 @@ func assertCCTPNumericSafe(t *testing.T, q string) {
 }
 
 // assertCCTPRawValueReads guards the post-deletion honesty rule (file-doc
-// rule 1): the legacy event_index-0 twins were DELETED on 2026-07-31, so
+// rule 1): the legacy event_index-0 twins were DELETED, so
 // value-carrying flow queries read RAW per-event rows. The old per-(tx, op)
 // collapse with max(amount) was a workaround for those twins, and keeping
 // it would silently HALVE a future genuine batched double-transfer in one
 // op (the 0112 class — admin events already prove same-op same-type groups
 // occur on the wire: attester_enabled ×2, remote_token_messenger_added ×23
-// in single ops on the 2026-07-31 lake census). max(amount) is the
+// in single ops on the lake census). max(amount) is the
 // fingerprint of that collapse — cctpRecvCTE's legitimate one-body-per-op
 // group uses min(body), so its presence in a full query is unambiguous.
 func assertCCTPRawValueReads(t *testing.T, q string) {

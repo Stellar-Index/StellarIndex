@@ -102,7 +102,7 @@ func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
 // target column list, in the exact order stellar.contracts_census_daily
 // (contracts_census_daily.sql) declares them. A positional INSERT here
 // would depend on the SELECT's alias order matching the table's ALTER
-// history forever (GH-1169); naming the columns makes a future column
+// history forever; naming the columns makes a future column
 // added to either side fail loudly instead of silently swapping values.
 func TestCensusDayInsertNamesItsColumns(t *testing.T) {
 	stmt := censusDayInsert("contracts_census_daily_staging_test")

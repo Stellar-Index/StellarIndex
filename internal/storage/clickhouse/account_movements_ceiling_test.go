@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestAccountMovementsQuery_LedgerCeiling pins F055's storage half: the
+// TestAccountMovementsQuery_LedgerCeiling pins the storage half of the ledger ceiling: the
 // /movements merge boundary is a SQL predicate on this read, and its
 // set-signal is HasMaxLedger — never "MaxLedger != 0".
 //

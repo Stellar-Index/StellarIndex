@@ -613,7 +613,7 @@ func (r *VWAPUSDFXResolver) fresh(observedAt, at time.Time, window time.Duration
 }
 
 // lookupCache returns (rate, true) when the cache has a fresh
-// entry, otherwise ("", false). Empty rate means "previously
+// entry, otherwise ("", false). Empty rate means "already
 // resolved as no-rate-available" — caller still treats that as
 // ok=false at the boundary.
 func (r *VWAPUSDFXResolver) lookupCache(key fxCacheKey) (string, bool) {
@@ -835,7 +835,7 @@ func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
 //
 // Buckets below [bridgeLegMinUSDVolume] are excluded so a dust-only
 // bucket cannot set the rate. The lower bucket bound mirrors the
-// G11-06 rationale on queryDB: without it a miss walks prices_1m back
+// rationale on queryDB: without it a miss walks prices_1m back
 // to genesis before returning a row the caller would discard anyway.
 func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, error) {
 	// Both on-chain wire forms of XLM — the classic `native` type and
@@ -850,8 +850,8 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	// The lower bucket bound must live INSIDE each UNION branch, not on
 	// the outer query: chunk exclusion is decided per-scan, so a bound
 	// applied after the union still lets both branches walk prices_1m
-	// back to genesis on a miss — the very thing G11-06 fixed on
-	// queryDB. Same reason the vwap > 0 guard is inlined too.
+	// back to genesis on a miss — the very thing the bound on
+	// queryDB avoids. Same reason the vwap > 0 guard is inlined too.
 	lowerBound := ""
 	if r.bridgeFreshness > 0 {
 		lowerBound = `

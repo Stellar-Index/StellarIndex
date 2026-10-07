@@ -223,8 +223,8 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 }
 
 // tradeUSDVolumeViaUSDBase is tier 2b: value the trade off a
-// USD-pegged BASE leg. The whole waterfall used to inspect only the
-// quote asset, so a `USDC/TOKEN`-oriented market — where the
+// USD-pegged BASE leg. A waterfall inspecting only the
+// quote asset so a `USDC/TOKEN`-oriented market — where the
 // dollar leg is the base — fell through every tier even though its
 // USD value was sitting right there in base_amount. Measured at
 // 43,277 unpriced on-chain trades in one day.
@@ -237,7 +237,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 // ahead of the FX tiers.
 //
 // It also supersedes a quote-side FX estimate where both could fire
-// (e.g. USDC/XLM, previously valued as quote_amount x XLM/USD).
+// (e.g. USDC/XLM, otherwise valued as quote_amount x XLM/USD).
 // That is deliberate and a correctness win: measured across 111,617
 // such trades in one day the two routes agreed to 0.69% on average
 // but diverged by up to 134.92%, and the divergence is the VWAP
@@ -395,8 +395,7 @@ var usdLegAgreementFactor = big.NewRat(10, 1)
 // NULL) rather than served. Deliberately set high so the large legitimate
 // class of unresolvable-base DEX trades keeps its honest value: the ceiling
 // only removes the implausible, uncross-checkable tail an attacker can drive
-// arbitrarily high through a self-authored bridge rate (W1-flow-price-serve-1;
-// the base-unresolvable variant of the $182M fake-print incident, task #32).
+// arbitrarily high through a self-authored bridge rate (the base-unresolvable variant of the $182M fake-print incident).
 var singleLegMaxUSDVolume = new(big.Rat).SetInt64(100_000_000)
 
 // fxLegValue values one leg of a trade through the resolver: amount /
@@ -503,7 +502,7 @@ func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass 
 	usdAmount := new(big.Rat).Mul(q, usdRate)
 	// A non-XLM anchor's rate is the same poisonable tier-3b bridge the
 	// quote-side FX tier reads, so it takes the same bound:
-	// the base leg used to store it verbatim, which re-opened the $182M
+	// storing it verbatim would re-open the $182M
 	// fake-print class for anyone who planted <base>/XLM and swapped
 	// against a never-priced quote. XLM is exempt, and must stay so: its
 	// rate is a direct XLM/USD market nobody can author and base_amount
@@ -1238,8 +1237,8 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 // per-landed-row (xmax=0) result set into the outcome tallies (new + unit-ratio
 // per source) and the distinct landed assets — each kept at its highest-ledger
 // observation (registerClassicAssetSeen advances last_seen_* via GREATEST) —
-// that drive the classic-asset/issuer registry hook the batch path previously
-// skipped (C2-13b). Split out of BatchInsertTrades for length/complexity.
+// that drive the classic-asset/issuer registry hook the batch path would otherwise
+// skip. Split out of BatchInsertTrades for length/complexity.
 // emitBatchTradeOutcomeMetrics records the per-source insert-outcome metrics for
 // a batch: landed (new) + duplicate (sent-landed) + unit-ratio counts. Split
 // out of BatchInsertTrades to keep it under the length budget.
@@ -1647,12 +1646,12 @@ func noteRegistryObservation(seen map[string]registryObservation, asset string, 
 // registerBatchLandedAssets runs the classic-asset registry hook for the
 // distinct assets of a batch's landed rows.
 func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[string]registryObservation) {
-	// C2-13b: auto-register the classic-asset / issuer registry from the
-	// LANDED trades — the same Phase-4 hook InsertTrade runs. The batch path
-	// used to skip this, reasoning a later single-row InsertTrade would pick
+	// Auto-register the classic-asset / issuer registry from the
+	// LANDED trades — the same Phase-4 hook InsertTrade runs. Skipping it on the batch path
+	// would assume a later single-row InsertTrade picks
 	// the asset up; but the LIVE indexer ingests trades EXCLUSIVELY through
 	// this batch path (persistWorker → BatchInsertTrades), so classic_assets
-	// / issuers permanently under-populated for batch-ingested assets. We
+	// / issuers would stay permanently under-populated for batch-ingested assets. We
 	// register only genuinely-inserted rows (matching InsertTrade's
 	// duplicate-replay guard), deduped to the distinct assets in this batch,
 	// each over the lowest..highest ledger we saw. Soft-fail + dedupe-cached, exactly
@@ -1736,7 +1735,7 @@ func countZeroLegAdmitted(t canonical.Trade) {
 }
 
 // registryObservation is the lowest and highest ledger observation of a
-// landed asset within one BatchInsertTrades call — the input to the C2-13b
+// landed asset within one BatchInsertTrades call — the input to the
 // batch-path classic-asset/issuer registry hook. Both ends are carried so a
 // backfill batch offers the true first-seen minimum, not just its tip.
 type registryObservation struct {
@@ -1767,8 +1766,7 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 // caller, and it is per ROW: the row's own base_asset decides, not
 // which arm of the union returned it.
 //
-// TWO LIMITED ARMS, not one OR'd scan. Each arm is exactly the query
-// this used to be, so each keeps its index-ordered scan
+// TWO LIMITED ARMS, not one OR'd scan. Each arm is exactly the single-direction query, so each keeps its index-ordered scan
 // (trades_pair_ts_idx / trades_pair_source_ts_idx, migration 0037) and
 // its early stop. An OR would have to bitmap both directions and sort
 // them together — on a read whose worst case is already a full-history
@@ -2423,7 +2421,7 @@ func (s *Store) tradesInRangeAfter(
 // at-or-before `cutoff`, restricted to sources passed in `fxSources`
 // (typically the result of external.FXSources()).
 //
-// Read order (BACKLOG #42 — the unified FX read path):
+// Read order (the unified FX read path):
 //
 //  1. `fx_quotes` — the table the ACTIVE FX feed (`massive`, the
 //     internal/sources/external/forex worker) writes. Consulted only when

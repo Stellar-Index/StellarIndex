@@ -788,7 +788,7 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 		// primary index cut the range at the cursor; a tuple alone is not pruned.
 		sb.WriteString(" AND ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
-	// LIMIT 1 BY = the DAT-10 read-time dedup the sibling account readers
+	// LIMIT 1 BY = the read-time dedup the sibling account readers
 	// (AccountTransactions / AccountOperations) already carry: an un-merged
 	// ReplacingMergeTree duplicate part — routine while a re-derive is in
 	// flight, since InsertAccountMovements is retry-by-reinsert — would

@@ -6,7 +6,7 @@ import (
 )
 
 // TestGapDetectorStatementTimeoutWithinGoBudget pins the timeout
-// ordering the 2026-08-28 r1 incident violated: the PG-side
+// ordering an r1 incident violated: the PG-side
 // statement_timeout the gap detector SETs on its scan queries must sit
 // at or below the Go per-target context timeout. When it doesn't (the
 // count-distinct used the 2h ops/verify constant against a 15-min Go

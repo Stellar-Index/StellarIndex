@@ -19,7 +19,7 @@ import (
 // hash) or the referenced contract_code entry isn't captured (so we have the
 // hash but not the bytes). It's a clean "not found" (404), NOT an error.
 //
-// The "live-only capture window" explanation this comment used to give is
+// A "live-only capture window" explanation is
 // STALE for contract_code, and following it wastes an operator's time
 // waiting for a backfill that has already run. Measured on r1:
 // ledger_entries_current holds all 4,534 distinct contract_code keys, from
@@ -86,7 +86,7 @@ type ContractWasmInfo struct {
 //
 // Returns ErrContractWasmUnresolved (a clean 404) when either hop misses in
 // the captured window — historical deploy-time entries are largely outside the
-// live ledger_entry_changes capture (extract.go G12-03 note).
+// live ledger_entry_changes capture (see extract.go).
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
 	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
@@ -349,7 +349,7 @@ type ContractCodeVersion struct {
 }
 
 // contractCodeHistoryMaxRows caps the instance-change rows ContractCodeHistory
-// pulls back. Pre-fix the query had no LIMIT at all: a
+// pulls back. Without the cap the query has no LIMIT at all: a
 // contract that rewrites its instance entry often — instance-STORAGE writes
 // rewrite the same ledger key, not just `update_contract` upgrades — can match
 // millions of rows, every one of which is transferred and XDR-decoded below.
@@ -755,10 +755,10 @@ func codeKeyXDR(hash xdr.Hash) (string, error) {
 // at 121,584 rows / 53.93 MiB / 34 ms, and the MISS costs the
 // same as the hit.
 //
-// The pre-fix query scanned stellar.ledger_entry_changes (159.4B rows /
-// 6.52 TiB) with no key predicate and filtered the hash in Go. 59% of that
+// A query scanning stellar.ledger_entry_changes (159.4B rows /
+// 6.52 TiB) with no key predicate, filtering the hash in Go, is unworkable. 59% of that
 // table sits in partitions holding ZERO contract_code rows, and a full pass
-// is ~45-50s — six times the 8s explorerReadTimeout. It never completed:
+// is ~45-50s — six times the 8s explorerReadTimeout. It never completes:
 // query_log showed 12/12 executions aborted at the deadline having read
 // 3.31 GiB each, i.e. this endpoint had NEVER returned a 200 for a WASM
 // contract. The key_xdr bloom on the changes log is not the answer either —
@@ -831,7 +831,7 @@ func (r *ExplorerReader) wasmCodeByHash(ctx context.Context, hash xdr.Hash) ([]b
 // asset-shaped METADATA name must not be trusted — only stellar-core
 // mints the StellarAsset executable, which is the trust anchor here).
 //
-// Board #40 (RFP audit): wallets look holdings up by contract
+// Wallets look holdings up by contract
 // address; a SAC lookup must land on the classic identity so it
 // carries the classic asset's price.
 func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error) {

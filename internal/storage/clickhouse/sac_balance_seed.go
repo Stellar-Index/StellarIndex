@@ -625,11 +625,11 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // A SINGLE argMax over a TUPLE of every projected column, keyed on the full
 // within-ledger identity tuple (ledger_seq, intra_ledger_seq, tx_hash,
 // op_index, change_index) — NOT ledger_seq alone, and not one argMax per
-// column. C2-4: ledger_seq is not unique per key within a
+// column. ledger_seq is not unique per key within a
 // ledger (change_index is only a per-TRANSACTION counter — see
 // extract_entry_changes.go — so a single ledger can hold several changes to
 // the same storage key), so `argMax(col, ledger_seq)` computed INDEPENDENTLY
-// per column let ClickHouse resolve the tie differently for each column:
+// per column lets ClickHouse resolve the tie differently for each column:
 // entry_xdr from a still-present change and change_type from a later 'removed'
 // change in the same ledger → a Frankenstein current-state row. When
 // change_type was mis-read as present, the removed-entry skip never fired and
@@ -645,7 +645,7 @@ func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (l
 // resolves same-ledger cross-tx writes by TRUE apply order — and it is the
 // exact same tie-break folded into ledger_entries_current's version, so this
 // full-history reduction and the FINAL projection agree on the winner. Rows
-// written before the C2-4c fix (and legacy rows until a re-derive) carry
+// written before intra_ledger_seq was folded into the version (and legacy rows until a re-derive) carry
 // intra_ledger_seq = 0, so among them the tuple falls through to
 // (tx_hash, op_index, change_index) — the prior lexical-but-deterministic
 // canonical order — a strict superset, never a regression.

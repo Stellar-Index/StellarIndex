@@ -296,7 +296,7 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 //
 // It is one literal, not two, because the two surfaces are required to
 // agree: `/v1/markets?source=X` and `/v1/pools?source=X` describe the
-// same venue's same pair and used to disagree by orders of magnitude —
+// same venue's same pair and would disagree by orders of magnitude if
 // the markets listing read the PAIR-WIDE prices_1m/prices_1d CAGGs and
 // merely FILTERED them by `source = ANY(sources)`, which selects
 // BUCKETS a venue printed in, not that venue's contribution. Sharing
@@ -379,16 +379,12 @@ func poolsFilterArgs(filter PoolsFilter) []any {
 }
 
 func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
-	// Pre-#25 this query scanned the trades hypertable three times:
-	// once for the vol_24h CTE (24h SUM grouped by source+pair),
-	// once for the last_px CTE (DISTINCT ON per-source latest price),
-	// and once for the outer FROM trades enumeration (14d window
-	// LEFT JOINing both CTEs). Measured 8-30s on a populated 2.7B-
-	// row hypertable; #23 wrapped the result in stale-while-
-	// revalidate so user requests stayed sub-ms warm but cold-fill
-	// + the background refresh both paid the full cost.
-	//
-	// Post-#25 every read collapses into a single scan of the
+	// Scanning the trades hypertable directly would take three passes:
+	// the vol_24h CTE (24h SUM grouped by source+pair), the last_px
+	// CTE (DISTINCT ON per-source latest price), and the outer
+	// enumeration (14d window LEFT JOINing both CTEs). That measures
+	// 8-30s on a populated 2.7B-row hypertable, so every read instead
+	// collapses into a single scan of the
 	// pools_per_source_1h continuous aggregate (migration 0036).
 	// One row per (source, base, quote, 1h bucket) holds
 	// SUM(usd_volume) split by Phase-1-priced vs needs-XLM-fallback,
@@ -402,9 +398,9 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// XLM-fallback semantics preserved exactly: priced trades
 	// contribute their stored usd_volume; unpriced trades with an
 	// XLM leg contribute base_amount × XLM/USD (or quote_amount
-	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (the
-	// pre-#25 query returned NULL; the handler scan collapses
-	// NULL and "0" identically, so functionally equivalent).
+	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (a
+	// direct trades scan would return NULL; the handler scan collapses
+	// NULL and "0" identically, so the two are equivalent).
 	// $8/$9 are the alias-fold arrays, after the $1..$7 layout below.
 	cte := perSourcePoolsCTE(8)
 	canonBase, canonQuote, flipped := canonOrientSQL(10)
@@ -1353,8 +1349,7 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 
 // FirstTradeBatch returns, for each requested (base, quote) pair,
 // the open time of the pair's FIRST daily bucket in prices_1d — the
-// queryable "since inception = first recorded trade" anchor (RFP;
-// board #44). Day precision is deliberate: prices_1d is indefinite
+// queryable "since inception = first recorded trade" anchor (RFP). Day precision is deliberate: prices_1d is indefinite
 // (back to each pair's first trade) and the per-pair MIN is
 // index-assisted, so this stays cheap enough for the ?include=
 // opt-in path on /v1/markets. Both orientations of each pair are

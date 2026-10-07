@@ -7,7 +7,7 @@ import (
 )
 
 // TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus is the
-// differential guard for the 2026-08-28 r1 incident fix: the density
+// differential guard for the r1 incident fix: the density
 // numerator for soroban-events comes from the ledger_ingest_log census
 // (PK range scan) instead of a full scan of the index-less 257 GB
 // soroban_events hypertable — and EVERY other registered target keeps

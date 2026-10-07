@@ -36,13 +36,12 @@ func docCommentAbove(t *testing.T, text, declLine string) string {
 	return strings.Join(comment, " ")
 }
 
-// TestOnConflictDocsMatchGenerationGuardedUpsert guards GH-1016: doc
+// TestOnConflictDocsMatchGenerationGuardedUpsert guards that doc
 // comments on writers backed by an INV-3 generation-guarded corrective
 // ON CONFLICT ... DO UPDATE (migration 0110) must not describe the
 // pre-migration DO NOTHING / no-op / positional-PK behaviour those
 // upserts replaced. A doc that still claims "no-op" or omits a PK
-// column the query actually conflicts on is stale in exactly the way
-// #612/#934 were.
+// column the query actually conflicts on is stale.
 func TestOnConflictDocsMatchGenerationGuardedUpsert(t *testing.T) {
 	cases := []struct {
 		name           string

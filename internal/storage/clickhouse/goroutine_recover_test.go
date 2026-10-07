@@ -15,7 +15,7 @@ import (
 const clickhouseGoroutineFloor = 3
 
 // TestClickhouseGoroutinesRecover is the package-wide guard for this
-// package's detached goroutines (GH-1017): every `go` statement in a
+// package's detached goroutines: every `go` statement in a
 // non-test file under internal/storage/clickhouse must defer
 // worker.Recover or worker.Report. main.go-scoped guards cannot see these
 // — they are started from ExplorerReader's cache-refresh paths, not from

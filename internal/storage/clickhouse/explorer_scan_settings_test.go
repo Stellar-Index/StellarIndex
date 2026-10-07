@@ -125,13 +125,13 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		t.Error("a first-page exact arm must not carry a cursor clause")
 	}
 
-	// A first page carries no CURSOR clause on either arm. (Until
-	// 2026-09-02 this was asserted as "no WHERE at all", which was a
-	// faithful proxy only while the query had no lower bound either — the
+	// A first page carries no CURSOR clause on either arm. (This is not
+	// asserted as "no WHERE at all", which is a
+	// faithful proxy only while the query has no lower bound — the
 	// tail-window bound is a WHERE on the first page, and is pinned
 	// in explorer_reader_recent_operations_test.go. The property this row
 	// actually protects — the arg count matching the clause count — is
-	// now asserted directly.)
+	// asserted directly.)
 	for _, q := range []string{recentOperationsQuery(false, true), recentOperationsQuery(false, false)} {
 		if strings.Contains(q, recentOperationsCursorPredicate) || strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
 			t.Errorf("recentOperationsQuery(false, …) must not carry a cursor clause:\n%s", q)
@@ -168,7 +168,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 }
 
 // TestNativeHoldersQueries_Shape pins the native arm of AssetHolders
-// (2026-07-31: /v1/assets/native/holders served {"holder_count":0} by
+// (without it /v1/assets/native/holders would serve {"holder_count":0} by
 // construction because native has no trustlines). The load-bearing facts:
 // both native queries read the ACCOUNT entry range — entry_type is the
 // FIRST ORDER BY column, so this is a primary-index range read, and losing

@@ -14,13 +14,13 @@ import (
 )
 
 // [Store.HasAsset] is the 404 gate on GET /v1/assets/{id}. Its
-// non-classic arm used to be an UNBOUNDED existence scan of the `trades`
+// non-classic arm must not be an UNBOUNDED existence scan of the `trades`
 // hypertable:
 //
 //	SELECT EXISTS (SELECT 1 FROM trades
 //	                WHERE base_asset = $1 OR quote_asset = $1 LIMIT 1)
 //
-// Measured on r1 2026-09-09 while a usd-volume re-stamp was
+// Measured on r1 while a usd-volume re-stamp was
 // decompressing historical chunks, that shape took `GET
 // /v1/assets/native` past the 15 s request budget three times running
 // (`GetAsset failed err="timescale: HasAsset: timeout: context deadline
@@ -91,7 +91,7 @@ func subqueryBody(s string) string {
 // TestHasAsset_NativeIssuesNoUnboundedTradesScan is the regression this
 // fix exists for: every `trades` read on the native path must carry the
 // `ts >=` bound that lets the planner prune to the window's chunks. RED
-// against the pre-fix query, whose single read has no bound at all.
+// against an unbounded query, whose single read has no bound at all.
 func TestHasAsset_ProbeIssuesNoUnboundedTradesScan(t *testing.T) {
 	stmt, has := hasAssetStmt(t, probeAsset(t), true)
 
@@ -263,8 +263,7 @@ func TestHasAsset_NonClassicAlwaysProbesItsOwnSpelling(t *testing.T) {
 // for every asset the index does not carry — which is what a scraper
 // hits. One statement, one answer.
 //
-// This one passes against the pre-fix code too (it issued one statement
-// as well): it is a forward guard against that ladder, not a proof of
+// This one passes against an unbounded single-statement implementation too: it is a forward guard against that ladder, not a proof of
 // the fix. The redness proofs are the three tests above.
 func TestHasAsset_AbsentNonClassicAnswersWithoutFallback(t *testing.T) {
 	eur, err := canonical.NewFiatAsset("EUR")
@@ -293,10 +292,10 @@ unbounded scan. Statements:
 }
 
 // TestHasAsset_ClassicStillBypassesTrades guards the dispatch. The
-// classic arm's speed comes from never touching the hypertable at all
-// (F-0157); routing it through the new bounded probe would be a
+// classic arm's speed comes from never touching the hypertable at all;
+// routing it through the new bounded probe would be a
 // regression dressed as consolidation. Like the test above, this is a
-// forward guard — it passed before the fix as well.
+// forward guard.
 func TestHasAsset_ClassicStillBypassesTrades(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -327,8 +326,8 @@ SQL:
 //
 // The non-classic probe bounds existence on MarketsRecencyWindow, which
 // is right for assets that are DISCOVERED by trading. XLM is not: it
-// exists from the genesis ledger of every Stellar network. Measured on
-// 2026-09-09, futurenet had zero XLM trades in that window while testnet
+// exists from the genesis ledger of every Stellar network. Measured once,
+// futurenet had zero XLM trades in that window while testnet
 // had 2,030 — so a native asset routed through the probe answers 404 on
 // the quiet network and 200 on the busy one, from the same code. A test
 // that seeds a trade cannot see this; this one asserts the store issues

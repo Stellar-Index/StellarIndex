@@ -18,7 +18,7 @@ import (
 //
 // `trades` is a hypertable. An UPDATE that names it and constrains `ts`
 // only through the join (`t.ts = v.ts`) is planned against EVERY chunk:
-// measured on production 2026-09-06, one batch's plan carried 260
+// on production, one batch's plan carried 260
 // `Update on …_chunk` targets over an Append of 260 sequential scans
 // (cost 10,040,409), TimescaleDB serviced the DML on the compressed ones
 // by decompressing them wholesale, and a 23-row UPDATE ran 60 minutes,

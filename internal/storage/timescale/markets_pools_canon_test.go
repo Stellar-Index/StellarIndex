@@ -10,15 +10,15 @@ import (
 
 // Both /v1/pools orderings must read the SAME canonical CTE.
 //
-// The pair-ordered tail used to select `FROM pools` — the pre-collapse
-// CTE — while the volume-desc tail selected `FROM canon`. So the two
-// orderings disagreed about what a pool is: `?order_by=pair` returned
+// A pair-ordered tail selecting `FROM pools` — the pre-collapse
+// CTE — while the volume-desc tail selects `FROM canon` would make the two
+// orderings disagree about what a pool is: `?order_by=pair` would return
 // both orientations of every two-sided market as separate rows, each
 // carrying only its own direction's vol_24h_usd and count_24h rather
 // than the summed pair, with last_price un-inverted on the flipped
-// side. Measured on r1 2026-08-03: 61 duplicate both-orientation pairs
+// side. Measured on r1: 61 duplicate both-orientation pairs
 // in a 200-row page versus 0 on the default ordering, and both variants
-// cache under distinct keys so the disagreement was durable.
+// cache under distinct keys so the disagreement would be durable.
 func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	t.Parallel()
 

@@ -22,7 +22,7 @@ func TestIsInfraError(t *testing.T) {
 		{"nil", nil, false},
 		{"context canceled", context.Canceled, false},
 		{"context deadline", context.DeadlineExceeded, false},
-		// The 2026-07-06 incident signature.
+		// The incident signature.
 		{"dial connection refused (string)", errors.New("dial tcp 127.0.0.1:5432: connect: connection refused"), true},
 		{"wrapped connection refused", fmt.Errorf("timescale: BatchInsertTrades: %w", errors.New("connect: connection refused")), true},
 		{"driver bad conn", driver.ErrBadConn, true},

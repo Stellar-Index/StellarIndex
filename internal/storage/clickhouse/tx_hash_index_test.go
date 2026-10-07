@@ -188,7 +188,7 @@ func TestTransactionByHashFastPath(t *testing.T) {
 }
 
 func TestTransactionByHashIndexMissIsAuthoritativeNotFound(t *testing.T) {
-	// 2026-07-30 (account-filter class audit): the NON-EMPTY index covers
+	// The NON-EMPTY index covers
 	// genesis→tip, so an INDEX miss is an authoritative "no such hash" —
 	// the reader must NOT fall through to the 10.5B-row bloom scan
 	// (which turned every garbage hash into an unauthenticated
@@ -460,7 +460,7 @@ func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	}
 }
 
-// TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak proves the DAT-10 fix:
+// TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak proves the tie-break:
 // the ledger-scoped read that both txByHashIndexed and txByHashScan's step 2
 // share is FINAL-deduped, not an `ORDER BY ingested_at DESC LIMIT 1` — which
 // silently picked an UNSPECIFIED row whenever two ReplacingMergeTree parts
@@ -497,7 +497,7 @@ func TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak(t *testing.T) {
 	}
 }
 
-// TestTxHashIndexBackfillQuery_UsesFinal proves the DAT-10 fix on
+// TestTxHashIndexBackfillQuery_UsesFinal proves the dedup on
 // BackfillTxHashIndex's per-window INSERT…SELECT: it must read
 // stellar.transactions FINAL-deduped so a re-derive backfill window doesn't
 // enqueue an un-merged duplicate (or, worse, a stale pre-correction) row into

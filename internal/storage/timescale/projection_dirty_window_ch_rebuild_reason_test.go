@@ -5,7 +5,7 @@ package timescale
 
 import "testing"
 
-// The third writer of projection_dirty_windows (F075): a clean-slate window
+// The third writer of projection_dirty_windows: a clean-slate window
 // scripts/ops/ch-rebuild-projected.sh DELETEd and did not re-derive. Its
 // provenance has to be distinguishable from the other two, and — the part
 // that matters to an on-call — it must NOT read as a projector-replay

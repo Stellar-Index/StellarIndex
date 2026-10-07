@@ -16,7 +16,7 @@ import (
 // tier reads, and for a non-XLM token that rate is usually tier 3b's
 // <token>/XLM x XLM/USD bridge — writable by anyone who pays
 // bridgeLegMinUSDVolume. The FX tier bounds a value resting on such a
-// rate ([boundUSDVolume]); until F044 / K045 the base anchor stored it
+// rate ([boundUSDVolume]); without a bound the base anchor would store it
 // verbatim, so the $182M fake-print class stayed open through the base
 // leg: plant TOKEN_A/XLM, then swap base=TOKEN_A against a never-priced
 // TOKEN_B so the quote tier declines and the anchor fires.
@@ -88,7 +88,7 @@ func TestTradeUSDVolume_BaseAnchorRefusesAnUncrossCheckablePrintAboveTheCeiling(
 // TestTradeUSDVolume_BaseAnchorBoundLeavesPlausiblePrintsByteIdentical
 // is the other half of a lossy guard: the refusal must fire ONLY above
 // the ceiling. The token/token class this tier exists for (99.2% of the
-// remaining unpriced trades, 2026-07-22) keeps its value to the digit,
+// remaining unpriced trades) keeps its value to the digit,
 // and the boundary itself is inclusive, as it is on the quote side
 // (`> ceiling` refuses; `== ceiling` serves).
 func TestTradeUSDVolume_BaseAnchorBoundLeavesPlausiblePrintsByteIdentical(t *testing.T) {

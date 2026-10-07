@@ -116,7 +116,7 @@ func TestRecentOperations_CursorArgsBindTheLedgerToBothArms(t *testing.T) {
 		cur.Ledger, // ledger_seq = ?
 		cur.A,      // (tx_index, …) < (?, …)
 		cur.B,      // (…, op_index) < (…, ?)
-		cur.Ledger - uint32(recentLedgersTailWindow), // #444 lower bound
+		cur.Ledger - uint32(recentLedgersTailWindow), // lower bound
 		windowRows(50, windowFactorKeys),             // dedup window row budget
 	}
 	got := conn.args[0]

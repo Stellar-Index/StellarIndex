@@ -122,7 +122,7 @@ func TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg(t *testing.T) {
 // predicate must be a plain equality against a bound alias form, never
 // `= ANY(array)`.
 //
-// Measured on r1 (2026-09-03, EXPLAIN ANALYZE against prices_1d): the
+// Measured on r1 (EXPLAIN ANALYZE against prices_1d): the
 // array form is planned as a bucket-ordered scan with the pair as a
 // post-filter — 5 666 ms and ~4.2M rows discarded for XLM/USD — while
 // the cross-joined equality form reaches prices_1d_pair_bucket_idx as

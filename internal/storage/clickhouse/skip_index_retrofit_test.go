@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// GH-1160: a skip index declared only inside tier1_schema.sql's
+// A skip index declared only inside tier1_schema.sql's
 // `CREATE TABLE IF NOT EXISTS` never reaches a host whose table predates it —
 // the CREATE is a no-op there, and `MATERIALIZE INDEX` fails on an index the
 // table does not have. Every tier1 skip index therefore needs an

@@ -241,7 +241,7 @@ func TestRollupCyclesDeclareTheirWindowBinds(t *testing.T) {
 // for work that was rolled back — measured on r1, 10.8% of the
 // archive's sponsorship operations and about 8% of its CreateAccount
 // operations sit in failed transactions, and the served revocation count
-// was better than twice its true value (#493).
+// was better than twice its true value.
 //
 // So any statement reading stellar.operations must establish application
 // one of the two ways this repo has evidence for: pair the operation with

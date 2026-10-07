@@ -24,7 +24,7 @@ import (
 //
 // Neither failure is visible from Go: one is a psql script an operator runs
 // by hand post-Phase-D, the other is a shell assertion on r1. Migration 0152
-// (#358) dropped three tables that were in both lists — tvl_observations,
+// dropped three tables that were in both lists — tvl_observations,
 // classic_asset_stats_5m and aggregator_exposures — and this test is what
 // makes the next such drop a red build instead of a silent operational
 // regression.

@@ -2,7 +2,7 @@ package timescale
 
 import "testing"
 
-// The CS-083 guard's problem arm: a found failure admits a lower-tip
+// The guard's problem arm: a found failure admits a lower-tip
 // write whether or not it names a ledger; a verdict that is false only
 // because a claim was not evaluated does not.
 func TestCompletenessSnapshotFoundProblem(t *testing.T) {

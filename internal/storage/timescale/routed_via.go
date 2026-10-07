@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// This file is Phase B of router attribution (BACKLOG #29 /
-// migration 0025): joining persisted router invocations
+// This file is Phase B of router attribution (migration 0025): joining persisted router invocations
 // (soroswap_router_swaps) to the per-pair `trades` rows they drove,
 // and stamping trades.routed_via with the router's registry name.
 //
@@ -33,7 +32,7 @@ import (
 //     routedViaTsSlack to survive any second-vs-millisecond
 //     precision skew; correctness comes from the exact
 //     (ledger, tx_hash) equality, the ts bound is pruning only.
-//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103, ROADMAP #11 + #29).
+//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103).
 //     A router swap observed as a sub-invocation records the full
 //     wrapping chain in call_path — call_path[1] (Postgres 1-indexed;
 //     Go CallPath[0]) is the OUTERMOST invoking contract. When that

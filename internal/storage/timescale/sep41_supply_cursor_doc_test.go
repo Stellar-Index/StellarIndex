@@ -9,14 +9,14 @@ import (
 )
 
 // TestSEP41SupplyCursorDoc_NamesTheProjectorsActualCursorWrite is the
-// regression for a docstring left behind by F159 (7f2a32655): the
+// regression for a docstring left behind when the cursor write changed: the
 // sep41SupplyCursorSource / sep41SupplyCursorSub doc comment described the
 // projector's cursor commit as `UpsertCursor(ctx, "projector", src.Name,
-// commitTo)`. F159 moved that write to a compare-and-swap —
-// internal/projector's commitCursor now calls Store.AdvanceCursorFrom, and
-// UpsertCursor left the projector's store interface entirely — so a reader
-// following the old comment to UpsertCursor would be pointed at a call the
-// projector no longer makes for this cursor.
+// commitTo)`. That write is a compare-and-swap —
+// internal/projector's commitCursor calls Store.AdvanceCursorFrom, and
+// UpsertCursor is not on the projector's store interface — so a reader
+// following such a comment to UpsertCursor would be pointed at a call the
+// projector does not make for this cursor.
 //
 // Read the doc comment from the AST, anchored to the actual const decl,
 // so the assertion cannot silently pass once the declaration moves, and
@@ -53,7 +53,7 @@ func TestSEP41SupplyCursorDoc_NamesTheProjectorsActualCursorWrite(t *testing.T) 
 	}
 	text := doc.Text()
 
-	// The stale claim named the exact call the projector used to make;
+	// The stale claim named an exact call the projector does not make;
 	// banning that literal call shape (rather than the bare identifier)
 	// lets the comment go on mentioning UpsertCursor for contrast — e.g.
 	// explaining why AdvanceCursorFrom replaced it — without failing this

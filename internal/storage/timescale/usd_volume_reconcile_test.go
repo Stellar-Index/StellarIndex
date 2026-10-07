@@ -44,7 +44,7 @@ func TestClassifyUSDVolumeTier(t *testing.T) {
 		wantDecimals int
 	}{
 		// Off-chain: fiat:USD quote → tier 1, at the SOURCE's registered
-		// scale — 8 for CEXes, 6 for the FX pollers (CS-040: the checker
+		// scale — 8 for CEXes, 6 for the FX pollers (the checker
 		// must divide by the same per-source scale the stamper uses, or
 		// it certifies a 100× error as correct).
 		{"cex USD quote", "binance", "crypto:XLM", "fiat:USD", TierQuotePegged, 8},
@@ -56,7 +56,7 @@ func TestClassifyUSDVolumeTier(t *testing.T) {
 		// classic credits are uniformly 7-decimal.
 		{"dex pegged quote", "sdex", "native", usdc, TierQuotePegged, 7},
 		// On-chain: the dollar leg is the BASE — tier 2b, the case a
-		// quote-only waterfall used to miss entirely.
+		// quote-only waterfall would miss entirely.
 		{"dex pegged base", "sdex", usdc, "native", TierBasePegged, 7},
 		// On-chain: neither leg pegged → estimated.
 		{"dex unpegged", "sdex", "native", "crypto:BTC", TierEstimated, 0},

@@ -46,8 +46,8 @@ func gatherGapDetectorRunsTotal(t *testing.T) map[[3]string]float64 {
 	return got
 }
 
-// TestGapDetectorPreregistersRunsTotalSeries pins the 2026-08-29 09:55Z
-// r1 false-fire of stellarindex_ingest_gap_detector_silent: after the
+// TestGapDetectorPreregistersRunsTotalSeries pins the
+// false-fire of stellarindex_ingest_gap_detector_silent: after the
 // v0.49.0 deploy the seeded schedule correctly deferred every scan, so
 // no Inc() ever ran and `sum by (outcome)(runs_total)` returned NO
 // series for 26 min — absent_over_time(runs_total[15m]) read "no scan

@@ -9,12 +9,12 @@ import (
 )
 
 // txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window
-// INSERT…SELECT. FINAL on the source read (audit DAT-10): stellar.transactions
+// INSERT…SELECT. FINAL on the source read stellar.transactions
 // is ReplacingMergeTree(ingested_at), so a window that has already seen a
 // re-ingest (retry, or a decode-fix re-derive) can hold un-merged duplicate
 // PARTS for the same (ledger_seq, tx_index) key; without FINAL, this INSERT…
 // SELECT would enqueue BOTH — including, on a genuine correction, the STALE
-// pre-fix tx_hash alongside the corrected one — into stellar.tx_hash_index,
+// tx_hash alongside the corrected one — into stellar.tx_hash_index,
 // which is itself keyed on tx_hash and just as exposed to the same
 // ingested_at-tie ambiguity documented on txByLedgerAndHash. Cheap here: this
 // is an operator-run backfill (not a per-request path) and FINAL is bounded

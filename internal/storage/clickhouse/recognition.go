@@ -21,7 +21,7 @@ type TopicShape struct {
 	Topic0Sym  string
 	// t0, t1 and tn widen the identity when topic[0] is not a Symbol
 	// (Topic0Sym ""): every such event would otherwise share one shape per
-	// contract, so one recognised exemplar hid its unrecognised siblings (GH-807).
+	// contract, so one recognised exemplar would hide its unrecognised siblings.
 	t0, t1    string
 	tn        uint64
 	Count     uint64
@@ -77,7 +77,7 @@ func (s TopicShape) key() shapeKey {
 	return shapeKey{contract: s.ContractID, topic0: s.Topic0Sym, t0: s.t0, t1: s.t1, tn: s.tn}
 }
 
-// nonSymbolShapeCols are the GH-807 key columns, empty for a Symbol topic[0]
+// nonSymbolShapeCols are the non-Symbol key columns, empty for a Symbol topic[0]
 // so group-key state grows only for the rare non-Symbol shapes. They make the
 // scan read topics_xdr (measured on r1: 4.5 s / 30.6 GiB -> 12.9 s / 82.5 GiB
 // per 1M-ledger window); a recognition claim that hides shapes is not cheaper
@@ -238,7 +238,7 @@ func distinctShapesWindowQuery(excludeTopic0 []string) string {
 func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
 	where := fmt.Sprintf("WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym IN (%s) AND contract_id IN (%s)",
 		sqlQuoteList(topic0), sqlQuoteEscapedList(contractIDs))
-	// topic_0_sym IN (non-empty Symbols): the GH-807 columns are constant
+	// topic_0_sym IN (non-empty Symbols): the non-Symbol columns are constant
 	// here, so they are not read from topics_xdr.
 	return fmt.Sprintf(`
 		SELECT

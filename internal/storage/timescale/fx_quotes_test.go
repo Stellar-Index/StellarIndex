@@ -56,9 +56,8 @@ func mkFiatPair(t *testing.T, base, quote string) canonical.Pair {
 //	CORRECT: 0.12 × 0.8  = 0.096 EUR/XLM  (XLM = 0.12 USD = 0.096 EUR ✓)
 //	BUGGY:   0.12 × 1.25 = 0.15           (leg inverted — served price wrong)
 //
-// Before the fix, fxSnapFromRows returned rate_usd(B)/rate_usd(Q), so
-// price(USD/EUR) came back 1.25 (the inverse of 0.8) — this test caught
-// exactly that. For JPY (rate_usd≈150) the same inversion is a ~150²
+// fxSnapFromRows must not return rate_usd(B)/rate_usd(Q), which would make
+// price(USD/EUR) 1.25 (the inverse of 0.8). For JPY (rate_usd≈150) the same inversion is a ~150²
 // error on every served XLM/JPY-style pair.
 func TestFXSnapFromRows_RateUSDOrientation(t *testing.T) {
 	bucket := time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC)

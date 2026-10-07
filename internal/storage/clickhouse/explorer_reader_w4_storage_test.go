@@ -12,7 +12,7 @@ import (
 // Regression tests for audit W4-storage-1 (ContractEventsRecent + EventsByTx
 // read stellar.contract_events — a ReplacingMergeTree — with no FINAL /
 // LIMIT 1 BY / uniqExact, so during a merge window an un-merged duplicate part
-// was served as a duplicate EVENT). Same class as DAT-10, same query-SHAPE
+// was served as a duplicate EVENT). Same class as the other ReplacingMergeTree reads, same query-SHAPE
 // proof idiom: the stubConn/stubRows harness (tx_hash_index_test.go) does not
 // implement real ReplacingMergeTree semantics, so these assert the emitted SQL
 // carries the dedup construct the siblings use — the live-ClickHouse proof that
@@ -148,9 +148,9 @@ func TestContractEventsRecent_CursorShapes(t *testing.T) {
 // TestContractEventsRecent_ActiveLedgerBound — with the
 // contract_active_ledgers index present, the reader walks the contract's
 // recent active ledgers and bounds the events read to them (the
-// quiet-contract fix, site audit 2026-08-07/08). A NON-EMPTY walk bounds
-// the events read; an EMPTY walk is NOT authoritative (audit
-// W1-chrollup-3) — see TestContractEventsRecent_EmptyWalkFallsThrough.
+// quiet-contract fix). A NON-EMPTY walk bounds
+// the events read; an EMPTY walk is NOT authoritative.
+// See TestContractEventsRecent_EmptyWalkFallsThrough.
 func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {

@@ -30,7 +30,7 @@ func isHoldersCount(q string) bool {
 // board swapped-new while counts/stats/histograms hold the previous cycle's
 // data — the half-swapped state holdersRollupBoard trusts as authoritative.
 //
-// Proven red against the pre-fix code (five separate EXCHANGE statements): the
+// Red against five separate EXCHANGE statements: the
 // exactly-one assertion counts 5 and fails.
 func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 	// All five live tables that must swap as a group.
@@ -78,8 +78,8 @@ func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 // consistency check in holdersRollupBoard/AccountsStats fire on every read,
 // even for a perfectly healthy cycle.
 //
-// Proven red against the pre-fix statements (each relying on its own
-// `DEFAULT now()`): the two insert statements checked below carried no
+// Red against statements (each relying on its own
+// `DEFAULT now()`): the two insert statements checked below carry no
 // explicit computed_at value at all, so this substring search fails.
 func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	cycleAt := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
@@ -110,8 +110,8 @@ func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 // produces — so holdersRollupBoard must retry, and the retried (self-
 // consistent, both cycle2) pair is what must be served.
 //
-// Proven red against the pre-fix holdersRollupBoard, which had no
-// computed_at comparison at all: it returned the FIRST (torn) pair —
+// Red against a holdersRollupBoard that has no
+// computed_at comparison at all: it returns the FIRST (torn) pair —
 // balance=100 paired with total=999 — instead of retrying to the
 // self-consistent balance=200/total=500.
 func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {

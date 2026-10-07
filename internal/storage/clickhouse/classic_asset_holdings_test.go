@@ -9,7 +9,7 @@ import (
 // guard for CA2-A14-correct-5 (the executing proof against real ClickHouse is
 // test/integration/trustline_pool_prefix_test.go).
 //
-// The pre-fix predicate `NOT startsWith(asset, 'pool')` matches any credit
+// The naive predicate `NOT startsWith(asset, 'pool')` matches any credit
 // asset string that merely starts with the substring "pool" (e.g.
 // "poolX-GISSUER...", a valid case-sensitive Stellar asset code), silently
 // dropping it from the registry walk alongside the two real pool-share

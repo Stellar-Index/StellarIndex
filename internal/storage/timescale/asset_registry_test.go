@@ -16,8 +16,8 @@ import (
 // newDedupeStore returns a DB-less Store whose dedupe cache is
 // fresh, so each `shouldSkipAssetRegistryUpsert` case sees the
 // asset as never-upserted. The cache lives on the Store (not the
-// package) since the 2026-08-28 cross-DB fix, so a new Store IS
-// the reset. F-1243 (codex audit-2026-05-12).
+// package), so a new Store IS
+// the reset.
 func newDedupeStore() *Store {
 	return &Store{}
 }
@@ -33,9 +33,8 @@ func TestShouldSkipAssetRegistryUpsert_NoCache(t *testing.T) {
 
 // TestShouldSkipAssetRegistryUpsert_WithinTTL — call inside the
 // 60s window after a recorded upsert returns true (skip the
-// DB round-trip — the F-1243 pre-fix preserved this behaviour
-// indefinitely; the wave-46 fix only preserves it for the TTL
-// window).
+// DB round-trip — a cache without a TTL would preserve this behaviour
+// indefinitely; the TTL only preserves it for the window).
 func TestShouldSkipAssetRegistryUpsert_WithinTTL(t *testing.T) {
 	s := newDedupeStore()
 	now := time.Now()
@@ -47,9 +46,9 @@ func TestShouldSkipAssetRegistryUpsert_WithinTTL(t *testing.T) {
 
 // TestShouldSkipAssetRegistryUpsert_PastTTL — call outside the
 // 60s window returns false (upsert must run so `last_seen_*` +
-// `observation_count` advance). This is the F-1243 regression
-// — pre-wave-46 the cache had no TTL so every subsequent call
-// returned true and the row froze at first observation.
+// `observation_count` advance). This is the stale-cache regression
+// — a cache with no TTL would return true on every subsequent call
+// and the row would freeze at first observation.
 func TestShouldSkipAssetRegistryUpsert_PastTTL(t *testing.T) {
 	s := newDedupeStore()
 	now := time.Now()
@@ -72,12 +71,12 @@ func TestShouldSkipAssetRegistryUpsert_DifferentAssetMisses(t *testing.T) {
 }
 
 // TestShouldSkipAssetRegistryUpsert_CacheCorruption — if some
-// future code mistakenly stores a non-time.Time value (legacy
-// bug shape from the pre-wave-46 sentinel pattern), the gate
+// future code mistakenly stores a non-time.Time value (a
+// bug shape from a sentinel pattern), the gate
 // fails open (returns false) so the upsert still runs.
 func TestShouldSkipAssetRegistryUpsert_CacheCorruption(t *testing.T) {
 	s := newDedupeStore()
-	s.assetRegistryDedupe.Store("USDC-GA5Z", struct{}{}) // pre-wave-46 shape
+	s.assetRegistryDedupe.Store("USDC-GA5Z", struct{}{}) // sentinel-value shape
 	if s.shouldSkipAssetRegistryUpsert("USDC-GA5Z", time.Now()) {
 		t.Error("corrupt-cache returned skip=true; want false (fail-open to allow upsert)")
 	}
@@ -125,7 +124,7 @@ func (d *recordingDriver) classicAssetUpserts() int {
 // scoped to ONE Store (one database). asset_id is only unique
 // within a database, so a process-wide cache let a second Store
 // over a different DB inherit "already upserted within TTL" for
-// a classic_assets row that DB never received — the 2026-08-28
+// a classic_assets row that DB never received — the
 // TestAssetsReader `HasAsset(USDC) = false` flake, reproduced
 // whenever it ran after any test that inserted a USDC trade into
 // a different container. Drives the real registerClassicAssetSeen

@@ -155,8 +155,8 @@ func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBuc
 // trade-time usd_volume sum. sum_xlm_base / sum_xlm_quote hold the XLM
 // legs that were never priced; valuing them at today's XLM/USD would make
 // a historical hour move with spot, so they are excluded and surfaced as
-// xlm_unpriced instead. The bucket predicate is dexHourlyBucketWindow
-// (GH-1113), the same bucket set the DEX 24h readers select.
+// xlm_unpriced instead. The bucket predicate is dexHourlyBucketWindow,
+// the same bucket set the DEX 24h readers select.
 func sourceVolumeHistoryQuery() string {
 	return `
 		SELECT source,

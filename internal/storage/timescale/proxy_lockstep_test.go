@@ -15,10 +15,10 @@ import (
 // catalogue price derivations' literal IN-lists (assetPriceCTEs +
 // getAssetBySlugSQL). An asset "priced" by one and "priceless" by
 // another is exactly how the popular-priceless alert fires forever on
-// an asset the catalogue could price — or, as on r1 2026-08-28, how an
+// an asset the catalogue could price — or, as seen on r1, how an
 // asset the volume path valued at $730k/7d served no price at all.
 //
-// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: #331 F1
+// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: the derivation
 // moved the derivation out of the per-request SELECT and into the
 // asset_price_snapshot refresh, so that is where the IN-lists now live.
 // The property under test is unchanged — the listing's price still comes
@@ -53,7 +53,7 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	// The XLM leg in both directions, in all 8 catalogue CTEs: the
 	// base-side arm (quote_asset IN xlm) AND the inverted arm
 	// (base_asset IN xlm). Counting the INVERTED arm is what makes this
-	// test red against the pre-fix catalogue: it had 4 base-side arms
+	// test red against a catalogue with only 4 base-side arms
 	// per query and zero inverted ones.
 	for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
 		xlmList := xlmQuotesBound(1)
@@ -78,7 +78,7 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	// must read both directions too: with only the base-side arm an
 	// asset whose XLM market is SAC-as-base had a headline price (the 8
 	// arms above) but an EMPTY sparkline. Same red-maker as above —
-	// pre-fix these had 1 base-side arm and 0 inverted arms each.
+	// without the fix these would have 1 base-side arm and 0 inverted arms each.
 	for name, sql := range map[string]string{
 		"history24h":      getAssetPriceHistory24hSQL,
 		"history7d":       getAssetPriceHistory7dSQL,

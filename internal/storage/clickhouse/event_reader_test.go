@@ -33,7 +33,7 @@ func TestFirstContractEventLedgerQuery_SharesStreamFilter(t *testing.T) {
 	}
 }
 
-// TestContractEventsFilteredQuery_OpArgsTrim pins the 2026-07-08 OOM fix's
+// TestContractEventsFilteredQuery_OpArgsTrim pins the OOM fix's
 // column trim: the WIDE op_args_xdr column is read only when the consuming
 // decoder actually uses events.Event.OpArgs (redstone). The sep41 reconcile —
 // millions of CAP-67 firehose rows — must never pull it.

@@ -5,11 +5,10 @@ import (
 	"testing"
 )
 
-// TestNetworkStatsQueryFoldsOrientation pins RLT-274: markets_count_24h
+// TestNetworkStatsQueryFoldsOrientation pins that markets_count_24h
 // must count DISTINCT canonical (base, quote) pairs, not raw stored
 // ones — otherwise a market recorded in both orientations (XLM/USDC and
-// USDC/XLM) is counted twice. Before the fix, networkStatsQuery emitted
-// a bare `SELECT DISTINCT base_asset, quote_asset`.
+// USDC/XLM) is counted twice by a bare `SELECT DISTINCT base_asset, quote_asset`.
 func TestNetworkStatsQueryFoldsOrientation(t *testing.T) {
 	q := networkStatsQuery()
 	if strings.Contains(q, "SELECT DISTINCT base_asset, quote_asset") {
@@ -21,7 +20,7 @@ func TestNetworkStatsQueryFoldsOrientation(t *testing.T) {
 	}
 }
 
-// TestSourceStatsQueryFoldsOrientation pins RLT-274 in GetSourceStats:
+// TestSourceStatsQueryFoldsOrientation pins the same fold in GetSourceStats:
 // the per_pair CTE must GROUP BY the canonical (base, quote), not the
 // raw stored columns, or a source's markets_24h is inflated by one per
 // flipped-orientation pair it printed.

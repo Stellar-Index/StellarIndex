@@ -14,7 +14,7 @@ import (
 )
 
 // xlmBaseTestQuote is a pure-Soroban SEP-41 token with no USD market —
-// the quote leg shape behind every #372 violation.
+// the quote leg shape behind every such violation.
 const xlmBaseTestQuote = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 
 // usdcAssetID is the operator's canonical USD peg on r1.
@@ -52,7 +52,7 @@ func xlmAnchorAt(r USDVolumeFXResolver) func(canonical.Trade) *string {
 func strptr(s string) *string { return &s }
 
 // TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow is the
-// #372 fixture, reproduced from the r1 measurement in the G9 triage:
+// incident fixture, reproduced from the r1 measurement:
 //
 //	ledger 62643474, 2026-05-19T19:12:03Z, sdex native/BUCK
 //	base  49,999,996 stroops (4.9999996 XLM)
@@ -139,8 +139,7 @@ func TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath(t *testing.T) {
 }
 
 // TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt is rule 2+3 of
-// the file header, and the requirement stated in #372's remediation
-// brief: a row the anchor cannot price keeps whatever it holds. A stored
+// the file header, and the remediation requirement: a row the anchor cannot price keeps whatever it holds. A stored
 // NULL stays NULL — it is NOT filled with the quote-side estimate the
 // live waterfall would fall through to — and a stored (wrong) value is
 // not blanked either.

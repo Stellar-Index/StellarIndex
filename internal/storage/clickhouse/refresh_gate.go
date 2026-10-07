@@ -39,8 +39,8 @@ var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity satu
 //
 // A nil *RefreshGate admits everything (handy for test stubs).
 //
-// PER-CLASS FAIRNESS (inventory #26 item 5, second half): the single
-// global bound stopped the amplification but let one key CLASS starve
+// PER-CLASS FAIRNESS: the single
+// global bound stops the amplification but lets one key CLASS starve
 // the rest — a crawler churning fabricated contract ids could hold all
 // 4 slots with contract-detail refreshes, and every cold account /
 // holders / directory page then fast-503d behind it. TryAcquireClass
