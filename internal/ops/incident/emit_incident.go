@@ -103,6 +103,18 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 	return fields
 }
 
+// parseIncidentEvent maps -event, including its short aliases, to the wire event.
+func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
+	switch strings.ToLower(strings.TrimSpace(event)) {
+	case "sev1", "incident.sev1":
+		return platform.WebhookEventIncidentSEV1, nil
+	case "resolved", "incident.resolved":
+		return platform.WebhookEventIncidentResolved, nil
+	default:
+		return "", fmt.Errorf("-event must be `sev1` or `resolved` (got %q)", event)
+	}
+}
+
 // Emit fans out an `incident.sev1` or `incident.resolved`
 // webhook to every subscribed dashboard hook for the given slug.
 //
@@ -161,14 +173,9 @@ func Emit(args []string) error {
 		return errors.New("-slug is required")
 	}
 
-	var eventType platform.WebhookEventType
-	switch strings.ToLower(strings.TrimSpace(*event)) {
-	case "sev1", "incident.sev1":
-		eventType = platform.WebhookEventIncidentSEV1
-	case "resolved", "incident.resolved":
-		eventType = platform.WebhookEventIncidentResolved
-	default:
-		return fmt.Errorf("-event must be `sev1` or `resolved` (got %q)", *event)
+	eventType, err := parseIncidentEvent(*event)
+	if err != nil {
+		return err
 	}
 	if err := gate.RequireStatedMode(); err != nil {
 		return err
