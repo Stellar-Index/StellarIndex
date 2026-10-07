@@ -1,7 +1,7 @@
 # Every pushed commit must carry an allowed author and committer.
 #
 # WHY THIS EXISTS. A test fixture wrote a throwaway identity into the real
-# repository's .git/config on 2026-09-09 — git honours an inherited GIT_DIR
+# repository's .git/config — git honours an inherited GIT_DIR
 # over its own `-C`, so a fixture launched from inside a hook writes to the
 # repository it came from. 151 commits were authored by it before anyone
 # looked, 96 of them pushed to a public repository, where they became

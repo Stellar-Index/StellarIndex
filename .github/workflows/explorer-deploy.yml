@@ -32,7 +32,7 @@
 # Required secrets (set once in repo settings):
 #   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on ALL three explorer
 #                             projects (mainnet renamed from
-#                             stellarindex-showcase 2026-07-04, task #23)
+#                             stellarindex-showcase)
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
 
 name: explorer-deploy
@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
 
       - name: Assert the production approval gate is configured
-        # deploy-approval-gate (audit-2026-07-23, CID-20): this job
+        # Deploy-approval gate: this job
         # declares `environment: explorer-${environment}`, which is not
         # a gate by itself — an environment with no `required_reviewers`
         # rule deploys unattended, exactly like deploy.yml's `r1` gate
@@ -104,7 +104,7 @@ jobs:
         #   (gh variable delete DEPLOY_APPROVAL_RELAXED) AND configure the
         #   explorer-production environment's Required-reviewers rule.
         #   Deleting the variable alone already restores enforcement.
-        #   The relaxation arm mirrors deploy.yml VERBATIM (2026-08-05):
+        #   The relaxation arm mirrors deploy.yml VERBATIM:
         #   the two deploy workflows must share ONE approval posture —
         #   pre-fix this one lacked the arm, so the repo-wide
         #   DEPLOY_APPROVAL_RELAXED=true phase variable let r1 binaries

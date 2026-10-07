@@ -27,8 +27,7 @@ name: sla-proof-weekly
 # else; that one needs a load target that does not exist. Folding the
 # probe aggregate into a workflow called k6-weekly would leave a file
 # whose name describes neither of its halves, and would make one job's
-# broken plumbing read as the other's finding — the exact confusion #316
-# and #502 were both about. k6-weekly.yml keeps the k6 capability: its
+# broken plumbing read as the other's finding. k6-weekly.yml keeps the k6 capability: its
 # scenario compile-check still runs on every pull_request touching
 # test/load/**, and the load run is one workflow_dispatch away the moment
 # a production-shaped target exists. What it no longer has is a schedule,
@@ -222,7 +221,7 @@ jobs:
           # fall back to the documented default. No secret is read: only
           # these two keys are matched, and the file's API key is never
           # touched. Landed in files rather than piped — an early-exit pipe
-          # consumer under pipefail is the #475 bug class
+          # consumer under pipefail is the SIGPIPE bug class
           # (scripts/ci/lint-shell-sigpipe.sh).
           # Single-quoted remote commands: nothing expands locally, so what
           # runs on the host is exactly what is written here.

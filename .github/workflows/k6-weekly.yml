@@ -8,12 +8,11 @@ name: k6-weekly
 # Schedule: Sundays 02:00 UTC. Off-peak for the target's traffic so a
 # legitimate latency regression isn't masked by routine load.
 #
-# 2026-08-29 (#316) — this workflow was a permanently-green no-op. With
-# the target secrets unset the scheduled path printed `::notice::` and
+# Why the scheduled path fails loudly: it was once a permanently-green
+# no-op. With the target secrets unset it printed `::notice::` and
 # exited 0, so every scheduled run since the cron was restored concluded
 # `success` with `Install k6`, `Compile-check all scenarios` and `Run
-# scenario` all `skipped` (runs 30733884244, 31292354359, 31922897932,
-# 32614013429) — and no docs/operations/sla-proof-<YYYY-MM-DD>.md has
+# scenario` all `skipped` — and no docs/operations/sla-proof-<YYYY-MM-DD>.md has
 # ever landed. Three structural changes:
 #
 #   1. The scenario compile-check is its own job with NO secret and NO
@@ -43,7 +42,7 @@ name: k6-weekly
 #      success are no longer the same signal. The two jobs are INDEPENDENT
 #      (no `needs:`) so that neither can silence the other.
 #
-# 2026-09-03 (#378) — #316 made a run that measures NOTHING go red. It did
+# Making a run that measures NOTHING go red was not enough. It did
 # not make a run that DOES measure land anything, and it left a live
 # false-evidence surface. Three further changes, none of which presume an
 # answer to the staging-target question below:

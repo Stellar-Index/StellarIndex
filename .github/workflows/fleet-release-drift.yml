@@ -1,6 +1,6 @@
 name: fleet-release-drift
 
-# Test-net release-drift tripwire (launch-plan 1.7, 2026-09-03).
+# Test-net release-drift tripwire.
 #
 # One day after testnet and futurenet were caught up to r1 they were a
 # release and three migrations behind again (v0.57.0 / migrations head
@@ -33,13 +33,13 @@ name: fleet-release-drift
 # the verdict can go quiet and close the issue; this is a tripwire against a
 # region nobody redeployed, not a control against a lying host.
 #
-# Daily, not weekly: r1 cut three releases on 2026-09-03 alone, and the
+# Daily, not weekly: r1 has cut three releases in one day, and the
 # drift that motivated this appeared within a day. A follower may lack an
 # r1 release for 24h without that counting — r1 deploys first by design
 # and the test nets follow — so a deploy in progress stays quiet; past
 # that it is drift. The 24h run from the OLDEST release the follower
 # lacks, per follower, never from r1's newest tag: measured from the
-# newest tag, a same-day cascade like 2026-09-03's re-opened the window on
+# newest tag, a same-day cascade re-opened the window on
 # every release and a follower two releases behind never crossed it. On
 # drift or on an unreadable host it opens / updates ONE tracking issue
 # carrying the exact catch-up dispatches, closes it only once every test

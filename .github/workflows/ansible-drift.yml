@@ -90,7 +90,7 @@ name: ansible-drift
 # Actions scheduling config) instead of the real one.
 #
 # THIS WORKFLOW REPORTS BY FAILING, AND SAYS SO IN ONE MACHINE-READABLE
-# LINE (#502). Everything above is the human version of a fact the
+# LINE. Everything above is the human version of a fact the
 # scheduled-control sweep in ci-health.yml has to know: a red scheduled
 # run here is this control WORKING — it found drift and named the tasks
 # — not a control that has broken or stopped. Without the declaration

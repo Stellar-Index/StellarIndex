@@ -1,7 +1,7 @@
 ---
-# Weekly production crawl guard (site audit 2026-07-03, Wave E).
+# Weekly production crawl guard.
 #
-# The July audit found silent site rot: pages 404ing from the site's
+# Why: silent site rot: pages 404ing from the site's
 # own links, canonicals pointing at dead URLs, doubled titles, a
 # curated sliver presented as the asset universe. Each incident is
 # pinned as a check in scripts/ci/site-crawl-check.sh; this runs the
