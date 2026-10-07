@@ -2,11 +2,9 @@ name: ci
 
 on:
   pull_request:
-    # T471/RLT-376 (audit-2026-09-18): a top-level `paths-ignore` skips
-    # the ENTIRE workflow, including the `repo-gates` job (doc checks) defined in
-    # this same file — so it previously skipped the one job whose whole
-    # purpose is validating docs, and also skipped every trigger for an
-    # internal/incidents/data/*.md-only change (that package's
+    # A top-level `paths-ignore` skips the ENTIRE workflow, including the
+    # `repo-gates` job (doc checks) defined in this same file, and every
+    # trigger for an internal/incidents/data/*.md-only change (that package's
     # `//go:embed data/*.md` corpus). Only truly inert paths (the
     # CHANGELOG, written at release cut; LICENSE; PR/issue templates)
     # are skipped here. `**.md`/`docs/**` are NOT: doc-checks still
@@ -18,27 +16,14 @@ on:
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
-  # Push-to-main also fires CI. F-1231 (codex audit-2026-05-12):
-  # direct pushes (live-in-development sessions, hot-fix commits,
-  # the /loop workflow) must still run the canonical suite.
+  # Push-to-main also fires CI: direct pushes (hot-fix commits,
+  # scheduled sessions) must still run the canonical suite.
   #
-  # 2026-07-02 (CS-097): main was reported protected by two repo
-  # rulesets — "main-integrity" (force-push + deletion blocked, NO
-  # bypass, not even admins) and "main-required-checks" (the core jobs
-  # here are required status checks; repository admins bypass so the
-  # operator's direct-push workflow keeps working).
-  #
-  # CID-01 (audit-2026-07-23, corrected 2026-07-25): that claim was
-  # never verified from inside the repo, and a live check found it
-  # false — `GET /repos/<repo>/rules/branches/main` currently returns
-  # `[]` (no active rules), confirmed both authenticated and via a
-  # plain unauthenticated `curl` (the repo is public). A ruleset has
-  # since been configured, and the `branch-protection-status` job below
-  # fails any push run that finds main with zero active rules, since
-  # nothing in this repo can configure the ruleset itself. Regardless
-  # of ruleset state, this push trigger is NOT redundant: it is what
-  # keeps direct pushes honest even under an admin-bypass rule — a red
-  # run on main is the tripwire. Do not remove it.
+  # Nothing in this repo can configure main's ruleset itself, so the
+  # `branch-protection-status` job below fails any push run that finds
+  # main with zero active rules. Regardless of ruleset state, this push
+  # trigger is NOT redundant: it keeps direct pushes honest even under an
+  # admin-bypass rule — a red run on main is the tripwire. Do not remove it.
   push:
     branches: [main]
     # See T471/RLT-376 note on the pull_request trigger above — same
@@ -70,22 +55,18 @@ env:
   GOVULNCHECK_VERSION: v1.8.0
   GITLEAKS_VERSION: 8.21.2
 
-  # F-1294 (codex audit-2026-05-13): SHA-256 of upstream tool
-  # tarballs that the install steps verify before unpacking —
-  # pre-fix the install steps were `curl | tar -xz` with no
-  # checksum, so a compromised upstream tarball could have made
-  # the `monitoring-rules` job accept broken PromQL or the `vuln`
-  # job miss leaked secrets.
+  # SHA-256 of upstream tool tarballs that the install steps verify
+  # before unpacking: an unchecked `curl | tar -xz` would let a
+  # compromised upstream tarball make the `monitoring-rules` job accept
+  # broken PromQL or the `vuln` job miss leaked secrets.
   #
-  # audit-2026-07-16 (C4-17b): the EXPECTED checksums are committed
-  # (PROM_TARBALL_SHA256_DEFAULT next to PROM_VERSION in the
-  # monitoring-rules job; GITLEAKS_TARBALL_SHA256_DEFAULT below),
-  # NOT stored only in a repo secret. A tarball checksum is public
-  # (upstream sha256sums.txt) and belongs in the reviewable diff:
-  # storing it as a secret gained nothing and left main CI hard-red
-  # for 24h+ whenever the secret was unset — invisible to local
-  # `make verify`. The committed default is the only source: a stale
-  # repo secret used to override it and red a correct bump.
+  # The EXPECTED checksums are committed (PROM_TARBALL_SHA256_DEFAULT next
+  # to PROM_VERSION in the monitoring-rules job;
+  # GITLEAKS_TARBALL_SHA256_DEFAULT below), NOT stored in a repo secret. A
+  # tarball checksum is public (upstream sha256sums.txt) and belongs in
+  # the reviewable diff; a secret gains nothing, reds main CI whenever it
+  # is unset (invisible to local `make verify`), and a stale one would
+  # override a correct bump. The committed default is the only source.
   #
   # Bump procedure: bump the VERSION; copy the matching SHA from the
   # upstream release (Prometheus publishes sha256sums.txt; gitleaks
@@ -102,13 +83,12 @@ concurrency:
 
 jobs:
   # ────────────────────────────────────────────────────────────────
-  # preflight — fast-fail gate (CI feedback-loop plan,
-  # §A). Target under 60s: every lint measured sub-5s standalone on
-  # 2026-09-07 (see the script-by-script comments below), so a lint
-  # slip costs ~40s of runner time here, never the 15-20 min container
-  # lane a `needs: preflight` job would otherwise have started paying
-  # for in parallel. Mirrors `make lint-changed`'s intent — same checks,
-  # so local and CI cannot disagree about what "fast" means.
+  # preflight — fast-fail gate. Target under 60s: every lint here is
+  # sub-5s standalone (see the per-step timings below), so a lint slip
+  # costs ~40s of runner time here, never the 15-20 min container lane a
+  # `needs: preflight` job would otherwise have started paying for in
+  # parallel. Mirrors `make lint-changed`'s intent — same checks, so
+  # local and CI cannot disagree about what "fast" means.
   #
   # ALSO computes the path-change classes (§B) that gate the expensive
   # jobs below, and the Dependabot toolchain guard (§C).
@@ -149,8 +129,8 @@ jobs:
         run: |
           go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}
           go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
-      # Measured standalone, full tree, 2026-09-07: gofumpt 3.8s,
-      # goimports 2.9s. Both comfortably sub-5s even unscoped.
+      # Measured standalone, full tree: gofumpt 3.8s, goimports 2.9s.
+      # Both comfortably sub-5s even unscoped.
       - name: gofumpt (fast — full tree)
         run: |
           if [ -n "$(gofumpt -l .)" ]; then
@@ -165,13 +145,13 @@ jobs:
             goimports -l .
             exit 1
           fi
-      # Measured standalone 2026-09-07: 2.81s.
+      # Measured standalone: 2.81s.
       - name: lint-shell-sigpipe
         run: ./scripts/ci/lint-shell-sigpipe.sh
-      # Measured standalone 2026-09-07: 1.27s.
+      # Measured standalone: 1.27s.
       - name: lint-lexicon
         run: ./scripts/ci/lint-lexicon.sh
-      # Measured standalone 2026-09-07: 0.11s.
+      # Measured standalone: 0.11s.
       - name: lint-actions-pinning
         run: bash scripts/ci/lint-actions-pinning.sh
       # T547: catches a pnpm/action-setup `version:` input drifting from
@@ -180,10 +160,10 @@ jobs:
         run: bash scripts/ci/lint-pnpm-version-pin-test.sh
       - name: lint-pnpm-version-pin
         run: bash scripts/ci/lint-pnpm-version-pin.sh
-      # Measured standalone 2026-09-07: 2.37s.
+      # Measured standalone: 2.37s.
       - name: lint-migration-immutability
         run: ./scripts/ci/lint-migration-immutability.sh
-      # Measured standalone 2026-09-07: 0.73s.
+      # Measured standalone: 0.73s.
       - name: lint-baseline-growth
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -213,12 +193,11 @@ jobs:
       - name: lint-sdk-version-pin
         run: ./scripts/ci/lint-sdk-version-pin.sh
       # §C: a language/runtime-version bump is a deliberate decision, not
-      # a dependency patch — #495 raised go.mod's `go` directive
-      # 1.25.10 -> 1.26.0 and dropped `toolchain` inside a grouped
-      # go-minor-patch Dependabot PR, surfacing only as a govulncheck
-      # parse failure. Only meaningful on pull_request (push-to-main is
-      # never dependabot-authored); fails open on unresolvable history
-      # rather than false-failing a shallow checkout.
+      # a dependency patch — a grouped go-minor-patch Dependabot PR can raise
+      # go.mod's `go` directive and drop `toolchain`, surfacing only as a
+      # govulncheck parse failure. Only meaningful on pull_request
+      # (push-to-main is never dependabot-authored); fails open on
+      # unresolvable history rather than false-failing a shallow checkout.
       - name: Dependabot toolchain/language-version guard
         if: github.event_name == 'pull_request'
         env:
@@ -296,8 +275,8 @@ jobs:
             # BUILDS, this one says whether it RUNS at all. A package in
             # the first and absent from this one has its
             # `//go:build integration` tests compiled by the unconditional
-            # compile gate and executed by nothing (T424/T449 — the
-            # scripts/ops/fx-history-backfill INV-3 money invariant).
+            # compile gate and executed by nothing (e.g. the
+            # scripts/ops/fx-history-backfill money invariant).
             # Guarded by test/controlwiring/
             # integration_pkgs_trigger_evidence_test.go and mirrored in
             # scripts/ci/check-change-class.sh (cross-checked below).
@@ -464,24 +443,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [preflight]
-    # CID-02 (audit-2026-07-23): `lint` is a required status check
-    # (main-required-checks per CS-097); a job-level `if:` that a PR
-    # author's own label can flip to `false` makes a "skipped" run
-    # report as a passing required check — the PR author controls
-    # whether their own gate runs. This job-level escape was already
-    # dropped from `build` (N2-07, audit-2026-06-11) but missed here.
-    # A docs-only PR skips Go lint's actual work via preflight's `go`
-    # path class (see the STEP-level `if:` on each work step below),
-    # not via a per-job `if:` or the trigger's `paths-ignore` — a
-    # per-job label a required check can't defend against.
+    # `lint` is a required status check; a job-level `if:` that a PR
+    # author's own label can flip to `false` makes a "skipped" run report
+    # as a passing required check — the PR author would control whether
+    # their own gate runs. So there is no job-level escape here (nor on
+    # `build`).
     #
-    # §B gates this job on preflight's `go` class, but deliberately with
-    # a STEP-level `if:` on each work step below rather than a job-level
-    # one — see the REQUIRED-CHECK NOTE on `preflight` above. That keeps
-    # this job's own conclusion always `success`/`failure`, never
-    # `skipped`, which is the CID-02 property this comment protects,
-    # regardless of which reading of the skipped-required-check
-    # contradiction turns out to be correct.
+    # §B gates this job on preflight's `go` class with a STEP-level `if:`
+    # on each work step below rather than a job-level one — see the
+    # REQUIRED-CHECK NOTE on `preflight` above. That keeps this job's own
+    # conclusion always `success`/`failure`, never `skipped`, regardless of
+    # how a skipped required check would be read.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -503,15 +475,14 @@ jobs:
             gofumpt -l .
             exit 1
           fi
-      # #317: the config's JSON-Schema check runs OFFLINE, against the copy
+      # The config's JSON-Schema check runs OFFLINE, against the copy
       # vendored at scripts/ci/golangci.v*.jsonschema.json. Left on (the
       # action's default), `verify: true` makes it run `golangci-lint config
       # verify`, which downloads the schema from golangci-lint.run on every
-      # run — on 2026-08-28 that fetch died with `connection reset by peer`
-      # and took this REQUIRED check red on a diff with no Go in it. The
-      # step below keeps the validation and drops the third-party fetch; the
-      # `verify: false` here is enforced by that same lint, so it cannot
-      # silently come back.
+      # run — a `connection reset by peer` there takes this REQUIRED check
+      # red on a diff with no Go in it. The step below keeps the validation
+      # and drops the third-party fetch; the `verify: false` here is enforced
+      # by that same lint, so it cannot silently come back.
       - name: golangci-lint config schema (offline)
         if: needs.preflight.outputs.go == 'true'
         run: go run ./scripts/ci/lint-golangci-config
@@ -550,10 +521,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download (retry on GOPROXY flake)
-        # proxy.golang.org / sum.golang.org return transient 5xx (e.g. the
-        # 502 that red-failed #172 and generated a run of "CI failed" emails
-        # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
-        # the build; a genuine missing/renamed module still fails after 3.
+        # proxy.golang.org / sum.golang.org return transient 5xx. Retry with
+        # backoff so a proxy hiccup doesn't fail the build; a genuine
+        # missing/renamed module still fails after 3.
         if: needs.preflight.outputs.go == 'true'
         run: |
           for i in 1 2 3; do
@@ -573,7 +543,7 @@ jobs:
           read -r -a pkgs <<<"$GO_PKGS"
           go test -race -coverprofile=coverage.txt -covermode=atomic "${pkgs[@]}"
       - name: Compile integration-tagged tests (no Docker)
-        # F-1334: catches build-tag breakage (an interface change that
+        # Catches build-tag breakage (an interface change that
         # doesn't update an `//go:build integration` test) without
         # spinning testcontainers. The full Docker suite stays
         # operator-/local-invoked.
@@ -621,38 +591,29 @@ jobs:
     # §B: only when the diff touches the preflight `integration` class —
     # internal/storage|pipeline|sources|api, internal/ops/archive,
     # cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/,
-    # test/harness/ or go.mod. The 2026-07-01 sponsors/markets/blend
-    # regressions this shard matrix exists to catch all lived in the first
-    # group; the rest are the other INT_TEST_PKGS directories, whose
-    # integration-tagged tests are otherwise compiled but never executed
-    # for a change confined to them. A docs/web-only PR still gets zero
-    # additional signal from a 20-minute Docker round-trip.
+    # test/harness/ or go.mod. The regressions this shard matrix exists to
+    # catch live in the first group; the rest are the other INT_TEST_PKGS
+    # directories, whose integration-tagged tests are otherwise compiled but
+    # never executed for a change confined to them. A docs/web-only PR
+    # still gets zero additional signal from a 20-minute Docker round-trip.
     #
     # Gated by the job-level `if:` above; the aggregate below carries the
     # required check and fails closed unless the class output is 'false'.
-    # 4-way shard (2026-08-29): main CI's wall-clock was ~23 min and this
-    # job alone was ~1230 s (20.5 min) — the suite has ~158 tests, zero
-    # t.Parallel(), one testcontainers set per test, so it ran strictly
-    # serially while every other job finished in <= 6 min. Each shard
-    # derives the same sorted `go test -list` and takes lines i mod 4
-    # (scripts/ci/integration-shard.sh; the partition property is pinned
-    # by scripts/ci/integration-shard-test.sh in import-checks). 6-way:
-    # 493 tests put each of 4 shards at a 15-17.5 min median,
-    # the PR critical path; the summed work (~62 runner-min) cannot fit
-    # under ~13 min in 4 slots however it is balanced. The
+    # Sharded because the suite (~500 tests, zero t.Parallel(), one
+    # testcontainers set per test) runs strictly serially and would be the
+    # PR critical path by far. Each shard derives the same sorted `go test
+    # -list` and takes lines i mod N (scripts/ci/integration-shard.sh; the
+    # partition property is pinned by scripts/ci/integration-shard-test.sh
+    # in import-checks). Six ways because the summed work (~62 runner-min)
+    # cannot fit under ~13 min in four slots however it is balanced. The
     # `integration tests (Docker)` aggregate job below is the branch-
     # protection required check; keep that name stable.
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
-    # BLOCKING (CS-070). Wiring this job first surfaced accumulated rot (the
-    # suite was only ever compiled, never run) — all fixed 2026-07-01: the
-    # stale FXSources assertion (massive joined the registry), the markets
-    # tests that only refreshed prices_1m when DistinctPairs enumerates from
-    # prices_1d, and the blend jsonb-attribute checks (compact substrings vs
-    # postgres's spaced ::text). The full suite is green, so this is now a
-    # required gate.
+    # BLOCKING: a suite that is only ever compiled, never run, rots
+    # silently; running it is what keeps it true.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -662,10 +623,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download (retry on GOPROXY flake)
-        # proxy.golang.org / sum.golang.org return transient 5xx (e.g. the
-        # 502 that red-failed #172 and generated a run of "CI failed" emails
-        # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
-        # the build; a genuine missing/renamed module still fails after 3.
+        # proxy.golang.org / sum.golang.org return transient 5xx. Retry with
+        # backoff so a proxy hiccup doesn't fail the build; a genuine
+        # missing/renamed module still fails after 3.
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -797,9 +757,9 @@ jobs:
       - name: doc-pinned-tests self-test
         run: ./scripts/ci/doc-pinned-tests-test.sh
       # Go tests read markdown at test time (29 packages), but a docs-only PR
-      # sets go=false and skips the `test` job (#2440 went green and broke
-      # main). Run only the packages whose tests name a changed .md; when
-      # go=true the `test` job already covers them.
+      # sets go=false and skips the `test` job, so a doc edit could break
+      # main unseen. Run only the packages whose tests name a changed .md;
+      # when go=true the `test` job already covers them.
       - name: Select Go tests that pin a changed doc
         id: doc_pinned
         if: needs.preflight.outputs.go != 'true' && needs.preflight.outputs.base != ''
@@ -841,14 +801,12 @@ jobs:
         # commit that changes the gate and its fixtures together.
         run: bash scripts/ci/lint-actions-pinning-test.sh
       - name: Restore trusted lint-actions-pinning.sh from the base ref
-        # CID-03 (audit-2026-07-23): same class as import-checks'
-        # equivalent step — a change could weaken this script's
-        # hard-fail (e.g. widen SHA_RE, or exempt a namespace) and
-        # introduce an unpinned third-party action in the same diff,
-        # and be judged by its own weakened copy. Restore the base-ref
-        # (un-modified) script before it runs; it scans the workflow
-        # tree on disk, so it still judges the PR-head
-        # `.github/workflows/` content.
+        # Same class as import-checks' equivalent step — a change could
+        # weaken this script's hard-fail (e.g. widen SHA_RE, or exempt a
+        # namespace) and introduce an unpinned third-party action in the same
+        # diff, and be judged by its own weakened copy. Restore the base-ref
+        # (un-modified) script before it runs; it scans the workflow tree on
+        # disk, so it still judges the PR-head `.github/workflows/` content.
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -872,12 +830,10 @@ jobs:
             echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
           fi
       - name: lint-actions-pinning
-        # F-1216 (codex audit-2026-05-12): HARD-FAILS on any third-party
-        # action in the workflow tree that is not pinned to a commit SHA.
-        # It used to hard-fail only on `git diff origin/main`, which is
-        # empty on a push-to-main checkout — inert for every commit that
-        # lands here under the direct-to-main cadence. The scan reads the
-        # tree, so there is no diff base left to be wrong about.
+        # HARD-FAILS on any third-party action in the workflow tree that is
+        # not pinned to a commit SHA. It scans the tree rather than `git diff
+        # origin/main`, which is empty on a push-to-main checkout, so there is
+        # no diff base to be wrong about.
         run: bash scripts/ci/lint-actions-pinning.sh
       # ── from the former `import-checks` job (import-boundary lint) ──
       - name: lint-baseline-growth self-test
@@ -887,24 +843,22 @@ jobs:
         # re-test main's version and a fix to the gate could never be
         # shown to work.
         #
-        # This does not weaken CID-03. The gate that JUDGES this PR is
-        # still the base-ref copy restored below; these fixtures only
-        # assert that the version being merged behaves — undeclared
-        # growth fails, declared growth passes, a reason-less trailer
-        # does not count, and the verdict does not depend on how large
-        # the commit range is (the piped `grep -q` it used to run took
-        # SIGPIPE past the 64KB pipe buffer and failed PRs that had
-        # declared correctly).
+        # This does not weaken the base-ref restore. The gate that JUDGES this
+        # PR is still the base-ref copy restored below; these fixtures only
+        # assert that the version being merged behaves — undeclared growth
+        # fails, declared growth passes, a reason-less trailer does not count,
+        # and the verdict does not depend on how large the commit range is (a
+        # piped `grep -q` takes SIGPIPE past the 64KB pipe buffer).
         run: ./scripts/ci/lint-baseline-growth-test.sh
       - name: config-apply gate self-test
-        # Pins config-apply-gate.sh's SURFACES list (2026-08-28: a tasks/-only
-        # release would have passed the gate and shipped the node_exporter
-        # probe dead). Runs pre-restore so the PR's own gate copy is tested.
+        # Pins config-apply-gate.sh's SURFACES list (a missing surface lets a
+        # tasks/-only release pass the gate and ship a probe dead). Runs
+        # pre-restore so the PR's own gate copy is tested.
         run: ./scripts/ci/config-apply-gate-test.sh
       - name: lint-replay-plan self-test
         # Same placement rationale as the baseline-growth self-test
         # above: validates the gate AS THIS PR SHIPS IT. (lint-replay-
-        # plan.sh is not in the CID-03 restore list — that list is
+        # plan.sh is not in the base-ref restore list — that list is
         # deliberately scoped to the money/i128/anti-bypass trio.)
         run: ./scripts/ci/lint-replay-plan-test.sh
       - name: CI meta-gate coverage (Tier D gating + ci-health workflow list)
@@ -938,13 +892,11 @@ jobs:
         # resolve-pages-branch.sh, which refuses a non-main production ref.
         run: ./scripts/ci/pages-deploy-branch-test.sh
       - name: verify.sh <-> CI import-checks parity (+ self-test)
-        # GH-778/CID-25: this gate is the chokepoint that keeps
-        # `make verify` honest against what CI actually runs, but until
-        # now no workflow invoked it — it only ran via `scripts/dev/
-        # verify.sh`, so a contributor who never ran verify.sh locally
-        # never saw a parity break either. Same placement rationale as
-        # the self-tests above: validates the PR's own copy of both
-        # files, pre-restore.
+        # This gate is the chokepoint that keeps `make verify` honest against
+        # what CI actually runs; run only from `scripts/dev/verify.sh`, a
+        # contributor who never ran verify.sh locally would never see a parity
+        # break. Same placement rationale as the self-tests above: validates
+        # the PR's own copy of both files, pre-restore.
         run: |
           ./scripts/ci/check-verify-parity-test.sh
           ./scripts/ci/check-verify-parity.sh
@@ -967,9 +919,8 @@ jobs:
         # restore-drill.sh needs root + pgbackrest + Postgres to run for
         # real; these pin (a) its ch-backfill flag contract statically and
         # (b) its capacity floor / evidence-on-every-exit behaviour by
-        # driving the real script with shimmed host tools (audit
-        # 2026-08-28 backup-restore-3/-4). Neither was wired into CI
-        # before, so the drill's own regressions shipped green.
+        # driving the real script with shimmed host tools, so the drill's own
+        # regressions cannot ship green.
         run: |
           bash scripts/ops/restore-drill-test.sh
           bash scripts/ops/restore-drill-run-test.sh
@@ -977,14 +928,9 @@ jobs:
         # Pins that every scripts/ops script passing credentials to
         # clickhouse-client does so via its environment, never argv
         # (which `ps` and the journal would expose). Fully stubbed —
-        # never reaches a real lake.
-        #
-        # Wired into CI 2026-08-30 because it was NOT: it lived only in
-        # scripts/dev/verify.sh, so when #286 gave d2-ordinal-reproject
-        # a destructive-DDL acknowledgement that exits before its first
-        # query, the contract test started failing and shipped anyway.
-        # A gate only the local pre-push hook runs is a gate that rots
-        # unobserved — main sat red on `make verify` until wave D.
+        # never reaches a real lake. Wired here, not only in
+        # scripts/dev/verify.sh: a gate only the local pre-push hook runs is a
+        # gate that rots unobserved.
         run: bash scripts/ops/ch-ops-user-test.sh
       - name: ClickHouse lake data-backup chain tests
         # Drives ch-lake-backup.sh with a fake ClickHouse: full then
@@ -1019,38 +965,36 @@ jobs:
         # after it this would only re-test the base ref's copy.
         run: ./scripts/ci/lint-migrations-backnumber-test.sh
       - name: Restore trusted gate scripts from the base ref
-        # CID-03 (audit-2026-07-23): every step below runs from the
-        # PR-head checkout, including the SCRIPT FILES themselves — so
-        # a single PR could edit e.g. lint-migrations.sh to stop
-        # flagging a BIGINT money column, add exactly that column in
-        # the same diff, and be judged by its own weakened copy.
-        # lint-migrations.sh (money-column DDL scan), lint-i128.sh (the
-        # Go-side i128-truncation grep — same self-weakening risk: a PR
-        # could broaden the pattern to stop matching int64(x.Lo) and add
-        # exactly that truncation in one diff) and lint-baseline-growth.sh
-        # (the anti-self-bypass tripwire for every OTHER baseline/
-        # allowlist — the one gate whose own sabotage would be hardest to
-        # notice) get the un-modified base-ref version restored over the
-        # PR-head one before they run; every step still evaluates PR-head
-        # CONTENT (the migrations/ tree, the internal/ + cmd/ + pkg/ Go
-        # source lint-i128 scans, the git history lint-baseline-growth
-        # diffs) — only the checker's own source is pinned to the base.
+        # Every step below runs from the PR-head checkout, including the
+        # SCRIPT FILES themselves — so a single PR could edit e.g.
+        # lint-migrations.sh to stop flagging a BIGINT money column, add exactly
+        # that column in the same diff, and be judged by its own weakened copy.
+        # lint-migrations.sh (money-column DDL scan), lint-i128.sh (the Go-side
+        # i128-truncation grep — same self-weakening risk: a PR could broaden
+        # the pattern to stop matching int64(x.Lo) and add exactly that
+        # truncation in one diff) and lint-baseline-growth.sh (the
+        # anti-self-bypass tripwire for every OTHER baseline/allowlist — the one
+        # gate whose own sabotage would be hardest to notice) get the
+        # un-modified base-ref version restored over the PR-head one before they
+        # run; every step still evaluates PR-head CONTENT (the migrations/ tree,
+        # the internal/ + cmd/ + pkg/ Go source lint-i128 scans, the git history
+        # lint-baseline-growth diffs) — only the checker's own source is pinned
+        # to the base.
         #
-        # The first three guard the #1 money + i128 ADR-0003 invariants (and
-        # the baseline-tripwire that guards everyone else); lint-imports.sh
-        # and lint-deploy-systemd-authority.sh run in this job and read
-        # grandfather baselines/ORPHANS, so they are pinned too. Deliberately
-        # not every scripts/ci/*.sh: a blanket policy
-        # would also block a PR from ever exercising ITS OWN fix to
-        # any other gate script in the same PR that adds the case it
-        # fixes — a real workflow cost this repo does not currently
-        # pay for the other ~20 gate scripts. Widen the loop below if
-        # that trade-off is revisited.
+        # The first three guard the money + i128 ADR-0003 invariants (and the
+        # baseline-tripwire that guards everyone else); lint-imports.sh and
+        # lint-deploy-systemd-authority.sh run in this job and read grandfather
+        # baselines/ORPHANS, so they are pinned too. Deliberately not every
+        # scripts/ci/*.sh: a blanket policy would also block a PR from ever
+        # exercising ITS OWN fix to any other gate script in the same PR that
+        # adds the case it fixes — a real workflow cost this repo does not pay
+        # for the other ~20 gate scripts. Widen the loop below if that
+        # trade-off is revisited.
         #
-        # First push / shallow history (no BASE_SHA, or it isn't in
-        # this checkout's history) falls back to the PR-head script
-        # rather than failing the job — same fallback lint-baseline-
-        # growth.sh's own BASE_SHA handling already uses.
+        # First push / shallow history (no BASE_SHA, or it isn't in this
+        # checkout's history) falls back to the PR-head script rather than
+        # failing the job — same fallback lint-baseline-growth.sh's own
+        # BASE_SHA handling uses.
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -1076,8 +1020,8 @@ jobs:
           done
       - name: lint-imports
         # Enforces architectural import rules:
-        # - No stellar-rpc in production ingest (removed from r1
-        #   2026-04-23; see docs/architecture/ingest-pipeline.md).
+        # - No stellar-rpc in production ingest (see
+        #   docs/architecture/ingest-pipeline.md).
         # - go-stellar-sdk/xdr scoped to internal/scval (ADR-0013).
         # - No Horizon anywhere (ADR-0001).
         # Grandfathered legacy violations live in
@@ -1086,30 +1030,28 @@ jobs:
         # baseline to shrink monotonically.
         run: ./scripts/ci/lint-imports.sh
       - name: lint-imports self-test
-        # The gate's own fixtures (DEP-F2, audit-2026-08-14): a banned
-        # package's SUBPACKAGE must trip the ban, an EXACT import still
-        # trips it, and a mere name-prefix lookalike does not. A ban you
-        # evade by importing one directory deeper is worse than none.
+        # The gate's own fixtures: a banned package's SUBPACKAGE must trip the
+        # ban, an EXACT import still trips it, and a mere name-prefix lookalike
+        # does not. A ban you evade by importing one directory deeper is worse
+        # than none.
         run: ./scripts/ci/lint-imports-test.sh
       - name: lint-git-fixture-isolation
-        # #1257: previously reachable only through `make lint-changed`
-        # (opt-in pre-commit hook), so a fixture leaking a real .git
-        # marker into a test tree could merge through CI unseen.
+        # Not only in `make lint-changed` (an opt-in pre-commit hook): a fixture
+        # leaking a real .git marker into a test tree must not merge through CI
+        # unseen.
         run: ./scripts/ci/lint-git-fixture-isolation.sh
       - name: lint-alerts-catalog
-        # #1257: same gap — the alerts-catalogue Severity column could
-        # drift from labels.severity through CI with only the hook to
-        # catch it, and the hook is opt-in.
+        # Same reason: the alerts-catalogue Severity column must not drift from
+        # labels.severity with only the opt-in hook to catch it.
         run: python3 ./scripts/ci/lint-alerts-catalog.py
       - name: lint-yaml-duplicate-keys
-        # #1257: same gap — a duplicate mapping key in a rule file
-        # (later key silently wins) could merge through CI unseen.
+        # Same reason: a duplicate mapping key in a rule file (later key
+        # silently wins) must not merge through CI unseen.
         run: python3 ./scripts/ci/lint-yaml-duplicate-keys.py
       - name: lint-go-toolchain-parity self-test
-        # #1257: the toolchain-parity gate's own self-test ran nowhere —
-        # not in this workflow, not in verify.sh — so a regression in the
-        # gate itself (the exact failure mode it exists to catch) was
-        # invisible.
+        # The toolchain-parity gate's own self-test: a regression in the gate
+        # itself is the exact failure mode it exists to catch, so it must run
+        # somewhere.
         run: ./scripts/ci/lint-go-toolchain-parity-test.sh
       - name: lint-go-typographic-quotes
         # `make fmt` runs gofumpt, whose doc-comment reformatter applies Go's
@@ -1128,10 +1070,9 @@ jobs:
       - name: lint-protocol-registry-sync
         # The frontend protocol registry (web/explorer/.../protocols/registry.ts)
         # mirrors the Go source-of-truth (internal/api/v1/protocols_registry.go)
-        # for the static-export slug set. Nothing cross-checked them, so a
-        # Go-registered protocol could silently ship with no pre-rendered
-        # explorer page (sorocredit, 2026-07-07). This fails on any name-set
-        # drift between the two registries.
+        # for the static-export slug set. Without a cross-check a Go-registered
+        # protocol can silently ship with no pre-rendered explorer page. This
+        # fails on any name-set drift between the two registries.
         run: ./scripts/ci/lint-protocol-registry-sync.sh
       - name: lint-i128
         # ADR-0003: reject int64(x.Lo) i128 truncation in Go (fast grep;
@@ -1155,18 +1096,16 @@ jobs:
         # Ansible-deployed compute-completeness.timer.
         run: ./scripts/ci/lint-completeness-staleness.sh
       - name: lint-source-enablement
-        # "Registered, tracked, and never actually run" — the same defect
-        # twice on production. A decoder ships, gets a reconSource entry in
-        # the compute-completeness catalogue so /v1/coverage asserts a
-        # verdict about it, and is never added to
+        # "Registered, tracked, and never actually run": a decoder ships, gets a
+        # reconSource entry in the compute-completeness catalogue so
+        # /v1/coverage asserts a verdict about it, and is never added to
         # stellarindex_enabled_sources in the archival-node defaults — the
         # only path to `[ingestion] enabled_sources`. No projector runs, the
         # served tier stays empty, and the source reads INCOMPLETE forever
-        # with watermark == genesis-1. Nothing else fails, so nobody
-        # notices: sushiswap_v3 sat that way until 72ad4ad4d (2026-09-09),
-        # upshift (#503) was found hours later. Escape hatch is the declared
-        # stellarindex_sources_not_yet_enabled map, which the gate refuses to
-        # let you use on a source the completeness catalogue still tracks.
+        # with watermark == genesis-1. Nothing else fails, so nobody notices.
+        # Escape hatch is the declared stellarindex_sources_not_yet_enabled
+        # map, which the gate refuses to let you use on a source the
+        # completeness catalogue still tracks.
         run: ./scripts/ci/lint-source-enablement.sh
       - name: lint-source-enablement self-test
         # Each of the gate's six checks proven red by mutation, plus the
@@ -1192,16 +1131,13 @@ jobs:
         # observed failing on the shapes it claims to catch.
         run: ./scripts/ci/lint-served-value-cadence-test.sh
       - name: lint-migration-compat
-        # CID-14 (audit-2026-07-23): migrations/README.md rule 9 —
-        # every up-migration must be additive + old-binary-safe. The
-        # deploy pipeline applies `migrate up` BEFORE the binary swap
-        # and a failed health probe rolls back the BINARY ONLY
-        # (CS-099), so a destructive migration turns a rollback into an
-        # outage the pipeline cannot clear. Rule 9 was prose only; this
-        # enforces it. Escapes need an inline
+        # migrations/README.md rule 9 — every up-migration must be additive +
+        # old-binary-safe. The deploy pipeline applies `migrate up` BEFORE the
+        # binary swap and a failed health probe rolls back the BINARY ONLY, so
+        # a destructive migration turns a rollback into an outage the pipeline
+        # cannot clear. This enforces the rule. Escapes need an inline
         # `-- migration-compat:ok <reason>`; pre-existing violations are
-        # grandfathered (shrink-only) in
-        # scripts/ci/migration-compat.baseline.
+        # grandfathered (shrink-only) in scripts/ci/migration-compat.baseline.
         run: ./scripts/ci/lint-migration-compat.sh
       - name: lint-migration-compat self-test
         # The gate's own fixtures: each violation class fires, the
@@ -1250,17 +1186,14 @@ jobs:
         # stays unflagged.
         run: ./scripts/ci/lint-migration-commands-test.sh
       - name: lint-lake-dedup
-        # stellar.transactions and stellar.operations are
-        # ReplacingMergeTree archives whose duplicates are not merged
-        # away: over ledgers 63,000,000-63,099,999 on r1 EVERY distinct
-        # (ledger_seq, tx_index) key in transactions carries more than one
-        # row and operations runs at 2.0x. Three near-misses in one day
-        # (2026-09-07) — a sponsors board inflated 176,573 -> 296,799, a
-        # verification query reporting 489,253 rows dropped that were not,
-        # and the argMax gate the shipped rollup needs. None was visible in
-        # a total. This fails an AGGREGATING read that does not collapse
-        # the table on its full identity first; per-entity detail readers
-        # are out of scope by construction.
+        # stellar.transactions and stellar.operations are ReplacingMergeTree
+        # archives whose duplicates are not merged away: on r1 every distinct
+        # (ledger_seq, tx_index) key in a sampled range carries more than one
+        # row and operations runs at 2.0x. An uncollapsed aggregate silently
+        # inflates boards and verification counts, and none of it is visible in
+        # a total. This fails an AGGREGATING read that does not collapse the
+        # table on its full identity first; per-entity detail readers are out
+        # of scope by construction.
         run: ./scripts/ci/lint-lake-dedup.sh
       - name: lint-lake-dedup self-test
         # Pins the gate against the two historical defects — the naive
@@ -1271,17 +1204,13 @@ jobs:
         # subquery, and prose.
         run: ./scripts/ci/lint-lake-dedup-test.sh
       - name: lint-ch-apply-scope
-        # deploy/clickhouse/ is not a bootstrap manifest. 08-clickhouse.yml
-        # used to with_fileglob the directory and execute every file, on
-        # every host with clickhouse_apply_schema true (testnet, futurenet)
-        # — so an OPERATOR's migration artifacts ran unattended on each
-        # fresh provision, including one whose header says "NOT auto-applied
-        # by any bootstrap" and one that says "FREEZE-GATED: do NOT run".
-        # Mostly invisible (tier1 runs first, so IF NOT EXISTS made the
-        # mirrors no-ops), except the two v2 cut-over pairs, which the test
-        # nets still carry as exact duplicates of their v1 tables: double MV
-        # write work and a second copy of the same rows, forever. The apply
-        # set is now a default-deny allow-list; this fails unless every
+        # deploy/clickhouse/ is not a bootstrap manifest. Executing every file
+        # in the directory on each fresh provision would run OPERATOR migration
+        # artifacts unattended — including ones whose headers say "NOT
+        # auto-applied by any bootstrap" or "FREEZE-GATED: do NOT run" — and
+        # leave duplicate v1/v2 cut-over tables (double MV write work and a
+        # second copy of the same rows, forever). The apply set is a
+        # default-deny allow-list; this fails unless every
         # deploy/clickhouse/*.sql declares its si-apply-scope, the allow-list
         # matches the fresh-host set exactly, and every object an operator
         # artifact creates is declared identically by a fresh-host file.
@@ -1298,10 +1227,10 @@ jobs:
         # about the glob it removed.
         run: ./scripts/ci/lint-ch-apply-scope-test.sh
       - name: integration-shard self-test
-        # 4-way integration-suite shard (2026-08-29): pins that the shards
-        # PARTITION `go test -list` exactly (every test in exactly one
-        # shard, none empty, deterministic) and that empty/bad-arg paths
-        # fail loudly. Stub listing, no Docker, no go build.
+        # Integration-suite shard: pins that the shards PARTITION `go test
+        # -list` exactly (every test in exactly one shard, none empty,
+        # deterministic) and that empty/bad-arg paths fail loudly. Stub
+        # listing, no Docker, no go build.
         run: ./scripts/ci/integration-shard-test.sh
       - name: pre-push integration-routing self-test
         # The local pre-push gate automatically adds Docker-backed tests for
@@ -1309,13 +1238,13 @@ jobs:
         # here so a future path move cannot silently weaken local clearance.
         run: ./scripts/ci/prepush-integration-required-test.sh
       - name: lint-shell-sigpipe
-        # #475: `… | sort | head -n N` under `set -o pipefail` is a coin
-        # flip — head closes the pipe, systemd's IgnoreSIGPIPE default turns
-        # the signal into EPIPE, the producer prints "write failed: Broken
-        # pipe" and exits non-zero, and pipefail promotes that to the
-        # pipeline. It only fires once the producer outsizes the 64 KiB pipe
-        # buffer, so it passes review and every small-input test, then fails
-        # a third of production runs (r1's galexie-archive-fill, three times).
+        # `… | sort | head -n N` under `set -o pipefail` is a coin flip —
+        # head closes the pipe, systemd's IgnoreSIGPIPE default turns the
+        # signal into EPIPE, the producer prints "write failed: Broken pipe" and
+        # exits non-zero, and pipefail promotes that to the pipeline. It only
+        # fires once the producer outsizes the 64 KiB pipe buffer, so it passes
+        # review and every small-input test, then fails a fraction of
+        # production runs.
         run: ./scripts/ci/lint-shell-sigpipe.sh
       - name: lint-shell-sigpipe self-test
         # Pins the gate non-vacuous: it must CATCH a pipefail script piping
@@ -1325,13 +1254,10 @@ jobs:
         # when a root contains no pipefail scripts at all.
         run: ./scripts/ci/lint-shell-sigpipe-test.sh
       - name: lint-http-timeouts
-        # #371 F5: http.DefaultClient has NO timeout, so a peer that
-        # accepts and then stops sending hangs the caller forever. Two
-        # real instances shipped — a kraken backfill (reads as "slow
-        # venue") and an operator directory-sync (reads as "still
-        # running"). A ctx deadline is not a substitute: it only bounds
-        # the call when the caller supplies one, and both sites already
-        # took a ctx.
+        # http.DefaultClient has NO timeout, so a peer that accepts and then
+        # stops sending hangs the caller forever — and reads as "slow venue" or
+        # "still running", not as a hang. A ctx deadline is not a substitute: it
+        # only bounds the call when the caller supplies one.
         run: ./scripts/ci/lint-http-timeouts.sh
       - name: lint-http-timeouts self-test
         # Pins the gate non-vacuous: catches a production use, honours a
@@ -1352,11 +1278,10 @@ jobs:
         # fails a stale marker, and FAILS on a tree with no auth files.
         run: ./scripts/ci/lint-apikey-scan-test.sh
       - name: lint-unbounded-latest-row
-        # #594: a DISTINCT ON over a hypertable with no time or ledger floor
-        # reads every row of every chunk. It is fast on a fresh database and
-        # degrades with history, so no test sees it: SupplyCoverageStats
-        # outgrew its 5 s diagnostics budget this way. A deliberately
-        # unbounded read carries `// unbounded-latest-ok: <reason>`.
+        # A DISTINCT ON over a hypertable with no time or ledger floor reads
+        # every row of every chunk. It is fast on a fresh database and degrades
+        # with history, so no test sees it. A deliberately unbounded read
+        # carries `// unbounded-latest-ok: <reason>`.
         run: python3 ./scripts/ci/lint-unbounded-latest-row.py
       - name: lint-unbounded-latest-row self-test
         # Pins the gate non-vacuous: catches the shipped SupplyCoverageStats
@@ -1364,19 +1289,16 @@ jobs:
         # FAILS on an empty root or a migrations dir with no hypertable.
         run: ./scripts/ci/lint-unbounded-latest-row-test.sh
       - name: deploy-baseline self-test
-        # #427: the config-apply gate's baseline is the version live on the
-        # host. A FAILED read used to warn and fall back to the previous
-        # release tag, so the gate diffed a range nobody was deploying and
-        # passed — both test-net deploys on 2026-09-02 went green that way
-        # across five releases touching 9-11 gated files. This pins that a
-        # read failure FAILS, that an absent sidecar (first deploy) still
-        # falls back, and that stellarindex-migrate stays excluded from the
-        # minimum. Runs the extracted step against a fake ssh; no network.
+        # The config-apply gate's baseline is the version live on the host. A
+        # FAILED read that fell back to the previous release tag would diff a
+        # range nobody is deploying and pass. This pins that a read failure
+        # FAILS, that an absent sidecar (first deploy) still falls back, and
+        # that stellarindex-migrate stays excluded from the minimum. Runs the
+        # extracted step against a fake ssh; no network.
         run: ./scripts/ci/deploy-baseline-test.sh
       - name: check-deploy-protection self-test
-        # deploy-approval-gate (audit-2026-07-23): fixtures for the
-        # fail-closed environment-approval assertion deploy.yml runs
-        # before it touches production. No network, no token.
+        # Fixtures for the fail-closed environment-approval assertion deploy.yml
+        # runs before it touches production. No network, no token.
         run: ./scripts/ci/check-deploy-protection-test.sh
       - name: production credentials sit behind an environment gate
         # Every job reading the r1 root key, the ansible vault, the r1
@@ -1390,75 +1312,65 @@ jobs:
           python3 ./scripts/ci/lint-deploy-credentials.py
           ./scripts/ci/lint-deploy-credentials-test.sh
       - name: check-main-ci-health self-test
-        # reconciliation-and-monitoring-liveness (audit-2026-07-23):
-        # fixtures for the shared red-streak decision core both
-        # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
-        # (watches `ansible-drift.yml`) call. No network, no token.
+        # Fixtures for the shared red-streak decision core both ci-health.yml
+        # (watches `ci.yml`) and reconciliation-health.yml (watches
+        # `ansible-drift.yml`) call. No network, no token.
         run: ./scripts/ci/check-main-ci-health-test.sh
       - name: check-scheduled-controls self-test
-        # #496: the red-streak core above reads the LATEST run whatever
-        # triggered it, so ansible-drift.yml — 0 green of 8 SCHEDULED
-        # runs across seven weeks — read healthy on the strength of a
-        # green manual dispatch. These fixtures pin the dead-control
-        # sweep ci-health.yml runs daily: scheduled runs only, a
-        # threshold derived from each workflow's own cron cadence (the
-        # same 8-day-old pass is live weekly and dead daily), cancelled
-        # runs and a disabled schedule not read as green, a newly
-        # merged workflow not flagged, self-reference as the one
-        # exclusion, workflows enumerated from the tree rather than a
-        # list, and an empty or unreadable sweep failing rather than
-        # reporting a clean result. No network, no token.
+        # The red-streak core above reads the LATEST run whatever triggered it,
+        # so a workflow whose scheduled runs all fail can read healthy on the
+        # strength of one green manual dispatch. These fixtures pin the
+        # dead-control sweep ci-health.yml runs daily: scheduled runs only, a
+        # threshold derived from each workflow's own cron cadence (the same
+        # 8-day-old pass is live weekly and dead daily), cancelled runs and a
+        # disabled schedule not read as green, a newly merged workflow not
+        # flagged, self-reference as the one exclusion, workflows enumerated
+        # from the tree rather than a list, and an empty or unreadable sweep
+        # failing rather than reporting a clean result. No network, no token.
         #
-        # #502 added the three classes it sorts those into — stopped,
-        # broken, and reporting-a-finding — and the marker a workflow
-        # writes in its own file to claim the last one. The cases pin
-        # what that marker CANNOT do far harder than what it can: it
-        # never changes the exit code or the flagged set, never reaches
-        # DEAD, does not apply to a run that never executed a step, and
-        # is void unless it names a step that workflow really has. That
-        # last one is swept over the REAL .github/workflows tree here,
-        # which is why renaming a declared verdict step reddens this
+        # It sorts flagged workflows into three classes — stopped, broken, and
+        # reporting-a-finding — with a marker a workflow writes in its own file
+        # to claim the last one. The cases pin what that marker CANNOT do far
+        # harder than what it can: it never changes the exit code or the
+        # flagged set, never reaches DEAD, does not apply to a run that never
+        # executed a step, and is void unless it names a step that workflow
+        # really has. That last one is swept over the REAL .github/workflows
+        # tree here, which is why renaming a declared verdict step reddens this
         # step on the PR that does it.
         run: ./scripts/ci/check-scheduled-controls-test.sh
       - name: check-sla-evidence self-test
-        # #316: k6-weekly.yml's scheduled path exited 0 with a `::notice::`
-        # whenever the load-target secrets were unset, so four months of
-        # scheduled runs concluded `success` with every real step `skipped`
-        # and no sla-proof-<date>.md ever landed — the SLA-evidence feed was
-        # a permanently-green no-op. These fixtures pin the verdict (no
-        # target = rc 1, no recent proof = rc 2, healthy = rc 0, and the
-        # procedure/template files are not evidence) plus the k6-weekly
-        # wiring that consumes it: PR-triggered compile gate, no `if:` on
-        # it, no `needs:` from the evidence job onto it, `always()` on the
-        # issue/fail steps, the Makefile's `-e` __ENV seeding, and no
-        # object spread in the scenarios (the pinned k6's babel cannot
-        # parse it). The wiring block is fail-closed — it counts the
-        # assertions it emitted and fails on a short count, so an
-        # unparseable or renamed workflow cannot silence it. The workflow
-        # itself runs weekly against secrets that do not exist, so this is
-        # the only place it is exercised on a PR. No network, no k6, no
-        # token.
-        # 2026-09-09 (#378): six further wiring assertions cover the
-        # DURABLE half — the run must execute render-sla-proof.sh, hold
-        # `contents: write`, commit the report, recompute the verdict
-        # AFTER the report lands, retain a threshold breach as evidence
-        # while still reddening the run, and refuse to close the tracking
-        # issue on a run that produced no proof of its own.
+        # A scheduled path that exits 0 with a `::notice::` when the
+        # load-target secrets are unset concludes `success` with every real step
+        # `skipped` and lands no sla-proof-<date>.md — a permanently-green
+        # no-op SLA-evidence feed. These fixtures pin the verdict (no target =
+        # rc 1, no recent proof = rc 2, healthy = rc 0, and the
+        # procedure/template files are not evidence) plus the k6-weekly wiring
+        # that consumes it: PR-triggered compile gate, no `if:` on it, no
+        # `needs:` from the evidence job onto it, `always()` on the issue/fail
+        # steps, the Makefile's `-e` __ENV seeding, and no object spread in the
+        # scenarios (the pinned k6's babel cannot parse it). The wiring block is
+        # fail-closed — it counts the assertions it emitted and fails on a short
+        # count, so an unparseable or renamed workflow cannot silence it. The
+        # workflow itself runs against secrets CI does not have, so this is the
+        # only place it is exercised on a PR. No network, no k6, no token.
+        # Six further wiring assertions cover the DURABLE half — the run must
+        # execute render-sla-proof.sh, hold `contents: write`, commit the
+        # report, recompute the verdict AFTER the report lands, retain a
+        # threshold breach as evidence while still reddening the run, and refuse
+        # to close the tracking issue on a run that produced no proof of its
+        # own.
         run: ./scripts/ci/check-sla-evidence-test.sh
       - name: render-sla-proof self-test
-        # #378: the weekly run measured and then left nothing behind —
-        # summary.json expires with the artifact, the step summary ages out
-        # with the job page, and the only artefact check-sla-evidence.sh
-        # counts is a committed docs/operations/sla-proof-<YYYY-MM-DD>.md
-        # whose sole "implementation" was a manual procedure pointing at a
-        # Grafana host that does not exist. render-sla-proof.sh is that
-        # implementation; these fixtures pin its REFUSALS above all — a
+        # A load run must leave evidence behind: summary.json expires with the
+        # artifact and the step summary ages out with the job page, so the only
+        # artefact check-sla-evidence.sh counts is a committed
+        # docs/operations/sla-proof-<YYYY-MM-DD>.md, written by
+        # render-sla-proof.sh. These fixtures pin its REFUSALS above all — a
         # p99-less export (k6's default trend stats omit p(99), so the real
         # checked-in export is exactly that shape), a zero-request run, a
-        # threshold-less export, and each provenance field missing on its
-        # own — because a renderer that emits a report regardless of input
-        # re-creates the false-evidence artifact under a new name. No
-        # network, no k6, no token.
+        # threshold-less export, and each provenance field missing on its own —
+        # because a renderer that emits a report regardless of input creates a
+        # false-evidence artifact. No network, no k6, no token.
         run: ./scripts/ci/render-sla-proof-test.sh
       - name: sla-proof-from-probe self-test
         # The weekly proof's second source. k6 needs a production-shaped
@@ -1481,35 +1393,31 @@ jobs:
         # is not left untested. No network, no Prometheus, no token.
         run: bash scripts/ops/sla-proof-from-probe-test.sh
       - name: check-public-dataset self-test
-        # backup-restore-6 (audit-2026-08-29): fixtures for the
-        # aws-public-blockchain drift verdict public-dataset-check.yml
-        # calls weekly. Pins every drift class RED (gap inside/above the
-        # trimmed range, misnamed partition, manifest change, stalled
-        # publication) and the live 1003-partition shape GREEN. No
+        # Fixtures for the aws-public-blockchain drift verdict
+        # public-dataset-check.yml calls weekly. Pins every drift class RED (gap
+        # inside/above the trimmed range, misnamed partition, manifest change,
+        # stalled publication) and the live 1003-partition shape GREEN. No
         # network, no aws cli.
         run: ./scripts/ci/check-public-dataset-test.sh
       - name: check-fleet-release-drift self-test
-        # launch-plan 1.7 (2026-09-03): fixtures for the test-net
-        # release-drift verdict fleet-release-drift.yml calls daily and
-        # deploy.yml runs after every deploy. Pins the drift that
-        # motivated it RED (test nets v0.57.0 / migrations 0150 vs r1
-        # v0.59.1 / 0154, with the release and migration counts), the
-        # same-day release cascade RED on the real tag dates (the 24h
-        # grace runs from the oldest release a test net lacks, not r1's
-        # newest tag), the in-step fleet GREEN, and the ways the check
-        # could lie — a redirecting hostname, an upstream error page or an
-        # unreadable host reading as "in step" — as DEGRADED, along with
-        # a served "version" carrying newlines and a forged verdict line
+        # Fixtures for the test-net release-drift verdict
+        # fleet-release-drift.yml calls daily and deploy.yml runs after every
+        # deploy. Pins a test net releases and migrations behind r1 RED (with
+        # the release and migration counts), the same-day release cascade RED
+        # on real tag dates (the 24h grace runs from the oldest release a test
+        # net lacks, not r1's newest tag), the in-step fleet GREEN, and the
+        # ways the check could lie — a redirecting hostname, an upstream error
+        # page or an unreadable host reading as "in step" — as DEGRADED, along
+        # with a served "version" carrying newlines and a forged verdict line
         # (one prefixed line, never a key), a pre-release reference
-        # (fail-closed) and --fail-with-body (a PATH-shim curl).
-        # Throwaway git repos for the tag counts and dates; no network.
+        # (fail-closed) and --fail-with-body (a PATH-shim curl). Throwaway git
+        # repos for the tag counts and dates; no network.
         run: ./scripts/ci/check-fleet-release-drift-test.sh
       - name: lint-metric-refs self-test
-        # W8.15: the F-1329 dead-alert guard used a plain grep over
-        # emitter files, so a metric named only in a `//` (Go) or `#`
-        # (.prom/shell) COMMENT counted as "emitted" — a dead reference
-        # looked live. These fixtures pin that comment-only mentions do
-        # NOT satisfy is_emitted while real Name:/bare-metric lines do.
+        # A plain grep over emitter files would count a metric named only in a
+        # `//` (Go) or `#` (.prom/shell) COMMENT as "emitted", so a dead alert
+        # reference looks live. These fixtures pin that comment-only mentions
+        # do NOT satisfy is_emitted while real Name:/bare-metric lines do.
         run: ./scripts/ci/lint-metric-refs-test.sh
       - name: lint-unit-failed-baseline self-test
         run: ./scripts/ci/lint-unit-failed-baseline-test.sh
@@ -1523,10 +1431,10 @@ jobs:
         # a live footgun — it starts, and nothing reconciles it.
         run: ./scripts/ci/lint-deploy-systemd-authority.sh
       - name: lint-systemd-flag-hatch
-        # #1231: `${EXTRA_FLAGS}` in a direct-exec ExecStart= is ONE argv
-        # token (systemd.service(5)), so `EXTRA_FLAGS="-limit 100"` failed
-        # the Go flag parser on every tick of twelve units. Bare `$VAR`
-        # word-splits; only an `sh -c` unit may use the brace form.
+        # `${EXTRA_FLAGS}` in a direct-exec ExecStart= is ONE argv token
+        # (systemd.service(5)), so `EXTRA_FLAGS="-limit 100"` fails the Go flag
+        # parser on every tick. Bare `$VAR` word-splits; only an `sh -c` unit
+        # may use the brace form.
         run: ./scripts/ci/lint-systemd-flag-hatch.sh
       - name: lint-systemd-flag-hatch self-test
         run: ./scripts/ci/lint-systemd-flag-hatch-test.sh
@@ -1539,22 +1447,19 @@ jobs:
       - name: systemd unit hardening self-test
         run: ./scripts/ci/lint-systemd-hardening-test.sh
       - name: memory-mappings self-test
-        # #1257: the mapping-headroom probe's own fixture tests ran
-        # nowhere — CI has no host and macOS has no /proc, so this is the
-        # only place the probe's process-selection and fail-closed
-        # behaviour can be exercised at all.
+        # The mapping-headroom probe's own fixture tests: CI has no host and
+        # macOS has no /proc, so this is the only place the probe's
+        # process-selection and fail-closed behaviour can be exercised at all.
         run: ./scripts/ci/memory-mappings-test.sh
 
       - name: lint-textfile-exposition
-        # r1 2026-09-10: the TimescaleDB probe ran
-        # `SET statement_timeout = '10s'; SELECT …` through `psql -At`.
-        # psql prints the SET's command tag on stdout, `-At` does not
-        # suppress it, and the probe's field parser wrote
-        # `stellarindex_pg_lock_convoy_backends SET`. node_exporter does
-        # not skip an unparseable line — it rejects the WHOLE file, so 127
-        # pre-existing stellarindex_timescale_* series went off the host
-        # as collateral and nothing alerted, because the alerting that
-        # would have noticed was in the file that stopped parsing.
+        # psql prints a SET's command tag on stdout and `-At` does not suppress
+        # it, so a probe running `SET statement_timeout = '10s'; SELECT …` writes
+        # a line like `stellarindex_pg_lock_convoy_backends SET`. node_exporter
+        # does not skip an unparseable line — it rejects the WHOLE file, so
+        # every other series in it goes off the host and nothing alerts,
+        # because the alerting that would notice is in the file that stopped
+        # parsing.
         #
         # Sweeps every textfile-collector producer in the tree (census
         # reconciled against scripts/ci/textfile-producers.manifest) for
@@ -1564,56 +1469,50 @@ jobs:
         # Postgres, no host.
         run: ./scripts/ci/lint-textfile-exposition.sh
       - name: lint-textfile-exposition self-test
-        # The load-bearing fixture reproduces the pre-b96982c22 probe and
+        # The load-bearing fixture reproduces a probe with that defect and
         # asserts the gate is RED on it. Runs pre-restore, like the other
         # gate self-tests here: it validates the gate AS THIS PR SHIPS IT.
         run: ./scripts/ci/lint-textfile-exposition-test.sh
       - name: lint-ansible-tasks
-        # 2026-08-28 audit (deploy-ansible-shell-1 / -secrets-9): a shell
-        # task setting pipefail without `executable: /bin/bash` fails under
-        # dash and aborted every full archival-node apply at step 04; and
-        # vault secrets sat on `mc` argv (visible in /proc/<pid>/cmdline)
-        # under a comment claiming env-based auth. Both are structural, so
+        # A shell task setting pipefail without `executable: /bin/bash` fails
+        # under dash and aborts a full archival-node apply; vault secrets on
+        # `mc` argv are visible in /proc/<pid>/cmdline. Both are structural, so
         # they are gated here rather than re-learned on the next host.
         run: ./scripts/ci/lint-ansible-tasks.sh
       - name: lint-ansible-tasks self-test
         run: ./scripts/ci/lint-ansible-tasks-test.sh
       - name: lint-ansible-toolchain-pin (+ self-test)
-        # GH-896: deploy.yml, ansible-drift.yml and ci.yml each used to
-        # spell out their own ansible/ansible-core version inline, so a
-        # bump landing in one workflow and not the others went unnoticed
-        # until the collections a lint job resolved diverged from the
-        # ones a real deploy applied. All three now route through
-        # scripts/ci/install-ansible.sh + configs/ansible/toolchain.txt;
-        # this keeps a future edit from reintroducing an inline pin.
+        # deploy.yml, ansible-drift.yml and ci.yml route their ansible version
+        # through scripts/ci/install-ansible.sh + configs/ansible/toolchain.txt;
+        # an inline pin lets a bump land in one workflow and not the others,
+        # diverging the collections a lint job resolves from the ones a real
+        # deploy applies. This keeps an inline pin from coming back.
         run: |
           ./scripts/ci/lint-ansible-toolchain-pin-test.sh
           ./scripts/ci/lint-ansible-toolchain-pin.sh
       - name: check-ansible-drift self-test
-        # OBS-drift (audit-2026-07-23): fixtures for the codified≠live
-        # verdict ansible-drift.yml calls. The load-bearing case runs the
-        # pre-fix rule (`changed -gt 13`) and the current gate against the
-        # same ansible output and asserts they disagree — thirteen unnamed
-        # changed tasks used to pass as "no drift". ansible-drift.yml only
-        # fires weekly against live r1, so these fixtures are the only
-        # place the verdict is exercised on a PR. No network, no ansible.
+        # Fixtures for the codified≠live verdict ansible-drift.yml calls. The
+        # load-bearing case runs a count-threshold rule (`changed -gt 13`) and
+        # the real gate against the same ansible output and asserts they
+        # disagree — thirteen unnamed changed tasks must not pass as "no
+        # drift". ansible-drift.yml only fires weekly against live r1, so these
+        # fixtures are the only place the verdict is exercised on a PR. No
+        # network, no ansible.
         run: ./scripts/ci/check-ansible-drift-test.sh
       - name: run-heavy-job wrapper self-test
-        # 2026-08-28 r1 (supply_refresh_error_dominant): the heavy-job
-        # wrapper must hand every wrapped stellarindex-ops job the
-        # low-priority ClickHouse ops-batch identity from
+        # The heavy-job wrapper must hand every wrapped stellarindex-ops job
+        # the low-priority ClickHouse ops-batch identity from
         # /etc/default/stellarindex-ops ITSELF — the runbooks source
-        # /etc/default/stellarindex, so a design that relied on the
-        # caller's shell was a silent no-op on the incident path. These
-        # fixtures extract the shipped wrapper out of the ansible task and
-        # run it. No network, no ansible, no systemd (non-root exec path).
+        # /etc/default/stellarindex, so relying on the caller's shell is a
+        # silent no-op on the incident path. These fixtures extract the shipped
+        # wrapper out of the ansible task and run it. No network, no ansible,
+        # no systemd (non-root exec path).
         run: ./scripts/ci/run-heavy-job-test.sh
       - name: zfs-snapshot job self-test
-        # Rolling ZFS snapshots (2026-08-29): retention, the min-free
-        # guard's prune-oldest-first / never-the-newest / skip-and-report
-        # behaviour, and the never-destroy-a-non-auto-snapshot invariant,
-        # run against a file-backed `zfs`/`zpool` stub. No network, no
-        # ansible, no real pool.
+        # Rolling ZFS snapshots: retention, the min-free guard's
+        # prune-oldest-first / never-the-newest / skip-and-report behaviour, and
+        # the never-destroy-a-non-auto-snapshot invariant, run against a
+        # file-backed `zfs`/`zpool` stub. No network, no ansible, no real pool.
         run: ./scripts/ci/zfs-snapshot-test.sh
       - name: ordinal-rederive-chunks wrapper self-test
         # Chunk bounds (-to hi-1, BAND_END exclusive), the zfs avail floors
@@ -1621,23 +1520,22 @@ jobs:
         # zfs and stellarindex-ops. No network, no pool, no ClickHouse.
         run: ./scripts/ci/ordinal-rederive-chunks-test.sh
       - name: pgbackrest-backup wrapper self-test
-        # 2026-08-29 (repo2 = S3 live on r1): pgBackRest's `backup` is
-        # single-repo — with no --repo it writes ONLY repo1, so the nightly
-        # wrapper fed the off-site repo WAL but never a base backup. These
-        # fixtures run the shipped template against a stubbed pgbackrest:
-        # one backup per configured repo, repo1 failure does not skip
-        # repo2, single-repo argv byte-identical, per-repo textfile
-        # metrics, no secrets on argv. No network, no ansible, no systemd.
+        # pgBackRest's `backup` is single-repo — with no --repo it writes ONLY
+        # repo1, so a nightly wrapper that does not loop would feed the off-site
+        # repo WAL but never a base backup. These fixtures run the shipped
+        # template against a stubbed pgbackrest: one backup per configured repo,
+        # repo1 failure does not skip repo2, single-repo argv byte-identical,
+        # per-repo textfile metrics, no secrets on argv. No network, no ansible,
+        # no systemd.
         run: ./scripts/ci/pgbackrest-backup-test.sh
       - name: data-freshness watchdog self-test
-        # Runbook Wave L (#319): the watchdog's LAST producer is a
-        # ClickHouse HTTP probe, and under `set -euo pipefail` a bare
-        # `SF_AGE=$(curl … | tr …)` took curl's status — so a CH outage
-        # aborted the script before its atomic swap and node_exporter kept
-        # re-serving the previous textfile. Every freshness gauge FROZE
-        # instead of going absent, so neither the per-source staleness
-        # alerts nor the watchdog's own absent_over_time meta-alert could
-        # fire. These fixtures run the shipped probe region against a
+        # The watchdog's LAST producer is a ClickHouse HTTP probe, and under
+        # `set -euo pipefail` a bare `SF_AGE=$(curl … | tr …)` takes curl's
+        # status — so a CH outage aborts the script before its atomic swap and
+        # node_exporter keeps re-serving the previous textfile. Every freshness
+        # gauge FREEZES instead of going absent, so neither the per-source
+        # staleness alerts nor the watchdog's own absent_over_time meta-alert
+        # can fire. These fixtures run the shipped probe region against a
         # stubbed curl. No network, no ClickHouse, no Postgres.
         run: ./scripts/ci/data-freshness-test.sh
       - name: TimescaleDB job/CAGG probe self-test
@@ -1701,13 +1599,12 @@ jobs:
         # No network, no ansible.
         run: ./scripts/ci/lint-deploy-playbook.sh
       - name: envfile-loader self-test
-        # deploy-ansible-secrets-5: /etc/default/{stellarindex,-ops,galexie}
-        # are systemd EnvironmentFiles (unquoted values) that the deploy
-        # migrate step, a root cron and a dozen host scripts used to
-        # `set -a; .` — the SHELL parser, which expands `$` and runs `;`
-        # inside a secret as root while systemd keeps the services happy.
-        # Pins every consumer to the verbatim reader and proves it
-        # round-trips metacharacters. No network, no ansible.
+        # /etc/default/{stellarindex,-ops,galexie} are systemd
+        # EnvironmentFiles (unquoted values). Sourcing one with `set -a; .` uses
+        # the SHELL parser, which expands `$` and runs `;` inside a secret as
+        # root while systemd keeps the services happy. Pins every consumer to
+        # the verbatim reader and proves it round-trips metacharacters. No
+        # network, no ansible.
         run: ./scripts/ci/envfile-loader-test.sh
       - name: deploy-inputs self-test
         # deploy-ansible-input-8: runs deploy.yml's shipped Validate step
@@ -1738,11 +1635,10 @@ jobs:
       - name: check-no-wrangler-cache-tracked self-test
         run: bash scripts/ci/check-no-wrangler-cache-tracked-test.sh
       - name: lint-lexicon
-        # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
-        # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
-        # only logger) + shrink-only per-file baseline for
-        # grandfathered `Coin*` vocabulary and non-canonical
-        # constructor shapes. See docs/architecture/lexicon.md.
+        # Domain-lexicon + idiom ratchet. Zero rules (no Fetch/Make verbs,
+        # slog is the only logger) + shrink-only per-file baseline for
+        # grandfathered `Coin*` vocabulary and non-canonical constructor
+        # shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
       - name: check-deprecations
         # engineering-standards §2.4: every `// Deprecated:` names its
@@ -1760,14 +1656,13 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-baseline-growth.sh
       - name: lint-replay-plan
-        # 2026-08-28 incident: e17288bd widened the fiat allow-list
-        # (32→132); live ingestion recorded 4 new currencies, nobody
-        # replayed history, 190,228 served rows missing for a day. A
-        # change to a decoder (internal/sources/*/decode*.go), event
-        # schema, feed registry, venue pair allow-list (pairs.go) or
-        # canonical asset allow-list must state its replay plan in a
-        # `Replay-Plan:` commit trailer (`none — <reason>` when no
-        # served history is affected) so the plan ships WITH the change.
+        # Widening an allow-list without replaying history leaves the served
+        # tier missing every row the new entries would have produced before the
+        # change — silently, until someone looks. A change to a decoder
+        # (internal/sources/*/decode*.go), event schema, feed registry, venue
+        # pair allow-list (pairs.go) or canonical asset allow-list must state its
+        # replay plan in a `Replay-Plan:` commit trailer (`none — <reason>` when
+        # no served history is affected) so the plan ships WITH the change.
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./scripts/ci/lint-replay-plan.sh
@@ -1842,12 +1737,12 @@ jobs:
     # unchecked.
     env:
       PROM_VERSION: "2.55.1"
-      # audit-2026-07-16 (C4-17b): the expected tarball SHA-256 lives HERE, in
-      # version control next to the version pin — NOT in a repo secret. A
-      # checksum is public (from the upstream sha256sums.txt) and belongs in the
-      # reviewable diff: bumping PROM_VERSION obligates bumping this in the same
-      # commit. Storing it as a secret gained nothing and left CI hard-red for
-      # 24h+ whenever the secret was unset. No secret override exists.
+      # The expected tarball SHA-256 lives HERE, in version control next to
+      # the version pin — NOT in a repo secret. A checksum is public (from the
+      # upstream sha256sums.txt) and belongs in the reviewable diff: bumping
+      # PROM_VERSION obligates bumping this in the same commit. A secret gains
+      # nothing and leaves CI hard-red whenever it is unset. No secret
+      # override exists.
       PROM_TARBALL_SHA256_DEFAULT: "19700bdd42ec31ee162e4079ebda4cd0a44432df4daa637141bdbea4b1cd8927"
       AM_VERSION: "0.28.1"
       # Same C4-17b convention as PROM_TARBALL_SHA256_DEFAULT above: the
@@ -1860,8 +1755,8 @@ jobs:
           persist-credentials: false
       - name: structural rule lint (no promtool)
         # Pure-Python guard that runs even if the promtool install below fails —
-        # catches the mis-indented-rule class (2026-07-06 galexie-archive: alerts
-        # at group level). Also wired into scripts/dev/verify.sh for local dev.
+        # catches the mis-indented-rule class (alerts at group level). Also
+        # wired into scripts/dev/verify.sh for local dev.
         run: python3 ./scripts/ci/lint-rule-structure.py
       - name: runbook-annotations lint (no promtool)
         # YAML-aware guard (audit C4-1): every alert's runbook_url must live
@@ -1871,11 +1766,9 @@ jobs:
         run: python3 ./scripts/ci/lint-runbook-annotations.py
       - name: install promtool
         run: |
-          # F-1294 (codex audit-2026-05-13): SHA-verified install.
-          # Pre-fix this was `curl | tar -xz` straight, no
-          # checksum. Now we download, verify, then unpack.
-          # Checksum source (audit-2026-07-16 C4-17b): the committed
-          # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable).
+          # SHA-verified install: download, verify against the committed
+          # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable),
+          # then unpack.
           SHA="$PROM_TARBALL_SHA256_DEFAULT"
           curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" -o /tmp/prom.tar.gz
           echo "${SHA}  /tmp/prom.tar.gz" | sha256sum -c -
@@ -1906,20 +1799,11 @@ jobs:
           bash configs/alertmanager/apply-test.sh
       - name: alertmanager apply-path parity (+ self-test)
         # /etc/prometheus/alertmanager.yml has TWO producers — the r1
-        # standalone config validated in the step above, and the Ansible
-        # role template — and the only thing that had ever kept them in
-        # step was a header comment claiming they mirrored each other. On
-        # 2026-09-08 the fix for #485 routed `severity: informational` to
-        # a real Discord receiver in the first and not the second, so a
-        # role apply would have silently restored the bug it had just
-        # fixed (#501). Renders BOTH paths with identical inputs, on the
-        # wired and the all-URLs-empty branch, and fails on any
-        # structural difference.
-        #
-        # It belongs in THIS job, not in ansible-check: that job is gated
-        # on `configs/ansible/**`, and the commit that introduced the
-        # divergence touched only `configs/alertmanager/`. A gate the
-        # regression's own diff would have skipped is not a gate.
+        # standalone config validated in the step above, and the Ansible role
+        # template — and nothing else keeps them in step. A routing fix applied
+        # to one and not the other means a role apply silently restores the bug
+        # it fixed. Renders BOTH paths with identical inputs, on the wired and
+        # the all-URLs-empty branch, and fails on any structural difference.
         run: |
           set -euo pipefail
           # jinja2 + PyYAML are not guaranteed on the runner image, and
@@ -1999,34 +1883,28 @@ jobs:
           fetch-depth: 0
       # ── from the former `ansible-check` job (ansible syntax + lint) ──
       - name: ansible-collection-pin-parity self-test
-        # F146 (audit-2026-09-02): this job and ansible-drift.yml both used
-        # to install only the `ansible` pipx bundle, never
-        # configs/ansible/requirements.yml — so CI lint and the drift
-        # controller ran against different collection versions than
-        # deploy.yml applies to r1. The install steps below now pin
-        # requirements.yml too; this asserts that stays true against the
-        # PR-head workflow files, no ansible install needed.
+        # CI lint and the drift controller must run against the same
+        # collection versions deploy.yml applies to r1, so the install steps
+        # below pin configs/ansible/requirements.yml as well as the `ansible`
+        # bundle. This asserts that stays true against the PR-head workflow
+        # files, no ansible install needed.
         run: ./scripts/ci/ansible-collection-pin-parity-test.sh
       - name: Install ansible + lint
         if: needs.preflight.outputs.ansible == 'true'
-        # DEP-01 (audit-2026-07-23): exact pins, same reasoning as
-        # ansible-drift.yml — this job carries no secrets, but an
-        # unpinned install still runs arbitrary upstream code in CI on
-        # every PR. Pinned to what it already resolved to.
+        # Exact pins, same reasoning as ansible-drift.yml — this job carries no
+        # secrets, but an unpinned install still runs arbitrary upstream code in
+        # CI on every PR.
         #
-        # F146 (audit-2026-09-02): the `ansible` bundle carries its own
-        # community.general/ansible.posix/community.postgresql at
-        # whatever version pipx resolved for 14.2.0 (community.general
-        # 11.x-class) — a different set than deploy.yml applies to r1
-        # (community.general 9.5.0 / ansible.posix 1.5.4 / community.
-        # postgresql 3.10.0, pinned in configs/ansible/requirements.yml).
-        # A task using a module argument present in the bundle but
-        # absent or changed in the pinned collection passed this
-        # syntax-check + lint gate and only broke on the real apply.
-        # Installing the pinned collections AFTER the bundle puts them
-        # in ~/.ansible/collections, which Ansible resolves ahead of
-        # the collections shipped inside the `ansible` package — this
-        # job now lints against the same collections deploy.yml applies.
+        # The `ansible` bundle carries its own community.general/ansible.posix/
+        # community.postgresql at whatever version pipx resolved — a different
+        # set than deploy.yml applies to r1 (pinned in
+        # configs/ansible/requirements.yml). A task using a module argument
+        # present in the bundle but absent or changed in the pinned collection
+        # would pass this gate and break only on the real apply. Installing the
+        # pinned collections AFTER the bundle puts them in
+        # ~/.ansible/collections, which Ansible resolves ahead of the
+        # collections shipped inside the `ansible` package, so this job lints
+        # against the same collections deploy.yml applies.
         run: |
           set -euo pipefail
           ./scripts/ci/install-ansible.sh bundle
@@ -2038,11 +1916,10 @@ jobs:
         run: |
           # syntax-check only needs the vars file to exist and parse.
           # Do not expose production vault material to Dependabot PRs.
-          # GUARD (2026-07-27): only write the stub if no password file
-          # exists — on 2026-07-25 these exact commands, reproduced on an
-          # operator workstation, silently OVERWROTE the real vault
-          # password (which had no other copy). Ephemeral CI runners never
-          # have the file, so the guard is a no-op in CI.
+          # GUARD: only write the stub if no password file exists — run on an
+          # operator workstation, these commands would otherwise silently
+          # OVERWRITE the real vault password. Ephemeral CI runners never have
+          # the file, so the guard is a no-op in CI.
           mkdir -p ~/.ansible
           if [ ! -e ~/.ansible/r1_vault_pass ]; then
             printf '%s\n' 'ci-syntax-only' > ~/.ansible/r1_vault_pass
@@ -2057,39 +1934,35 @@ jobs:
             -e version=v0.0.0-ci -e binaries_csv=stellarindex-api -e local_dist_dir=/tmp/ci-dist
 
       - name: jinja template parse gate
-        # r1 2026-08-29: pgbackrest-backup.sh.j2 carried bash's array-length
-        # idiom, which Jinja reads as a COMMENT — the template could not
-        # render, so #305's per-repo nightly backup never reached the host
-        # while every gate here stayed green (`--syntax-check` parses
-        # playbooks, never template bodies). Parses all *.j2 as ansible will.
+        # Bash's array-length idiom reads as a Jinja COMMENT, so a template
+        # carrying it cannot render and never reaches the host — while
+        # `--syntax-check` stays green, because it parses playbooks, never
+        # template bodies. Parses all *.j2 as ansible will.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/lint-jinja-templates.sh
       - name: jinja template parse gate self-test
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/lint-jinja-templates-test.sh
       - name: ClickHouse Prometheus endpoint self-test
-        # r1 2026-09-03: ClickHouse serves its own /metrics, but the stock
-        # config.xml ships the whole <prometheus> block inside an XML
-        # comment — nothing on 9363, zero `ClickHouse*` series, so the lake
-        # behind every explorer read had no health signal while the file on
-        # disk looked like it configured one. Renders the role template and
-        # requires the block to be a live element in an XML parse (a comment
-        # is not), then pins the port + job name across the template, the
-        # task, the scrape config and both rule trees. No hosts, no
-        # ClickHouse, no ansible run.
+        # ClickHouse serves its own /metrics, but the stock config.xml ships
+        # the whole <prometheus> block inside an XML comment — nothing on 9363,
+        # zero `ClickHouse*` series, so the lake behind every explorer read has
+        # no health signal while the file on disk looks like it configures one.
+        # Renders the role template and requires the block to be a live element
+        # in an XML parse (a comment is not), then pins the port + job name
+        # across the template, the task, the scrape config and both rule trees.
+        # No hosts, no ClickHouse, no ansible run.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/clickhouse-exporter-test.sh
       - name: ansible ClickHouse host-gate self-test
-        # F128 (audit-2026-09-02): the role CONFIGURES ClickHouse in four
-        # task files (15-log-discipline plus 20/21/22) and INSTALLS it in a
-        # fifth, and the config ones ran unconditionally — so the DR
-        # bring-up, a fresh r2/r3 or any no-lake box hard-failed the whole
-        # role on the first of them. Gating them on run_clickhouse would be
-        # the wrong fix (it is false on r1 BY DESIGN, and r1 is the host
-        # they exist for); arm B here fails on exactly that mistake. Runs
-        # the role's own tasks/main.yml with -c local against three host
-        # shapes, the log-discipline arms under --check. No hosts, no
-        # ClickHouse, no writes outside a temp dir.
+        # The role CONFIGURES ClickHouse in four task files (15-log-discipline
+        # plus 20/21/22) and INSTALLS it in a fifth; run unconditionally, the
+        # config ones hard-fail the whole role on the DR bring-up, a fresh r2/r3
+        # or any no-lake box. Gating them on run_clickhouse is the wrong fix (it
+        # is false on r1 BY DESIGN, and r1 is the host they exist for); arm B
+        # here fails on exactly that mistake. Runs the role's own tasks/main.yml
+        # with -c local against three host shapes, the log-discipline arms under
+        # --check. No hosts, no ClickHouse, no writes outside a temp dir.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-clickhouse-host-gate-test.sh
       - name: ansible listing-sync pubnet gate
@@ -2099,12 +1972,11 @@ jobs:
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-listing-sync-gate-test.sh
       - name: zfs-snapshot dataset coverage
-        # NS03 (audit-2026-09-02): the rolling-snapshot job covered
-        # data/clickhouse and data/postgres — both DERIVED — while the
-        # Galexie LCM archive they are derived from (data/minio, 2.64 TB)
-        # had no snapshot and no off-host copy. Renders the role's real
-        # zfs-snapshot.env.j2 and cross-checks it against the script's
-        # built-in default and the role's own zfs_datasets.
+        # The rolling-snapshot job must cover the Galexie LCM archive
+        # (data/minio), not only data/clickhouse and data/postgres, which are
+        # derived from it. Renders the role's real zfs-snapshot.env.j2 and
+        # cross-checks it against the script's built-in default and the role's
+        # own zfs_datasets.
         #
         # Here rather than in repo-gates: it needs a python with
         # jinja2 + PyYAML, which only this job installs (via ansible).
@@ -2114,17 +1986,16 @@ jobs:
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/zfs-snapshot-coverage-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
-        # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
-        # that galexie-input renders restart only on EFFECTIVE change
-        # (comment-only edits used to cost a ~9-min mainnet catchup) and
-        # that the bootstrap binary install restarts every daemon it
-        # replaces. Runs galexie-effective-checksum.yml for real against
-        # temp files with a stub handler — no hosts, no secrets.
+        # Pins that galexie-input renders restart only on EFFECTIVE change (a
+        # comment-only edit must not cost a ~9-min mainnet catchup) and that the
+        # bootstrap binary install restarts every daemon it replaces. Runs
+        # galexie-effective-checksum.yml for real against temp files with a stub
+        # handler — no hosts, no secrets.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-galexie-restart-test.sh
       - name: Postgres DSN credential-encoding test (structural + local ansible run)
-        # A raw '/', '#' or '@' in the vaulted password broke the rendered
-        # DSN's URL parse, so migrate and every service refused to start.
+        # A raw '/', '#' or '@' in the vaulted password breaks the rendered
+        # DSN's URL parse, so migrate and every service refuse to start.
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
@@ -2248,56 +2119,52 @@ jobs:
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-keepalived-healthcheck-test.sh
       - name: verify-archive Tier D cron-argument test (#362)
-        # r1 2026-09-02: the Tier D fork-detection cron rendered
-        # `-to -1` (stellarindex_live_seam_ledger defaults to 0, minus 1),
-        # which `verify-archive`'s fs.Uint rejects at parse time — the
-        # weekly ADR-0016 §7.4 control had never produced a single journal
-        # line. --syntax-check and ansible-lint both pass such a task; only
-        # RENDERING it and checking the flag values catches it. No hosts.
+        # A cron rendering `-to -1` (stellarindex_live_seam_ledger defaults to
+        # 0, minus 1) is rejected by `verify-archive`'s fs.Uint at parse time,
+        # so the weekly ADR-0016 §7.4 fork-detection control never runs.
+        # --syntax-check and ansible-lint both pass such a task; only RENDERING
+        # it and checking the flag values catches it. No hosts.
         #
-        # GH-778: this gate asserts on internal/ops/archive/verify_archive.go
-        # (the flags it renders must still exist and -to must still be an
-        # fs.Uint), so a Go-only diff that renames one of those flags has to
-        # run it too — gating on `ansible` alone let such a diff skip the
-        # only test that reads it. `go=='true'` doesn't run the ansible
-        # install step above, so install the Jinja/YAML the script needs
-        # itself; the script already fails closed in CI without them.
+        # This gate asserts on internal/ops/archive/verify_archive.go (the flags
+        # it renders must still exist and -to must still be an fs.Uint), so a
+        # Go-only diff that renames one of those flags has to run it too.
+        # `go=='true'` doesn't run the ansible install step above, so install
+        # the Jinja/YAML the script needs itself; the script already fails
+        # closed in CI without them.
         if: needs.preflight.outputs.ansible == 'true' || needs.preflight.outputs.go == 'true'
         run: |
           python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
           ./scripts/ci/verify-archive-tier-d-test.sh
       - name: deploy migrations-sync test (structural + local ansible run)
-        # 2026-08-29 incident (r1 deploy of v0.49.0, run 33244745680): the
-        # directory-src `copy` that #268 put in for the migrations dir is one
-        # SFTP round-trip per file — > 16 min for 291 unchanged files, and
-        # it dropped synchronize's `delete: true`. Pins the sync to ONE
-        # unarchive transfer and runs tasks/sync-migrations.yml for real
-        # (-c local, temp dirs): extras pruned, idempotent re-run, nothing
-        # outside dest touched, empty source fails closed. Needs GNU tar
-        # (unarchive's --diff) — this runner has it. No hosts, no secrets.
+        # A directory-src `copy` is one SFTP round-trip per file — > 16 min for
+        # a few hundred unchanged migrations — and drops synchronize's
+        # `delete: true`. Pins the sync to ONE unarchive transfer and runs
+        # tasks/sync-migrations.yml for real (-c local, temp dirs): extras
+        # pruned, idempotent re-run, nothing outside dest touched, empty source
+        # fails closed. Needs GNU tar (unarchive's --diff) — this runner has it.
+        # No hosts, no secrets.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/deploy-sync-test.sh
       - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
         if: needs.preflight.outputs.ansible == 'true'
         working-directory: configs/ansible
-        # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the
-        # exit code, so this REQUIRED check was permanently green even on
-        # error-level violations — a silent false green. It is dropped: a NEW
-        # violation in any non-grandfathered rule now fails the check. The
-        # ~535 pre-existing moderate findings are grandfathered via skip_list
-        # in configs/ansible/.ansible-lint (auto-discovered from this dir);
-        # burn that list down to re-enable each rule as an enforced gate.
+        # No trailing `|| true`: that would keep this REQUIRED check
+        # permanently green even on error-level violations. A NEW violation in
+        # any non-grandfathered rule fails the check. Pre-existing moderate
+        # findings are grandfathered via skip_list in
+        # configs/ansible/.ansible-lint (auto-discovered from this dir); burn
+        # that list down to re-enable each rule as an enforced gate.
         run: ansible-lint --profile moderate roles/ playbooks/ tasks/
       - name: secret-rendering template tasks suppress --diff
-        # backup-restore-7 (audit-2026-08-28): a template task that inlines
-        # vault secrets (pgbackrest cipher-pass, S3 key pair) without
-        # `diff: false` prints them into the weekly ansible-drift job log
-        # via `--check --diff`. Pure-Python (PyYAML); also in verify.sh.
+        # A template task that inlines vault secrets (pgbackrest cipher-pass,
+        # S3 key pair) without `diff: false` prints them into the weekly
+        # ansible-drift job log via `--check --diff`. Pure-Python (PyYAML);
+        # also in verify.sh.
         if: needs.preflight.outputs.ansible == 'true'
         run: python3 ./scripts/ci/lint-ansible-secret-diff.py
       - name: installed scripts reach ClickHouse with a credential file (report-only)
-        # INV-0802: lists every clickhouse-client / :8123 call that would
-        # still authenticate as CH `default`. Becomes fatal with the lock.
+        # Lists every clickhouse-client / :8123 call that would still
+        # authenticate as CH `default`. Becomes fatal with the lock.
         if: needs.preflight.outputs.ansible == 'true'
         run: |
           python3 ./scripts/ci/lint-ch-client-auth.py
@@ -2346,12 +2213,10 @@ jobs:
         working-directory: web/explorer
         run: pnpm lint
         if: needs.preflight.outputs.web == 'true'
-      # The vitest suite ran in NEITHER this job nor scripts/dev/verify.sh
-      # (cold audit 2026-08-04) — 209 tests across 49 files, all green and
-      # all dead, including safe-domain.test.ts (the isSafeHomeDomain /
-      # isSafePublicImageUrl phishing + client-SSRF gate), the CS-009 og
-      # SSRF regression, and the AGT-06 stale-flag regression. A refactor
-      # loosening any of them would have landed green.
+      # Runs the vitest suite, including safe-domain.test.ts (the
+      # isSafeHomeDomain / isSafePublicImageUrl phishing + client-SSRF gate)
+      # and the og SSRF and stale-flag regressions. Unrun, a refactor
+      # loosening any of them would land green.
       - name: "web/explorer pnpm test"
         working-directory: web/explorer
         run: pnpm test
@@ -2364,15 +2229,12 @@ jobs:
       # through to the seed-only path when CI can't reach the
       # production API — that's expected and not a CI failure.
       #
-      # We deliberately run the build ONLY against the CI stub URL.
-      # A second build against the real API used to live here, but
-      # Next.js's per-page-render 60s worker timeout is too tight
-      # for /assets/native — XLM has 5,553 markets and the build
-      # serialises the response into the static HTML, which trips
-      # the timeout on busy build hosts. CF Pages does the real-API
-      # build at deploy time with its own retry policy, so the CI
-      # second-pass was redundant. Keep the stub-URL build — it
-      # exercises every code path that doesn't depend on API shape.
+      # The build runs ONLY against the CI stub URL. A real-API build
+      # trips Next.js's 60s per-page-render worker timeout on /assets/native
+      # (XLM's thousands of markets serialise into the static HTML) on busy
+      # build hosts; CF Pages does the real-API build at deploy time with its
+      # own retry policy. The stub-URL build exercises every code path that
+      # doesn't depend on API shape.
       - name: "web/explorer pnpm build"
         working-directory: web/explorer
         run: pnpm build
@@ -2383,22 +2245,17 @@ jobs:
           # generateStaticParams kicks in when the fetch fails, so
           # the build still succeeds with seed-only slugs.
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
-      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
-      # DEP-F1 (audit-2026-08-14): the `pnpm audit --audit-level high` gate
-      # that lived here enforced NOTHING from 2026-07-15 on — the npm advisory
-      # endpoint it calls returned ERR_PNPM_AUDIT_BAD_RESPONSE continuously
-      # (registry-side), so the step loud-SKIPPED every run and the promised
-      # OSV/trivy backstop stayed unwired: a HIGH advisory could ship green.
-      # Replaced with an endpoint-INDEPENDENT scanner — trivy reads the
-      # committed pnpm-lock.yaml against its own vuln DB (no npm advisory
-      # endpoint in the path), so it keeps enforcing through the outage. Same
-      # SHA-pinned action and same posture as the scheduled scan in
-      # security.yml: ignore-unfixed (an unfixable upstream CVE must not red
-      # every PR — it re-enters the moment a fixed version exists) and
-      # HIGH,CRITICAL only. node_modules is skipped so the verdict is a pure
-      # function of the committed lockfile, not of what `pnpm install`
-      # happened to resolve. scan-ref is repo-root-relative: `uses:` steps
-      # ignore this job's defaults.run.working-directory.
+      # Per-PR web-dependency vuln gate. trivy reads the committed
+      # pnpm-lock.yaml against its own vuln DB, so no npm advisory endpoint is
+      # in the path — `pnpm audit` depends on one, and while it errors the
+      # gate loud-skips and a HIGH advisory ships green. Same SHA-pinned
+      # action and same posture as the scheduled scan in security.yml:
+      # ignore-unfixed (an unfixable upstream CVE must not red every PR — it
+      # re-enters the moment a fixed version exists) and HIGH,CRITICAL only.
+      # node_modules is skipped so the verdict is a pure function of the
+      # committed lockfile, not of what `pnpm install` happened to resolve.
+      # scan-ref is repo-root-relative: `uses:` steps ignore this job's
+      # defaults.run.working-directory.
       - name: web-deps vuln scan (trivy, pnpm-lock)
         if: needs.preflight.outputs.web == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -2442,11 +2299,8 @@ jobs:
         if: needs.preflight.outputs.web == 'true'
         env:
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
-      # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
-      # DEP-F1 (audit-2026-08-14): see the web/explorer job above — the
-      # `pnpm audit` gate that lived here enforced nothing since 2026-07-15
-      # (ERR_PNPM_AUDIT_BAD_RESPONSE loud-skip). Replaced with the same
-      # endpoint-independent trivy lockfile scan, identical posture to
+      # Per-PR web-dependency vuln gate: the same endpoint-independent trivy
+      # lockfile scan as the web/explorer job above, identical posture to
       # security.yml (ignore-unfixed, HIGH,CRITICAL). scan-ref is
       # repo-root-relative; node_modules skipped so the verdict is a pure
       # function of the committed web/status/pnpm-lock.yaml.
@@ -2485,12 +2339,9 @@ jobs:
         # secret. We invoke the OSS CLI directly instead (same scan,
         # MIT licensed, no key).
         run: |
-          # F-1294 (codex audit-2026-05-13): SHA-verified install.
-          # Pre-fix this was `curl | tar -xz` straight, no
-          # checksum. Now we download, verify, then unpack.
-          # Checksum source (audit-2026-07-16 C4-17b): the committed
+          # SHA-verified install: download, verify against the committed
           # GITLEAKS_TARBALL_SHA256_DEFAULT (top-level env, versioned +
-          # reviewable).
+          # reviewable), then unpack.
           SHA="$GITLEAKS_TARBALL_SHA256_DEFAULT"
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
           echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
@@ -2511,10 +2362,10 @@ jobs:
           done
           echo "::error::go mod download failed after 3 attempts"; exit 1
       - name: Fuzz smoke
-        # #340 item 5. The unit-test job already runs every fuzz target's
-        # SEED corpus (a Go fuzz target is an ordinary test without
-        # -fuzz); this job is the GENERATIVE pass, which is the half that
-        # finds inputs nobody thought to write down.
+        # The unit-test job already runs every fuzz target's SEED corpus (a Go
+        # fuzz target is an ordinary test without -fuzz); this job is the
+        # GENERATIVE pass, which is the half that finds inputs nobody thought
+        # to write down.
         #
         # 30s per target is a smoke, not a campaign: it catches shallow
         # crashers on every PR at a few minutes of runner time. Deep runs
@@ -2536,8 +2387,8 @@ jobs:
     name: branch protection status
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # CID-01 (audit-2026-07-23): only meaningful on the branch itself —
-    # a PR's merge-ref isn't "main", so this only runs on push-to-main.
+    # Only meaningful on the branch itself — a PR's merge-ref isn't
+    # "main", so this only runs on push-to-main.
     if: github.event_name == 'push'
     permissions: {}
     steps:
