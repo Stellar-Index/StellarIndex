@@ -137,7 +137,7 @@ type chunkResult struct {
 // Empty chunks (zero ledgers processed — the SDK's stream may
 // legitimately yield zero ledgers for ranges before a bucket exists)
 // are skipped when choosing WHICH pairs to compare, but never skip
-// the check itself (DAT-11): the boundary is re-targeted at the
+// the check itself: the boundary is re-targeted at the
 // nearest non-empty neighbours on each side, so an empty chunk
 // sitting between two non-empty chunks — which would mask a genuine
 // mid-range hole if the check were skipped outright — still surfaces
@@ -150,11 +150,11 @@ type chunkResult struct {
 // chunk's index — the boundary belongs to the chunk whose last
 // ledger it hangs off. That increment is what makes the failure
 // PAGEABLE: the P1 stellarindex_stellar_archive_divergence rule
-// selects that counter, so a break landing on one of the ~11
-// worker-chunk boundaries (rather than inside a chunk) used to abort
+// selects that counter, so without it a break landing on one of the
+// ~11 worker-chunk boundaries (rather than inside a chunk) would abort
 // the run without touching it, surfacing only as the severity-ticket
 // stellarindex_verify_archive_unit_failed. Same divergence class,
-// same page (#282). The counter reaches Prometheus via
+// same page. The counter reaches Prometheus via
 // verify_archive_textfile.go, which reads the live collector on the
 // way out and so picks these up automatically.
 func stitchChunks(results []chunkResult) error {
@@ -227,10 +227,10 @@ func (o checkpointAnchorOutcome) String() string {
 // that checkpoint. Above the mirror's high-water the walk is simply
 // ahead of the fill job — on r1 the mirror is filled at 02:2x UTC and
 // the tier-B walk runs at 04:38 UTC, so ~23 checkpoints closed in
-// between are absent on every single run, by design (F144). Counting
-// those as missing archive data is what made ADR-0017's hard
-// invariant unenforceable on the deployed path: the flag that would
-// enforce it could not be turned on without failing every night.
+// between are absent on every single run, by design. Counting those
+// as missing archive data would make ADR-0017's hard invariant
+// unenforceable on the deployed path: the flag that enforces it could
+// not be turned on without failing every night.
 //
 // Errors (read failure, hash divergence) abort the chunk walk; the
 // caller bumps the mismatch counter and propagates.
@@ -258,15 +258,15 @@ func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Has
 // parsing; the caller controls those.
 //
 // Every chunk validates ledger N's PreviousLedgerHash against ledger
-// N-1's hash within this chunk (GH-694: this used to be gated on the
-// "chain" tier only, so a checkpoint-only run — Tier B, the nightly —
-// had no gap detection at all; sequence/hash continuity is intrinsic
-// to the LCM stream and costs nothing extra, so it always runs).
+// N-1's hash within this chunk, whatever the tier: sequence/hash
+// continuity is intrinsic to the LCM stream and costs nothing extra,
+// and gating it on the "chain" tier would leave a checkpoint-only run
+// (Tier B, the nightly) with no gap detection at all.
 // Cross-chunk boundaries are validated by stitchChunks instead.
 //
 // Errors abort the chunk's walk; the orchestrator's errgroup
-// cancels sibling chunks. The verification semantics match the
-// pre-parallel verifyArchiveLCMWalk one-for-one.
+// cancels sibling chunks. The verification semantics match a serial
+// single-chunk walk one-for-one.
 //
 //nolint:gocognit,funlen,gocyclo // walk-loop linearity beats premature splitting
 func verifyChunk(
@@ -352,7 +352,7 @@ func verifyChunk(
 			obs.VerifyArchiveLedgersVerified.WithLabelValues(chunkLabel).Inc()
 			obs.VerifyArchiveCurrentLedger.WithLabelValues(chunkLabel).Set(float64(seq))
 			// Liveness signal for the systemd watchdog: a walk that
-			// stops advancing this stops feeding WATCHDOG=1 (OBS-07).
+			// stops advancing this stops feeding WATCHDOG=1.
 			verifyArchiveProgress.Ledgers.Add(1)
 
 			if time.Since(lastProgress) >= progressEvery {
@@ -379,8 +379,7 @@ func verifyChunk(
 type chunkOrchestratorOpts struct {
 	// MirrorCoverage is the checkpoint span the cross-anchor mirror
 	// holds, measured once before the walk. The zero value (Known
-	// false) treats every absent checkpoint as missed, which is the
-	// behaviour every caller had before the span existed.
+	// false) treats every absent checkpoint as missed.
 	MirrorCoverage archiveMirrorCoverage
 
 	// ChunkIdxs maps each position in `chunks` to the chunk's

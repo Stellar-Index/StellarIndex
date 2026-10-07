@@ -61,8 +61,8 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	// LoadWithEnv (not bare Load) so the STELLARINDEX_* env overrides —
 	// the injected Postgres DSN / Redis + ClickHouse secrets — take
 	// effect, matching every other binary (cmd/stellarindex-{api,indexer,
-	// aggregator} and the rest of internal/ops). Bare Load left this
-	// operator reading the placeholder TOML DSN/secrets (C3-14).
+	// aggregator} and the rest of internal/ops). Bare Load would leave
+	// this operator reading the placeholder TOML DSN/secrets.
 	cfg, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -94,24 +94,23 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	// pipeline.NewColdDataStore, NOT datastore.NewDataStore: the SDK
 	// builds every S3 client from the ambient AWS credential chain,
 	// which on r1 carries local MinIO's keys (the hot tier
-	// authenticates through it). Presenting those to real AWS failed
+	// authenticates through it). Presenting those to real AWS fails
 	// every cold read with `InvalidAccessKeyId ... does not exist in
-	// our records` (diagnosed 2026-07-25) — which for THIS operator
-	// meant the disaster-recovery path (re-pull a range trimmed too
-	// aggressively) could never have worked either.
+	// our records` — which for THIS operator would break the
+	// disaster-recovery path (re-pull a range trimmed too aggressively).
 	cold, err := pipeline.NewColdDataStore(rootCtx, cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("cold datastore: %w", err)
 	}
 	defer func() { _ = cold.Close() }()
 
-	// CA2-A20-correct-7: both tiers' schemas must agree before any
+	// Both tiers' schemas must agree before any
 	// path is built. rehydratePaths derives every object key from
 	// ONE schema (hot's); if cold's actual layout uses a different
 	// LedgersPerFile/FilesPerPartition/extension, every key handed to
 	// cold.Exists is simply wrong-shaped and 404s — indistinguishable
 	// from a genuine archive gap. Mirrors the hard-fail-on-mismatch
-	// guard in internal/ledgerstream/ledgerstream.go (INT-01).
+	// guard in internal/ledgerstream/ledgerstream.go.
 	schema, err := loadAndVerifyRehydrateSchemas(rootCtx, hot, cold, cfg.Storage)
 	if err != nil {
 		return err
@@ -147,16 +146,14 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 // rehydrateExitError decides whether a completed rehydrate run should
 // exit non-zero.
 //
-// CA2-A20-correct-7: `missing` alone must NOT fail the run — it's a
-// legitimate diagnostic signal (a genuine archive gap, or a normal
-// spot-check outcome) that the previous behaviour correctly left
-// exit-0. But every single requested file missing, with zero
+// `missing` alone must NOT fail the run — it's a legitimate diagnostic
+// signal (a genuine archive gap, or a normal spot-check outcome) that
+// exits 0. But every single requested file missing, with zero
 // copied/skipped/errored, means nothing in the range was found on
 // cold at all — the exact fully-mismatched-schema symptom (every
 // hot-shaped key 404s against a differently-partitioned cold
-// mirror), not a sparse archive. Previously this returned nil (exit
-// 0) unconditionally whenever errs was 0, silently reporting success
-// on a run that copied nothing.
+// mirror), not a sparse archive. Returning nil (exit 0) whenever errs
+// is 0 would silently report success on a run that copied nothing.
 func rehydrateExitError(totalPaths, missing, errs int) error {
 	if errs > 0 {
 		return fmt.Errorf("rehydrate finished with %d errors", errs)
@@ -268,12 +265,11 @@ func rehydrateOneFile(ctx context.Context, logger *slog.Logger, hot, cold rehydr
 // copyColdToHot performs the actual cold->hot copy for one path that
 // is confirmed absent from hot.
 //
-// DAT-09: a cold.GetFile error was previously ALWAYS counted as
-// "missing in cold" (a genuine archive gap), even when the failure
-// was actually transient (network blip, throttling, auth hiccup) —
-// which both misreports a real cold-tier read fault as a data gap
-// AND still exits 0, since only `errs` (not `missing`) forces the
-// caller's non-zero exit. cold.Exists is now checked FIRST: a
+// Counting every cold.GetFile error as "missing in cold" (a genuine
+// archive gap), even a transient one (network blip, throttling, auth
+// hiccup), would both misreport a real cold-tier read fault as a data
+// gap AND exit 0, since only `errs` (not `missing`) forces the
+// caller's non-zero exit. So cold.Exists is checked FIRST: a
 // definitive not-found (exists=false, err=nil) is the only path that
 // reports rehydrateMissing; any Exists error, or any GetFile error
 // AFTER Exists confirmed presence, reports rehydrateErrored instead.

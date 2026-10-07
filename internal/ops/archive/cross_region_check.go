@@ -131,8 +131,8 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 		return err
 	}
 	if len(regions) < 2 {
-		// F-1234 (audit-2026-05-12): pre-R2/R3-bringup posture has
-		// only R1 deployed; treating that as an error trains
+		// Before R2/R3 bring-up only R1 is deployed; treating that
+		// as an error trains
 		// operators to ignore the command. Return nil so the
 		// pre-launch smoke flow can call this unconditionally and
 		// get a meaningful no-op until multi-region lands.
@@ -189,7 +189,7 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 			totalDivergences, len(regions))
 	}
 	if totalComparable == 0 {
-		// OBS-07: no sampled bucket ever had >=2 responding regions, so
+		// No sampled bucket ever had >=2 responding regions, so
 		// NOTHING was actually compared — a total inability to compare
 		// (every region down but one, or a total outage) must not read
 		// as "all consistent". See the ERR lines above for which
@@ -337,7 +337,7 @@ func splitPair(p string) (base, quote string, err error) {
 // (diverged, compared): diverged is true when the ≥2 responding
 // regions disagreed; compared is true when there were actually ≥2
 // responding regions to compare at all — false means this sample
-// proves NOTHING (OBS-07: a caller that only tracks `diverged` would
+// proves NOTHING (a caller that only tracks `diverged` would
 // read "no divergence" across a run where every sample was
 // incomparable as "all consistent", when in fact nothing was ever
 // checked).
