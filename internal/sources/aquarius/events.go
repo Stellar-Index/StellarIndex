@@ -44,7 +44,7 @@ const (
 	EventReservesSync = "reserves_sync"
 	// SetProtocolFee / ClaimProtocolFee are governance/treasury events
 	// — fee schedule changes + claim destinations. No trade impact;
-	// classification only so we audit the full topic set.
+	// decoded into FeeEvent rows in aquarius_protocol_fee.
 	EventSetProtocolFee   = "set_protocol_fee"
 	EventClaimProtocolFee = "claim_protocol_fee"
 	// kill_* / unkill_* are pool-circuit-breaker events. We don't act

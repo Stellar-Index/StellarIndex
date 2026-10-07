@@ -194,8 +194,8 @@ func classify(e *events.Event) (fieldTopic string, isSwap bool) {
 	return e.Topic[1], true
 }
 
-// action is the family of Phoenix events we recognise: swap, the
-// two liquidity actions, or the two stake actions. The dispatcher
+// action is the family of Phoenix events we recognise: swap, liquidity,
+// stake, reward, governance and factory shapes, listed below. The dispatcher
 // hot path uses classifyAny so a single topic[0] match drives the
 // routing without three separate Matches() calls per event.
 type action int
@@ -259,8 +259,8 @@ var topicPairActions = map[topicPair]action{
 }
 
 // classifyAny is the union of classify + liquidity / stake topic
-// matching. Returns (action, topic[1] blob) when the event is one
-// of the five Phoenix actions; (actionUnknown, "") otherwise.
+// matching. Returns (action, topic[1] blob) for any recognised action
+// ("" topic[1] for single-topic Map shapes); (actionUnknown, "") otherwise.
 //
 // Keeping the existing two-return classify() alongside this helper
 // preserves the existing call-sites (swap tests and the original
