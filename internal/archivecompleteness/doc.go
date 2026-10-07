@@ -1,52 +1,15 @@
-// Package archivecompleteness implements the daemon side of the
-// dual-archive completeness contract specified in [ADR-0017].
+// Package archivecompleteness is the daemon side of the dual-archive
+// completeness contract ([ADR-0017]), run by `stellarindex-ops
+// archive-completeness check|fix|verify` and a daily timer
+// (docs/operations/archive-completeness.md).
 //
-// # Scope
-//
-// Two archives are checked:
-//
-//   - The PRIMARY archive — galexie-archive MinIO bucket, holding
-//     per-ledger XDR meta files. Source of rate data.
-//   - The CROSS-ANCHOR archive — `/srv/history-archive/`, a
-//     traditional Stellar history archive. Used by verify-archive
-//     to anchor each checkpoint against SDF's signed view.
-//
-// Both must be structurally complete for the API's downstream
-// integrity guarantees to hold. The package implements the
-// ADR-0017 modes driven by the
-// `stellarindex-ops archive-completeness <mode>` subcommand and
-// the `archive-completeness.{service,timer}` systemd units, but
-// today only the cross-anchor archive is enforced — see "Modes"
-// below.
-//
-//   - [CrossAnchorChecker.Check] — read-only scan of the cross-
-//     anchor archive's `ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`
-//     positions, returning a list of missing checkpoints.
-//
-//   - [Report] — the JSON wire shape that bundles results from
-//     both archives; consumed by `fix` (multi-source fallback
-//     fetcher that downloads missing bytes back into place) and
-//     `verify` (chain-link + checkpoint-anchor integrity check).
-//
-// # Modes
-//
-//  1. `check` — read-only scan. Cross-anchor is a native Go
-//     filesystem walk and is shipped. The primary (galexie-archive)
-//     scan is NOT implemented: [Report.Primary] is always left nil
-//     and no code in this package shells out to `galexie
-//     detect-gaps` or anything else to populate it.
-//  2. `fix` — fetches missing files via the multi-source fallback
-//     chain (SDF mainnet → AWS public-blockchain → peers).
-//  3. `verify` — chain-link + checkpoint-anchor verification of
-//     the repaired archive.
-//
-// The `archive-completeness.timer` runs the daily steady-state
-// guardrail (see `docs/operations/archive-completeness.md`).
-//
-// # Concurrency
-//
-// CrossAnchorChecker is safe for concurrent Check calls on
-// different ranges. The underlying os.Stat doesn't mutate state.
+// Only the cross-anchor archive (`/srv/history-archive/`, which anchors
+// checkpoints against SDF's signed view) is enforced:
+// [CrossAnchorChecker.Check] walks its ledger files and lists missing
+// checkpoints, and is safe for concurrent calls. The primary
+// galexie-archive scan is NOT implemented; [Report.Primary] is always
+// nil. `fix` refetches missing files (SDF, then AWS public blockchain,
+// then peers); `verify` checks chain links and checkpoint anchors.
 //
 // [ADR-0017]: ../../docs/adr/0017-archive-completeness-invariants.md
 package archivecompleteness
