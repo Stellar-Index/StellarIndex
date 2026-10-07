@@ -27,16 +27,16 @@ import (
 // compression policy, the run lock and the free-space guard; it knows
 // nothing about which usd_volume tier is being repaired. The rows are the
 // tier's business, reached through [chunkRestampTier] — implemented by
-// usd_volume_restamp_chunks_xlmbase.go (the #372 anchor re-derive) and
-// usd_volume_restamp_chunks_exact.go (the W5.3 peg identity). Both tiers
+// usd_volume_restamp_chunks_xlmbase.go (the XLM-base anchor re-derive) and
+// usd_volume_restamp_chunks_exact.go (the exact-tier peg identity). Both tiers
 // live in COMPRESSED chunks and both pay the same price for writing into
 // one, so they share the walk rather than each growing their own.
 //
 // # Why a second walk exists
 //
 // The day walk (usd_volume_restamp_xlmbase.go) UPDATEs rows in place, in
-// -batch transactions, wherever they are. On production 2026-09-03 that
-// meant every one of the 90 `trades` chunks in [2026-01-01, 2026-07-21]
+// -batch transactions, wherever they are. Measured on production, every
+// one of the 90 `trades` chunks in the repair window
 // was COMPRESSED (policy: compress_after 7 days; TimescaleDB 2.26.4;
 // max_tuples_decompressed_per_dml_transaction = 100000), and a DML into a
 // compressed chunk is serviced by decompressing it wholesale: one
@@ -44,10 +44,10 @@ import (
 // rows/min against a 28.6M-row write set, and it was stopped with 0 rows
 // committed. The dry run never showed it — it only reads.
 //
-// Decompressing the chunk is necessary and was not sufficient. The batch
-// statement names the HYPERTABLE, so until it carried its own `ts` bound
-// every one of the 258 compressed chunks was a result relation of every
-// batch and got decompressed too — measured 2026-09-06, a 23-row UPDATE
+// Decompressing the chunk is necessary but not sufficient. The batch
+// statement names the HYPERTABLE, so without its own `ts` bound
+// every one of the 258 compressed chunks is a result relation of every
+// batch and gets decompressed too — measured: a 23-row UPDATE
 // inside a freshly decompressed chunk ran 60 minutes and wrote ~270 GB
 // of WAL. The bound lives with the statement
 // ([timescale.Store.ApplyXLMBaseUSDVolumeRestamp]); this walk is what
@@ -145,7 +145,7 @@ import (
 //     compress_chunk and the policy re-enable) is printed to stderr,
 //     because either statement can outlive the window between
 //     run-heavy-job.sh's SIGTERM and its SIGKILL (the wrapper's
-//     TimeoutStopSec: 5min by default since 2026-09-04, 2h where the
+//     TimeoutStopSec: 5min by default, 2h where the
 //     runbook's launch line exports HEAVY_JOB_STOP_TIMEOUT=2h, and 90 s
 //     on a host that has not had the heavy-job-wrapper tag applied).
 //   - RESUMABLE: every chunk is first PROBED read-only, slice by slice,
@@ -661,10 +661,10 @@ const defaultChunkBytesPoll = 30 * time.Second
 // WHY THIS EXISTS. The walk cannot restamp a row in a compressed chunk
 // until the chunk is decompressed, and on r1 that decompress is the
 // longest single step of the run: 49+ minutes measured on a 17.3 GB
-// chunk, and about 1.5 hours on the 159.7 GB outlier at [2026-06-06,
-// 2026-07-06). Row progress is structurally zero for all of it, so
+// chunk, and about 1.5 hours on the 159.7 GB outlier chunk.
+// Row progress is structurally zero for all of it, so on row progress alone
 // `stellarindex_ops_job_no_progress` (30 min flat + 15 min `for`)
-// ticketed on every healthy run — and an alert that fires on every
+// would ticket on every healthy run — and an alert that fires on every
 // healthy run is one the operator stops reading, which is the blindness
 // the alert exists to prevent.
 //
@@ -703,13 +703,11 @@ const defaultChunkBytesPoll = 30 * time.Second
 // window plus a 15 min `for`). Measured at 0.52x the decompress
 // (23.0 s against 44.1 s on the same chunk), the 159.7 GB outlier's
 // ~90 min decompress implies a ~47 min re-compress, which is over that
-// threshold. An earlier version of this comment claimed the 0.52x ratio
-// kept it inside the window; that is arithmetically wrong and is
-// corrected here rather than left as a claim nobody rechecks.
+// threshold.
 //
 // This is accepted because it fails in the SAFE direction: an extra
-// ticket on one chunk, not a silence, and strictly better than the
-// pre-fix state that ticketed through the whole decompress of EVERY
+// ticket on one chunk, not a silence, and strictly better than
+// ticketing through the whole decompress of EVERY
 // chunk. The runbook tells the operator to confirm a `re-compressing`
 // ticket with pg_stat_activity before treating it as a hang.
 // TimescaleDB 2.26.4 publishes no compression-progress view to do better

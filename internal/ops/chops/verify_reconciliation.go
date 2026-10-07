@@ -81,7 +81,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		return fmt.Errorf("verify-reconciliation: %w", verr)
 	}
 	// Re-derive on the gate the live indexer runs with — curated set ∪
-	// protocol_contracts — not on the bare in-code seed (RLT-430): a
+	// protocol_contracts — not on the bare in-code seed: a
 	// contract an operator admitted through protocol_contracts is decoded
 	// live, so its rows are in the table, while an unwarmed re-derive
 	// expects none of them and reports the source as a mismatch that is
@@ -92,7 +92,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		return fmt.Errorf("verify-reconciliation: %w", err)
 	}
 	if *only == "" || *only == "soroswap" {
-		// Fail CLOSED (RLT-416): a failed or partial seed leaves the re-derive
+		// Fail CLOSED: a failed or partial seed leaves the re-derive
 		// decoder rejecting real pair events, which reads as expected=0
 		// against real served rows — a mismatch that is not in the data.
 		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
@@ -110,7 +110,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		if eerr != nil {
 			return fmt.Errorf("%s: %w", src.name, eerr)
 		}
-		// C4-059: rows the re-derive could not decode are dropped from the
+		// Rows the re-derive could not decode are dropped from the
 		// EXPECTED side, and the projector dropped them from the ACTUAL side
 		// for the same reason — so the per-ledger diff below is structurally
 		// blind there and would report OK. Report it as a mismatch so the
@@ -133,8 +133,8 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 				// A source redeployed behind a new contract id (config not
 				// updated) writes nothing, the re-derive expects nothing over
 				// two empty maps, and ReconcileCounts sees no mismatch — the
-				// same vacuous-pass shape verify-recognition already guards
-				// (#1093). expected=0 actual=0 is refused rather than
+				// same vacuous-pass shape verify-recognition guards.
+				// expected=0 actual=0 is refused rather than
 				// certified: a target dark for weeks must not print OK.
 				if reconciliationIsVacuous(expTotal, actTotal) {
 					anyGaps = true
@@ -193,7 +193,7 @@ func sumCounts(m map[uint32]int) int {
 }
 
 // reconciliationIsVacuous reports whether a no-gap target saw zero events on
-// both sides — the vacuous-pass shape (#1093): a source redeployed behind a
+// both sides — the vacuous-pass shape: a source redeployed behind a
 // new contract id with the config not updated writes nothing, the re-derive
 // expects nothing over two empty maps, and ReconcileCounts sees no mismatch.
 // That is indistinguishable from "fully reconciled" unless it is refused.
@@ -212,7 +212,7 @@ func reconciliationIsVacuous(expTotal, actTotal int) bool {
 //     nothing seeded; the decoder still learns the pairs whose new_pair
 //     events fall inside the re-derived range.
 //   - factory SET but no RPC endpoint, or the sweep erroring, IS a
-//     failure and returns an error the caller must not swallow (RLT-416).
+//     failure and returns an error the caller must not swallow.
 //     SeedFromFactoryRPC returns mid-loop, so an error can mean a
 //     PARTIALLY seeded registry: every event of an unseeded pair fails
 //     Matches, the projection re-derive expects 0 against real served

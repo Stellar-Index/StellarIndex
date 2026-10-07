@@ -20,8 +20,7 @@ import (
 )
 
 // verifyUSDVolume is the stellarindex-ops `verify-usd-volume` subcommand —
-// the VALUE half of the usd_volume checks (C4-055 / C4-066,
-// audit-2026-07-23).
+// the VALUE half of the usd_volume checks.
 //
 // The standing usd-volume alerts (configs/prometheus/rules.r1/
 // usd-volume-coverage.yml) are a COVERAGE check: the ratio of trades
@@ -121,19 +120,17 @@ func verifyUSDVolume(args []string) error {
 // not an exact identity — which is why it lives beside, not inside,
 // the exact-tier check.
 //
-// # What ±30% actually catches (#372 F1 — the previous text here was wrong)
+// # What ±30% actually catches
 //
 // It fires at **1.30× overstatement or 1.43× understatement** (a stored
-// value below 0.70 × expected). The old comment said "catches 10×+
-// errors", which reads as the bound's SENSITIVITY and is not: 10×–10⁶×
-// was the size of the 2026-08-04 tier-3b poisoning that motivated it,
-// not the threshold. Anyone reading it as a sensitivity figure concludes
-// a 1.3–1.7 ratio must be something other than an error — which is
-// exactly the wrong hypothesis issue #372 was opened on.
+// value below 0.70 × expected). "Catches 10×+ errors" is NOT its
+// SENSITIVITY: 10×–10⁶× was the size of the tier-3b poisoning that
+// motivated it, not the threshold. Anyone reading it as a sensitivity
+// figure concludes a 1.3–1.7 ratio must be something other than an
+// error — which is exactly the wrong hypothesis.
 //
 // # It is NOT structurally immune to intraday movement
 //
-// The old comment claimed "zero false alarms on ordinary volatility".
 // The two sides read DIFFERENT series: each trade was anchored at its
 // own minute's prices_1m XLM/<peg> bucket, while the bound divides by
 // the day's prices_1d crypto:XLM/fiat:USD VWAP. So the largest ratio an
@@ -141,12 +138,11 @@ func verifyUSDVolume(args []string) error {
 //
 //	max(intraday_hi / day_vwap, day_vwap / intraday_lo)
 //
-// Measured on r1 over 120 days with both series present
-// (2026-01-01…2026-09-02): worst 1.2206 (2026-05-29, day VWAP
-// 0.21619906 against an intraday 0.19606124…0.26389110), mean 1.0370,
-// two days at or above 1.15, none at 1.30. So the bound holds today —
+// Measured on r1 over 120 days with both series present: worst 1.2206
+// (day VWAP 0.21619906 against an intraday 0.19606124…0.26389110), mean
+// 1.0370, two days at or above 1.15, none at 1.30. So the bound holds —
 // by 0.08, on measurement, NOT by construction. A day whose XLM range
-// is ~7% wider than 2026-05-29's can false-fire it, and tightening the
+// is ~7% wider than that worst day's can false-fire it, and tightening the
 // tolerance below ~1.25 without a notional floor makes that routine.
 //
 // A breach where stored AND expected both round to $0.00 is exempt (see
@@ -168,12 +164,11 @@ func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
 
 // xlmBaseLegScale returns the denominator that lifts a group's raw XLM
 // base-amount sum to whole XLM. The scale is a CONNECTOR property, not
-// an asset one (CS-040, and the /v1/history 10× lesson): on-chain DEX
+// an asset one: on-chain DEX
 // rows stamp stroops (1e7), off-chain CEX rows 1e8, the FX pollers
-// 1e6. The bound's first live run hardcoded 1e7 and flagged every
-// honest kraken/bitstamp XLM/EUR day at ratio ≈ 0.100 — the check was
-// wrong, not the data. Same subclass dispatch the insert path's
-// usdVolumeDecimals uses.
+// 1e6. A hardcoded 1e7 would flag every honest kraken/bitstamp XLM/EUR
+// day at ratio ≈ 0.100 — the check would be wrong, not the data.
+// Same subclass dispatch the insert path's usdVolumeDecimals uses.
 func xlmBaseLegScale(source string) *big.Rat {
 	baseDecimals := int64(7) // on-chain stroop scale
 	md := external.Lookup(source)
@@ -198,10 +193,10 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 }
 
 // checkXLMQuoteBound is [checkXLMBaseBound]'s mirror for the `-tier
-// xlm-quote` population (CA2-A17): DEX trades where XLM sits in the
+// xlm-quote` population: DEX trades where XLM sits in the
 // QUOTE leg instead of the base one. checkXLMBaseBound can never match
-// these rows (their BaseAsset is never an XLM form), so before this they
-// got no automated judgement at all — only counted into the printed
+// these rows (their BaseAsset is never an XLM form), so without this they
+// get no automated judgement at all — only counted into the printed
 // MEASURED rollup.
 func checkXLMQuoteBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
 	return checkXLMLegBound(groups, spec, dayVWAP, minRows, maxList, "XLM-QUOTE",
@@ -319,7 +314,7 @@ func newTierRollup() *usdVolumeTierRollup {
 // classified or had unparseable sums, and the tier rollups for the report.
 //
 // parseErrs is counted separately from violations here — the caller decides
-// whether to fold it in (#1093: it must, so a mis-spelled asset id on a
+// whether to fold it in (it must, so a mis-spelled asset id on a
 // landed trade can't leave the judged population with a clean exit).
 //
 //nolint:gocognit // one linear pass: classify → accumulate → judge exact tiers → print.
@@ -337,10 +332,10 @@ func classifyExactTierGroups(
 		if cerr != nil {
 			// An unparseable asset id on a LANDED trade is its own finding;
 			// report it rather than dropping the group silently. Counted as
-			// a violation by the caller (#1093): ClassifyUSDVolumeTier's
+			// a violation by the caller: ClassifyUSDVolumeTier's
 			// error path demotes the group to TierEstimated, which
-			// !tier.Exact() then skips — a mis-spelled asset id was
-			// otherwise dropped out of the judged population with no
+			// !tier.Exact() then skips — a mis-spelled asset id would
+			// otherwise drop out of the judged population with no
 			// non-zero exit to show for it.
 			parseErrs++
 			fmt.Fprintf(os.Stderr, "  UNCLASSIFIABLE %s %s/%s: %v\n", g.Source, g.BaseAsset, g.QuoteAsset, cerr)
@@ -394,11 +389,11 @@ func classifyExactTierGroups(
 }
 
 // usdVolumeTotalViolations combines the exact-tier and XLM-bound violation
-// counts with parseErrs (#1093): an unclassifiable or unparseable group on a
+// counts with parseErrs: an unclassifiable or unparseable group on a
 // LANDED trade — a mis-spelled asset id, a scale ClassifyUSDVolumeTier
-// couldn't resolve — is a defect, not a benign skip. Before this, parseErrs
-// was printed but never folded in, so a day with nothing but unclassifiable
-// groups exited 0.
+// couldn't resolve — is a defect, not a benign skip. If parseErrs were
+// printed but not folded in, a day with nothing but unclassifiable
+// groups would exit 0.
 func usdVolumeTotalViolations(exactViolations, xlmBoundViolations, parseErrs int) int {
 	return exactViolations + xlmBoundViolations + parseErrs
 }
@@ -450,9 +445,9 @@ func verifyXLMBounds(
 	maxList int,
 ) (int, error) {
 	violations := 0
-	// XLM-BASE BOUND (2026-08-04): the estimated tiers were structurally
-	// unjudged — Exact() covers only the pegged tiers — which is why the
-	// tier-3b poisoning shipped invisible for 13 days. For groups whose
+	// XLM-BASE BOUND: without it the estimated tiers are structurally
+	// unjudged — Exact() covers only the pegged tiers — which is how a
+	// tier-3b poisoning stayed invisible for 13 days. For groups whose
 	// BASE leg is XLM the anchor formula IS checkable against the day's
 	// CEX-fed XLM/USD VWAP, within a coarse intraday tolerance.
 	rate, rateOK, rerr := store.DayCloseVWAPXLMUSD(ctx, day)

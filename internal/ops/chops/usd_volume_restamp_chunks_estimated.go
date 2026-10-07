@@ -15,7 +15,7 @@ import (
 //
 // The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
 // compression policy, the run lock and the free-space guard. This file is
-// the other half for every tier whose write set is a ROW LIST — the #372
+// the other half for every tier whose write set is a ROW LIST — the
 // XLM-base re-derive, its XLM-quote mirror, and the CEX fiat-quote
 // re-derive. All three plan a window through the live valuation function,
 // apply the plan in `-chunk-batch` transactions and report the same

@@ -18,9 +18,9 @@ import (
 )
 
 // verify-served-values — the "data-correct, not just code-correct"
-// harness (board #14; audit theme: prior passes proved the CODE sound
-// while the flagship served VALUE was wrong — CS-010's XLM market cap
-// read +58% until sampled by hand).
+// harness: proving the CODE sound does not prove a served VALUE right
+// (the flagship XLM market cap read +58% with sound code until it was
+// sampled by hand).
 //
 // It fetches a curated set of values we SERVE and reconciles each
 // against an INDEPENDENT ground truth, emitting node_exporter
@@ -30,11 +30,11 @@ import (
 //
 //   - XLM circulating + total supply vs the SDF lumen API
 //     (https://developers.stellar.org/docs — dashboard.stellar.org/api/v3/lumens),
-//     the canonical source CS-010's fix is measured against.
+//     the canonical source for XLM supply.
 //   - USDC-on-Stellar total supply vs Stellar Expert's asset API.
 //   - The configured SDF reserve-account LIST vs the list SDF publishes
 //     (sdf_reserve_list.go) — the 2% value tolerance above cannot see
-//     a single added or retired reserve account (C4-069).
+//     a single added or retired reserve account.
 //
 // Deliberately NOT here: price cross-checks (the divergence worker
 // compares served prices against CoinGecko/Chainlink continuously —
@@ -42,7 +42,7 @@ import (
 // count reconciliation (compute-completeness owns served↔lake).
 //
 // The check table is designed to GROW — adding a check is one entry.
-// Mind the window trap (feedback_metric_window_apples_oranges):
+// Mind the window trap:
 // every ground truth here is point-in-time state, never a windowed
 // counter, so both sides measure the same thing.
 //
@@ -439,7 +439,7 @@ func writeAtomic(path, body string) error {
 // servedSupplyField reads a supply field from our own
 // GET /v1/assets/{id} F2 block. The F2 supply fields are served as
 // decimal strings in BASE UNITS (stroops for classic; verified
-// empirically 2026-07-02 — served XLM total was exactly 1e7 × the
+// empirically — served XLM total was exactly 1e7 × the
 // natural-unit truth), so the value is scaled by 10^-decimals before
 // comparison against natural-unit ground truth. supply_as_of_ledger is
 // read alongside so a drift recheck can tell a new snapshot from a stale one.

@@ -21,8 +21,8 @@ import (
 )
 
 // usdVolumeRestamp is the stellarindex-ops `usd-volume-restamp` subcommand
-// — the corrective WRITE half of verify-usd-volume (W5.3, v1-launch-plan;
-// docs/operations/usd-volume-rederive-2026-08.md §5).
+// — the corrective WRITE half of verify-usd-volume
+// (docs/operations/usd-volume-rederive-*.md §5).
 //
 // It carries four TIERS, selected by -tier, because the usd_volume column
 // holds two kinds of number and the estimated kind is reached by three
@@ -31,17 +31,16 @@ import (
 //	-tier exact (default) — tiers 1/2/2b, where usd_volume is a pure
 //	  decimal rescaling of an amount already on the row
 //	  (`pegged_leg / 10^decimals`). Repairable as a SQL identity; that is
-//	  what this file does. Fixes the pre-2026-07-23 class measured on
-//	  2026-07-30: [2026-05-12, 2026-07-22], 66 dirty days, every violation
-//	  a `[base_pegged] sdex` USDC-base row valued by the resolver's VWAP
-//	  (+0.7%) instead of the $1 peg identity.
+//	  what this file does. The measured repair class was 66 dirty days,
+//	  in which every violation was a `[base_pegged] sdex` USDC-base row
+//	  valued by the resolver's VWAP (+0.7%) instead of the $1 peg identity.
 //
 //	-tier xlm-base — the tier-4 XLM anchor
 //	  (`base_amount/1e7 x XLM/USD at ts`), re-derived in GO through the
 //	  store's own [timescale.Store] resolver rather than in SQL, because
 //	  the value is a function of prices_1m at the row's timestamp and not
-//	  of the row alone. Fixes issue #372: every XLM-base DEX trade written
-//	  before `fd1860bd` was valued QUOTE-side through the counterparty's
+//	  of the row alone. It repairs XLM-base DEX trades valued
+//	  QUOTE-side through the counterparty's
 //	  own thin book (a 43x under-valuation on the measured row) or left
 //	  NULL (~31% of the population). See usd_volume_restamp_xlmbase.go.
 //
@@ -85,7 +84,7 @@ import (
 //     peg, nor a supported fiat — is never priced at all. The ~54M
 //     token/token rows on r1 are outside every tier's scan AND its Go
 //     gate, deliberately: their only available rate is the tier-3b bridge
-//     a counterparty authors (the 2026-08-04 and 2026-08-11 incidents).
+//     a counterparty authors.
 //
 // Acceptance after a run: `verify-usd-volume -day <last> -days <N>` over
 // the span.
@@ -104,7 +103,7 @@ import (
 // compression policy, decompress each compressed `trades` chunk in the
 // window, restamp inside it, re-compress it, re-enable the policy,
 // release the lock. It exists because an in-place walk measured ~1,574
-// rows/min against compressed chunks on 2026-09-03 — a rate every tier
+// rows/min against compressed chunks — a rate every tier
 // pays, since they write the same column of the same chunks. The three
 // estimated tiers share one per-chunk restamp
 // (usd_volume_restamp_chunks_estimated.go) and the exact tier has its own
@@ -573,13 +572,13 @@ func restampSourceAllowList(csv string) map[string]bool {
 }
 
 // validateRestampSourceAllowList refuses a -sources name that is not in
-// the tier's own registry (CA2-A13). The estimated tiers resolve their
+// the tier's own registry. The estimated tiers resolve their
 // allow-list through [timescale.restampScanSources], which silently
 // DROPS an unregistered name rather than erroring — so
 // `-tier cex-fx -sources sdex` (a DEX source on the CEX tier) or a plain
 // typo scans nothing, plans zero changes, and exits 0 with per-day
 // output shaped identically to a genuinely clean window. Mirrors the
-// already-shipped `ch-rebuild -sources` guard (checkCHRebuildSources).
+// `ch-rebuild -sources` guard (checkCHRebuildSources).
 //
 // The exact tier is not gated here: its allow-list filters groups the
 // scan actually found in the data (restampRun.exactTierGroups), so a

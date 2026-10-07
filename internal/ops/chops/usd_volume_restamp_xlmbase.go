@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -tier xlm-base` — the #372 re-derive ─────────
+// ─── `usd-volume-restamp -tier xlm-base` — the anchor re-derive ─────
 //
 // The exact-tier half of this command (usd_volume_restamp.go) repairs a
 // SQL identity. This half re-derives an ESTIMATED tier, so it is a
@@ -29,7 +29,7 @@ import (
 //     number by construction, not by two implementations agreeing;
 //   - a row the anchor cannot price is REPORTED, never guessed at. The
 //     live path would fall through to the quote side; that fall-through
-//     IS the defect #372 is about, and committing it at a high
+//     IS the defect this tier repairs, and committing it at a high
 //     derive_generation would make it permanent;
 //   - the run is bounded and resumable: -from/-to days, each walked in
 //     -slice windows, each window's write set applied in -batch UPDATE
@@ -56,7 +56,7 @@ type xlmBaseRestampStore interface {
 // xlmBaseRestampRun carries one ESTIMATED tier's invocation: its fixed
 // inputs and its running totals across days (or chunks).
 //
-// It is named for the tier it was built for (#372) and now carries every
+// It is named for the tier it was built for and carries every
 // estimated tier — xlm-base, xlm-quote and cex-fx all walk a window in
 // -slice steps, plan a row list through the live valuation function,
 // apply it in -batch transactions and report the same dispositions. What
@@ -170,7 +170,7 @@ type estimatedTierProfile struct {
 	DeclineLabel string
 }
 
-// xlmBaseTierProfile is the #372 anchor re-derive's profile.
+// xlmBaseTierProfile is the XLM-base anchor re-derive's profile.
 func xlmBaseTierProfile(store xlmBaseRestampStore) estimatedTierProfile {
 	return estimatedTierProfile{
 		Tier:         restampTierXLMBase,
@@ -248,14 +248,14 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 // window (Timescale rejects `SQLSTATE 22023: refresh window too small`
 // for anything narrower than 2× the bucket).
 //
-// # Why this is printed at all (#372 F3)
+// # Why this is printed at all
 //
 // The `acceptance:` line below runs `verify-usd-volume`, which reads
 // `trades` DIRECTLY (TradeValuationByDay). Every SERVED volume surface —
 // /v1/markets volume, asset volume, venue rankings, market share, every
 // chart — reads a continuous aggregate instead, and none of them
-// auto-refresh anywhere near this far back. Measured `start_offset` on r1
-// 2026-09-03: prices_1m 5 min, prices_15m 1 h, prices_1h 4 h,
+// auto-refresh anywhere near this far back. Measured `start_offset` on
+// r1: prices_1m 5 min, prices_15m 1 h, prices_1h 4 h,
 // prices_4h 1 day, prices_1d / prices_1w / dex_volume_by_pair_1d /
 // source_volume_1h / pools_per_source_1h 7 days (prices_1w 28 days,
 // prices_1mo 3 months). So without this step the acceptance check goes
@@ -265,14 +265,15 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 // # The membership + order are DERIVED, not copied
 //
 // [timescale.TradesCAGGs] is the one list: every aggregate rooted on
-// `trades`, prices_1m first and the hierarchical twaps last. Holding a
-// second copy here let the two drift to seven and twelve entries, with
-// five of the twelve unrefreshable through RefreshContinuousAggregate.
+// `trades`, prices_1m first and the hierarchical twaps last. A second
+// copy here would drift: two measured copies held seven and twelve
+// entries, with five of the twelve unrefreshable through
+// RefreshContinuousAggregate.
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
 // tier must be followed by, plus the `-min-rel-delta` guidance that only
-// the #372 anchor re-derive has measurements for.
+// the XLM-base anchor re-derive has measurements for.
 func (r *xlmBaseRestampRun) followUp(from, to time.Time) string {
 	if r.tier == restampTierXLMBase {
 		return xlmBaseRestampFollowUp(from, to)

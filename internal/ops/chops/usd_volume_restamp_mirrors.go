@@ -15,7 +15,7 @@ import (
 // ─── `-tier xlm-quote` and `-tier cex-fx` — the two mirror re-derives ───
 //
 // usd_volume_restamp_xlmbase.go repairs the on-chain DEX rows whose XLM
-// leg is the BASE one (issue #372). These two tiers repair the
+// leg is the BASE one. These two tiers repair the
 // populations either side of it, through the same machinery: the same
 // run, the same walk, the same chunk driver, the same INV-3 guard, the
 // same `-fill-null` opt-in, the same fail-closed dry run. What each one

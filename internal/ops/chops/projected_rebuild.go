@@ -42,7 +42,7 @@ import (
 // (one ≤BatchLimit=1,000-ledger window per 5s tick, PerSourceTimeout=60s
 // deadline per cycle), a ceiling of roughly 720k ledgers/hour. That is
 // fine for small rewinds but hopeless for a multi-million-ledger held job
-// (the 2026-07 r1 backlog: blend_backstop from ledger 51.5M, blend_emitter
+// (an r1 backlog: blend_backstop from ledger 51.5M, blend_emitter
 // from 51.5M, aquarius rewards from 52.7M — each ~11-12M ledgers, i.e.
 // 15-17+ hours apiece at the projector's ceiling with ZERO parallelism).
 // projected-rebuild removes the tick/deadline ceiling entirely and adds
@@ -103,7 +103,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if *cfgPath == "" || *sourceName == "" || *from == 0 {
 		return fmt.Errorf("-config, -source, and -from are required")
 	}
-	// BackfillSafe gate (F050), before the config load and long before the
+	// BackfillSafe gate, before the config load and long before the
 	// decoder is built: a refusal must not need a reachable database, and
 	// it applies to the default dry-run too — see
 	// checkProjectedRebuildBackfillSafe.
@@ -147,7 +147,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// Harmless in the default dry-run (no writes occur until -write).
 	store.SetDeriveGeneration(time.Now().Unix())
 
-	// A-CRIT-1 (audit-2026-07-24): the positive generation stamped above makes
+	// The positive generation stamped above makes
 	// every trade this rebuild writes WIN the ON CONFLICT guard, and
 	// InsertTrade/BatchInsertTrades then assign `usd_volume = EXCLUDED.usd_volume`
 	// unconditionally. Without the USD-volume resolvers installed, tradeUSDVolume
@@ -155,8 +155,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// -write run would OVERWRITE correct stored usd_volume with NULL across its
 	// whole range (soroswap/aquarius/phoenix/comet all emit TradeEvents — even the
 	// documented `-source aquarius` rewards catch-up decodes trades in-range).
-	// Install them exactly as ch_rebuild.go / backfill_external.go do; this wiring
-	// was absent here (the destructive combination the sibling tools already fixed).
+	// Install them exactly as ch_rebuild.go / backfill_external.go do.
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
@@ -229,7 +228,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(write), *chAddr)
 
 	// A -write run rewrites served rows below the live watermark — the same
-	// carried-claim invalidation projector-replay has (2026-07-31; migration
+	// carried-claim invalidation projector-replay has (migration
 	// 0125): compute-completeness would otherwise keep carrying a prior clean
 	// projection claim over the range this rebuild just changed. Record the
 	// dirty window BEFORE writing anything and refuse to run without it —
@@ -382,16 +381,15 @@ func gateProjectedRebuild(ctx context.Context, cfg config.Config, store *timesca
 
 // checkProjectedRebuildBackfillSafe refuses a rebuild of a source whose
 // decoder has not been audited against every WASM generation that ran
-// over its history (finding F050).
+// over its history.
 //
 // projected-rebuild is the third re-derive path: it builds the live
 // projector's CURRENT decoder (projector.BuildRegistry) and runs it over
 // a HISTORICAL lake range, and — because it stamps a positive
 // derive_generation — its rows WIN over what is stored. That is the
 // old-WASM-generation hazard `backfill`, `projector-replay` and
-// `ch-rebuild -write` already refuse, on the very path the
-// projector-replay runbook sends any rewind over ~1M ledgers to; until
-// this check it never asked. The question goes through
+// `ch-rebuild -write` refuse, on the very path the
+// projector-replay runbook sends any rewind over ~1M ledgers to. The question goes through
 // [external.ReplayBackfillSafe], which resolves the projector source
 // names that deliberately have no registry row of their own
 // (blend_backstop follows blend's attestation; the sep41 pair read a
@@ -519,13 +517,12 @@ type ProjectedRebuildOptions struct {
 //
 // The failure count is the load-bearing return value: it counts the inserts a
 // RE-RUN CAN STILL LAND, so a non-zero count means the caller must not
-// checkpoint that window (COR-09 — see [checkpointWindow]).
+// checkpoint that window (see [checkpointWindow]).
 //
 // One class of HandleEvent error is deliberately NOT in that count: a
-// *[pipeline.TradeDroppedError] (RLT-132) — a trade the store PERMANENTLY
-// rejected. Until RLT-132 HandleEvent folded that drop into a nil return, so
-// only non-trade inserts could surface here; now the drop is reported. It is
-// counted on its own ([projectedRebuildCounters.permanentDrops]) and does NOT
+// *[pipeline.TradeDroppedError] — a trade the store PERMANENTLY
+// rejected, which HandleEvent reports rather than folding into a nil return.
+// It is counted on its own ([projectedRebuildCounters.permanentDrops]) and does NOT
 // hold the window, for three reasons:
 //
 //   - it is deterministic: the same value fails identically on every re-run,
@@ -534,7 +531,7 @@ type ProjectedRebuildOptions struct {
 //   - it is the live projector's policy for the same fault (count + skip +
 //     advance the cursor — projector.dispositionSkip), and this tool's whole
 //     contract is to behave like the live projector, in bulk;
-//   - it is what this tool already does for the other deterministic per-row
+//   - it is what this tool does for the other deterministic per-row
 //     failure, a decode error: counted, window still checkpoints.
 //
 // The loop never stops at a failed output — a row's remaining outputs are
@@ -591,18 +588,17 @@ func writeProjectedOutputs(
 }
 
 // checkpointWindow records a completed projected-rebuild window — or
-// deliberately does NOT, when rows were lost inside it (COR-09).
+// deliberately does NOT, when rows were lost inside it.
 //
-// The old code discarded HandleEvent's error and checkpointed
-// unconditionally, justified by "the idempotent ON CONFLICT write is
-// retried by re-running the range". But -resume defaults to true and a
-// resumed run SKIPS checkpointed windows, so the range was never actually
-// re-run and the row was gone permanently. Leaving the cursor unset is what
-// makes that justification true again: the next resumed run redoes exactly
-// this window, and the writes are idempotent.
+// Checkpointing unconditionally on the grounds that "the idempotent ON
+// CONFLICT write is retried by re-running the range" would be false:
+// -resume defaults to true and a resumed run SKIPS checkpointed windows, so
+// the range would never actually be re-run and the row would be gone
+// permanently. Leaving the cursor unset is what makes that retry real: the
+// next resumed run redoes exactly this window, and the writes are idempotent.
 //
 // insertErrs is [applyProjectedEvent]'s count, so it EXCLUDES trades the store
-// permanently rejected (RLT-132): those are counted separately and never hold
+// permanently rejected: those are counted separately and never hold
 // a window, because no re-run can land them. What does land here is a
 // non-trade insert that failed, or a trade whose block-and-retry (ADR-0041)
 // was abandoned on ctx cancellation. A non-trade row the store rejects
@@ -650,11 +646,11 @@ type ProjectedRebuildResult struct {
 	// (see [applyProjectedEvent]), and WindowsHeld the windows deliberately
 	// left un-checkpointed because of them. Both non-zero means this run did
 	// NOT cover its whole range: re-run to retry the held windows (writes
-	// are idempotent). COR-09.
+	// are idempotent).
 	InsertErrors int64
 	WindowsHeld  int64
 	// PermanentDrops counts trades the store permanently rejected
-	// (*pipeline.TradeDroppedError, RLT-132). They are NOT in InsertErrors
+	// (*pipeline.TradeDroppedError). They are NOT in InsertErrors
 	// and hold no window: a re-run cannot land them. Non-zero means rows are
 	// missing from the served tier until the underlying defect is fixed and
 	// the range is re-run with -resume=false.
@@ -698,7 +694,7 @@ type ProjectedRebuildResult struct {
 // internal/projector.processEventSafely). A trade the store permanently
 // rejects (*pipeline.TradeDroppedError) gets the same treatment for the same
 // reason — counted in PermanentDrops, window still checkpoints — while every
-// other insert failure holds its window (COR-09); see [applyProjectedEvent].
+// other insert failure holds its window; see [applyProjectedEvent].
 func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (ProjectedRebuildResult, error) {
 	logger := opts.Logger
 	if logger == nil {
@@ -717,7 +713,7 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	// the stream: a group is emitted only when a later event completes
 	// or sweeps it. Concurrent workers claim windows out of ledger
 	// order, which starves those sweep triggers and silently DROPS
-	// groups — measured on the phoenix 7-field era (2026-08-21):
+	// groups — measured on the phoenix 7-field era:
 	// workers=4 lost ~650 of 5,154 era trades, workers=1 lost none.
 	// Clamp rather than trust every operator to know this.
 	if numWorkers > 1 {
@@ -838,8 +834,8 @@ type projectedRebuildCounters struct {
 	// so a resumed run will redo it — see runProjectedRebuildWorker.
 	insertErrors atomic.Int64
 	windowsHeld  atomic.Int64
-	// permanentDrops counts trades the store permanently rejected
-	// (RLT-132). Counted, never held — see applyProjectedEvent.
+	// permanentDrops counts trades the store permanently rejected.
+	// Counted, never held — see applyProjectedEvent.
 	permanentDrops atomic.Int64
 	kindMu         sync.Mutex
 	kindCounts     map[string]int64
@@ -1070,12 +1066,12 @@ func writeModeLabel(write bool) string {
 // -write run can finish without having landed every row, kept apart because
 // the operator's next step is OPPOSITE for each.
 //
-//   - Held windows (COR-09): a re-run retries them. Loud, and phrased as an
+//   - Held windows: a re-run retries them. Loud, and phrased as an
 //     instruction, because the only unattended recovery is re-running. Do not
 //     point the operator at compute-completeness here — the reconciliation
 //     catalogue does not register every non-trade table (aquarius registers
 //     only `trades`), so it cannot see these rows.
-//   - Permanent drops (RLT-132): a re-run CANNOT land them, their windows ARE
+//   - Permanent drops: a re-run CANNOT land them, their windows ARE
 //     checkpointed, and saying "re-run" would be false.
 func projectedRebuildLossLines(r ProjectedRebuildResult) []string {
 	var lines []string

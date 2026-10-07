@@ -23,13 +23,13 @@ import (
 //
 // # Why the exact tier needs it too
 //
-// The mode was built for the #372 anchor re-derive, whose write set is a
+// The mode was built for the XLM-base anchor re-derive, whose write set is a
 // row list. The exact tier writes a set-based UPDATE per `-slice` window
 // instead — which is a different statement, not a different price: a DML
 // into a COMPRESSED chunk is serviced by decompressing that chunk inside
 // the transaction whatever shape the statement has. The measured rate is
 // the same ~1,574 rows/min, and the exact-tier repair population is ~10M
-// rows across 2026-03..07 (2,306,054 in March alone) — 100+ hours in
+// rows across five months of trades (2,306,054 in March alone) — 100+ hours in
 // place, against the decompress → restamp → re-compress bracket's
 // per-chunk cost.
 //
