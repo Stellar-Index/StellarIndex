@@ -190,3 +190,26 @@ func TestWithinModWindow(t *testing.T) {
 		}
 	}
 }
+
+// A bare run is the bounded read-only tally; an explicit -dry-run still
+// collects and prints the write set; -write wins over -dry-run.
+func TestParseStateSnapshotFlags_Mode(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args           []string
+		write, collect bool
+	}{
+		{nil, false, false},
+		{[]string{"-dry-run"}, false, true},
+		{[]string{"-write"}, true, true},
+		{[]string{"-write", "-dry-run"}, true, true},
+	} {
+		o, err := parseStateSnapshotFlags(tc.args)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if o.write != tc.write || o.collect != tc.collect {
+			t.Errorf("%v: write=%v collect=%v, want write=%v collect=%v", tc.args, o.write, o.collect, tc.write, tc.collect)
+		}
+	}
+}

@@ -64,7 +64,7 @@ while [ "$w" -le "$TO" ]; do
     w=$((end + 1)); continue
   fi
   echo "$(date -u) seed [$w,$end]"
-  if "$OPS" ch-supply -config "$CFG" -from "$w" -to "$end" -seed-flows -final=false >/dev/null; then
+  if "$OPS" ch-supply -config "$CFG" -from "$w" -to "$end" -seed-flows -write -final=false >/dev/null; then
     echo "$w" >> "$STATE"
   else
     echo "$(date -u) FAILED [$w,$end]" >&2; rc=1; break

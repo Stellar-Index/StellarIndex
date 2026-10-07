@@ -42,7 +42,7 @@ func exemptBecause(why string) subcommandClass { return subcommandClass{class: e
 // how it writes. A namespace's sub-verbs are keyed "namespace verb".
 var subcommandClasses = map[string]subcommandClass{
 	"docs-config":           ro(),
-	"mint-key":              pending("PG api key insert; -confirm-operator is an identity check, not a preview"),
+	"mint-key":              gate(),
 	"upgrade-key":           pending("PG api key rate-limit update"),
 	"emit-incident":         pending("PG webhook_deliveries insert (customer webhook fan-out); no preview, a mistyped run notifies subscribers"),
 	"usage-rollup-backfill": gate(),
@@ -59,7 +59,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"backfill":                gate(),
 	"backfill-external":       gate(),
 	"backfill-chainlink":      gate(),
-	"backfill-index":          pending("PG CoinGecko observations; bespoke -write"),
+	"backfill-index":          gate(),
 	"backfill-router":         gate(),
 	"detect-gaps":             ro(),
 	"list-cursors":            ro(),
@@ -75,7 +75,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"seed-entry-counts":       pending("PG entry-count overwrite, no flag"),
 	"projector-replay":        gate(),
 	"scan-soroban-events":     ro(),
-	"state-snapshot":          pending("CH state snapshot; bespoke -write and -dry-run"),
+	"state-snapshot":          gate(),
 	"issuer-enrich":           gate(),
 	"sep1-refresh":            gate(),
 	"issuer-flags":            gate(),
@@ -88,7 +88,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"verify-archive":            exemptBecause("verifier; serves metrics and writes its -textfile-output and -state-file only"),
 	"cross-region-check":        ro(),
 	"cross-region-monitor":      exemptBecause("serves a metrics listener only"),
-	"trim-galexie-archive":      pending("MinIO DELETE; bespoke -dry-run/-commit"),
+	"trim-galexie-archive":      gate(),
 	"rehydrate-galexie-archive": gate(),
 	"galexie-mirror-verify":     exemptBecause("verifier; writes its -textfile-output metrics only"),
 	"wasm-history":              exemptBecause("writes local JSONL outputs and -checkpoint-dir only"),
@@ -115,7 +115,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-reproject":                 ro(),
 	"ch-rebuild":                   gate(),
 	"trades-cagg-refresh":          pending("PG money CAGG refresh, -force=true default"),
-	"ch-supply":                    pending("CH supply_flows; -seed-flows is the opt-in"),
+	"ch-supply":                    gate(),
 	"ch-txindex-backfill":          gate(),
 	"ch-contract-ledgers-backfill": gate(),
 	"ch-instance-backfill":         gate(),
@@ -136,8 +136,8 @@ var subcommandClasses = map[string]subcommandClass{
 	"usd-volume-restamp":           gate(),
 	"sdex-claim-audit":             ro(),
 
-	"classic-movements-backfill": pending("CH classic movements; bespoke -write"),
-	"projected-rebuild":          pending("PG projected tables; bespoke -write"),
+	"classic-movements-backfill": gate(),
+	"projected-rebuild":          gate(),
 	"reconcile-balances":         ro(),
 	"verify-contiguity":          ro(),
 	"verify-hashchain":           ro(),
@@ -151,17 +151,10 @@ var subcommandClasses = map[string]subcommandClass{
 // gated (the test then proves it takes -write); a readOnly one may not be a
 // writer.
 var pinnedPendingGate = []string{
-	"backfill-index",
-	"ch-supply",
-	"classic-movements-backfill",
 	"compute-completeness",
 	"emit-incident",
-	"mint-key",
-	"projected-rebuild",
 	"seed-entry-counts",
-	"state-snapshot",
 	"trades-cagg-refresh",
-	"trim-galexie-archive",
 	"upgrade-key",
 }
 

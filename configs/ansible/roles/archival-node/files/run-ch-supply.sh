@@ -92,7 +92,7 @@ while [ "$FROM" -lt "$TIP" ]; do
     is_uint "$M" && [ "$M" -lt "$MEMGUARD" ] && break
     sleep 20
   done
-  "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows </dev/null \
+  "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows -write </dev/null \
     || { echo "$(date -u) seed [$FROM,$TO] FAILED" >&2; rc=1; }
   FROM=$TO
 done

@@ -105,6 +105,33 @@ func TestParseTrimFlags_CommitOptIn(t *testing.T) {
 	}
 }
 
+// -commit is kept as the units' spelling of the shared -write gate; both
+// must arm the same delete.
+func TestParseTrimFlags_WriteIsCommit(t *testing.T) {
+	t.Parallel()
+	for _, flagName := range []string{"-commit", "-write"} {
+		opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", flagName})
+		if err != nil {
+			t.Fatalf("%s: parse: %v", flagName, err)
+		}
+		if !opts.commit || opts.dryRun {
+			t.Errorf("%s: commit=%v dryRun=%v, want commit=true dryRun=false", flagName, opts.commit, opts.dryRun)
+		}
+	}
+}
+
+// The shared gate lets -write win over -dry-run; an irreversible DELETE must
+// not, so contradictory flags are refused before any S3 call.
+func TestParseTrimFlags_DryRunWithCommitOrWriteIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, flagName := range []string{"-commit", "-write"} {
+		_, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-dry-run", flagName})
+		if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Errorf("-dry-run %s: err = %v, want a mutually-exclusive refusal", flagName, err)
+		}
+	}
+}
+
 func TestParseTrimFlags_OverflowGuard(t *testing.T) {
 	t.Parallel()
 	_, err := parseTrimFlags([]string{"-older-than-ledger", "9999999999"})

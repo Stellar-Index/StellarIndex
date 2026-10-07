@@ -6,7 +6,6 @@ package chops
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -86,7 +85,7 @@ import (
 // projector-replay (rule of thumb: projector-replay for rewinds under
 // ~1M ledgers, projected-rebuild for anything bigger).
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
-	fs := flag.NewFlagSet("projected-rebuild", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	sourceName := fs.String("source", "", "projector source name to rebuild (required); see internal/projector/registry.go for the list")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
@@ -95,12 +94,12 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	window := fs.Uint("window", projectedRebuildDefaultWindow, "ledger-window size per checkpoint/scheduling unit — smaller gives finer resume granularity and better load balance across workers on uneven-density ranges (e.g. aquarius rewards); does NOT bound memory (this tool streams, never buffers a window)")
 	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; soft-capped at 8 (see RunProjectedRebuild's PG pool-sizing note)")
 	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run for this source")
-	write := fs.Bool("write", false, "actually write to Postgres via pipeline.HandleEvent (default: dry-run, count + report only, no checkpoints)")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-exit gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_projected_rebuild_<source>.prom when that directory exists (r1), otherwise no heartbeat at all")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and run even though the live projector's cursor is inside [-from,-to]. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract in this command's doc comment.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	write := gate.Enabled()
 	if *cfgPath == "" || *sourceName == "" || *from == 0 {
 		return fmt.Errorf("-config, -source, and -from are required")
 	}
@@ -227,7 +226,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	}
 
 	fmt.Fprintf(os.Stderr, "projected-rebuild: source=%s range=[%d,%d] window=%d workers=%d mode=%s ch=%s\n",
-		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(*write), *chAddr)
+		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(write), *chAddr)
 
 	// A -write run rewrites served rows below the live watermark — the same
 	// carried-claim invalidation projector-replay has (2026-07-31; migration
@@ -238,7 +237,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// window one clean verify clears; the opposite order leaves rewritten
 	// rows certified by stale evidence). Dry-run writes nothing and records
 	// nothing.
-	if *write {
+	if write {
 		if derr := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
 			Source: *sourceName,
 			From:   fromLedger,
@@ -264,16 +263,16 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		To:        toLedger,
 		Window:    windowSize,
 		Workers:   numWorkers,
-		Write:     *write,
+		Write:     write,
 		Resume:    *resume,
 		Logger:    logger,
 		Heartbeat: hb,
 	})
-	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, *write, result)
+	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, write, result)
 	interrupted := ctx.Err() != nil
 	// After the run, even a failed or interrupted one: any window it wrote is
 	// below the fold checkpoint. A failed reset fails the job, interrupted or not.
-	if rerr := resetSEP41RollupAfterRebuild(ctx, os.Stderr, store, *sourceName, *write); rerr != nil {
+	if rerr := resetSEP41RollupAfterRebuild(ctx, os.Stderr, store, *sourceName, write); rerr != nil {
 		runErr, interrupted = errors.Join(runErr, rerr), false
 	}
 	return finishProjectedRebuild(hb, result, runErr, interrupted)

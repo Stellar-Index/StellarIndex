@@ -1,7 +1,8 @@
 package chops
 
 import (
-	"flag"
+	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -32,17 +33,22 @@ import (
 // since the serving path moved to summing `stellar.supply_flows` live
 // (internal/storage/clickhouse/supply_flows.go SupplyReader.TokenSupply —
 // "no rollup refresh" by design). -seed-flows below is the still-live
-// mechanism that keeps supply_flows itself complete.
+// mechanism that keeps supply_flows itself complete; the shared -write gate
+// applies it, and without -write a -seed-flows run counts the rows it would
+// write.
 func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional seed, report; splitting hurts clarity.
-	fs := flag.NewFlagSet("ch-supply", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("ch-supply")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	topN := fs.Int("top", 25, "print the top-N contracts by absolute supply")
 	useFinal := fs.Bool("final", true, "FINAL-dedup reads (correct but ~40x slower over all history; -final=false for a fast all-token estimate)")
-	seedFlows := fs.Bool("seed-flows", false, "seed stellar.supply_flows: write one decoded row per mint/burn/clawback event (the decode-at-ingest history backfill; idempotent)")
+	seedFlows := fs.Bool("seed-flows", false, "seed stellar.supply_flows: one decoded row per mint/burn/clawback event (the decode-at-ingest history backfill; idempotent). Written only with -write")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := checkCHSupplyMode(*seedFlows, gate); err != nil {
 		return err
 	}
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
@@ -70,33 +76,13 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		lastLog      = time.Now()
 	)
 
-	// seed-flows: write one decoded supply_flows row per event, batched during
-	// the stream (570M rows can't be held in memory like the rollup map).
-	const flowBatchN = 20000
-	var (
-		flowBatch  []clickhouse.SupplyFlowRow
-		flowsWrote int
-	)
-	if *seedFlows {
-		if eerr := clickhouse.EnsureSupplyFlowsTable(ctx, *chAddr); eerr != nil {
-			return fmt.Errorf("ch-supply: ensure supply_flows: %w", eerr)
-		}
-		flowBatch = make([]clickhouse.SupplyFlowRow, 0, flowBatchN)
-	}
-	flushFlows := func() error {
-		if len(flowBatch) == 0 {
-			return nil
-		}
-		if werr := clickhouse.WriteSupplyFlows(ctx, *chAddr, flowBatch); werr != nil {
-			return werr
-		}
-		flowsWrote += len(flowBatch)
-		flowBatch = flowBatch[:0]
-		return nil
+	seeder, err := newSupplyFlowSeeder(ctx, *chAddr, *seedFlows, gate.Enabled())
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v seed-flows=%v)\n", lo, hi, *chAddr, *useFinal, *seedFlows)
-	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
+	err = clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
 		v, skipType, ok := clickhouse.DecodeSupplyAmountXDR(f.DataXDR)
 		if !ok {
@@ -123,26 +109,21 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		if f.Ledger > a.lastLedger {
 			a.lastLedger = f.Ledger
 		}
-		if *seedFlows {
-			flowBatch = append(flowBatch, clickhouse.SupplyFlowRow{
-				ContractID: f.ContractID,
-				LedgerSeq:  f.Ledger,
-				CloseTime:  f.CloseTime,
-				TxHash:     f.TxHash,
-				OpIndex:    f.OpIndex,
-				EventIndex: f.EventIndex,
-				Kind:       f.Kind,
-				Amount:     v,
-			})
-			if len(flowBatch) >= flowBatchN {
-				if ferr := flushFlows(); ferr != nil {
-					return ferr
-				}
-			}
+		if serr := seeder.add(ctx, clickhouse.SupplyFlowRow{
+			ContractID: f.ContractID,
+			LedgerSeq:  f.Ledger,
+			CloseTime:  f.CloseTime,
+			TxHash:     f.TxHash,
+			OpIndex:    f.OpIndex,
+			EventIndex: f.EventIndex,
+			Kind:       f.Kind,
+			Amount:     v,
+		}); serr != nil {
+			return serr
 		}
 		if time.Since(lastLog) >= 15*time.Second {
 			rate := float64(flows) / time.Since(start).Seconds()
-			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d tokens, %d flow-rows written (%.0f flows/s)\n", flows, len(tokens), flowsWrote, rate)
+			fmt.Fprintf(os.Stderr, "ch-supply: %d flows, %d tokens, %d flow-rows written (%.0f flows/s)\n", flows, len(tokens), seeder.seeded, rate)
 			lastLog = time.Now()
 		}
 		return nil
@@ -150,11 +131,8 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 	if err != nil {
 		return fmt.Errorf("ch-supply: stream: %w", err)
 	}
-	if *seedFlows {
-		if ferr := flushFlows(); ferr != nil {
-			return fmt.Errorf("ch-supply: seed-flows write: %w", ferr)
-		}
-		fmt.Fprintf(os.Stderr, "ch-supply: seeded %d supply_flows rows\n", flowsWrote)
+	if err := seeder.finish(ctx); err != nil {
+		return err
 	}
 
 	net := func(a *acc) *big.Int {
@@ -189,6 +167,90 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 			break
 		}
 		fmt.Printf("%-58s %30s %12d\n", r.contract, r.supply.String(), r.flows)
+	}
+	return nil
+}
+
+// checkCHSupplyMode ties the shared gate to -seed-flows, the only write. A
+// seeding caller must state its mode: run-ch-supply.sh treats exit 0 as
+// "window seeded", so a silent preview would stall supply_flows. -write
+// without -seed-flows has nothing to apply and is refused, not ignored.
+func checkCHSupplyMode(seedFlows bool, gate *opsutil.WriteGate) error {
+	if !seedFlows {
+		if gate.Enabled() {
+			return errors.New("ch-supply: -write applies -seed-flows; without -seed-flows this command is a read-only report")
+		}
+		return nil
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("ch-supply -seed-flows: %w", err)
+	}
+	return nil
+}
+
+// supplyFlowSeeder batches -seed-flows rows into stellar.supply_flows (the
+// stream is ~570M rows, so they cannot be held like the report map). Without
+// write it only counts, so a -dry-run seed reports what it would write.
+type supplyFlowSeeder struct {
+	chAddr    string
+	on, write bool
+	batch     []clickhouse.SupplyFlowRow
+	seeded    int
+}
+
+const supplyFlowBatchN = 20000
+
+func newSupplyFlowSeeder(ctx context.Context, chAddr string, on, write bool) (*supplyFlowSeeder, error) {
+	s := &supplyFlowSeeder{chAddr: chAddr, on: on, write: write}
+	if !on {
+		return s, nil
+	}
+	opsutil.PrintWriteBanner(write)
+	if write {
+		if err := clickhouse.EnsureSupplyFlowsTable(ctx, chAddr); err != nil {
+			return nil, fmt.Errorf("ch-supply: ensure supply_flows: %w", err)
+		}
+	}
+	s.batch = make([]clickhouse.SupplyFlowRow, 0, supplyFlowBatchN)
+	return s, nil
+}
+
+func (s *supplyFlowSeeder) add(ctx context.Context, row clickhouse.SupplyFlowRow) error {
+	if !s.on {
+		return nil
+	}
+	s.batch = append(s.batch, row)
+	if len(s.batch) < supplyFlowBatchN {
+		return nil
+	}
+	return s.flush(ctx)
+}
+
+func (s *supplyFlowSeeder) flush(ctx context.Context) error {
+	if len(s.batch) == 0 {
+		return nil
+	}
+	if s.write {
+		if err := clickhouse.WriteSupplyFlows(ctx, s.chAddr, s.batch); err != nil {
+			return err
+		}
+	}
+	s.seeded += len(s.batch)
+	s.batch = s.batch[:0]
+	return nil
+}
+
+func (s *supplyFlowSeeder) finish(ctx context.Context) error {
+	if !s.on {
+		return nil
+	}
+	if err := s.flush(ctx); err != nil {
+		return fmt.Errorf("ch-supply: seed-flows write: %w", err)
+	}
+	if s.write {
+		fmt.Fprintf(os.Stderr, "ch-supply: seeded %d supply_flows rows\n", s.seeded)
+	} else {
+		fmt.Fprintf(os.Stderr, "ch-supply: dry run: would seed %d supply_flows rows; pass -write to apply\n", s.seeded)
 	}
 	return nil
 }
