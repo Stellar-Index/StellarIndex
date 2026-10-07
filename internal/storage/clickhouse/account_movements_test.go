@@ -268,7 +268,7 @@ func TestChunkStrings(t *testing.T) {
 // send relies on: LEDGER first, then address and the rest of the table's
 // ORDER BY columns. The previous address-first order made a partially
 // sent batch an address prefix spanning the window's whole ledger range,
-// which the max(ledger) resume then skipped over (RLT-296).
+// which the max(ledger) resume then skipped over.
 func TestSortAccountMovementRowsForInsert(t *testing.T) {
 	rows := []AccountMovementRow{
 		{Address: "GB", Ledger: 2, TxHash: "z"},

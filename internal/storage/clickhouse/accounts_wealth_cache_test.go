@@ -51,7 +51,7 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 
 // TestWealthCacheStaleServing — an EXPIRED entry is still returned, with
 // its real timestamp, so callers can serve degraded-but-honest instead of
-// 503 (route-sweep 2026-07-29). Staleness is the caller's judgment via the
+// 503. Staleness is the caller's judgment via the
 // returned cachedAt; the cache itself never withholds a filled entry.
 func TestWealthCacheStaleServing(t *testing.T) {
 	t.Parallel()

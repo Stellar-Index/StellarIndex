@@ -33,7 +33,7 @@ const (
 // cohortScanSettings is the board rollups' memory and spill budget with
 // more threads: this cycle reads the whole movements archive once a day,
 // and at the boards' two threads a dense window near tip does not finish
-// inside its budget. Measured on r1, 2026-09-17, one 1M-ledger window of
+// inside its budget. Measured on r1, one 1M-ledger window of
 // 657M rows: the boards' argMax de-duplication exceeded 8 GiB at both 2
 // and 6 threads; FINAL at 6 threads finished in 151 s at 2.7 GiB. So the
 // walk de-duplicates with FINAL (per partition, which is per window) and

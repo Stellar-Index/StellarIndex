@@ -13,7 +13,7 @@ import (
 // Ops-batch ClickHouse identity — the LOW-priority counterpart of
 // ADR-0048 D4's `api_serving` profile.
 //
-// WHY (2026-08-28, r1): a runbook-prescribed `ch-rebuild -sep41`
+// WHY: a runbook-prescribed `ch-rebuild -sep41`
 // dry-run over 2M ledgers drove host load to 12.9 and starved the
 // aggregator's supply refresher — stellarindex_aggregator_
 // supply_refresh_error_dominant fired for all 39 watched contracts
@@ -67,7 +67,7 @@ import (
 // ship before the CH user and env file exist. The ops pair must reach
 // ONLY the batch jobs' environment; the deploy/systemd reference units
 // share /etc/default/stellarindex-ops with the batch one-shots, so each
-// live-daemon unit strips it with `UnsetEnvironment=` (#292).
+// live-daemon unit strips it with `UnsetEnvironment=`.
 // TestOpsBatchIdentityNeverReachesLiveDaemons pins that live daemons
 // resolve to live_daemon (or `default` when unconfigured) and never to
 // ops_batch, and batch units to ops_batch.

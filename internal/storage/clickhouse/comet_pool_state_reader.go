@@ -15,7 +15,7 @@ import (
 // Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout,
 // derived from the protocol's public Rust source
 // (CometDEX/comet-contracts-v1, contracts/src/c_pool/storage_types.rs
-// + metadata.rs @ main, read 2026-07-29):
+// + metadata.rs @ main):
 //
 //	DataKey is a #[contracttype] enum of unit variants (NO explicit
 //	u32 discriminants), so per the Soroban custom-types spec each
@@ -32,7 +32,7 @@ import (
 //	(bound/index/denorm/balance); decode is by field name, so only
 //	the `balance` i128 is required and either generation reads.
 //
-// VALIDATED ON R1 2026-07-29: of the two candidate key encodings
+// VALIDATED ON R1: of the two candidate key encodings
 // probed, the Vec[Symbol] form matched the real AllRecordData entry for
 // the sole mainnet pool (CAS3FL6T…); decode yielded 2 legs —
 // ~748k USDC + ~71.7M BLND — plausible Blend-backstop magnitudes. The

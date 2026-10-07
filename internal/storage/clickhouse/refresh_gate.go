@@ -18,8 +18,7 @@ import (
 var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity saturated; retry shortly")
 
 // RefreshGate is a small non-blocking semaphore bounding how many DETACHED
-// cache refreshes may run concurrently against the explorer's lake pool
-// (audit 2026-07-31).
+// cache refreshes may run concurrently against the explorer's lake pool.
 //
 // Why it exists: the explorer's stale-while-revalidate caches (account
 // state here; asset holders / contracts directory / contract detail in
@@ -73,7 +72,7 @@ var serverKeyedClasses = map[string]bool{
 // detached tier can never consume every connection, so inline
 // request-path reads always have headroom.
 //
-// Sized against a PAGE, not a request (2026-08-13). At 4 — half the old
+// Sized against a PAGE, not a request. At 4 — half the old
 // 8-connection pool — a single cold contract page could not fill
 // itself: it fans out to five reads, so even with per-panel classes the
 // global bound refused some, and a second visitor had nothing left.

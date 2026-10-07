@@ -8,10 +8,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for #444 / #332 F2: RecentOperations carried NO ledger
+// Regression tests: RecentOperations carried NO ledger
 // lower bound on either arm, so ClickHouse had every part in every partition
-// as a candidate for the reverse read. Measured on r1's system.query_log
-// (user api_serving, 2026-09-02): one 50-row first page read 10.3M rows /
+// as a candidate for the reverse read. Measured on r1's system.query_log:
+// one 50-row first page read 10.3M rows /
 // 1.37 GiB in 1,788–1,875 ms, which is what put /v1/operations at a 2.238 s
 // 6h p95 — the "cheap streamed reverse scan" the query's own comment
 // claimed, refuted by the engine's own accounting.
@@ -87,8 +87,8 @@ func TestRecentOperations_CursorPageIsBoundedBelowTheCursor(t *testing.T) {
 	}
 	q := conn.queries[0]
 	// The keyset comparison still bounds the page from ABOVE — paging must
-	// stay exact across a ledger that straddles a page boundary. Since #484
-	// it is spelled index-prunably rather than as a bare tuple compare;
+	// stay exact across a ledger that straddles a page boundary.
+	// It is spelled index-prunably rather than as a bare tuple compare;
 	// explorer_reader_deep_cursor_test.go pins that spelling.
 	if !strings.Contains(q, recentOperationsCursorPredicate) {
 		t.Fatalf("cursor page lost its keyset comparison:\n%s", q)
@@ -123,7 +123,7 @@ func TestRecentOperations_CursorNearGenesisClampsTheLowerBound(t *testing.T) {
 	}
 	args := conn.args[0]
 	// args = [ledger, ledger, tx_index, op_index, lower, limit] — the lower
-	// bound is index 4 since #484 bound the ledger to both predicate arms.
+	// bound is index 4 because the ledger bounds both predicate arms.
 	if got, want := args[4], uint32(0); got != want {
 		t.Fatalf("lower bound near genesis = %v (%T), want %v — uint32 underflow would empty the page", got, got, want)
 	}

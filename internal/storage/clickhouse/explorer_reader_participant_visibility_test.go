@@ -94,7 +94,7 @@ func walkParticipantKeys(t *testing.T, lake *participantLake, limit int) (got []
 // TestParticipantKeys_ExactPastFailedTxs walks the participant arm page by
 // page and requires exactly the visible keys, in order, with every page but
 // the last full: a failed tx must neither appear nor shorten a page (a short
-// page reads as end of history, #290), even when a whole window is failed.
+// page reads as end of history), even when a whole window is failed.
 func TestParticipantKeys_ExactPastFailedTxs(t *testing.T) {
 	lake := &participantLake{failed: map[accountTxKey]bool{}}
 	var want []accountOpKey

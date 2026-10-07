@@ -33,8 +33,8 @@ func isTopHeldAssets(q string) bool {
 	return strings.Contains(q, "stellar.asset_holders_counts")
 }
 
-// isStatsCycleMarker matches AccountsStats' post-read consistency re-check
-// (T346): a bare max(computed_at) read, distinct from isStatsMetrics' three-
+// isStatsCycleMarker matches AccountsStats' post-read consistency re-check:
+// a bare max(computed_at) read, distinct from isStatsMetrics' three-
 // column select and isStatsProbe's LIMIT 1.
 func isStatsCycleMarker(q string) bool {
 	return strings.Contains(q, "max(computed_at)") && strings.Contains(q, "stellar.accounts_stats")
@@ -285,7 +285,7 @@ func TestAccountsStats_HistogramsAreOrderedByBucket(t *testing.T) {
 // TestAccountsStats_ProbeGatesEveryRead — the probe exists so a deployment
 // without the rollup tables does not issue four failing reads per request.
 // Exactly six queries: the probe, one read per table, and the post-read
-// cycle-marker re-check (T346) — no retry on a consistent read.
+// cycle-marker re-check — no retry on a consistent read.
 func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	r, conn := statsConn(t, nil, nil, nil, nil)
 	if _, _, err := r.AccountsStats(t.Context()); err != nil {

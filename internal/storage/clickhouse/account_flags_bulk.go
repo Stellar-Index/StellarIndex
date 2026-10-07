@@ -13,7 +13,7 @@ import (
 // verbatim into `issuers.auth_flags_source` (migration 0153) and surfaced on
 // /v1/issuers/{g_strkey}.
 //
-// This exists because ~10.2k of the ~59.2k known issuers (r1, 2026-09-02)
+// This exists because ~10.2k of the ~59.2k known issuers (r1)
 // have merged their account away: their flags are knowable, but only as of
 // the ledger that removed them. Serving those with no provenance would assert
 // "this is the issuer's current authorisation policy" about an account that no
@@ -213,7 +213,7 @@ func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []st
 // ledger_entries_current, and the lake records the PRE-IMAGE IN THAT SAME
 // LEDGER — an account_merge leaves `state` → `updated` pairs for the fee phase
 // and every operation, ending `state` → `removed`. So the second read is
-// PARTITION-PRUNED to the removal ledgers only. Measured on r1 2026-09-02 over
+// PARTITION-PRUNED to the removal ledgers only. Measured on r1 over
 // 296 real residue issuers spanning 277 removal ledgers: 296/296 resolved, 0
 // empty pre-images, 0.388s for the whole batch.
 //
@@ -327,7 +327,7 @@ func (r *ExplorerReader) RemovedAccountsLastKnownAuthFlags(ctx context.Context, 
 // Note the projection holds no `removed` row below its floor (r1: ledger
 // 38,000,000), so an account merged before that is absent here and stays
 // unresolved. That is a projection-coverage gap, not a reader defect, and it
-// is ~1.5% of the residue (r1 2026-09-02: 4 of a 300-key sample).
+// is ~1.5% of the residue (r1: 4 of a 300-key sample).
 func (r *ExplorerReader) accountRemovalLedgers(ctx context.Context, keys []string) (map[string]uint32, error) {
 	const q = `SELECT key_xdr, ledger_seq
 		FROM stellar.ledger_entries_current FINAL

@@ -44,7 +44,7 @@ import (
 // key-cardinality-bounded, which is why FINAL is preferred here over a
 // GROUP BY/argMax whose hash state would scale with the ~hundreds of
 // millions of distinct offer keys ever created. max_threads=4 pins the
-// fan-out (the 2026-07 campaign measured default fan-out costing 40× the
+// fan-out (default fan-out measured at 40× the
 // memory of a pinned scan on this table's part layout). Pinned off like
 // blendReserveStateQuery: pushing the change_type filter to PREWHERE ahead
 // of the FINAL collapse can surface a superseded, non-removed offer version.
@@ -197,8 +197,8 @@ func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint3
 // under pressure. Reading to the raw max crosses such a hole and commits
 // a cursor above it, so the rows ch-live-catchup later writes INTO the
 // hole are below the cursor forever — an offer removed in the dropped
-// ledger is served as resting liquidity until the process restarts
-// (audit 2026-09-02 F162). Bounded by the contiguous tip the cursor holds
+// ledger is served as resting liquidity until the process restarts.
+// Bounded by the contiguous tip the cursor holds
 // just below the hole and resumes through it once it is filled — the
 // same guard as projector.resolveTip and chops.Cap67Range.
 func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint32) ([]OfferChange, uint32, error) {
@@ -247,8 +247,8 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 				// A skipped non-removed change FREEZES this key's
 				// previously-applied state in the served book (the update
 				// it carried is lost until the key's next decodable
-				// change) — surface it instead of dropping it silently
-				// (audit 2026-07-31). Offer entries are core-emitted XDR,
+				// change) — surface it instead of dropping it silently.
+				// Offer entries are core-emitted XDR,
 				// so any increment here points at a lake problem upstream.
 				slog.Warn("sdex order book: undecodable non-removed offer change skipped; key's prior state frozen",
 					"key_xdr", keyXDR, "ledger", ledger)
@@ -285,21 +285,21 @@ type OfferRemovalRef struct {
 // offerRemovalProbeBatch bounds one OfferRemovedAt query. Each ref
 // prunes to its own ledger's granules via the (ledger_seq, …) primary
 // key, so per-batch cost is ~linear in refs; 500 scattered old-era
-// refs measured 0.77s / trivial memory on r1 (2026-07-31).
+// refs measured 0.77s / trivial memory on r1.
 const offerRemovalProbeBatch = 500
 
 // OfferRemovedAt reports which of the given offers have a `removed`
 // change row AT THE SAME LEDGER as their winning current-state row.
 //
-// Why this exists — the zombie-offer class (2026-07-31): historical
+// Why this exists — the zombie-offer class: historical
 // backfill wrote ledger_entry_changes rows with intra_ledger_seq = 0,
 // so every same-ledger change to one key ties on
 // ledger_entries_current's ReplacingMergeTree version and an ARBITRARY
 // row survives the merge. An offer that was updated then fully
 // consumed within one ledger can survive as `updated` — a phantom
 // "live" offer years after it left the chain (founding case: XLM/USDC
-// offers 845025288/845025425/845025699/845028065, consumed 2021-11-10
-// at ledger 38224736+, still "live" in the book on 2026-07-31 and
+// offers 845025288/845025425/845025699/845028065, consumed
+// at ledger 38224736+, still "live" in the book and
 // serving a crossed best bid 0.4327 vs best ask 0.1722). The losing
 // `removed` row is physically gone from ledger_entries_current after
 // the merge, but ledger_entry_changes still holds it — this probe

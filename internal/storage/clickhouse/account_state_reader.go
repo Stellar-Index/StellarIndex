@@ -179,7 +179,7 @@ func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (Acco
 // trustline LedgerKeys share a fixed key_xdr prefix (accountEntryKeyPrefix),
 // so `key_xdr LIKE '<prefix>%'` prunes to the account's contiguous slice of
 // the (entry_type, key_xdr) sort order; the exact account_id equality closes
-// the prefix's one-byte residual. Measured on r1 (2026-07-30, whale
+// the prefix's one-byte residual. Measured on r1 (a whale
 // account): 5.18s via the old account_id bloom skip-index → 0.069s. The
 // scan-settings pin stays as a guard rail, not load-bearing tuning.
 const accountTrustlinesQuery = `SELECT asset, entry_xdr AS ex, balance AS bal
@@ -311,7 +311,7 @@ func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]O
 // assetHoldersQuery / assetHoldersCountQuery are AssetHolders' two FINAL
 // scans over the trustline prefix (idx_lecur_asset bloom). Scan-shaped —
 // their cost scales with the ASSET's holder count, not the request — hence
-// the explorerScanSettings pin (route-sweep 2026-07-29: one huge asset's
+// the explorerScanSettings pin (one huge asset's
 // /v1/assets/{id}/holders was in the 8s 503 class; latency for repeats is
 // the hot_reads.go cache's job, the pin bounds the scan that DOES run).
 const (
@@ -329,12 +329,12 @@ const (
 // AssetHolders. Native XLM has NO trustlines — every account holds XLM in
 // its AccountEntry balance — so the trustline-shaped queries above return
 // an empty board with holder_count 0 BY CONSTRUCTION for it (live bug,
-// 2026-07-31: /v1/assets/native/holders served {"holder_count":0} instantly
+// /v1/assets/native/holders served {"holder_count":0} instantly
 // while every issued asset's board did real work). The native board ranks
 // the ACCOUNT range instead. entry_type is the FIRST column of the table's
 // ORDER BY (entry_type, key_xdr), so this is a primary-index RANGE read
 // over the account rows (30.7M of the 43.6M current-state total), not a
-// whole-table scan — measured on r1 2026-07-31 under this exact SETTINGS
+// whole-table scan — measured on r1 under this exact SETTINGS
 // pin: 2.36s ranking + 2.11s count (9,915,982 funded accounts). Same cost
 // class as a large issued asset's trustline board, and like every holders
 // board it is served exclusively through the explorer's SWR cache
@@ -442,7 +442,7 @@ type AccountWealth struct {
 // max_execution_time = 150 gives the CH side matching headroom so the query
 // completes and the cache populates, instead of dying silently at 30s.
 //
-// max_threads/max_memory (route-sweep 2026-07-29): at DEFAULT threads the
+// max_threads/max_memory: at DEFAULT threads the
 // whole-table FINAL fan-out over the post-D3 part layout is the 40× memory
 // class — the refresh died repeatedly, so the cache never filled and
 // /v1/accounts sat on its 503 warming state forever. Pinning the refresh is
@@ -673,7 +673,7 @@ func accountKeyXDR(gStrkey string) (string, error) {
 // caller keeping its exact `account_id = ?` filter; the prefix's job is
 // only to turn the read into a primary-index range.
 //
-// Measured on r1 (2026-07-30, the route-sweep whale account): trustline
+// Measured on r1 (a whale account): trustline
 // read 5.18s via the account_id bloom skip-index → 0.069s via this prefix
 // — the difference between /v1/accounts/{g} needing the whole
 // stale-serving apparatus and answering interactively.

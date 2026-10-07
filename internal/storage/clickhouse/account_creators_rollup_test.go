@@ -75,13 +75,13 @@ func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 // aggregates, each by the source predicate that defines it, together
 // with the ledger range that source can ACTUALLY hold a creation in.
 //
-// That last column is the fact the board originally got wrong (#493) and
+// That last column is the fact the board originally got wrong and
 // is not a restatement of the SQL. stellar.account_movements' create_account
 // rows have exactly one writer, `stellarindex-ops classic-movements-backfill`,
 // whose -to is hard-clamped below P23BoundaryLedger because ADR-0047 D2
 // makes that projection historical-only — so the classic arm cannot see
 // a creation at or above the boundary however wide its window is.
-// Measured on r1 2026-09-07: max(ledger) = 58,762,516 for
+// Measured on r1: max(ledger) = 58,762,516 for
 // movement_kind='create_account' and 0 rows at or above the boundary,
 // against a lake tip of 64,310,629. Post-P23 the same creation is a
 // CAP-67 `transfer` movement, and only the CreateAccount operation in
@@ -113,7 +113,7 @@ var creationArms = []struct {
 // current. Protocol 23 changed how a CreateAccount is RECORDED, not
 // whether it happens, so a cycle that reads only the classic
 // representation ranks creators over a set that ends at ledger
-// 58,762,516 — 4,715,612 creations short of the tip on r1 2026-09-07.
+// 58,762,516 — 4,715,612 creations short of the tip on r1.
 //
 // It drives the real walk over a real post-P23 tip and asks, of each
 // probe ledger, how many creation arms actually land it in the working
@@ -133,7 +133,7 @@ var creationArms = []struct {
 // so a working table whose creations reach the tip is a thru_ledger that
 // reaches the tip.
 func TestCreatorsRollupSpansTheP23Boundary(t *testing.T) {
-	// r1's lake tip on 2026-09-07 — about a year of ledgers above the
+	// r1's lake tip — about a year of ledgers above the
 	// boundary, which is the span the board was missing.
 	const tip = 64_310_629
 
@@ -271,7 +271,7 @@ func TestCreatorsRollupDedupesTheArchive(t *testing.T) {
 // design (extract.go's Ops arm has no success gate — the lake keeps what
 // the ledger contained). A creation that never happened has no CAP-67
 // transfer, so pairing the operation with its movement is what gates the
-// board on transaction success. Measured on r1 2026-09-07 over ledgers
+// board on transaction success. Measured on r1 over ledgers
 // 63,000,000-63,010,000: of 6,266 distinct CreateAccount operations the
 // 5,890 in successful transactions match exactly one transfer leg each,
 // and the 376 in failed transactions match none.
@@ -309,7 +309,7 @@ func TestCreatorsRollupPostP23FundingComesFromTheMovement(t *testing.T) {
 }
 
 // TestCreatorsRollupScansMovementsOnce: stellar.account_movements is the
-// expensive table — 10,309,271,697 rows / 583.54 GiB on r1 2026-09-06.
+// expensive table — 10,309,271,697 rows / 583.54 GiB on r1.
 // It is read once PER WINDOW, by whichever arm owns that side of the
 // boundary, and only ever by a walked step that fills the working table;
 // every other figure derives from those rows, which is what makes the
@@ -319,7 +319,7 @@ func TestCreatorsRollupPostP23FundingComesFromTheMovement(t *testing.T) {
 // representation at P23 and the cycle reads both. The arms clamp on
 // opposite sides of the boundary, so a window wholly on the far side of
 // a clamp prunes to no parts at all — measured at 0 rows read and 2-4 ms
-// on r1 2026-09-07, against 2.4-107 s for the arm that owns it.
+// on r1, against 2.4-107 s for the arm that owns it.
 func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
 	var touching []int
 	for i, step := range creatorsRollupStatements(P23BoundaryLedger) {
@@ -353,7 +353,7 @@ func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
 // walk alone would not have fixed.
 //
 // The board's LEFT JOIN builds one row per account that currently exists
-// — 10,928,611 rows at 3.18 GiB measured on r1 2026-09-06 — and that
+// — 10,928,611 rows at 3.18 GiB measured on r1 — and that
 // build side does not shrink when the movement scan is partitioned. A
 // join over THAT population left inside the walked step would rebuild
 // the same hash table on every one of the 65 windows and re-read the
@@ -364,7 +364,7 @@ func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
 // The hazard is the POPULATION, not the keyword: a walked step may join
 // where both sides are bounded by its own window (the post-P23 arm pairs
 // a window's transfers with that window's CreateAccount operations, and
-// measures 1.43 GiB at its widest on r1 2026-09-07). What it may not do
+// measures 1.43 GiB at its widest on r1). What it may not do
 // is touch the account-entry table, or leave the planner to choose which
 // side of a join becomes the hash table — the two sides grow with
 // different populations, so an unpinned estimate silently moves the
@@ -402,7 +402,7 @@ func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
 }
 
 // TestCreatorsRollupLiveAccountsDedupeRecycledAddresses is the regression
-// guard for #541: account_creators_ops is one row per creation OPERATION,
+// guard for the board's live-account count: account_creators_ops is one row per creation OPERATION,
 // so a creator that recycles one address (create -> merge -> create ...)
 // produces several rows sharing the same `created`. The board's
 // live_accounts/live_stroops must describe the SURVIVING SET — one row

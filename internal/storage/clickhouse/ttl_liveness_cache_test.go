@@ -9,7 +9,7 @@ import (
 )
 
 // These tests pin the stale-while-revalidate contract of the archived-pair
-// verdict cache (route-sweep 2026-07-29): the ttl-prefix classification
+// verdict cache: the ttl-prefix classification
 // scan must never run per request — a filled snapshot serves instantly
 // (missing keys fail open as TTLUnknown), a stale/incomplete snapshot kicks
 // exactly one detached recompute, and a cold cache waits for the detached
@@ -79,7 +79,7 @@ func TestTTLLivenessCache_MissingKeyFailsOpenAndRefreshes(t *testing.T) {
 // evict the rest of the snapshot: store() whole-map-replaces, so before the
 // union fix a single-pair refresh wiped every other pair's verdict and the
 // archived-pair filter fell open (TTLUnknown→keep) for the whole registry —
-// dead pools served as live liquidity (cold audit 2026-08-03).
+// dead pools served as live liquidity.
 func TestTTLLivenessCache_SubsetRefreshDoesNotEvictOtherKeys(t *testing.T) {
 	c := newTTLLivenessCache(func(_ context.Context, keys []string) (map[string]TTLLiveness, error) {
 		out := make(map[string]TTLLiveness, len(keys))

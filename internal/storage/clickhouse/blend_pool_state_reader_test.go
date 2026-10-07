@@ -28,7 +28,7 @@ import (
 // provably not what the chain stores, rather than with a self-consistent
 // nonsense both sides agree on.
 //
-// Those two figures are also the #504 measurement: ONE reserve's key matches
+// Those two figures are also the measurement: ONE reserve's key matches
 // 74,834 rows in the window the reader used to fold over, and exactly one row
 // in the projection it reads now. The instance key resolving in
 // ledger_entries_current is what proves contract_data is projected there.
@@ -221,7 +221,7 @@ func TestBlendPoolReserves_RejectsANonContractPool(t *testing.T) {
 
 // TestBlendPoolReserves_QueryShape pins the version-resolution and pruning
 // decisions documented on the reader — all of which are silent-wrong-answer
-// territory rather than errors — plus the #504 requirement that the read is a
+// territory rather than errors — plus the requirement that the read is a
 // PK-prefix probe on the current-state projection, not a windowed scan of
 // stellar.ledger_entry_changes.
 func TestBlendPoolReserves_QueryShape(t *testing.T) {
@@ -235,7 +235,7 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	}
 	q := conn.queries[0]
 
-	// #504: the reserve state comes from the current-state projection, whose
+	// The reserve state comes from the current-state projection, whose
 	// sort key IS (entry_type, key_xdr) — so the probe reads ~one row per
 	// requested key. Folding the latest entry per key out of the CHANGES
 	// table instead costs a window scan whose size tracks pool ACTIVITY, and

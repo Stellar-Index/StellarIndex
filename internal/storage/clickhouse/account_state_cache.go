@@ -45,11 +45,11 @@ func newAccountStateCache() *accountStateCache {
 }
 
 // get returns the cached state whenever one exists — INCLUDING past the
-// TTL (fresh=false). Staleness is the CALLER's judgment (route-sweep
-// 2026-07-30): treating an expired entry as a hard miss meant a whale
+// TTL (fresh=false). Staleness is the CALLER's judgment:
+// treating an expired entry as a hard miss meant a whale
 // account whose scan outruns the request budget was warm for only the
 // 30s after each detached fill and 503'd the rest of the time — the
-// same failure shape the wealth cache fixed on 2026-07-29. ok=false only
+// same failure shape the wealth cache fixed. ok=false only
 // when the account was never computed. Nil-safe (a zero-value reader in
 // tests behaves as a permanent miss).
 func (c *accountStateCache) get(account string) (st AccountState, ok, fresh bool) {
@@ -105,7 +105,7 @@ var errAccountStateRefreshFailed = errors.New(
 // see accountStateCache's godoc for why (site-audit follow-up:
 // /v1/accounts/{g} and /v1/issuers/{g} were 6-8s under concurrent load).
 //
-// Detached (route-sweep 2026-07-30): the scan used to run on the request
+// Detached: the scan used to run on the request
 // context, so a whale account whose UNION arms exceed the 8s budget died
 // WITH the request, the cache never filled, and every retry paid the
 // timeout again — a permanent 503 for exactly the accounts people look up.
@@ -118,7 +118,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 			// refresh runs — old-but-real beats a 503, and for a whale
 			// account whose scan outruns the request budget this is the
 			// only way the route answers at all outside the short
-			// post-fill window (route-sweep 2026-07-30). The stale bool
+			// post-fill window. The stale bool
 			// lets the handler pair the serve with flags.stale, matching
 			// the wealth ranking's honesty contract.
 			r.refreshAccountState(account) //nolint:contextcheck // intentional detach — see refreshAccountState
@@ -142,7 +142,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 			// failure below keeps errAccountStateRefreshFailed → 500.
 			// fl.saturated covers the NON-OWNER that joined a flight the
 			// owner then saturation-skipped — it used to fall through to
-			// the 500 for pure backpressure (cold audit 2026-08-03).
+			// the 500 for pure backpressure.
 			return AccountState{}, false, ErrRefreshSaturated
 		}
 		return AccountState{}, false, errAccountStateRefreshFailed
@@ -168,7 +168,7 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	if !owner {
 		return fl, false
 	}
-	// Global bound across keys (audit 2026-07-31): the per-account flight
+	// Global bound across keys: the per-account flight
 	// collapses same-account bursts, but the account space is
 	// attacker-chosen (fabricated G-addresses), so without this gate key
 	// churn queued one unbounded detached scan per key on the 8-conn

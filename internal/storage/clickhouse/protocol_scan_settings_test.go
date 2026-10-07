@@ -10,7 +10,7 @@ import (
 // explorer_scan_settings_test.go: losing either is silent in review, silent in
 // unit tests, and expensive only in production.
 //
-// Measured on r1 2026-09-03, cold, use_query_condition_cache = 0, over the
+// Measured on r1, cold, use_query_condition_cache = 0, over the
 // caller's real 90-day window on a busy contract (125M events/90d):
 //
 //	ProtocolEventBreakdown    58,460 ms / 1.09 B rows / 373.41 GiB

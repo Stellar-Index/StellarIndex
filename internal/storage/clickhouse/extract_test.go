@@ -16,7 +16,7 @@ import (
 // past the gate. This table covers every claim-bearing op variant.
 
 // claimNative / claimUSDC are the two DISTINCT legs every fixture claim
-// carries. C2-010 (audit-2026-07-23): these atoms used to leave
+// carries. C2-010: these atoms used to leave
 // AssetSold/AssetBought at their zero value, which is
 // xdr.AssetTypeAssetTypeNative on BOTH legs — a native/native self-cross
 // stellar-core never emits and internal/sources/sdex has always dropped
@@ -244,7 +244,7 @@ func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
 	}
 }
 
-// TestExtractLedger_UnreadableTxCountsTowardTxCount (INV-2315): a tx the
+// TestExtractLedger_UnreadableTxCountsTowardTxCount: a tx the
 // reader cannot resolve is skipped, but stored tx_count must still include
 // it so gate.go's stored-vs-rows comparison fails instead of agreeing on
 // fewer transactions.

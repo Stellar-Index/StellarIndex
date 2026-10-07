@@ -18,8 +18,8 @@ import (
 //
 // This is not theoretical. The creators rollup's edge step carried both
 // from the day it shipped and died at step 10/12 with "Query memory
-// limit exceeded: would use 8.00 GiB" on the first cycle after deploy
-// (2026-09-09), leaving stellar.account_creator_edges empty and
+// limit exceeded: would use 8.00 GiB" on the first cycle after deploy,
+// leaving stellar.account_creator_edges empty and
 // /v1/accounts/{g}/graph serving its warming 503. Measured on r1: with
 // the setting removed, the same 24.8 M-row aggregation completes inside
 // a 512 MiB budget.

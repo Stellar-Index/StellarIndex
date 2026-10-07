@@ -157,7 +157,7 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 // a fresh/older ClickHouse before the first backfill write, the same
 // belt-and-suspenders pattern supply_flows.go uses.
 //
-// idx_cb_balance_id (added 2026-07-12, see FindClaimableBalanceCreates'
+// idx_cb_balance_id (see FindClaimableBalanceCreates'
 // doc comment) is part of this DDL so a FRESH install gets it from the
 // start. `CREATE TABLE IF NOT EXISTS` does NOT retrofit an index onto
 // an already-existing table, though — this only takes effect the first
@@ -222,7 +222,7 @@ const accountMovementsInsertChunk = 20_000
 // (sortAccountMovementRowsForInsert), so whatever survives a partial
 // send is COMPLETE for every ledger below the highest one written,
 // which is exactly what makes max(ledger) a sound resume checkpoint
-// for that caller (RLT-296). ch-cap67-movements, this table's other
+// for that caller. ch-cap67-movements, this table's other
 // writer, does not use this checkpoint at all — it resumes off its
 // own stellar.cap67_movements_watermark. Returns the number of ROWS sent
 // (not deduped — unlike Postgres's ON CONFLICT ... RETURNING, a
@@ -314,8 +314,8 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 // remaining ORDER BY columns (address, tx_hash, op_index, leg_index,
 // direction) for a fully deterministic, reproducible batch.
 //
-// Ledger-first is a resume-safety requirement, not a cosmetic choice
-// (RLT-296). A batch larger than accountMovementsInsertChunk is sent as
+// Ledger-first is a resume-safety requirement, not a cosmetic choice.
+// A batch larger than accountMovementsInsertChunk is sent as
 // several INSERTs, and ClickHouse has no transaction spanning them: a
 // send that fails partway leaves the earlier chunks durably written.
 // classic-movements-backfill checkpoints on MaxAccountMovementLedger —
@@ -430,7 +430,7 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 // later invocation with a WIDENED -from (covering an earlier range a
 // prior, narrower run never touched) still finds that prior run's tip
 // via max(ledger) and jumps straight to it, silently never
-// revisiting the newly-widened earlier range (Q216).
+// revisiting the newly-widened earlier range.
 func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -468,7 +468,7 @@ type ClaimableBalanceCreateRow struct {
 // bound exists purely as a safety ceiling on how large a single
 // server-side hash-set (and driver-side Table.Append batch) gets built
 // per query. 1,000,000 comfortably covers every real window observed
-// so far (up to 1,393,786 ids, 2026-07-13) in one or two queries,
+// so far in one or two queries,
 // while still capping worst-case per-query footprint if some future
 // window is far larger.
 const cbLookupExtTableChunkSize = 1_000_000
@@ -507,45 +507,17 @@ func chunkStrings(ids []string, n int) [][]string {
 // It replaces a now-removed single-ref FindClaimableBalanceCreate that
 // classic-movements-backfill called once per pending ref, serially.
 //
-// 2026-07-12 finding: the claimable-balance-bot era (ledgers
-// ~34M-40M) surfaces thousands of pending refs per window, and each
-// serial per-ref lookup was a 6.5s full scan of
-// stellar.account_movements' 973M rows — the drain was crawling.
-// idx_cb_balance_id (this package's accountMovementsDDL and
-// deploy/clickhouse/tier1_schema.sql; already applied to r1 via a
-// one-off ALTER TABLE) is a bloom_filter skip-index on
-// JSONExtractString(attributes, 'balance_id') that brought a single
-// lookup to ~84ms (~77x). Batching on top of that turns an entire
-// window's fallback resolution into (at most) a handful of queries
-// regardless of how many refs it has, instead of one query per ref.
+// A claimable-balance-bot window surfaces thousands to millions of pending
+// refs, so one lookup per ref was a full scan each. The idx_cb_balance_id
+// bloom skip-index fixes single lookups, but inlining a large IN-list into
+// the SQL text does not scale: past ~3,400 ids it exceeds `max_query_size`,
+// and at 2,000 ids per chunk the bloom filter's false-positive rate compounds
+// (1-(1-0.01)^2000 ≈ 1), degenerating each chunk into a near-full scan of the
+// wide `attributes` column that blows `max_memory_usage`. An IN-list
+// overflow failed the WHOLE window's lookup, leaving every claim
+// unresolved.
 //
-// 2026-07-13 finding #1 (fixed same day, superseded below): "a handful
-// of queries" needed a floor. Batching into ONE query per window
-// worked fine until the claimable-balance spam era (ledger ~49.3M)
-// produced windows with over a million pending refs — the driver
-// inlines the whole []string IN-list into the SQL text, and anything
-// past ~3,400 ids blew ClickHouse's `max_query_size` (256 KiB
-// default: `code: 62, Max query size exceeded`), failing the entire
-// lookup and leaving every claim in that window's batch unresolved.
-// The first fix chunked the inlined IN-list at 2,000 ids per query.
-//
-// 2026-07-13 finding #2 (this fix, ~1h after #1 shipped): chunking the
-// inlined IN-list traded one failure mode for a worse one. With 2,000
-// ids inlined per chunk, idx_cb_balance_id's bloom_filter(0.01) skip
-// index stops helping and starts hurting: across the table's ~119k
-// granules, the chance a granule's bloom filter reports a false
-// positive for at least one of 2,000 probed ids is
-// 1-(1-0.01)^2000 ≈ 1 (indistinguishable from certainty), so every
-// chunk degenerates into a near-full parallel scan of the wide
-// `attributes` column over all 973M rows — and that blew the
-// connection's `max_memory_usage` (`code: 241, Query memory limit
-// exceeded, would use 10.00 GiB`). Single-id point lookups were never
-// affected (a 1-in-100 false-positive rate keeps a literal `= ?` or
-// tiny `IN (?)` cheap: ~84ms, confirmed live) — only the batched path
-// broke, because bloom-filter false-positive rate compounds with probe
-// count, not because the index itself regressed.
-//
-// The terminal fix: ids are passed as a ClickHouse EXTERNAL TABLE
+// So ids are passed as a ClickHouse EXTERNAL TABLE
 // (`clickhouse.WithExternalTable`, native-protocol side-channel, not
 // SQL text) and matched via `JSONExtractString(...) IN cb_ids` — a
 // hash-set semijoin whose cost is O(ids), not a function of granule
@@ -606,7 +578,7 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 // attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
 // an inlined IN-list.
 // The SETTINGS clause lives in the SQL text, not clickhouse.WithSettings:
-// observed live (2026-07-13) that per-query context settings did NOT reach
+// observed live that per-query context settings did NOT reach
 // the server when combined with WithExternalTable — the failing query ran
 // at openRead's connection-level 10 GiB ceiling, not the requested 8 GB.
 // use_skip_indexes=0 is load-bearing: evaluating idx_cb_balance_id (bloom,
@@ -736,7 +708,7 @@ type AccountMovementFilter struct {
 	// sits above the ceiling, which is the routine shape while the
 	// cap67 follow daemon is mid-window. An empty page suppresses
 	// next_cursor and makes the account's whole pre-watermark history
-	// unreachable (F055). Bounding inside the query fills the page from
+	// unreachable. Bounding inside the query fills the page from
 	// the rows that are actually servable.
 	MaxLedger uint32
 	// HasMaxLedger is the explicit set-signal for MaxLedger: 0 is a

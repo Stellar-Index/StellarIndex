@@ -99,7 +99,7 @@ func newAccountsWealthCache() *accountsWealthCache {
 
 // get returns the cached ranking and its fetch time whenever one has EVER
 // been stored — including past the TTL. Staleness is the CALLER's decision
-// now (2026-07-29): treating an expired entry as a hard miss meant one
+// now: treating an expired entry as a hard miss meant one
 // window of failed refreshes blanked the route back to its 503 warming
 // state even though a perfectly real ranking sat in memory — serving it
 // with an honest as-of + degraded flag beats serving nothing. ok=false only
@@ -169,7 +169,7 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 //     single-flight refresh is kicked. The handler compares asOf against
 //     AccountsWealthCacheTTL to set the envelope's degraded (`stale`)
 //     flag — a real-but-old ranking with an honest timestamp beats a 503
-//     (route-sweep 2026-07-29: a window of refresh failures used to blank
+//     (a window of refresh failures used to blank
 //     the route back to "warming up" indefinitely).
 //   - nothing ever stored: ok=false immediately so the handler can render
 //     an honest warming state instead of hanging for the request timeout

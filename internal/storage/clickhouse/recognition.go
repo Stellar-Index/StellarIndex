@@ -92,7 +92,7 @@ const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 // enabled protocol decoders don't claim — pass ClassicTokenTopic0Syms to focus
 // the audit on protocol shapes). Results are ordered by Count descending.
 //
-// Structure (2026-07-08 OOM fix): the old single GROUP BY carried
+// Structure: the old single GROUP BY carried
 // argMax(topics_xdr)/argMax(data_xdr) exemplar states — one WIDE string pair
 // per distinct key — over the whole range in one query. Post-P23/CAP-67 every
 // classic asset movement emits events, so the distinct key set and the wide

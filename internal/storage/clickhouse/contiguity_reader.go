@@ -162,7 +162,7 @@ type ECWindowCoverage struct {
 // Missing is the EXACT count of tx-bearing ledgers in [From,To] with zero
 // stellar.ledger_entry_changes rows: TxLedgers - ECCoveredTxLedgers.
 //
-// C4-085 (audit-2026-07-23). This used to subtract two INDEPENDENT
+// This used to subtract two INDEPENDENT
 // cardinalities — tx-bearing ledgers from stellar.ledgers against
 // uniqExact(ledger_seq) over ALL of ledger_entry_changes in the window — and
 // saturate at zero. Entry-change rows exist for ledgers that carry no
@@ -207,7 +207,7 @@ const ecTxScopedRow = "tx_hash != ''"
 //   - uniqExact(ledger_seq), not count(): stellar.ledgers is
 //     ReplacingMergeTree, so count() over an un-merged re-ingested ledger
 //     double-counts a tx-bearing ledger and manufactures a false coverage
-//     surplus (audit C2-12). uniqExact counts distinct ledgers — matching
+//     surplus. uniqExact counts distinct ledgers — matching
 //     the two uniqExact reads above.
 //
 //   - uniqExactIf(..., ledger_seq IN (SELECT … FROM ledger_entry_changes …))

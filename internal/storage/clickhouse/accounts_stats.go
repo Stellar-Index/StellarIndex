@@ -7,7 +7,7 @@ import (
 )
 
 // AccountsStats is the network-wide account analytics snapshot for the
-// /accounts hub (operator request 2026-08-08), read from the
+// /accounts hub, read from the
 // ch-holders-rollup cycle's exchange-swapped tables. Stroops values are
 // int64 here and serialized as STRINGS at the API layer (ADR-0003).
 type AccountsStats struct {
@@ -56,7 +56,7 @@ const topHeldAssetsLimit = 12
 // The four rollup tables below are exchanged as ONE atomic group by the
 // writer (asset_holders_rollup.go's holdersRollupStatements, RA-2), but read
 // here as four independent round trips — the swap can land between any two
-// of them and blend two rollup cycles into one served snapshot (T346). Since
+// of them and blend two rollup cycles into one served snapshot. Since
 // the swap touches stellar.accounts_stats too, re-reading its computed_at
 // stamp after the last query and comparing it to the value the first query
 // (readStatsMetrics) captured detects that: a mismatch means a swap landed

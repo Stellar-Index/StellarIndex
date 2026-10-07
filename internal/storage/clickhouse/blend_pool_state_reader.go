@@ -51,11 +51,11 @@ type BlendReserveState struct {
 // Blend ResData entry is rewritten on nearly every pool interaction, so
 // one reserve's key alone matches tens of thousands of rows scattered
 // across the window's granules (74,834 rows for the busiest pool's USDC
-// reserve, measured on r1 2026-09-03 — see the fixture note in
+// reserve, measured on r1 — see the fixture note in
 // blend_pool_state_reader_test.go). The scan cost is a function of pool
 // ACTIVITY over the window, not of how many reserves were asked for, so
 // it was a multi-second FLOOR paid by every pool, largest and smallest
-// alike (#504: 12.1s timeout on the largest pool, 9.31s on a small one).
+// alike (12.1s timeout on the largest pool, 9.31s on a small one).
 //
 // ledger_entries_current already holds exactly this answer as one row
 // per live key, so the fold is not ours to do:
@@ -63,23 +63,23 @@ type BlendReserveState struct {
 //   - VERSION RESOLUTION is the same composite the old argMax spelled
 //     out. The table is ReplacingMergeTree(version) with
 //     version = (ledger_seq << 32) | intra_ledger_seq, so FINAL keeps the
-//     LAST change in canonical intra-ledger order. That is what
-//     audit-2026-07-16 C2-4c requires: a ResData entry is commonly
-//     rewritten several times inside ONE ledger, and a ledger_seq-only
-//     tie-break serves an arbitrary MID-ledger reserve state.
+//     LAST change in canonical intra-ledger order, which matters because
+//     a ResData entry is commonly rewritten several times inside ONE
+//     ledger, and a ledger_seq-only tie-break serves an arbitrary
+//     MID-ledger reserve state.
 //   - THE REMOVED-KEY DROP keeps only rows whose entry_xdr is NON-EMPTY,
 //     applied to the row FINAL kept. (Spelled without the empty-string
 //     literal on purpose: gofumpt's doc-comment reformatter rewrites a
 //     doubled apostrophe to a typographic quote, silently, and the
 //     result is fmt-STABLE — so the corruption survives every later
-//     check. The SQL itself is in a raw string and is unaffected.) A 'removed' change carries only its key (see
-//     entryChangeRow), so an empty entry_xdr on the winning row means
-//     "this key's final change was a removal". The filter must NOT run
-//     before the collapse — filtering removals out first is what let an
-//     earlier same-ledger update RESURRECT a deleted key, the exact bug
-//     the old HAVING existed to avoid — so
-//     optimize_move_to_prewhere_if_final is pinned OFF rather than left
-//     to the server default.
+//     check. The SQL itself is in a raw string and is unaffected.) A
+//     'removed' change carries only its key (see entryChangeRow), so an
+//     empty entry_xdr on the winning row means "this key's final change
+//     was a removal". The filter must NOT run before the collapse —
+//     filtering removals out first is what let an earlier same-ledger
+//     update RESURRECT a deleted key, the exact bug the old HAVING
+//     existed to avoid — so optimize_move_to_prewhere_if_final is pinned
+//     OFF rather than left to the server default.
 //
 // max_threads / max_memory_usage are the shared guard rails the sibling
 // readers pin (see ttlLivenessBatchQuery): the read is cheap, and a
@@ -314,7 +314,7 @@ func scanBlendReserveParts(rows interface {
 // consumes this") and that PHO's +157% supply divergence came from.
 //
 // It also replaces a bound that used to exist by accident. The
-// pre-#504 250,000-ledger window was doing DOUBLE DUTY: an archived
+// previous 250,000-ledger window was doing DOUBLE DUTY: an archived
 // entry has had no writes since it lapsed, so the window dropped it as a
 // side effect of being narrow. Reading the current-state projection
 // removes that window — correctly, since a QUIET reserve is not a dead

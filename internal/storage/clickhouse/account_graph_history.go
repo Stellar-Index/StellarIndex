@@ -10,7 +10,7 @@ import (
 )
 
 // The account graph's activity history: one account's creation and
-// sponsorship activity resolved into calendar months (#351).
+// sponsorship activity resolved into calendar months.
 //
 // # What the served tier can and cannot place in time
 //
@@ -190,7 +190,7 @@ type AccountGraphHistory struct {
 // primary-key range on (creator, …) or (sponsor, …). The comparable shape
 // already on the served path — AccountGraph's outbound summary, the same
 // range aggregated without a bucket — measures 63 ms at max_threads=2
-// over the busiest creator's 1,569,693 rows on r1 2026-09-09, against a
+// over the busiest creator's 1,569,693 rows on r1, against a
 // busiest OUTBOUND degree of 785,543 sponsorship edges and 193,015
 // creation edges. That is why this is not behind an SWR cache: it is a
 // fraction of what the same handler family already pays uncached, and a

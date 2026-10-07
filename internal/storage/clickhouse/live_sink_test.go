@@ -20,7 +20,7 @@ func (stalledConn) PrepareBatch(ctx context.Context, _ string, _ ...driver.Prepa
 
 func (stalledConn) Close() error { return nil }
 
-// TestLiveSink_StopBoundedByStopTimeout — #1018. Stop used to run the final
+// TestLiveSink_StopBoundedByStopTimeout pins that Stop is bounded. Stop used to run the final
 // flush and then Close (which flushes again), each on a fresh WriteTimeout,
 // after any flush already in flight: up to 3 × WriteTimeout (90s in
 // production) against a wedged ClickHouse, past systemd's stop timeout.

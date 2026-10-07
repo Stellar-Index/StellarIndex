@@ -162,12 +162,12 @@ type LedgerEntryChangeRow struct {
 	// ingest.LedgerChangeReader state machine and dispatcher's
 	// walkLedgerEntryChanges exactly. This doc previously described a
 	// PER-TRANSACTION order, which mis-ranked tx1's apply-phase change below
-	// tx2's fee change (C2-032, audit-2026-07-23). It is the
+	// tx2's fee change. It is the
 	// intra-ledger tie-breaker folded into stellar.ledger_entries_current's
 	// ReplacingMergeTree version (version = ledger_seq<<32 | intra_ledger_seq),
 	// so when the SAME key is changed more than once in one ledger (e.g.
 	// update-then-remove) FINAL deterministically keeps the LAST change instead
-	// of an arbitrary same-ledger row (audit-2026-07-16 C2-4c). change_index
+	// of an arbitrary same-ledger row. change_index
 	// alone can't serve — it is a per-TRANSACTION counter, so it repeats across
 	// a ledger's txs (see extract_entry_changes.go). Snapshot/seed backfill rows
 	// stamp the seedIntraLedgerSeq sentinel (the authoritative final state for
@@ -233,9 +233,9 @@ type LedgerExtract struct {
 	// classic balance / trustline / offer / LP change in those txs is
 	// missing, which reads downstream as "nothing happened". Unreachable
 	// on production input today (galexie's captive core re-generates meta
-	// at replay time — verified across protocols 1→19 on 2026-08-04);
+	// at replay time — verified across protocols 1→19);
 	// a non-zero value means an archive re-derived by an old core binary
-	// or a protocol that bumped meta past V4 (cold audit 2026-08-04).
+	// or a protocol that bumped meta past V4.
 	EntryMetaUnsupported int
 
 	// SorobanFeeMetaUnsupported counts Soroban transactions whose
@@ -319,7 +319,7 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 			// G12-04: `max_execution_time` is a TIME limit (seconds), not a
 			// memory bound — the prior "keep memory modest" comment was wrong,
 			// and 0 = UNLIMITED, which is exactly what let a heavy FINAL
-			// gate/reconcile read wedge CH on 2026-06-11. This Sink is the WRITE
+			// gate/reconcile read wedge CH. This Sink is the WRITE
 			// path (cheap appends), so a generous-but-finite ceiling is purely a
 			// safety net against a pathological INSERT…SELECT; the read-path caps
 			// live on openRead in gate.go where the heavy-FINAL query class runs.
@@ -440,7 +440,7 @@ func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[stri
 // flat per-table slices intact and is O(1); the ch-live-catchup gap-scan timer
 // re-fills the dropped (older, below-tip) ledgers later. Bounded heap is
 // strictly safer than unbounded growth on the shared r1 host (Postgres
-// co-tenant; see the 2026-06-11 CH-root-fill incident).
+// co-tenant; see CH-root-fill incident).
 func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	if s.maxBufferLedgers > 0 && len(s.ledgers) >= s.maxBufferLedgers {
 		return ErrBufferFull

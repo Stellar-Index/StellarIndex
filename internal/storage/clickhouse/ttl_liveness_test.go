@@ -147,7 +147,7 @@ func TestTTLEntryLayoutConstants(t *testing.T) {
 // primary-key lookup over the slim projection, latest state via
 // argMax(live_until, version), thread/memory guard rails retained — and,
 // critically, NO scan of ledger_entries_current and NO per-row entry_xdr
-// decode (the design that OOM'd six production runs on 2026-07-29).
+// decode (the design that OOM'd six production runs).
 func TestTTLLivenessQueryIsSlimLookup(t *testing.T) {
 	q := ttlLivenessBatchQuery([]string{"unhex(?)", "unhex(?)"})
 

@@ -18,7 +18,7 @@ type AccountBalanceSnapshot struct {
 	// Stroops is argMax(balance, (ledger_seq, intra_ledger_seq)) — the
 	// balance from the LAST change (in canonical intra-ledger walk order) to
 	// this account. The intra_ledger_seq tie-break makes same-ledger
-	// multi-change resolution deterministic (audit-2026-07-16 C2-4c): one
+	// multi-change resolution deterministic: one
 	// ledger can hold several changes to a single account (receive-then-send
 	// across two ops, or update-then-merge), and ledger_seq alone ties them,
 	// so a single-column argMax picked an ARBITRARY same-ledger row — possibly
@@ -43,7 +43,7 @@ type AccountBalanceSnapshot struct {
 // zero-balance account still has at least one 'created'/'updated'
 // row).
 //
-// SHAPE NOTE (2026-07-30 account-filter class audit): this is the ONE
+// SHAPE NOTE: this is the ONE
 // remaining `account_id = ?` bloom-shaped filter in the package, and it
 // is deliberate — this function backs ONLY the `reconcile-balances`
 // operator diagnostic (internal/ops/chops), never a serving path, and

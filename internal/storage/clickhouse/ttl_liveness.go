@@ -18,9 +18,9 @@ import (
 // contract_data row for this key" as current state will serve an archived
 // balance indefinitely.
 //
-// That is not hypothetical. It is why PHO served +157% against Horizon
-// (2026-07-28): `supply seed-sac-balances` wrote 122,148,204 PHO across 39
-// contract holders whose entries had been archived since 2024-11/2025-03,
+// That is not hypothetical. It is why PHO served +157% against Horizon:
+// `supply seed-sac-balances` wrote 122,148,204 PHO across 39
+// contract holders whose entries had been archived,
 // while our LIVE observer's rows matched Horizon to 0.009%. Four of the five
 // keys behind the largest balance had `live_until` in the 54.4M–56.5M range
 // against a tip of 63.68M.
@@ -72,7 +72,7 @@ const (
 // 1,500 keys ≈ 105 KiB of query text (each key renders as
 // `unhex('<64-hex>'), ` ≈ 70 bytes), safely inside ClickHouse's 256 KiB
 // default max_query_size. The original 5,000 produced ~350 KiB and
-// failed the parse cap on the first production run (2026-07-29) — the
+// failed the parse cap on the first production run — the
 // tool must fit DEFAULT server limits, not depend on a users.d raise.
 const ttlLivenessBatchSize = 1_500
 
@@ -207,8 +207,8 @@ func ensureTTLLiveUntilTable(ctx context.Context, conn driver.Conn) error {
 //
 // SETTINGS rationale: the lookup is bounded by construction (≤ batch-size
 // primary-key probes over three tiny columns), so these pins are guard rails,
-// not load-bearing tuning — carried over from the scan era (2026-07-29,
-// measured on r1: unpinned max_threads fanned a read out to 40× its
+// not load-bearing tuning — carried over from the scan era
+// (measured on r1: unpinned max_threads fanned a read out to 40× its
 // single-digit-MiB cost) so that a future layout or planner shift fails THIS
 // query loudly instead of starving the shared host.
 func ttlLivenessBatchQuery(placeholders []string) string {

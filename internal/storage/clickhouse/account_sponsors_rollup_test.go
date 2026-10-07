@@ -80,13 +80,13 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for #494: a
+// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for a
 // served league table that counted sponsorship arrangements which never
 // took effect.
 //
 // stellar.operations carries no success flag and never will — the lake
 // stores what the ledger CONTAINED, so extractOps keeps the operations of
-// failed transactions by design. Measured on r1 2026-09-07, 2,426,813 of
+// failed transactions by design. Measured on r1, 2,426,813 of
 // the archive's 22,413,991 sponsorship operations (10.8%) sit in failed
 // transactions. Ungated the board served 11,162,397 sponsorships_started
 // and 87,193 revocations_issued against true figures of 9,972,887 and

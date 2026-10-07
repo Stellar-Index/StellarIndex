@@ -21,9 +21,9 @@ import (
 //
 // The "live-only capture window" explanation this comment used to give is
 // STALE for contract_code, and following it wastes an operator's time
-// waiting for a backfill that has already run. Measured on r1 2026-08-04:
+// waiting for a backfill that has already run. Measured on r1:
 // ledger_entries_current holds all 4,534 distinct contract_code keys, from
-// Soroban activation (ledger 50,457,427, 2024-02-20) to tip, with zero
+// Soroban activation to tip, with zero
 // removals — and every contract_code key present in ledger_entry_changes
 // across all 14 Soroban partitions is present there too (7,777 rows, 0
 // missing). A miss on the CODE hop therefore means the hash genuinely is
@@ -41,7 +41,7 @@ var ErrContractWasmUnresolved = errors.New("clickhouse: contract wasm not resolv
 // the busiest contracts on the network — have no WASM to show, ever; a
 // backfill will never produce one. Distinct from ErrContractWasmUnresolved
 // so the API/UI can say "this is a SAC, no WASM" instead of "not captured
-// yet" (audit 2026-06-19 item 13). Callers map this to a 404 with a SAC note.
+// yet". Callers map this to a 404 with a SAC note.
 var ErrContractIsSAC = errors.New("clickhouse: contract is a stellar asset contract (no wasm)")
 
 // WasmExport is one exported function of a Soroban contract — its name and
@@ -209,7 +209,7 @@ func (r *ExplorerReader) fillWasmModule(ctx context.Context, wasmHash xdr.Hash, 
 // executable wins under in-place contract upgrades; the per-contract result is
 // cached hard (the wasm for a hash is immutable).
 func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
-	// Index-first (inventory #26, wasm two-hop item, 2026-08-11): the
+	// Index-first: the
 	// genesis-complete contract_instance_changes timeline resolves the
 	// CURRENT executable for contracts whose instance entry predates
 	// live entry capture — the "not in the captured window yet" class
@@ -247,8 +247,8 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 		return xdr.Hash{}, false, err
 	}
 	// ledger_entries_current, not the changes log: the current-state MV
-	// folds every insert (immune to the snapshot-row merge-loss defect,
-	// site-audit 2026-07-03) and (entry_type, key_xdr) is a PK-prefix
+	// folds every insert (immune to the snapshot-row merge-loss defect)
+	// and (entry_type, key_xdr) is a PK-prefix
 	// lookup instead of a bloom-filtered scan.
 	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -349,7 +349,7 @@ type ContractCodeVersion struct {
 }
 
 // contractCodeHistoryMaxRows caps the instance-change rows ContractCodeHistory
-// pulls back (audit-2026-07-23 C-F1). Pre-fix the query had no LIMIT at all: a
+// pulls back. Pre-fix the query had no LIMIT at all: a
 // contract that rewrites its instance entry often — instance-STORAGE writes
 // rewrite the same ledger key, not just `update_contract` upgrades — can match
 // millions of rows, every one of which is transferred and XDR-decoded below.
@@ -372,7 +372,7 @@ const contractCodeHistoryMaxRows = 10_000
 // explorerScanSettings: key_xdr is NOT a sort-key prefix on the append-log
 // ledger_entry_changes (ORDER BY leads with ledger_seq), so this predicate
 // is scan-shaped over the changes history — the pin bounds its thread
-// fan-out (route-sweep 2026-07-29: /v1/contracts/{id}/code-history was in
+// fan-out (/v1/contracts/{id}/code-history was in
 // the 8s 503 class). Same-ledger order is intra_ledger_seq first, as in
 // contractCodeHistoryIndexedQuery: change_index restarts per transaction.
 const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM (
@@ -398,7 +398,7 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
 
-	// Index-first, same posture as contractWasmHash (audit REC-04, #716):
+	// Index-first, same posture as contractWasmHash (audit REC-04):
 	// instanceChangesIndexAvailable is a table-global LIMIT-1 emptiness
 	// probe, so it flips true within minutes of the DDL — long before a
 	// multi-hour/day genesis backfill has reached any given contract. An
@@ -752,7 +752,7 @@ func codeKeyXDR(hash xdr.Hash) (string, error) {
 //
 // ledger_entries_current, NOT the changes log: (entry_type, key_xdr) is this
 // table's FULL primary key, so this is a mark-range lookup — measured on r1
-// 2026-08-04 at 121,584 rows / 53.93 MiB / 34 ms, and the MISS costs the
+// at 121,584 rows / 53.93 MiB / 34 ms, and the MISS costs the
 // same as the hit.
 //
 // The pre-fix query scanned stellar.ledger_entry_changes (159.4B rows /
@@ -909,13 +909,13 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 // the LAST fallback for SAC identification when the contract instance
 // was never captured (deployed pre-lake + TTL-evicted before any
 // checkpoint — structurally invisible to snapshots; ~55k such
-// contracts measured in the 2026-07-03 site audit). The caller MUST
+// contracts measured in the site audit). The caller MUST
 // cross-check by re-deriving the SAC address from the returned asset
 // — the topic is attacker-influenceable on non-SAC contracts, the
 // derivation is not.
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
-	// Bound the scan by the contract's own active ledgers (sub-second
-	// audit 2026-08-13). Unbounded, this is the quiet-contract reverse
+	// Bound the scan by the contract's own active ledgers.
+	// Unbounded, this is the quiet-contract reverse
 	// read-in-order trap that contract_active_ledgers exists to fix:
 	// `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the whole
 	// key range backwards for a contract with few events, and this

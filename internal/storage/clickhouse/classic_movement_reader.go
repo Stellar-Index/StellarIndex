@@ -102,7 +102,7 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 // Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx
 // restriction is a grace_hash INNER JOIN over a `GROUP BY tx_hash` derived
 // table (never an IN-subquery — the set-build blew the 10 GiB budget on a dense
-// 250k-ledger window, 2026-07-11), and that join is spelled BEFORE the outer
+// 250k-ledger window), and that join is spelled BEFORE the outer
 // WHERE so ClickHouse still propagates the ledger window through
 // o.ledger_seq = r.ledger_seq and primary-key-prunes stellar.operation_results.
 //

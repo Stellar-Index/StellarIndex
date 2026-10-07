@@ -73,7 +73,7 @@ func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args
 	}
 }
 
-// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins CODE-M #606:
+// TestSubstrateProblem_WalksInteriorDespiteHeadTruncation pins CODE-M:
 // substrateHeadProblem used to short-circuit SubstrateProblem before the
 // contiguity/hash-chain walks ran, so a head-truncated lake with a REAL
 // interior gap reported only the (harmless, expected) head problem and never

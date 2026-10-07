@@ -34,7 +34,7 @@ func contractEventRecentRowFor(seq uint32, opIndex, eventIndex uint32) []any {
 // TestContractEventsRecent_FastPathKeepsReadInOrder — the fast query must
 // carry NEITHER `FINAL` (defeats the contract_id bloom skip-index for
 // quiet contracts) NOR `LIMIT 1 BY` (disables the reverse read-in-order
-// early exit for busy ones — measured 16.3s vs 0.16s on r1, 2026-08-06,
+// early exit for busy ones — measured 16.3s vs 0.16s on r1,
 // the CCW5IBJ7… contract-page 503). The W4-storage-1 dedup moved to
 // Go-side adjacent-row collapse.
 func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
@@ -183,7 +183,7 @@ func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	}
 }
 
-// TestContractEventsRecent_PartialWalkShortPageFallsThrough (INV-2314): a
+// TestContractEventsRecent_PartialWalkShortPageFallsThrough: a
 // NON-empty walk can still be truncated by a partial backfill (recent
 // ledgers indexed, older not). A short bounded page must be re-read
 // unbounded so older events are served and pagination is not ended early.
@@ -292,7 +292,7 @@ func TestEventsByTx_UsesFinal(t *testing.T) {
 // ledger_seq DESC LIMIT 1` walks the whole key range backwards, cost
 // ~0.34s idle and 8s (the request deadline) under a page's own
 // concurrency — 23 of 25 cold random contract pages breached the 1s
-// budget on this single call (sub-second audit 2026-08-13). With the
+// budget on this single call. With the
 // index present the read MUST be bounded to the contract's own recent
 // active ledgers.
 func TestSACAssetFromEvents_ActiveLedgerBound(t *testing.T) {

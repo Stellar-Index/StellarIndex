@@ -14,7 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// ─── #292: the ops-batch identity must not reach a live daemon ──────
+// The ops-batch identity must not reach a live daemon ──────
 //
 // [opsAuth] takes the low-priority `ops_batch` identity from the
 // PROCESS ENVIRONMENT, and docs/operations/clickhouse-ops-batch-profile.md
@@ -36,7 +36,7 @@ import (
 // pair), feeds it to [chAuthFrom], and asserts the identity that comes
 // out — live_daemon (CH `default` before the live pair is rendered) for
 // the live daemons, `ops_batch` for the batch one-shots that share the
-// file (so a future over-broad strip cannot quietly re-break #243 in the
+// file (so a future over-broad strip cannot quietly re-break the batch tier in the
 // other direction).
 //
 // Deliberately NOT credited as a strip: `Environment=VAR=` neutralising.
@@ -68,7 +68,7 @@ var nonServingCmds = map[string]bool{
 const opsEnvFileBase = "stellarindex-ops"
 
 // opsBinary matches a unit whose ExecStart runs the ops CLI directly —
-// such a unit IS the batch tier and must resolve to ops_batch (#113).
+// such a unit IS the batch tier and must resolve to ops_batch.
 var opsBinary = map[string]bool{"stellarindex-ops": true}
 
 type systemdUnit struct {
@@ -189,7 +189,7 @@ func identityViolation(u systemdUnit, auth, liveWant clickhouse.Auth, serving ma
 	case u.runsAnyOf(opsBinary) || u.reachesOpsViaScript(scripts):
 		// Running the ops CLI, directly or through a shipped script, IS
 		// the batch tier: it MUST resolve to ops_batch whether or not it
-		// sources the file (#113, #882 — batch units that sourced nothing
+		// sources the file (#113: batch units that sourced nothing
 		// ran at CH `default`/serving priority and matched no arm here).
 		if auth != batchWant {
 			violation = fmt.Sprintf("%s runs stellarindex-ops (directly or via a shipped script) but would authenticate as %+v, want %+v.\n"+
@@ -456,7 +456,7 @@ func systemdRepoRoot(t *testing.T) string {
 }
 
 // TestOpsBatchIdentityScriptRoutedBatchUnits pins the arm for a unit that
-// reaches stellarindex-ops through a shipped script (#882): one that gets
+// reaches stellarindex-ops through a shipped script: one that gets
 // the pair from nowhere must be reported, not silently skipped.
 func TestOpsBatchIdentityScriptRoutedBatchUnits(t *testing.T) {
 	scripts := map[string]opsScript{

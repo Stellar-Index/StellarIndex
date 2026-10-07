@@ -18,8 +18,8 @@ import (
 // rows match what the live LedgerEntryChangeDecoder hook sees"), and until now
 // that contract was enforced only by a comment in each file saying it mirrored
 // the other. Comment-coupling is what rotted last time — the dispatcher grew a
-// failed-tx skip the lake never had (C2-023/C2-040) and both kept a per-tx
-// phase order the chain does not use (C2-032), with the docs on both sides
+// failed-tx skip the lake never had and both kept a per-tx
+// phase order the chain does not use, with the docs on both sides
 // still claiming they agreed.
 //
 // It lives in package clickhouse_test (external) so it can import
@@ -213,10 +213,10 @@ func (s *spyDecoder) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer
 // break it:
 //
 //   - tx2 is FAILED with a committed fee debit — the dispatcher used to skip
-//     the whole tx before its entry-change walk while the lake walked it
-//     (C2-023/C2-040), so the two disagreed by exactly the failed-tx fee set;
+//     the whole tx before its entry-change walk while the lake walked it,
+//     so the two disagreed by exactly the failed-tx fee set;
 //   - tx1 has both an apply-phase change and a later tx's fee change competing
-//     for the same key — the per-tx walk ranked the fee last (C2-032);
+//     for the same key — the per-tx walk ranked the fee last;
 //   - both txs carry PostTxApplyFeeChanges — the P23 Soroban refund phase
 //     (R-A01-1), which neither walker read.
 func TestEntryWalkParity_DispatcherAndLakeAgree(t *testing.T) {
