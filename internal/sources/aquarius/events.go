@@ -1,9 +1,8 @@
 // Package aquarius ingests trade events from Aquarius's Soroban AMM
 // (volatile + stableswap + concentrated pool types).
 //
-// Design reference: internal/sources/aquarius/README.md and
-// docs/discovery/dexes-amms/aquarius.md. Read the quirks Q1–Q4
-// before modifying the decoder.
+// Design reference: internal/sources/aquarius/README.md. Read its
+// Quirks section before modifying the decoder.
 package aquarius
 
 import (
@@ -19,7 +18,7 @@ const SourceName = "aquarius"
 
 // Event names — topic[0] of every Aquarius event, as a Symbol SCVal.
 //
-// Verified 2026-04-23 against
+// Verified against
 // aquarius-amm/liquidity_pool_events/src/lib.rs — every
 // `e.events().publish(...)` call uses a tuple whose first element
 // is a `Symbol::new(e, "<name>")`, which serializes as ScvSymbol
@@ -62,11 +61,11 @@ const (
 	EventKillGaugesClaim   = "kill_gauges_claim"
 	EventUnkillGaugesClaim = "unkill_gauges_claim"
 
-	// ─── Rewards-gauge subsystem (ROADMAP #89, 2026-07-10 census) ───
+	// ─── Rewards-gauge subsystem ───
 	//
 	// A per-pool liquidity-mining layer on top of the swap/liquidity
 	// surface above. Verified against real r1 lake bytes (ClickHouse
-	// stellar.contract_events, 2026-07-10) — every one of these
+	// stellar.contract_events) — every one of these
 	// topics was observed emitted by a REGISTERED Aquarius pool
 	// contract (the same 332-pool gated set the trade/liquidity/
 	// reserves events use), not a separate gauge-factory contract.
@@ -83,12 +82,13 @@ const (
 	EventSetRewardsState            = "set_rewards_state"
 	EventRewardsGaugeAdd            = "rewards_gauge_add"
 
-	// ─── Governance / upgrade admin surface (ROADMAP #89) ───
+	// ─── Governance / upgrade admin surface ───
 	//
-	// Router + pool lifecycle actions. apply_upgrade / commit_upgrade
-	// are emitted by the ROUTER (MainnetRouter); the others are
-	// observed on pool contracts — see decode_admin.go for the exact
-	// per-kind emitter, cited against real lake bytes.
+	// Router + pool lifecycle actions. pool_gauge_switch_token is
+	// emitted only by the ROUTER (MainnetRouter); the other seven are
+	// emitted by the router and by registered pools — see
+	// decode_admin.go for the per-kind emitter census against real
+	// lake bytes.
 	EventApplyUpgrade            = "apply_upgrade"
 	EventCommitUpgrade           = "commit_upgrade"
 	EventSetPrivilegedAddrs      = "set_privileged_addrs"
@@ -100,17 +100,14 @@ const (
 
 	// EventConfigRewards is the ROUTER-side companion to the pool-side
 	// EventSetRewardsConfig — same reward round (verified against real
-	// lake bytes 2026-07-10: identical amount + expires_at values in
-	// the same tx). Not in the original 19-topic README census (which
-	// scanned the "set_rewards_config" name), but equally unhandled
-	// before this change and documented under the same gap in
-	// docs/protocols/aquarius.md line 23; folded in here as the 12th
-	// rewards-family kind rather than left as a second gap.
+	// lake bytes: identical amount + expires_at values in the same tx).
+	// It is the 12th rewards-family kind and decodes through
+	// decodeRewardsEvent.
 	EventConfigRewards = "config_rewards"
 )
 
-// Mainnet contract addresses — verified during Phase-1 audit against
-// stellar.expert + Aquarius docs.
+// Mainnet contract addresses — verified against stellar.expert +
+// Aquarius docs.
 const (
 	MainnetRouter = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK"
 	// XLM SAC (network-wide, not Aquarius-specific, but Aquarius
@@ -131,7 +128,7 @@ const (
 	PoolUnknown      PoolType = 0
 	PoolVolatile     PoolType = 1 // x*y=k
 	PoolStableswap   PoolType = 2 // Curve-style invariant (N assets)
-	PoolConcentrated PoolType = 3 // v3-style; WIP at Phase-1 audit
+	PoolConcentrated PoolType = 3 // v3-style
 )
 
 func (p PoolType) String() string {
@@ -221,13 +218,13 @@ var (
 // Symbol "add_pool"; emitted by MainnetRouter, not by pools). Its
 // body is a Vec whose first element is the Address of the newly
 // registered pool — the fan-out seam the contract-identity gate
-// anchors on (ADR-0035 / ADR-0040 §1 mechanism 1+2 hybrid; see
-// docs/protocols/aquarius.md "Verification 2026-07-05").
+// anchors on (ADR-0035 / ADR-0040 §1 mechanism 1+2 hybrid; see the
+// verification section of docs/protocols/aquarius.md).
 const EventAddPool = "add_pool"
 
-// MainnetPools is the curated gated pool set (ADR-0040, CS-026).
-// Derivation, verified 2026-07-05 against the r1 lake AND the
-// protocol's own registry API:
+// MainnetPools is the curated gated pool set (ADR-0040).
+// Derivation, verified against the r1 lake AND the protocol's own
+// registry API:
 //
 //   - the 332 distinct pool addresses announced by MainnetRouter's
 //     add_pool events in the lake (338 events, ledgers

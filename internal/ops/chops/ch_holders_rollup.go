@@ -18,13 +18,13 @@ import (
 // operator already looks.
 const holdersRollupLockPath = "/var/lib/stellarindex/ch-holders-rollup.lock"
 
-// ch-holders-rollup — inventory #4: recompute every asset's top-500
+// ch-holders-rollup recomputes every asset's top-500
 // holders board + holder count into staging tables and atomically
 // EXCHANGE them live (deploy/clickhouse/asset_holders_rollup.sql). The
-// two ledger_entries_current FINAL scans this runs are exactly what
-// GET /v1/assets/{id}/holders used to run PER REQUEST; a 30-minute
+// two ledger_entries_current FINAL scans this runs are too heavy for
+// GET /v1/assets/{id}/holders to run PER REQUEST; a 30-minute
 // timer runs them once per cycle instead, and the API serves keyed
-// sub-millisecond reads (sub-second page goal, 2026-08-08).
+// sub-millisecond reads (sub-second page goal).
 //
 // Takes an exclusive advisory lock before it runs anything: the timer
 // and a manually-invoked run both resolve to this same function, and
@@ -60,10 +60,10 @@ func chHoldersRollup(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	// T391: the timer runs this unattended every 30 minutes with no other
-	// success/failure signal — a cycle that silently falls behind (no
-	// crash, just no progress) previously had no metric at all. The same
-	// heartbeat primitive ch-backfill and usd-volume-restamp already use
+	// The timer runs this unattended every 30 minutes with no other
+	// success/failure signal, so a cycle that silently falls behind (no
+	// crash, just no progress) needs a metric of its own. The same
+	// heartbeat primitive ch-backfill and usd-volume-restamp use
 	// publishes stellarindex_ops_job_last_finish_unix /
 	// _last_exit_ok, which the existing generic ops_job alert tree covers
 	// without a new alert.

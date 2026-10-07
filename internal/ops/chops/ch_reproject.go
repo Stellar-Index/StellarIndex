@@ -74,7 +74,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		return fmt.Errorf("ch-reproject: reconciliation catalogue: %w", err)
 	}
 	// Re-derive on the gate the live indexer runs with — curated set ∪
-	// protocol_contracts — not on the bare in-code seed (RLT-430): a
+	// protocol_contracts — not on the bare in-code seed: a
 	// contract an operator admitted through protocol_contracts was decoded
 	// live, so it HAS served rows, while an unwarmed re-derive both drops
 	// it from the static contractIDs prefilter and rejects its events in
@@ -92,11 +92,11 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	// Factory-anchored sources (ADR-0035): seed each gate registry from
 	// the factory's creation events in [genesis, lo) BEFORE the
 	// re-derive, exactly as verify-reconciliation and
-	// compute-completeness already do. Without it a source whose
+	// compute-completeness do. Without it a source whose
 	// decoder carries no in-code curated set — blend is the only one —
 	// re-derives 0 rows for any window above its factory deploys, which
 	// reads as a bogus delta here and as a silently-empty arm in
-	// ch-rebuild -write (cold audit 2026-08-03). Read-only, idempotent,
+	// ch-rebuild -write. Read-only, idempotent,
 	// and a no-op for the 20+ non-factory sources.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
