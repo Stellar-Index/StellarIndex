@@ -33,7 +33,7 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex
-# INV-0802: CH as ops_batch once the role renders this file; /dev/null (no
+# CH as ops_batch once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-batch.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
@@ -43,7 +43,7 @@ fi
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that
-# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
+# cannot read it — which User=stellarindex (non-root hardening)
 # cannot. Call the versioned binary directly to bypass the wrapper.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 
@@ -55,8 +55,8 @@ CHUNK="${CHSUPPLY_CHUNK:-25000}"
 MEMGUARD="${CHSUPPLY_MEMGUARD:-6442450944}"   # wait while CH mem > 6 GiB
 # Logs go to stdout/stderr → systemd-journald → promtail → loki. This oneshot
 # unit is de-privileged (User=stellarindex) and writes NOTHING to disk: a
-# /var/log file would fail on ownership under the 2026-07-03 hardening AND isn't
-# scraped by promtail (which ships the journal, not files). (2026-07-17)
+# /var/log file would fail on ownership under the non-root hardening AND isn't
+# scraped by promtail (which ships the journal, not files).
 # -f: an HTTP 4xx/5xx is a failure with an empty stdout, not an exception
 # body that reads as a value.
 CH() { curl -sSf --max-time 3600 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary "$1"; }
@@ -77,9 +77,9 @@ is_uint "$FROM" || { echo "$(date -u) ch-supply: supply_flows watermark unresolv
 echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK)"
 
 # Track whether any chunk failed so the oneshot unit reports failure to systemd
-# instead of a spurious success (audit-2026-07-16 C4-2: without this, a failed
-# seed chunk was logged but the script still exit-0'd, so no alert fired and the
-# served SEP-41 supply silently understated until the next run happened to heal).
+# instead of a spurious success: without this a failed seed chunk is logged but
+# the script exits 0, so no alert fires and the served SEP-41 supply silently
+# understates until a later run happens to heal it.
 # Mirrors run-compute-completeness.sh's rc + `exit $rc`.
 rc=0
 

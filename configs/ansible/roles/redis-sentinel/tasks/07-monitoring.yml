@@ -12,10 +12,8 @@
     mode: "0755"
 
 # ── redis_exporter ───────────────────────────────────────────────
-# F-1293 (codex audit-2026-05-13): same fail-fast checksum
-# pattern as F-1280/F-1285/F-1291. Pre-fix get_url had no
-# `checksum:` — root-owned executable installed without
-# provenance.
+# Fail-fast checksum: without `checksum:` get_url installs a
+# root-owned executable with no provenance.
 - name: assert redis_exporter_release_sha256 is set
   assert:
     that:
@@ -53,11 +51,10 @@
     remote_src: yes
   when: redis_exporter_version | length > 0
 
-# F-1295 (codex audit-2026-05-13): write the Redis password to a
-# 0600 root-only secret file, then have the systemd unit read it
-# via `EnvironmentFile=`. Pre-fix the password was inlined into
-# the world-readable (0644) unit file, so any local user could
-# recover it via `cat /etc/systemd/system/redis_exporter.service`.
+# Write the Redis password to a 0600 root-only secret file and have
+# the systemd unit read it via `EnvironmentFile=`. Inlined into the
+# world-readable (0644) unit file, any local user could recover it
+# via `cat /etc/systemd/system/redis_exporter.service`.
 - name: install redis_exporter secret file
   copy:
     dest: /etc/default/redis_exporter
@@ -128,13 +125,11 @@
 # redis_exporter doesn't expose "who Sentinel currently believes
 # the primary is" cleanly. Emit a small per-host gauge that ops
 # dashboards can use to see failover events at a glance.
-# F-1295 follow-up (codex audit-2026-05-13): the sentinel-state
-# scraper script previously inlined `{{ redis_password }}` directly
-# into a world-readable (0755) /usr/local/bin/ script. The script
-# now reads the password from /etc/default/redis_exporter (0600
-# root-only) and the systemd unit sets ProtectSystem=strict +
-# DynamicUser-style restrictions — same secret-hygiene contract as
-# the redis_exporter unit.
+# The script reads the password from /etc/default/redis_exporter
+# (0600 root-only) rather than inlining it into a world-readable
+# (0755) /usr/local/bin/ script, and the systemd unit sets
+# ProtectSystem=strict + DynamicUser-style restrictions — same
+# secret-hygiene contract as the redis_exporter unit.
 - name: install sentinel-state textfile scraper
   copy:
     dest: /usr/local/bin/redis-sentinel-textfile-scraper
