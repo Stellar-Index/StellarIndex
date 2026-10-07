@@ -41,15 +41,13 @@ const contributionScale = 18
 // carried onto every row: it is the only thing telling the 5m, 1h and
 // 24h breakdowns of one pair apart.
 func contributionRows(rec orchestrator.ContributionRecord) []timescale.PriceSourceContribution {
-	// F-1242 (codex audit-2026-05-12): read per-source USD volume
-	// directly from the post-filter breakdown the orchestrator
-	// supplies. SourceUSDVolume sums per-trade USD over the same
-	// surviving trade slice that computed Contributions[].Weight,
-	// so the persisted `volume_usd` matches the published
-	// contribution set even when outliers/class-filter dropped
-	// rows. Sources with no SourceUSDVolume entry get NULL —
-	// matches the prior all-NULL posture for non-USD windows
-	// rather than fabricating a value.
+	// Read per-source USD volume directly from the post-filter
+	// breakdown the orchestrator supplies. SourceUSDVolume sums
+	// per-trade USD over the same surviving trade slice that computed
+	// Contributions[].Weight, so the persisted `volume_usd` matches the
+	// published contribution set even when outliers/class-filter
+	// dropped rows. Sources with no positive SourceUSDVolume entry get
+	// NULL rather than a fabricated value.
 	rows := make([]timescale.PriceSourceContribution, 0, len(rec.Contributions))
 	for _, c := range rec.Contributions {
 		row := timescale.PriceSourceContribution{
