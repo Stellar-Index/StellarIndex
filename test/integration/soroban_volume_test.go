@@ -85,7 +85,7 @@ func TestSorobanVolume24hUSD_XLMAnchored(t *testing.T) {
 	}
 
 	// Plain reader: only the USD-pegged token/USDC leg contributes.
-	plain, err := store.Volume24hUSDForAsset(ctx, token.String())
+	plain, _, err := store.Volume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("Volume24hUSDForAsset: %v", err)
 	}

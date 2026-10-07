@@ -122,7 +122,7 @@ func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 
 	// Plain reader now ALSO sees the tier-4 leg — it sums whatever
 	// landed in usd_volume, and this trade's column is no longer NULL.
-	plain, err := store.Volume24hUSDForAsset(ctx, token.String())
+	plain, _, err := store.Volume24hUSDForAsset(ctx, token.String())
 	if err != nil {
 		t.Fatalf("Volume24hUSDForAsset: %v", err)
 	}

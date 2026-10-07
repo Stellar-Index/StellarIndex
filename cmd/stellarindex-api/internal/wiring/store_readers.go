@@ -17,7 +17,7 @@ import (
 // and a real error for genuine SQL failures.
 type StoreVolumeReader struct{ S *timescale.Store }
 
-func (r StoreVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
+func (r StoreVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, bool, error) {
 	return r.S.Volume24hUSDForAsset(ctx, assetKey)
 }
 
