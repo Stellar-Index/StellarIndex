@@ -301,7 +301,7 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 // TestDetachedRefreshGate_SaturationSkipsNotQueues pins the global bound
 // across cache keys: per-key single-flight alone let attacker-chosen key
 // churn (fabricated addresses/assets — every one a distinct cold key)
-// queue one unbounded detached lake scan per key on the shared 8-conn
+// queue one unbounded detached lake scan per key on the shared explorer
 // pool. On saturation the refresh is SKIPPED — stale entries keep
 // serving, cold keys miss honestly with a retryable error — and refreshes
 // resume once capacity frees.

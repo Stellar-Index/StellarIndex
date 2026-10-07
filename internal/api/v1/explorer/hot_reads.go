@@ -17,8 +17,8 @@ import (
 // the lake rather than by the request: GET /v1/assets/{asset_id}/holders
 // and the GET /v1/contracts directory.
 //
-// Run on every request, over the shared 8-connection explorer pool, with
-// no credential required, either scan lets a single client looping it
+// Run on every request, over the shared explorer pool, with no
+// credential required, either scan would let a single client looping it
 // hold every connection and stall every lake-backed endpoint behind it,
 // which the per-request explorerReadTimeout bounds but does not prevent.
 // The defence is the one already in the tree for the same class of read:

@@ -108,7 +108,7 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 		return fl
 	}
 	// Own gate CLASS: the key space here is a single entry, but the scan
-	// contends on the same 8-connection lake pool as the attacker-keyed
+	// contends on the same explorer lake pool as the attacker-keyed
 	// caches. A distinct class means a cold-key burst on holders /
 	// contract-detail can never starve this refresh (and vice versa),
 	// while the global bound still holds. On saturation skip, don't queue
