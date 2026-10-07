@@ -123,8 +123,7 @@ var (
 var (
 	// ErrNotEmitterEvent — topic[0] doesn't match any known Emitter
 	// symbol. Skip: an unrelated contract, or (post-gate) a future
-	// Emitter WASM upgrade that adds a new event kind. NOTE (cold
-	// audit 2026-08-03): blend_emitter implements no EvictedOrphans()
+	// Emitter WASM upgrade that adds a new event kind. NOTE: blend_emitter implements no EvictedOrphans()
 	// reporter, so stellarindex_source_orphan_events_total never
 	// populates for this source — unknown kinds land in the
 	// dispatcher's global unmatched tally; the ADR-0033 recognition

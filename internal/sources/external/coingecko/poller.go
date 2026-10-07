@@ -92,13 +92,9 @@ const SimplePricePath = "/api/v3/simple/price"
 // batched /simple/price request per tick × 288 ticks/day, total
 // burn is ~288 calls/day, leaving ample headroom for the
 // market-cap refresher (~288/day at the same cadence) and the
-// divergence reference (one-shot per pair per tick). Pre-fix
-// (F-0030, 2026-05-27) the default was 60s — burn rate alone
-// from this poller was 1,440/day and combined with the
-// divergence service's per-pair lookups on a shared IP the demo
-// 10K/day cap tripped, producing the sustained
-// "poller error … http 429 — backing off 59m59s" loop observed
-// live on r1.
+// divergence reference (one-shot per pair per tick). At 60s this
+// poller alone burns 1,440/day and, with the divergence lookups on
+// a shared IP, trips the demo 10K/day cap into a sustained 429 loop.
 const DefaultPollInterval = 300 * time.Second
 
 // DefaultDecimals — 8dp matches the off-chain-source convention.

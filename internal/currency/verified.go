@@ -13,7 +13,7 @@ import (
 var seedYAML []byte
 
 // AssetClass classifies a verified currency for the
-// everything-is-an-asset routing model (operator decision 2026-05-11).
+// everything-is-an-asset routing model.
 // Crypto is the default; new classes plug in as ingestion lights up
 // for them. Stocks / metals / commodities / funds are future-scope
 // placeholders.
@@ -345,9 +345,9 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 			// speak about it. That is the worst possible gap: since no
 			// legitimate classic asset can bear XLM's ticker, EVERY
 			// classic "XLM-G…" is by construction an impersonator — and
-			// before 2026-08-04 every one of them was served with no
+			// without this every one of them is served with no
 			// warning AND, because the listing falls back to the code as
-			// the slug, wearing the explorer's "Verified currency" badge.
+			// the slug, wears the explorer's "Verified currency" badge.
 			// Measured on r1: issuer GBEO62ZY… issues both a fake USDC
 			// (correctly flagged) and a fake XLM (silent).
 			//
@@ -411,7 +411,7 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // so flagging all of them is the fail-closed, correct default.
 //
 // A SOVEREIGN CURRENCY is the one kind of entry that reasoning does not
-// reach, so ClassFiat lands in byFiatCode instead (K033). USDT, XRP and
+// reach, so ClassFiat lands in byFiatCode instead. USDT, XRP and
 // BTC each name a token somebody issues somewhere, and a classic
 // `USDT-G…` claims to be that token. `USD` names a unit of account
 // nobody issues — the catalogue's own fiat entries carry `networks: []`
@@ -490,7 +490,7 @@ func (c *Catalogue) Browseable() []*VerifiedCurrency {
 
 // StellarIssued returns the catalogue entries that have a Stellar on-chain
 // issuance (StellarEntry() != nil) — the set that belongs on /v1/assets after
-// the Stellar/external split (LC-001). This EXCLUDES both reference-only coins
+// the Stellar/external split. This EXCLUDES both reference-only coins
 // (BTC/ETH) AND fiat currencies (USD/EUR) — both have no Stellar issuance, so
 // they live on /v1/external/assets. (Browseable only drops reference-only, so
 // it still leaks fiat into the Stellar listing — do not use it for the browse
@@ -510,7 +510,7 @@ func (c *Catalogue) StellarIssued() []*VerifiedCurrency {
 
 // External returns the catalogue entries with NO Stellar issuance
 // (StellarEntry() == nil): fiat currencies + reference-only coins. This is the
-// set for /v1/external/assets (LC-001). Order preserved; freshly allocated.
+// set for /v1/external/assets. Order preserved; freshly allocated.
 func (c *Catalogue) External() []*VerifiedCurrency {
 	if c == nil {
 		return nil
@@ -579,7 +579,7 @@ func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, b
 // issuance (USD, EUR, GBP, …) is NOT a collision and returns
 // (nil, false) — it is a denomination, not an asset identity; see
 // indexTickerOnlyEntry for the reasoning and FiatDenomination for the
-// lookup that does answer it (K033).
+// lookup that does answer it.
 func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" || issuer == "" {
 		return nil, false
@@ -604,7 +604,7 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 // issuance of its own ("USD" → the US Dollar entry). Case-insensitive.
 //
 // This is the answer StellarCollision deliberately does not give for
-// such a code (K033): the pair is a DENOMINATION statement, not an
+// such a code: the pair is a DENOMINATION statement, not an
 // identity claim, so it carries no impersonation verdict and must not
 // gate a valuation. It exists so the catalogue still speaks about every
 // ticker it holds — a fiat entry is in exactly one of the two indexes,
@@ -623,7 +623,7 @@ func (c *Catalogue) FiatDenomination(code string) (*VerifiedCurrency, bool) {
 }
 
 // FiatCodeAnchor answers the anchor-verdict question StellarCollision
-// deliberately never gates on (K033/F006): given a classic asset's
+// deliberately never gates on: given a classic asset's
 // (code, issuer), is code a catalogue fiat denomination, and if so is
 // issuer in that entry's operator-curated known-anchor set?
 //

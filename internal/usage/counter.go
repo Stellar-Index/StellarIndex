@@ -9,7 +9,7 @@
 // store stamped no owner reference), so every credential an account
 // holds shares one counter — the monthly ceiling is a plan budget, and
 // keying it per credential let a customer multiply it by minting keys
-// and reset it by rotating one (RLT-404).
+// and reset it by rotating one.
 //
 // Storage shape — two key families per (subject, day):
 //
@@ -73,8 +73,8 @@ const (
 	// unbillable. Caveat on the ENDPOINT dimension: both 429
 	// producers reject before the router resolves a route pattern,
 	// so throttled counts land under the "unmatched" endpoint
-	// rather than the caller's target route (cold audit
-	// 2026-08-03; documented on /v1/account/usage in the spec).
+	// rather than the caller's target route (documented on
+	// /v1/account/usage in the spec).
 	ClassThrottled = "429"
 	// ClassServerError — 5xx.
 	ClassServerError = "5xx"
@@ -109,10 +109,8 @@ func WithKeyPrefix(prefix string) Option {
 // the rate-limit Bucket uses — usage shares the bucket's Redis
 // host since the keys never collide (different prefix).
 func New(rdb redis.Cmdable, opts ...Option) *Counter {
-	// F-1258 (codex audit-2026-05-12) — defence-in-depth. The
-	// caller in cmd/stellarindex-api/main.go now only constructs a
-	// counter when Redis is wired, but if a future call site
-	// passes nil here, return nil so [middleware.UsageTracker]'s
+	// Defence-in-depth: main only constructs a counter when Redis is
+	// wired, but if a future call site passes nil, return nil so [middleware.UsageTracker]'s
 	// `counter == nil` short-circuit fires before any Redis op.
 	if rdb == nil {
 		return nil
@@ -224,7 +222,7 @@ type DetailRow struct {
 // SUMMED both, and usage_daily's GREATEST() merge made the inflated
 // count PERMANENT for a closed day (no later sweep can produce a
 // larger true value to correct it) — a customer's usage history
-// doubled by a Redis implementation detail (cold audit 2026-08-03).
+// doubled by a Redis implementation detail.
 // A repeat key is always a re-read of the same (subject, day) hash,
 // never distinct data, so keeping the first read is exact.
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
@@ -357,7 +355,7 @@ type Day struct {
 // today. Used by [middleware.MonthlyQuota] to enforce monthly
 // request ceilings; `subject` is the owner-account key (see the
 // package doc), so the sum spans every credential the account
-// holds. F-1226 (codex audit-2026-05-12).
+// holds.
 //
 // Each day counts max(Redis, usage_daily) when [WithDurableDays] is
 // set. The day keys carry a TTL on an evicting Redis, and a missing

@@ -69,12 +69,9 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		quote  canonical.Asset
 	}{
 		{"XLM-USD", xlm, usd},
-		// BTC + ETH cross-fiat (2026-05-14): pre-fix BTC-EUR + ETH-EUR
-		// were single-source (only Bitstamp publishes), causing
-		// permanent Phase 2 freeze fires on those pairs. Coinbase
-		// supports BTC-EUR + BTC-GBP + ETH-EUR + ETH-GBP natively;
-		// adding to the cross-venue set so VWAP has multi-source
-		// corroboration on the most-asked-for fiat conversions.
+		// BTC + ETH cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are
+		// single-source (only Bitstamp) and Phase 2 freeze fires on them
+		// permanently; these give VWAP multi-source corroboration.
 		// XLM-EUR (verified online on the Coinbase products API 2026-08-27).
 		// Added because crypto:XLM/fiat:EUR had only TWO venues (kraken +
 		// bitstamp): a single venue going quiet dropped it to source_count=1,
