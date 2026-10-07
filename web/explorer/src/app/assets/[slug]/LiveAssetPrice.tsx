@@ -9,6 +9,7 @@ import {
   usePricePoll,
   useTipStream,
 } from '@/lib/live/hooks';
+import { ThinMarketBadge, thinMarketNote } from '@/components/ThinMarketBadge';
 import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
 
@@ -89,7 +90,11 @@ export function LiveAssetPrice({
 }) {
   // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll;
   // this component keeps only the provenance/caption mapping.
-  const poll = usePricePoll({ asset: assetID, initialPrice });
+  const poll = usePricePoll({
+    asset: assetID,
+    initialPrice,
+    includeThin: true,
+  });
   // Same live feed ChangeSummaryStrip renders below (identical query key,
   // so TanStack Query serves both from one in-flight request) — never a
   // second, independently-computed 24h figure beside it. Falls back to
@@ -124,12 +129,16 @@ export function LiveAssetPrice({
     initialProvenance === 'global_market' ||
     initialProvenance === 'declared_peg' ||
     initialProvenance === 'transitive';
+  // A thin market price must not displace a derived one either: the derived
+  // price exists because that market was refused.
+  const refused = poll.withheld || (poll.thin && derived);
   const withheld = poll.withheld && !derived;
-  const price = poll.withheld && derived ? initialPrice : poll.price;
+  const thin = poll.thin && !derived;
+  const price = refused && derived ? initialPrice : poll.price;
   const live = poll.polled;
   const stale = poll.polled ? poll.stale : Boolean(initialStale);
   const provenance: PriceProvenance =
-    poll.polled && !poll.withheld
+    poll.polled && !refused
       ? poll.triangulated
         ? 'triangulated'
         : 'vwap1m'
@@ -144,7 +153,8 @@ export function LiveAssetPrice({
   // waits one poll to learn whether the stream is servable.
   const freshDirectMarket =
     initialProvenance === 'vwap1m' && !initialStale && initialPrice != null;
-  const tipEnabled = withheld ? false : poll.polled ? true : freshDirectMarket;
+  const tipEnabled =
+    withheld || poll.thin ? false : poll.polled ? true : freshDirectMarket;
   const tip = useTipStream(tipEnabled ? assetID : null);
   // Slow clock so a wedged stream loses its "live" claim without
   // waiting for the next poll render (WB-04).
@@ -172,6 +182,9 @@ export function LiveAssetPrice({
         >
           {shown != null ? `$${formatPriceSmall(shown)}` : '—'}
         </span>
+        {thin && shown != null && (
+          <ThinMarketBadge substance={poll.substance} className="self-center" />
+        )}
         {changePct != null && (
           <span
             className={`font-mono text-sm tabular-nums ${
@@ -204,12 +217,15 @@ export function LiveAssetPrice({
           (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
         {!withheld && tipActive && caveat && ` · ${caveat}`}
+        {thin && shown != null && 'thin market · low confidence · in no total'}
         {!withheld &&
+          !thin &&
           !tipActive &&
           shown != null &&
           provenance === 'vwap1m' &&
           '1-min VWAP · USD'}
         {!withheld &&
+          !thin &&
           !tipActive &&
           shown != null &&
           provenance === 'triangulated' &&
@@ -251,6 +267,11 @@ export function LiveAssetPrice({
           provenance !== 'transitive' &&
           ' · as baked at deploy'}
       </p>
+      {thin && shown != null && (
+        <p className="text-warn-700 mt-1 text-xs">
+          {thinMarketNote(poll.substance)}
+        </p>
+      )}
     </>
   );
 }

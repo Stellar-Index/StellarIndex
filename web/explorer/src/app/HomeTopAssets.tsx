@@ -27,6 +27,7 @@ import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
+import { ThinMarketBadge } from '@/components/ThinMarketBadge';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
@@ -55,7 +56,7 @@ export function HomeTopAssets() {
     undefined,
     undefined,
     pricing ? 'volume_24h_usd_desc' : 'observation_count_desc',
-    { sparkline: pricing },
+    { sparkline: pricing, includeThin: pricing },
   );
   const { data: nativeCoin } = useNativeCoin({ sparkline: true });
   const { data: verifiedSlugs } = useVerifiedSlugs();
@@ -184,9 +185,7 @@ function Row({
               </svg>
             </span>
           )}
-          <span className="text-ink-muted text-[11px]">
-            {coinSlug(coin)}
-          </span>
+          <span className="text-ink-muted text-[11px]">{coinSlug(coin)}</span>
           <ScamBadge tags={coin.issuer_directory_tags} />
         </Link>
       </Td>
@@ -195,6 +194,7 @@ function Row({
           {price != null ? (
             <span className="text-ink font-mono">
               ${formatPriceSmall(price)}
+              {coin.thin_market && <ThinMarketBadge className="ml-1" />}
             </span>
           ) : (
             <Dash />

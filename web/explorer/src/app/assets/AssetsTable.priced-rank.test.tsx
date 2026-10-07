@@ -50,6 +50,13 @@ const assets: Coin[] = [
     volume_24h_usd: '52422.98',
     circulating_supply: '10000000000',
   }),
+  // A thin-market price is served under include_thin but ranks unpriced.
+  coin('THIN', {
+    price_usd: '0.0500000000',
+    thin_market: true,
+    volume_24h_usd: '60000.00',
+    circulating_supply: '50000000000',
+  }),
   // Unpriced, yet ranked above the two priced rows that trail it.
   coin('EURZ', {
     volume_24h_usd: '51556.15',
@@ -71,19 +78,26 @@ const assets: Coin[] = [
   }),
 ];
 
-const PRICED_FIRST = ['USDZ', 'XRP', 'TESOURO', 'EURZ', 'APPLELEGACY'];
+const PRICED_FIRST = ['USDZ', 'XRP', 'TESOURO', 'THIN', 'EURZ', 'APPLELEGACY'];
+
+const useAssetsOptions = vi.hoisted(
+  () => [] as Array<{ includeThin?: boolean } | undefined>,
+);
 
 vi.mock('@/api/hooks', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
-    useAssets: () => ({
-      data: { assets, next_cursor: '' },
-      isLoading: false,
-      isError: false,
-      error: null,
-    }),
+    useAssets: (...args: unknown[]) => {
+      useAssetsOptions.push(args[4] as { includeThin?: boolean } | undefined);
+      return {
+        data: { assets, next_cursor: '' },
+        isLoading: false,
+        isError: false,
+        error: null,
+      };
+    },
   };
 });
 
@@ -127,6 +141,25 @@ describe('AssetsTable priced-first default ranking', () => {
     for (const a of assets) {
       expect(renderedCodes()).toContain(a.code);
     }
+  });
+
+  it('shows a thin-market price with a warning badge, ranked with the unpriced rows', () => {
+    useAssetsOptions.length = 0;
+    renderTable();
+    expect(useAssetsOptions.at(-1)?.includeThin).toBe(true);
+    const row = screen.getAllByRole('row')[4];
+    expect(row).toHaveTextContent('THIN');
+    expect(row).toHaveTextContent('$0.05');
+    expect(row?.querySelector('[title^="Low confidence"]')).not.toBeNull();
+  });
+
+  it('does not ask /external/assets for thin prices', () => {
+    useAssetsOptions.length = 0;
+    renderTable({
+      endpoint: '/v1/external/assets',
+      basePath: '/external/assets',
+    });
+    expect(useAssetsOptions.at(-1)?.includeThin).toBe(false);
   });
 
   it('leaves an explicit column sort alone', () => {
