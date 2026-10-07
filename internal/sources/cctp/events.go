@@ -111,7 +111,7 @@ const (
 	// three CCTP contracts had EVER emitted, cross-checked against
 	// topics_xdr for the empty-topic_0_sym trap — none found; all CCTP
 	// topics are Symbols). These are the census topics outside the
-	// governance set above.
+	// transfer and governance sets above.
 	EventAdminChangeStarted        = "admin_change_started"          // 2-step admin change initiated (old_admin may be void — bootstrap)
 	EventAttesterEnabled           = "attester_enabled"              // MessageTransmitter: an attester public key was enabled
 	EventAttesterManagerUpdated    = "attester_manager_updated"      // MessageTransmitter: attester-manager role reassigned (old may be void — bootstrap)
@@ -618,8 +618,7 @@ type FeeRecipientSet struct {
 // MaxMessageBodySizeUpdated is the canonical projection of one
 // `max_message_body_size_updated` event — MessageTransmitter's message
 // size ceiling changed. Only ever observed from MessageTransmitter.
-// Verified against a real mainnet event: ledger 62146641 (new value
-// 8192 bytes).
+// Verified against a real mainnet event: ledger 62146641 (new value 8192 bytes).
 //
 // Wire shape (single-topic event; body ScMap):
 //
@@ -766,8 +765,7 @@ type SetBurnLimitPerMessage struct {
 // `swap_minter_config_set` event — a swap-minter configuration was set
 // for one local token. Only ever observed from TokenMessengerMinter.
 // Verified against real mainnet events: ledger 62146806. The body's
-// `swap_minter_config` field is a NESTED map — flattened here into two
-// fields.
+// `swap_minter_config` field is a NESTED map — flattened here into two fields.
 //
 // Wire shape (2-topic event; body ScMap):
 //
@@ -792,8 +790,7 @@ type SwapMinterConfigSet struct {
 // local decimals; this event records the conversion). Only ever
 // observed from TokenMessengerMinter. Verified against real mainnet
 // events: ledger 62146699 (canonical=6, local=7). The body's
-// `token_decimal_config` field is a NESTED map — flattened here into
-// two fields.
+// `token_decimal_config` field is a NESTED map — flattened here into two fields.
 //
 // Wire shape (2-topic event; body ScMap):
 //
