@@ -125,7 +125,7 @@ type reconSource struct {
 	// events.Event.OpArgs (redstone zips write_prices feed_ids from the op
 	// args). The -ch projection reconcile trims the WIDE op_args_xdr column
 	// from the lake read for every other source; reading it across the
-	// sep41/CAP-67 firehose is one of the loads that run
+	// sep41/CAP-67 firehose would be one of the loads that run
 	// compute-completeness out of memory.
 	needsOpArgs bool
 
@@ -784,10 +784,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	})
 
 	// sep41 promotion — see the doc comment above. Gated the same way
-	// buildSEP41ReconSources's own EmptyWatchedSetErrors precondition expects: only attempt it when a
-	// watched set is actually configured, so a deployment that never opted
-	// into SEP-41 supply/transfer capture gets an empty (not an error)
-	// promotion — matching the dispatcher's own non-opted-in behavior.
+	// buildSEP41ReconSources's own EmptyWatchedSetErrors precondition
+	// expects: only attempt it when a watched set is actually configured,
+	// so a deployment that never opted into SEP-41 supply/transfer capture
+	// gets an empty (not an error) promotion — matching the dispatcher's
+	// own non-opted-in behavior.
 	if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
 		sepCat, err := buildSEP41ReconSources(cfg)
 		if err != nil {

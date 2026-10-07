@@ -31,10 +31,9 @@ import (
 //	-tier exact (default) — tiers 1/2/2b, where usd_volume is a pure
 //	  decimal rescaling of an amount already on the row
 //	  (`pegged_leg / 10^decimals`). Repairable as a SQL identity; that is
-//	  what this file does. The measured repair class: 66 dirty days,
-//	  every violation
-//	  a `[base_pegged] sdex` USDC-base row valued by the resolver's VWAP
-//	  (+0.7%) instead of the $1 peg identity.
+//	  what this file does. The measured repair class was 66 dirty days,
+//	  in which every violation was a `[base_pegged] sdex` USDC-base row
+//	  valued by the resolver's VWAP (+0.7%) instead of the $1 peg identity.
 //
 //	-tier xlm-base — the tier-4 XLM anchor
 //	  (`base_amount/1e7 x XLM/USD at ts`), re-derived in GO through the
