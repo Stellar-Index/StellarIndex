@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-metric-refs.sh — F-1329 guard against the "dead alert layer".
+# lint-metric-refs.sh — guard against the "dead alert layer".
 #
 # Every `stellarindex_*` metric token referenced inside a Prometheus
 # rule `expr:` MUST resolve to something that actually emits it — a
@@ -7,8 +7,7 @@
 # scripts/ configs/healthchecks, which covers textfile-collector .prom
 # emitters too). A rule that selects a metric nothing produces is dead:
 # it can never fire, so the operator gets a false sense of coverage.
-# That is exactly how backups could silently stop with zero paging
-# (the F-1329 finding).
+# That is how backups can silently stop with zero paging.
 #
 # This is the alert->producer direction only. The reverse direction
 # (a metric emitted but never selected by any rule) is reported as an
@@ -17,7 +16,7 @@
 # per-metric exception list the size of the metric registry. The
 # advisory pass exists so an operator can spot an accidental gap (a
 # metric that SHOULD have paged and doesn't) without turning every
-# unalerted gauge into a required build-time decision (T456).
+# unalerted gauge into a required build-time decision.
 #
 # Scope + conservatism:
 #   - Only `stellarindex_*` tokens are enforced. node_/pg_/redis_/
@@ -104,7 +103,7 @@ KNOWN_INERT=(
   stellarindex_stellar_archive_publish_errors_total
   # stellar.yml — stellar-core / stellar-rpc metrics come from the
   # external stellar-core-prometheus-exporter, which is NOT deployed on
-  # r1 today (removed 2026-04-23; returns at Phase-3 / ADR-0004).
+  # r1 today (returns at Phase-3 / ADR-0004).
   stellarindex_stellar_core_last_ledger_time_unix
   stellarindex_stellar_core_peer_count
   stellarindex_stellar_rpc_latest_ledger_age_seconds
@@ -345,5 +344,5 @@ if [[ "$unalerted" -gt 0 ]]; then
 fi
 # exit 1, NOT exit "$dead": the shell truncates the status mod 256, so
 # exactly 256 dead references exited 0 (proven with a 128-alert x 2-tree
-# fixture). Cold audit 2026-08-04.
+# fixture).
 [[ "$dead" -eq 0 ]] || exit 1

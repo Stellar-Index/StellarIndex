@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-baseline-growth.sh — the anti-self-bypass tripwire (CS-098).
+# lint-baseline-growth.sh — the anti-self-bypass tripwire.
 #
 # The lint gates in this repo carry self-editable escape hatches:
 #   - scripts/ci/*.baseline               (grandfathered violations:
@@ -10,30 +10,27 @@
 #   - .gitleaks.toml                      ([allowlist]/[[rules.allowlists]]
 #                                          path/regex exemptions)
 #   - scripts/ci/govulncheck-allow.txt    (accepted-risk vuln ids — a .txt,
-#                                          missed by the *.baseline glob;
-#                                          Q233/T467)
+#                                          missed by the *.baseline glob)
 #   - .golangci.yml                       (linters.exclusions.rules —
-#                                          per-path/linter lint exemptions;
-#                                          Q233)
+#                                          per-path/linter lint exemptions)
 #   - configs/ansible/.ansible-lint       (skip_list — grandfathered
 #                                          ansible-lint rule classes,
 #                                          auto-discovered by ansible-lint
 #                                          rather than named in any CI
-#                                          yaml; T467)
+#                                          yaml)
 #   - deploy/systemd/ORPHANS              (declared-orphan unit exemptions
 #                                          for lint-deploy-systemd-
-#                                          authority.sh; Q233)
+#                                          authority.sh)
 #   - scripts/ci/migration-immutability.sha256 (watched for a MUTATED
 #                                          hash on an existing basename,
 #                                          not a new one — new migrations
-#                                          are meant to append freely; Q233)
+#                                          are meant to append freely)
 #
 # Each is designed to shrink monotonically, and the linters already
 # fail on STALE entries — but nothing stopped a commit from GROWING
 # the allowlist in the same change that introduces the violation it
-# hides (audit 2026-06-30, CS-098; the gitleaks pair added for W5-ci-2,
-# where a PR could add an ignore fingerprint or a broad path allowlist
-# that silences a REAL leak in the same diff). This check closes that
+# hides (e.g. a gitleaks ignore fingerprint or broad path allowlist that
+# silences a REAL leak in the same diff). This check closes that
 # hole: any commit range that ADDS entries to a baseline/allowlist fails
 # unless a commit message in the range carries an explicit, auditable
 # trailer that NAMES the grown file:
@@ -44,25 +41,18 @@
 # impossible to do SILENTLY. A reviewer (or the operator reading
 # `git log`) sees the declaration next to the change.
 #
-# TWO properties this gate must hold, and the bugs (CID-1, audit
-# 2026-08-14) that this revision closes:
+# TWO properties this gate must hold:
 #
 #   1. PER-FILE SCOPING. A trailer excuses growth ONLY in the file it
-#      names. The previous revision greped the whole range log for ANY
-#      `Baseline-Growth:` line and, on the first match, cleared the fail
-#      flag for ALL four watched surfaces at once — so a single innocuous
-#      "docs-sample" trailer anywhere in the range blanket-approved a
-#      broad .gitleaks.toml widening AND a .gitleaksignore fingerprint
-#      that together hid a real secret. Now each grown file needs a
-#      trailer that names IT.
+#      names, so one innocuous trailer cannot blanket-approve growth in
+#      every watched file at once.
 #
 #   2. NO SELF-HEAL ON DIRECT-PUSH. On direct-push-to-main the caller
 #      passes BASE_SHA=github.event.before. A push that grows a baseline
 #      undeclared reds exactly one run — but the FAILED commit still lands
 #      on main, and the NEXT push's `before` is that failed tip, so its
 #      diff window starts ABOVE the growth and the gate goes green with no
-#      trailer ever consulted (observed live: 47b7c662 grew .gitleaksignore
-#      undeclared, fb8c3aac healed main). We defend by re-deriving a
+#      trailer ever consulted. We defend by re-deriving a
 #      trustworthy base: walk BASE_SHA's first-parent chain back past any
 #      tip commit that ITSELF introduced watched growth not declared in
 #      its OWN message (a failed/undeclared tip), landing on the last
@@ -229,7 +219,7 @@ detect_growth() {
   # 5) scripts/ci/govulncheck-allow.txt: one accepted-risk OSV/GO-id per
   #    line (an inline `# reason` comment is part of the entry, not
   #    stripped) — the same "silence this specific finding" shape as the
-  #    others. A *.baseline glob misses it because it's a .txt (Q233).
+  #    others. A *.baseline glob misses it because it's a .txt.
   added="$(added_entries "$base" "$head" scripts/ci/govulncheck-allow.txt '^GO-')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/govulncheck-allow.txt "$line"
@@ -237,7 +227,7 @@ detect_growth() {
 
   # 6) .golangci.yml's linters.exclusions.rules block: a new path/linter
   #    exemption silently turns a real violation off for a file pattern
-  #    (Q233). See golangci_exclusions_added_lines() for the block-scoping.
+  #    See golangci_exclusions_added_lines() for the block-scoping.
   added="$(golangci_exclusions_added_lines "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .golangci.yml "$line"
@@ -246,7 +236,7 @@ detect_growth() {
   # 7) configs/ansible/.ansible-lint's skip_list: each entry silences a
   #    whole ansible-lint rule class repo-wide (CID-3) — the same
   #    shrink-only shape, but auto-discovered by ansible-lint rather than
-  #    named in any CI yaml, so nothing else points a reader at it (T467).
+  #    named in any CI yaml, so nothing else points a reader at it.
   added="$(added_entries "$base" "$head" configs/ansible/.ansible-lint '^\s*-\s+\S')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' configs/ansible/.ansible-lint "$line"
@@ -254,15 +244,14 @@ detect_growth() {
 
   # 8) deploy/systemd/ORPHANS: declaring a unit here silences
   #    lint-deploy-systemd-authority.sh's orphan check for it (LID-7) —
-  #    the same "declare an exemption" shape as a *.baseline entry (Q233).
+  #    the same "declare an exemption" shape as a *.baseline entry.
   added="$(added_entries "$base" "$head" deploy/systemd/ORPHANS '.')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' deploy/systemd/ORPHANS "$line"
   done <<<"$added"
 
   # 9) scripts/ci/migration-immutability.sha256: watched for MUTATED
-  #    entries only, not appended ones — see mutated_migration_hash_entries()
-  #    (Q233).
+  #    entries only, not appended ones — see mutated_migration_hash_entries().
   added="$(mutated_migration_hash_entries "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/migration-immutability.sha256 "$line"

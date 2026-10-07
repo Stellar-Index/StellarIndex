@@ -1,27 +1,10 @@
 #!/usr/bin/env bash
 # check-ansible-drift.sh — the codified≠live verdict for ansible-drift.yml.
 #
-# Why this script exists (OBS-drift, audit-2026-07-23):
-#
-#   The verdict used to be one inline line in the workflow:
-#
-#       if [ "${CHANGED:-999}" -gt 13 ]; then … fail … fi
-#
-#   i.e. up to THIRTEEN changed tasks passed the "codified = live"
-#   check, on the strength of a one-line comment ("known non-idempotent
-#   command tasks (chown recurse, bucket-ensure)") that named nothing.
-#   A hand fix on r1 that ansible would erase — the exact failure this
-#   guard was built for after the 2026-06-11 rsyslog incident — passes
-#   silently as long as it lands inside the slack. The number was also
-#   load-bearing folklore: docs/operations/r1-ansible-drift-2026-07-03.md
-#   enumerates the eleven tasks it was sized around, but the gate never
-#   read that list, so an enumerated task clearing (a real improvement)
-#   just handed the slack to genuine drift.
-#
-#   This replaces the blanket count with an ENUMERATION. Every task that
-#   is allowed to report `changed` is named, with a reason, in
-#   scripts/ci/ansible-drift.baseline. ANY changed task not on that list
-#   fails the gate — at count 1, not count 14.
+# Why an ENUMERATION, not a changed-task count: a count lets a hand fix on
+# r1 that ansible would erase pass silently inside the slack. Every task
+# allowed to report `changed` is named, with a reason, in
+# scripts/ci/ansible-drift.baseline; ANY other changed task fails at count 1.
 #
 # The verdict, in order:
 #
@@ -62,14 +45,13 @@ cd "$(dirname "$0")/../.."
 BASELINE="${ANSIBLE_DRIFT_BASELINE:-scripts/ci/ansible-drift.baseline}"
 RUNBOOK="docs/operations/r1-ansible-drift-2026-07-03.md"
 
-# ── The report (#496) ────────────────────────────────────────────────
+# ── The report ───────────────────────────────────────────────────────
 # A weekly check that reliably finds something and is reliably ignored
 # is worse than none: it teaches everyone to skip the notification. The
 # verdict below therefore renders into the run's JOB SUMMARY — the page
 # a person actually lands on — and NAMES the tasks and the host paths
 # that would change. "r1 has unapplied changes" is unactionable; "these
-# six tasks would change, here are their files" was a twenty-minute fix
-# on 2026-09-08.
+# six tasks would change, here are their files" is a quick fix.
 #
 # Every drifted task also gets its own `::error file=…,line=…::`
 # annotation, resolved back to the `- name:` line in the role, so the
@@ -292,12 +274,9 @@ detail_for() {
 # even when neither line contains a comment.
 #
 # What counts as a comment is decided PER FILE, from the host path on the
-# hunk's `--- before: <path>` line (#519). The first version stripped
-# from the first `#`, `--` OR `//` whatever the file, so every URL host
-# (`https://…`) and every long flag (`--config-file …`) on both sides of
-# a hunk was discarded before the compare, and a changed S3 endpoint in
-# pgbackrest.conf or a changed retention flag in /etc/default/prometheus
-# was reported under a ✅ as "comments only". The table below names ONE
+# hunk's `--- before: <path>` line. Stripping every `#`, `--` and `//`
+# regardless of file would discard URL hosts and long flags, reporting a
+# changed endpoint or retention flag as "comments only". The table names ONE
 # line-comment token per file type — the same rows as `comment_marker`
 # in scripts/ci/config-apply-gate.sh, plus the extensionless host paths
 # this role renders — and a type with no known convention (ClickHouse
@@ -383,10 +362,8 @@ echo "ansible-drift: PLAY RECAP reports changed=$recap_changed; parsed $parsed_c
 # 1b — an ABORTED preview. A task that errors under `--check` is fatal,
 # so ansible stops the play and every task after it is never evaluated:
 # the run reports a recap, but that recap describes a PREFIX of the role,
-# not the role. This is what the weekly run hit on 2026-08-10 (ok=192,
-# census-rollup.timer) and 2026-08-24 (ok=117, sla-probe.timer) — in both
-# cases the drift the run existed to report sat in the tasks that never
-# ran. Fail with the failing task NAMED, and never let a truncated pass
+# not the role, and the drift may sit in the tasks that never ran.
+# Fail with the failing task NAMED, and never let a truncated pass
 # read as "codified = live".
 if [ "$recap_failed" -gt 0 ]; then
   failing="$(awk '

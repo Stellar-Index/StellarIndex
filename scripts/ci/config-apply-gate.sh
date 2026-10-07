@@ -5,25 +5,17 @@
 # stellarindex.toml, sync Prometheus rules, install systemd units, or apply
 # DB schema. So when a release changed any of those surfaces, the feature
 # they gate ships DEAD and SILENT unless an operator applies the config too
-# (the 2026-08-25 declared-peg + rules.d incidents — see
-# docs/operations/deploy-config-apply.md).
+# (see docs/operations/deploy-config-apply.md).
 #
 # The surfaces below are the role's WHOLE config-bearing tree, not just
-# templates/: on 2026-08-28 a new node_exporter probe + its systemd units
-# shipped as INLINE `content:` blocks inside tasks/10-observability.yml
-# (and role scripts live in files/), so a release that touched only
-# tasks/ or files/ would have passed this gate and deployed the feature
-# dead. A near-miss, caught by hand — hence the two extra entries.
-#
-# 2026-08-28 (audit deploy-ansible-gate-4): the list was still narrower
-# than what the role actually renders. roles/…/defaults/main.yml feeds
+# templates/: tasks/ carries INLINE `content:` blocks and role scripts live
+# in files/. roles/…/defaults/main.yml feeds
 # every template (galexie_ledgers_per_file → galexie.toml.j2), inventory
 # host_vars do the same, handlers/ decide what restarts, and the role
 # COPIES files from outside configs/ansible entirely: configs/healthchecks/*
 # (17-stellarindex-healthchecks.yml), scripts/ops/config-assertions.sh
 # (15-log-discipline.yml), scripts/ops/{ch-schema-snapshot,restore-drill}.sh
-# and scripts/dev/r1-smoke.sh. A defaults-only or healthchecks-only
-# release passed this gate. Deliberately NOT listed: playbooks/ and
+# and scripts/dev/r1-smoke.sh. Deliberately NOT listed: playbooks/ and
 # tasks/deploy-one-binary.yml (the deploy itself runs them — a change
 # there is applied, not dead), migrations/ (deploy-binary.yml migrates)
 # and bin/.
@@ -46,16 +38,9 @@
 # is an ERROR, not "no changes" — a gate that cannot see the diff has no
 # basis for a green.
 #
-# THREE OUTCOMES PER CHANGED SURFACE, not two. Until 2026-09-07 this gate
-# knew only "changed" and "unchanged", so every diff was an operator
-# decision. Two of the day's four failed deploys were spent discovering
-# that a diff was comment-only (deploy/clickhouse/*.sql, twice), and the
-# rule people then generalised from that — "comment-only, so acknowledge"
-# — is FALSE: v0.61.1..v0.62.0 added `CREATE TABLE
-# stellar.account_creators_ops` to account_creators_rollup.sql and
-# tier1_schema.sql. That acknowledgement was correct only because the DDL
-# had already been applied by hand and the objects confirmed present.
-# So each changed surface lands in exactly one of:
+# THREE OUTCOMES PER CHANGED SURFACE, not two, so a comment-only diff
+# needs no operator decision and a DDL diff is never waved through as
+# "probably comments". Each changed surface lands in exactly one of:
 #
 #   comment-only   every added and removed line is blank or a comment in
 #                  that file's syntax, so NOTHING the host renders or
@@ -127,9 +112,8 @@
 #
 # The bar for adding to this list is that last clause: the applier must
 # VERIFY the surface is live and fail if it is not. A step that merely
-# copies a file has not earned an exemption — it reproduces the exact
-# 2026-09-01 failure this gate exists to catch, where a merged ClickHouse
-# alert watched nothing and a deleted alert kept firing. The caller must
+# copies a file has not earned an exemption: a copied alert can watch
+# nothing while a deleted one keeps firing. The caller must
 # also pass a surface here ONLY when the apply actually succeeded on this
 # run; a pre-declared list would clear the gate for a step that never ran.
 set -uo pipefail
@@ -195,8 +179,7 @@ ddl_objects() {
   # canonical name and drops the old. Their absence is therefore the
   # FINISHED state as much as the never-run one, so existence proves
   # nothing either way — the surface stays with the operator's
-  # acknowledgement. testnet was refuted on 2026-09-30 for a cut-over it
-  # had completed weeks earlier.
+  # acknowledgement.
   local body
   body=$(git show "$2:$3" 2>/dev/null || true)
   if grep -q '^-- si-cutover-object:' <<<"$body"; then
@@ -392,13 +375,9 @@ fi
 # ch_ddl step found every object the file creates absent from
 # system.tables.
 #
-# 2026-09-18, live. That step already knew this and said so as a
-# ::warning::, but it published only what it CERTIFIED, so this gate
-# could not tell "nobody asked" from "asked, and the answer was no" —
-# and an acknowledgement cleared both alike. v0.91.0 deployed with
-# stellar.asset_month_usd_prices missing; the cohort flows read LEFT
-# JOINs it, so every GET /v1/accounts/{g}/graph/cohort answered 500
-# until the DDL was applied by hand. config_acknowledged=true is the
+# Without this list the gate cannot tell "nobody asked" from "asked, and
+# the answer was no", and a missing table read by a LEFT JOIN 500s its
+# endpoint until applied by hand. config_acknowledged=true is the
 # operator ASSERTING a surface is applied; where the host answered
 # otherwise in this same run that assertion is refuted by the run's own
 # evidence and cannot stand. Surfaces the host was never asked about
