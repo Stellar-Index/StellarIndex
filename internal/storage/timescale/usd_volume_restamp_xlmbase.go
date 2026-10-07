@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── #372: the XLM-BASE usd_volume RE-DERIVE ──────────────────────────
+// ─── the XLM-BASE usd_volume RE-DERIVE ───────────────────────────────
 //
 // [usd_volume_restamp.go] repairs the EXACT tiers, whose value is a pure
 // decimal rescaling of an amount already on the row and can therefore be
@@ -23,76 +23,19 @@ import (
 // XLM-base anchor (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
 // [usdVolumeViaXLMBaseAnchor]).
 //
-// The population it exists for (issue #372, triage G9 2026-09-02): every
-// on-chain DEX trade with an XLM BASE leg, with a non-USD-pegged quote,
-// whose `usd_volume` the anchor tier would have written differently.
+// The population: every on-chain DEX trade with an XLM BASE leg, with a
+// non-USD-pegged quote, whose `usd_volume` the anchor tier would have
+// written differently. Rows a later re-derive already stamped carry a
+// higher `derive_generation`, so the window ends the day before that
+// re-derive's first row (the runbook gives the `-to` value).
 //
-// # The right edge is 2026-07-21, not 2026-08-04 (#372 F2)
-//
-// This header used to scope the population as "written before `fd1860bd`
-// (2026-08-04, v0.25.0)". That is two weeks late, and it names a commit
-// date rather than a measured behaviour change. Measured on r1
-// 2026-09-03 over this tool's own population (DEX sources, base an XLM
-// form, quote not a declared peg), per UTC day:
-//
-//	day          rows       %rows NULL   Σstored / Σ(base/1e7 × dayVWAP)
-//	                                     priced rows only    all rows
-//	2026-07-18   262,541       0.2%        1.0147             0.7766
-//	2026-07-19   244,199       0.1%        1.0032             0.8569
-//	2026-07-20   200,304       0.0%        1.0016             1.0016
-//	2026-07-21   236,558       0.0%        1.0051             1.0051
-//
-// From 2026-07-20 the NULL fraction is 0 and both ratios agree: the
-// COVERAGE work ends on 2026-07-19. The per-row picture does not end
-// there — the same day's `-report` measured 193,056 of 250,439 rows on
-// 2026-07-20 differing from the anchor (net −$423: the long tail of small
-// wrong-leg corrections; the runbook's report table), and 2026-07-21 is
-// the same era. Rows at ts ≥ 2026-07-22 already carry `derive_generation`
-// 1785871528 from the 2026-08 re-derive and are left alone by design. So
-// the recommended window ends at `-to 2026-07-21`: the last day before
-// that generation, and the window issue #372 reconciled against. The two
-// extra days sit in the same 7-day chunk ([07-16, 07-23)) the chunk mode
-// decompresses for 07-19 anyway, so they cost a scan, not a decompress.
-//
-// # What the population actually IS — coverage first, valuation second
-//
-// The other half of the old text implied wholesale MIS-VALUATION: the
-// waterfall reached the QUOTE side first, so an `XLM/<token>` trade was
-// valued through the token's own thin `<token>/USDC` bucket — a rate the
-// token's own counterparties author — instead of off the XLM leg. That
-// class is real and byte-proven (2026-05-19 sdex `native/BUCK`: 44.69 XLM
-// worth $6.47 stored as $0.15, reproducing the BUCK/USDC prices_1m VWAP
-// to 9 decimal places after that book fell 322× mid-day).
-//
-// But it is not the mass. Measured monthly on r1 over the same
-// population, valuing each day's XLM at that day's on-chain XLM/USD-peg
-// VWAP:
-//
-//	month     rows        %rows NULL   ratio (priced rows)   ratio (all rows)
-//	2026-03   2,052,367     99.0%        0.9993               0.2631
-//	2026-04   5,549,124     99.5%        0.9982               0.2890
-//	2026-05   7,743,745     76.0%        0.9973               0.3399
-//	2026-06   8,131,219     40.4%        1.0031               0.6452
-//	2026-07   7,115,201     16.0%        1.0035               0.6880
-//	2026-08   1,310,477      0.0%        0.9999               0.9999
-//
-// The PRICED rows aggregate to within 0.3% of the anchor in every month
-// a day rate exists for. The gap between the two ratio columns is
-// entirely rows stored NULL. So the bulk of this run is coverage
-// recovery (`-fill-null`), and the wrong-leg corrections are a long tail
-// of small dead-asset groups — consistent with the tool's own full-window
-// dry run, where 17,848,617 of 28,583,186 changed rows are NULL→value and
-// only 139,046 of the remainder move ≥10%.
-//
-// Beware the ratio that conflates the two: `prices_1m`/`prices_1d`
-// coalesce a NULL `usd_volume` to 0, so a CAGG-derived
-// `Σvolume_usd / Σ(volume/1e7 × dayVWAP)` reads a coverage hole as a
-// valuation error. That is what produced the "behaviour changed on
-// 2026-07-20" reading; the change on that date is the last NULLs
-// disappearing, not a valuation flip.
-//
-// The insert path is correct at HEAD; nothing has re-derived the rows
-// before 2026-07-22 (they sit at `derive_generation = 0`).
+// It is mostly coverage, not valuation: per month on r1 the PRICED rows
+// aggregate to within 0.3% of the anchor, and the gap is rows stored
+// NULL. So the bulk of a run is `-fill-null`; wrong-leg corrections (an
+// `XLM/<token>` trade valued through the token's own thin `<token>/USDC`
+// bucket) are a long tail. A CAGG-derived ratio misreads this:
+// `prices_1m`/`prices_1d` coalesce a NULL `usd_volume` to 0, so a
+// coverage hole reads as a valuation error.
 //
 // Three rules make this a re-derive rather than a guess, and they are the
 // reason the arithmetic is NOT done in SQL:
@@ -111,8 +54,8 @@ import (
 //     falls through to [tradeUSDVolumeViaFX] — the quote-side route that
 //     wrote the defect. This tool deliberately stops at the anchor: a row
 //     the anchor cannot price is REPORTED, not valued. Writing the
-//     quote-side estimate here would re-commit the exact error #372 is
-//     about, and it would do so at a HIGH `derive_generation`, which is
+//     quote-side estimate here would re-commit the error this tool
+//     corrects, and it would do so at a HIGH `derive_generation`, which is
 //     the one state a later correction cannot claw back. An unpriced row
 //     stays recoverable; a confidently-wrong high-generation row does not.
 //
@@ -159,11 +102,11 @@ type XLMBaseRestampParams struct {
 	// what -fill-null would add.
 	FillNull bool
 
-	// MaxGeneration is the INV-3 read guard: rows already stamped by a
+	// MaxGeneration is the derive_generation read guard: rows already stamped by a
 	// LATER re-derive are not candidates. Callers pass the run's own
 	// generation (the same value the UPDATE writes), or a lower value to
 	// target a specific vintage — e.g. 0 for the never-re-derived
-	// population #372 is about.
+	// population.
 	MaxGeneration int64
 
 	// MinRelDelta, when non-nil and positive, suppresses rows whose
@@ -544,14 +487,14 @@ const xlmBaseRestampArgsPerRow = 10
 //     derive_generation still equal what the plan read: a row another
 //     writer moved after the plan is skipped, and surfaces as
 //     planned-vs-changed, rather than overwritten from its old state.
-//   - INV-3: each row is written only while
+//   - each row is written only while
 //     `trades.derive_generation <= generation`, and is stamped with it, so
 //     a later live gen-0 replay cannot claw the correction back and a
 //     NEWER re-derive cannot be overwritten by this one.
 //   - one bounded transaction per batch, each lifting the Timescale
 //     decompression cap with `SET LOCAL` — POSTGRES unwinds that at
 //     COMMIT/ROLLBACK, so the lifted cap can never escape onto a pooled
-//     connection (the pgx-stdlib finding behind CHANGELOG 2026-08).
+//     connection.
 //   - `batch <= 0` uses [xlmBaseRestampApplyBatch].
 func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
 	return s.ApplyUSDVolumeRestampPlan(ctx, plan, generation, batch)
@@ -597,7 +540,7 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 // UPDATE that names `trades` and constrains `ts` only through a join
 // clause (`t.ts = v.ts`) cannot be pruned at planning time, so the plan
 // makes EVERY chunk a result relation and hash-joins the batch against an
-// Append over all of them. Measured on production 2026-09-06: the plan
+// Append over all of them. Measured on production: the plan
 // for one batch carried 260 `Update on …_chunk` targets, an Append of 260
 // sequential scans estimated at 61.9M rows, cost 10,040,409 — and because
 // TimescaleDB has to service the DML on each compressed chunk in that

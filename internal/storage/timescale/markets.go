@@ -34,11 +34,8 @@ import (
 //     the 24h scan window).
 //   - BucketCloseAt — start-of-day UTC of the day bucket the pair
 //     was last active in. Always populated. Aligns to UTC
-//     midnight by construction (`time_bucket('1 day', ts)`); pre
-//     2026-05-27 this was misnamed `last_trade_at`, but most pairs
-//     surfaced exactly-midnight values and clients computing
-//     freshness against `now()` saw spuriously-large staleness
-//     (F-0065).
+//     midnight by construction (`time_bucket('1 day', ts)`), so it
+//     is not a freshness signal; LastTradeAt is.
 type Market struct {
 	Pair          canonical.Pair
 	LastTradeAt   time.Time
@@ -83,21 +80,9 @@ type Pool struct {
 // not "every pair ever observed". The window is exposed as a var so
 // tests can override it without changing the public function signature.
 //
-// Empirical sizing on r1 at the 14-day default:
-//   - 2026-04 baseline (441M trades, 1100+ chunks, no concurrent
-//     backfill): ~540 ms cold, ~50 ms warm.
-//   - 2026-05-04 measurement (539M trades, 787 chunks, 16-way
-//     parallel backfill running across 50M-62M ledger range):
-//     ~7 s cold first call, ~400 ms warm steady-state.
-//
-// The cold-call regression is dominated by buffer-cache eviction
-// from the concurrent backfill — recent chunks are pushed out and
-// the GROUP BY across the 14-day window has to re-fault them in.
-// Steady-state warm at 400 ms is also ~8x the original 50 ms because
-// the trades hypertable has grown ~22 % and the chunks at the window
-// boundary are still being column-store-compressed asynchronously.
-// Once the backfill completes and the columnstore policy catches up
-// the warm baseline should approach the original 50 ms again.
+// At the 14-day default on r1 (441M trades, no concurrent backfill):
+// ~540 ms cold, ~50 ms warm. A concurrent backfill evicts the recent
+// chunks from the buffer cache and pushes the cold call to ~7 s.
 //
 // 30-day: ~9 s with JIT, ~3 s without — too slow for a hot path.
 // 90-day: ~16-19 s — exceeded the 30s client deadline.
@@ -160,7 +145,7 @@ func (s *Store) DistinctPairsExt(ctx context.Context, cursor string, limit int, 
 // It deliberately does NOT route through distinctPairsCommon: the
 // pair-wide price CAGGs have no per-source grain to filter on, only a
 // `sources` array to test membership against, so a source-filtered
-// read of them returns the whole market's figures (F027 / K031). See
+// read of them returns the whole market's figures. See
 // [sourceMarketsCommon].
 func (s *Store) SourceMarkets(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
@@ -314,9 +299,9 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // same venue's same pair and used to disagree by orders of magnitude —
 // the markets listing read the PAIR-WIDE prices_1m/prices_1d CAGGs and
 // merely FILTERED them by `source = ANY(sources)`, which selects
-// BUCKETS a venue printed in, not that venue's contribution (F027 /
-// K031). Sharing the CTE makes the agreement structural instead of a
-// thing two query templates have to remember.
+// BUCKETS a venue printed in, not that venue's contribution. Sharing
+// the CTE makes the agreement structural instead of a thing two query
+// templates have to remember.
 //
 // Callers append their own filter predicates, the GROUP BY, and their
 // ordering tail. $1 is the recency-window lower bound; every caller
@@ -466,19 +451,9 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		`
 		return cte + tail, poolsQueryArgs(since, filter, cursor, limit)
 	}
-	// FROM canon, NOT FROM pools. This tail used to read the
-	// pre-collapse CTE while the volume-desc tail above read `canon`,
-	// so the two orderings disagreed about what a pool IS: order_by=pair
-	// returned BOTH orientations of every two-sided market as separate
-	// rows, each carrying only its own direction's vol_24h_usd and
-	// count_24h instead of the summed pair, and last_price un-inverted
-	// on the flipped side. Measured on r1 2026-08-03: 61 duplicate
-	// both-orientation pairs in a 200-row page, versus 0 on the default
-	// ordering. Both variants cache under distinct keys, so the
-	// inconsistency was durable and read as a data problem rather than a
-	// query one. (The `canon` CTE was still being built and simply went
-	// unreferenced on this branch — legal in Postgres, invisible at
-	// compile time.)
+	// FROM canon, NOT FROM pools, like the volume-desc tail above: the
+	// pre-collapse CTE returns both orientations of a two-sided market
+	// as separate rows, each with only its own direction's volume.
 	const tail = `
 	 SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, last_price, vol_lower_bound
 	   FROM canon
@@ -585,7 +560,7 @@ func aliasFoldCTE(formsIdx int) string {
 // source dimension away — one row per canonical pair, carrying THAT
 // venue's own 24h trade count, 24h USD volume and last price.
 //
-// Why not distinctPairsCommon with a source filter (F027 / K031):
+// Why not distinctPairsCommon with a source filter:
 // prices_1m and prices_1d are grouped by (bucket, base, quote) with an
 // `array_agg(DISTINCT source) AS sources` column, so `$source = ANY(
 // p.sources)` is a BUCKET-membership test, not a contribution filter.
@@ -600,7 +575,7 @@ func aliasFoldCTE(formsIdx int) string {
 //
 // Freshness comes along with it: pools_per_source_1h has a 5-minute
 // end_offset against prices_1d's 6 hours, so the per-venue last_price
-// is minutes old rather than the previous UTC day's close (F028).
+// is minutes old rather than the previous UTC day's close.
 func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	if limit < 1 {
 		limit = 100
@@ -697,10 +672,10 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
 func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	// A per-source listing is never answerable from the pair-wide price
 	// CAGGs — `$source = ANY(p.sources)` selects buckets a venue printed
-	// in, so every aggregate over them is the whole market's (F027 /
-	// K031). Route it to the per-source CAGG instead of computing a
-	// cross-source answer under a per-source label; no caller can reach
-	// the wrong shape by passing a source here.
+	// in, so every aggregate over them is the whole market's. Route it
+	// to the per-source CAGG instead of computing a cross-source answer
+	// under a per-source label; no caller can reach the wrong shape by
+	// passing a source here.
 	if source != "" {
 		return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
 	}
@@ -772,10 +747,9 @@ func scanDistinctPairs(rows *sql.Rows, limit int, withLowerBound bool) ([]Market
 		m, err := buildMarketRow(baseRaw, quoteRaw, lastAt, bucketCloseAt, count24h, vol24hUSD)
 		if err != nil {
 			// Skip rows we can't parse rather than failing the whole
-			// response. A single malformed trades row (e.g. a manual
-			// insert with a non-canonical asset code) used to 500 the
-			// entire /v1/markets surface and trip page-tier alerts
-			// (2026-06-01 incident). The ingest pipeline only emits
+			// response: one malformed trades row (e.g. a manual insert
+			// with a non-canonical asset code) would otherwise 500 the
+			// entire /v1/markets surface. The ingest pipeline only emits
 			// canonical asset strings, so reaching this branch means
 			// something bypassed the normal write path; surface it as
 			// a warning + counter so operators can find and remove it
@@ -958,14 +932,10 @@ const distinctPairsActivityCTEs = `
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
 	// /v1/markets is a DIRECTORY query ("which pairs are active +
 	// their 24h volume / last price"), not a history view. Sourcing
-	// it from prices_1m × 14 days was O(~52k pairs × 20,160 1-min
-	// buckets); post all-time backfill prices_1m ballooned and the
-	// aggregate seq-scans multi-million-row materialized chunks →
-	// ~8s+, blowing BOTH the 8s handler ceiling and the prewarm
-	// budget, so the cache never warmed and /v1/markets 503'd for
-	// real users (fix commit cc4ed08ae, 2026-05-19). The earlier
-	// "prices_1m alone, ~0.46s" measurement (2026-05-11) no longer
-	// holds at this data scale.
+	// it from prices_1m × 14 days is O(~52k pairs × 20,160 1-min
+	// buckets): the aggregate seq-scans multi-million-row materialized
+	// chunks and blows both the 8s handler ceiling and the prewarm
+	// budget.
 	//
 	// Right-granularity rewrite. NO data or precision loss anywhere
 	// data is consumed at resolution — prices_1m and every detail
@@ -1003,7 +973,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// FILTER-SUM, which yielded NULL for that case).
 	//
 	// last_price + membership come from the FULL OUTER JOIN of d and h
-	// (F028). prices_1d is materialized_only with a 6-hour end_offset
+	// prices_1d is materialized_only with a 6-hour end_offset
 	// and a 6-hour schedule, so its newest bucket for an actively
 	// traded pair is yesterday's close — reading last_price from it
 	// served a price 12-36 h old under a field the spec documents as
@@ -1020,19 +990,15 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// the volume aggregate (zero added cost) — MAX(bucket) gives
 	// minute-precision for in-24h-active pairs. For pairs idle >24h
 	// (rare under volume-desc default ordering) it falls back to
-	// the daily bucket-start. F-0065 fix (2026-05-27): pre-fix the
-	// /v1/markets `last_trade_at` field was the daily bucket-start
-	// for ALL pairs, so most rows surfaced midnight UTC and clients
-	// computing staleness against `now()` saw spuriously-large
-	// values.
+	// the daily bucket-start.
 	//
 	// $1 since(14d) bounds the prices_1d set; $4 source / $5 asset
 	// filter BOTH CTEs (empty short-circuits → planner skips); the
 	// keyset-cursor ($2) + LIMIT $3 overfetch-by-one shape is
 	// byte-for-byte the prior pagination contract.
 	//
-	// $5 is a text[] of the requested asset's ALIAS forms, not a scalar
-	// (F-1340): XLM lives under `native`, `crypto:XLM` and its SAC
+	// $5 is a text[] of the requested asset's ALIAS forms, not a scalar:
+	// XLM lives under `native`, `crypto:XLM` and its SAC
 	// C-address depending on which venue's trades keyed the row, so a
 	// scalar `= $5` on `?asset=native` structurally omitted the
 	// crypto:XLM-keyed CEX markets (and vice-versa). ANY-membership on
@@ -1153,14 +1119,14 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 //     quote_asset, ts|bucket DESC), so the planner falls back to the
 //     bare time index with the pair as a post-index filter. This is the
 //     same defect [closedVWAP1mAtOrBeforeQuery] carries the measurement
-//     for (#441).
+//     for.
 //   - The old form asked ONE 14-day aggregate for two answers that need
 //     far less: MAX(ts) needs a single backwards index probe per
 //     direction, and count_24h needs 24 hours. Reading 14 days for both
 //     meant crypto:BTC/crypto:USDT materialised 17.2 MILLION rows to
 //     return a timestamp and a count.
 //
-// Measured on r1 (2026-09-03) on an idle box, trades at 140 GB. Two
+// Measured on r1 on an idle box, trades at 140 GB. Two
 // runs per form, so the first column is a cold buffer pool and the
 // second a warm one:
 //
@@ -1179,7 +1145,8 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 // last_price sort: `bucket DESC` alone is not a total order once a
 // bucket holds both orientations (native/USDC has 1,270 such buckets in
 // a day on r1), so which leg won was planner-defined. Same reasoning and
-// same tiebreaker as #441. Guarded by TestPairMarketQueryShape.
+// same tiebreaker as [closedVWAP1mAtOrBeforeQuery]. Guarded by
+// TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (
             SELECT MAX(ts) AS ts FROM (

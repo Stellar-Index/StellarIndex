@@ -47,7 +47,7 @@ import (
 // # Naming
 //
 // The row/plan/stats vocabulary below was written for the xlm-base tier
-// (issue #372) and keeps its exported spelling — renaming a money-path
+// and keeps its exported spelling — renaming a money-path
 // type across the tree would bury this change in churn. The aliases give
 // the shared vocabulary a tier-neutral name for the code that is not
 // about XLM at all.
@@ -378,7 +378,7 @@ func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate
 // returns how many rows the database actually changed. The write set is
 // the PLAN — no second predicate is evaluated against the table — and
 // each row is written only while `trades.derive_generation <=
-// generation` and is stamped with it (INV-3). Shared by every tier: the
+// generation` and is stamped with it. Shared by every tier: the
 // statement is keyed on the primary key and carries the batch's own `ts`
 // bounds, neither of which knows which tier decided the value.
 func (s *Store) ApplyUSDVolumeRestampPlan(ctx context.Context, plan *RestampPlan, generation int64, batch int) (int64, error) {
