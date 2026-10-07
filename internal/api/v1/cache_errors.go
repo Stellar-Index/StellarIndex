@@ -20,15 +20,13 @@ import (
 //   - MISCONF replies — Redis returns "MISCONF Redis is configured to
 //     save RDB snapshots, but it's currently unable to persist to
 //     disk" once `stop-writes-on-bgsave-error` is active and BGSAVE
-//     has failed. This was the May-10 SEV-2 (incidents/data/
-//     2026-05-10-redis-writes-blocked-disk-full.md): every cache write
-//     returned MISCONF, the orchestrator's per-pair Set bombed, and
-//     downstream the cascade-affected handlers — /v1/oracle/*,
-//     /v1/lending/pools, /v1/vwap, /v1/observations*, /v1/price/tip* —
-//     surfaced HTTP 500 generic-internal-error to clients (F-0086,
-//     F-0087, F-0089, F-0090, F-0145, F-0146). 503 + Retry-After lets
-//     well-behaved clients back off automatically while operators
-//     unblock the writes.
+//     has failed. Then every cache write returns MISCONF, the
+//     orchestrator's per-pair Set fails, and downstream the
+//     cascade-affected handlers — /v1/oracle/*, /v1/lending/pools,
+//     /v1/vwap, /v1/observations*, /v1/price/tip* — would otherwise
+//     surface HTTP 500 generic-internal-error to clients. 503 +
+//     Retry-After lets well-behaved clients back off automatically
+//     while operators unblock the writes.
 //
 // Returns false for:
 //   - nil (no error).
@@ -104,8 +102,7 @@ func IsCacheUnavailable(err error) bool {
 
 // writeCacheUnavailableProblem emits the canonical 503 + Retry-After +
 // RFC-7807 problem+json shape for the cascade-affected handlers that
-// previously fell through to a generic HTTP 500 on Redis MISCONF
-// (F-0086, F-0087, F-0089, F-0090, F-0145, F-0146; audit-2026-05-27).
+// would otherwise fall through to a generic HTTP 500 on Redis MISCONF.
 //
 // Retry-After is 30s, mirroring the rate-limit middleware's
 // writeThrottleUnavailableProblem — typical Redis fail-over windows

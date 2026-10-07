@@ -152,9 +152,9 @@ const (
 )
 
 // coverageFloorEpoch is the lower bound of every probe: the pubnet
-// genesis month (the network's ledger 1 closed 2015-09-30). Nothing can
-// be bucketed before it, so binding it as a literal costs no rows and
-// buys plan-time chunk exclusion at the bottom end.
+// genesis month. Nothing can be bucketed before it, so binding it as a
+// literal costs no rows and buys plan-time chunk exclusion at the bottom
+// end.
 var coverageFloorEpoch = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
 
 // coverageFloorOutcome is what one probe established about one pair.
@@ -616,9 +616,9 @@ func historyPageIsAmbiguous(rows int, afterTS time.Time) bool {
 // The chart's window always ends at NOW, so it structurally cannot sit
 // below the floor and `outside_coverage` never fires here. The floor
 // itself is the whole answer on this surface: an empty 24h series with
-// `coverage_from: 2018-07-01` says the pair has been quiet; the same
+// a `coverage_from` value says the pair has been quiet; the same
 // series with the field absent says this deployment holds nothing for
-// the pair at all. Pre-signal both rendered as `points: []`.
+// the pair at all. Without the field both would render as `points: []`.
 func (s *Server) writeChartSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, series ChartSeries, walk chartWalkResult,

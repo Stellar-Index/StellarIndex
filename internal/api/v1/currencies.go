@@ -70,7 +70,7 @@ type CurrenciesSnapshot struct {
 type CurrencyEntry struct {
 	Ticker string
 	Name   string
-	//floatmoney:ok known debt (#600) — forex-pipeline float chain (forex cache.go/worker.go RateUSD)
+	//floatmoney:ok known debt: forex-pipeline float chain (forex cache.go/worker.go RateUSD)
 	RateUSD      float64
 	Change24hPct *float64
 	Change7dPct  *float64

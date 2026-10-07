@@ -30,7 +30,7 @@ import (
 // other three AT ALL. It is not undercounting by accident; it is blind by
 // construction.
 //
-// Measured against Horizon on the /v1/rwa/assets set (2026-09-11), the supply
+// Measured against Horizon on the /v1/rwa/assets set, the supply
 // invisible to the trustline sum was CETES +36.605%, TESOURO +10.594%,
 // USTRY +10.272%, USDY +1.274% — and 99.9% of it sat in SAC contract_data,
 // with claimable balances and LP reserves rounding to nothing. The served USDY
@@ -109,7 +109,7 @@ const (
 	// be and still outrank the lake arms.
 	//
 	// The observer writes every asset on its watch-list every few minutes;
-	// measured on r1 over the fourteen days to 2026-09-15 the widest gap
+	// measured on r1 over a fourteen-day window the widest gap
 	// between consecutive observations of any asset was 40 minutes. Six
 	// hours is nine times that worst case, so a restart, a redeploy or a
 	// slow pass never costs an asset its observation, while an observer
@@ -225,13 +225,12 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 //
 // # Why the observation still outranks the lake
 //
-// The order is unchanged: the ADR-0011 supply observation first, then the
-// lake-flows total, then the trustline sum, never below the trustline floor.
-// The reason it is unchanged is worth stating, because the defect that
-// prompted this code looked exactly like a reason to invert it — the served
-// USDC figure was 5.57% below both the lake and Horizon.
+// The order is the ADR-0011 supply observation first, then the lake-flows
+// total, then the trustline sum, never below the trustline floor. A served
+// figure below both the lake and Horizon (USDC measured 5.57% under) looks
+// exactly like a reason to invert it, and is not.
 //
-// Re-measured against Horizon's all-domain totals on r1 2026-09-15, the lake
+// Measured against Horizon's all-domain totals on r1, the lake
 // arm is the one that cannot be promoted. It read BLND at 128,119,614.53
 // against 114,854,773.04 outstanding (+11.53%) and PHO at 199,999,999.31
 // against 77,882,787.15 (+156.79%), because its flow history carries replayed
@@ -240,12 +239,12 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 // On the same day the observation arm matched Horizon to the stroop on PHO and
 // to 0.02% on BLND.
 //
-// What was actually wrong was the observation's VINTAGE, and that is fixed
-// where it was broken — at the read, which now takes the observer's live row
-// instead of a daily roll-up of it (timescale.Store.LatestSupplyObservations),
-// bounded by [preciseSupplyMaxAge]. An observation older than that bound is not
-// offered here at all, so a stale-but-present reading can no longer outrank a
-// live lake figure that disagrees with it.
+// What goes wrong with the observation is its VINTAGE, so the read takes the
+// observer's live row instead of a daily roll-up of it
+// (timescale.Store.LatestSupplyObservations), bounded by [preciseSupplyMaxAge].
+// An observation older than that bound is not offered here at all, so a
+// stale-but-present reading cannot outrank a live lake figure that disagrees
+// with it.
 func classicSupplyReading(
 	assetID string, precise map[string]timescale.SupplyObservation, lake, broad map[string]string,
 ) (string, supply.Basis) {
@@ -494,28 +493,27 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // the supply /v1/assets and /v1/rwa/assets publish does not depend on how
 // recently somebody looked.
 //
-// # The defect this closes
+// # Why warming does not wait for requests
 //
 // Everything above this line warms itself from the REQUEST path: a listing
 // request finds nothing cached, kicks a detached refresh for
 // [classicLakeSupplyBatch] of the assets it asked about, and serves the
 // trustline sum for the rest. That shape converges under sustained traffic —
 // the served figures then match Horizon's all-component totals to within
-// 0.012% — and it never converges without it. Convergence was the unstated
-// assumption, and it does not hold on a service with no consumer traffic:
+// 0.012% — and it never converges without it. Convergence assumes traffic,
+// which a service with no consumer traffic does not have:
 // entries expire unread at [classicLakeSupplyTTL] and the listing falls back
 // to the trustline-only sum, which is blind to claimable balances, LP reserves
 // and SAC-held supply by construction (see the top of this file). Measured on
-// r1 2026-09-12, ~19 h after the last request:
+// r1, ~19 h after the last request:
 //
 //	PYUSD  served  3,149,454   lake  11,778,001   (73% understated)
 //	XRF    served 21,895,149   lake 118,333,629   (82% understated)
 //
-// The readings and the preference chain were already right. Only the warming
-// was wrong, so this changes only the warming: the source ranking is untouched
-// (the ADR-0011 supply observation still outranks the lake, which still cannot
-// fall below the trustline floor), and every failure path still degrades to
-// exactly what is served today.
+// The readings and the preference chain are right, so this changes only the
+// warming: the source ranking is untouched (the ADR-0011 supply observation
+// outranks the lake, which cannot fall below the trustline floor), and every
+// failure path degrades to exactly what an unwarmed entry serves.
 //
 // # Why it lives in the API process rather than a job
 //
@@ -541,8 +539,8 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // outside pages ordered by observation count and 24h volume, never be warmed,
 // and serve the trustline floor indefinitely rather than for one TTL gap.
 //
-// Measured on r1 2026-09-16, an hour after a restart, with the floor now
-// visible on the wire because the row declares its own basis:
+// Measured on r1, an hour after a restart, with the floor visible on the
+// wire because the row declares its own basis:
 //
 //	USDY     served 461,621,813.40   all domains 467,502,151.70   (1.26% short)
 //	USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
