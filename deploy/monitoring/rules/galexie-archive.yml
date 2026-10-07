@@ -1,11 +1,11 @@
 ---
-# galexie-archive tip-lag alerts (538d0e752) — defense-in-depth for the 23-day archive stall.
+# galexie-archive tip-lag alerts — defense-in-depth against a silent archive stall.
 #
-# The original incident was a 23-day silent stall of galexie-archive (the ADR-0016 R1
-# durable full-mirror). The recurrence fix (f12289f6d) is the
-# hourly `galexie-archive-fill.timer`; this alert is the safety net
-# under it — if that timer (or its `mc` aliases, aws-public IAM,
-# etc.) silently breaks, we want to PAGE in hours, not weeks.
+# On r1, galexie-archive (the ADR-0016 R1 durable full-mirror) has
+# stalled silently for 23 days. The hourly `galexie-archive-fill.timer`
+# keeps it current; this alert is the safety net under it — if that
+# timer (or its `mc` aliases, aws-public IAM, etc.) silently breaks,
+# we want to PAGE in hours, not weeks.
 #
 # Scrape source: node_exporter's textfile_collector reads
 # `/var/lib/node_exporter/textfile_collector/galexie_archive_tip_lag.prom`,
@@ -34,8 +34,8 @@
 #     stayed un-mirrored past two hourly fill cycles.
 #   Page threshold: >128,000 → ≥2 completed partitions behind; the
 #     hourly fill has clearly broken (the 23-day-stall failure class).
-# The pre-2026-05-22 thresholds (5,000 / 50,000) predated this model
-# and false-fired through every normal partition cycle.
+# Thresholds that ignore this model (e.g. 5,000 / 50,000) false-fire
+# through every normal partition cycle.
 
 groups:
   - name: stellarindex.galexie_archive_tip_lag
@@ -116,7 +116,7 @@ groups:
             the service's last journal entries; verify the script
             can read both MinIO buckets via the `local` mc alias.
 
-      # DR-asset shape guard (2026-08-21 DR review): tip-lag proves the
+      # DR-asset shape guard: tip-lag proves the
       # newest edge advances; this proves the MIDDLE is intact. The scan
       # declares the expected coverage (genesis partition + the
       # ARCHIVE_FROM tail, with the capacity-trim window as the ONLY
@@ -168,17 +168,17 @@ groups:
       # ── The scan's own health (monitoring of monitoring) ─────────
       #
       # stellarindex_galexie_archive_gap above is `page` and is the only
-      # recurring guard on this bucket's SHAPE. Until this alert existed
-      # its producer could fail without saying so:
+      # recurring guard on this bucket's SHAPE, so its producer must not
+      # fail without saying so:
       #
-      #   - The scan read the bucket with `mc ls … || true`, which threw
-      #     the exit status away. A read that died PARTWAY handed the
-      #     parser a truncated but perfectly contiguous prefix, so the
-      #     walk found no holes and wrote `unexpected_gaps 0` — a clean
-      #     DR verdict derived from a failed read, byte-identical to the
-      #     healthy answer. Reproduced against the shipped bytes
-      #     2026-09-05: a listing cut after 4 of 11 partitions.
-      #   - A read that died having emitted NOTHING wrote
+      #   - A scan that reads the bucket with `mc ls … || true` throws the
+      #     exit status away. A read that dies PARTWAY hands the parser a
+      #     truncated but perfectly contiguous prefix, so the walk finds no
+      #     holes and writes `unexpected_gaps 0` — a clean DR verdict
+      #     derived from a failed read, byte-identical to the healthy
+      #     answer (reproduced with a listing cut after 4 of 11
+      #     partitions).
+      #   - A read that dies having emitted NOTHING writes
       #     `unexpected_gaps 1`, which pages with a DR-corruption claim
       #     about a bucket nobody managed to look at, and sends the
       #     responder to the recovery runbook for a `mc` fault.
@@ -188,9 +188,9 @@ groups:
       #     contiguity_silent arm above reads ABSENCE and so cannot see
       #     this at all.
       #
-      # The producer now publishes its own state on every run, and does
+      # The producer publishes its own state on every run, and does
       # not publish a partition verdict for a run that could not look. A
-      # SUCCESSFUL read that returns nothing is unchanged and still
+      # SUCCESSFUL read that returns nothing still
       # pages: an empty durable mirror is a real DR event, and
       # galexie_archive_scan_listing_lines is what separates it from a
       # listing the parser no longer matches.
@@ -300,7 +300,7 @@ groups:
             journal.
 
       - alert: stellarindex_galexie_catchup_refused
-        # 2026-07-05: the captive core wedged with 'invalid local state'
+        # On r1 the captive core has wedged with 'invalid local state'
         # and refused catchup for 11 hours while the lake froze — the
         # signature sat verbatim in the journal, unwatched. Sustained
         # refusals = the core cannot heal itself; the remedy is a galexie
@@ -325,17 +325,17 @@ groups:
       # ── The catchup probe's own health (monitoring of monitoring) ──
       #
       # stellarindex_galexie_catchup_refused above is `page` and has no
-      # absent arm and no staleness arm, so until this alert existed
-      # every way its producer could fail was silent AND landed on the
-      # value 0 — which is also the healthy value:
+      # absent arm and no staleness arm, so without this alert every way
+      # its producer can fail is silent AND lands on the value 0 — which
+      # is also the healthy value:
       #
-      #   - The probe counted with `journalctl … | grep -c … || true`.
-      #     `grep -c` prints 0 and exits 1 on no match, the healthy
-      #     outcome, so the `|| true` was load-bearing and swallowed the
-      #     journal read's failure with it. Measured on r1 2026-09-05, a
-      #     healthy read, a unit name that does not exist, a journal that
-      #     could not be opened and a missing journalctl binary all
-      #     produced N=0 and exit 0.
+      #   - A probe counting with `journalctl … | grep -c … || true` hides
+      #     a failed read: `grep -c` prints 0 and exits 1 on no match, the
+      #     healthy outcome, so the `|| true` is load-bearing and swallows
+      #     the journal read's failure with it. Measured on r1: a healthy
+      #     read, a unit name that does not exist, a journal that could
+      #     not be opened and a missing journalctl binary all produce
+      #     N=0 and exit 0.
       #   - A read that exits 0 and returns NOTHING (a renamed unit) is a
       #     correctly-derived zero over an empty input, with no error
       #     anywhere. galexie logged 364-409 lines per 5 min across

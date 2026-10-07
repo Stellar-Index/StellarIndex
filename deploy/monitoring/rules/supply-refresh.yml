@@ -1,6 +1,6 @@
 ---
 # Supply-refresh alerts. Pair with the aggregator-resident supply
-# refresher in cmd/stellarindex-aggregator (Task #57 + #66 + #70).
+# refresher in cmd/stellarindex-aggregator.
 #
 # Scrape source: the aggregator's Prometheus /metrics endpoint
 # emits stellarindex_aggregator_supply_refresh_total{outcome=…},
@@ -48,8 +48,8 @@ groups:
         # Fires when NO successful (ok) tick has been recorded across any
         # watched asset in the last 30m. Uses changes()==0 on the counter,
         # NOT time()-timestamp(...): timestamp() returns the SAMPLE's scrape
-        # time (≈now while the series is still scraped), so the old
-        # time()-timestamp(...) form evaluated to ≈0 and never fired (W5-mon).
+        # time (≈now while the series is still scraped), so a
+        # time()-timestamp(...) form evaluates to ≈0 and never fires.
         # Fleet-wide sum() (not per-asset): a single healthy asset means the
         # goroutine is alive; per-asset failure is _error_dominant's job. The
         # "never ticked at all" case (series absent) is _never_initialized's.
@@ -114,13 +114,13 @@ groups:
             both paths.
 
       - alert: stellarindex_aggregator_supply_refresh_error_dominant
-        # F-1320: aggregate PER ASSET (`by (asset_key)`), not fleet-wide —
-        # a single asset failing 100% of its ticks could never push the
-        # fleet-wide fraction past 50% while healthy siblings diluted it,
-        # so a permanently-stale asset was un-alertable. Also exclude the
-        # benign `dormant` outcome (a dormant asset's last observation IS
-        # current — accepted, not an error) and `missing_baseline`
-        # (incident 2026-07-06: a SAC-wrapper whose pre-Soroban opening
+        # Aggregate PER ASSET (`by (asset_key)`), not fleet-wide — a
+        # single asset failing 100% of its ticks could never push the
+        # fleet-wide fraction past 50% while healthy siblings dilute it,
+        # so a permanently-stale asset would be un-alertable. Also exclude
+        # the benign `dormant` outcome (a dormant asset's last observation
+        # IS current — accepted, not an error) and `missing_baseline`
+        # (a SAC-wrapper whose pre-Soroban opening
         # balance hasn't been seeded — a range-scoped condition fixed by
         # `stellarindex-ops supply seed-sep41-genesis`, not corruption; a
         # genuine post-seed negative still surfaces as `compute_error`).
@@ -185,10 +185,10 @@ groups:
             horizon. Runbook: section "Several assets dormant at once" —
             check each component observer is advancing.
 
-      # GH-1153: the sep41 rollup fails closed when the projector's
+      # The sep41 rollup fails closed when the projector's
       # sep41_supply cursor row is absent — the fold stays pinned and every
       # supply read for the contract runs the full-history scan migration 0085
-      # exists to prevent (incident 2026-07-06). The worker labels those passes
+      # exists to prevent. The worker
       # `no_cursor`, distinct from the dormant-token `noop`. Per contract: one
       # pinned contract is the whole incident for that contract. A projector
       # that commits its first sep41_supply cycle clears it on the next pass.
@@ -215,10 +215,10 @@ groups:
             or quarantined), or ingestion_cursors was lost in a restore.
 
       # ch-supply.service (daily supply_flows gap-fill) failed its last run.
-      # Added 2026-07-17: this unit failed SILENTLY for weeks (a /var/log
-      # permission regression under the 2026-07-03 non-root hardening) because
-      # NOTHING alerted on it. The fix moved its logging to journald; this alert
-      # ensures a future failure is loud. node_systemd_unit_state comes from
+      # On r1 this unit once failed SILENTLY for weeks (a /var/log
+      # permission regression under the non-root hardening) with nothing
+      # alerting on it. It logs to journald, and this alert makes a
+      # future failure loud. node_systemd_unit_state comes from
       # node_exporter --collector.systemd (same source as verify-archive).
       - alert: stellarindex_ch_supply_gapfill_failed
         expr: |

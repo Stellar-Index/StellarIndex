@@ -31,10 +31,10 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#retiring-a-source
 
-      # CS-102 (2026-07-28): the domain-level `supply` freshness check measures
-      # max(time) across the WHOLE table, so it proves only that SOME asset is
-      # publishing. It read green while 37 of 48 watched assets were frozen —
-      # the still-live assets kept the global max current. This alert is the
+      # The domain-level `supply` freshness check measures max(time) across
+      # the WHOLE table, so it proves only that SOME asset is publishing. On
+      # r1 it read green while 37 of 48 watched assets were frozen — the
+      # still-live assets kept the global max current. This alert is the
       # per-asset shape that aggregate cannot express.
       - alert: stellarindex_supply_assets_stale
         expr: |
@@ -100,18 +100,17 @@ groups:
       # we promised to cover. attributeRecognitionGaps caps that source's
       # recognition axis; recognition_ok goes 0.
       #
-      # This REPLACES stellarindex_recognition_unattributed_jump, which
-      # watched the other bucket — unrecognized shapes on contracts NOBODY
-      # owns, i.e. foreign protocols. That number is 23866 and grows
-      # forever as Stellar grows; the jump alert tried to infer a registry
-      # regression from its growth RATE against a ~30/day organic baseline.
-      # The inference is unreliable in both directions: it fires when
-      # Stellar is merely busy (361 in 2 days on 2026-09-01, all of them on
-      # unowned contracts, no source degraded), and a regression would look
-      # identical to growth from the alert alone.
+      # The other bucket — unrecognized shapes on contracts NOBODY owns,
+      # i.e. foreign protocols — is the wrong thing to alert on. That
+      # number is 23866 and grows forever as Stellar grows, and inferring
+      # a registry regression from its growth RATE against a ~30/day
+      # organic baseline is unreliable in both directions: it fires when
+      # Stellar is merely busy (361 in 2 days on r1, all of them on
+      # unowned contracts, no source degraded), and a regression looks
+      # identical to growth from that number alone.
       #
-      # The signal it was trying to infer is directly observable here, so
-      # infer nothing: alert on the source axis itself.
+      # The signal that inference would chase is directly observable here,
+      # so infer nothing: alert on the source axis itself.
       - alert: stellarindex_source_recognition_failing
         expr: stellarindex_recognition_ok == 0
         for: 1h
@@ -246,9 +245,9 @@ groups:
       # very end, so a run that dies before the swap leaves the PREVIOUS
       # data_freshness.prom on disk — node_exporter keeps re-serving it
       # with a fresh scrape timestamp, every stellarindex_data_freshness_*
-      # series stays present, and absent_over_time never trips (T599; the
-      # runbook has carried a manual mtime check for this exact case since
-      # Wave L / #319 with nothing automated behind it). node_exporter's
+      # series stays present, and absent_over_time never trips. The
+      # runbook's manual mtime check covers this case by hand; this rule
+      # automates it. node_exporter's
       # own textfile-collector mtime tracks the file's real last-write
       # time and freezes the moment the timer stops rewriting it, same
       # pattern as stellarindex_config_assertions_stale (storage.yml).
@@ -293,7 +292,7 @@ groups:
             serve is wrong. Investigate the derivation before
             customers or auditors sample it by hand.
 
-      # OBS-2 pattern (see restore-drill.yml): a bare `time() - <gauge>`
+      # Same pattern as restore-drill.yml: a bare `time() - <gauge>`
       # predicate can only measure a series that EXISTS. When the harness
       # has never written its textfile the vector is empty, the subtraction
       # yields nothing, and the one alert whose whole job is "the harness
@@ -346,7 +345,7 @@ groups:
             source is reachable / its response shape; the check resumes
             automatically once truth returns.
 
-      # C4-069: the LIST-level companion to served_value_drift for
+      # The LIST-level companion to served_value_drift for
       # xlm_circulating_supply. That check's 2% tolerance (~700M XLM) is
       # deliberate — it rides out methodology residuals such as the fee
       # pool — but it cannot see SDF adding or retiring ONE reserve
