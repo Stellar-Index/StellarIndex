@@ -1,29 +1,12 @@
-// Package baseline provides robust statistical primitives for the
-// per-asset volatility baselines defined in ADR-0019 Phase 2:
+// Package baseline is the pure robust statistics behind the per-asset
+// volatility baselines of ADR-0019 Phase 2: [Median], [MAD], [Baseline]
+// with [Baseline.ZScore], and [ReturnsFromVWAPs], which turns timed
+// bucket VWAPs into returns scaled to one minute. Storage and
+// orchestration live elsewhere so this stays fuzzable without a
+// database.
 //
-//   - [Median] / [MAD] over a slice of returns
-//   - [Baseline] — combined robust-stats result with an attached
-//     [Baseline.ZScore] method for "how anomalous is this new
-//     return"
-//   - [ReturnsFromVWAPs] — convert a timed sequence of bucket VWAPs
-//     into bucket-to-bucket returns scaled to one minute (the input
-//     the baseline summarises)
-//
-// The math is intentionally split off from the storage layer (the
-// `volatility_baseline_1m` CAGG that feeds it) and from the
-// orchestrator integration. This keeps the math pure-Go and easy
-// to fuzz without dragging in DB fixtures.
-//
-// Why MAD instead of standard deviation: per ADR-0019, σ is itself
-// sensitive to outliers — a single attack in the training window
-// inflates σ and hides the next attack. MAD (median absolute
-// deviation) is computed from medians and is robust against
-// outliers in the training data, which is exactly the failure mode
-// our anomaly detector needs to survive. Mature oracles (Pyth,
-// MakerDAO OSM) make the same substitution for the same reason.
-//
-// Output of MAD is scaled by 1.4826 so it is σ-equivalent for
-// normally-distributed data — the consistency factor that makes
-// "5σ is anomalous" match clinicians' / quants' intuition without
-// requiring a separate scale conversion at every call site.
+// MAD replaces standard deviation because one attack in the training
+// window inflates σ and hides the next attack; medians resist that. MAD
+// is scaled by 1.4826 so it equals σ for normal data and "5σ" keeps its
+// usual meaning.
 package baseline

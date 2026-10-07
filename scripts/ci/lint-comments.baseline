@@ -1,7 +1,5 @@
 # History citations in product Go comments, one per comment line: <path>\t<first match>.
 # Shrink-only: delete a line when its citation goes; scripts/ci/lint-comments fails on new or stale entries.
-internal/api/v1/dashboardwebhooks/doc.go	F-1235
-internal/api/v1/dashboardwebhooks/doc.go	F-1270
 internal/api/wiretime/wiretime.go	2026-06
 internal/archivecompleteness/cross_anchor_fill.go	live-001
 internal/auth/sep10/validator.go	2026-07-23
