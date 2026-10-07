@@ -20,8 +20,8 @@ const SyntheticCrossName = "synthetic-usd-cross"
 //
 //	base/fiat:X  :=  (base / fiat:USD)  ÷  (fiat:X / fiat:USD)
 //
-// Motivation (2026-08-24, the corroborated-release amendment's
-// operational cost): EUR/GBP-quoted pairs have exactly ONE direct
+// Motivation (the corroborated-release rule's operational cost):
+// EUR/GBP-quoted pairs have exactly ONE direct
 // reference (CoinGecko), which is below the divergence trust floor
 // (divergenceMinSources), so their freezes can never auto-release —
 // every one ends in an operator page. The components for a second,
