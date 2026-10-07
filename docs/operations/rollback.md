@@ -60,7 +60,7 @@ The deploy workflow keeps previous binaries as
 Preferred path: re-trigger it with the previous known-good tag (host-side
 backup→swap→restart→health-probe, automatic rollback on probe failure). It
 works only with `-f migrations_skip=true` (`deploy.yml:105`): the schema stays
-forward (CS-099), so without it `migrate up` (`deploy-binary.yml:291`) fails
+forward (CS-099), so without it `migrate up` (`deploy-binary.yml:282`) fails
 with "no migration found for version N" whenever a migration landed after that
 tag.
 
