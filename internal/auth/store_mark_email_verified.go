@@ -17,10 +17,8 @@ import (
 
 // MarkEmailVerified flips an existing API key's
 // `EmailVerifiedAt` timestamp to now (or to the optional
-// `at` override, used by tests for determinism). F-1218 wave 45
-// (codex audit-2026-05-12): the `/v1/signup/verify` handler
-// calls this after Consume so the optional `RequireEmailVerified`
-// middleware can gate /v1/* access on the flag.
+// `at` override, used by tests for determinism). The optional
+// `RequireEmailVerified` middleware gates /v1/* access on the flag.
 //
 // Implementation mirrors `UpdateRateLimit`: resolve the KeyID through
 // the index ([RedisAPIKeyStore.findRecordByKeyID]), then
@@ -55,7 +53,7 @@ func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, 
 		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	// KeepTTL (Q186): same reasoning as UpdateRateLimit — this
+	// KeepTTL: same reasoning as UpdateRateLimit — this
 	// read-modify-write must not clear a register-mirrored record's
 	// sliding idle TTL ([MirroredKeyIdleTTL]). A bare `SET ... 0` here
 	// would turn the FIRST verification click into a permanent, never-

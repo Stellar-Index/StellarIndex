@@ -15,8 +15,7 @@ import (
 )
 
 // RedisSignupEmailLocker is the Redis-SETNX adapter for the
-// dashboardauth EmailLocker seam (F-1255, codex audit-2026-05-12).
-// It serialises first-login provisioning per email so two
+// dashboardauth EmailLocker seam. It serialises first-login provisioning per email so two
 // /v1/auth/callback callers can't both create speculative
 // Account rows before the email-unique-index Users insert
 // resolves a winner.
@@ -26,11 +25,11 @@ import (
 // Redis). The value is a per-acquire random FENCING token, not a
 // fixed sentinel: Acquire stores it via SETNX and Release deletes
 // the key only if it still carries that token (a Lua
-// compare-and-delete). This closes F-C (audit-2026-08-14): if a
-// holder overruns the 30s TTL (a slow Account.Create +
-// Users.CreateUser), the key can expire and a concurrent caller
-// can SETNX-acquire it afresh; a blind DEL would then delete the
-// SUCCESSOR's lock, reintroducing the F-1255 orphan race. The
+// compare-and-delete). If a holder overruns the 30s TTL (a slow
+// Account.Create + Users.CreateUser), the key can expire and a
+// concurrent caller can SETNX-acquire it afresh; a blind DEL would
+// then delete the SUCCESSOR's lock, reopening the orphan-Account
+// race the lock exists to close. The
 // token-scoped delete makes the overrunning holder's Release a
 // no-op instead. The TTL remains the safety net for a process
 // crash between Acquire and Release.
@@ -73,9 +72,9 @@ func NewRedisSignupEmailLocker(rdb redis.Cmdable) *RedisSignupEmailLocker {
 }
 
 // signupLockKey returns the Redis key for an email-hash. Kept
-// separate from `signupKey` (the F-1218 reservation key) so the
-// two namespaces don't collide; the ACL allow-list (F-1254)
-// already permits the `signup:*` family.
+// separate from `signupKey` (the signup reservation key) so the
+// two namespaces don't collide; the Redis ACL allow-list already
+// permits the `signup:*` family.
 func signupLockKey(emailHash string) string {
 	return "signup:lock:" + emailHash
 }
@@ -85,7 +84,7 @@ func signupLockKey(emailHash string) string {
 // Returns (true, token, nil) on win, (false, "", nil) on
 // contention, and (false, "", err) on a Redis-side (or entropy)
 // failure. The caller treats the err case as "fall through to
-// the legacy non-locked path" rather than refusing to log in,
+// the non-locked path" rather than refusing to log in,
 // and passes the returned token back to Release.
 func (l *RedisSignupEmailLocker) Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error) {
 	token, err := newLockToken()

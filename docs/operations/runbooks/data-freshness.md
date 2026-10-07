@@ -374,7 +374,7 @@ Then `docs/architecture/supply-pipeline.md` for which algorithm (1 XLM / 2 class
 
 ## stellarindex_served_value_drift
 
-Trips: `stellarindex_served_value_ok == 0`, `for: 26h` (two consecutive daily runs). Label `check`. A served value sits outside its tolerance vs its independent source.
+Trips: `stellarindex_served_value_ok == 0`, `for: 26h` (two consecutive daily runs). Label `check`. A served value sits outside its tolerance vs its independent source. A drifted check is re-read once, 6 minutes later (one supply-snapshot interval), so a mint or burn landing between our snapshot and the truth read does not count; it fails only if the gap persists. The unit log line's note says which: `gap persisted after the served snapshot advanced` is a real drift, `served supply snapshot stale` means `supply_as_of_ledger` did not move between the reads (look at the supply writer, not the derivation).
 
 Causes: a supply-derivation basis wrong or partially populated (standing cases: `xlm_circulating_supply` reads `xlm_total_only` until the operator sets `sdf_reserve_accounts`; `usdc_total_supply` under-reads vs Stellar Expert); a backfill/observer gap left supply hypertables incomplete; the GROUND TRUTH changed methodology (SE counts locked amounts, SDF changes basis), so verify windows/bases match before "fixing" our side.
 

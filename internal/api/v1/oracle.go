@@ -54,14 +54,14 @@ type oracleAtReader interface {
 // Reflector publishes XLM under crypto:XLM, and an empty 285 ms
 // hypertable scan was the wall-clock cost of proving it.
 //
-// The `crypto:<TICKER>` translation is IDENTITY-GATED (#336). It used
-// to fire on the CODE alone, so any classic asset whose code happened
-// to spell a global ticker was answered with the REAL issuer's oracle
-// rows: `?asset=USDC-GBNZILST…AQUA` — AQUA's issuer wearing Circle's
-// code, an asset that does not exist — returned band / redstone /
-// reflector-cex USDC prices verbatim (verified live on r1, 2026-09-02).
-// That is the attacker-authored-pricing class of the 2026-08 valuation
-// incident: identity is (code, issuer), never code alone. Only an asset
+// The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the
+// CODE alone answers any classic asset whose code happens to spell a
+// global ticker with the REAL issuer's oracle rows: measured live on r1,
+// `?asset=USDC-GBNZILST…AQUA` — AQUA's issuer wearing
+// Circle's code, an asset that does not exist — returned band /
+// redstone / reflector-cex USDC prices verbatim. That is
+// attacker-authored pricing: identity is (code, issuer), never code
+// alone. Only an asset
 // the verified-currency catalogue itself issues under that ticker
 // (internal/currency — the same trust surface `/v1/assets/{slug}`
 // dispatches on) may claim the ticker's readings; an impersonator gets
@@ -383,7 +383,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	// 8s ceiling on the oracle_updates hypertable scan, matching
 	// the fail-fast-on-slow-upstream timeout used by the other
 	// hypertable-scanning endpoints (/v1/pools, /v1/history).
-	// Steady-state ~600ms per the 2026-05-08 prod probe, but
+	// Steady-state ~600ms measured on prod, but
 	// cold-cache scans of 7d × 80 oracle streams can take 5-10s.
 	osCtx, osCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer osCancel()

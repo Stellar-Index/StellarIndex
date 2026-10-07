@@ -31,12 +31,12 @@ const (
 	tipWindowMaxTrades = 10000
 
 	// tipEscalationWindowSeconds is the widened retry window when the
-	// caller's (or default 5s) window contains no trades. Board #42
-	// (RFP audit): the previous behavior fell STRAIGHT from an empty
-	// 5s window to the closed-bucket store price (60–113s stale) —
-	// live samples showed ~90s staleness on /v1/price/tip whenever a
-	// quiet second was hit, breaching the ≤30s freshness SLA the tip
-	// surface exists to serve. Escalating to a 30s window first means
+	// caller's (or default 5s) window contains no trades. Falling
+	// straight from an empty 5s window to the closed-bucket store price
+	// (60–113s stale) breaches the ≤30s freshness SLA the tip surface
+	// exists to serve: live samples of that shape showed ~90s staleness
+	// on /v1/price/tip whenever a quiet second was hit.
+	// Escalating to a 30s window first means
 	// staleness exceeds 30s ONLY when the pair genuinely had no trade
 	// in the last 30s (at which point the closed bucket is the honest
 	// answer and observed_at says so). 30 = the SLA bound, hence not
@@ -148,9 +148,9 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // in-contract on this surface. The staleness bit PriceReader sets for
 // /v1/price is deliberately ignored; tip has its own envelope contract.
 // divergence_warning/divergence_checked come from the shared lookup,
-// asked for the requested (base, quote) spelling only (GH-1045:
-// quote-specific, never ORed across the base's other quotes, never read
-// from another alias's market).
+// asked for the requested (base, quote) spelling only: quote-specific,
+// never ORed across the base's other quotes, never read from another
+// alias's market.
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
 	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
@@ -175,7 +175,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// window VWAP below is computed straight from raw trades, so
 	// without this check a dust-authored market would serve its
 	// attacker-written rate here even after /v1/price started
-	// withholding it (the 2026-08-04 incident class). One gate call
+	// withholding it. One gate call
 	// covers every branch of this function; the reader-level gates
 	// inside LatestPrice would otherwise cover only the middle one.
 	//
@@ -187,9 +187,9 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// withholding gate has none — it decides whether to serve AT ALL,
 	// and the only two things a timed-out gate could do are refuse a
 	// price that is fine or publish one the gate exists to withhold.
-	// Timing this out on the emit path would republish an
-	// attacker-authored rate the 2026-08-04 incident class made these
-	// gates for, so a slow gate correctly costs the emission instead.
+	// Timing this out on the emit path would republish the
+	// attacker-authored rate these gates exist to withhold, so a slow
+	// gate correctly costs the emission instead.
 	//
 	// Scam-issuer gate: same posture as the substance gate on this
 	// surface — a directory-scam-flagged issuer's live tip is still an
@@ -199,13 +199,10 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	//
 	// Asked about BOTH legs, via [scamWithheld], because the withholding
 	// decision is a property of the MARKET rather than of whichever leg
-	// the client named first. This line used to read
-	// `s.Scam.Withheld(ctx, asset, "tip")` and claim that keying on the
-	// base "covers every quote": it did the opposite — the tip of
-	// `?asset=native&quote=<FLAGGED>` is the flagged market's own price
-	// inverted, and it was served at 200, unauthenticated, live, off the
-	// flagged issuer's own trades, while `?asset=<FLAGGED>` 404'd
-	// (F002/K001). One call, both legs, folded inside pricingguard.
+	// the client named first. Keying on the base alone does not cover
+	// every quote: the tip of `?asset=native&quote=<FLAGGED>` is the
+	// flagged market's own price inverted. The fold over both legs
+	// happens inside pricingguard, in one call.
 	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}
@@ -251,19 +248,19 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// for the tip fallback per ADR-0018 (the customer reads price_type
 	// + observed_at to know what they got).
 	//
-	// F-1340: route through the rc.89 XLM dual-form alias loop, exactly
+	// Route through the XLM dual-form alias loop, exactly
 	// as handlePrice does, so /v1/price/tip?asset=native resolves a
 	// fresh crypto:XLM observation rather than missing it on the
 	// literal form.
 	snap, sources, _, err := s.readPriceWithAliases(ctx, s.Prices, asset, quote)
 	if err == nil {
-		// dex-nonstandard-decimals forward normalization (M2): this
-		// closed-bucket / last-trade fallback returns the RAW asset/quote ratio,
-		// exactly like /v1/price's readPriceWithAliases read. The tip window
-		// VWAP path (tipWindowVWAP) already normalizes; this fallback branch did
-		// NOT, so a confirmed non-7-decimals asset served a skewed tip here.
-		// Byte-identical no-op at 7dp. (The Redis/proxy/fiat branches below
-		// self-normalize at their own source — see tryStablecoinFiatProxy.)
+		// Forward-normalize dex-nonstandard decimals: this closed-bucket /
+		// last-trade fallback returns the RAW asset/quote ratio, exactly like
+		// /v1/price's readPriceWithAliases read, so without this a confirmed
+		// non-7-decimals asset would serve a skewed tip. The tip window VWAP
+		// path (tipWindowVWAP) normalizes on its own. This is a byte-identical
+		// no-op at 7dp. (The Redis/proxy/fiat branches below self-normalize at
+		// their own source — see tryStablecoinFiatProxy.)
 		s.normalizeRawPriceSnapshot(&snap, asset, quote)
 		return snap, sources, true, nil
 	}
@@ -286,10 +283,10 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg>
 	// at request time using the operator's
 	// [trades].usd_pegged_classic_assets allow-list. Mirrors the
-	// equivalent fallback in priceFallback (6505934b5). Without this
+	// equivalent fallback in priceFallback. Without this
 	// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 	// every fresh deployment because nothing on-chain ever quotes in
-	// fiat:USD — same exact failure mode as /v1/price had.
+	// fiat:USD, the same failure mode priceFallback guards on /v1/price.
 	proxySnap, proxySources, proxyOK, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if proxyOK {
 		proxySnap.ProxyDeviation = s.proxyDeviation(ctx, time.Now().UTC())
@@ -388,7 +385,7 @@ func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 
 // tipWindowEscalating runs the rolling-window VWAP over pairs at the
 // caller's window and, when that window is empty, once more at the 30s
-// SLA bound (board #42) before the caller drops to its next fallback.
+// SLA bound before the caller drops to its next fallback.
 // The response's window_seconds reports the window actually used. An
 // empty pair set is simply a miss.
 func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
@@ -423,12 +420,12 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	now := time.Now().UTC()
 	from := now.Add(-time.Duration(windowSeconds) * time.Second)
 
-	// XLM dual-form (rc.89 / F-1340): trades for the SAME asset live under
-	// different canonical ids per source class — CEX trades under
-	// `crypto:XLM`, on-chain under `native`. A single-pair read sees only
-	// one slice, which made ?asset=native fall through to the closed-bucket
-	// fallback (61–113s stale) while ?asset=crypto:XLM was fresh — failing
-	// the ≤30s freshness contract for the natural spelling. MERGE the
+	// XLM dual-form: trades for the SAME asset live under different
+	// canonical ids per source class — CEX trades under `crypto:XLM`,
+	// on-chain under `native`. A single-pair read sees only one slice, so
+	// ?asset=native would fall through to the closed-bucket fallback
+	// (61–113s stale) while ?asset=crypto:XLM is fresh, failing the ≤30s
+	// freshness contract for the natural spelling. MERGE the
 	// alias pairs' trades (disjoint sets) so the tip VWAP covers all venues
 	// regardless of which spelling the caller used. Which combinations
 	// are merged — and why an unnamed SAC-form one is read only after
@@ -460,7 +457,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	// mean would weight each trade by its smallest-unit magnitude
 	// (real_volume × 10^scale) and over-weight the finer-scaled venue ~10×
 	// per decimal. Lift every trade to the common scale first. A single-venue
-	// window (the common case) is byte-identical (CS-040).
+	// window (the common case) is byte-identical.
 	price, err := aggregate.VWAP(aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor))
 	if err != nil {
 		// All-zero-volume input. The fallback path will produce a
@@ -468,16 +465,13 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		return PriceSnapshot{}, nil, false
 	}
 
-	// dex-nonstandard-decimals forward normalization. /v1/price/tip (and
-	// its SSE sibling /v1/price/tip/stream, which shares this function)
-	// had NO decline guard at all — declineIfNonstandardDecimals's
-	// original four-endpoint list omitted the tip surface, so a confirmed
-	// non-7-decimals asset's skewed price was reaching customers here
-	// live and unguarded even after the 2026-07-09 guard shipped. Scaling
-	// the ratio below closes that gap directly rather than adding a
-	// decline (the compute is query-time-only here, same as VWAP/TWAP/
-	// OHLC single-bar, so normalizing is safe). No-op for any pair with
-	// no confirmed non-7-decimals leg.
+	// Forward-normalize dex-nonstandard decimals: /v1/price/tip (and its
+	// SSE sibling /v1/price/tip/stream, which shares this function) has no
+	// decline guard, so scaling the ratio below is what keeps a confirmed
+	// non-7-decimals asset's price from being served skewed. The compute
+	// is query-time-only here, same as VWAP/TWAP/OHLC single-bar, so
+	// normalizing is safe. It is a no-op for any pair with no confirmed
+	// non-7-decimals leg.
 	price = aggregate.AdjustPrice(price,
 		aggregate.ResolveDecimals(s.NonstandardDecimals, asset),
 		aggregate.ResolveDecimals(s.NonstandardDecimals, quote))

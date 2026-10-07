@@ -12,11 +12,10 @@ import (
 // MirroredKey is an already-minted credential being written into the
 // Redis validator store under a plaintext the CALLER generated.
 //
-// Why this exists (v0.32.0 post-deploy, 2026-08-12): a deployment can
-// run the Redis validator (r1: `backend=redis`) while an issuance path
-// records its management row in Postgres. A key that exists only in
-// Postgres 401s the moment it is used — POST /v1/register shipped a
-// well-formed key that never authenticated. [RedisAPIKeyStore.Create]
+// Why this exists: a deployment can run the Redis validator (r1:
+// `backend=redis`) while an issuance path records its management row
+// in Postgres. A key that exists only in Postgres 401s the moment it is
+// used. [RedisAPIKeyStore.Create]
 // cannot serve that path because it GENERATES the secret; mirroring
 // requires writing the caller's secret verbatim so one plaintext
 // validates on either backend.
@@ -101,8 +100,7 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 	// records must not accumulate forever in the allkeys-lru pool. The
 	// validator re-warms this TTL on every successful Lookup
 	// ([RedisAPIKeyValidator.refreshIdleTTL]), so a key that is actually
-	// used never expires — only an abandoned one ages out
-	// (W1-flow-register-2).
+	// used never expires — only an abandoned one ages out.
 	//
 	// Indexed in the same atomic write as the record, exactly as Create
 	// does: POST /v1/register rolls a failed registration back through

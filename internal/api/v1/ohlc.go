@@ -19,9 +19,7 @@ import (
 // filter applied before ComputeOHLC. Unlike VWAP — which is volume-
 // weighted and naturally dampens dust trades — OHLC's High/Low have
 // no statistical robustness: a single 1-stroop ↔ 1-stroop SDEX dust
-// trade lands at price=1 and pegs the High of an entire bar. (R-007
-// in `docs/review-2026-05-10.md` — XLM/USD bar showed High=$1 from
-// one such trade.)
+// trade lands at price=1 and pegs the High of an entire bar.
 //
 // 4.0 matches the aggregator orchestrator's default
 // (cfg.OutlierSigmaThreshold). Caller can override via
@@ -35,11 +33,10 @@ const ohlcDefaultOutlierSigma = 4.0
 // unit is a per-SOURCE scale, NOT a fixed stroop: an on-chain DEX leg is
 // 7-decimal, a CEX leg 8 (internal/sources/external/coinbase.
 // externalAmountDecimals), an FX poller 6 — the scale
-// [amountScaleDecimalsFor] resolves from the trade's source. This comment
-// used to call them "stroop-equivalent"; that is false for every CEX-fed
-// pair (crypto:XLM/fiat:USD among them), and a consumer that divided by a
-// fixed 1e7 overstated the figure tenfold (finding F096, live on the
-// /markets/[pair] page).
+// [amountScaleDecimalsFor] resolves from the trade's source. They are
+// not "stroop-equivalent" for any CEX-fed pair (crypto:XLM/fiat:USD
+// among them), and a consumer that divides by a fixed 1e7 overstates the
+// figure tenfold.
 //
 // BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire,
 // so a consumer renders asset units as volume / 10^decimals rather than
@@ -64,7 +61,7 @@ const ohlcDefaultOutlierSigma = 4.0
 // (only those of the chronologically-LAST N trades, since the reader
 // drops the OLDEST rows under the LIMIT). Close is unaffected: it is
 // the newest print either way. See VWAPResult.Truncated for the same
-// semantics and the F-1319 note on which end survives.
+// semantics and which end survives.
 type OHLCBar struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`
@@ -78,7 +75,7 @@ type OHLCBar struct {
 	// scale of the two sums above — see this type's doc comment. `null`
 	// when a contributing trade's source has no [external.Registry]
 	// entry: the sums are not convertible to asset units and must not
-	// be divided by a guessed scale (GH-1285). Mirrors
+	// be divided by a guessed scale. Mirrors
 	// OHLCSeriesBar.v_base_decimals / v_quote_decimals.
 	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
@@ -141,7 +138,7 @@ func priceRenderScale(r *big.Rat, digits int) int {
 //     param. Returns one [OHLCBar] for the window [from, to)
 //     computed from raw trades via [aggregate.ComputeOHLC]. This is
 //     the original /v1/ohlc semantics.
-//  2. Multi-bar series (F-0071, CG/CMC parity): `interval` is one
+//  2. Multi-bar series (CG/CMC parity): `interval` is one
 //     of 1m / 5m / 15m / 30m / 1h / 4h / 1d / 1w. Returns
 //     [OHLCSeriesResponse.Intervals] — up to `limit` (default 100,
 //     max 1000) closed bars, oldest first, sourced from the
@@ -210,8 +207,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// if the window has more trades than that, the bar will under-
 	// count. Aggregator-persisted CAGGs will replace this raw-scan
 	// path once they're live.)
-	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): the single-bar
-	// path scans raw `trades` on every query (the multi-bar series path
+	// Per-request DB ceiling: the single-bar path scans raw `trades`
+	// on every query (the multi-bar series path
 	// above reads CAGGs and sets its own timeout in handleOHLCSeries).
 	// 8s matches the sibling raw-scan endpoints and fires before the
 	// blanket request-timeout middleware.
@@ -220,9 +217,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 
 	// Single-bar mode shares the point-path trade fetch with /v1/vwap and
 	// /v1/twap — one implementation, so a fiat quote can't be resolved
-	// against a different constituent set here than there (C1-024). The
-	// second copy of this fetch that used to live in this file
-	// (`ohlcTradesWithStablecoinFallback`) is gone.
+	// against a different constituent set here than there.
 	const maxTradesForOHLC = 10000
 	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
 	if err != nil {
@@ -240,7 +235,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The volume sums below are only meaningful with a scale attached, and
-	// the scale is per-SOURCE (7dp on-chain, 8 CEX, 6 FX — CS-040). It is
+	// the scale is per-SOURCE (7dp on-chain, 8 CEX, 6 FX). It is
 	// resolved over the window as fetched: the window carries its lift
 	// target through the outlier filter, and an unregistered source the
 	// filter drops still set the scale its survivors were lifted to.
@@ -250,7 +245,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// WINDOW hit the cap — not whether the post-outlier-filter slice
 	// happens to equal it. Mirrors vwap.go; computing it after
 	// FilterOutliers would yield false negatives whenever the filter
-	// dropped any trade. See G2-05.
+	// dropped any trade.
 	preFilter := window.Len()
 	if window, ok = filterOHLCOutliers(w, r, window, sigma); !ok {
 		return
@@ -361,10 +356,10 @@ func (s *Server) computeOHLCSingleBar(
 // no [external.Registry] entry: [external.Lookup] answers such a source
 // with the registry's CEX-flavoured 8-decimal default (AmountScaleDecimals'
 // zero-value fallback), and stating that default as fact for a source we
-// do not actually recognise would re-introduce the F096 tenfold error for
+// do not actually recognise would misstate the scale tenfold for
 // the opposite population — an unregistered on-chain DEX at 7 decimals
 // would be reported at 8. An unrecognised source is scale-unknown, not
-// scale-8 (GH-1285).
+// scale-8.
 func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
 	trades := window.Trades()
 	for i := range trades {
@@ -417,7 +412,7 @@ func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 // trailing-`d` shortcut for days (e.g. `7d`). When supplied, `from`
 // is set to `to - window`. Combining `window` with an explicit
 // `from` is a 400 — they're conflicting controls for the same value;
-// rejecting it loudly catches the F-0072 "I asked for 24h and got a
+// rejecting it loudly catches the "I asked for 24h and got a
 // 1h default" surprise. Combining `window` with an explicit `to` is
 // fine — gives an arbitrary-anchored window of the requested length.
 func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {

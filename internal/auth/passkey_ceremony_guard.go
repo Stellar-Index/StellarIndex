@@ -13,7 +13,7 @@ import (
 )
 
 // RedisPasskeyCeremonyGuard is the Redis-SETNX adapter for the
-// dashboardauth PasskeyCeremonyGuard seam (audit-2026-08-13).
+// dashboardauth PasskeyCeremonyGuard seam.
 //
 // It records every WebAuthn ceremony challenge that has been spent so
 // a captured `finish-login` / `finish-register` request — ceremony
@@ -24,8 +24,7 @@ import (
 // in-process set would happily let the replay through on the other
 // instance.
 //
-// Same shape and same reasoning as [sep10.RedisReplayGuard] (F-1224),
-// which does this for SEP-10 challenge transactions.
+// Same shape and same reasoning as [sep10.RedisReplayGuard], which does this for SEP-10 challenge transactions.
 //
 // Key layout: `passkey:ceremony:<sha256-hex>` — the digest is built
 // by the dashboardauth handler, so no challenge material reaches
@@ -44,8 +43,7 @@ import (
 // evicted before its TTL (e.g. while an attacker floods the shared
 // instance with no-expiry apikey mirror writes via open registration),
 // a replayed `finish-login` finds the slot free and SETNX re-claims
-// it — minting a SECOND session for the victim (W1-auth-passkey-1,
-// audit-2026-08-14). To make eviction fail CLOSED instead of open,
+// it — minting a SECOND session for the victim. To make eviction fail CLOSED instead of open,
 // production consumes through [RedisPasskeyCeremonyGuard.Reserve] +
 // [RedisPasskeyCeremonyGuard.ClaimReserved]: the ceremony is reserved
 // at begin, and the claim REQUIRES the reservation to still exist — an
@@ -74,8 +72,8 @@ func passkeyCeremonyKey(digest string) string {
 }
 
 // liveCeremonyKey names the begin-time reservation marker for a
-// ceremony digest. Distinct from the (superseded) spent-marker
-// passkeyCeremonyKey writes, but under the same `passkey:ceremony:`
+// ceremony digest. Distinct from the spent-marker passkeyCeremonyKey
+// writes for [RedisPasskeyCeremonyGuard.Consume], but under the same `passkey:ceremony:`
 // prefix so no Redis ACL allow-list change is needed.
 func liveCeremonyKey(digest string) string {
 	return "passkey:ceremony:live:" + digest
@@ -113,8 +111,8 @@ var ErrPasskeyCeremonyAlreadyReserved = errors.New("passkey ceremony already res
 // the one and only presentation that may mint a session — and (false,
 // nil) when the marker is ABSENT for ANY reason: already claimed (a
 // replay), never reserved, or evicted under memory pressure. Treating
-// absence as "refuse" is the fix: unlike the SETNX spent-set, an
-// evicted marker can no longer be re-claimed, because the claim needs
+// absence as "refuse" is what makes eviction fail closed: unlike the
+// SETNX spent-set, an evicted marker cannot be re-claimed, because the claim needs
 // the marker present rather than absent. DEL is atomic, so two
 // concurrent presentations of one captured request resolve to exactly
 // one claimant. A store outage surfaces as an error; the caller fails

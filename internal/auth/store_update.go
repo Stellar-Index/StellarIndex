@@ -54,7 +54,7 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	// KeepTTL (Q186): this is a read-modify-write on a record that may
+	// KeepTTL: this is a read-modify-write on a record that may
 	// carry the register-mirror's sliding idle TTL
 	// ([MirroredKeyIdleTTL]). A bare `SET ... 0` clears any existing TTL,
 	// turning a bounded-lifetime mirrored key permanent the first time an

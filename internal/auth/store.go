@@ -80,8 +80,8 @@ type CreateAPIKeyRequest struct {
 	// it to the caller's own expiry via [ChildKeyRequest].
 	ExpiresAt time.Time
 
-	// EmailVerifiedAt — zero means the key has not (yet) passed the
-	// /v1/signup/verify email-link flow. Set by the self-service
+	// EmailVerifiedAt — zero means the key's owner never proved
+	// ownership of their signup email. Set by the self-service
 	// rotation path (POST /v1/account/keys) to the caller's own
 	// stamp so a child key inherits its parent's verification:
 	// the verification is a property of the identifier's owner,
@@ -307,8 +307,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	// `sip_` namespace prefix (Stellar Index Pricing). Matches the
 	// dashboard minter (dashboardkeys.generatePlaintext). Validation
 	// is SHA-256 of the full plaintext, so the prefix is purely a
-	// human-facing namespace label. (The last pre-rebrand-prefixed
-	// key was deleted from the store 2026-07-03.)
+	// human-facing namespace label.
 	plaintext, err := generateID(s.randRead, "sip_", 32)
 	if err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: generate plaintext: %w", err)
@@ -330,8 +329,8 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		// dashboard issuance default (Permissions.All=true). Without this
 		// the permission middleware's closed posture (no allow entries +
 		// PermissionsAll=false) 403s EVERY request from a freshly minted
-		// key ("this key has no permission entries") — caught 2026-06-12
-		// when a mint-key'd load-test key failed 210k/210k requests.
+		// key ("this key has no permission entries"); a mint-key'd
+		// load-test key failed 210k/210k requests that way.
 		// Per-endpoint restriction stays a dashboard feature.
 		PermissionsAll: true,
 	}
