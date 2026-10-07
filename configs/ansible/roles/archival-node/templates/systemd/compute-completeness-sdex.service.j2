@@ -1,7 +1,7 @@
 # systemd unit: weekly full re-proof of the SDEX completeness verdict.
 #
 # Rendered by Ansible. The nightly -pass never re-floors the sdex census: its
-# full reconcile (~4.8 h on r1) outlasts the pass's 120 min deadline, and a
+# full reconcile (~4.8 h on r1) outlasts the pass's 170 min deadline, and a
 # deadline-cut source writes nothing. Without this unit sdex's
 # projection_evidenced_at ages past the /v1/coverage evidence gate and holds
 # flags.stale on. Same driver as compute-completeness.service, so it keeps the
