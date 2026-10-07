@@ -530,9 +530,8 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 // leg rounds to 0, which are real trades Hubble also records. So the
 // figure that explains a per-ledger shortfall is `both`, NOT `anyZero`.
 //
-// This comment used to say the guard was `||` and that anyZero should
-// equal the shortfall. Following the
-// old text, an operator seeing anyZero == shortfall would conclude "fully
+// Treating the guard as `||` (anyZero == shortfall) would mislead: an
+// operator seeing anyZero == shortfall would conclude "fully
 // explained by the zero-amount artifact — not a decoder gap", and write
 // off every one-side-zero fill in (shortfall - both) as expected. Those
 // are real SDEX history missing from `trades`, which is exactly what

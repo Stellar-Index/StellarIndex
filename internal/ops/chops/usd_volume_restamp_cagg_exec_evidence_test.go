@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── T688: a -write run never EXECUTES its own CAGG follow-up ───────────
+// ─── a -write run never EXECUTES its own CAGG follow-up ───────────
 //
 // restampCAGGFollowUp (usd_volume_restamp_xlmbase.go) renders the ordered
 // `CALL refresh_continuous_aggregate(...)` block every finished restamp

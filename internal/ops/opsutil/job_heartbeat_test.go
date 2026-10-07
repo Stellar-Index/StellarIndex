@@ -390,10 +390,10 @@ func TestJobHeartbeatSweepsDeadPIDSiblings(t *testing.T) {
 	}
 }
 
-// TestJobHeartbeatSweepsDeadSiblingWithoutNewContention is the T597/T601
-// regression: sweepStalePIDFiles previously ran on contention ONLY, so a
-// loser that died without a follow-up contention leaked its `.pidN.prom`
-// file forever — this run never contends with anyone, so the old
+// TestJobHeartbeatSweepsDeadSiblingWithoutNewContention is the
+// regression: if sweepStalePIDFiles ran on contention ONLY, a
+// loser that died without a follow-up contention would leak its `.pidN.prom`
+// file forever — this run never contends with anyone, so a
 // contention-only path never fires at all.
 func TestJobHeartbeatSweepsDeadSiblingWithoutNewContention(t *testing.T) {
 	dir := t.TempDir()
@@ -435,8 +435,8 @@ func findDeadPID(t *testing.T) int {
 }
 
 // TestJobHeartbeatPublishesObservedByteProgressSeparately is the
-// 2026-09-09 regression: `stellarindex_ops_job_no_progress` ticketed on
-// every healthy `usd-volume-restamp -chunks` run.
+// regression: `stellarindex_ops_job_no_progress` must not ticket on
+// a healthy `usd-volume-restamp -chunks` run.
 //
 // That job must decompress a Timescale chunk before it can restamp a row
 // in it, and on r1 the decompress ran 49+ minutes on a 17.3 GB chunk

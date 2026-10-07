@@ -314,10 +314,10 @@ func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *tes
 	}
 }
 
-// TestPersistWorker_PostCancelPhasesShareOneDeadline pins CON-10 against
+// TestPersistWorker_PostCancelPhasesShareOneDeadline pins the shutdown deadline against
 // the racy select: once ctx is cancelled, a `<-in` or ticker arm that wins
 // the race (via shutdownSafeCtx) and the `<-ctx.Done()` arm must all write
-// under the SAME absolute deadline. When each started its own drainTimeout,
+// under the SAME absolute deadline. If each started its own drainTimeout,
 // one extra blocking arm pushed the Done arm's deadline past main's
 // ShutdownDeadline hard exit, so carried rows died unreported. The select
 // picks `<-in` first with p=1/2 per run, so 50 runs make a pre-fix pass

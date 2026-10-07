@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestAcquireHoldersRollupLockSerializesConcurrentRuns pins T572: a manual
+// TestAcquireHoldersRollupLockSerializesConcurrentRuns pins that a manual
 // `stellarindex-ops ch-holders-rollup` invocation must not be able to run
 // while another invocation (the 30-minute timer, or a second manual run) is
 // still mid-cycle. Red without acquireHoldersRollupLock: with neither flock nor any

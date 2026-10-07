@@ -294,7 +294,7 @@ func CrossOracleFactor(divergencePct float64) float64 {
 // The "no composite available" case is signalled by passing a negative
 // divergence and returns [triangulationNeutralFactor]; [Compute] also
 // zeroes this factor's weight in that case, so an un-triangulated pair
-// scores exactly as it did before this factor existed.
+// scores as if this factor were absent.
 //
 // NaN returns 0 — a caller bug, not a sentinel (same as every other
 // factor here).

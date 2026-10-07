@@ -14,8 +14,8 @@ import (
 // TestHandleEvent_EntryCountFollowsTheLandedInsert pins the ordering the
 // four inline handleEvent cases share with every persist helper: the
 // `entries` bump runs only AFTER the row landed. Bumping ahead of the
-// insert counted one entry per REL-08 infra-retry attempt of the same
-// event, and one for a row the store then rejected (Q062).
+// insert would count one entry per infra-retry attempt of the same
+// event, and one for a row the store then rejects.
 //
 // The seam is the nil store the validation-reject tests already use: each
 // store.Insert* rejects an empty TxHash in Go before touching the pool, so

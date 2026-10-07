@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestScopeSACWrappers — GH #714: -contracts narrows the pass (and so the
+// TestScopeSACWrappers — -contracts narrows the pass (and so the
 // provenance it touches) to the named wrappers; a typo is an error, never an
 // empty pass, and no flag means every configured wrapper.
 func TestScopeSACWrappers(t *testing.T) {
@@ -56,8 +56,8 @@ func (f *fakeClaimableStore) InsertClaimableObservation(_ context.Context, o tim
 	return nil
 }
 
-// TestClaimableSeedWriterRowFallback — GH #714: a failed batch no longer
-// aborts an hours-long pass. Its rows are retried one by one, the good ones
+// TestClaimableSeedWriterRowFallback — a failed batch does not
+// abort an hours-long pass. Its rows are retried one by one, the good ones
 // land, and the bad one is named in a non-zero exit.
 func TestClaimableSeedWriterRowFallback(t *testing.T) {
 	store := &fakeClaimableStore{bad: map[string]bool{"b": true}}

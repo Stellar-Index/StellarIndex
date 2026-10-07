@@ -532,13 +532,13 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		{phoenix.InitializeEvent{}, "phoenix.initialize", "phoenix_initialize"},
 		{phoenix.AdminEvent{}, "phoenix.admin", "phoenix_admin_events"},
 		// blend_emitter: the two 1:1 kinds that stay reconciled after the drop
-		// fan-out kind was waived (2026-08-18) — pinned so the catalogue kind
+		// fan-out kind was waived — pinned so the catalogue kind
 		// strings stay welded to the decoder that emits them.
 		{blend_emitter.DistributeEvent{}, "blend_emitter.distribute", "blend_emitter_events"},
 		{blend_emitter.SwapConfigEvent{}, "blend_emitter.swap_config", "blend_emitter_events"},
 		// defindex, enumerated per Direction — the harvest-regression guard.
 		// Both layers land in defindex_flows; strategy.harvest MUST be a
-		// reconciled kind (audit 2026-08-04 finding 4).
+		// reconciled kind.
 		{defindex.Event{Flow: defindex.StrategyFlow{Direction: defindex.DirectionDeposit}}, "defindex.strategy.deposit", "defindex_flows"},
 		{defindex.Event{Flow: defindex.StrategyFlow{Direction: defindex.DirectionWithdraw}}, "defindex.strategy.withdraw", "defindex_flows"},
 		{defindex.Event{Flow: defindex.StrategyFlow{Direction: defindex.DirectionHarvest}}, "defindex.strategy.harvest", "defindex_flows"},

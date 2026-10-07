@@ -250,7 +250,7 @@ func TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums(t *testing.T) {
 	}
 }
 
-// TestHubbleStatsSQL_ScalesSumsToStroops pins CA2-A28-correct-7: Hubble's
+// TestHubbleStatsSQL_ScalesSumsToStroops pins that Hubble's
 // selling_amount/buying_amount are whole-unit FLOAT64 (stellar-etl divides
 // by 1e7 on load), while our side sums stroop-scale base_amount/quote_amount.
 // Comparing them raw is off by exactly hubbleStroopsPerUnit, and a

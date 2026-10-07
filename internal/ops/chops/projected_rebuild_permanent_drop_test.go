@@ -66,7 +66,7 @@ func TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow(t *test
 }
 
 // TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow is the guard on the
-// other side: COR-09 is untouched. A failure that is NOT a permanent trade
+// other side: the permanent-drop rule is untouched. A failure that is NOT a permanent trade
 // drop still counts toward holding the window, a poison trade beside it does
 // not mask it, and every output of the row is still offered to the sink.
 func TestApplyProjectedEvent_OtherFailuresStillHoldTheWindow(t *testing.T) {

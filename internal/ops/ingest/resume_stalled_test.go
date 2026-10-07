@@ -285,9 +285,9 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 		{name: "unknown decoder", sources: []string{"some-future-source"}, want: false},
 		// sorocredit and blend_emitter are BackfillSafe Soroban lending
 		// sources (external/registry.go) whose raw events land in
-		// soroban_events (dispatcher.go case list) — they were missing
-		// from the hand-kept list and silently gated against the SDEX
-		// trades scan instead (CA2-A19-correct-3).
+		// soroban_events (dispatcher.go case list) — missing
+		// from the hand-kept list they would silently gate against the SDEX
+		// trades scan instead.
 		{name: "sorocredit alone", sources: []string{"sorocredit"}, want: true},
 		{name: "blend_emitter alone", sources: []string{"blend_emitter"}, want: true},
 		{name: "mixed blend + blend_emitter", sources: []string{"blend", "blend_emitter"}, want: true},
@@ -306,7 +306,7 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 // sorobanDecoderNames to pipeline.SorobanSourceNames (in turn derived
 // from BuildDispatcher's switch) so a source added to the dispatcher
 // without updating the shared list fails CI here instead of silently
-// mis-gating resume-stalled (CA2-A19-correct-3).
+// mis-gating resume-stalled.
 func TestSorobanDecoderNamesCoversDispatcherSourceSet(t *testing.T) {
 	for _, name := range pipeline.SorobanSourceNames {
 		if _, ok := sorobanDecoderNames[name]; !ok {
@@ -426,7 +426,7 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 }
 
 // TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents is the
-// CA2-A19 regression: a Soroban DECODER plan (as opposed to a raw
+// regression test: a Soroban DECODER plan (as opposed to a raw
 // [SorobanEventsPseudoSource] backfill) must be gated on its OWN
 // registered table(s), never on soroban_events. soroban_events is
 // written by live ingest for every Soroban event regardless of which
@@ -456,7 +456,7 @@ func TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents(t *testing.T) {
 	}
 }
 
-// TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed is CA2-A19's
+// TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed is the
 // second half: a decoder with NO registered [timescale.GapDetectorTarget]
 // at all must NOT be treated as clean just because it has no evidence —
 // that would re-open the same false-skip class with an even weaker

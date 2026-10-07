@@ -176,7 +176,7 @@ func TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_AutoClampsToLandedLakeTip is the 2026-08-22
+// TestResolveSnapshotLedger_AutoClampsToLandedLakeTip is the
 // r1 regression: the ledgerstream cursor (Postgres, realtime) leads the
 // lake's stellar.ledgers (CH sink, lands seconds later), so at the moment
 // a timer-driven snapshot fires the cursor's own row is routinely absent

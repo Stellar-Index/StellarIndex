@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// CA2-A19-correct-8: on a -wait-timeout, the recovery advice must not be
+// On a -wait-timeout, the recovery advice must not be
 // "re-run with the same -from" — a re-run recomputes the rewind target
 // from the now partially-advanced cursor and rewinds+re-walks the whole
 // range again, never refreshing the gap between the first run's partial

@@ -96,7 +96,7 @@ func funcBodyFrom(src, name string) string {
 // history-completeness-plan.md §2.2 (`-sdex-gaps … -write`, which also
 // lacked the -sdex its pass needs) and sep41-mint-recovery.md §3
 // (`ch-rebuild -sep41 -write -contracts …`). This drives the corrected
-// flag sets through BOTH legs, and shows the as-previously-written forms
+// flag sets through BOTH legs, and shows the forms without -sources
 // are exactly what leg 2 refuses.
 func TestCHRebuild_DocumentedWriteCommandsPassBothGateLegs(t *testing.T) {
 	t.Parallel()
@@ -146,7 +146,7 @@ func TestCHRebuild_DocumentedWriteCommandsPassBothGateLegs(t *testing.T) {
 		if gerr := checkCHRebuildBackfillSafe(inRun); gerr != nil {
 			t.Errorf("%s: documented command refused at leg 2: %v", tc.doc, gerr)
 		}
-		// The form both docs used to carry — no -sources — is refused.
+		// The form without -sources is refused.
 		all := func(string) bool { return true }
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, tc.passes, all)); gerr == nil {
 			t.Errorf("%s: the same command WITHOUT -sources is no longer refused — the doc's -sources note is stale", tc.doc)

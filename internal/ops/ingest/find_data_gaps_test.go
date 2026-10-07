@@ -109,9 +109,9 @@ func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 // gap target whose Source is ALREADY the projector source name (cctp
 // has no CanonicalSource override in per_source_gaps.go — its
 // SourceNetKey() falls back to "cctp", which is exactly what
-// buildSource registers). Before the CA2-A19-correct-10 fix,
-// projectorSourceForGapTarget's hand-written switch had no case for
-// "cctp" and fell through to the "no direct projector source"
+// buildSource registers). A hand-written switch in
+// projectorSourceForGapTarget with no case for
+// "cctp" would fall through to the "no direct projector source"
 // stub, hiding a real, runnable `projector-replay --source cctp`
 // command from the operator.
 func TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand(t *testing.T) {

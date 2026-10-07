@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate is T137:
+// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate pins that
 // a claim against a claimable balance that CAP-0038 auto-liquidation
 // created LATER IN THE SAME WINDOW must resolve from that window's
 // own batch, not fall through to "unresolved" — the CAP-0038 create

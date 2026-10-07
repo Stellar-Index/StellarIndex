@@ -80,7 +80,7 @@ func TestTick_DecimalsLookup_NormalizesNonstandardLeg(t *testing.T) {
 
 // TestTick_DecimalsLookup_NilIsByteIdenticalNoOp proves the default (nil
 // DecimalsLookup, matching every deployment/test that predates this field)
-// produces the exact same published VWAP as before this change — the
+// produces the exact same published VWAP as the 7dp path — the
 // regression-safety half of constraint #5 (7dp assets untouched).
 func TestTick_DecimalsLookup_NilIsByteIdenticalNoOp(t *testing.T) {
 	store := &mockStore{

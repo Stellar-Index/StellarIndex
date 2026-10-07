@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-// TestMintKey_RejectsMalformedIdentifier — input-validation
-// (audit-2026-07-23). -identifier's own help text documents a
-// kebab-case slug shape ("e.g. customer-acme-corp"); prior to this
-// fix only non-emptiness was enforced, so anything else (spaces,
-// uppercase, control characters, an unbounded length) passed
-// straight through to store.Create and got persisted. This asserts
+// TestMintKey_RejectsMalformedIdentifier — input-validation.
+// -identifier's own help text documents a
+// kebab-case slug shape ("e.g. customer-acme-corp"); enforcing only
+// non-emptiness would let anything else (spaces,
+// uppercase, control characters, an unbounded length) pass
+// straight through to store.Create and get persisted. This asserts
 // the CLI actually rejects out-of-shape identifiers BEFORE reaching
 // config load / Redis — flag validation must fail fast on args
 // alone, no config file or network required for these cases to be

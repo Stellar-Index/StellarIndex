@@ -10,8 +10,8 @@ package pipeline
 //   sink.go HandleEvent      — persist arm per consumer.Event type
 //   sink.go tradeFromEvent   — trade-shaped fast path
 //
-// Drift between them is SILENT DATA LOSS (F-1316: the projector
-// wrote zero sep41_transfers rows because one list was missed).
+// Drift between them is SILENT DATA LOSS (for example the projector
+// writing zero sep41_transfers rows because one list was missed).
 // These tests read the specs, parse the sink's switch statements and
 // the source packages with go/ast, and cross-check, so adding an event
 // type or source without completing the wiring fails CI instead of
@@ -80,8 +80,8 @@ func funcDecl(t *testing.T, f *ast.File, name string) *ast.FuncDecl {
 // caseTypeNames extracts the `pkg.Type` names listed across all case
 // clauses of every type-switch inside fn, including ones nested inside
 // another switch's case body — a switch found at any depth still
-// yields its own cases (GH-1209: the old "return false" after the
-// first match stopped descent into that switch's children, which hid
+// yields its own cases (a "return false" after the
+// first match would stop descent into that switch's children and hide
 // a type-switch nested inside one of its case bodies).
 func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	t.Helper()
@@ -117,10 +117,10 @@ func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 // contains a call shaped like a real persist arm: a `persist*` helper
 // or a `store.<Method>(...)` call anywhere in its subtree (covering
 // the `if err := store.Insert…; err != nil { … }` guard shape used by
-// the router/defindex cases). GH-1209: caseTypeNames alone only proves
+// the router/defindex cases). caseTypeNames alone only proves
 // the TYPE LABEL is listed, which `case X: return nil` also satisfies
 // — silently dropping the event while every lockstep guard stays
-// green (the F-1316 shape).
+// green.
 func caseBodyPersists(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -276,8 +276,8 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	sink := parseFile(t, fset, "sink.go")
 
 	// `handleEvent` (unexported) holds the dispatch type-switch;
-	// HandleEvent is the exported one-line wrapper over it (REL-08 split
-	// it out so an infra RETRY can suppress the once-per-event source
+	// HandleEvent is the exported one-line wrapper over it (split
+	// out so an infra RETRY can suppress the once-per-event source
 	// counters). The guard walks the switch wherever it lives.
 	handleFn := funcDecl(t, sink, "handleEvent")
 	handle := caseTypeNames(t, handleFn)
@@ -460,7 +460,7 @@ func allSourceEventTypes(t *testing.T) map[string]bool {
 }
 
 // TestLockstep_EveryConsumerEventHasSinkArm is the exhaustiveness guard
-// for the "pipeline sink type-switch trap" (BACKLOG #56): EVERY type
+// for the "pipeline sink type-switch trap": EVERY type
 // that implements consumer.Event under internal/sources MUST have a
 // persist arm in sink.go's HandleEvent. A missing arm means the event
 // falls through to HandleEvent's `default` and is counted as an
@@ -472,8 +472,8 @@ func allSourceEventTypes(t *testing.T) map[string]bool {
 // TestLockstep_RegistrySourcesFullyWired) only cover PROJECTED source
 // packages, reached via IsProjectedEvent. This one covers ALL source
 // packages — the non-projected ones too (sdex / external / band /
-// soroswap_router / the five supply observers), which previously had
-// no automated guard tying them to a HandleEvent arm. Adding a new
+// soroswap_router / the five supply observers), which have
+// no other automated guard tying them to a HandleEvent arm. Adding a new
 // consumer.Event type without wiring the sink now fails CI here rather
 // than silently dropping its rows in production.
 func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {

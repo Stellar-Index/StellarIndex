@@ -12,12 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPersistTrade_PermanentFaultIsReportedNotSwallowed pins the RLT-132
+// TestPersistTrade_PermanentFaultIsReportedNotSwallowed pins the
 // return contract: a trade the store rejects as a permanent data fault is
-// DROPPED (never retried, never landed) and persistTrade says so. It used
-// to return nil, which is also what a landed trade returns — so the
-// projector's per-event sink counted the dropped row as emitted and
-// published it under outcome="ok".
+// DROPPED (never retried, never landed) and persistTrade says so. Returning
+// nil would be indistinguishable from a landed trade, and the
+// projector's per-event sink would count the dropped row as emitted and
+// publish it under outcome="ok".
 func TestPersistTrade_PermanentFaultIsReportedNotSwallowed(t *testing.T) {
 	before := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade")
 	store := &fakeTradeStore{dataErr: true}
@@ -99,7 +99,7 @@ func TestPersistTrade_AbandonStaysABareCtxError(t *testing.T) {
 }
 
 // TestPersistTrade_AbandonIsNotCountedAsADrop pins the insert-error label
-// split (GH-612): kind="trade" is what the any-rate persist_drop tripwire
+// split: kind="trade" is what the any-rate persist_drop tripwire
 // keys on, so it must mean "row gone". A ctx-abandoned retry (cursor held,
 // re-derivable) counts under kind="trade_abandoned" instead. The literal
 // strings are deliberate — they are the alert rule's wire contract.

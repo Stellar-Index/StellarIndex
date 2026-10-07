@@ -332,7 +332,7 @@ func TestReconciliationCatalogue_AggregateWaiversAreBounded(t *testing.T) {
 }
 
 // TestCombineWatermark_LakeDecouplesFromProjection pins the
-// ADR-0033/0034 two-axis verdict (decision brief
+// ADR-0033/0034 two-axis verdict (two-axis decision brief
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B): a
 // source whose substrate+recognition watermark reaches tip (srW.Complete
 // = lake_complete = true) but whose served-tier projection fails
@@ -603,7 +603,7 @@ func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
 }
 
 // TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip pins
-// CA2-A16-correct-2: a prior clean projection verdict must only be carried
+// that a prior clean projection verdict must only be carried
 // forward as far as the range it actually reconciled — [ProjectionVerifiedFrom,
 // Watermark] — never up to the snapshot's Tip (the network head at scan
 // time, which sits ABOVE Watermark whenever a recognition gap pinned the
@@ -1207,7 +1207,7 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 	}
 }
 
-// TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven pins T239:
+// TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven pins the carried label:
 // recOK reads true both when this run's shape scan genuinely found nothing
 // unrecognized AND when -skip-recognition ran no scan at all (the skip's
 // nil-gaps result is indistinguishable from a clean one at the recOK
