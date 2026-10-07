@@ -160,7 +160,7 @@ replay. soroswap requires the pair-registry seed for token identities.
 ### 4. Truthful watermarks + verification
 
 ```
-stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch
+stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -write
 stellarindex-ops verify-recognition   -config /etc/stellarindex.toml -from 50457424 -to <tip>
 stellarindex-ops verify-reconciliation -config /etc/stellarindex.toml -from <from> -to <to>
 ```

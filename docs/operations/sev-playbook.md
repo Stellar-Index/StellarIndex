@@ -142,13 +142,15 @@ build time, so fan-out is operator-triggered:
 stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug 2026-05-12-redis-blip \
-  -event sev1
+  -event sev1 \
+  -write
 
 # Later, after deploying the .md update with status=resolved:
 stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug 2026-05-12-redis-blip \
-  -event resolved
+  -event resolved \
+  -write
 ```
 
 It refuses impossible combinations (sev1 on a resolved incident, resolved on an investigating one, sev1 on a

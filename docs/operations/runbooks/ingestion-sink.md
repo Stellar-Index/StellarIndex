@@ -312,7 +312,7 @@ stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
 Soroban DEX trades (soroswap / aquarius / phoenix / comet) land through the same command's default event pass, so the range covers them too. Then confirm the served tier is whole over the range:
 
 ```sh
-stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <ledger_from>
+stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <ledger_from> -write
 ```
 
 [sdex-gap-detected](ingest-gap.md#sdex-gap-detected) has the longer form if the range is wide or the writer is still unhealthy.

@@ -3,12 +3,12 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -42,11 +42,14 @@ import (
 // Flags:
 //
 //	-config PATH   TOML config (required) — postgres DSN.
+//	-write         Overwrite source_entry_counts. -dry-run instead only
+//	               loads the config; a run passing neither is refused so a
+//	               script written before -write fails rather than skipping.
 //	-timeout DUR   Wall-clock budget. Default 30m (a full trades
 //	               GROUP BY over ~2,700+ chunks is minutes post-
 //	               backfill; generous headroom).
 func seedEntryCounts(args []string) error {
-	fs := flag.NewFlagSet("seed-entry-counts", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("seed-entry-counts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	timeout := fs.Duration("timeout", 30*time.Minute, "wall-clock budget for the recount")
 	if err := fs.Parse(args); err != nil {
@@ -55,10 +58,17 @@ func seedEntryCounts(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config required")
 	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return err
+	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if !gate.Banner() {
+		fmt.Fprintln(os.Stderr, "seed-entry-counts: would recompute source_entry_counts from every decoded-event hypertable")
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)

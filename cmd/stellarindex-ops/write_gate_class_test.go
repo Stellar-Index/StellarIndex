@@ -18,10 +18,6 @@ const (
 	readOnly writeClass = iota
 	// gated writes a datastore and carries opsutil's shared -write/-dry-run gate.
 	gated
-	// pendingGate writes a datastore WITHOUT the shared gate. It is the known
-	// non-conforming set: an entry leaves when its command is converted, and the
-	// test fails until it does, so the set only shrinks.
-	pendingGate
 	// exempt writes something, but not a datastore a preview could protect:
 	// local files, metrics, or a publish that is the whole command.
 	exempt
@@ -29,13 +25,12 @@ const (
 
 type subcommandClass struct {
 	class writeClass
-	// why is required for pendingGate (what it writes) and exempt (why no gate).
+	// why is required for exempt (why no gate).
 	why string
 }
 
 func ro() subcommandClass                      { return subcommandClass{class: readOnly} }
 func gate() subcommandClass                    { return subcommandClass{class: gated} }
-func pending(why string) subcommandClass       { return subcommandClass{class: pendingGate, why: why} }
 func exemptBecause(why string) subcommandClass { return subcommandClass{class: exempt, why: why} }
 
 // subcommandClasses classifies every dispatchable stellarindex-ops command by
@@ -43,8 +38,8 @@ func exemptBecause(why string) subcommandClass { return subcommandClass{class: e
 var subcommandClasses = map[string]subcommandClass{
 	"docs-config":           ro(),
 	"mint-key":              gate(),
-	"upgrade-key":           pending("PG api key rate-limit update"),
-	"emit-incident":         pending("PG webhook_deliveries insert (customer webhook fan-out); no preview, a mistyped run notifies subscribers"),
+	"upgrade-key":           gate(),
+	"emit-incident":         gate(),
 	"usage-rollup-backfill": gate(),
 	"freeze-unfreeze":       gate(),
 	"account-erase":         gate(),
@@ -72,7 +67,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"tag-tx-index":            gate(),
 	"seed-soroswap-pairs":     gate(),
 	"seed-protocol-contracts": gate(),
-	"seed-entry-counts":       pending("PG entry-count overwrite, no flag"),
+	"seed-entry-counts":       gate(),
 	"projector-replay":        gate(),
 	"scan-soroban-events":     ro(),
 	"state-snapshot":          gate(),
@@ -114,7 +109,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-gate":                      ro(),
 	"ch-reproject":                 ro(),
 	"ch-rebuild":                   gate(),
-	"trades-cagg-refresh":          pending("PG money CAGG refresh, -force=true default"),
+	"trades-cagg-refresh":          gate(),
 	"ch-supply":                    gate(),
 	"ch-txindex-backfill":          gate(),
 	"ch-contract-ledgers-backfill": gate(),
@@ -130,7 +125,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-recognition":               ro(),
 	"verify-recognition":           ro(),
 	"verify-reconciliation":        ro(),
-	"compute-completeness":         pending("PG completeness verdicts upsert, delete and publish"),
+	"compute-completeness":         gate(),
 	"verify-served-values":         exemptBecause("verifier; writes its -textfile metrics only"),
 	"verify-usd-volume":            ro(),
 	"usd-volume-restamp":           gate(),
@@ -146,18 +141,8 @@ var subcommandClasses = map[string]subcommandClass{
 	"wasm-drift":                 exemptBecause("verifier; writes its -textfile metrics only"),
 }
 
-// The two lists below are pinned literally so reclassifying a command is an
-// edit here, not a drive-by relabel. A pendingGate entry may leave only into
-// gated (the test then proves it takes -write); a readOnly one may not be a
-// writer.
-var pinnedPendingGate = []string{
-	"compute-completeness",
-	"emit-incident",
-	"seed-entry-counts",
-	"trades-cagg-refresh",
-	"upgrade-key",
-}
-
+// pinnedReadOnly is literal so reclassifying a command as read-only is an edit
+// here, not a drive-by relabel.
 var pinnedReadOnly = []string{
 	"ch-gate",
 	"ch-recognition",
@@ -196,7 +181,7 @@ func TestEverySubcommandIsClassified(t *testing.T) {
 		classifiedVerbs := classifiedSubVerbs(name)
 		if len(classifiedVerbs) == 0 {
 			if _, ok := subcommandClasses[name]; !ok {
-				t.Errorf("%s is not in subcommandClasses: classify it as gated, readOnly, pendingGate or exempt", name)
+				t.Errorf("%s is not in subcommandClasses: classify it as gated, readOnly or exempt", name)
 			}
 			seen[name] = true
 			continue
@@ -236,7 +221,7 @@ func classifiedSubVerbs(name string) []string {
 
 // TestSubcommandWriteGateMatchesItsClass reads each command's declared flags
 // off its own -h. A gated command must carry the shared fail-closed pair; every
-// other class must not, so a converted pendingGate entry fails until it moves.
+// other class must not.
 func TestSubcommandWriteGateMatchesItsClass(t *testing.T) {
 	paths := make([]string, 0, len(subcommandClasses))
 	for path := range subcommandClasses {
@@ -263,21 +248,17 @@ func TestSubcommandWriteGateMatchesItsClass(t *testing.T) {
 			case !strings.Contains(usageFlagBlock(usage, "dry-run"), "the DEFAULT"):
 				t.Errorf("%s does not declare the shared -dry-run alias with dry run as the DEFAULT", path)
 			}
-		case pendingGate:
-			if hasGate {
-				t.Errorf("%s now carries the shared write gate: move it from pendingGate to gated", path)
-			}
 		case exempt:
 			if hasGate {
 				t.Errorf("%s carries the shared write gate but is classified exempt: classify it gated", path)
 			}
 		case readOnly:
 			if writeLine != "" {
-				t.Errorf("%s is classified readOnly but declares -write: classify it gated or pendingGate", path)
+				t.Errorf("%s is classified readOnly but declares -write: classify it gated", path)
 			}
 		}
-		if (c.class == pendingGate || c.class == exempt) && c.why == "" {
-			t.Errorf("%s has no reason: a pendingGate entry names what it writes, an exempt one why no gate applies", path)
+		if c.class == exempt && c.why == "" {
+			t.Errorf("%s has no reason: an exempt entry names why no gate applies", path)
 		}
 	}
 }
@@ -303,24 +284,19 @@ func usageFlagBlock(usage, name string) string {
 	return ""
 }
 
-// TestWriteClassSetsArePinned fails when a command enters or leaves pendingGate
-// or readOnly without the pinned lists changing with it.
+// TestWriteClassSetsArePinned fails when a command enters or leaves readOnly
+// without pinnedReadOnly changing with it.
 func TestWriteClassSetsArePinned(t *testing.T) {
-	for _, tc := range []struct {
-		class  writeClass
-		pinned []string
-	}{{pendingGate, pinnedPendingGate}, {readOnly, pinnedReadOnly}} {
-		var got []string
-		for path, c := range subcommandClasses {
-			if c.class == tc.class {
-				got = append(got, path)
-			}
+	var got []string
+	for path, c := range subcommandClasses {
+		if c.class == readOnly {
+			got = append(got, path)
 		}
-		sort.Strings(got)
-		want := append([]string(nil), tc.pinned...)
-		sort.Strings(want)
-		if strings.Join(got, "\n") != strings.Join(want, "\n") {
-			t.Errorf("class %d set drifted from its pinned list.\n got: %v\nwant: %v\nA pendingGate entry may only move to gated (after gaining -write); edit the pinned list deliberately.", tc.class, got, want)
-		}
+	}
+	sort.Strings(got)
+	want := append([]string(nil), pinnedReadOnly...)
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("readOnly set drifted from pinnedReadOnly.\n got: %v\nwant: %v\nEdit the pinned list deliberately.", got, want)
 	}
 }

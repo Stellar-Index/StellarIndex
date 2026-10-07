@@ -41,10 +41,10 @@ func TestChRebuildProjectedScript_RefreshesTradesCAGGsAfterTheRederive(t *testin
 		t.Fatalf("call trace = %q, want %q — the window's trades were rewritten and no CAGG was refreshed over them", got, want)
 	}
 	rf := run.caggRefreshes()[0]
-	if rf.flag("-from") != "61000000" || rf.flag("-to") != "61999999" || rf.flag("-config") == "" {
-		t.Errorf("refresh call = %q, want -config CFG -from 61000000 -to 61999999", rf.args)
+	if rf.flag("-from") != "61000000" || rf.flag("-to") != "61999999" || rf.flag("-config") == "" || !rf.has("-write") {
+		t.Errorf("refresh call = %q, want -config CFG -from 61000000 -to 61999999 -write", rf.args)
 	}
-	if rf.has("-write") || rf.has("-sources") {
+	if rf.has("-sources") {
 		t.Errorf("refresh call carries re-derive flags: %q", rf.args)
 	}
 	if got := strings.TrimSpace(readIfExists(t, staleCAGGFile(dir))); got != "" {

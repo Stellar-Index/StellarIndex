@@ -752,7 +752,7 @@ Subcommands:
                           says so. Use it for a historical re-derive below
                           the source's floor — for a recovery INTO populated
                           ledgers it only adds a probe and then falls back.
-  trades-cagg-refresh -config PATH -from N -to N [-force=false] | -config PATH -size
+  trades-cagg-refresh -config PATH -from N -to N [-force=false] -write | -config PATH -size
                           Refresh every continuous aggregate over trades
                           (prices_1m first, twap_1h/twap_1d last) over the
                           time span of the trades now in ledgers
@@ -1155,7 +1155,7 @@ Subcommands:
                           (reflector/redstone), cctp/rozo/defindex, blend's
                           four tables (re-derive bucketed by EventKind), and
                           sdex (lake ops re-derive). Seeds soroswap pairs via RPC.
-  compute-completeness -config PATH -ch [-ch-addr A] [-to N] [-allow-frozen-cursor] [-source S] [-pass]
+  compute-completeness -config PATH -ch [-ch-addr A] [-to N] [-allow-frozen-cursor] [-source S] [-pass] -write
                           ADR-0033 Phase 6: compute the per-source
                           completeness WATERMARK (substrate continuity +
                           hash chain ∧ projection reconciliation) and a
@@ -1397,7 +1397,7 @@ Subcommands:
                           ~3N+1 RPC calls at 300ms throttle, so wall-time
                           scales linearly with pair count (~3 min for 200
                           pairs). Idempotent — re-running is safe.
-  seed-entry-counts -config PATH [-timeout DUR]
+  seed-entry-counts -config PATH [-timeout DUR] -write
                           Authoritatively recompute source_entry_counts
                           (the "entries" column on /v1/diagnostics/
                           ingestion) from a full GROUP BY over every
@@ -1505,7 +1505,7 @@ Subcommands:
                               -rate-limit-per-min 1000 \
                               -reason 'onboarding ticket 1234' \
                               -write
-  upgrade-key -config PATH -key-id KID -rate-limit-per-min N -reason TEXT [-actor NAME]
+  upgrade-key -config PATH -key-id KID -rate-limit-per-min N -reason TEXT [-actor NAME] -write
                           Lift (or lower) an existing API key's
                           per-minute rate-limit budget. Operator-
                           side path for manual / partner rate
@@ -1525,8 +1525,9 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -key-id kid_515c8d94191f4e93 \
                               -rate-limit-per-min 10000 \
-                              -reason 'partner contract 2026-09'
-  emit-incident -config PATH -slug SLUG -event {sev1|resolved}
+                              -reason 'partner contract 2026-09' \
+                              -write
+  emit-incident -config PATH -slug SLUG -event {sev1|resolved} -write
                           Fan out one incident.sev1 or
                           incident.resolved customer webhook for
                           the named incident slug. The slug must
@@ -1540,7 +1541,8 @@ Subcommands:
                             stellarindex-ops emit-incident \
                               -config /etc/stellarindex.toml \
                               -slug 2026-05-12-redis-blip \
-                              -event sev1
+                              -event sev1 \
+                              -write
   usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-write] [-timeout DUR]
                           Re-fold the Redis per-endpoint usage
                           counters into the usage_daily hypertable

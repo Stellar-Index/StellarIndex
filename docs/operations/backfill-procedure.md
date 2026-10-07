@@ -211,7 +211,7 @@ at `-parallel 4`.
 A binary older than the per-chunk `TradesCAGGs` / `OracleCAGGs` refresh left
 `twap_1h`, `twap_1d`, `dex_volume_by_pair_1d`, `source_volume_1h`,
 `pools_per_source_1h` and every `oracle_prices_*` rung stale. For the `trades`
-rollups: `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger>`
+rollups: `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write`
 refreshes all twelve in the safe order. For the oracle rungs run migration 0040's
 `refresh_continuous_aggregate` calls over the range.
 

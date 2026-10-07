@@ -84,7 +84,7 @@ groups:
             - "dirty window [F,T] PENDING this source's dedicated weekly compute-completeness
               timer" means PENDING RE-VERIFICATION, not a found gap: a backfill or rebuild
               rewrote served rows over a range too wide for the nightly pass. Do NOT re-derive.
-              Re-prove it with compute-completeness -ch -source {{ $labels.source }} and the
+              Re-prove it with compute-completeness -ch -source {{ $labels.source }} -write and the
               weekly budget (-timeout 360m; compute-completeness-sdex.service /
               compute-completeness-sep41.service).
             - Anything else is a real served<>lake gap: re-derive that source from the lake,

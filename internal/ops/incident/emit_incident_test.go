@@ -2,11 +2,13 @@ package incident
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -163,5 +165,18 @@ func TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet(t *testing.T) {
 	got, ok := fields["affected_components"].([]string)
 	if !ok || len(got) != 2 {
 		t.Fatalf("affected_components = %#v, want [api aggregator]", fields["affected_components"])
+	}
+}
+
+// A run that states neither -write nor -dry-run is refused before any
+// config or network I/O, so an old runbook line cannot silently notify no one.
+func TestEmit_RequiresStatedMode(t *testing.T) {
+	err := Emit([]string{"-config", "/nonexistent.toml", "-slug", "x", "-event", "sev1"})
+	if !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("Emit without a mode = %v, want ErrWriteModeUnstated", err)
+	}
+	err = Emit([]string{"-config", "/nonexistent.toml", "-slug", "x", "-event", "sev1", "-dry-run"})
+	if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("Emit -dry-run = %v, want it past the mode check to the config load", err)
 	}
 }

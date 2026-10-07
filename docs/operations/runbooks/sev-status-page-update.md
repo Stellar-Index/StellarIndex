@@ -197,7 +197,8 @@ get a callback. F-1249 (codex audit-2026-05-12) on R1:
 ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
-  -event sev1
+  -event sev1 \
+  -write
 ```
 
 When the SEV closes, after the same merge + deploy cycle
@@ -207,7 +208,8 @@ flips the corpus's `status: resolved`:
 ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -config /etc/stellarindex.toml \
   -slug ${DATE}-${SLUG} \
-  -event resolved
+  -event resolved \
+  -write
 ```
 
 The command refuses semantically-impossible combinations
@@ -238,7 +240,7 @@ When the SEV is closed:
 2. Append the final `## Timeline` row marking `**Resolved.**`.
 3. Fill the `## What we did` section.
 4. Commit + push (same flow as above).
-5. After the deploy lands, fire `emit-incident -event resolved`
+5. After the deploy lands, fire `emit-incident -event resolved -write`
    so dashboard subscribers get the close-out callback.
 6. Postmortem follow-up: when the postmortem lands at
    `docs/operations/postmortems/${DATE}-${SLUG}.md`, update

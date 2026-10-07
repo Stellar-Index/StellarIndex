@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -1744,6 +1745,16 @@ func TestComputeCompleteness_RequiresCH(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "-ch is required") {
 			t.Errorf("computeCompleteness(%v) = %v, want the -ch is required error", args, err)
 		}
+	}
+}
+
+// TestComputeCompleteness_RequiresStatedMode pins that a timer still calling
+// without -write fails before reading anything instead of exiting 0 having
+// published nothing.
+func TestComputeCompleteness_RequiresStatedMode(t *testing.T) {
+	err := computeCompleteness([]string{"-config", "/nonexistent/stellarindex.toml", "-ch", "-pass"})
+	if !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Fatalf("computeCompleteness without -write or -dry-run = %v, want ErrWriteModeUnstated", err)
 	}
 }
 

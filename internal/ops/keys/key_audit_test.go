@@ -133,3 +133,23 @@ func TestRunUpgradeKey_AuditsAndRollsBack(t *testing.T) {
 		t.Errorf("after a failed audit the budget is %d, want it rolled back to 50000", got.RateLimitPerMin)
 	}
 }
+
+// Without -write upgrade-key only reads the key: the budget stays put.
+func TestPreviewUpgradeKey_ChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	store := newKeyTestStore(t)
+	rec, _, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: "customer-acme", Label: "Acme", RateLimitPerMin: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := previewUpgradeKey(ctx, store, upgradeKeyOpts{keyID: rec.KeyID, rateLimit: 50000}); err != nil {
+		t.Fatalf("previewUpgradeKey: %v", err)
+	}
+	got, err := store.GetByKeyID(ctx, rec.KeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RateLimitPerMin != 1000 {
+		t.Errorf("preview changed the budget to %d", got.RateLimitPerMin)
+	}
+}

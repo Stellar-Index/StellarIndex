@@ -142,7 +142,7 @@ sudo -u postgres psql -d stellarindex -c \
  "SELECT source, complete, watermark_ledger, detail FROM (SELECT DISTINCT ON (source) * \
   FROM completeness_snapshots ORDER BY source, computed_at DESC) s WHERE NOT complete;"
 # Re-run that source to confirm it persists (off the serving DB, -ch):
-stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -source <X> -from <recent>
+stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -source <X> -from <recent> -write
 ```
 
 Causes: dropped rows (decoder bug fixed forward-only, e.g. SEP-41 CAP-67 loss), a missed projection window, a retention/PK artifact.
@@ -166,7 +166,7 @@ Re-derive the source from the lake, then re-verify.
   ```
 
   or the lake re-derive `ch-rebuild` (`-config`, `-from`, `-to` required; `-write` to apply; `-sdex` for SDEX, `-contract-calls` for band/soroswap-router).
-- Re-run `compute-completeness -ch -source <X>`; the gauge clears on `complete=true`. Run chunked and off-peak (SDEX/heavy re-derives blow ClickHouse's per-query memory over large windows).
+- Re-run `compute-completeness -ch -source <X> -write`; the gauge clears on `complete=true`. Run chunked and off-peak (SDEX/heavy re-derives blow ClickHouse's per-query memory over large windows).
 
 The manual re-verify only clears the gauge sooner: the nightly `-pass` floors a source whose prior projection verdict is failing at its genesis and publishes `complete=true` itself once the repair earns it. That re-verify can outlast the pass deadline (the nightly unit's `-timeout 170m`; sdex from 61249957 is ~3.44M ledgers at ~200 ledgers/s ~ 4.8 h), so the pass runs from-genesis sources LAST and publishes the `recognition` row first; only the re-verifying tail is left unevaluated (named in the pass's error). For a one-off larger budget set `PASS_TIMEOUT` (e.g. `PASS_TIMEOUT=300m`) in `/etc/default/compute-completeness` AND raise `TimeoutStartSec` in `compute-completeness.service` (54000 s = 43200 s lock wait + 180 min) by as much, or systemd kills the pass first; or clear the source by hand with the chunked `-source` re-run.
 

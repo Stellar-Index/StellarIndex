@@ -97,7 +97,7 @@ fi
 
 echo "compute-completeness: ${MODE[*]} refresh to tip=$TIP"
 if ! "$OPS" compute-completeness -config "$CONFIG" -ch -ch-addr "$CH_ADDR" \
-     -to "$TIP" "${MODE[@]}" </dev/null; then
+     -to "$TIP" -write "${MODE[@]}" </dev/null; then
   echo "compute-completeness: ${MODE[*]} FAILED (tip=$TIP)" >&2
   exit 1
 fi

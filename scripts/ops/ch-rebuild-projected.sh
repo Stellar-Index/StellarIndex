@@ -300,8 +300,8 @@ mark_stale() { grep -qxF "$1 $2" "$STALE" || echo "$1 $2" >> "$STALE"; }  # LO H
 # refresh_window LO HI — rule 5. Idempotent, so a retry only costs time.
 refresh_window() {
   echo "--- window [$1,$2] CAGG REFRESH $(date -u) ---"
-  $OPS trades-cagg-refresh -config "$CFG" -from "$1" -to "$2" \
-    || { echo "CAGG REFRESH FAILED [$1,$2] — trades are re-derived, but every continuous aggregate over them still serves the pre-repair rows. Recorded in $STALE; the next run refreshes it first. By hand: $OPS trades-cagg-refresh -config $CFG -from $1 -to $2"
+  $OPS trades-cagg-refresh -config "$CFG" -from "$1" -to "$2" -write \
+    || { echo "CAGG REFRESH FAILED [$1,$2] — trades are re-derived, but every continuous aggregate over them still serves the pre-repair rows. Recorded in $STALE; the next run refreshes it first. By hand: $OPS trades-cagg-refresh -config $CFG -from $1 -to $2 -write"
          exit 1; }
   drop_line "$STALE" "$1 $2"
 }

@@ -154,7 +154,7 @@ Mitigate:
 
 1. If CH is down/wedged: restart `clickhouse-server`; watch the root filesystem (logs go to ZFS since 5dd6fcda, but verify).
 2. If the sink buffer is saturated on bursts: raise the sink buffer (indexer config) and restart the indexer during a quiet window.
-3. Force a heal pass once CH is healthy: `systemctl start ch-live-catchup.service`, then confirm the lake tail is contiguous: `stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <pre-gap ledger>` (any strict source works; substrate is global).
+3. Force a heal pass once CH is healthy: `systemctl start ch-live-catchup.service`, then confirm the lake tail is contiguous: `stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <pre-gap ledger> -write` (any strict source works; substrate is global).
 
 Escalate: sustained page + heal path cannot catch up: treat as SEV-2 (lake tail integrity), follow `docs/operations/sev-playbook.md`.
 

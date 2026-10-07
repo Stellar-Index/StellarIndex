@@ -71,7 +71,7 @@ func TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange(t *testing.T) {
 
 	run := func(from, to string) (string, error) {
 		return captureStdout(t, func() error {
-			return chops.Run([]string{"trades-cagg-refresh", "-config", cfgPath, "-from", from, "-to", to})
+			return chops.Run([]string{"trades-cagg-refresh", "-config", cfgPath, "-from", from, "-to", to, "-write"})
 		})
 	}
 	out, err := run("61000000", "61001000")
@@ -162,7 +162,7 @@ func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T)
 	seedCAGGTrade(t, ctx, db, 61_000_000, 1, day10.Add(12*time.Hour), 11)
 	run := func() (string, error) {
 		return captureStdout(t, func() error {
-			return chops.Run([]string{"trades-cagg-refresh", "-config", cfgPath, "-from", "61000000", "-to", "61000000"})
+			return chops.Run([]string{"trades-cagg-refresh", "-config", cfgPath, "-from", "61000000", "-to", "61000000", "-write"})
 		})
 	}
 	if out, err := run(); err != nil {
