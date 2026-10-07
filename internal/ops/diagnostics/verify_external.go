@@ -255,7 +255,7 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("coinmarketcap: %w", err)
 		}
-		// F-1237 (codex audit-2026-05-13): mirror the
+		// Mirror the
 		// indexer/aggregator wiring — bind the verified-currency
 		// catalogue's CMC IDs so the poller queries by
 		// `id=<numeric>` instead of the ambiguous `symbol=`

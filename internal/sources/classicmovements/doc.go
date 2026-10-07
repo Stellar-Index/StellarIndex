@@ -109,12 +109,12 @@
 // Phase 4 entry-changes surface only), and hard-clamps its ledger
 // range below the P23 boundary regardless of what an operator
 // requests — see that command's flag help for the exact clamp
-// behavior. Per ADR-0048 D2 (2026-07-10), that command writes
+// behavior. Per ADR-0048 D2, that command writes
 // ClickHouse's stellar.account_movements — a lake-in/lake-out job
 // with NO Postgres connection at all; see
 // internal/storage/clickhouse/account_movements.go.
 //
-// # Storage target — amended by ADR-0048 (2026-07-10)
+// # Storage target — amended by ADR-0048
 //
 // The rest of this doc comment (and migration 0105's row/README)
 // describe ADR-0047 D1's ORIGINAL plan: a Postgres `classic_movements`

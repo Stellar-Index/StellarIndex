@@ -8,8 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing audit-trail observer for SEP-41
-// (F-0021 closure).
+// Decoder is the dispatcher-facing audit-trail observer for SEP-41.
 type Decoder struct {
 	watched map[string]struct{}
 }
@@ -49,7 +48,7 @@ func (*Decoder) Name() string { return SourceName }
 // clawback belong to sep41_supply and are skipped here so the
 // two observers don't double-process.
 //
-// The projector reuses this same watched-set decoder (F-1316): it must
+// The projector reuses this same watched-set decoder: it must
 // reproduce exactly what the dispatcher writes, so the watched set IS
 // the gate on both paths.
 func (d *Decoder) Matches(ev events.Event) bool {
@@ -80,7 +79,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		// EventIndex disambiguates multiple SEP-41 events emitted by the
 		// same contract in one op (batch transfers, approve+transfer_from):
 		// it is part of the sep41_transfers PK (migration 0047), so leaving
-		// it 0 collapsed all-but-one of them via ON CONFLICT (F-1324/G9-02).
+		// it 0 would collapse all-but-one of them via ON CONFLICT.
 		EventIndex: uint32(ev.EventIndex), //nolint:gosec // non-negative by Soroban spec.
 		ObservedAt: closedAt,
 		Kind:       kind,

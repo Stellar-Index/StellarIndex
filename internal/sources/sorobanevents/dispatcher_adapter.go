@@ -388,8 +388,7 @@ func (s *AsyncSink) WrittenCount() uint64 {
 
 // LostCount returns the total number of rows permanently lost — a
 // batch that either hit a positively-classified permanent data fault
-// or never landed before shutdown gave up on it (audit-2026-07-23
-// REL-02/DAT-09: soroban_events is the raw catch-all landing zone and
+// or never landed before shutdown gave up on it (soroban_events is the raw catch-all landing zone and
 // used to drop a failed batch outright with only a Warn log; a
 // sustained infra fault silently ate whole windows of raw events with
 // no operator-visible signal and no re-derive hint). Operators alert
@@ -528,8 +527,7 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 }
 
 // flushBatch writes one batch with the same asymmetric ADR-0041
-// failure policy the trades path uses (REL-08 / audit-2026-07-23
-// REL-02, DAT-09): a write failure blocks-and-retries with capped
+// failure policy the trades path uses: a write failure blocks-and-retries with capped
 // backoff by DEFAULT; only a POSITIVELY-classified permanent data
 // fault (the injected IsPermanentFault predicate — pq class 22/23) is
 // isolated and dropped. Before this, ANY error — including a
@@ -548,8 +546,8 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // used to be abandoned right here — so a Stop() that raced a healthy
 // in-flight write (the write's own ctx is cancelled, it returns
 // context.Canceled) counted a whole batch as lost on every restart
-// or deploy; CI run 33168844647 (2026-08-28) caught it as
-// TestAsyncSink_StopDrainsPendingRows_NoChannelClose "WrittenCount =
+// or deploy, which
+// TestAsyncSink_StopDrainsPendingRows_NoChannelClose catches as "WrittenCount =
 // 6, want 10" (10 rows minus one BatchSize=4 batch). During the
 // drain abortFlush is the grace timer, and a batch that still hasn't
 // landed when it fires is abandoned loudly via

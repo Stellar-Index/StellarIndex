@@ -113,8 +113,7 @@ func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) 
 			// classic_trade_effect_count drop the atom too and the
 			// ADR-0033 reconcile nets to zero — a new ClaimAtom variant
 			// or an unparseable asset code would go on losing real
-			// trades indefinitely with a green verdict (cold audit
-			// 2026-08-04).
+			// trades indefinitely with a green verdict.
 			//
 			// Still `continue`, not a returned error: the other claims
 			// in this op are independently valid and a returned error

@@ -151,7 +151,7 @@ func decodeClaimAtom(
 		boughtAmount = lp.AmountBought
 
 	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		// F-1233 (codex audit-2026-05-12): legacy pre-CAP-27 shape.
+		// Legacy pre-CAP-27 shape.
 		// Distinguishable from ClaimOfferAtom only by carrying the
 		// seller's raw ed25519 bytes (uint256) instead of an
 		// AccountId discriminant. Surface as a regular OrderBook
@@ -212,8 +212,7 @@ func decodeClaimAtom(
 
 // xdrAssetToCanonical converts an xdr.Asset to canonical.Asset.
 //
-// C2-010 (audit-2026-07-23): the body moved to
-// [canonical.AssetFromXDR]. It stays a thin local wrapper so this
+// The body lives in [canonical.AssetFromXDR]. It stays a thin local wrapper so this
 // package's call sites and error-wrapping read unchanged, but the RULE
 // — which on-chain assets are representable, and therefore which SDEX
 // fills become trade rows — now lives in the leaf package where

@@ -1,79 +1,20 @@
-// Package divergence cross-checks our computed VWAP against
-// external reference oracles + aggregators. Per ADR-0019 §"Layer 5
-// — Cross-reference divergence monitoring", this is the last
-// line of defense against the case where every layer above
-// (multi-source consensus, source-class exclusion, outlier filter)
-// somehow agrees on a wrong price — divergence catches it by
-// comparing against an independent universe of references.
+// Package divergence cross-checks our VWAP against independent external
+// references: the last line of defence when every layer above it agrees
+// on a wrong price (ADR-0019 Layer 5).
 //
-// # Scope
+// Every reference implements [Reference]: [CoinGeckoReference] (on by
+// default), [ChainlinkReference] (opt-in via FeedMap) and
+// [OracleReference], which reads the on-chain oracles we ingested from
+// `oracle_updates` via [OracleReader]. Oracle rows never feed the VWAP
+// itself (their ingest class is excluded); here they show what an
+// on-chain consumer actually sees.
 //
-// Wired today:
+// [Compare] queries every reference in parallel, takes the median of the
+// successes and reports our deviation from it; failures land in
+// [Result.Failures]. The aggregator sets `flags.divergence_warning` only
+// when [Result.SuccessCount] reaches [ServiceOptions.MinSourcesForWarning]
+// (`[divergence].min_sources_for_warning`, default 2).
 //
-//   - [Reference] interface — every external source plugs in here.
-//   - [Compare] — gather references in parallel, compute the
-//     divergence percentage from the median.
-//   - [Result] — the wire shape consumed by the aggregator's
-//     bucket-close path to set [api.v1.Flags].DivergenceWarning.
-//   - [Service] / [CachedResult] — the worker shape the aggregator
-//     binary instantiates; per-pair [RefreshPair] is driven by the
-//     orchestrator's Tick.
-//   - [CoinGeckoReference] — HTTP reference against CoinGecko's
-//     /simple/price endpoint. Always-on by default (free tier,
-//     no auth).
-//   - [ChainlinkReference] — HTTP reference against Chainlink's
-//     EVM AggregatorV3 `latestRoundData()` selector. Off by default;
-//     operator opts in via FeedMap of mainnet feed addresses.
-//   - [OracleReference] — on-chain oracle references (reflector-dex
-//     / reflector-cex / reflector-fx / redstone / band). No HTTP:
-//     each reads the latest row OUR indexer ingested into the
-//     `oracle_updates` served tier (via [OracleReader]) and
-//     compares the oracle's published value against our VWAP for
-//     the pairs both sides cover. On by default — no external
-//     quota; a pair the oracle doesn't publish records
-//     asset_unsupported.
-//
-// The on-chain oracles never contribute to the VWAP itself (their
-// ingest class is `oracle`, excluded at VWAP compute time) — here
-// they serve as independent-methodology cross-checks: the value an
-// on-chain consumer (e.g. Blend) actually sees vs the price we
-// computed. CoinMarketCap is a candidate future HTTP reference;
-// deferred until an operator asks for a second aggregator behind
-// CoinGecko.
-//
-// # Algorithm
-//
-// At bucket close the aggregator calls:
-//
-//	res := divergence.Compare(ctx, refs, pair, ourPrice, observedAt)
-//
-// Compare fetches each reference's price in parallel (one
-// goroutine per reference, bounded timeout). It collects the
-// successful responses, computes the median, then the percentage
-// deviation between our price and the median. The aggregator
-// reads `res.DivergencePct` and gates `flags.divergence_warning`
-// on a configurable threshold.
-//
-// # Tolerance for partial failures
-//
-// References can fail (HTTP timeout, asset unsupported, vendor
-// outage). [Compare] is designed to surface partial results: any
-// successful reference contributes to the median; failures are
-// recorded in [Result.Failures] for operator visibility.
-//
-// The threshold on "do we trust the median?" is implicit in the
-// caller's logic — if N of M references succeeded and N is too
-// small to constitute a meaningful consensus, the aggregator
-// SHOULD NOT fire divergence_warning purely on its own.
-// [Result.SuccessCount] exposes the count for that decision;
-// [ServiceOptions.MinSourcesForWarning] (config:
-// `[divergence].min_sources_for_warning`, default 2) is the
-// operator-tunable floor.
-//
-// # Concurrency
-//
-// All exported types are safe for concurrent use after
-// construction. [Reference] implementations MUST be safe for
-// concurrent LookupQuote calls (Compare invokes them in
-// parallel goroutines).
+// [Reference] implementations must be safe for concurrent LookupQuote
+// calls; every exported type is safe for concurrent use.
 package divergence

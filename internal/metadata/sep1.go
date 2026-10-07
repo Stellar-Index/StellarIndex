@@ -159,7 +159,7 @@ func NewResolver(opts Options) *Resolver {
 		// an issuer-controlled URL, and the SSRF guard lives in
 		// DialContext below.
 		//
-		// SECURITY (F-1336): if we honoured HTTP(S)_PROXY here, the
+		// SECURITY: if we honoured HTTP(S)_PROXY here, the
 		// transport would dial the PROXY's address (which passes the
 		// guard) and hand it the issuer-controlled target host in the
 		// CONNECT line / request URL. The guard would then NEVER see —
@@ -1052,9 +1052,8 @@ func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocogn
 	return true
 }
 
-// isBlocked delegates to the canonical union blocklist in internal/nettools
-// (CS-008 — the block ranges used to be duplicated here + in the two webhook
-// guards with divergent coverage). Allow-override in tests via
+// isBlocked delegates to the canonical union blocklist in internal/nettools,
+// shared with the webhook guards so coverage cannot diverge. Allow-override in tests via
 // Options.AllowPrivateIPs.
 func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 	if d.allowPrivateIPs {

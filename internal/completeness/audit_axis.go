@@ -25,8 +25,8 @@ import (
 // The deployed metrics already exclude this row from the per-source
 // gauges for exactly this reason — see the two `WHERE source <>
 // 'recognition'` clauses in
-// configs/ansible/roles/archival-node/files/data-freshness.sh (PR
-// #465). [IsAuditAxis] is the Go-side twin so /v1/coverage's public
+// configs/ansible/roles/archival-node/files/data-freshness.sh.
+// [IsAuditAxis] is the Go-side twin so /v1/coverage's public
 // headline agrees with them.
 const SystemRecognitionSource = "recognition"
 
