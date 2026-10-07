@@ -16,7 +16,7 @@ import (
 // TestHandleIncidentsAtom_LinkTarget pins the per-entry alternate
 // link to the canonical /incident/{slug} route.
 //
-// The atom feed previously emitted `https://status.stellarindex.io/#<slug>`,
+// The atom feed must not emit `https://status.stellarindex.io/#<slug>`,
 // expecting subscribers to land on the home page and scroll to a
 // matching anchor — but the home page doesn't render `id="<slug>"`
 // on the per-incident summary, so feed readers landed on the home
@@ -246,8 +246,8 @@ func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 
 // TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry pins the
 // feed-level <updated> to the most recent entry's <updated>, per
-// RFC 4287 (and the handler's own doc comment). The pre-fix code set
-// it to time.Now(), so a stale feed was syndicated as freshly updated
+// RFC 4287 (and the handler's own doc comment). Setting
+// it to time.Now() would syndicate a stale feed as freshly updated
 // on every crawl — a dishonest freshness signal to Feedly/Slack RSS.
 //
 // Entries here are deliberately in the past; the feed <updated> must
@@ -292,7 +292,7 @@ func TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry(t *testing.T) {
 	if feed.Updated != wantUpdated {
 		t.Errorf("feed <updated> = %q, want most-recent entry %q (RFC 4287)", feed.Updated, wantUpdated)
 	}
-	// Guard against the pre-fix time.Now() behaviour explicitly: the
+	// Guard against a time.Now() feed timestamp explicitly: the
 	// feed <updated> must not be within a few seconds of now.
 	if u, err := time.Parse(time.RFC3339, feed.Updated); err == nil {
 		if d := time.Since(u); d < 5*time.Second && d > -5*time.Second {
@@ -325,7 +325,7 @@ func TestHandleIncidentsAtom_EmptyFeedUsesStableSentinel(t *testing.T) {
 	if feed.Updated != wantSentinel {
 		t.Errorf("empty-feed <updated> = %q, want stable sentinel %q", feed.Updated, wantSentinel)
 	}
-	// And it must not be ~now (the pre-fix churn).
+	// And it must not be ~now (no time.Now() churn).
 	if u, err := time.Parse(time.RFC3339, feed.Updated); err == nil {
 		if d := time.Since(u); d < 5*time.Second && d > -5*time.Second {
 			t.Errorf("empty-feed <updated> %q is ~now — empty feed churns freshness every crawl", feed.Updated)

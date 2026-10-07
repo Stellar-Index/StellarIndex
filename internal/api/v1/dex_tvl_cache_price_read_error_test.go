@@ -20,7 +20,7 @@ import (
 // "The price read ERRORED" is a fact about this refresh: the token is
 // exactly as priced as it was a minute ago, and we just could not ask.
 //
-// Until RLT-090 / RLT-239 (#580) rateFor folded both into the first. The
+// If rateFor folded both into the first, the
 // error was memoised as "unpriceable" for the whole refresh, value()
 // returned no_served_price with no error, every protocol's refresh
 // therefore SUCCEEDED, and Refresh's carry-forward — which only runs

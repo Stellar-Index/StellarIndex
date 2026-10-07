@@ -11,7 +11,7 @@ import (
 )
 
 // TestHandleErrorDoc — the RFC 9457 problem `type` URIs must dereference
-// (site-audit S6: all ~179 previously 404'd). The handler must echo the
+// (otherwise ~179 of them would 404). The handler must echo the
 // slug, humanise it, and point at the docs, in both JSON and HTML.
 func TestHandleErrorDoc(t *testing.T) {
 	s := newTestServerWithLogger()
@@ -84,8 +84,8 @@ func TestHandleErrorDoc(t *testing.T) {
 	})
 }
 
-// TestAPIDesignDoc_AnonymousRateLimitNotHardcoded — GH-626: §7.1 of
-// api-design.md once asserted anonymous callers "see 60" as a live fact,
+// TestAPIDesignDoc_AnonymousRateLimitNotHardcoded — §7.1 of
+// api-design.md must not assert anonymous callers "see 60" as a live fact,
 // while r1 runs anon_rate_limit_per_min far higher (docs/getting-started.md
 // puts it at 6,000). The doc must describe 60 as the code default and point
 // at the live-value source instead of restating it as fact.

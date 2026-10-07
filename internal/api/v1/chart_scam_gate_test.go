@@ -14,8 +14,7 @@ import (
 
 // /v1/chart served a full price SERIES for a directory-scam-flagged
 // issuer while /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap,
-// /v1/twap, the SEP-40 oracle and the asset headline all withheld it
-// (issue #366).
+// /v1/twap, the SEP-40 oracle and the asset headline all withheld it.
 //
 // This is the third time this exact class has appeared. MSP-02 found
 // /v1/vwap and /v1/twap ungated after pricingguard/scam.go's own package

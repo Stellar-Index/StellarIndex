@@ -29,7 +29,7 @@ func (r *ledgerOpsTotalReader) LedgerBySeq(ctx context.Context, _ uint32) (click
 	return r.hdr, true, nil
 }
 
-// TestOperations_LedgerPath_SignalsTruncation pins GH-1135: a ledger whose
+// TestOperations_LedgerPath_SignalsTruncation pins that a ledger whose
 // true operation count (from the ledger header) exceeds the served page
 // must say so — the same Total/Truncated shape LedgerTransactionsView
 // already gives /v1/ledgers/{seq}/transactions — rather than returning a

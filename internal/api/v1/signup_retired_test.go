@@ -19,9 +19,8 @@ import (
 // byte comparison.
 var requestIDPat = regexp.MustCompile(`,"request_id":"[^"]*"`)
 
-// TestSignupRetired_IdenticalForEveryRequest pins the invariant behind
-// INV-0907: no unauthenticated endpoint answers differently depending on
-// whether an email is known. /v1/signup used to return 201+key for a new
+// TestSignupRetired_IdenticalForEveryRequest pins the invariant: no unauthenticated endpoint
+// answers differently depending on whether an email is known. /v1/signup must not return 201+key for a new
 // address and 409 for a known one.
 func TestSignupRetired_IdenticalForEveryRequest(t *testing.T) {
 	srv := v1.New(v1.Options{Auth: fakeAuthMiddleware(auth.Subject{})})

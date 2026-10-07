@@ -9,7 +9,7 @@ package dashboardauth
 // this file exists: the shipped suite covered the ceremony cookie by
 // constructing SessionData with an Expires field the production path
 // never populated, so it passed while every expiry guard in the
-// package was dead code (audit-2026-08-13).
+// package was dead code.
 //
 // The missing piece was an authenticator. [softAuthenticator] below is
 // one: a P-256 key plus the ~40 bytes of CBOR/flags the library
@@ -225,13 +225,13 @@ func finishLogin(t *testing.T, rig *passkeyRig, cookie *http.Cookie, body string
 	return w
 }
 
-// ─── The audit-2026-08-13 regressions ─────────────────────────────
+// ─── Passkey ceremony regressions ─────────────────────────────
 
-// TestPasskeyFinishLogin_ChallengeIsSingleUse — the HIGH finding. A
-// captured finish-login request (ceremony cookie + assertion body) was
-// an unlimited-use session mint: the assertion still verifies on the
-// second POST because it is byte-identical, and nothing marked the
-// challenge spent. Replaying it must now fail.
+// TestPasskeyFinishLogin_ChallengeIsSingleUse — a HIGH-severity case. A
+// captured finish-login request (ceremony cookie + assertion body) must
+// not be an unlimited-use session mint: the assertion still verifies on
+// the second POST because it is byte-identical, so only marking the
+// challenge spent stops it. Replaying it must fail.
 //
 // The signature COUNTER here is 0, deliberately, and it is what makes
 // this test test the right thing. A counter that advances would make
@@ -324,7 +324,7 @@ func TestPasskeyBeginLogin_StampsServerSideExpiry(t *testing.T) {
 }
 
 // TestPasskeyCeremony_ZeroExpiryRefused — a ceremony with no stamped
-// expiry (what the pre-fix binary minted) is refused rather than
+// expiry (what an older binary minted) is refused rather than
 // treated as eternal.
 func TestPasskeyCeremony_ZeroExpiryRefused(t *testing.T) {
 	rig := newPasskeyRig(t)
@@ -381,8 +381,8 @@ func TestPasskeyBeginLogin_AsksForUserVerification(t *testing.T) {
 }
 
 // TestPasskeyFinishLogin_OversizeBodyRejected — the "body too large"
-// branch used to be unreachable (io.LimitReader returns nil error at
-// its cap, silently truncating), so an oversize assertion surfaced as
+// branch is unreachable unless the cap is checked (io.LimitReader returns nil error at
+// its cap, silently truncating), so an oversize assertion surfaces as
 // a confusing parse failure.
 func TestPasskeyFinishLogin_OversizeBodyRejected(t *testing.T) {
 	rig := newPasskeyRig(t)
@@ -550,7 +550,7 @@ func TestPasskeyFinishLogin_FailsClosedWhenGuardUnavailable(t *testing.T) {
 // and the begin-time reservation (Reserve/ClaimReserved) sit in maps
 // that evict() empties, exactly as an LRU pass under memory pressure
 // would. Implementing BOTH the base contract and the reservation
-// upgrade lets the same fake drive the pre-fix (Consume) and post-fix
+// upgrade lets the same fake drive the spent-set (Consume) and reservation
 // (ClaimReserved) finish paths through the real handlers — so the test
 // below is red against the bare spent-set and green against the fix.
 type evictableCeremonyGuard struct {

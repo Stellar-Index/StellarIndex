@@ -75,7 +75,7 @@ func (r *testRig) postLogin(t *testing.T, email string) *httptest.ResponseRecord
 }
 
 // attachCookies replays onto req the cookies a real browser would
-// have stored from w. Load-bearing since C3-030: `POST /v1/auth/login`
+// have stored from w. Load-bearing because `POST /v1/auth/login`
 // sets the login-intent witness and `GET /v1/auth/callback` refuses to
 // mint a session without it, so a callback request built without this
 // step is a DIFFERENT browser — which is exactly the login-CSRF the
@@ -330,7 +330,7 @@ func TestHandleCallback_SetsNoReferrerOnEveryExit(t *testing.T) {
 func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 	r := newTestRig(t)
 	// Binding valid, token unknown to the store: the 400 must come from
-	// the token lookup, not from the C3-030 binding.
+	// the token lookup, not from the login-intent binding.
 	cb := boundUnknownCallback(r.h)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
@@ -703,8 +703,7 @@ func TestTouchTracker_Debounces(t *testing.T) {
 	}
 }
 
-// stubLoginThrottle lets a test force the magic-link throttle decision
-// (audit-2026-06-14 A12).
+// stubLoginThrottle lets a test force the magic-link throttle decision.
 type stubLoginThrottle struct {
 	allow bool
 	err   error
@@ -803,9 +802,9 @@ func TestHandleLogin_EmailDescribesUAFromClosedVocabulary(t *testing.T) {
 	}
 }
 
-// TestTruncateUA_RuneSafe — GH-1303: a multi-byte rune straddling the
+// TestTruncateUA_RuneSafe — a multi-byte rune straddling the
 // byte-256 truncation boundary must not be split. A byte-slice
-// truncation (the pre-fix behaviour) cuts the leading bytes of "€"
+// truncation (a naive implementation) cuts the leading bytes of "€"
 // (E2 82 AC) off mid-sequence and hands Postgres invalid UTF-8, which
 // `user_agent text NOT NULL` (migration 0027) refuses — after the
 // login token has already been consumed, burning the attempt.
@@ -824,7 +823,7 @@ func TestTruncateUA_RuneSafe(t *testing.T) {
 	}
 }
 
-// TestTruncateUA_BreaksOutOfTemplateDelimiter — RLT-320/RSEC-N1: the
+// TestTruncateUA_BreaksOutOfTemplateDelimiter — the
 // plaintext magic-link template renders the UA inside a literal
 // "({{.UserAgent}})" with no escaping. A UA that closes that paren
 // early and adds prose must not survive truncateUA, or the rendered
@@ -846,4 +845,4 @@ func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
 	}
 }
 
-// TestMaskEmail moved to internal/pii with the implementation (#346 F8).
+// TestMaskEmail moved to internal/pii with the implementation.

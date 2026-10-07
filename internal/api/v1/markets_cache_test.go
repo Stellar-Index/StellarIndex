@@ -197,7 +197,7 @@ func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 
 // TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic pins the
 // regression for a runtime panic observed on r1 production
-// (2026-05-10 15:36:20 UTC, GET /v1/markets):
+// (GET /v1/markets):
 //
 //	panic: runtime error: invalid memory address or nil pointer
 //	dereference
@@ -281,8 +281,8 @@ func toString(v any) string {
 // a cold fetch cached from the row a refresh replaces it with: the
 // stub moves the pool's 24h trade count on every call after the first,
 // which is what a re-scan of the trades window returning later data
-// looks like. The stub used to return one fixed row, identical before
-// and after a refresh, so nothing but a stopwatch separated a caller
+// looks like. A stub returning one fixed row, identical before
+// and after a refresh, would leave nothing but a stopwatch to separate a caller
 // served the cached entry from one handed the refresh's result.
 const (
 	swrPoolsStaleTrades = 100
@@ -290,7 +290,7 @@ const (
 )
 
 // swrPoolsUpstream is a race-safe configurable AllPools stub for the
-// #23 stale-while-revalidate tests: atomic call counter, an optional
+// stale-while-revalidate tests: atomic call counter, an optional
 // hold that parks a call until the test releases it, and an atomic
 // "fail on call >= 2" toggle (deterministic by call number → no
 // mid-test field mutation, so `go test -race` is clean even under the
@@ -321,11 +321,11 @@ func (s *swrPoolsUpstream) AllPools(ctx context.Context, _ timescale.PoolsFilter
 // TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: every one
 // of 20 concurrent reads of an expired pools entry is served THE STALE
 // ROW while exactly one single-flighted background refresh runs (the
-// #23 fix), and the row that refresh returns is what replaces it.
+// SWR path), and the row that refresh returns is what replaces it.
 //
 // What a stale read is served is a value, so it is asserted as one.
-// The stub used to return one fixed row, so the row before the refresh
-// and the row after it were the same row and no assertion here could
+// A stub returning one fixed row would make the row before the refresh
+// and the row after it the same row, and no assertion here could
 // tell a read served the entry from a read handed the refresh's
 // result — the 120 ms ceiling on each reader was the whole evidence,
 // and what it measured was how quickly the runner rescheduled 20
@@ -460,7 +460,7 @@ func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (m
 
 // TestNoDanglingPR1185Citation guards against re-introducing the "#1185"
 // / "PR #1185" citation into the cache-miss-rate-high runbook or its
-// Prometheus rule comment (RSWP-105). No PR #1185 was ever opened; the
+// Prometheus rule comment. No PR #1185 was ever opened; the
 // bare number now resolves to a real but unrelated open issue, so the
 // citation misleads a reader rather than merely dangling. Mirrors
 // TestNoDanglingIssueReferences (dangling_issue_refs_test.go) for the
@@ -485,7 +485,7 @@ func TestNoDanglingPR1185Citation(t *testing.T) {
 
 // TestNoDanglingPR1195Citation guards against re-introducing the "#1195"
 // / "PR #1195" citation into the cache-miss-rate-high runbook, its
-// Prometheus rule comment, or CHANGELOG.md (RSWP-110). No PR #1195 was
+// Prometheus rule comment, or CHANGELOG.md. No PR #1195 was
 // ever opened; the bare number now resolves to a real but unrelated open
 // issue (verify-lake/verify-contiguity under-reporting), so the citation
 // misleads a reader rather than merely dangling. Mirrors

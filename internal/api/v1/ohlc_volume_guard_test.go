@@ -12,7 +12,7 @@ import (
 
 // A count majority of dust prints must not become the single-bar OHLC
 // by trimming a volume majority: 3 × 1,000,000 XLM at 0.100 and
-// 4 × 30,000 XLM at 0.114 used to serve a 200 bar of the 4 wash prints
+// 4 × 30,000 XLM at 0.114 would serve a 200 bar of the 4 wash prints
 // alone. The window is contested, so the default filter withholds it
 // as all-filtered rather than serving either side or claiming "no trades".
 func TestOHLC_DustCountMajorityWindowIsWithheldNotServed(t *testing.T) {

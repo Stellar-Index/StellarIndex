@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestNoDangling1219Reference guards RSWP-118: "#1219" was never a real
+// TestNoDangling1219Reference guards that "#1219" is not cited: it was never a real
 // PR/issue in this repo when the stablecoin-fiat-proxy-fallback comments
 // below were written, and GitHub has since assigned #1219 to a real but
 // unrelated open issue (oracle_unparsed_metric_test incrementing the

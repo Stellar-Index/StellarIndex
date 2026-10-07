@@ -17,7 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// C1-024 (audit-2026-07-23): a fiat-quoted POINT quote and the fiat-quoted
+// A fiat-quoted POINT quote and the fiat-quoted
 // SERIES it belongs to were computed over different trade populations.
 //
 //   - SERIES (`/v1/ohlc?interval=…`) COMBINES every constituent of
@@ -50,7 +50,7 @@ import (
 //	                                was unreachable from ?base=native)
 //
 // Combined: Σbase = 10000, Σquote = 1840 → VWAP = 1840/10000 = 0.184 exactly.
-// Pre-fix the point path served 200/1000 = 0.20 on 1000 base volume.
+// A point path off the series population would serve 200/1000 = 0.20 on 1000 base volume.
 const (
 	fiatParityWantVWAP       = "0.1840000000"
 	fiatParityWantBaseVolume = "10000"
@@ -236,12 +236,12 @@ func fetchFiatSeriesBar(t *testing.T, base string) v1.OHLCSeriesBar {
 	return env.Data.Intervals[0]
 }
 
-// TestFiatVWAPPointMatchesSeries is the C1-024 regression: /v1/vwap must be
+// TestFiatVWAPPointMatchesSeries is the point-vs-series regression: /v1/vwap must be
 // computed over the same constituent population the series combines, so its
 // price equals the series bar's own Σquote/Σbase and its volumes equal the
 // bar's volumes exactly.
 //
-// Pre-fix this served 0.2000000000 on base_volume 1000 — the literal
+// A mismatched point path would serve 0.2000000000 on base_volume 1000 — the literal
 // native/fiat:USD pair alone — against a series bar summing 10000 base.
 func TestFiatVWAPPointMatchesSeries(t *testing.T) {
 	srv := newFiatParityServer(t)
@@ -301,7 +301,7 @@ func TestFiatVWAPPointMatchesSeries(t *testing.T) {
 //
 // outlier_sigma=0 because the single-bar branch defaults to a 4σ MAD filter
 // the CAGG series has no equivalent of — a separate, still-open divergence
-// (audit MNY-22) that must not be conflated with the constituent-set one
+// that must not be conflated with the constituent-set one
 // under test here.
 //
 // open/close are deliberately NOT compared: the series' combined open/close
@@ -383,7 +383,7 @@ func TestFiatTWAPPointUsesAllConstituents(t *testing.T) {
 // TestFiatPointConstituentReadErrorFailsClosed pins the deliberate
 // fail-closed posture: a constituent whose read errors is NOT skipped.
 // Skipping would silently narrow the methodology back to a subset — the
-// exact defect C1-024 removes — and serve a quietly-wrong money value
+// exact defect the shared population removes — and serve a quietly-wrong money value
 // instead of an error the operator can see.
 func TestFiatPointConstituentReadErrorFailsClosed(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

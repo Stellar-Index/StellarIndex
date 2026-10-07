@@ -931,7 +931,7 @@ func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 
 	// One group: 300 rows in the requested orientation plus a single
 	// flipped row whose source sorts BELOW all of them. Far past any
-	// plausible page size, and past the ladder that used to bound the
+	// plausible page size, and past any ladder that could bound the
 	// completion.
 	rows := make([]canonical.Trade, 0, 301)
 	rows = append(rows, storedTrade(t, "aaa_low", 10, "0c", usdc, aqua, 100, 1))
@@ -978,7 +978,7 @@ func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 //
 // It does NOT catch every source comparison. Ordering ties by source
 // while still resuming PAST the group is harmless, because the cursor
-// no longer depends on where inside a group the page ended — which is
+// does not depend on where inside a group the page ended — which is
 // the point of stepping past it.
 func TestHistory_ExactlyOnceUnderEitherSourceCollation(t *testing.T) {
 	t.Parallel()

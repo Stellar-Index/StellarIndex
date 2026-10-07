@@ -399,10 +399,10 @@ func TestHub_PublishRaceFreeIDs(t *testing.T) {
 	}
 }
 
-// TestHub_PublishVsCancelRace pins CS-012: a subscriber cancelling (which
+// TestHub_PublishVsCancelRace pins that a subscriber cancelling (which
 // closes its channel) concurrently with Publish (which sends off the topic
-// lock) must never panic with "send on closed channel". Before the fix,
-// the select send-case on a closed channel was "ready" and chosen over
+// lock) must never panic with "send on closed channel". Without the guard,
+// the select send-case on a closed channel would be "ready" and chosen over
 // default, crashing the whole process. Run under -race.
 func TestHub_PublishVsCancelRace(t *testing.T) {
 	hub := streaming.NewHub(0)
@@ -468,16 +468,16 @@ func TestHub_PublishVsCancelRace(t *testing.T) {
 // subscribe/publish gap: an event published while Subscribe is running
 // must end up in EITHER the replay OR the live fanout — never neither.
 //
-// Before the fix Subscribe snapshotted every topic's buffer first and
-// only then registered as a live listener, so an event that landed in
-// between was in no snapshot and had no listener: silently dropped,
+// A Subscribe that snapshotted every topic's buffer first and
+// only then registered as a live listener would lose an event that landed in
+// between: it is in no snapshot and has no listener, so silently dropped,
 // and indistinguishable at the client from a buffer overrun.
 //
 // The subscription covers many topics because that is what makes the
-// window wide enough to hit reliably (the pre-fix code did ALL the
+// window wide enough to hit reliably (a snapshot-first Subscribe does ALL the
 // replay work before ANY registration). The same gap exists on the
 // single-topic production path — it is just microseconds wide, which
-// is a flaky test, not a safe one. Post-fix the invariant is
+// is a flaky test, not a safe one. The invariant is
 // structural, so the assertion is an exact zero.
 func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	const iterations = 200
@@ -550,21 +550,20 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	}
 }
 
-// TestHub_ReplayBeyondQueueDepthKeepsConnection is the regression test
-// for the cold audit of 2026-08-04.
+// TestHub_ReplayBeyondQueueDepthKeepsConnection pins replay-overflow handling.
 //
-// Subscribe pushed the whole replay set into a 32-deep channel before
-// any reader existed, and CLOSED the subscription on overflow. So a
-// client resuming more than 32 events behind received the 32 OLDEST
-// buffered events — the stalest prices in the ring — and was then
-// disconnected. Measured on r1: every reconnect returned exactly 32
-// events and closed in 6-8ms, so a client 20 minutes behind ground
+// A Subscribe that pushed the whole replay set into a 32-deep channel before
+// any reader existed, and CLOSED the subscription on overflow, would give a
+// client resuming more than 32 events behind the 32 OLDEST
+// buffered events — the stalest prices in the ring — and then
+// disconnect it: every reconnect would return exactly 32
+// events and close in 6-8ms, so a client 20 minutes behind would grind
 // through ~8 reconnect rounds rendering stale prices as live.
 //
-// The replay must now deliver the NEWEST events that fit and keep the
+// The replay must deliver the NEWEST events that fit and keep the
 // subscription open for live delivery. It is also budgeted at HALF the
-// channel capacity (GH-720): a full-capacity replay left no headroom,
-// so the very next live Publish found the channel full and evicted the
+// channel capacity a full-capacity replay leaves no headroom,
+// so the very next live Publish would find the channel full and evict the
 // subscriber it had just resumed.
 func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	h := streaming.NewHub(256)
@@ -623,9 +622,9 @@ drain:
 	}
 }
 
-// TestHub_ResumeReplayLeavesHeadroom is the regression test for GH-720:
-// a resume clamped at the FULL channel capacity left no room for the
-// next live Publish, which found the channel full and evicted the
+// TestHub_ResumeReplayLeavesHeadroom pins the replay headroom:
+// a resume clamped at the FULL channel capacity leaves no room for the
+// next live Publish, which finds the channel full and evicts the
 // subscriber it had just resumed. The channel must come back with
 // spare capacity, single-topic or multi-topic, and every subscribed
 // topic must contribute at least one replayed event — not just the
@@ -690,8 +689,8 @@ func TestHub_ResumeReplayLeavesHeadroom(t *testing.T) {
 	})
 }
 
-// TestHub_ReconnectIDsAreMonotonic is the regression test for GH-720's
-// first bullet: a resuming subscriber must never see an event ID
+// TestHub_ReconnectIDsAreMonotonic pins reconnect ordering:
+// a resuming subscriber must never see an event ID
 // smaller than or equal to the resume cursor's own ID, and never out
 // of order across the replayed set.
 func TestHub_ReconnectIDsAreMonotonic(t *testing.T) {
@@ -727,10 +726,10 @@ drain:
 	}
 }
 
-// TestHub_MultiTopicReplayIsMergedByID is the regression test for
-// GH-1033's second bullet: ids come from one Hub-wide generator but a
-// multi-topic Subscribe used to queue each topic's whole replay before
-// the next, so the wire `id:` line walked backwards at the topic
+// TestHub_MultiTopicReplayIsMergedByID pins merged replay order:
+// ids come from one Hub-wide generator but a
+// multi-topic Subscribe that queued each topic's whole replay before
+// the next would make the wire `id:` line walk backwards at the topic
 // boundary. Interleaving publishes across two topics and resuming from
 // before all of them must come back in strict id order, not grouped by
 // topic.
@@ -770,11 +769,11 @@ func idsOf(evs []streaming.Event) []string {
 	return out
 }
 
-// TestHub_ReplayGapEmitsStreamGapMarker is the regression test for
-// GH-1035: a resume whose cursor names an event the ring has already
+// TestHub_ReplayGapEmitsStreamGapMarker pins the gap marker:
+// a resume whose cursor names an event the ring has already
 // evicted must be preceded by an [streaming.EventTypeStreamGap] marker
 // naming the requested cursor and the oldest id still available —
-// today nothing on the wire distinguishes a truncated replay from a
+// without it nothing on the wire distinguishes a truncated replay from a
 // complete one.
 func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
 	hub := streaming.NewHub(2) // tiny ring: forces eviction
@@ -817,7 +816,7 @@ func TestHub_ReplayGapEmitsStreamGapMarker(t *testing.T) {
 
 // TestDoc_MaxTopicsIsNotAHardCeiling pins doc.go's package overview to
 // the reap-threshold behaviour hub.go's DefaultMaxTopics documents
-// (GH-1106): a stale "caps the map regardless" claim would send an
+// — a stale "caps the map regardless" claim would send an
 // operator sizing memory against a bound that does not exist. The
 // comment markers are stripped and the text re-joined on whitespace
 // before matching, so a phrase that got re-wrapped across lines can't

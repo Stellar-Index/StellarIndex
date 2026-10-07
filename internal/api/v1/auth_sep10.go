@@ -28,8 +28,8 @@ const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailab
 // the startup log, which carries the real error (not echoed here: the
 // route is public).
 //
-// The four call sites used to carry two different strings, the
-// terser of which said only "no SEP-10 validator wired" — a
+// The four call sites share one string, not a terser one such as
+// "no SEP-10 validator wired" — a
 // restatement of the error code, which tells a caller nothing they
 // could act on. One constant means those branches cannot drift apart
 // again.
@@ -240,8 +240,8 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 		// Mirrors the challenge handler's ErrNotImplemented branch
 		// — when the server-side validator is the no-op stub
 		// (sep10 wired but signing seed not configured), Verify
-		// returns ErrNotImplemented. Pre-fix this fell through to
-		// the default branch and surfaced as 500 + "Internal
+		// returns ErrNotImplemented. Without this branch it would fall through to
+		// the default branch and surface as 500 + "Internal
 		// error" — misleading because it's a deployment config
 		// state, not a server crash. Surfacing it as a non-retryable 404 with a
 		// detail makes the operator-side fix obvious.

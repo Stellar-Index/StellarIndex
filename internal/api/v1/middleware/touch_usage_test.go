@@ -19,7 +19,7 @@ import (
 )
 
 // afterResponseTestTimeout bounds how long a test waits for the shared
-// after-response pool to drain (GH-627: TouchUsage/UsageTracker run
+// after-response pool to drain (TouchUsage/UsageTracker run
 // there, not inline). Generous relative to the fake stores' in-memory
 // latency so it never flakes on a loaded CI box.
 const afterResponseTestTimeout = 2 * time.Second
@@ -201,7 +201,7 @@ func TestTouchUsage_ToucherErrorSwallowed(t *testing.T) {
 	}
 }
 
-// TestTouchUsage_PanickingHandlerStillTouched — GH-1276. Recoverer
+// TestTouchUsage_PanickingHandlerStillTouched. Recoverer
 // sits OUTSIDE TouchUsage in the real stack (server.go), so a
 // panicking handler unwinds past the touch bookkeeping. Straight-line
 // code after next.ServeHTTP never runs on that unwind; the fix

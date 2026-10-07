@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestUsageTracker_ObservesQuotaDenials pins the cold-audit-2026-08-03
-// finding: UsageTracker used to be appended AFTER MonthlyQuota, and
+// TestUsageTracker_ObservesQuotaDenials pins that UsageTracker
+// must not be appended AFTER MonthlyQuota, and
 // middleware.Chain makes an earlier entry the OUTER one — so the quota
 // middleware wrapped the usage tracker. A quota denial returns without
 // calling next, which meant a monthly-quota 429 executed the tracker

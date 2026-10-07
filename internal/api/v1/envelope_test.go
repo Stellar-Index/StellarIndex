@@ -120,7 +120,7 @@ func TestWriteEnvelope_FillsZeroAsOf(t *testing.T) {
 
 // TestWriteEnvelopeStatus_RespectsExplicitStatus — the 201
 // path for /v1/account/keys POST relies on this. Adding a regression
-// test pins it after F-0012's 200→201 fix.
+// test pins it the 200→201 status.
 func TestWriteEnvelopeStatus_RespectsExplicitStatus(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeEnvelopeStatus(rec, http.StatusCreated, Envelope{Data: "k"})
@@ -235,8 +235,8 @@ func TestWriteProblem_401SetsWWWAuthenticate(t *testing.T) {
 
 // TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate guards the
 // inverse: a 400 / 404 / 500 / 503 problem must NOT emit
-// WWW-Authenticate (RFC 7235's MUST applies to 401 only). Pre-fix
-// the helper had no condition; this pin keeps the conditional in
+// WWW-Authenticate (RFC 7235's MUST applies to 401 only). An unconditional
+// helper would be wrong; this pin keeps the conditional in
 // place.
 func TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate(t *testing.T) {
 	for _, status := range []int{
@@ -317,7 +317,7 @@ func TestHandlerTimedOut(t *testing.T) {
 		}
 	})
 	t.Run("call ctx deadline fired, err is a pg cancel", func(t *testing.T) {
-		// THE R-021 case: the driver returns its own
+		// The key case: the driver returns its own
 		// `canceling statement due to user request` error string
 		// after our context.WithTimeout fires. errors.Is misses it
 		// because the driver's PgError doesn't wrap context.DeadlineExceeded;

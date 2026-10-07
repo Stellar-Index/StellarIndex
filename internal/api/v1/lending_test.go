@@ -224,13 +224,13 @@ func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 // TestLendingPoolReserves_AssetsTimeoutReturns503 and its sibling below
 // pin C-F2: the reserves handler's 15s ceiling must surface as a
 // RETRYABLE 503 + `lending-timeout`, exactly like handleLendingPools in
-// the same file already does — not the 500 both sites used to emit.
+// the same file already does — not a 500.
 //
 // A 500 tells clients "broken, don't retry", costs an availability
 // point in the sla-probe's 5xx accounting, and is not even a status the
 // OpenAPI spec declares for this path (it declares 400 + 503 only).
 //
-// Proven red against the pre-fix handler: status 500, no
+// Proven red against a handler without the mapping: status 500, no
 // `lending-timeout` in the body.
 func TestLendingPoolReserves_AssetsTimeoutReturns503(t *testing.T) {
 	pool := mkCStrkey(t, 7)
@@ -403,9 +403,9 @@ const barrierPriceStall = 200 * time.Millisecond
 // barrierPriceReader is a v1.PriceReader that parks every LatestPrice call
 // until `want` of them are in flight AT ONCE, recording the peak it observed.
 //
-// This is the instrument #504 needed and did not have. The route's cost is a
-// per-reserve DB fan-out, so the only thing separating the shipped handler
-// from the fixed one is whether those reads OVERLAP — and a stub that answers
+// This is the instrument that detects a serial fan-out. The route's cost is a
+// per-reserve DB fan-out, so the only thing separating a serial handler
+// from a bounded-parallel one is whether those reads OVERLAP — and a stub that answers
 // instantly makes a serial walk and a parallel one look identical. Parking
 // each call turns concurrency into an observable: peak 1 is a serial loop,
 // peak len(reserves) is the bounded fan-out.
@@ -461,8 +461,8 @@ func (r *barrierPriceReader) observed() (peak, calls int) {
 	return r.peak, r.calls
 }
 
-// TestLendingPoolReserves_PricingFansOutBounded is the #504 regression guard
-// on the handler half of the fix.
+// TestLendingPoolReserves_PricingFansOutBounded is the regression guard
+// on the handler half.
 //
 // /v1/lending/pools/{pool}/reserves timed out at 12.1s on the largest Blend
 // pool while a SMALL pool answered in 9.31s — 78% of the same ceiling. That
@@ -478,7 +478,7 @@ func (r *barrierPriceReader) observed() (peak, calls int) {
 // (dex_tvl_exclusion_claims_internal_test.go) only ever proved the path was
 // REGISTERED, which is why this shipped.
 //
-// Proven RED against the pre-fix handler: peak concurrency 1 over 6 calls,
+// Proven RED against a serial handler: peak concurrency 1 over 6 calls,
 // the run taking 6 × barrierPriceStall.
 func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	pool := mkCStrkey(t, 7)
@@ -548,8 +548,8 @@ func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	}
 }
 
-// The 8s-ceiling comment on handleLendingPools once cited specific issue
-// numbers (#1082, #1099-#1104) from the cold-path-protection series. Those
+// The 8s-ceiling comment on handleLendingPools must not cite specific issue
+// numbers from the cold-path-protection series. Those
 // numbers resolve to OTHER endpoints (pools, sources, coins, chart, history,
 // oracle) — none of them lending — and no PR by any of those numbers exists
 // in this repo's remote. A reader following the reference lands on unrelated

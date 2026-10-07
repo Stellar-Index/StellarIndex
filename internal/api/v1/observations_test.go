@@ -348,7 +348,7 @@ func TestObservations_InternalError(t *testing.T) {
 
 // observationsCallTracker is a HistoryReader that counts
 // LatestTradePerSource calls and serves `rows` back. The call count is
-// the assertion vehicle for the #29 fast-path regressions: that
+// the assertion vehicle for the fast-path short-circuit guards: that
 // short-circuit answered whole quote families from memory, so a quote
 // that never reaches storage can never return the observation a venue
 // actually recorded for it.
@@ -391,7 +391,7 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 // connectors write XLM-USD / BTC-USD / ETH-USD straight against it, so
 // trades carrying quote_asset "fiat:USD" exist and /v1/observations/stream
 // (same computeObservations, no short-circuit) serves them. The residual
-// #29 fast-path answered the request endpoint from memory instead, making
+// a fast path would answer the request endpoint from memory instead, making
 // the default quote the one quote that could never return an observation.
 func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	hist := &observationsCallTracker{
@@ -418,7 +418,7 @@ func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	}
 }
 
-// TestObservations_RealCexQuotesHitStorage pins F-1325: CEX connectors
+// TestObservations_RealCexQuotesHitStorage pins that CEX connectors
 // write genuine trades quoted in crypto:USDT / crypto:BTC / fiat:EUR, so
 // observations for those quotes must NOT be short-circuited — they have
 // to query storage (the previous all-fiat/all-crypto short-circuit
@@ -440,7 +440,7 @@ func TestObservations_RealCexQuotesHitStorage(t *testing.T) {
 	}
 }
 
-// F-0068 closure (2026-05-28): /v1/observations accepts `base=` as
+// /v1/observations accepts `base=` as
 // alias for `asset=` so URLs from /v1/twap don't 400 on first try.
 func TestObservations_BaseParamAcceptedAsAssetAlias(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
@@ -473,13 +473,13 @@ func (r *aliasKeyedHistoryReader) LatestTradePerSource(
 	return r.byPair[pair.String()], nil
 }
 
-// TestObservations_AliasFanIn — the XLM dual-form regression (cold
-// audit 2026-08-03, streaming/metadata): CEX observations are stored
+// TestObservations_AliasFanIn — the XLM dual-form regression:
+// CEX observations are stored
 // under XLM's `crypto:XLM` spelling, and the literal single-pair
 // lookup made `?asset=native` silently blind to them. The handler must
 // scan every alias spelling and merge per source. (Quote is
 // crypto:USDT, not fiat:USD — that quote short-circuits to the
-// triangulation hint before any scan, F-1325.)
+// triangulation hint before any scan.)
 func TestObservations_AliasFanIn(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	usdt, _ := canonical.ParseAsset("crypto:USDT")
@@ -538,7 +538,7 @@ func (r *rendezvousHistoryReader) LatestTradePerSource(
 
 // TestObservations_AliasScansRunConcurrently — an XLM pair fans out to one
 // LatestTradePerSource scan per alias spelling; run serially, a cold read
-// cost the sum of every spelling's scan (INV-0675).
+// cost the sum of every spelling's scan.
 func TestObservations_AliasScansRunConcurrently(t *testing.T) {
 	native, _ := canonical.ParseAsset("native")
 	usdt, _ := canonical.ParseAsset("crypto:USDT")
@@ -565,7 +565,7 @@ func TestObservations_AliasScansRunConcurrently(t *testing.T) {
 // cross-reference verdict to vouch for, so `divergence_checked` is false
 // here BY DESIGN and the DivergenceLooker is never consulted. A verdict
 // under EVERY spelling of the base — firing, no less — must leave both
-// divergence flags false and the looker untouched. Per CS-087 that false
+// divergence flags false and the looker untouched. That false
 // reads as "this surface does not verify", which is the truth. If this
 // test starts failing because the surface now consults the looker, the
 // comment block in handleObservations and the OpenAPI text need the

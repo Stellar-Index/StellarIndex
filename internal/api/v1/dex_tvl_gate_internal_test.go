@@ -41,7 +41,7 @@ func (g *stubTVLGate) Screens() []string {
 	return g.screens
 }
 
-// TestDEXTVLCache_GatedTokenContributesNoValue is the #338 regression.
+// TestDEXTVLCache_GatedTokenContributesNoValue is the regression test.
 //
 // Before the gate, tvlValuer.rateFor consulted only the USD resolver,
 // whose sole floor is $0.01 of quote notional — so a directory-flagged
@@ -123,8 +123,8 @@ func TestDEXTVLCache_GatedTokenContributesNoValue(t *testing.T) {
 // This arm is REACHABLE in production: cmd/stellarindex-api's
 // buildDEXTVLValueGate returns a nil interface when neither guard was
 // built (pinned by TestBuildDEXTVLValueGate_NilWhenNoGuardIsWired in
-// that package). Until 2026-09-03 the wiring assigned a non-pointer
-// struct unconditionally, so this test pinned a path the API binary
+// that package). If the wiring assigned a non-pointer
+// struct unconditionally, this test would pin a path the API binary
 // could not take.
 func TestDEXTVLCache_NoGateKeepsTodaysFigures(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
@@ -197,7 +197,7 @@ func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 // a gate consulted after it would leave every operator-declared peg
 // unscreened — and an operator's 1:1-USD declaration is an older,
 // broader statement than a curated directory's later scam flag on that
-// issuer. Same ordering the asset detail path settled on 2026-08-25:
+// issuer. Same ordering as the asset detail path:
 // suppressScamIssuerPricing runs after fillDeclaredPegPrice.
 func TestTVLValuer_GateBeatsTheDeclaredPeg(t *testing.T) {
 	const pegged = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -274,11 +274,11 @@ func TestDEXTVLCache_GatedAquariusLegCountsUnpriced(t *testing.T) {
 // TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan is the RV1-#3
 // regression: Basis is a public claim about which trust screens ran on
 // each reserve leg, rendered verbatim by the explorer's TVL tooltip
-// (web/explorer/src/app/protocols/ProtocolTvlPanel.tsx). It used to be
+// (web/explorer/src/app/protocols/ProtocolTvlPanel.tsx). It must not be
 // one fixed sentence naming BOTH screens whenever any gate was wired,
-// so an operator running [pricing_guard] disable_substance_gate = true
+// otherwise an operator running [pricing_guard] disable_substance_gate = true
 // — which makes buildSubstanceGate return nil while the scam gate stays
-// wired — published "or a market below the substance floor" for legs no
+// wired — would publish "or a market below the substance floor" for legs no
 // substance screen had touched.
 func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
 	const (

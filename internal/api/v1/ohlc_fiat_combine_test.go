@@ -10,7 +10,7 @@ import (
 )
 
 // The two smallest-unit scales the fiat constituent set actually spans
-// (CS-040): an on-chain DEX leg stamps 7-decimal stroops, a CEX leg 8.
+// — an on-chain DEX leg stamps 7-decimal stroops, a CEX leg 8.
 const (
 	onChainScale = 7
 	cexScale     = 8
@@ -22,7 +22,7 @@ const (
 //
 // This REPLACES TestCombinedBarDropsFatFinger, which pinned the 2×-VWAP band
 // (`combinedOutlierBandRatio`). That band was removed by operator decision
-// (2026-07-22, docs/operations/finding-dust-trades-set-chart-extremes.md
+// (docs/operations/finding-dust-trades-set-chart-extremes.md
 // "DECISION"): filter on trade SIZE, never on price divergence. The wicks the
 // band existed for were all dust, and dust is now excluded at the individual
 // TRADE level by the $0.01 notional floor on the CAGG extremes (migration
@@ -120,7 +120,7 @@ func TestCombinedBarSingleConstituentExtremes(t *testing.T) {
 	}
 }
 
-// TestCombinedBarScaleDrivesVolumeWeighting pins the CS-040 series fix at
+// TestCombinedBarScaleDrivesVolumeWeighting pins the per-venue scale fix at
 // the accumulator: the SAME two constituent bars must combine to different
 // (and each correct) numbers depending on the scale their venues declare.
 //
@@ -229,7 +229,7 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 			"scales internally takes the finest, the lift that cannot inflate its "+
 			"own weight against its peers", got, cexScale)
 	}
-	// GH-1285: a source absent from external.Registry must not be
+	// A source absent from external.Registry must not be
 	// answered with the registry's CEX-flavoured 8-decimal fallback
 	// either — same defect as the point-path commonAmountScaleDecimals,
 	// same shared amountScaleDecimalsFor resolver.
@@ -259,7 +259,7 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 	}
 }
 
-// TestCombinedBarStatesScaleOnWire pins F015's narrowed remainder: a
+// TestCombinedBarStatesScaleOnWire pins that a
 // combined bucket must STATE the smallest-unit scale its v_base/v_quote
 // were lifted to, not just carry it internally. Before this, finalize
 // left VBaseDecimals/VQuoteDecimals at Go's zero value regardless of the

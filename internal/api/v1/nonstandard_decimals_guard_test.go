@@ -33,7 +33,7 @@ func nonstandardDecimalsCacheWith(t *testing.T, asset string, decimals int) *v1.
 }
 
 // TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg proves /v1/price
-// no longer declines a confirmed non-7-decimal base leg — the closed-1m-
+// normalizes a confirmed non-7-decimal base leg — the closed-1m-
 // bucket read (the last /v1/price path still declining after v0.12.0)
 // now serves the AdjustPrice-corrected value. The stub snapshot carries
 // the RAW CAGG ratio 41.32 (the runbook's real CC2RB… incident value,
@@ -147,8 +147,8 @@ func TestPrice_NonstandardDecimals_NoCacheWired_ServesNormally(t *testing.T) {
 	}
 }
 
-// TestVWAP_NonstandardDecimals_Normalizes proves /v1/vwap no longer
-// declines a confirmed non-7-decimals pair — since 2026-07-10 it computes
+// TestVWAP_NonstandardDecimals_Normalizes proves /v1/vwap
+// does not decline a confirmed non-7-decimals pair — it computes
 // entirely from raw trades at query time, so the fix is to serve the
 // CORRECTED price (aggregate.AdjustPrice) rather than 422. See
 // docs/operations/runbooks/dex.md "Root cause
@@ -195,8 +195,8 @@ func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	}
 }
 
-// TestHistory_NonstandardDecimals_Normalizes proves /v1/history no longer
-// declines — it reads exclusively from raw trades (TradesInRangeAfter),
+// TestHistory_NonstandardDecimals_Normalizes proves /v1/history
+// does not decline — it reads exclusively from raw trades (TradesInRangeAfter),
 // so the per-row Price field is corrected instead.
 func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
@@ -239,8 +239,8 @@ func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 
 // TestOHLC_NonstandardDecimals proves BOTH modes normalize now:
 // single-bar mode (raw trades, query-time — normalized since v0.12.0)
-// and interval= series mode (prices_<n> CAGG — normalized 2026-07-10,
-// closing the deferred tail; previously declined 422).
+// and interval= series mode (prices_<n> CAGG — normalized,
+// not declined with 422).
 func TestOHLC_NonstandardDecimals(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
@@ -283,7 +283,7 @@ func TestOHLC_NonstandardDecimals(t *testing.T) {
 const classicUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 // TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes pins the
-// series-mode contract closed on 2026-07-10:
+// series-mode contract:
 //
 //   - o/h/l/c: the raw prices_<n> CAGG ratio × K (K = 10^(9−7) = 100
 //     for a 9dp base vs a 7dp classic quote) — the same factor the
@@ -368,8 +368,8 @@ func TestOHLCSeries_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
 }
 
 // TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD pins the
-// /v1/chart contract closed on 2026-07-10 (this endpoint was never
-// guarded at all — it served the raw prices_<gran> ratio):
+// /v1/chart contract (this endpoint is
+// not declined; the raw prices_<gran> ratio is corrected:
 //
 //   - each point's `p`: raw CAGG ratio × K (10^(9−7) = 100 here).
 //   - each point's `v_usd`: UNCHANGED — prices_<gran>.volume_usd is
@@ -522,8 +522,8 @@ func TestPriceBatch_NonstandardDecimals_Normalizes(t *testing.T) {
 
 // TestOraclePrices_NonstandardDecimals_Normalizes — the SEP-40
 // prices(asset, records) passthrough reads the same raw prices_1m CAGG
-// (RecentClosedSnapshots) and was neither guarded nor normalized; fixed
-// alongside the /v1/price closed-bucket path (2026-07-10).
+// (RecentClosedSnapshots) and must be guarded and normalized
+// like the /v1/price closed-bucket path.
 func TestOraclePrices_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	key := flaggedAsset + "/fiat:USD"
@@ -546,8 +546,8 @@ func TestOraclePrices_NonstandardDecimals_Normalizes(t *testing.T) {
 	}
 }
 
-// TestTWAP_NonstandardDecimals_Normalizes proves /v1/twap no longer
-// declines — same rationale as /v1/vwap.
+// TestTWAP_NonstandardDecimals_Normalizes proves /v1/twap
+// does not decline — same rationale as /v1/vwap.
 func TestTWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	xlmUSD, err := canonical.ParseAsset(flaggedAsset)

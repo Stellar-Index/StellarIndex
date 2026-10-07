@@ -217,7 +217,7 @@ func TestCORS_VaryNotSetForWildcardMode(t *testing.T) {
 }
 
 // TestCORS_DefaultAllowedMethodsIncludePOST pins the v1-surface-
-// matching default. Pre-2026-05-02 the default was {GET, HEAD,
+// matching default. A default of {GET, HEAD,
 // OPTIONS}; cross-origin POST to /v1/account/keys etc. would fail
 // preflight unless the operator overrode AllowedMethods. Now POST
 // is in the default set so the API binary's
@@ -252,7 +252,7 @@ func TestCORS_DefaultAllowedMethodsIncludePOST(t *testing.T) {
 }
 
 // TestCORS_PerRequestObservability — every request increments the
-// CORS decisions counter with the right outcome label. F-1244 lets
+// CORS decisions counter with the right outcome label. This lets
 // operators see real cross-origin traffic patterns + alert when a
 // wildcard policy starts handling actual cross-origin requests in
 // production rather than just at startup.

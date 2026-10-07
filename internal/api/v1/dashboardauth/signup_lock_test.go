@@ -54,7 +54,7 @@ func (l *fakeEmailLocker) Release(_ context.Context, key, token string) error {
 // the loser must wait + return the winner's user WITHOUT creating
 // a speculative Account row.
 //
-// F-1255 (codex audit-2026-05-12): proves the full-fix path. The
+// Proves the full-fix path. The
 // fallback Suspend-on-conflict recovery still serves as defence
 // in depth, but the lock path should never trigger it.
 func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {

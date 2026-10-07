@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestChartTimeoutComment_NoDanglingIssueCitation pins RSWP-078: the 8s
-// chart-query ceiling comment must not cite a bare issue number. #1100 was
+// TestChartTimeoutComment_NoDanglingIssueCitation pins that the 8s
+// chart-query ceiling comment must not cite a bare issue number. A bare #1100 was
 // never a live tracking reference (the repo's issue/PR count was #803 when
 // the comment was written) and the tracker has since grown past it, so a
 // reader following the citation lands on an unrelated, already-fixed issue
@@ -28,10 +28,10 @@ func TestChartTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 	}
 }
 
-// TestChartVWAPTimeoutComment_NoDanglingIssueCitation pins RSWP-079: the 8s
+// TestChartVWAPTimeoutComment_NoDanglingIssueCitation pins that the 8s
 // ceiling comment above the VWAP chart handler's context.WithTimeout call
 // must not cite a bare issue number. Bare numbers rot — #1101 (like #1102
-// in RSWP-080) 404s today and can silently start resolving to an unrelated
+// in the sibling comment) 404s today and can silently start resolving to an unrelated
 // issue once the tracker grows past it, which is worse than a 404 because a
 // reader following the citation lands on the wrong history with no signal
 // anything is off. The comment must

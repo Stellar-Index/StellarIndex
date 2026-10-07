@@ -22,7 +22,7 @@ import (
 //
 // That makes a location claim inside one a published claim about the
 // API's own shape, and those rot silently: the blend entry asserted
-// until 2026-09-09 that lending supplied-value "is published
+// that lending supplied-value "is published
 // per-protocol as bespoke.tvl_usd". No such field is on the wire —
 // the lending protocol block carries event and user COUNTS only, and
 // says so itself (timescale/bespoke_lending.go: "Pool-level figures
@@ -37,7 +37,7 @@ import (
 // exclusion making no location claim (defindex's double-counting
 // argument) is unconstrained.
 //
-// KNOWN LIMIT (#504): registered is not the same as ANSWERS. This guard
+// KNOWN LIMIT: registered is not the same as ANSWERS. This guard
 // parses route registrations out of server.go; it cannot tell a working
 // route from one that 503s. The blend exclusion cited
 // /v1/lending/pools/{pool}/reserves while that route timed out on the

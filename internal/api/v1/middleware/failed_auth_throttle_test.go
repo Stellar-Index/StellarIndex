@@ -19,7 +19,7 @@ import (
 )
 
 // TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage pins the
-// SEC-15 / C3-5 fix: once the failed-auth Bucket has been erroring for
+// fail-closed behaviour: once the failed-auth Bucket has been erroring for
 // longer than its dwell-time (Take returns
 // [ratelimit.ErrThrottleUnavailable]), the credential-stuffing throttle
 // must fail CLOSED (still block the request) instead of silently
@@ -59,7 +59,7 @@ func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	// First failure only ARMS the dwell-time clock (elapsed=0 < 30s):
 	// the bucket still returns a plain wrapped error, so the throttle
 	// stays fail-open for this one request — matches the main
-	// RateLimit middleware's grace window (F-0050/F-0150).
+	// RateLimit middleware's grace window.
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, badReq())
 	if w.Code != http.StatusUnauthorized {
@@ -86,7 +86,7 @@ func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	}
 }
 
-// TestAuth_FailedAuthThrottle is the C3-5 regression: invalid-credential
+// TestAuth_FailedAuthThrottle is the regression: invalid-credential
 // attempts must be throttled PER IP. Auth runs before the main rate
 // limiter, so without this a wrong key is rejected (401) before reaching
 // any limiter and can be retried without bound (credential stuffing). On

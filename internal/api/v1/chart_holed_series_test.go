@@ -26,7 +26,7 @@ import (
 // inside a `points` array with no hole in it, so the consumer draws a
 // straight line across the missing years.
 //
-// Measured on production 2026-09-06, one host, one minute:
+// Measured on production, one host, one minute:
 //
 //	/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1d
 //	  → 1,070 points, ONE interior gap of 1,919 days
@@ -232,7 +232,7 @@ func chartBucketDays(t *testing.T, env chartEnvelope) []time.Time {
 // regression turns on: the alias-spelling series is NOT empty, it is
 // holed, and the fallback that can fill the hole was gated on emptiness.
 //
-// RED before the fix: 15 points, all at the CEX mark, with a 25-day
+// Without the fix: 15 points, all at the CEX mark, with a 25-day
 // interior gap — the pool's spelling is enumerated by the proxy walk and
 // never read, because `len(points) == 0` is false.
 func TestChart_HoledAliasSeriesStillReachesTheProxyWalk(t *testing.T) {
@@ -280,7 +280,7 @@ func TestChart_HoledAliasSeriesStillReachesTheProxyWalk(t *testing.T) {
 // It asserts agreement in BOTH directions. Convergence in one direction
 // only is how a fix that puts the chart onto /v1/ohlc's read would pass
 // while silently emptying the assets the chart reaches and /v1/ohlc does
-// not — measured live on 2026-09-06, `/v1/ohlc` returns nothing at all
+// not — measured live, `/v1/ohlc` returns nothing at all
 // for the declared peg's own dollar series while `/v1/chart` serves 124
 // days of it through the XLM cross.
 func TestChart_AgreesWithOHLCOnThePopulationItServes(t *testing.T) {
@@ -477,7 +477,7 @@ func TestChart_ContiguousSeriesIsNotDiscontinuous(t *testing.T) {
 
 // TestChartTWAP_HoledSeriesReachesTheProxyWalk: price_type=twap reads
 // the twap CAGGs through the same chain and inherited the same defect.
-// Probed live 2026-09-06: it served the identical 1,070 points with the
+// Probed live: it served the identical 1,070 points with the
 // identical 1,919-day break.
 func TestChartTWAP_HoledSeriesReachesTheProxyWalk(t *testing.T) {
 	ts := holedServer(t, holedFlagshipStore())
@@ -528,7 +528,7 @@ func TestChartMarketCap_HoledPriceLegReachesTheProxyWalk(t *testing.T) {
 // third copy: /v1/history/since-inception ran a hand-maintained twin of
 // the same chain, with the same per-response first-hit gate, and served
 // the identical holed series — 1,070 points and the identical 1,919-day
-// break, probed live 2026-09-06. It now shares the chain rather than
+// break, probed live. It shares the chain rather than
 // mirroring it.
 func TestHistorySinceInception_HoledSeriesReachesTheProxyWalk(t *testing.T) {
 	ts := holedServer(t, holedFlagshipStore())
@@ -606,7 +606,7 @@ func TestHistorySinceInception_DeclaresItsOwnHole(t *testing.T) {
 // own dollar series has no observed market under ANY spelling — its
 // depth is the USDC/XLM book — so the chart derives it through XLM, and
 // /v1/ohlc, which has no derivation route, serves nothing for it at all
-// (measured live 2026-09-06: 124 chart points against `intervals: []`).
+// (measured live: 124 chart points against `intervals: []`).
 //
 // The per-bucket merge must leave that route exactly where it was: last,
 // whole-series, and reached only when nothing observed answered.
@@ -755,8 +755,8 @@ func TestChart_SlowProxyCannotCostTheSeries(t *testing.T) {
 // the error edge rather than the latency one: a source consulted to
 // FILL a series may never destroy one.
 //
-// RED before the fix: the proxy's error propagated, every merged bucket
-// was discarded, and a complete 40-point series answered 503.
+// Without the fix the proxy's error propagates, every merged bucket
+// is discarded, and a complete 40-point series answers 503.
 func TestChart_ProxyReadErrorDegradesRatherThanFails(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	failing := &latencyStore{
@@ -865,8 +865,8 @@ func TestChart_UncoveredWindowStillWalks(t *testing.T) {
 // hole it does not have — the field's own documented meaning inverted,
 // on the wire, in the OpenAPI description.
 //
-// RED before the fix: discontinuous=true, gap_starts_at=2025-01-01,
-// gap_ends_at=2025-02-01.
+// A fixed threshold reports discontinuous=true with the gap spanning
+// the January-to-February adjacency.
 func TestChart_MonthlyGranularityIsNotDiscontinuous(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	months := map[time.Time]string{}

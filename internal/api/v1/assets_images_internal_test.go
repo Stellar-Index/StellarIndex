@@ -147,7 +147,7 @@ func (plainSep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.I
 	return nil, sql.ErrNoRows
 }
 
-// TestProjectCatalogueRows_Sep1ImageOverlay pins BACKLOG #37b: catalogue-
+// TestProjectCatalogueRows_Sep1ImageOverlay pins that catalogue-
 // sourced listing rows (asset_class=fiat|stablecoin|crypto,
 // /v1/external/assets, and the catalogue phase of asset_class=all) must
 // gain the same SEP-1 logo overlay the classic_assets-backed listing rows

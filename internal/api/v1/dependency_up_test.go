@@ -16,7 +16,7 @@ import (
 // but the outcome existed only as JSON on an HTTP endpoint. Nothing
 // scraped it, so nothing could alert on a dependency going away.
 //
-// That mattered most for ClickHouse (#371 F2): postgres, redis and minio
+// That mattered most for ClickHouse: postgres, redis and minio
 // each have a Prometheus exporter on r1, and ClickHouse — the raw lake
 // the ADR-0033 completeness claim rests on — has none. Its only symptom
 // would have been endpoints failing one by one.

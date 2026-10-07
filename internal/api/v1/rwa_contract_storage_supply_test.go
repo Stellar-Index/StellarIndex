@@ -34,7 +34,7 @@ func (s *storageSupplyStub) ContractStorageSupply(
 // private-credit deal tokens on pubnet were in exactly that state, reporting a
 // total supply of 0 while their storage held 548,113,042.88 tokens.
 //
-// Red before the fix: the row published "0" on the sep41_lake_flows basis.
+// Red without the storage read: the row publishes "0" on the sep41_lake_flows basis.
 func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {
 	const contractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
 	// The six non-zero Balance entries measured for this exact contract.

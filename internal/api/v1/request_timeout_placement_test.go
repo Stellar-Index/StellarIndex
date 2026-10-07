@@ -25,8 +25,8 @@ func (p *deadlineProbe) middleware(next http.Handler) http.Handler {
 	})
 }
 
-// TestRequestTimeout_BoundsThePreHandlerStack pins C3-102
-// (audit-2026-07-23). RequestTimeout used to be appended just above
+// TestRequestTimeout_BoundsThePreHandlerStack pins that
+// RequestTimeout must wrap outside the credential middleware, not just above
 // CaptureRoute — the INNERMOST cross-cutting wrapper — so every
 // credential/quota/limit middleware (Auth, KeyPolicy,
 // RequireEmailVerified, MonthlyQuota, RateLimit, UsageTracker,

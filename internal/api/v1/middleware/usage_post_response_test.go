@@ -17,7 +17,7 @@ import (
 )
 
 // slowRedisHook delays every command by delay, simulating a wedged Redis
-// (GH-627) without needing a real network stall. Cooperates with ctx
+// without needing a real network stall. Cooperates with ctx
 // cancellation so it never masks the fact that the request's own
 // deadline still applies to anything that DOES stay on the request's
 // context.
@@ -41,7 +41,7 @@ func (slowRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 }
 
 // TestUsageTracker_RecordsAfterClientAbort pins the post-response half of
-// C3-102 (audit-2026-07-23).
+// client-abort handling.
 //
 // UsageTracker's counters run AFTER the response is flushed, but they used
 // `r.Context()` — which is already cancelled when the client aborted, or
@@ -49,7 +49,7 @@ func (slowRedisHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 // honours context cancellation, so the write failed and was swallowed at
 // Debug level. The legacy total is the MONTHLY-QUOTA INPUT, so a lost row
 // is lost billing signal, and moving RequestTimeout outward (the other half
-// of C3-102) would have widened the window.
+// of the post-response change) would have widened the window.
 //
 // The fix derives the write context with context.WithoutCancel plus its own
 // bound. This test drives the REAL middleware with an already-cancelled
@@ -157,10 +157,10 @@ func (alwaysTouch) ShouldTouch(ctx context.Context, _ string) (bool, error) {
 }
 
 // TestUsageTracker_AbortedRequestConsumesQuota pins the DECISION that came
-// with the C3-102 post-response fix, so it cannot be silently reverted as
+// with the post-response change, so it cannot be silently reverted as
 // "an unintended side effect".
 //
-// Before the fix an aborted request's Increment died on the cancelled
+// Without it an aborted request's Increment died on the cancelled
 // context, so the request was free. After it, the request counts against the
 // monthly quota. That is intended: statusRecorder defaults to 200, a
 // served-then-abandoned request classes as billable, and it really did
@@ -209,7 +209,7 @@ func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 }
 
 // TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore is the core
-// GH-627 regression: UsageTracker used to run its counter writes INLINE
+// regression: UsageTracker must not run its counter writes INLINE
 // on the request goroutine, under context.WithoutCancel(r.Context()) +
 // postResponseWriteTimeout, entirely OUTSIDE api.request_timeout. A slow
 // store (here, a Redis with every command delayed 300ms) added a

@@ -1,6 +1,6 @@
 package v1_test
 
-// GET /v1/rwa/history — the RWA set valued over time (#352).
+// GET /v1/rwa/history — the RWA set valued over time.
 //
 // The surface exists because /v1/rwa/assets is a snapshot and the
 // question everyone actually asks is "and is it growing". What makes it
@@ -285,7 +285,7 @@ func TestRWAHistory_AColdFailedBuildIsNotASectorOfZero(t *testing.T) {
 
 // TestRWAHistory_ACarriedForwardAssemblyIsStaleAndDated — once a rebuild
 // fails, the last good assembly is served flagged stale and dated by its
-// build, never as a fresh answer as of now (GH-549).
+// build, never as a fresh answer as of now.
 func TestRWAHistory_ACarriedForwardAssemblyIsStaleAndDated(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
@@ -356,7 +356,7 @@ func (s *blockingFlowSupply) DailySupplyFlowsForContracts(
 
 // TestRWAHistory_AnAbortingClientDoesNotAbortTheSharedBuild — the build
 // is shared by every waiter and the cache, so the client that happened to
-// start it must not be able to cancel it by disconnecting (GH-549).
+// start it must not be able to cancel it by disconnecting.
 func TestRWAHistory_AnAbortingClientDoesNotAbortTheSharedBuild(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)

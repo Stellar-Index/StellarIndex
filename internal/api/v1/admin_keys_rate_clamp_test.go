@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// GH-1147: POST /v1/admin/keys clamped scopes to the caller's but checked
+// POST /v1/admin/keys must clamp scopes to the caller's but checked
 // rate_limit_per_min only against the constant [0, 100000], so an
 // operator key narrowed to "admin" could still mint 100,000/min keys.
 func TestAdminKeysCreate_NarrowedOperatorCannotMintAboveItsRateLimit(t *testing.T) {

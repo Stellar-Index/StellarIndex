@@ -73,7 +73,7 @@ func decodeStreamed(t *testing.T, ev streaming.Event) streamedPrice {
 // TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket — under
 // an ADR-0019 freeze the raw prices_1m bucket is the value the freeze
 // refused, and /v1/price never serves it under the flag. The stream
-// used to publish it every minute as a price_update with flags
+// would publish it every minute as a price_update with flags
 // {stale:false} and no frozen key — the same bytes as a healthy pair.
 // The marker of ANY spelling governs (the reader does not report which
 // alias its bucket came from), so a freeze on crypto:XLM covers native.

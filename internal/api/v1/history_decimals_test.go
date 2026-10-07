@@ -98,8 +98,8 @@ func TestHistory_ClassicDecimalsNoReaderConsult(t *testing.T) {
 	}
 }
 
-// TestHistory_OffChainSourceDecimals is the regression test for the cold
-// audit of 2026-08-04.
+// TestHistory_OffChainSourceDecimals is the regression test for the
+// off-chain decimals divisor.
 //
 // base_decimals/quote_decimals are documented as THE divisor for turning
 // a row's raw amount into whole units, and they were resolved once per
@@ -112,7 +112,7 @@ func TestHistory_ClassicDecimalsNoReaderConsult(t *testing.T) {
 // trade by exactly 10x. `price` is scale-invariant, so nothing in the
 // response contradicted it.
 //
-// Verified live before the fix: coinbase rows served base_decimals 7
+// Failure shape: coinbase rows served base_decimals 7
 // against a parser that stamps 8.
 func TestHistory_OffChainSourceDecimals(t *testing.T) {
 	onChain := mkHistTrade(100) // Source: soroswap

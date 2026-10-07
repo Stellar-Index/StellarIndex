@@ -285,7 +285,7 @@ func TestStatusNotices_PublicUnwiredEmpty(t *testing.T) {
 	}
 }
 
-// TestStatusNotices_ListErrorMarksStale pins RLT-465: a ListActive
+// TestStatusNotices_ListErrorMarksStale pins that a ListActive
 // failure must not be byte-identical to a genuine empty list on the
 // wire — flags.stale distinguishes "nothing to announce" from
 // "couldn't ask".

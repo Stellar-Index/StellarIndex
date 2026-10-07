@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// GH-628: the operator kill switch answered 204 and wrote a key.revoke
+// The operator kill switch must not answer 204 and wrote a key.revoke
 // audit row for a revoke that matched nothing, so an on-call engineer
 // who mistyped one character of a leaked key's identifier was told the
 // incident was contained while the key kept authenticating. Driven

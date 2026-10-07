@@ -60,7 +60,7 @@ func (f *fakeIssuersUpstream) ListIssuers(ctx context.Context, limit int) ([]tim
 
 // TestCachedIssuersReader_HitsCachedValue — once warmed the upstream
 // must NOT be called again within the TTL window. This is the cache-
-// aside path F-0011 was about: the second request must NOT pay the
+// aside path: the second request must NOT pay the
 // 196ms+ HashAggregate scan.
 func TestCachedIssuersReader_HitsCachedValue(t *testing.T) {
 	up := &fakeIssuersUpstream{}

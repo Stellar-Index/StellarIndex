@@ -247,10 +247,10 @@ func readPriceStreamFrame(t *testing.T, br *bufio.Reader, timeout time.Duration)
 }
 
 // TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes — the
-// alias fan-out regression (cold audit 2026-08-03 finding 2): the
+// alias fan-out regression: the
 // aggregator publishes XLM's CEX-fed VWAP under `crypto:XLM/fiat:USD`,
-// and pre-fix a `?asset=native` subscriber got a healthy 200 and zero
-// frames forever. The handler now subscribes to every alias spelling
+// a `?asset=native` subscriber would otherwise get a healthy 200 and zero
+// frames forever. The handler subscribes to every alias spelling
 // of the pair.
 func TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes(t *testing.T) {
 	hub := streaming.NewHub(0)
@@ -345,10 +345,10 @@ func framesUntil(t *testing.T, br *bufio.Reader, sentinel string) []string {
 	}
 }
 
-// TestPriceStream_OneSeriesPerConnection is the #752 regression. The
+// TestPriceStream_OneSeriesPerConnection is the one-series regression. The
 // aggregator prices XLM as both `native` (SDEX) and `crypto:XLM` (CEX),
 // and publishes each on its own topic every bucket. A connection
-// subscribes to both spellings, so pre-fix it received two price_update
+// subscribes to both spellings, so it could receive two price_update
 // frames per bucket from two independent series — a sawtooth between
 // SDEX and CEX prices. It must follow ONE series: the caller's own
 // spelling first, the order /v1/price?window= reads the cache in.
@@ -386,7 +386,7 @@ func TestPriceStream_OneSeriesPerConnection(t *testing.T) {
 }
 
 // TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet — the other half
-// of the #752 contract: once the preferred spelling has published nothing
+// of the one-series contract: once the preferred spelling has published nothing
 // for cachekeys.VWAPMaxAge, /v1/price?window= serves the alias key, and
 // so does the stream (the zero-frames fix must survive series selection).
 func TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet(t *testing.T) {
@@ -443,9 +443,9 @@ func TestPriceStream_WithheldMarkerFollowsTheSelectedSeries(t *testing.T) {
 	})
 }
 
-// TestPriceStream_WindowSeparation — the window-interleave regression
-// (cold audit 2026-08-03 finding 1, r1-confirmed): the aggregator
-// publishes one bucket per (pair, window) and pre-fix all three landed
+// TestPriceStream_WindowSeparation — the window-interleave regression:
+// the aggregator
+// publishes one bucket per (pair, window) and without separation all three land
 // on ONE topic. A subscriber following the default 300s series must
 // NOT receive the 3600s or 86400s publishes.
 func TestPriceStream_WindowSeparation(t *testing.T) {

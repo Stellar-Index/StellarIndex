@@ -25,7 +25,7 @@ func (r *fakeDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([]t
 
 // TestPublisher_NormalizesNonstandardDecimals proves the SSE closed-bucket
 // producer applies the SAME dex-nonstandard-decimals correction
-// /v1/price applies before serving (RLT-353): reader.LatestPrice returns
+// /v1/price applies before serving: reader.LatestPrice returns
 // the RAW closed-1m ratio, and without normalization the wire payload
 // would carry that raw (wrong by 10^11) value instead of the true price.
 //

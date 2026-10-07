@@ -339,9 +339,9 @@ func TestHandleCursors_InvalidMaxAge(t *testing.T) {
 }
 
 // ?source=<name> isolates one source — the live indexer cursor
-// without the ~50 backfill rows alongside it. Caught from a r1
-// audit: the param was being silently ignored, so an operator
-// asking for ?source=ledgerstream got everything.
+// without the ~50 backfill rows alongside it. The
+// param must not be silently ignored, or an operator
+// asking for ?source=ledgerstream gets everything.
 func TestHandleCursors_SourceFilter(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Cursors: &stubCursorsReader{
@@ -433,7 +433,7 @@ func TestHandleCursors_NoReaderReturns503(t *testing.T) {
 
 // TestHandleCursors_StatusActive — `?status=active` filters out
 // rows older than 10 minutes (the active/stale boundary). Matches
-// the R-015 ask: completed backfill cursors that linger in the
+// the intent: completed backfill cursors that linger in the
 // table shouldn't dominate the listing.
 func TestHandleCursors_StatusActive(t *testing.T) {
 	srv := v1.New(v1.Options{
@@ -556,8 +556,8 @@ func TestHandleCursors_StatusActiveCombinesWithMaxAge(t *testing.T) {
 	}
 }
 
-// F-0094 closure (2026-05-28): under the cascade, /v1/diagnostics/cursors
-// returned a generic 500 that didn't distinguish "postgres briefly
+// Under a cascade, a generic 500 from /v1/diagnostics/cursors
+// would not distinguish "postgres briefly
 // stalled" from "endpoint permanently broken." Operators couldn't tell
 // whether to retry or escalate. Map transient + timeout shapes to
 // 503 with a clearer detail string.

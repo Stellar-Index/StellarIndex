@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestSortTradesChronological_NeutralToVenueName pins GH-1154 on the
+// TestSortTradesChronological_NeutralToVenueName pins, on the
 // fiat point path: the merged window's slice order picks the served
 // open/close, so inside one ledger close it must follow tx_hash and not
 // the alphabetical rank of the venue names. Swapping the names must leave

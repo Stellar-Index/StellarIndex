@@ -13,7 +13,7 @@ import (
 // hint: writeStream must emit `retry: 5000` before the `:connected`
 // prelude comment and before the first real event, so a client that
 // disconnects immediately after connecting still learned the
-// server's requested reconnect backoff (Refs #1035).
+// server's requested reconnect backoff.
 func TestWriteStream_EmitsRetryInPrelude(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

@@ -13,7 +13,7 @@ import (
 // established for the bespoke and network-throughput blocks, applied to
 // the roster read (W1.3).
 //
-// Why: handleProtocolsList used to call protocolRoster PER protocol on
+// Why: handleProtocolsList must not call protocolRoster PER protocol on
 // every origin miss, with no server-side cache — only Cache-Control:
 // max-age=60. For a registry-empty source that roster is a
 // `SELECT DISTINCT … LIMIT 5000` full served-tier scan, so the loop was

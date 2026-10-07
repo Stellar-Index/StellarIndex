@@ -309,16 +309,15 @@ func (u *swrStaleMarketsUpstream) DistinctPairsExt(ctx context.Context, cursor s
 	return u.stubMarketsReader.DistinctPairsExt(ctx, cursor, limit, order)
 }
 
-// TestMarkets_SWRStaleServeStampsHonestFlags is the W8-reconciliation
-// regression (#32 item 1a): /v1/markets served from the cache's
+// TestMarkets_SWRStaleServeStampsHonestFlags is the
+// regression: /v1/markets served from the cache's
 // stale-while-revalidate path — an expired entry served while its
 // background refresh keeps failing — MUST report flags.stale=true and
 // as_of = the served rows' ACTUAL observation time, never stale:false /
 // as_of=now over arbitrarily-old rows. A fresh serve stays stale:false
-// with a recent as_of. Mirrors the /v1/contracts REC-05 stale-serve test
-// (commit bb64ff3c).
+// with a recent as_of. Mirrors the /v1/contracts stale-serve test.
 //
-// Red against pre-fix code: handleMarkets built Envelope{Flags:Flags{}}
+// Red against code that dropped the flags: handleMarkets built Envelope{Flags:Flags{}}
 // and writeEnvelope stamped as_of=now, so the stale serve reported
 // stale:false and an as_of that did NOT equal the old fill time.
 func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
@@ -450,10 +449,10 @@ func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	}
 }
 
-// TestMarkets_LastTradeAtVsBucketCloseAt — F-0065 fix (2026-05-27).
+// TestMarkets_LastTradeAtVsBucketCloseAt.
 // Pins the wire contract: BOTH `last_trade_at` (minute-precise) AND
 // `bucket_close_at` (daily bucket-start) ship on every row, and they
-// are distinct values. Pre-fix the `last_trade_at` field carried the
+// are distinct values. The `last_trade_at` field must not carry the
 // daily bucket-start (midnight UTC) for ALL rows; clients computing
 // staleness saw spuriously-large values. The test feeds a stub where
 // `last_trade_at` is mid-bucket and `bucket_close_at` is midnight,
@@ -729,7 +728,7 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 
 // TestPools_InvalidBase400 / TestPools_InvalidQuote400 — the AND-shape
 // base/quote filters flowed raw into the trades-hypertable scan; a
-// malformed value now 400s up front (P2/C3-9, audit-2026-07-16) rather
+// malformed value 400s up front rather
 // than reaching the query. Mirrors the `?asset=` guard.
 func TestPools_InvalidBase400(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})

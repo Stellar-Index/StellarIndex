@@ -10,9 +10,9 @@ import (
 )
 
 // TestOpenAPIProtocolCategoryEnumMatchesRegistry pins ProtocolRow.category's
-// wire enum to the vocabulary protocolRegistry actually emits (GH-655).
-// The spec previously listed `token` as a valid category, but no entry in
-// protocolRegistry has ever used it — a generated client had to model a
+// wire enum to the vocabulary protocolRegistry actually emits.
+// A spec listing `token` as a valid category, but no entry in
+// protocolRegistry uses it would make a generated client model a
 // value /v1/protocols can never serve.
 func TestOpenAPIProtocolCategoryEnumMatchesRegistry(t *testing.T) {
 	raw, err := os.ReadFile("../../../openapi/stellar-index.v1.yaml")

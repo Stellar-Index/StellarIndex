@@ -142,7 +142,7 @@ func rightmostUntrustedForwardedFor(xff string) string {
 		}
 		addr, err := netip.ParseAddr(entry)
 		if err != nil {
-			// A malformed hop breaks the trust chain: we can no longer
+			// A malformed hop breaks the trust chain: we cannot
 			// be sure entries to its left are attacker-controlled vs
 			// trusted, so stop and let the caller fall back to the
 			// direct peer rather than trusting a guessed value.

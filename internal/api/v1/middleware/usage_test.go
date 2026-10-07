@@ -121,7 +121,7 @@ func TestUsageTracker_FamilyAndOutcome(t *testing.T) {
 
 // TestUsageTracker_OutcomeClasses — every status lands in its detail
 // class, and only CALLER-caused outcomes advance the legacy billable
-// total. wantBillable is 0 for 5xx: that used to be 1, which is
+// total. wantBillable is 0 for 5xx: counting it as 1 would be
 // exactly the COR-05 defect (a platform failure charged to the
 // customer's monthly quota) — see
 // TestUsageTracker_ServerErrorExcludedFromLegacyTotal.
@@ -446,7 +446,7 @@ func TestUsageTracker_AnonymousSkipped(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_PanickingHandlerStillCounted — GH-1276. Recoverer
+// TestUsageTracker_PanickingHandlerStillCounted. Recoverer
 // sits OUTSIDE UsageTracker in the real stack (server.go), so a
 // panicking handler unwinds past the tracker's post-dispatch
 // bookkeeping. Straight-line code after next.ServeHTTP never runs on

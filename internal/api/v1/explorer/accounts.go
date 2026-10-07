@@ -54,7 +54,7 @@ const accountScopeAll = "all"
 // `address`/`counterparty` columns are keyed on G-strkey equality (see
 // baseAccountAddress in internal/sources/classicmovements/decode.go), so a
 // query for the M-form must resolve or every muxed-attributed row is
-// unreachable (GH-1118). ok=false (after a problem+json) on an invalid strkey.
+// unreachable. ok=false (after a problem+json) on an invalid strkey.
 func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	g := r.PathValue("g_strkey")
 	if canonical.IsMuxedAccount(g) {

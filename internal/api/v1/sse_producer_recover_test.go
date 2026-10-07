@@ -10,9 +10,8 @@ import (
 	"testing"
 )
 
-// TestSSEProducerGoroutinesRecover is a guard-coverage test for AGT-12
-// (audit-2026-07-24): every goroutine this package spawns MUST register a
-// recover().
+// TestSSEProducerGoroutinesRecover is a guard-coverage test: every goroutine
+// this package spawns MUST register a recover().
 //
 // Why this shape rather than a behavioural test. Detached goroutines here are
 // started as bare `go s.someMethod(...)` calls or inline `go func(){...}()`

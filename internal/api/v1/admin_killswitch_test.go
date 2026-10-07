@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// C3-010 (audit-2026-07-23) — the operator kill switch.
+// The operator kill switch.
 //
 // The suspension machinery existed and was enforced on the read paths,
 // but NOTHING in the HTTP surface could trigger it: PATCH
@@ -188,7 +188,7 @@ func adminDelete(t *testing.T, url, reason string) *http.Response {
 }
 
 // TestAdminKeysRevoke_KillsALeakedKey is the key-half regression: an
-// operator can revoke a credential belonging to somebody else. Pre-fix
+// operator can revoke a credential belonging to somebody else. Without the kill switch
 // there was no route at all — self-service revoke is scoped to the
 // caller's own identifier, so killing a leaked key required the victim's
 // credential or a hand-edit of Redis.

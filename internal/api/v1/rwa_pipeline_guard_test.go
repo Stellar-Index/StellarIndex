@@ -125,7 +125,7 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	}
 }
 
-// TestDirectoryTagsPrecedeTheListingValuationArm — RLT-313 / RLT-337.
+// TestDirectoryTagsPrecedeTheListingValuationArm.
 //
 // applyListingValuations refuses a row whose issuer carries a scam-class
 // directory tag, and it reads that tag from AssetDetail.IssuerDirectoryTags

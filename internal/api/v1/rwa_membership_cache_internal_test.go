@@ -21,14 +21,14 @@ import (
 // payload (1.18M currency entries on r1) plus the curated-directory
 // walk, ~11.5 s, behind a ten-minute TTL — and it was rebuilt INLINE on
 // whichever request happened to find the entry expired. On r1
-// (2026-09-15) that made the route perfectly bimodal: 39 of 43 requests
+// that made the route perfectly bimodal: 39 of 43 requests
 // under 1 s, the other 4 over 10 s. With no more than one page load per
 // TTL window it is roughly one visitor in ten who waits twelve seconds
 // for a page the other nine get in a third of a second.
 //
 // Like the logo-map tests, the assertions need no timing heuristic: the
 // scan is held open for the whole test, so if the read returns at all
-// it returned without waiting for the rebuild. Against the pre-fix code
+// it returned without waiting for the rebuild. Against an unguarded rebuild
 // they do not fail on a threshold — they block until the outer timeout.
 
 // blockingRWASep1Reader stands in for that scan: it announces that it

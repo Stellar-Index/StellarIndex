@@ -629,7 +629,7 @@ func TestAccountCohortView_FlowAssetsTruncatedFlag(t *testing.T) {
 	}
 }
 
-// GH-646: price_cap is spec-required and non-omitempty, so an uncovered
+// price_cap is spec-required and non-omitempty, so an uncovered
 // cohort must still report the real cap rather than the zero value — a
 // budget-exhausted price walk (which also serves 0 priced/unpriced) must
 // stay distinguishable from "no market" by price_cap alone.

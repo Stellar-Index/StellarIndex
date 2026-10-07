@@ -125,8 +125,8 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 	}
 }
 
-// TestTipProducerRegistry_CeilingBoundsDetachedProducers is the wave-D
-// UNAUTH-DOS-1 regression.
+// TestTipProducerRegistry_CeilingBoundsDetachedProducers is the
+// unauthenticated-DoS regression guard.
 //
 // The SSE caps count CONNECTIONS, but a tip-stream connection also mints
 // a DETACHED producer: context.Background(), outliving the request by
@@ -144,7 +144,7 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 // never add to them. Refusal (and its count) is for a registry whose
 // every slot is subscribed.
 //
-// Proven red against the pre-fix registry: acquire always succeeded, so
+// Red against a registry with no ceiling: acquire always succeeds, so
 // running() reached the full attempt count.
 func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	const ceiling = 8

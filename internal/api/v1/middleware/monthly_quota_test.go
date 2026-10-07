@@ -102,7 +102,7 @@ func TestMonthlyQuota_RejectsAtCap(t *testing.T) {
 	}
 }
 
-// TestMonthlyQuota_RejectsAtCap_RetryAfterToMonthBoundary (GH-800):
+// TestMonthlyQuota_RejectsAtCap_RetryAfterToMonthBoundary:
 // the monthly-quota-exceeded 429 must carry Retry-After so a
 // spec-following client backs off until the counter can actually
 // satisfy the cap, rather than retrying tightly for the rest of the
@@ -173,8 +173,7 @@ func TestMonthlyQuota_AnonymousPassThrough(t *testing.T) {
 	}
 }
 
-// TestMonthlyQuota_FailOpenIncrementsCounter is the C3-082 regression
-// (audit-2026-07-23).
+// TestMonthlyQuota_FailOpenIncrementsCounter is the regression test.
 //
 // The fail-open above is correct and stays — but before this counter the
 // only trace that the metered-spend ceiling had switched itself OFF was a

@@ -33,7 +33,7 @@ var integerVolumeText = regexp.MustCompile(`^[0-9]+$`)
 // (native CAGG pass-through) and one fiat-quoted (combined) series over the
 // SAME stored bar and holds v_base/v_quote to one shape: integer
 // smallest-unit text. The CAGG's quote_vol is vwap*volume, so its NUMERIC
-// text carries sub-unit fractional digits; the native path used to pass that
+// text carries sub-unit fractional digits; the native path would pass that
 // through verbatim while the combined path rendered v_quote at a fixed 10dp.
 func TestOHLCSeriesVolumeFormatMatchesAcrossPaths(t *testing.T) {
 	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

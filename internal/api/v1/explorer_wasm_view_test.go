@@ -27,7 +27,7 @@ func TestExplorer_ContractWasm_OK(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	// #1070: this URL is keyed on contract_id, not the wasm hash it
+	// This URL is keyed on contract_id, not the wasm hash it
 	// returns, so a day-long "immutable" cache served pre-upgrade
 	// bytecode for up to 24h after an in-place upgrade. Bounded to the
 	// standard catalogue band instead.
