@@ -3,7 +3,7 @@
 # pass scripts/dev/verify.sh, in one command, and report EVERY missing item
 # in one pass rather than one per twelve-minute run.
 #
-# The cost of not having this, measured on 2026-09-07: two full verify.sh
+# The cost of not having this, measured once: two full verify.sh
 # runs, each failing on a different missing install about ten minutes in and
 # in a section unrelated to the change under test.
 #

@@ -3,7 +3,7 @@
 # does it still carry work main does not have, and would applying it DESTROY
 # anything?
 #
-# WHY THIS EXISTS (2026-09-08). Assessing a stale branch with
+# WHY THIS EXISTS. Assessing a stale branch with
 #
 #     git diff --stat main...branch -- <paths>
 #
@@ -23,8 +23,7 @@
 # Judge it by whether its tip is an ancestor of main, by `main..branch`
 # (two-dot) for commits, and by the DELETE lines in `git diff --name-status`.
 #
-# ANCESTRY IS NOT THE ONLY WAY WORK LANDS (2026-09-09). Over the 143 local
-# branches this repository had that day, the ancestor test called 10 of them
+# ANCESTRY IS NOT THE ONLY WAY WORK LANDS. Over 143 local branches once, the ancestor test called 10 of them
 # LANDED. A per-branch content audit put the real figure at 106. The gap is
 # how this repository merges: a rebase and a squash PR both re-author the
 # commit, so the tip is not an ancestor of the base and every file reads as
@@ -42,8 +41,7 @@
 # still read as unlanded here, correctly — the script will not guess. Settle
 # them by hand: find the squash (`git log --oneline BASE --grep=<issue>`),
 # then confirm the branch's added lines are in the base's tree before
-# deleting. docs/operations/branch-triage.md records that procedure and the
-# 2026-09-09 pass that applied it.
+# deleting. docs/operations/branch-triage.md records that procedure.
 #
 # Usage:
 #   scripts/dev/branch-status.sh                 every local branch
@@ -52,8 +50,8 @@
 #   scripts/dev/branch-status.sh --no-patch-id   ancestry only; skip git cherry
 #   BASE=origin/main scripts/dev/branch-status.sh
 #
-# `git cherry` costs one patch id per commit the branch is BEHIND. Measured
-# 2026-09-09: 38s for 143 branches averaging 400 behind, against 9s without.
+# `git cherry` costs one patch id per commit the branch is BEHIND. Measured:
+# 38s for 143 branches averaging 400 behind, against 9s without.
 # --no-patch-id buys that back at the cost of the rebase verdict.
 #
 # Exit status is a REPORT, not a judgement: 0 always, unless a branch would

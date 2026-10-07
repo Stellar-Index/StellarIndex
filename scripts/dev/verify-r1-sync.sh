@@ -50,7 +50,7 @@ for f in configs/prometheus/rules.r1/*.yml; do
     FAILS=$((FAILS + 1))
   fi
 done
-# Pre-deploy migration check (added 2026-05-28).
+# Pre-deploy migration check.
 #
 # deploy.yml syncs binaries only — Postgres migrations are operator-
 # manual per feedback_migrations_not_auto_deployed. A binary release

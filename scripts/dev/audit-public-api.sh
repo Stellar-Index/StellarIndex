@@ -5,7 +5,7 @@
 # Scalar docs UI's "Send" button uses these examples verbatim; if
 # they don't return 200, the docs are misleading users.
 #
-# Reported 2026-05-08: many Scalar default test requests returned
+# Why: many Scalar default test requests returned
 # 4xx because OpenAPI examples used short symbols like `USDC` /
 # `XLM` against handlers that strict-validate canonical asset
 # IDs. This script catches that class of regression.
@@ -67,7 +67,7 @@ audit() {
       "import sys,json; d=json.load(sys.stdin); print(d.get('detail',d.get('title','?'))[:160])" \
       2>/dev/null)
     # $body is an unbounded HTTP response body, so `| head -c` can EPIPE the
-    # writer under pipefail (#475). Slice it in the shell instead.
+    # writer under pipefail. Slice it in the shell instead.
     [ -z "$detail" ] && detail=${body:0:120}
     printf "  %sFAIL%s %-44s %sHTTP %s — %s%s\n" "$RED" "$OFF" "$label" "$DIM" "$status" "$detail" "$OFF"
     FAILS=$((FAILS + 1))
@@ -88,7 +88,7 @@ audit "incidents"              "/v1/incidents"
 
 # Catalogue
 # /v1/coins + /v1/currencies were removed in rc.48; the unified
-# /v1/assets surface replaces both. F-1204 (codex audit-2026-05-12).
+# /v1/assets surface replaces both.
 audit "assets (5)"             "/v1/assets?limit=5"
 audit "assets/{id}=native"     "/v1/assets/native"
 audit "assets metadata=native" "/v1/assets/native/metadata"

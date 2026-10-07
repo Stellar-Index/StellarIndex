@@ -193,7 +193,7 @@ done < <(printf '%s\n' "${RESULTS[@]}" | sort -t'|' -k1,1nr)
 echo
 # sigpipe-ok: RESULTS holds one short line per swept route (<100 of them,
 # ~80 bytes each) — far under the 64 KiB pipe buffer, so head cannot
-# close the pipe before sort finishes (#475).
+# close the pipe before sort finishes.
 slow=$(printf '%s\n' "${RESULTS[@]}" | sort -t'|' -k1,1nr | head -1)
 printf '%sslowest: %s (p95 %s ms)%s\n' "$B" \
   "$(echo "$slow"|cut -d'|' -f2)" "$(echo "$slow"|cut -d'|' -f1)" "$O"
