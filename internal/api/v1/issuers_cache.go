@@ -41,8 +41,9 @@ import (
 //
 // Single-flight: concurrent callers during a refetch share one
 // upstream call. Same write-on-success / delete-on-error /
-// waiter-err-pointer pattern as CachedMarketsReader, so a waiter
-// never dereferences an entry the leader already removed.
+// waiter-err-pointer pattern as CachedMarketsReader: a waiter holds its
+// own pointer to the entry, so it reads the leader's error even after
+// the leader removed that entry from the map.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration
