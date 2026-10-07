@@ -26,7 +26,7 @@ import (
 // policy is on production. They are the mirrors of
 // TestXLMBaseRestampChunks_RestampsInsideACompressedChunk, and they exist
 // for the same reason: an in-place UPDATE into a compressed chunk
-// measured ~1,574 rows/min on 2026-09-03, and these two populations are
+// measured ~1,574 rows/min, and these two populations are
 // ~18.0M and ~12.6M rows.
 //
 // Each one pins the same four things:

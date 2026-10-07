@@ -317,13 +317,11 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 	t.Run("soroban LCM with comet POOL.swap lands Trade", func(t *testing.T) {
 		dsDir := t.TempDir()
 
-		// Pool contract ID — MUST be the curated backstop pool since the
-		// 2026-07-08 contract-identity gate (ADR-0035/0040, CS-026): comet
+		// Pool contract ID — MUST be the curated backstop pool: the
+		// contract-identity gate (ADR-0035/0040) applies, and comet
 		// Matches() rejects any emitter outside comet.MainnetGatedSet, so a
-		// synthetic well-formed address no longer lands a Trade (this test
-		// caught exactly that on the first post-gate CI run). Using the
-		// production curated pool also makes the e2e truer: the gate itself
-		// is now in the exercised path.
+		// synthetic well-formed address would not land a Trade. Using the
+		// production curated pool also keeps the gate itself in the exercised path.
 		poolRaw, err := strkey.Decode(strkey.VersionByteContract, comet.MainnetBackstopPool)
 		if err != nil {
 			t.Fatalf("decode curated pool strkey: %v", err)
@@ -532,7 +530,7 @@ func runIngest(
 	err := ledgerstream.Stream(ctx, lsCfg, from, to, func(lcm xdr.LedgerCloseMeta) error {
 		outputs, err := disp.ProcessLedger(lcm, testPassphrase)
 		if err != nil {
-			// FAIL, don't log-and-continue (audit-2026-06-14 A20): this is the
+			// FAIL, don't log-and-continue: this is the
 			// load-bearing Galexie→ledgerstream→dispatcher→sink end-to-end test.
 			// Downgrading a ProcessLedger error to t.Logf meant a real decode
 			// regression (or a fixture that stops matching after an SDK bump)

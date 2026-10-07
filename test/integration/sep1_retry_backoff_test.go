@@ -40,7 +40,7 @@ func TestSep1RetryBackoff(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	// Real r1 residue (2026-09-12). coinonstellar.com is NXDOMAIN;
+	// Real r1 residue. coinonstellar.com is NXDOMAIN;
 	// centre.io is the Circle toml the USDC issuer resolves through;
 	// litemint.store fronts a large family of parked subdomains.
 	const (

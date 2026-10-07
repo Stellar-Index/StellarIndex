@@ -16,12 +16,12 @@ import (
 )
 
 // TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier is
-// the executing proof for `ch-rebuild -write -preflight` (RLT-381), driven
+// the executing proof for `ch-rebuild -write -preflight`, driven
 // through the real subcommand on real TimescaleDB.
 //
 // scripts/ops/ch-rebuild-projected.sh DELETEs a window and only then asks
-// ch-rebuild to re-derive it. The refusals used to live inside that second
-// step, so a guard doing its job left the window empty. The preflight lets
+// ch-rebuild to re-derive it. The refusals must not live inside that second
+// step, or a guard doing its job leaves the window empty. The preflight lets
 // the script ask first — which is only safe if the preflight:
 //
 //  1. really runs the guards — a live projector cursor below -to, and a

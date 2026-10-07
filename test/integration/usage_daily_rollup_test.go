@@ -44,8 +44,8 @@ func TestUsageDailyRollupReSweepIdempotent(t *testing.T) {
 
 	// day is now-relative: ReadUsageDaily reads a trailing now-anchored
 	// window, so a hardcoded date is a calendar time-bomb — the original
-	// "2026-07-29" literal aged out of the 7-day window on 2026-08-05 and
-	// the test started failing untouched (ci-health flood, 2026-08-08).
+	// window, so a hardcoded date ages out of the window and the test starts
+	// failing untouched.
 	day := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	const subj = "key:kid_bill_1"
 

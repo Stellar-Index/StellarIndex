@@ -12,7 +12,7 @@ import (
 )
 
 // TestFindPerSourceLedgerGapsSorobanEventsCloseTimeBound is the DB-backed
-// proof of INV-1530: soroban_events is partitioned by ledger_close_time,
+// proof that soroban_events is partitioned by ledger_close_time,
 // so the gap scan bounds that column by the close times ledger_ingest_log
 // records around [from, to]. The bound must stay correct when the census
 // has holes (the scan runs exactly when coverage may be broken): anchors

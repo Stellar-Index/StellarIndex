@@ -16,7 +16,7 @@ import (
 )
 
 // TestSEP41SupplyRollup_ResetSeenButRewriteUnseenIsNotStranded pins the
-// residual half of audit-2026-09-02 F108 that the row lock alone does not
+// residual half of the reset race that the row lock alone does not
 // close: the fold must not pair a POST-reset boundary with a PRE-rewrite
 // view of sep41_supply_events.
 //

@@ -15,12 +15,11 @@ import (
 )
 
 // TestAssetRegistry_DuplicateReplayDoesNotMutateCounters pins the
-// F-1243 (codex audit-2026-05-13) end-to-end counter contract:
+// end-to-end counter contract:
 // replaying a previously-stored trade must NOT advance the
 // `classic_assets.observation_count` or `last_seen_*` columns,
 // even when the in-process dedupe cache is cold (the simulated-
-// process-restart shape that the audit specifically called out as
-// missing closure-grade evidence).
+// process-restart shape).
 //
 // The audit's concern was: a backfill operator (or restarted
 // indexer) that re-encounters already-stored trades should not

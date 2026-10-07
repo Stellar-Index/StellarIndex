@@ -299,8 +299,8 @@ func insertSAC(t *testing.T, ctx context.Context, store *timescale.Store, contra
 	}
 }
 
-// TestClaimableSameLedgerTieBreak pins the read-path tie-break added
-// 2026-07-28. Two rows can share a (claimable_id, ledger): an ops seed
+// TestClaimableSameLedgerTieBreak pins the read-path tie-break.
+// Two rows can share a (claimable_id, ledger): an ops seed
 // stamps SeedIntraLedgerSeq (MaxUint32, "authoritative reconstructed final
 // state") while the live observer writes the real per-ledger ordinal. They
 // do NOT collide on the natural key when observed_at differs, so both rows
@@ -362,7 +362,7 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 // freshness anchor must be the slowest component OBSERVER's watermark, not
 // the asset's last activity in that component.
 //
-// This reproduces the exact production shape from 2026-07-28. All four
+// This reproduces the production shape. All four
 // observers are current (they have written at ledger ~5000 for SOME asset),
 // but the quiet asset's own last claimable event is ancient. That is the
 // normal, healthy state for a write-once entry type — nobody created or

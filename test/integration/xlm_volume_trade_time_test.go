@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestXLMLegVolume_TradeTimeNeverSpot pins the volume readers that used to
+// TestXLMLegVolume_TradeTimeNeverSpot pins the volume readers that must not
 // value an unpriced XLM leg at today's XLM/USD: the per-source breakdowns
 // exclude it and count it, and the MEV scan values it at the anchor of the
 // trade's own minute, or not at all when that anchor is over an hour old.

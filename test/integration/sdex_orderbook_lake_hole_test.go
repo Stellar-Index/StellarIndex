@@ -17,15 +17,15 @@ import (
 )
 
 // TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled is the served-data proof
-// for the order book's cursor discipline (audit 2026-09-02, F162).
+// for the order book's cursor discipline.
 //
 // The LiveSink drops a WHOLE ledger under buffer pressure, leaving a hole in
-// the lake that ch-live-catchup back-fills minutes later. The pre-fix reader
-// bounded its incremental read by max(ledger_seq) of ledger_entry_changes,
-// so Advance read straight across the hole and committed the cursor PAST it;
-// the healed rows then landed BELOW the cursor and were never read. An offer
-// removed in the dropped ledger stayed on /v1/sdex/orderbook as resting
-// liquidity — and an offer created in it never appeared — until the API
+// the lake that ch-live-catchup back-fills minutes later. A reader that
+// bounds its incremental read by max(ledger_seq) of ledger_entry_changes
+// lets Advance read straight across the hole and commit the cursor PAST it;
+// the healed rows then land BELOW the cursor and are never read. An offer
+// removed in the dropped ledger would stay on /v1/sdex/orderbook as resting
+// liquidity — and an offer created in it would never appear — until the API
 // process restarted.
 //
 // This drives the REAL reader and the REAL cache through the REAL endpoint

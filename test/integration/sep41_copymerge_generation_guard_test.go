@@ -11,16 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCopyMergeSEP41_GenerationGuard is the proven-red DB-backed test for
-// TV-1/TV-3 (audit-2026-08-14): the BULK COPY+merge writers used by
-// ch_rebuild (CopyMergeSEP41SupplyEvents / CopyMergeSEP41Transfers) must
-// carry the SAME INV-3 generation-guarded corrective-upsert semantics as
-// their per-row siblings, not the old generation-0 `ON CONFLICT DO NOTHING`.
+// TestCopyMergeSEP41_GenerationGuard is the proven-red DB-backed test that
+// the BULK COPY+merge writers used by ch_rebuild (CopyMergeSEP41SupplyEvents /
+// CopyMergeSEP41Transfers) carry the SAME generation-guarded corrective-upsert
+// semantics as their per-row siblings, not generation-0 `ON CONFLICT DO NOTHING`.
 //
-// Before the fix the bulk path (a) omitted derive_generation from the COPY
-// column list, so every bulk row defaulted to the migration-0110 DEFAULT 0,
-// and (b) merged DO NOTHING, so a corrected re-derive of a wrong money value
-// silently no-op'd against an existing PK. On the unfixed code:
+// A naive bulk path (a) omits derive_generation from the COPY column list, so
+// every bulk row takes the column DEFAULT 0, and (b) merges DO NOTHING, so a
+// corrected re-derive of a wrong money value silently no-ops against an
+// existing PK. With that shape:
 //   - "corrective re-derive lands" goes RED (DO NOTHING keeps the wrong V1).
 //   - "gen-0 replay cannot revert" would trivially pass on DO NOTHING but is
 //     kept as the companion assertion that pins the guard direction once the

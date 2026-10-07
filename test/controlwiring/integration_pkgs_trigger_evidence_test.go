@@ -27,15 +27,14 @@ import (
 //   - scripts/ci/prepush-integration-required.sh — whether `make prepush`
 //     adds the Docker-backed tests locally.
 //
-// Until this guard, none of them listed scripts/ops, cmd/stellarindex-ops,
+// Without this guard, none of them would list scripts/ops, cmd/stellarindex-ops,
 // internal/ops/archive or (in CI) test/harness. So a change confined to
 // scripts/ops/fx-history-backfill/main.go — e.g. dropping the
-// SetDeriveGeneration call that generation_test.go exists to pin, the INV-3
-// money invariant that operator fx_quotes corrections carry a positive
-// derive generation — COMPILED the test (the compile gate is unconditional)
-// and EXECUTED it nowhere: not in PR CI, not in the local pre-push gate.
-// F-1334 (cmd/stellarindex-ops) and W6-tst-1 (internal/ops/archive) were the
-// same hole, found one package at a time; this closes the class.
+// SetDeriveGeneration call that generation_test.go exists to pin, the money
+// invariant that operator fx_quotes corrections carry a positive
+// derive generation — would COMPILE the test (the compile gate is unconditional)
+// and EXECUTE it nowhere: not in PR CI, not in the local pre-push gate.
+// This closes the class of one-package-at-a-time holes.
 //
 // Untagged on purpose: it must run in the default suite, the one place a
 // newly untriggered package is guaranteed to be noticed.

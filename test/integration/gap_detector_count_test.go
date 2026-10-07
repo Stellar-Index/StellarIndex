@@ -11,12 +11,12 @@ import (
 )
 
 // TestCountDistinctLedgersSorobanEventsReadsCensus is the DB-backed
-// proof of the 2026-08-28 r1 incident fix: the soroban-events density
+// proof that the soroban-events density
 // numerator is answered by the ledger_ingest_log census (PK range scan)
 // and NOT by a scan of soroban_events. The fixture leaves soroban_events
 // EMPTY and writes a census with a known number of event-carrying
-// ledgers in the window; pre-fix the count is 0 (observed rows), post-
-// fix it is the census count. A non-overridden target over the same
+// ledgers in the window; a scan of observed rows would count 0, and the
+// census count is the right one. A non-overridden target over the same
 // table proves the generic path is untouched.
 func TestCountDistinctLedgersSorobanEventsReadsCensus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

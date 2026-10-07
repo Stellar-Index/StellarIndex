@@ -29,8 +29,8 @@ const (
 // READ side (LatestCometLiquidityFlows) + the bespokeDEX comet augment.
 // Proves empty-safe, net-flow (added − removed) with i128/NUMERIC
 // preservation, and — critically — that the surfaced depth carries the
-// CS-026 caveat (Comet is contract-identity gated as of 2026-07-08; rows
-// captured before the gate shipped predate it and were not re-verified).
+// contract-identity caveat (Comet is gated on contract identity; rows
+// captured before the gate predate it and were not re-verified).
 func TestLatestCometLiquidityFlowsAndBespoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

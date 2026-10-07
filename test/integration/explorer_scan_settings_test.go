@@ -18,8 +18,8 @@ import (
 )
 
 // TestExplorerScanQueries_ExecuteAgainstServer proves, against a REAL
-// ClickHouse server, that every scan-shaped explorer query refactored in
-// route-sweep 2026-07-29 (extracted to builders + pinned with
+// ClickHouse server, that every scan-shaped explorer query (extracted to
+// builders + pinned with
 // `SETTINGS max_threads/max_memory_usage`) still parses and executes — the
 // unit tests pin the SQL text; this pins that the text is valid ClickHouse
 // (a misplaced SETTINGS clause or a drifted placeholder count fails HERE,
@@ -71,7 +71,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	// trustline/offer scans are PK-prefix range reads (`key_xdr LIKE
 	// '<52-char real-XDR prefix>%'`, accountEntryKeyPrefix), so a synthetic
 	// placeholder key can never match and would silently skip the very path
-	// under test (CI-red 2026-07-30: the old "e5-trustline-key" seed).
+	// under test.
 	var issuerSeed [32]byte
 	issuerSeed[0] = 0xE6
 	issuer, err := strkey.Encode(strkey.VersionByteAccountID, issuerSeed[:])

@@ -16,8 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSACEvictionFallsOutOfServedSupply is the served-money proof for Q119
-// (audit-2026-09-02), end to end over real TimescaleDB:
+// TestSACEvictionFallsOutOfServedSupply is the served-money proof, end to end over real TimescaleDB:
 //
 //	LedgerCloseMeta with an evicted key
 //	  → internal/dispatcher (eviction phase)

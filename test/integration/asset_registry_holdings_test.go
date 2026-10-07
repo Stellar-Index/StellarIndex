@@ -38,7 +38,7 @@ const (
 // Franklin Templeton's BENJI is the case that surfaced it. It has more
 // trustlines than all eighteen impersonating BENJIs combined and zero rows
 // in both tables, because a money-market fund is bought and held rather
-// than day-traded. Measured on the production lake 2026-09-10: 512,496
+// than day-traded. On the production lake: 512,496
 // classic assets have a trustline, 199,793 had a registry row.
 //
 // HOW THIS FAILS WITHOUT THE FIX. Subtest "held asset with no trade is

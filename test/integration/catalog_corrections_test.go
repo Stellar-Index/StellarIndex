@@ -34,8 +34,8 @@ import (
 //     post-insert (it is valued at INSERT; NULL means "no route" and never
 //     becomes a value on its own — a consumer that polls waits forever).
 //   - aquarius_rewards_events must name twelve kinds, matching its own
-//     event_kind CHECK, and must name config_rewards — the one the old
-//     "11 kinds" list omitted.
+//     event_kind CHECK, and must name config_rewards — the one a stale
+//     "11 kinds" list would omit.
 //   - oracle_updates.contract_id must not name coinmarketcap or the retired
 //     chainlink-http spelling.
 //   - aquarius_protocol_fee.recipient must point at the `token` column

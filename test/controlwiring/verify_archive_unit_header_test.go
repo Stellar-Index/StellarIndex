@@ -23,8 +23,8 @@ import (
 // way it tells them a run has no liveness detection, so the 16h
 // wall-clock cap is load-bearing and must stay — and a cap that fires
 // mid-walk leaves the high-water unadvanced, making every subsequent
-// run a full pass. That is the 2026-05-13 incident documented a few
-// lines further down the same header.
+// run a full pass, as the same header documents a few lines further
+// down.
 //
 // The rule is mechanical: if a comment claims the unit has no watchdog
 // wiring, the unit must not wire one.

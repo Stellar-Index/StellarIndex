@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestPriceAlertsCooldownFloorBackfill pins migration 0181 (GH #810): a
+// TestPriceAlertsCooldownFloorBackfill pins migration 0181 : a
 // stored cooldown below platform.MinAlertCooldownSeconds is raised to it
 // (and its updated_at stamped), so a pre-existing 0 no longer re-fires
 // every tick; values at or above the floor are untouched.

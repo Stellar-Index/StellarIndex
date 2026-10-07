@@ -19,17 +19,12 @@ import (
 // BOTH trees (the ansible template is r1's authority; deploy/systemd
 // is the operator-facing reference copy).
 //
-// GRADUATED out of the k023evidence build tag (it lived in
-// deployed_controls_test.go) once the flag could actually be turned
-// on. It could not before: the walk runs to the galexie bucket's tip
-// while the cross-anchor mirror is filled by its own daily job, so the
-// trailing checkpoints were counted as missing archive data and the
-// flag would have failed the unit every night. Measured on r1
-// 2026-09-19, `matched=325 missed=23` with all 23 above the mirror's
-// high-water and not one hole below it. The binary now separates the
-// two (archiveMirrorCoverage), so `missed` means a hole inside the
-// mirror's own coverage and the flag reads what ADR-0017 contract 3
-// says it reads.
+// The walk runs to the galexie bucket's tip while the cross-anchor
+// mirror is filled by its own daily job, so trailing checkpoints above the
+// mirror's high-water must not count as missing archive data, or the flag
+// would fail the unit every night. The binary separates the two
+// (archiveMirrorCoverage), so `missed` means a hole inside the mirror's own
+// coverage and the flag reads what ADR-0017 contract 3 says it reads.
 //
 // The assertion reads the argv that reaches the BINARY rather than
 // scanning the file's text, because r1's unit runs through the

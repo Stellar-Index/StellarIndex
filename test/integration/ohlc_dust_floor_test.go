@@ -16,12 +16,11 @@ import (
 // Audit finding B11-F1 — dust trades set OHLC chart extremes
 // (docs/operations/finding-dust-trades-set-chart-extremes.md).
 //
-// The prices_* continuous aggregates built their OHLC extremes with NO size
-// filter, so one economically-meaningless fill set high/low for the whole
-// bucket. Production symptom (2026-07-17 06:00 UTC): the served XLM/USD low
-// was 0.1333333333 — the inverse of a SINGLE `USDC-GA5Z…/native` print of 2
-// stroops for 15 stroops (usd_volume $0.00000027, price 7.5). The real market
-// low that hour was 0.1822.
+// Without a size filter on the prices_* continuous aggregates' OHLC extremes,
+// one economically-meaningless fill sets high/low for the whole bucket.
+// Example: the served XLM/USD low was 0.1333333333 — the inverse of a SINGLE
+// `USDC-GA5Z…/native` print of 2 stroops for 15 stroops (usd_volume
+// $0.00000027, price 7.5), while the real market low that hour was 0.1822.
 //
 // Migration 0115 adds a notional floor ($0.01 of usd_volume) to the extremes
 // inside the CAGGs — it must be there, not in the serve layer, because the
@@ -180,10 +179,9 @@ func TestOHLCDustFloor_CAGGExtremes(t *testing.T) {
 // (Store.OHLCSeries — the non-fiat `?interval=` path): the crumb is stored in
 // the REVERSE direction, so `1/high_price` becomes the served LOW.
 //
-// Pre-fix this bar serves low = 0.1333333333 (1/7.5) and high = 1000 (1/0.001).
-// Post-fix it serves the real market range, low 0.1822 / high 0.1845 —
-// matching the CEX range (0.1822–0.1836) the operator measured for the
-// 2026-07-17 06:00 UTC bar.
+// Without the floor this bar serves low = 0.1333333333 (1/7.5) and high = 1000
+// (1/0.001); with it, the real market range, low 0.1822 / high 0.1845 —
+// matching the CEX range (0.1822–0.1836) measured for the same bar.
 func TestOHLCDustFloor_ServedSeriesReproducesTheWick(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
