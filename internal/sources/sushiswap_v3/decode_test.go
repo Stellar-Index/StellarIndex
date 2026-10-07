@@ -439,7 +439,7 @@ func swapBodyWithBadTick(t *testing.T, amount0, amount1 *big.Int, recipient stri
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// TestDecodeSwapFields_ToleratesMalformedUnusedFields proves RLT-066: a
+// TestDecodeSwapFields_ToleratesMalformedUnusedFields proves that a
 // malformed/missing tick (or liquidity, sqrt_price_x96, sender — none of
 // which decodeSwap reads) must not fail the whole decode and drop an
 // otherwise-good, price-forming trade. Only amount0, amount1, and

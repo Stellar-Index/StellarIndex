@@ -206,7 +206,7 @@ func TestGolden_RoundTripViaDecodeOne(t *testing.T) {
 	}
 }
 
-// ─── real-lake golden frames: V1/V2-divergent shapes (2026-07-09) ──
+// ─── real-lake golden frames: V1/V2-divergent shapes ──
 //
 // These fixtures don't fit the shared goldenFrames map (V1 fixtures
 // use the V1 contract; gulp_emissions/rw_zone/rw_zone_add arity
@@ -356,7 +356,7 @@ func TestGolden_RwZoneAdd_V2(t *testing.T) {
 }
 
 // TestDecodeRwZoneRemove_SyntheticFromSource covers bug #4.
-// rw_zone_remove has ZERO lake occurrences as of 2026-07-09 (never
+// rw_zone_remove has ZERO lake occurrences (never
 // fired on mainnet) so this is SYNTHETIC-FROM-SOURCE, not a real-lake
 // pin: the shape (topics=[sym]; data=bare Address) is taken from
 // blend-contracts-v2 backstop/src/events.rs's actual `let topics =
@@ -544,7 +544,7 @@ func TestDecodeWithdraw_Synthetic(t *testing.T) {
 		t.Fatalf("decodeWithdraw: %v", err)
 	}
 	// Amount is normalized to the TOKEN quantity (tokens_out); Amount2
-	// carries the shares burned — the opposite of the pre-fix mapping.
+	// carries the shares burned — the opposite of a naive positional mapping.
 	if d.Amount != "450" || d.Amount2 != "900" {
 		t.Errorf("Amount/Amount2 = %q/%q, want 450/900 (tokens_out/shares_burned)", d.Amount, d.Amount2)
 	}

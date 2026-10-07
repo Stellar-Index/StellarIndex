@@ -11,8 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// This file pins the supply-drift regression from audit-2026-07-23
-// DAT-10: reserves of a pool whose last liquidity is withdrawn (entry
+// This file pins a supply-drift regression: reserves of a pool whose last liquidity is withdrawn (entry
 // deleted) must stop counting toward the served supply aggregate.
 // Before the removal fix the observer emitted nothing for the deletion,
 // so the last-seen reserves stayed in Σ lp_reserve forever and
@@ -123,7 +122,7 @@ func servedLPAggregate(obs []Observation, assetKey string) *big.Int {
 	return total
 }
 
-// TestServedAggregate_ReturnsToZeroAfterFullWithdraw is the DAT-10
+// TestServedAggregate_ReturnsToZeroAfterFullWithdraw is the
 // money regression: deposit into a pool, withdraw part of it, then
 // withdraw the rest (pool entry deleted). The served Σ lp_reserve must
 // return to its pre-deposit value (zero) rather than keep counting the
@@ -151,7 +150,7 @@ func TestServedAggregate_ReturnsToZeroAfterFullWithdraw(t *testing.T) {
 		t.Fatalf("after deposit: served LP aggregate = %s, want 1000000", got)
 	}
 
-	// Ledger 150 — partial withdraw. Already handled pre-fix; anchors
+	// Ledger 150 — partial withdraw. A case that always worked; anchors
 	// that the fold tracks real values rather than always returning 0.
 	seq = 0
 	all = append(all, routeLedger(t, disp, 150, &seq,
@@ -326,8 +325,7 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	// consults hasPreImage, which does not apply lookupPreImage's ledger
 	// guard, so this is the one shape that reaches Decode unattributable
 	// — and a dropped removal over-reports supply forever, because the
-	// removal is absorbing, not a delta. It used to return (nil, nil)
-	// (cold audit 2026-08-04).
+	// removal is absorbing, not a delta; it must not return (nil, nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

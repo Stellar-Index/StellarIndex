@@ -10,7 +10,7 @@ import (
 
 // ─── real-lake golden frames (base64 XDR) ────────────────────────
 //
-// Captured 2026-07-10 via a read-only ClickHouse query against the
+// Captured via a read-only ClickHouse query against the
 // r1 raw lake (stellar.contract_events), scoped by topic_0_sym +
 // ledger_seq — see internal/sources/blend/README.md "Known gap" for
 // the evidence trail. These PIN the V1 pool-factory's simpler

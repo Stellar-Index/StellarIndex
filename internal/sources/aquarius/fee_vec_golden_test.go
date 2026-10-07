@@ -28,7 +28,7 @@ import (
 // Decoder.Matches (the registry gate) and Decoder.Decode (classify +
 // body decode + consumer.Event wrap) — asserting the exact decoded
 // FeeEvent field values. Fixtures byte-identical to r1's ClickHouse lake
-// (stellar.contract_events); captured 2026-08-18.
+// (stellar.contract_events).
 //
 // Wire shape / semantics (see decodeSetProtocolFee): the Aquarius pool
 // contract's fee API is a single set_protocol_fee_fraction /

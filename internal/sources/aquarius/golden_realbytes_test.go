@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── Golden real-lake decode-VALUE tests (DAT-15) ───────────────────
+// ─── Golden real-lake decode-VALUE tests ───────────────────
 //
 // See internal/sources/defindex/golden_realbytes_test.go for the full
 // statement of the convention. In one line: capture the EXACT on-chain
@@ -29,14 +29,13 @@ import (
 //
 // All fixtures are byte-identical to what r1's ClickHouse lake
 // (stellar.contract_events) stores; each cites its ledger_seq /
-// tx_hash / op_index / event_index for re-verification. Values were
-// captured 2026-08-17.
+// tx_hash / op_index / event_index for re-verification.
 
 // mainnetPool is a curated Aquarius pool (in MainnetPools) that emitted
 // the arity-sensitive governance events below during the protocol-wide
 // staged WASM upgrade. Because it is registered, Matches() admits its
-// pool-emitted governance events (reg.Has) — the exact path the pre-#89
-// router-only gate fail-closed into an ADR-0033 recognition gap.
+// pool-emitted governance events (reg.Has) — the exact path a
+// router-only gate fails closed into an ADR-0033 recognition gap.
 const mainnetPool = "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP"
 
 // decodeOneAdmin drives a real governance event through the production
@@ -65,7 +64,7 @@ func decodeOneAdmin(t *testing.T, ev events.Event) AdminEvent {
 }
 
 // TestGolden_aquariusPoolApplyUpgrade2Hash_ledger56505116 — the
-// headline #93 arity surface. A POOL apply_upgrade carries a
+// headline arity surface. A POOL apply_upgrade carries a
 // 2-element Vec[Bytes] (applied hash + one staged predecessor). The
 // old `len != 1` guard rejected every pool body (686 apply_upgrade
 // events / 320 pools dropped). By arity: element[0] → Target,
@@ -253,8 +252,7 @@ func TestGolden_aquariusPoolTrade_ledger55436194(t *testing.T) {
 	// Amounts: BaseAmount = sold (body[0]), QuoteAmount = bought (body[1]).
 	// Mutation guard (non-vacuous): change wantSold/wantBought by one
 	// digit, or swap wantTokenIn/wantTokenOut, and the test FAILS — the
-	// values and their positions are pinned. Demonstrated by the DAT-15
-	// build.
+	// values and their positions are pinned.
 	if got := tr.BaseAmount.String(); got != wantSold {
 		t.Errorf("BaseAmount (sold) = %q, want %q", got, wantSold)
 	}

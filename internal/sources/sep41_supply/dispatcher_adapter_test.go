@@ -317,8 +317,8 @@ func TestDecoder_DecodeNegativeAmount(t *testing.T) {
 }
 
 // TestDecoder_CounterpartyAcrossShapes pins the shape-aware counterparty
-// decode across EVERY mainnet-observed topic shape (lake-verified on r1
-// 2026-06-15). The counterparty position is NOT fixed by topic count: the
+// decode across EVERY mainnet-observed topic shape (lake-verified on r1).
+// The counterparty position is NOT fixed by topic count: the
 // legacy SAC form prefixes `admin` (counterparty at topic[2]), while the
 // CAP-67 / Whisk form (mainnet 2025-09-03, 99.96% of recent mints + 100% of
 // clawbacks) puts the counterparty at topic[1] and the sep0011_asset STRING at
@@ -327,7 +327,7 @@ func TestDecoder_DecodeNegativeAmount(t *testing.T) {
 // This supersedes the old back-compat test, whose "post-P23" fixture appended
 // sep0011 to the LEGACY admin-prefixed form (`["mint", admin, to, sep0011]`) —
 // a shape mainnet never emits — and so passed while the decoder silently
-// dropped every real CAP-67 mint + clawback (F-13xx, audit-2026-06-14).
+// dropped every real CAP-67 mint + clawback.
 func TestDecoder_CounterpartyAcrossShapes(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
 
@@ -391,7 +391,7 @@ func TestDecoder_HasI128SafeAmount(t *testing.T) {
 	}
 }
 
-// TestDecoder_PopulatesEventIndex pins F-1324: EventIndex must be
+// TestDecoder_PopulatesEventIndex pins that EventIndex must be
 // carried onto the row so multiple supply events emitted by one op
 // (mint-to-many, or a burn + clawback in one call) don't collapse on
 // the sep41_supply_events PK (migration 0057) via ON CONFLICT.

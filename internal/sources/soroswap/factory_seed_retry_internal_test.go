@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// White-box half of the RLT-416 retry regression (see
+// White-box half of the seed-retry regression (see
 // factory_seed_retry_test.go for the fake RPC and the black-box half). These
 // substitute seedSleep with a recorder, so they run instantly and can assert
 // the exact backoff schedule. Every case still goes through the exported seed

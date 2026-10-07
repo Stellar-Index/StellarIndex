@@ -20,7 +20,7 @@ import (
 //  1. The amount arrives in TWO on-wire SHAPES — a bare i128, or the
 //     CAP-67 map { amount, to_muxed_id } (decode.go:87 amountScVal). The
 //     shapes MUST agree; when they did not, 37 of 54 mints on one watched
-//     contract were dropped and mint_total went to zero (2026-07-06).
+//     contract were dropped and mint_total went to zero.
 //     A differential target proves agreement over the whole i128 domain
 //     rather than the handful of amounts a fixture picks.
 //

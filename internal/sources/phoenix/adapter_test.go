@@ -220,7 +220,7 @@ func newTestDecoder() *Decoder {
 	}))
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
 // phoenix topics are plain string tuples ANY pubnet contract can
 // emit — a perfect topic shape from an unregistered contract must
 // NOT be attributed to phoenix, while the same event from a curated
@@ -247,7 +247,7 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
-// TestGatedSet_SeedsVerifiedCompletenessContracts pins the 2026-08-18
+// TestGatedSet_SeedsVerifiedCompletenessContracts pins the
 // phoenix projection-completeness seed additions: the legacy XYK pool
 // CAZ6W4WH… and the 13 per-pool stake contracts VERIFIED genuine against
 // the r1 lake (factory pool-create co-occurrence for the pool + 11
@@ -354,8 +354,8 @@ func makeFieldEventAt(t *testing.T, fieldTopic, body, txHash, closedAt string) e
 	return ev
 }
 
-// TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep is the
-// sources-decode audit 2026-08-04 finding-1 regression: the
+// TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep is a
+// sources-decode regression: the
 // PRE-UPGRADE pool WASM (ledgers 51,019,036 → 53,134,167) emitted 7
 // field-events per swap — no "actual received amount" — so the group
 // could never Complete() and was dropped as an orphan at sweep. ALL

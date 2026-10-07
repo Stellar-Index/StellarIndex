@@ -32,7 +32,7 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // of this event within its operation's contract-event list) is the
 // cctp_events PK discriminator (migration 0112) that keeps two events of
 // the SAME event_type emitted by ONE operation from collapsing to a single
-// row (C2-13a). idx comes from the source events.Event.EventIndex, which
+// row. idx comes from the source events.Event.EventIndex, which
 // the production dispatcher populates from the LCM and the re-derive path
 // reads back from the lake's event_index column.
 func withIndex(idx int, e Event) []consumer.Event {
@@ -57,7 +57,7 @@ var cctpContracts = map[string]struct{}{
 
 // MainnetContracts returns the known Circle CCTP v2 contract set —
 // the recognition-attribution pin for the ADR-0033 catalogue
-// (board #31: without contract pinning, an unhandled cctp topic fell
+// (without contract pinning, an unhandled cctp topic falls
 // into the system-wide recognition bucket instead of capping this
 // source).
 func MainnetContracts() []string {

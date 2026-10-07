@@ -6,7 +6,7 @@ import (
 )
 
 // TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair pins
-// GH-1307: a completed swap+sync whose pair has no token mapping is
+// that a completed swap+sync whose pair has no token mapping is
 // dropped with (nil, nil) — indistinguishable from "not a trade" to
 // the caller — and must be surfaced through the dispatcher's duck-typed
 // reporter interface (mirroring EvictedOrphans) so
@@ -33,7 +33,7 @@ func TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair(t *testing.
 	}
 }
 
-// TestDecoder_EvictedOrphans_excludesBareSyncEvictions pins GH-1308: a
+// TestDecoder_EvictedOrphans_excludesBareSyncEvictions pins that a
 // bare `sync` (deposit/withdraw/skim traffic, README Q2) that ages out
 // of the correlation buffer with no preceding swap must NOT inflate
 // EvictedOrphans — that counter is the real-loss signal (a swap that

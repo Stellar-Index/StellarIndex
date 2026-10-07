@@ -13,9 +13,9 @@ import (
 // tx 3870e2fc05a8a37f7ec7b01faaf222f91a353e8ca5273afe03c86b56963ba760,
 // op 0 event 2 — a `trade` event from REGISTERED pool CCY2PXGM… whose
 // body is (sold=2, bought=0, fee=0): a genuine dust swap whose output
-// rounded to zero. First blind ledger of the 2026-08-01 full-range
+// rounded to zero. First blind ledger of the first full-range
 // completeness reconcile — 40 of its 41 undecodable-but-matched events
-// are this zero-amount class (probe over the full range, 2026-08-02:
+// are this zero-amount class (probe over the full range:
 // all 40 are bought=0 dust swaps, ledgers 53,626,410 → 57,323,650; the
 // 41st is the set_privileged_addrs v2 arity, see decode_admin_test.go).
 //

@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ─── #291: an unrepresentable ScString feed_id must not black out the batch ──
+// ─── an unrepresentable ScString feed_id must not black out the batch ──
 //
 // RedStone feed_ids arrive as `ScString` — arbitrary bytes, unbounded
 // length — not the `ScSymbol` the Reflector/Band raw path was written
@@ -23,7 +23,7 @@ import (
 // event-level refusal takes every feed dark until a code change.
 // Refusal must therefore be per-SLOT: the unrepresentable slot is
 // dropped (counted + WARN-logged), every sibling feed still lands, and
-// op_index positions are unchanged (DAT-03).
+// op_index positions are unchanged.
 
 // oneUnrepresentableFeedID returns the args + body for a three-feed
 // batch whose middle feed_id is `bad`.
@@ -93,7 +93,7 @@ func TestDecode_UnrepresentableFeedID_SkipsSlotNotEvent(t *testing.T) {
 			if !updates[1].Asset.Equal(eth) {
 				t.Errorf("updates[1].Asset = %s, want %s", updates[1].Asset, eth)
 			}
-			// DAT-03: the surviving rows keep their ORIGINAL vector
+			// Slot stability: the surviving rows keep their ORIGINAL vector
 			// slots — ETH stays at 2, it does not slide into the
 			// dropped slot 1.
 			if updates[0].OpIndex != 0 {

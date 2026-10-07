@@ -67,8 +67,8 @@ func TestDecodeInitialize_realBodies(t *testing.T) {
 // body = a single Address (the LP-share token). The base64 body is
 // concatenated in chunks so gitleaks doesn't flag the short high-entropy
 // Address XDR — it decodes identically (same convention as the pool-init
-// bodies above). This is the shape the 2026-08-18 stake-contract gated
-// seed made Matches() but decodeInitializeEvent used to error on — the 20
+// bodies above). This is the shape the stake-contract gated
+// seed makes Matches() and decodeInitializeEvent must not error on — the 20
 // undecodable-but-matched blind ledgers (first=51,572,026) in the
 // projection re-derive. It must now Decode to NO output (recognized, not
 // projected), NOT an error.
@@ -94,7 +94,7 @@ func TestDecodeInitialize_stakeContractSelfAnnounce(t *testing.T) {
 		t.Fatal("stake-contract initialize: Matches=false, want true (gated + recognised)")
 	}
 	// … but it is recognized-but-not-projected: Decode must emit NOTHING
-	// and NOT error (the pre-fix ErrMalformedPayload is what made these 20
+	// and NOT error (an ErrMalformedPayload is what would make these 20
 	// events undecodable-but-matched blind spots in the re-derive).
 	out, err := d.Decode(ev)
 	if err != nil {

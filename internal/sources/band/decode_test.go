@@ -190,7 +190,7 @@ func TestDecodeRelay_TrailingArgIgnored(t *testing.T) {
 	}
 }
 
-// TestDecodeRelay_ContractRelayerValidates pins GH-598: `relay` declares
+// TestDecodeRelay_ContractRelayerValidates pins that `relay` declares
 // `from` as a Soroban Address, so the relayer may be a contract. Every
 // decoded update must still pass OracleUpdate.Validate — the check the
 // store runs before INSERT — or the whole batch's prices are lost.
@@ -271,7 +271,7 @@ func TestDecodeForceRelay_FarFutureResolveTimeClampsToClose(t *testing.T) {
 
 // TestDecodeForceRelay_OverflowResolveTimeClampsToClose covers the u64
 // values ABOVE math.MaxInt64 (~9.2e18) that the FarFuture test (3e18)
-// does not: these wrap NEGATIVE in the int64() cast and, pre-fix,
+// does not: these wrap NEGATIVE in the int64() cast and, unguarded,
 // stamped a far-PAST time (e.g. year -267,666,662,216 for 1e19, or
 // 1969 for MaxUint64) that slipped past the old `ts.After(close+24h)`
 // guard in both directions and overflowed the timestamptz INSERT.
@@ -373,7 +373,7 @@ func TestDecodeRelay_USDSymbolSkipped(t *testing.T) {
 // Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
 // raw:<symbol> row at its own vector slot, not skipped. Before this
 // change NOTACOIN was dropped (1 update) and BTC kept OpIndex 1; BTC
-// STILL has OpIndex 1 — the raw row fills slot 0 (DAT-03: no existing
+// STILL has OpIndex 1 — the raw row fills slot 0 (no existing
 // row moves).
 func TestDecodeRelay_UnknownSymbolRecordedAsRaw(t *testing.T) {
 	args := []string{
@@ -525,9 +525,8 @@ func TestDecoder_MatchesOnlyRelayFunctions(t *testing.T) {
 // dropped, not clamped to the ledger close: relay() silently NO-OPs
 // outside that window (the tx still succeeds), so writing the update
 // anyway — even stamped at closedAt — let a rate the chain never
-// applied win our `ORDER BY ts DESC` latest-read (cold audit
-// 2026-08-03; CA2-A32-correct-2 found the clamp itself still left that
-// window open for up to one relay interval).
+// applied win our `ORDER BY ts DESC` latest-read (the
+// clamp alone still leaves that window open for up to one relay interval).
 func TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped(t *testing.T) {
 	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 

@@ -7,9 +7,9 @@ import (
 )
 
 // Golden decode tests for the eight governance/upgrade admin event
-// kinds (migration 0100, ROADMAP #89). Every topic/body blob below is
+// kinds (migration 0100). Every topic/body blob below is
 // an UNTOUCHED base64 SCVal captured from the r1 ClickHouse lake
-// (stellar.contract_events) on 2026-07-10. Provenance note: every
+// (stellar.contract_events). Provenance note: every
 // sample here comes from the FLAGGED parallel router deployment
 // (CA7RQDMM...) or an as-yet-unidentified sibling system contract —
 // see decode_admin.go's package doc for why (these kinds are rare
@@ -326,7 +326,7 @@ func TestDecodeSetPrivilegedAddrs_realFixture(t *testing.T) {
 // single 5-element `set_privileged_addrs` event (ledger 57,711,797,
 // closed 2025-06-25), which was one of the 41 blind
 // undecodable-but-matched events on aquarius's first full-range
-// completeness reconcile (2026-08-01) while the decoder pinned
+// completeness reconcile while the decoder pinned
 // arity==4.
 func TestDecodeSetPrivilegedAddrs_v2RealFixture(t *testing.T) {
 	e := &events.Event{

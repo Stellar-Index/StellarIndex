@@ -162,7 +162,7 @@ func TestDecodeSwap_withFakeDecoder(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_AmbiguousBothDirectionsRefused (audit 2026-07-31): a
+// TestDecodeSwap_AmbiguousBothDirectionsRefused: a
 // swap whose FOUR amounts are all non-zero satisfies both direction
 // arms; the old switch silently decoded it as 0→1, dropping the 1→0
 // leg. It must be refused as ErrAmbiguousSwapDirection — which wraps
@@ -204,7 +204,7 @@ func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_ThreeNonZeroLegRefused (audit 2026-08-03): a swap with
+// TestDecodeSwap_ThreeNonZeroLegRefused: a swap with
 // exactly THREE non-zero amounts (0_in, 1_in, 1_out) slips past the
 // all-four-only ambiguity guard, matches the first direction arm
 // (0_in>0 && 1_out>0), and — before this fix — decoded a trade reporting
@@ -431,7 +431,7 @@ func mustClosed(t *testing.T, e *events.Event) time.Time {
 	return ts
 }
 
-// TestDecodeSwapTaker pins the SwapEvent.to capture (2026-07-30: soroswap
+// TestDecodeSwapTaker pins the SwapEvent.to capture (soroswap
 // was the one venue with 0% trades.taker coverage — the decoder dropped
 // the on-chain recipient; a replay backfills it via taker=EXCLUDED.taker).
 func TestDecodeSwapTaker(t *testing.T) {

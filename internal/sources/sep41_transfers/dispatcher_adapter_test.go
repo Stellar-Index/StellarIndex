@@ -395,11 +395,11 @@ func TestDecoder_NameAndSource(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesOnlyWatchedContract pins F-1316: the projector
+// TestDecoder_MatchesOnlyWatchedContract pins that the projector
 // reuses this watched-set decoder so it reproduces exactly what the
 // dispatcher writes — a watched contract matches, an unwatched one does
-// not. (The pre-fix projector passed a synthetic contract that matched
-// nothing, so it wrote zero rows.)
+// not. (A projector passing a synthetic contract that matches nothing
+// writes zero rows.)
 func TestDecoder_MatchesOnlyWatchedContract(t *testing.T) {
 	const watched = "CWATCHEDCONTRACT0000000000000000000000000000000000000000"
 	dec, err := NewDecoder([]string{watched})
@@ -414,7 +414,7 @@ func TestDecoder_MatchesOnlyWatchedContract(t *testing.T) {
 	}
 }
 
-// TestDecode_PopulatesEventIndex pins F-1324/G9-02: EventIndex must be
+// TestDecode_PopulatesEventIndex pins that EventIndex must be
 // carried onto the row so multiple same-op events don't collapse on the
 // PK via ON CONFLICT.
 func TestDecode_PopulatesEventIndex(t *testing.T) {

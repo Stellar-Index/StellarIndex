@@ -12,13 +12,13 @@ import (
 )
 
 // Golden fixtures below are VERBATIM real mainnet events pulled from
-// the ClickHouse raw lake (ADR-0034) on 2026-07-09 — ROADMAP #89c full
+// the ClickHouse raw lake (ADR-0034) for a full
 // topic census: every topic_0_sym the three CCTP contracts have EVER
 // emitted (26 distinct topics, 9496 total events, exactly reconciled
 // against a plain count() over the same contract set; topics_xdr was
 // also checked for the empty-topic_0_sym trap — none found, every
 // CCTP topic is a Symbol). This file covers the 16 topics that were
-// still undecoded after governance_test.go's #89b pass. Each carries
+// still undecoded after governance_test.go's pass. Each carries
 // its real ledger + tx_hash for cross-reference. See
 // docs/protocols/cctp.md for the full per-topic ledger range.
 

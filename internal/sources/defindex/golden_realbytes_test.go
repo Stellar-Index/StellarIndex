@@ -6,7 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── Golden real-lake decode-VALUE tests (DAT-15) ───────────────────
+// ─── Golden real-lake decode-VALUE tests ───────────────────
 //
 // CONVENTION (shared with internal/sources/aquarius/golden_realbytes_test.go
 // and mirrored on soroswap_router/real_bytes_test.go):
@@ -43,13 +43,12 @@ import (
 //     test (see the mutation-guard note on each test).
 
 // TestGolden_defindexStrategyHarvest_ledger57485721 pins the decode of a
-// real BlendStrategy `harvest` event (the just-validated #91 surface:
-// harvest was recognise-and-dropped until audit 2026-08-04 finding 4
-// proved 1,018 real harvests carry a decodeFlow-compatible body, whose
+// real BlendStrategy `harvest` event (harvest
+// was once recognise-and-dropped; the lake
+// proves 1,018 real harvests carry a decodeFlow-compatible body, whose
 // omission under-counted vault NAV by the full harvested yield).
 //
-// Real bytes captured from r1's ClickHouse lake (stellar.contract_events)
-// 2026-08-17:
+// Real bytes captured from r1's ClickHouse lake (stellar.contract_events):
 //
 //	ledger_seq   57,485,721  (closed 2025-06-10 19:26:07 UTC)
 //	tx_hash      bb84120494620c8145d21bcbf031689bd8cb67f8ccc0924ea386f3add291b9e3
@@ -122,7 +121,7 @@ func TestGolden_defindexStrategyHarvest_ledger57485721(t *testing.T) {
 	// amount: the DUST value 2, decoded-by-name — NOT price_per_share.
 	// Mutation guard (non-vacuous): change wantAmount to "3" (or wantFrom
 	// by one char) and this test FAILS — the value is pinned, not merely
-	// asserted non-empty. Demonstrated by the DAT-15 build.
+	// asserted non-empty.
 	if got := fe.Flow.Amount.String(); got != wantAmount {
 		t.Errorf("Amount = %q, want %q (decode-by-name must ignore price_per_share)", got, wantAmount)
 	}

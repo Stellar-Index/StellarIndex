@@ -42,7 +42,7 @@ func TestDecodeFee_setProtocolFee_realFixture(t *testing.T) {
 
 func TestDecodeFee_claimProtocolFee_realFixture(t *testing.T) {
 	// topic[1] carries the claimed token address on every sampled
-	// on-chain event (audit 2026-08-04 finding 5) — the original
+	// on-chain event — the original
 	// fixture captured only topic[0]; the token topic is rebuilt with
 	// the same encoding the lake stores.
 	wantClaimedAsset := "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A" // public contract strkey, not a credential

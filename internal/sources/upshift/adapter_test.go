@@ -37,8 +37,8 @@ func realDeposit(contractID string) events.Event {
 }
 
 // TestTopicSymbols_MatchTheLakeBytes pins every pre-encoded topic Symbol
-// to the exact base64 the lake stores in `topics_xdr[1]`, captured
-// 2026-09-09. classify() compares these as BYTES, so a wrong encoding
+// to the exact base64 the lake stores in `topics_xdr[1]`.
+// classify() compares these as BYTES, so a wrong encoding
 // would silently make the decoder claim nothing at all — a failure that
 // looks identical to "the protocol went quiet".
 func TestTopicSymbols_MatchTheLakeBytes(t *testing.T) {

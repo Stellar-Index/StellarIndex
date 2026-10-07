@@ -12,12 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// RLT-416 residual. compute-completeness and verify-reconciliation fail CLOSED
+// compute-completeness and verify-reconciliation fail CLOSED
 // on a seed error, and on r1 the seed sweeps a PUBLIC third-party RPC with
 // 1+3N sequential calls. With no retry, one transient failure anywhere in the
 // sweep aborted the nightly pass for every source. This file is the black-box
 // half of the regression: it uses only the exported seed and a real
-// stellarrpc.Client, so it COMPILES against the pre-fix code and fails there on
+// stellarrpc.Client, so it COMPILES against a no-retry seed and fails there on
 // behaviour. The schedule/budget/classification half is in
 // factory_seed_retry_internal_test.go.
 

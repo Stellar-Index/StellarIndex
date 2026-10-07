@@ -22,7 +22,7 @@ import (
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────────
 //
 // Captured verbatim from real mainnet ledgers emitted by the main
-// contract (MainnetContract) on the r1 ClickHouse lake, 2026-07-07.
+// contract (MainnetContract) on the r1 ClickHouse lake.
 // These PIN the decoded schemas: if a decode helper drifts, the asserted
 // promoted fields change. topics_xdr / data_xdr are the raw event bytes.
 

@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── 2026-07-31 attribution-chain hardening ────────────────────────────
+// ─── attribution-chain hardening ────────────────────────────
 //
 // These tests pin the decode-side layers that bind a set of attached op
 // args to the event they claim to describe: duplicate-feed refusal, the

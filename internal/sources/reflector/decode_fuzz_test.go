@@ -140,7 +140,7 @@ func FuzzDecodeUpdate(f *testing.F) {
 // FuzzSdkDecodeUpdateBodyRaw feeds arbitrary XDR to the body decoder.
 // Beyond not panicking, a success must mean the body really was the
 // #[contractevent] Map carrying update_data, with exactly one entry per
-// update_data slot (DAT-03 slot stability) — a foreign shape must be
+// update_data slot (slot stability) — a foreign shape must be
 // refused, not mis-decoded.
 func FuzzSdkDecodeUpdateBodyRaw(f *testing.F) {
 	fixRoot := filepath.Join("..", "..", "..", "test", "fixtures", "reflector")

@@ -14,7 +14,7 @@ var (
 	ledgerLiteral    = regexp.MustCompile(`\b\d{7,}\b`)
 )
 
-// RLT-402: the flagged-contract DELETE in defindex.md's operator rollout
+// The flagged-contract DELETE in defindex.md's operator rollout
 // must carry a ledger_close_time bound (defindex_flows is partitioned on
 // it) that can never skip a flagged row, and must not take that bound from
 // a subquery that can turn NULL and silently match nothing.

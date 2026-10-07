@@ -68,7 +68,7 @@ func TestDecoder_Matches(t *testing.T) {
 		{"empty topic", events.Event{ContractID: testPool}},
 		{"non-trade topic[0]", events.Event{ContractID: testPool, Topic: []string{
 			// "deposit" (bare) is now a recognized+gated rewards-gauge
-			// topic (ROADMAP #89) so it no longer proves this case —
+			// topic so it does not prove this case —
 			// use a genuinely unclassified topic name instead.
 			encodeSymbol(t, "totally_unrecognized_topic"),
 			encodeContractAddrFromStrkey(t, tokenIn),
@@ -84,7 +84,7 @@ func TestDecoder_Matches(t *testing.T) {
 	}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
 // the bare Symbol("trade") 4-topic shape is forgeable — the r1 lake
 // contains a parallel non-registry router deployment and a
 // foreign-WASM look-alike emitting the identical shape
@@ -329,7 +329,7 @@ func TestDecoder_Decode_MalformedClosedAtReturnsError(t *testing.T) {
 // force it through decodeTrade just because the topic shape happens to
 // resemble one. Before the fix, an event whose topic[0] classify()
 // doesn't recognize — but which otherwise has trade-shaped topics/body —
-// was silently decoded as a genuine trade (ADR-0035/CS-026 violation).
+// was silently decoded as a genuine trade (ADR-0035 violation).
 func TestDecoder_Decode_UnrecognizedKindFailsClosed(t *testing.T) {
 	d := NewDecoder()
 	tokenIn := makeContractStrkey(t, 0x01)

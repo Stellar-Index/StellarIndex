@@ -118,9 +118,9 @@ func runOneFixture(t *testing.T, path string) {
 	// (IsMapped()==false) and must hold its vector slot. DEX
 	// publishes Addresses only, so raw is never expected.
 	//
-	// 2026-08-29: the two raw slots every real FX event carried
+	// The two raw slots every real FX event carried
 	// (2026-04-23 mainnet) were VES and XAU — the pair that paged
-	// stellarindex_ingestion_oracle_unknown_symbols on r1 v0.48.0.
+	// stellarindex_ingestion_oracle_unknown_symbols on r1.
 	// Both are allow-listed now (fiat:VES per ADR-0010; XAU is the
 	// spot-gold commodity and lands as rwa:XAU per ADR-0028), so the
 	// FX variant tolerates NO raw row on these fixtures, and its only

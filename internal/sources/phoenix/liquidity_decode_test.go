@@ -11,7 +11,7 @@ import (
 )
 
 // Tests for the provide_liquidity / withdraw_liquidity / bond /
-// unbond reassembly + decode paths (Task #27).
+// unbond reassembly + decode paths.
 //
 // We exercise the same surface area as the swap tests:
 //   - classify the topic[0] to the right action
@@ -57,7 +57,7 @@ func TestClassifyAny(t *testing.T) {
 		{"withdraw auto unbonded", []string{TopicSymbolWithdrawLiquidity, TopicSymbolWLAutoUnbonded}, actionWithdrawLiquidity, TopicSymbolWLAutoUnbonded},
 		{"bond user", []string{TopicSymbolBond, TopicSymbolStakeUser}, actionBond, TopicSymbolStakeUser},
 		{"unbond amount", []string{TopicSymbolUnbond, TopicSymbolStakeAmount}, actionUnbond, TopicSymbolStakeAmount},
-		// EVERY-event policy — admin + initialize were silently dropped pre-2026-05-27.
+		// EVERY-event policy — admin + initialize must not be silently dropped.
 		{"admin replacement requested", []string{TopicSymbolAdmin, "any-detail"}, actionAdmin, "any-detail"},
 		{"initialize token_a", []string{TopicSymbolInitialize, "any-detail"}, actionInitialize, "any-detail"},
 		{"unknown topic[0]", []string{"some_other_action", TopicSymbolStakeAmount}, actionUnknown, ""},
@@ -537,7 +537,7 @@ func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 	}
 }
 
-// TestDecoder_Liquidity_PopulatesEventIndex pins F-1324: the completed
+// TestDecoder_Liquidity_PopulatesEventIndex pins that the completed
 // provide_liquidity / withdraw_liquidity reassembly must carry the
 // FIRST field-event's in-op EventIndex onto the LiquidityChange so two
 // same-(op,action) liquidity actions don't collapse on the
@@ -577,7 +577,7 @@ func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
 	}
 }
 
-// TestDecoder_Stake_PopulatesEventIndex pins F-1324 for the stake path
+// TestDecoder_Stake_PopulatesEventIndex pins the same for the stake path
 // (phoenix_stake_events PK, migration 0060): the bond / unbond
 // reassembly carries the first field-event's in-op EventIndex.
 func TestDecoder_Stake_PopulatesEventIndex(t *testing.T) {

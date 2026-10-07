@@ -350,13 +350,13 @@ func TestTopicSymbolFlush_StableEncoding(t *testing.T) {
 
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────
 //
-// ROADMAP #89 residual: payment_event's BODY decode had never been
-// verified against real on-chain bytes (only the topic SHAPE —
-// topic_count=1 — was lake-verified on 2026-07-09; see the Payment
+// payment_event's BODY decode is
+// verified here against real on-chain bytes (elsewhere only the topic
+// SHAPE — topic_count=1 — is lake-verified; see the Payment
 // doc comment in events.go). Captured read-only from the ClickHouse
 // raw lake (stellar.contract_events) on r1, scoped to the four
-// MainnetPaymentContracts, topic_0_sym = 'payment_event'
-// (2026-07-10). Same base64-capture convention as
+// MainnetPaymentContracts, topic_0_sym = 'payment_event'.
+// Same base64-capture convention as
 // internal/sources/blend_backstop/decode_test.go's goldenFrames.
 //
 // Verdict: DecodePayment agrees with the real wire shape exactly —
@@ -419,12 +419,12 @@ var rozoGoldenPaymentFrames = map[string]struct {
 }
 
 // TestGolden_Payment_LakeBytes pins DecodePayment against real
-// mainnet lake bytes across both the original and the 2026-07-09-
+// mainnet lake bytes across both the original and the later-
 // admitted 4th contract's sibling deployments, and across both
-// observed memo naming conventions. This is the ROADMAP #89 residual
-// verification: prior to this test, the body field-name mapping
-// (amount/destination/from/memo) was documented from the contract
-// source but never round-tripped against a captured real event.
+// observed memo naming conventions. This is the body
+// verification: the body field-name mapping
+// (amount/destination/from/memo) is documented from the contract
+// source; this round-trips it against a captured real event.
 func TestGolden_Payment_LakeBytes(t *testing.T) {
 	t.Parallel()
 	for name, f := range rozoGoldenPaymentFrames {
@@ -468,7 +468,7 @@ func TestGolden_Payment_LakeBytes(t *testing.T) {
 
 // TestGolden_FlushEvent_NeverObserved documents that flush_event
 // (the admin sweep path) has never fired on mainnet across any of
-// the four gated v1 Payment contracts as of the 2026-07-10 lake
+// the four gated v1 Payment contracts in the lake
 // census (topic_0_sym = 'flush_event' returns zero rows) — so
 // DecodeFlush's body shape remains UNVERIFIED against real bytes,
 // unlike DecodePayment above. This is the honest counterpart to the

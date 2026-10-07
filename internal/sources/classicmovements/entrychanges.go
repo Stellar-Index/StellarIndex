@@ -424,8 +424,8 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 	// balance was created to hold the proceeds.
 	//
 	// Emitting only the pool-exit leg (the original shape) made the
-	// created balance UNRESOLVABLE, and not for one reason but three
-	// (audit DAT-09): the movement was tagged KindLiquidityPoolWithdraw
+	// created balance UNRESOLVABLE, and not for one reason but three:
+	// the movement was tagged KindLiquidityPoolWithdraw
 	// so the resolver's `Kind == KindClaimableBalanceCreate` index gate
 	// skipped it; the id lived under `claimable_balance_id` while every
 	// other site — and the ClickHouse lookup's external table — keys on

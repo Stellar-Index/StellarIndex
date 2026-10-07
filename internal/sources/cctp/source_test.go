@@ -11,7 +11,7 @@ import (
 )
 
 // TestDecodeMintAndForward_RealMainnetFixture — golden test from the
-// actual lake event that surfaced board #31 (ledger 63098002 class):
+// actual lake event that surfaced the unpinned-topic gap (ledger 63098002 class):
 // single Symbol topic, body map {amount i128, forward_recipient
 // Address, token Address}.
 func TestDecodeMintAndForward_RealMainnetFixture(t *testing.T) {

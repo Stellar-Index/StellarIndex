@@ -428,7 +428,7 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 	// Two assets liquidated => FOUR movements: a pool-exit leg and a
 	// claimable-balance-create leg for each. This assertion used to read
 	// `want 2` — it pinned the pool-exit legs only, which is the shape
-	// that made the created balances unresolvable (DAT-09). The per-asset
+	// that made the created balances unresolvable. The per-asset
 	// fan-out it was really testing is unchanged and still checked below.
 	if len(movements) != 4 {
 		t.Fatalf("got %d movements, want 4 (a withdraw leg + a create leg per liquidated asset)", len(movements))
@@ -532,7 +532,7 @@ func TestDecodeCAP0038Revocation_setTrustLineFlags_triggerType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCAP0038Revocation: %v", err)
 	}
-	// 2 assets => 2 withdraw legs + 2 create legs (DAT-09). This test is
+	// 2 assets => 2 withdraw legs + 2 create legs. This test is
 	// about the trigger_op_type discriminator, not the leg count; the
 	// count is asserted so the shape stays pinned somewhere.
 	if len(movements) != 4 {

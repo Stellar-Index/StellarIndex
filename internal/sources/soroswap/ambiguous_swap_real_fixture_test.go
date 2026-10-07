@@ -11,8 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden regression from the completeness projection "false-red" investigation
-// (2026-08-18): mainnet ledger 56,779,692, tx a479f1d6…, op_index 0, registered
+// Golden regression from the completeness projection "false-red" investigation:
+// mainnet ledger 56,779,692, tx a479f1d6…, op_index 0, registered
 // pair CDJDRGUC… (soroswap_pairs: token0=CAS3J7GY…, token1=CDIKURWHYS…). The
 // pair emitted sync (event_index 2) then swap (event_index 3) whose body settled
 // with THREE non-zero amounts:
@@ -23,8 +23,8 @@ import (
 //	amount_1_out = 0
 //
 // token0 has BOTH an `in` and an `out` leg, so the direction is ambiguous: no
-// single (in,out) cross-token pair describes the trade. The pre-2026-08-03
-// decoder's all-four-only ambiguity guard let this three-leg shape match the
+// single (in,out) cross-token pair describes the trade. An
+// all-four-only ambiguity guard lets this three-leg shape match the
 // `in1 && out0` arm and emit a trade reporting the GROSS amount_1_in /
 // amount_0_out while silently dropping the 10M amount_0_in leg — fabricating a
 // price. That mis-decode is exactly the served gen-0 `trades` row this ledger
@@ -39,7 +39,7 @@ import (
 // NOT a decoder change and NOT masking the reconcile.
 //
 // Bytes are verbatim from the r1 ClickHouse lake (stellar.contract_events,
-// tx_hash=a479f1d6…, ledger_seq=56779692), fetched 2026-08-18.
+// tx_hash=a479f1d6…, ledger_seq=56779692).
 const (
 	ambPair   = "CDJDRGUCHANJDXALZVJ5IZVB76HX4MWCON5SHF4DE5HB64CBBR7W2ZCD"
 	ambTx     = "a479f1d654c653f3c5c98f5e65e8d516cfd8beaeaf3a89fe01c912811cf1e7c6"
@@ -77,7 +77,7 @@ func ambEvent(t *testing.T, topic1, data string, eventIndex int) events.Event {
 // refuses the real three-non-zero-leg swap at ledger 56,779,692 as a recognized
 // no-op, so the projection re-derive counts it expected-zero — establishing that
 // the surviving served `trades` row for this ledger is a stale gen-0 phantom
-// (a pre-2026-08-03 mis-decode), not a re-derive decode gap.
+// (an older mis-decode), not a re-derive decode gap.
 func TestAmbiguousSwap_RealLedger56779692_RecognizedNoOp(t *testing.T) {
 	// First, the WHY: the real swap body decodes to exactly the three
 	// non-zero legs (0_in, 0_out, 1_in) that make the direction ambiguous.

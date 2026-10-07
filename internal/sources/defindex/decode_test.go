@@ -45,7 +45,7 @@ func TestClassify_depositWithdraw(t *testing.T) {
 			wantClass: "",
 		},
 		{
-			// EVERY-event policy (2026-05-27): harvest is now classified
+			// EVERY-event policy: harvest is classified
 			// even though we don't produce a StrategyFlow for it yet.
 			name:      "harvest (classification-only)",
 			topic:     []string{TopicPrefixStrategy, TopicSymbolHarvest},
@@ -208,8 +208,8 @@ func TestClassifyVault_depositWithdraw(t *testing.T) {
 			topic:     []string{mustB64Symbol(t, "DeFindexVault"), TopicSymbolDeposit},
 			wantClass: "",
 		},
-		// EVERY-event policy (2026-05-27): the nine vault governance /
-		// admin / multiplexed-rebalance topics are now classified
+		// EVERY-event policy: the nine vault governance /
+		// admin / multiplexed-rebalance topics are classified
 		// (still no decoder — classification only). Pre-policy these
 		// returned "" and got silently dropped.
 		{name: "vault rescue", topic: []string{TopicPrefixVault, TopicSymbolRescue}, wantClass: EventRescue},
@@ -221,7 +221,7 @@ func TestClassifyVault_depositWithdraw(t *testing.T) {
 		{name: "vault rbmanager", topic: []string{TopicPrefixVault, TopicSymbolRBManager}, wantClass: EventRBManager},
 		{name: "vault dfees", topic: []string{TopicPrefixVault, TopicSymbolDFees}, wantClass: EventDFees},
 		{name: "vault rebalance (multiplexed body)", topic: []string{TopicPrefixVault, TopicSymbolRebalance}, wantClass: EventRebalance},
-		// ROADMAP #89 residual (2026-07-10): n_wasm — a read-only lake
+		// n_wasm — a read-only lake
 		// topic census found 2 real occurrences classifyVault didn't
 		// recognize. Classification-only (no decoder), same as the
 		// other 9 admin topics above — the topic encoding itself is
@@ -314,7 +314,7 @@ func TestClassifyFactory_createNfee(t *testing.T) {
 // closed-loop completeness check: Matches() returns true → Decode()
 // returns no error and no events, the event is consumed cleanly
 // rather than recorded as an unmatched-topic drop. Uses `n_fee`, but
-// `create` behaves identically now (task #34 / W8 recon 6c removed the
+// `create` behaves identically (there is no
 // create-body fan-out): both recognise + drop cleanly and never decode
 // their body — see TestDecode_factoryCreate_doesNotSeedFromBody and
 // TestDecode_factoryCreate_ignoresBody.
@@ -337,9 +337,9 @@ func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 	}
 }
 
-// ─── Factory `create` bodies — untrusted, never seeded (task #34) ──
+// ─── Factory `create` bodies — untrusted, never seeded ──
 //
-// Real lake bytes (data_xdr) captured 2026-07-10 via ClickHouse HTTP
+// Real lake bytes (data_xdr) captured via ClickHouse HTTP
 // against r1's certified raw lake, contract-scoped to the 3
 // create-emitting DeFindexFactory instances. Each constant is one
 // full `("DeFindexFactory","create")` event body, byte-identical to
@@ -372,13 +372,13 @@ const (
 )
 
 // TestDecode_factoryCreate_doesNotSeedFromBody is the security
-// regression for task #34 / W8 recon 6c. The DeFindex factory is
+// regression for body-seeding. The DeFindex factory is
 // PERMISSIONLESS — anyone can create a vault — so a `create` body's
 // NAMED strategy addresses (`assets[].strategies[].address`) are
 // attacker-controlled and must NOT auto-register: a canonical-factory
 // emitter does not vouch for them. A create is still RECOGNISED
 // (Matches true, drops cleanly with no error and no events) but seeds
-// NOTHING — the old ROADMAP #7 fan-out is removed.
+// NOTHING — there is no body fan-out.
 //
 // Uses real lake create bytes (which happen to name real curated
 // strategies) against a BARE registry — factory trust roots only, the
@@ -386,7 +386,7 @@ const (
 // from a create-body seed. That is exactly the permissionless-poisoning
 // path this fix closes.
 //
-// RED-PROOF: against the pre-fix code (Decode called
+// RED-PROOF: against a Decode that calls
 // decodeFactoryCreateStrategies + d.reg.Seed), reg.Has(named) is true
 // and reg.Len() > 0 here — this test FAILS. The fix makes them false/0.
 func TestDecode_factoryCreate_doesNotSeedFromBody(t *testing.T) {
@@ -492,7 +492,7 @@ func TestDecode_curatedStrategy_stillRecognised(t *testing.T) {
 }
 
 // TestDecode_factoryCreate_ignoresBody pins that a `create` event's
-// body is not decoded at all after the task #34 / W8 recon 6c fix:
+// body is not decoded at all:
 // even a body that isn't a Map (which the old fan-out would have
 // flagged as ErrMalformedPayload) now drops cleanly — recognised, no
 // error, no events, no seeding. Factory bodies are untrusted, so we
@@ -806,7 +806,7 @@ func symSCVal(s string) sdkxdr.ScVal {
 	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
 // the namespaced DeFindexVault/BlendStrategy topic strings are still
 // just strings any pubnet contract can emit — the r1 lake contains
 // emitters carrying the exact topic shape with NONE of the four
@@ -878,12 +878,12 @@ func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
 	}
 }
 
-// ─── Phase-B follow-up: harvest / rebalance / admin (BACKLOG #58) ──
+// ─── Phase-B follow-up: harvest / rebalance / admin ──
 
 // TestDecode_strategyHarvestDecodes SUPERSEDES the old
-// recognised-but-drops-cleanly pin (BACKLOG #58 "blocked on real
-// samples"): the lake disproved the no-samples premise (audit
-// 2026-08-04 finding 4 — 1,018 harvests with a decodeFlow-compatible
+// recognised-but-drops-cleanly pin ("blocked on real
+// samples"): the lake disproved the no-samples premise
+// (1,018 harvests with a decodeFlow-compatible
 // body), so a registered strategy's harvest now emits one
 // DirectionHarvest StrategyFlow end to end through Decode.
 func TestDecode_strategyHarvestDecodes(t *testing.T) {
@@ -950,7 +950,7 @@ func TestDecode_vaultUnmodelledRecognisedEmit0Events(t *testing.T) {
 }
 
 // TestDecodeRebalanceMethod exercises the four-way rebalance
-// discriminator scaffolding (BACKLOG #58). It verifies the decoder
+// discriminator scaffolding. It verifies the decoder
 // reads the `rebalance_method` Symbol verbatim and that Known()
 // classifies the four documented methods — WITHOUT asserting anything
 // about the (unmodelled) per-method payload. Wire spelling for the
@@ -1024,7 +1024,7 @@ func TestDecodeRebalanceMethod(t *testing.T) {
 	})
 }
 
-// TestDecodeFlow_harvest — audit 2026-08-04 finding 4 regression: the
+// TestDecodeFlow_harvest — regression: the
 // real on-chain harvest body (ledger 63,783,690 shape) is
 // {amount, from, price_per_share}; decodeFlow must produce a
 // DirectionHarvest StrategyFlow from it, ignoring the extra field
@@ -1127,7 +1127,7 @@ const (
 // TestDecode_dfeesRealLakeBytes drives the four REAL captured dfees
 // bodies through the production seams (Matches gate + Decode) and pins
 // the exact decoded values — token strkey, amount, kind, indices. This
-// is the redness proof for W5.2: on the pre-fix decoder every one of
+// is the redness proof: on a decoder that drops harvest every one of
 // these events clean-dropped to (nil, nil), so the len(out)=1
 // assertions fail there.
 func TestDecode_dfeesRealLakeBytes(t *testing.T) {

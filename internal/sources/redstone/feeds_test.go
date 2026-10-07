@@ -22,7 +22,7 @@ import (
 // published 1.00295305 and was served as `quote=fiat:USD`, i.e. "a
 // BTC-backed token is worth $1.00" while its own
 // `SolvBTC_FUNDAMENTAL/USD` sibling said $78,313.03 — live r1
-// `/v1/oracle/streams?include_unmapped=true`, 2026-08-29).
+// `/v1/oracle/streams?include_unmapped=true`).
 //
 // Adding a feed here is therefore an assertion about the world and
 // needs the evidence recorded alongside it: the feed's published value
@@ -140,14 +140,14 @@ func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.
 // TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset pins the
 // corrected values end-to-end through the decoder, using the four
 // SolvBTC-family feeds exactly as observed live on r1 via
-// `/v1/oracle/streams?include_unmapped=true` on 2026-08-29:
+// `/v1/oracle/streams?include_unmapped=true`:
 //
 //	crypto:SolvBTC.BBN_FUNDAMENTAL       1.00000000
 //	crypto:SolvBTC.BBN_FUNDAMENTAL_USD  78313.02974310
 //	crypto:SolvBTC_FUNDAMENTAL           1.00295305
 //	crypto:SolvBTC_FUNDAMENTAL_USD      78313.02974310
 //
-// The two `_USD` legs are byte-identical (also true of the 2026-07-27
+// The two `_USD` legs are byte-identical (also true of an earlier
 // capture, 6543063913439 both), which is what fixes each ratio's
 // denominator:
 //
@@ -155,7 +155,7 @@ func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.
 //     `SolvBTC_FUNDAMENTAL` ratio is denominated in BTC.
 //   - SolvBTC.BBN NAV in USD equals SolvBTC NAV in USD while the bare
 //     ratio is exactly 1.00000000 (three independent captures:
-//     lake ledger 60104689, 2026-07-27, 2026-08-29) ⇒ SolvBTC.BBN is
+//     lake ledger 60104689 and two live reads) ⇒ SolvBTC.BBN is
 //     1:1 with SolvBTC and its ratio is denominated in SolvBTC, not
 //     BTC. Quoting it crypto:BTC would contradict our own
 //     `SolvBTC.BBN_FUNDAMENTAL_USD` row.

@@ -9,7 +9,7 @@ import (
 
 // ─── real-lake golden frames (base64 XDR) ────────────────────────
 //
-// Captured 2026-07-10 via a read-only ClickHouse query against the
+// Captured via a read-only ClickHouse query against the
 // r1 raw lake (stellar.contract_events), scoped by contract_id (the
 // gated MainnetStakeContracts) + topic[1] byte-equality — see
 // events.go's "Reward actions" doc for the evidence trail. These PIN
@@ -152,7 +152,7 @@ func TestGolden_DistributeRewards(t *testing.T) {
 }
 
 // TestClassifyAny_DistributeRewardsTopic1 pins that only topic[1]=="asset"
-// classifies as distribute_rewards (INV-2280).
+// classifies as distribute_rewards.
 func TestClassifyAny_DistributeRewardsTopic1(t *testing.T) {
 	t.Parallel()
 	const distribute = "AAAADgAAABJkaXN0cmlidXRlX3Jld2FyZHMAAA=="
