@@ -12,12 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Per-refresh window observability (2026-08-28 outlier-trim redesign).
+// Per-refresh window observability.
 //
-// The `outlier_storm` alert used to gate on the per-tick re-count of
-// trimmed prints, which measures the whole-window MAD band's
-// disagreement with the window tail — not venue disagreement. These
-// helpers publish what the alert actually wants to know: the
+// A per-tick re-count of trimmed prints measures the whole-window MAD
+// band's disagreement with the window tail, not venue disagreement. These
+// helpers publish what the `outlier_storm` alert actually wants: the
 // per-venue VWAP of the trade set the filter was handed, and how many
 // trades each filter stage left standing in THIS refresh.
 

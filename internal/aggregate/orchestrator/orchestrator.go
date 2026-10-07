@@ -105,7 +105,7 @@ type Cache interface {
 	// no reader observes one without the other: a direct value clears a
 	// prior composite's "triangulated" marker in the same transaction
 	// that writes it (W1-flow-price-serve-2). The freeze path extends
-	// the held value's and its stamp's TTLs through it too (F-1345).
+	// the held value's and its stamp's TTLs through it too.
 	TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
@@ -227,9 +227,9 @@ type Config struct {
 	// every store, cache and reference call the tick makes — the trades
 	// fetch, both FX snap queries (triangulation and the
 	// composite-reference evaluator), the freeze record and the
-	// divergence refresh. Before it existed a tick ran on the process
-	// context, so ONE query that stopped answering (a half-open
-	// connection, a lock wait) stalled every price indefinitely (K025).
+	// divergence refresh. Without it ONE query that stopped answering
+	// (a half-open connection, a lock wait) would stall every price
+	// indefinitely.
 	//
 	// It is a WEDGE GUARD, not a budget: it must never cut a tick that
 	// is merely slow. refreshOrder is fixed, so a bound a healthy tick
@@ -329,23 +329,17 @@ type Config struct {
 	// same off-chain 10^8 convention), a classic asset on
 	// USDPeggedClassicAssets (7-decimal Stellar-classic invariant), or
 	// a Soroban SAC wrapper on USDPeggedSorobanAssets (same 7-decimal
-	// invariant, transitively). Before 2026-07-10 the floor applied
-	// ONLY to fiat:USD-quoted pairs — a directly-configured Soroban-
-	// or classic-quoted target pair (e.g. "native/CCW6…", a
-	// SAC-USDC-quoted pair) served VWAP unguarded at any volume, so a
-	// single dust trade could set the price.
+	// invariant, transitively). Soroban- or classic-quoted target pairs
+	// (e.g. "native/CCW6…", a SAC-USDC-quoted pair) are guarded too, so
+	// a single dust trade cannot set the price.
 	//
-	// R-008 (audit 2026-07-23): the stablecoin-fiat-proxy expansion
-	// path (EnableStablecoinFiatProxy) WAS affected, in the opposite
-	// direction, and this comment used to claim otherwise. The gate's
-	// APPLICABILITY was never in doubt on that path (fetchForTarget
-	// rewrites trades onto the fiat:USD target before the gate runs),
-	// but its INPUT was: the per-trade USD values are computed against
-	// the SOURCE pair's quote (`BASE/crypto:USDT`, …) before the
-	// rewrite, and the abstract stablecoin tickers weren't a
-	// recognised USD surface — so every proxy-fetched CEX leg counted
-	// as $0 and windows carrying real dollar volume were dropped as
-	// "below floor". Tier 2 of [usdQuoteDecimals] closes that.
+	// On the stablecoin-fiat-proxy expansion path (EnableStablecoinFiatProxy)
+	// fetchForTarget rewrites trades onto the fiat:USD target before the
+	// gate runs, but the per-trade USD values are computed against the
+	// SOURCE pair's quote (`BASE/crypto:USDT`, …) before the rewrite.
+	// Tier 2 of [usdQuoteDecimals] recognises the abstract stablecoin
+	// tickers so those legs do not count as $0 and get dropped as
+	// "below floor".
 	//
 	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) are converted to USD
 	// at the [Config.FXStore] snap and held to the same floor; with no
@@ -363,8 +357,8 @@ type Config struct {
 	// neighbourhood's — before VWAP computes
 	// (aggregate.FilterOutliersLocal). A lone wild print disagrees
 	// with both and is dropped; an agreed regime shift agrees with
-	// its neighbours and survives (the 2026-08-28 drift artifact
-	// the whole-window filter produced). 0 (zero value) disables the
+	// its neighbours and survives (a whole-window filter would drop
+	// it as drift). 0 (zero value) disables the
 	// filter — every fetched trade contributes.
 	//
 	// Applied AFTER class filtering and stablecoin expansion: the
@@ -406,8 +400,7 @@ type Config struct {
 	// target VWAP to its own cache key. Empty (default) = no
 	// triangulation. (NOTE: aggregate.Triangulate/TriangulateChain are
 	// the old direct-multiply helpers and are NOT on this path — they
-	// have no non-test callers; the live math is the router. Corrected
-	// 2026-08-03.)
+	// have no non-test callers; the live math is the router.)
 	//
 	// Cardinality: each chain contributes len(Windows) cache keys
 	// per tick. Operators tune the chain set explicitly — eager
@@ -446,8 +439,8 @@ type Config struct {
 	// tests/bring-up: the Phase 2 lifecycle (stepPhase2Freeze) runs
 	// regardless of Anomaly, so production deployments must wire
 	// FreezeWriter even with Anomaly nil — the aggregator binary now
-	// builds it unconditionally (2026-08-22, r1 XLM/GBP incident:
-	// Phase-1-off config froze 5m/1h windows with no marker).
+	// builds it unconditionally (a Phase-1-off config would otherwise
+	// freeze windows with no marker).
 	FreezeWriter FreezeMarker
 
 	// DisableClassFilter, when true, suppresses the aggregator's
@@ -517,7 +510,7 @@ type Config struct {
 
 	// CompositeReference gates the current-bucket composite-reference
 	// corroboration of the phase-2 freeze for structurally single-venue
-	// targets (2026-08-29; see composite_reference.go). Zero value =
+	// targets (see composite_reference.go). Zero value =
 	// off, which is what a Config assembled directly in a test gets.
 	CompositeReference CompositeReferenceConfig
 
@@ -541,7 +534,7 @@ type Config struct {
 	// successful pass is less than this value. Zero = refresh every
 	// tick (legacy behaviour).
 	//
-	// Rationale (F-0030 follow-up, 2026-05-27): the CMC free tier is
+	// Rationale: the CMC free tier is
 	// 10,000 calls / MONTH. Even with the per-tick batched lookup
 	// shipped earlier, refreshing every 30 s × 12 pairs is ~2,880
 	// calls/day = ~86,000/month — 8.6 × over cap. A 5-minute refresh
@@ -600,11 +593,9 @@ type Config struct {
 	// consumers pass through internal/api/v1's per-endpoint
 	// declineIfNonstandardDecimals guard, so this is the one place a
 	// confirmed non-7-decimals asset was still silently leaking a wrong
-	// price to real subscribers even after that guard shipped
-	// (2026-07-09).
+	// price to real subscribers.
 	//
-	// Nil (the default — every deployment before this field existed,
-	// and every existing test) means [aggregate.ResolveDecimals] always
+	// Nil (the default, and every existing test) means [aggregate.ResolveDecimals] always
 	// returns [aggregate.StandardDecimals] for both legs, so the
 	// adjustment factor is exactly 1 and refreshPairWindow's published
 	// VWAP is byte-identical to pre-normalization behaviour. Production
@@ -636,14 +627,10 @@ type ContributionRecord struct {
 	// SourceUSDVolume is the per-source USD-volume breakdown
 	// computed from the POST-filter trade slice — class filter +
 	// outlier filter have already run. Keys are the same
-	// `Source` values that appear in Contributions. F-1242
-	// (codex audit-2026-05-12): the prior shape was a pre-filter
-	// USDVolumeTotal split by post-filter weights, which
-	// over-attributed dollars when outliers dropped — non-NULL
-	// rows looked authoritative while drifting from the
-	// contribution set actually published. The sink now reads
-	// SourceUSDVolume directly so persisted `volume_usd` matches
-	// what VWAP actually saw. Exact: each trade's quote amount over its
+	// `Source` values that appear in Contributions. Splitting a pre-filter
+	// total by post-filter weights would over-attribute dollars when
+	// outliers drop, so the sink reads this directly and persisted
+	// `volume_usd` matches what VWAP actually saw. Exact: each trade's quote amount over its
 	// decimal scale, summed as big.Rat.
 	SourceUSDVolume map[string]*big.Rat
 }
@@ -669,7 +656,7 @@ type DivergenceRefresher interface {
 // StreamPublisher is the seam the orchestrator uses to fan out
 // closed-bucket events. Production impl is
 // [internal/api/streaming/redispub.Publisher] (Redis PUBLISH); the
-// API binary's matching subscriber (PR 2 of L3.9) republishes the
+// API binary's matching subscriber republishes the
 // event on its in-process [internal/api/streaming.Hub] so SSE
 // subscribers on `/v1/price/stream` get fed.
 //
@@ -793,7 +780,7 @@ const DefaultTickTimeoutIntervals = 4
 // 5m default window at network-wide trade rates, but a single liquid
 // pair (e.g. XLM/USDC on a busy day) can clear 10,000 trades well
 // inside the 1h and 24h windows — when it does, TradesInRange returns
-// the NEWEST 10,000 (F-1319 fixed the prior oldest-N truncation) and
+// the NEWEST 10,000 and
 // the orchestrator emits AggregatorWindowTruncatedTotal so operators
 // can see the VWAP is over a partial slice. Raise the cap (or move the
 // large windows to a SQL-side aggregate) if that counter fires
@@ -852,17 +839,16 @@ type Orchestrator struct {
 	prevVWAPCoverage map[string]cachekeys.WindowCoverage
 
 	// frozenPrevVWAPs is the SHADOW comparator for pairs whose bucket was
-	// REFUSED by the freeze lifecycle (2026-08-24, the XLM/GBP ratchet +
-	// unscored-stall incidents). prevVWAPs deliberately does not advance
+	// REFUSED by the freeze lifecycle. prevVWAPs deliberately does not advance
 	// on a refused bucket — but scoring the NEXT frozen bucket against
 	// that pinned pre-freeze value makes z measure TOTAL DRIFT SINCE
 	// FREEZE (divided by a per-minute MAD), so ADR-0019's auto-unfreeze
 	// (z < 3 twice) is only reachable if the market RETURNS to the
 	// freeze-time price; any real move ratchets the ladder to escalation
-	// instead (observed: z=87 ≈ 8% drift). Worse, prevVWAPs is in-memory:
+	// instead. Worse, prevVWAPs is in-memory:
 	// after a restart a frozen pair has NO prev at all and every bucket
 	// is UNSCORED — which can neither fire nor release, stalling the
-	// freeze forever (observed live as reason "phase2:unscored"). The
+	// freeze forever (reason "phase2:unscored"). The
 	// shadow advances with each refused bucket's FRESH computed VWAP, so
 	// a frozen pair is scored on its per-tick return — "is the market
 	// calm NOW", the condition the ADR's auto-unfreeze describes.
@@ -878,12 +864,12 @@ type Orchestrator struct {
 	// lastWriteAt tracks the wall-clock timestamp of the most recent
 	// successful VWAP cache-write per pair, keyed by `pair.String()` —
 	// base AND quote, so one quote's publishes cannot vouch for
-	// another's (F067). Written only through `recordPairWrite`: by both
+	// another's. Written only through `recordPairWrite`: by both
 	// writers of the served VWAP key (refreshPairWindow's direct publish
 	// and publishComposite's composite publish) and by the first-sighting
 	// seed in `emitStalenessGauges`. Used
 	// by `emitStalenessGauges` at end-of-Tick to drive the
-	// `stellarindex_api_price_stale` alert (F-1306, codex audit-2026-05-13).
+	// `stellarindex_api_price_stale` alert.
 	// Bounded by len(cfg.Pairs) + len(cfg.Triangulations) — both small
 	// operator-curated lists (a chain target need not be a configured
 	// pair; its stamp is then recorded but never emitted, because the
@@ -926,7 +912,7 @@ type Orchestrator struct {
 	// at the top of [Tick]. publishComposite stamps the pair-level write
 	// clock with it, so the composite writer, the direct writer and
 	// emitStalenessGauges all judge one instant rather than the composite
-	// stamping triangulateAll's own wall-clock read (F067). Zero outside
+	// stamping triangulateAll's own wall-clock read. Zero outside
 	// a Tick. Same single-Tick-at-a-time invariant as frozenThisTick.
 	tickNow time.Time
 
@@ -956,7 +942,7 @@ type Orchestrator struct {
 	// pass that runs afterwards reads it to build the cross-rate graph
 	// for the tick. Frozen / dropped / empty windows contribute no edge,
 	// which is exactly how the min_usd_volume gate keeps a dust pair from
-	// setting a confident cross (INV-11). Rebuilt at the top of every
+	// setting a confident cross. Rebuilt at the top of every
 	// [Tick]; same single-Tick-at-a-time invariant as prevVWAPs, so no
 	// lock is needed.
 	//
@@ -1231,7 +1217,7 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	}
 	obs.AggregatorTicksTotal.WithLabelValues(outcome).Inc()
 
-	// F-1306 (codex audit-2026-05-13): emit per-asset staleness so the
+	// Emit per-asset staleness so the
 	// `stellarindex_api_price_stale` alert has a producer. Runs at end-of-
 	// Tick whether or not any window wrote, so pairs with no fresh
 	// trades climb past the alert threshold even though Tick doesn't
@@ -1303,7 +1289,7 @@ const (
 // is the FULL pair (base and quote): a base-only key let every publish
 // of XLM/USD reset the one timestamp a dead XLM/GBP was judged by, so
 // the only serving-freshness alert read fresh through a per-quote
-// outage (F067).
+// outage.
 //
 // It is the ONLY writer of lastWriteAt, and the served VWAP key has two
 // writers that both come through here: the direct publish in
@@ -1347,7 +1333,7 @@ func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
 // every configured (base, quote) pair to `now - lastWriteAt[pair]`. The
 // alert on it is the only serving-freshness alert, so each quote gets
 // its own series: a per-base reading stays at 0 while one quote serves
-// nothing (F067), and a per-base worst cannot say which quote is dead.
+// nothing, and a per-base worst cannot say which quote is dead.
 //
 // Pairs that have never written carry the wall-clock age since the
 // aggregator started (orchestrator construction time would be cleaner
@@ -1356,7 +1342,7 @@ func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
 // shows ~0 staleness on the first tick and then climbs if it never
 // produces a write, which matches the alert intent).
 //
-// F-1308 (codex audit-2026-05-13): the gauge label has to match the
+// The gauge label has to match the
 // canonical asset_id the customer queries with. `/v1/price?asset=native`
 // goes through the priceFallback path for XLM because the aggregator's
 // configured pair is `crypto:XLM/fiat:USD` (matching the oracle source's
@@ -1467,17 +1453,15 @@ func (o *Orchestrator) decideBucket(
 		trades = filterForVWAP(trades)
 		if dropped := preFilter - len(trades); dropped > 0 {
 			// `pair` is the CONFIGURED target pair (bounded: only
-			// o.cfg.Pairs entries reach here) — the 2026-08-14
-			// outlier_storm needed ad-hoc SQL to attribute a
-			// single-issuer SDEX token farm because drops carried
-			// no pair.
+			// o.cfg.Pairs entries reach here); per-pair drops let
+			// outlier_storm attribute a single-issuer SDEX token farm.
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
 	trades = dropUnpriceable(pair, trades)
 	// Venue-level view of the set the outlier filter is handed: the
 	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
-	// the trim re-count (2026-08-28).
+	// the trim re-count.
 	recordWindowStage(pair, window, "fetched", preFilter)
 	recordWindowStageVolume(pair, window, "class", trades)
 	o.recordVenueVWAPs(pair, window, trades)
@@ -1486,8 +1470,7 @@ func (o *Orchestrator) decideBucket(
 		// Time-local trimming: a print is dropped only when it
 		// disagrees with the whole window AND its neighbourhood, so an
 		// agreed regime shift survives while a lone wild print does not
-		// (see aggregate.FilterOutliersLocal for the 2026-08-28 drift
-		// artifact this replaces the whole-window filter for).
+		// (see aggregate.FilterOutliersLocal).
 		// A trim that would leave less base volume than it removes
 		// withholds the window instead, compared at the same
 		// common scale computeNormalizedVWAP weights by.
@@ -1505,7 +1488,7 @@ func (o *Orchestrator) decideBucket(
 		return o.unpricedBucket(ctx, pair, window, now)
 	}
 
-	// F-1260 (codex audit-2026-05-12): sum USD across the SURVIVOR
+	// Sum USD across the SURVIVOR
 	// slice, not the pre-filter total returned by fetchForTarget.
 	// Without this, windows that get gutted by class/outlier filters
 	// can still publish above MinUSDVolume on volume that never made
@@ -1539,7 +1522,7 @@ func (o *Orchestrator) decideBucket(
 	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, mb, trades, stateKey, now); !ok {
 		_ = action
 		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
-		// VWAP key's TTL (F-1345). Skip the cache write so the prior
+		// VWAP key's TTL. Skip the cache write so the prior
 		// bucket's value keeps serving.
 		return nil, nil
 	}
@@ -1563,7 +1546,7 @@ func (o *Orchestrator) decideBucket(
 		// pinned pre-freeze baseline — see frozenPrevVWAPs.
 		prevForConfidence = shadow
 	}
-	// Composite-reference corroboration (2026-08-29): for an allow-listed
+	// Composite-reference corroboration: for an allow-listed
 	// structurally single-venue target, build the chain composite on the
 	// CURRENT bucket (this tick's leg publishes + an FX snap at `now`) and
 	// read it against this fresh VWAP. Evaluated BEFORE the confidence
@@ -1580,7 +1563,7 @@ func (o *Orchestrator) decideBucket(
 	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades, now)
 	// The freeze's source_count leg counts VENUES only; router routes are
-	// never a second venue (ADR-0019 amendment 2026-07-25 §2, see
+	// never a second venue (ADR-0019 amendment §2, see
 	// triangulate_corroborate.go). The composite reference changes only
 	// the VERDICT (compositeRef), never the count.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
@@ -1605,8 +1588,7 @@ func (o *Orchestrator) decideBucket(
 		confOK:   confOK,
 		// Only a published bucket becomes a router edge / reference leg:
 		// frozen, dropped, empty and below-floor buckets returned above,
-		// which is how a dust pair stays out of the cross-rate graph
-		// (INV-11).
+		// which is how a dust pair stays out of the cross-rate graph.
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
 		leg:  o.newLegRef(pair, vwap, trades, proxied),
 	}
@@ -1688,13 +1670,11 @@ func (o *Orchestrator) publishDirect(
 }
 
 // vwapMaxAge returns this orchestrator's silence grace: 10 missed ticks
-// at its OWN configured cadence, floored at [cachekeys.VWAPMaxAge]
-// (#1294). cachekeys.VWAPMaxAge's "10 missed ticks" relationship to the
-// tick interval previously existed only in prose — an operator raising
-// cfg.Interval silently got fewer missed ticks of grace, and any tick
-// cycle exceeding cachekeys.VWAPMaxAge (a large pair set, a slow
-// Timescale, a retry storm) flapped the long windows between 200 and
-// 404 with no signal explaining it. The floor keeps a FASTER-than-
+// at its OWN configured cadence, floored at [cachekeys.VWAPMaxAge].
+// Deriving it from cfg.Interval keeps a raised interval from silently
+// shrinking the grace, and a tick cycle longer than cachekeys.VWAPMaxAge
+// (a large pair set, a slow Timescale, a retry storm) from flapping the
+// long windows between 200 and 404. The floor keeps a FASTER-than-
 // default interval from tightening the documented grace.
 func (o *Orchestrator) vwapMaxAge() time.Duration {
 	if derived := 10 * o.cfg.Interval; derived > cachekeys.VWAPMaxAge {
@@ -1704,7 +1684,7 @@ func (o *Orchestrator) vwapMaxAge() time.Duration {
 }
 
 // vwapTTL is [cachekeys.VWAPTTL] derived from this orchestrator's own
-// tick cadence (#1294) rather than the package-default cadence.
+// tick cadence rather than the package-default cadence.
 func (o *Orchestrator) vwapTTL(window time.Duration) time.Duration {
 	return cachekeys.VWAPTTLWithMaxAge(window, o.vwapMaxAge())
 }
@@ -1754,8 +1734,7 @@ func (o *Orchestrator) serveDirect(
 	o.mu.Unlock()
 	obs.AggregatorVWAPWritesTotal.Inc()
 
-	// Pair-level write clock for `stellarindex_price_staleness_seconds`
-	// (F-1306).
+	// Pair-level write clock for `stellarindex_price_staleness_seconds`.
 	o.recordPairWrite(pair, now)
 	coverage := pub.coverage
 	o.streamBucketOnce(ctx, pair, window, pub.value, bucketEnd, &coverage)
@@ -1861,7 +1840,7 @@ func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair cano
 	// on-chain (7dp) and CEX (8dp) trades (native vs crypto:XLM spellings
 	// resolve to the same aggregate.Pair, and triangulation legs draw from
 	// both tiers), and the raw Σquote/Σbase mean over-weights the
-	// finer-scaled source ~10× per decimal (CS-040) — see
+	// finer-scaled source ~10× per decimal — see
 	// aggregate.NormalizeAmountScale. This is the same correction
 	// internal/api/v1's price_tip.go and ohlc_fiat_combine.go already apply
 	// on their VWAP paths; a single-scale window (today's common case) is
@@ -1944,9 +1923,9 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 // key for (pair, window) and of every qualifier written beside it — the
 // observed-at stamp, the window coverage, the triangulated-provenance marker, the
 // composite quality-flags meta and the confidence score — so all of them survive for at least as
-// long as the freeze marker (F-1345, G13-03). The value is not
+// long as the freeze marker. The value is not
 // rewritten, so the stamp keeps saying when it was observed; the API
-// serves it as observed_at (RLT-357). A qualifier left on its original
+// serves it as observed_at. A qualifier left on its original
 // TTL would expire mid-hold and relabel a frozen composite as a direct
 // VWAP with flags.triangulated and its quality flags gone.
 //
@@ -1956,14 +1935,12 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 // out of Redis while flags.frozen is still set, and the API would
 // then read frozen=true with no value to serve.
 //
-// ttl MUST be the marker's own TTL, which since the ADR-0019
-// lifecycle landed is "remaining hold + silence grace" and can reach
-// ~35 minutes — not the flat [cachekeys.FreezeTTL] it used to be.
-// Passing the smaller constant here would recreate exactly the bug
-// F-1345 fixed, one order of magnitude later in the hold: the LKG
-// would evaporate 5 minutes into a 30-minute freeze. ttl <= 0 falls
-// back to FreezeTTL so a caller with no lifecycle of its own (the
-// composite-refusal path) keeps the original behaviour.
+// ttl MUST be the marker's own TTL, which under the ADR-0019
+// lifecycle is "remaining hold + silence grace" and can reach
+// ~35 minutes — not the flat [cachekeys.FreezeTTL]. Passing the
+// smaller constant would let the LKG evaporate 5 minutes into a
+// 30-minute freeze. ttl <= 0 falls back to FreezeTTL so a caller with
+// no lifecycle of its own (the composite-refusal path) still works.
 //
 // Best-effort + nil-safe on a missing key: Expire returns
 // BoolCmd=false (not an error) when the key doesn't exist — the
@@ -2063,18 +2040,14 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	})
 	if !decision.IsFrozen() {
 		if decision.IsWarn() {
-			// COR-09 / AGT-06: this decision used to end here and vanish.
 			// The caller discards the returned Action on the non-freeze
-			// path, so a bucket deviating past warn_pct — loud enough to
-			// call out, not loud enough to freeze — left no trace at all
-			// and `warn_pct` was an inert knob. It is NOT folded into
-			// flags.divergence_warning despite what several doc comments
-			// used to say: that flag is the cross-reference divergence
-			// service's, and is meaningful only alongside
-			// divergence_checked (CS-087). An anomaly warn runs no
+			// path, so count the warn here or `warn_pct` is an inert knob.
+			// It is NOT folded into flags.divergence_warning: that flag is
+			// the cross-reference divergence service's, and is meaningful
+			// only alongside divergence_checked. An anomaly warn runs no
 			// cross-reference check, so setting it would publish
-			// divergence_warning=true / divergence_checked=false — the
-			// exact state CS-087 calls un-interpretable.
+			// divergence_warning=true / divergence_checked=false, an
+			// un-interpretable state.
 			obs.AnomalyWarnTotal.WithLabelValues(string(decision.Class)).Inc()
 			o.logger.Warn("anomaly warn threshold crossed (published, not frozen)",
 				"pair", pair.String(),
@@ -2147,8 +2120,7 @@ func distinctSourceCount(trades []canonical.Trade) int {
 // original quote-decimal convention (classic/SAC pegs are 7-decimal,
 // off-chain legs 1e8). It feeds the min-volume gate via
 // [survivorUSDVolume] and lets the filter chain drop trades by index
-// while preserving USD attribution: F-1242 (codex audit-2026-05-12)
-// — `flushContributions` sums per-source USD over the post-filter
+// while preserving USD attribution: `flushContributions` sums per-source USD over the post-filter
 // survivors so the persisted `volume_usd` matches the contribution
 // population the VWAP was actually computed against, not the
 // pre-filter total.
@@ -2237,7 +2209,7 @@ func (o *Orchestrator) fetchForTarget(
 // [usdQuoteDecimals] — the SAME classification [dropForMinUSDVolume]
 // uses to decide whether the MinUSDVolume floor applies to a given
 // target pair, so the two can never disagree about which quote
-// shapes are USD-valuable (Guard 1, 2026-07-10).
+// shapes are USD-valuable.
 func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) map[string]*big.Rat {
 	if len(batch) == 0 {
 		return nil
@@ -2272,7 +2244,7 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 // trade's QuoteAmount. Same four tiers as [usdQuoteDecimals], but the
 // two OFF-CHAIN tiers read the emitting source's declared scale from
 // the external registry instead of assuming the 1e8 CEX convention
-// (MNY-05 / CS-040 — the same per-source resolution
+// (the same per-source resolution
 // [approxUSDVolume] already uses for the confidence liquidity factor).
 //
 // The off-chain convention is NOT uniform: the CEX pollers stamp 8
@@ -2325,17 +2297,13 @@ func usdQuoteDecimalsForTrade(quote canonical.Asset, source string, classicUSDPe
 //     (the Stellar-classic invariant).
 //  4. A Soroban SAC wrapper on `sorobanUSDPegs` — decimals 7 (a SAC
 //     always mirrors the 7-decimal scale of the classic asset it
-//     wraps; Guard 1, 2026-07-10).
+//     wraps).
 //
-// Tier 2 is R-008 (audit 2026-07-23). It is the shape the
-// stablecoin-fiat-proxy expansion fetches under
-// (`ExpandTargetPairWithClassicPegs` emits `BASE/crypto:USDT` &
-// friends for a fiat:USD target), and it used to fall through to
-// ok=false — so [usdVolumeForPairPerTrade] valued the WHOLE batch at
-// $0, [survivorUSDVolume] summed $0 for those trades, and the
-// fiat:USD target window was measured against MinUSDVolume as if the
-// CEX stablecoin legs carried no dollars at all. A window whose
-// volume was mostly (or entirely) USDT-quoted was dropped every tick.
+// Tier 2 is the shape the stablecoin-fiat-proxy expansion fetches
+// under (`ExpandTargetPairWithClassicPegs` emits `BASE/crypto:USDT` &
+// friends for a fiat:USD target). Falling through to ok=false would
+// make [usdVolumeForPairPerTrade] value the WHOLE batch at $0 and drop
+// a mostly USDT-quoted window against MinUSDVolume every tick.
 // The peg set is read from the aggregate stablecoin map rather than
 // re-listed here so the two can't drift.
 //
@@ -2344,20 +2312,14 @@ func usdQuoteDecimalsForTrade(quote canonical.Asset, source string, classicUSDPe
 // non-USD fiat (fiat:EUR, fiat:GBP, …; would need a live FX rate),
 // non-USD stablecoin tickers (crypto:EURC → fiat:EUR; same missing
 // FX rate), an un-pegged classic/Soroban quote (would need a live
-// price lookup — "rare" per the Guard 1 finding, and deliberately
-// NOT built here; see dropForMinUSDVolume's unvaluable branch), and
+// price lookup — rare, and deliberately NOT built here; see dropForMinUSDVolume's unvaluable branch), and
 // any other crypto/RWA/native quote shape.
 //
 // Both [usdVolumeForPairPerTrade] (valuation) and
 // [dropForMinUSDVolume] (MinUSDVolume applicability) call this so
 // the two questions — "can we value this pair's USD volume" and
 // "does the manipulation floor apply to this pair" — are answered by
-// exactly one classification, not two that can drift apart. Before
-// 2026-07-10 they WERE two separate checks (minUSDVolumeApplies
-// tested only fiat:USD; this switch also recognised classic pegs)
-// and had drifted: a directly-configured classic- or Soroban-quoted
-// target pair could be valued here but the floor never consulted
-// that value.
+// exactly one classification, not two that can drift apart.
 func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (decimals int, ok bool) {
 	switch {
 	case quote.Type == canonical.AssetFiat && quote.Code == "USD":
@@ -2409,9 +2371,8 @@ func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
 // post-filter survivor slice, looked up by stable trade ID in the
 // per-trade map captured before fetchForTarget's pair rewrites.
 //
-// F-1260 (codex audit-2026-05-12): the MinUSDVolume manipulation
-// gate is documented as a post-class, post-outlier publish gate,
-// but previously evaluated the pre-filter total — letting thin
+// The MinUSDVolume manipulation gate is a post-class, post-outlier
+// publish gate; evaluating the pre-filter total would let thin
 // survivor windows clear the floor on volume the filter had
 // already discarded. This helper bridges the rewrite scheme
 // (Pair carries the target after fetchForTarget) with the source-
@@ -2449,34 +2410,27 @@ func minUSDVolumeRat(floor float64) *big.Rat {
 // move on. Extracted from refreshPairWindow to keep its cognitive
 // complexity under the linter cap.
 //
-// `usdVolume` is the SURVIVOR-set USD total — F-1260 (codex audit-
-// 2026-05-12) replaced the pre-filter scalar with [survivorUSDVolume]
-// of the post-class + post-outlier slice. Before F-1260 the caller
-// passed in the pre-filter total, which let thin windows publish
-// above MinUSDVolume on volume the filter had already discarded.
+// `usdVolume` is the SURVIVOR-set USD total, [survivorUSDVolume] of the
+// post-class + post-outlier slice; a pre-filter total would let thin
+// windows publish above MinUSDVolume on volume the filter had
+// already discarded.
 //
 // Applicability is [usdQuoteDecimals] — the SAME classification
 // [usdVolumeForPairPerTrade] uses to compute `usdVolume` in the
 // first place, so "can we value this pair" and "does the floor
-// apply" can't drift apart (Guard 1, 2026-07-10). Three outcomes:
+// apply" can't drift apart. Three outcomes:
 //
 //   - Quote is USD-valuable (fiat:USD / classic peg / Soroban SAC
 //     peg): floor applies — this is the normal gate path below.
 //   - Quote is on-chain (classic or Soroban) but NOT a recognised
 //     peg: unvaluable WITHOUT a live price lookup this package
 //     deliberately doesn't build (see [Config.MinUSDVolume]). This
-//     branch FAILS CLOSED (window dropped) as of 2026-08-04. History:
-//     before 2026-07-10 it passed through with no floor SILENTLY;
-//     2026-07-10 made it loud (WARN + metric) but kept the
-//     pass-through, reasoning that fail-closed would blackout a
-//     future legitimate not-yet-pegged pair. The 2026-08-04 valuation
-//     incident settled that trade the other way: an unvaluable quote
-//     is exactly the shape a mint-and-dust attacker produces, and "if
+//     branch FAILS CLOSED (window dropped): an unvaluable quote is
+//     exactly the shape a mint-and-dust attacker produces, and "if
 //     the volume cannot be valued, the floor cannot be verified, so
-//     do not publish" is the operator's stated policy (the serving
-//     side got the same posture via pricingguard.SubstanceGate). The
-//     blackout concern keeps its answer — the WARN + metric name the
-//     missing peg, and adding it to usd_pegged_classic_assets /
+//     do not publish" is the policy (the serving side takes the same
+//     posture via pricingguard.SubstanceGate). The WARN + metric name
+//     the missing peg, and adding it to usd_pegged_classic_assets /
 //     sac_wrappers un-blacks the pair deliberately, with valuation.
 //   - Quote is fiat but not USD (EUR, GBP, …): the survivor window's
 //     quote volume is converted to USD at the [Config.FXStore] snap
@@ -2796,7 +2750,7 @@ func (o *Orchestrator) flushContributions(
 	if len(contributions) == 0 {
 		return
 	}
-	// F-1242 (codex audit-2026-05-12): walk the POST-filter trade
+	// Walk the POST-filter trade
 	// slice and sum per-source USD value from the per-trade map.
 	// This matches the contribution population VWAP was computed
 	// against; an outlier-dropped trade contributes 0 USD to its

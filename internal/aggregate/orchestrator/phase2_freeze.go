@@ -29,10 +29,7 @@ import (
 // (operator hasn't overridden via TOML). Operators tune via the
 // `[anomaly.phase2]` config block.
 const (
-	// 0.45, NOT ADR-0019's original 0.10 — operator decision of
-	// 2026-07-25, taken together with the COR-14 fix as this repo's
-	// remediation ledger requires ("R-072/R-078 ... must be fixed as ONE
-	// decision").
+	// 0.45, NOT ADR-0019's original 0.10.
 	//
 	// Why the ADR's own z>5 needs a number this high: confidence is a
 	// weighted geometric mean, so it decays gently in z. Measured on the
@@ -140,8 +137,8 @@ func phase2FreezeFires(c confidenceWithSourceCount, t Phase2Thresholds) bool {
 // "agreeing" for the auto-unfreeze streak (Signal.ReleaseCorroborated).
 // 5%: a genuine repricing carries the references with it (candidate vs
 // reference median lands within low single digits), while the held-
-// manipulation band the 2026-08-24 corroborated-release panel measured
-// (~5-40% held offsets releasing under per-tick calmness) stays
+// manipulation band (~5-40% held offsets releasing under per-tick
+// calmness, as measured) stays
 // blocked and walks the ladder to the operator.
 const releaseAgreementMaxPct = 5.0
 
@@ -154,8 +151,8 @@ const releaseAgreementMaxPct = 5.0
 //     and samples go stale in ~2 ticks, far shorter than any hold — so
 //     for every pair WITHOUT a resolved current-bucket reference the
 //     cross-oracle median below is the operative release lens.
-//   - the CURRENT-BUCKET composite reference (composite_reference.go,
-//     2026-08-29), for allow-listed single-venue targets whose reference
+//   - the CURRENT-BUCKET composite reference (composite_reference.go),
+//     for allow-listed single-venue targets whose reference
 //     RESOLVED this bucket. It replaces the triangulation lens above
 //     (it is the same sample) but is read against its OWN, tighter band
 //     ([CompositeReferenceConfig.ReleaseBandPct], default 2 %): the
@@ -507,7 +504,7 @@ func (o *Orchestrator) engageFreeze(
 	// derived price.
 	o.markFrozenThisTick(pair, window)
 
-	// F-1345 (G13-03): a freeze skips the VWAP cache write, so the
+	// A freeze skips the VWAP cache write, so the
 	// prior bucket's value must outlive the marker. Refresh regardless
 	// of whether a FreezeWriter is wired — the LKG keeps serving
 	// either way.

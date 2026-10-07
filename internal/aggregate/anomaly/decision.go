@@ -14,14 +14,13 @@ const (
 	// deviation is large enough to call out but not extreme enough
 	// (or has multi-source corroboration) to refuse to publish.
 	//
-	// This does NOT set `flags.divergence_warning`, despite what
-	// this comment claimed until audit COR-09/AGT-06. That flag
+	// This does NOT set `flags.divergence_warning`. That flag
 	// belongs to the cross-reference divergence service and is
-	// meaningful only alongside `flags.divergence_checked`
-	// (CS-087); an anomaly warn runs no cross-reference check, so
-	// setting it would publish warning=true / checked=false — the
-	// state CS-087 declares un-interpretable. Surfacing this on
-	// the wire needs its own flag, which is an API-shape decision.
+	// meaningful only alongside `flags.divergence_checked`; an anomaly
+	// warn runs no cross-reference check, so setting it would publish
+	// warning=true / checked=false, a state consumers cannot interpret.
+	// Surfacing this on the wire needs its own flag, which is an
+	// API-shape decision.
 	ActionWarn Action = "warn"
 
 	// ActionFreeze — DO NOT publish this bucket. Serve the
@@ -70,8 +69,7 @@ func (d Decision) IsWarn() bool { return d.Action == ActionWarn }
 // Action added later would be treated as "publish" silently — no
 // compiler pressure, no lint, no test. Routing the decision through a
 // switch with an explicit default makes a new variant fail CLOSED
-// (refuse to publish) and, in tests, fail loudly (cold audit
-// 2026-08-04).
+// (refuse to publish) and, in tests, fail loudly.
 func (d Decision) Publishes() bool {
 	switch d.Action {
 	case ActionAllow, ActionWarn:

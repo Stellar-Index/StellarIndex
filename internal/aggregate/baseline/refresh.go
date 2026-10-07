@@ -204,7 +204,7 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		okOutcome = OutcomeOKPerMinuteFallback
 		// Day30.N is also the bootstrap cap's density. Under three bars that
 		// density is ~0, but per-minute N is print count and dust can buy it
-		// past the gate (#1108). Clamping at MinZScoreSamples keeps the 30d
+		// past the gate. Clamping at MinZScoreSamples keeps the 30d
 		// window's freeze vote and drops the density to under an hour.
 		if multi.Day30 != nil && multi.Day30.N > MinZScoreSamples {
 			multi.Day30.N = MinZScoreSamples

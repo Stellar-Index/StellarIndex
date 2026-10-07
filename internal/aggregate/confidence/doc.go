@@ -18,7 +18,7 @@
 //     direct price and the composite implied by a configured
 //     triangulation chain. Half-weight by default and weightless when
 //     no composite exists, so it is inert for pairs without a chain —
-//     ADR-0019 predates it; see that ADR's 2026-07-25 amendment.
+//     ADR-0019 predates it; see that ADR's amendment.
 //   - [BaselineQualityFactor]: how mature the per-asset baseline is.
 //
 // The combiner is the NORMALISED weighted geometric mean —

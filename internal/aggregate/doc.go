@@ -48,11 +48,6 @@
 // describes the symmetric band. On-call guidance lives in
 // docs/operations/runbooks/aggregator.md.
 //
-// Corrected 2026-08-04: this block used to describe a sigma-threshold
-// filter around the unweighted MEAN and said "the σ form is what the
-// methodology specifies". The median/MAD form shipped with the M5 fix;
-// the methodology page has now been corrected to match too.
-//
 // # Stablecoin fiat proxy
 //
 // Quote-side stablecoin tickers map to their pegged fiat at
@@ -69,7 +64,7 @@
 // graph router — [BuildEdges] builds the edge set from the
 // freshly-cached leg VWAPs and [CombineRoutes]/[CompositeRate]
 // enumerates and composites the best route — with the X2.5 forex-snap
-// rule for chained-fiat pairs (per F-0014). The orchestrator's
+// rule for chained-fiat pairs. The orchestrator's
 // [Triangulations] field drives a per-tick pass after direct-pair
 // refreshes have populated the leg cache. ([Triangulate] /
 // [TriangulateChain] are the older direct-multiply helpers, kept for

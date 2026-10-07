@@ -212,7 +212,7 @@ func tryVWAPTier(
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
 ) (fresh, stale *GlobalPriceResult, err error) {
-	// F-1340 (G14-04): loop the base's canonical aliases, mirroring
+	// Loop the base's canonical aliases, mirroring
 	// the API's readPriceWithAliases. XLM has two canonical forms —
 	// `native` (SDEX-emitted) and `crypto:XLM` (CEX-emitted). The
 	// aggregator VWAPs under whichever form the configured pair set
@@ -247,11 +247,9 @@ func tryVWAPTier(
 
 // assetAliases is the aggregate spelling of [canonical.AssetAliases].
 //
-// C4-012/C4-013 (audit-2026-07-23): this was a verbatim copy of the
-// api/v1 switch, kept "in lock-step" by a pair of reciprocal comments
-// and nothing else — the exact shape that lets one copy gain XLM's
-// third identity (the SAC C-address) and the other silently not. The
-// duplicate is gone; both call the leaf primitive, whose godoc carries
+// Delegates to the leaf primitive so the aggregator and api/v1 cannot
+// drift apart on XLM's identities (including the SAC C-address). The
+// leaf godoc carries
 // the priority-order reasoning that matters here: [tryVWAPTier] takes
 // the FIRST alias that clears VWAPMinTradeCount, so the SAC form is
 // ordered last and can only win when both SDEX (`native`) and CEX
@@ -400,8 +398,8 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // defaults) of the majority price is NOT dropped, only one further out
 // is. All comparison arithmetic is exact *big.Rat (ADR-0003).
 //
-// The deviation is measured in RATIO space ([symmetricDev], MNY-22 /
-// finding K004), not additively in price space. The additive band
+// The deviation is measured in RATIO space ([symmetricDev]), not
+// additively in price space. The additive band
 // `|p − centre| > K·scale` is one-sided-blind by construction: a source
 // can only ever be `centre` below the centre, so once K·scale reaches
 // the centre — a relative MAD of 1/(5·1.4826) = 13.5 %, which three

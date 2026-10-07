@@ -150,7 +150,7 @@ func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 // print's neighbours BY POSITION. Same-timestamp prints from different
 // sources therefore changed places tick to tick and moved a real trim
 // decision, so one window's VWAP was not reproducible from its own
-// inputs (finding K036). The order belongs here; call sites do not
+// inputs. The order belongs here; call sites do not
 // re-sort.
 func FiatBackers(fiat string) []string {
 	var out []string

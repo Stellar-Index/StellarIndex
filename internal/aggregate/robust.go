@@ -139,8 +139,7 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 // symmetrically in RATIO (log) space, expressed in the same price units
 // as the σ-equivalent scale the callers compare it against.
 //
-// Why (MNY-22, findings F037/F039/K004/RLT-391): every robust band here
-// used to be ADDITIVE in price space — `|p − centre| > K·scale` — which
+// Why: an ADDITIVE band in price space — `|p − centre| > K·scale` — which
 // is one-sided-blind by construction. `p` can only ever be `centre`
 // below the centre, so once `K·scale >= centre` NO downward print can
 // exceed the threshold: a crash print or a decimal-shift fat finger (on

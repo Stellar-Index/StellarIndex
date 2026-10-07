@@ -59,7 +59,7 @@ type BaselineSource interface {
 }
 
 // confidenceCacheTTL — the TTL is identical to VWAP (derived from this
-// orchestrator's own cadence, #1294) so a stale confidence record can't
+// orchestrator's own cadence) so a stale confidence record can't
 // outlive the price it scored.
 func (o *Orchestrator) confidenceCacheTTL(window time.Duration) time.Duration {
 	return o.vwapTTL(window)
@@ -256,7 +256,7 @@ type canonicalTrade = canonical.Trade
 
 // crossOracleSignal is what [Orchestrator.lookupCrossOracle] extracts
 // from the cached divergence result for the confidence step. The
-// no-data state (unchecked per CS-087) is both fields at their -1
+// no-data state (unchecked) is both fields at their -1
 // sentinels — [confidence.Compute] then uses the neutral factor and
 // serves CrossOracleChecked=false.
 type crossOracleSignal struct {
@@ -287,11 +287,9 @@ var noCrossOracle = crossOracleSignal{divergencePct: -1, agreementCount: -1}
 // transient cache failure, single-source success) returns
 // [noCrossOracle] — the "no cross-oracle data" sentinels.
 //
-// F-1344 (G16-03): reads the per-PAIR key (`div:<base>/<quote>`),
-// not a per-base key. The confidence score for XLM/USDT must use
-// XLM/USDT's own divergence, not whatever pair last wrote the base
-// key — the pre-fix per-base key meant the score consumed a
-// divergence computed against a different quote.
+// Reads the per-PAIR key (`div:<base>/<quote>`), not a per-base key:
+// the confidence score for XLM/USDT must use XLM/USDT's own divergence,
+// not one computed against a different quote.
 //
 // Best-effort: divergence is enrichment, not a publish-blocker.
 // Read failures don't propagate; the confidence step continues with
@@ -377,23 +375,18 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 // for them. The sentinel routes to the neutral factor instead, so the
 // score reflects the factors we DID measure.
 //
-// Scale correctness (M13 / CS-040): the quote amount's smallest-unit
-// scale is a per-SOURCE property, not a constant. Off-chain CEX /
-// aggregator quotes use 1e8 (8 decimals — see each poller's
-// externalAmountDecimals), the FX pollers 1e6, on-chain legs 1e7. A
-// fixed 1e7 divisor (the prior implementation) overstated every 8dp
-// CEX quote by 10× — and every pair this function values (fiat:USD +
-// the abstract crypto:* stablecoin tickers) is that off-chain 8dp
-// convention, so the whole valued set was systematically 10×-inflated.
+// The quote amount's smallest-unit scale is a per-SOURCE property, not a
+// constant. Off-chain CEX / aggregator quotes use 1e8 (8 decimals — see
+// each poller's externalAmountDecimals), the FX pollers 1e6, on-chain
+// legs 1e7. A fixed 1e7 divisor would overstate every 8dp CEX quote by
+// 10×, and every pair this function values (fiat:USD + the abstract
+// crypto:* stablecoin tickers) is that off-chain 8dp convention.
 //
-// That is NOT the benign error the old comment claimed: the
-// LiquidityFactor is log-LINEAR across its band, so a 10× (one-decade)
-// volume error shifts the factor by ln(10)/ln(ceiling/floor) for any
-// true volume inside it — a third of the full [0,1] range on today's
-// [1e3, 1e6] band, and HALF of it on the [1e3, 1e5] band that shipped
-// until 2026-07-25 (it only vanishes once the true volume already
-// saturates at the ceiling). That materially distorts the per-pair
-// confidence ranking. Resolve the scale the same way the
+// That error is not benign: the LiquidityFactor is log-LINEAR across its
+// band, so a 10× (one-decade) volume error shifts the factor by
+// ln(10)/ln(ceiling/floor) for any true volume inside it (a third of the
+// full [0,1] range on the [1e3, 1e6] band), materially distorting the
+// per-pair confidence ranking. Resolve the scale the same way the
 // contribution-sink USD valuation does —
 // external.Metadata.AmountScaleDecimals.
 //
@@ -441,16 +434,13 @@ func isUSDQuoted(pair canonical.Pair) bool {
 //
 // The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-
 // bucket RETURNS and N returns span N+1 buckets. Dividing N itself
-// made this measure structurally unable to reach 30 (RLT-260) — a
-// window in which the pair traded in all 43,200 minutes yields 43,199
-// returns and read 29.99931, under every threshold in
-// [confidence] — which left the bootstrap cap engaged for every asset
-// forever and pinned each served confidence at 0.5. A completely-
-// observed window now reads exactly 30.0, and no window can read
-// higher.
+// makes this measure structurally unable to reach 30: a window in which
+// the pair traded in all 43,200 minutes yields 43,199 returns and would
+// read 29.99931, under every threshold in [confidence], leaving the
+// bootstrap cap engaged forever. A completely-observed window reads
+// exactly 30.0, and no window can read higher.
 //
-// This is sample DENSITY, not calendar age, and the name is
-// historical (COR-14). It deliberately takes no wall-clock input:
+// This is sample DENSITY, not calendar age, despite the name. It deliberately takes no wall-clock input:
 // LatestBaseline's computedAt says when the refresher last WROTE the
 // row, which is a property of the refresh loop's cadence rather than
 // of the asset, and nothing available here carries the asset's
@@ -461,21 +451,14 @@ func isUSDQuoted(pair canonical.Pair) bool {
 // See [confidence.Inputs.BaselineAgeDays] for the consumer-side
 // framing.
 //
-// W8.8 (audit-2026-08-14) DECISION — density kept over calendar age.
-// The audit flagged this as mis-capping "mature-but-sparse" pairs at the
-// 0.5 baseline-quality floor and proposed plumbing a real first-observation
-// CALENDAR timestamp to un-cap them. Rejected, on two grounds the code above
-// already states: (1) confidence in a price BASELINE is a function of how
-// many observations back it, not how long the pair has existed — a mature
-// pair that barely trades has a genuinely thin, less-trustworthy baseline, so
-// scoring it conservatively is CORRECT, not a bug; (2) un-capping by calendar
-// age moves a money-adjacent confidence signal in the LESS-safe direction
-// (higher confidence on thin baselines) — the money-safety panel refused the
-// naive Day30==nil variant for exactly this (it would also un-cap genuinely
-// new-and-immature pairs). The current behaviour errs LOW = safe. If a calendar
-// maturity signal is ever wanted it must be ADDITIVE (never a replacement for
-// density) and plumbed from storage's first-observation time — a deliberate
-// cross-layer change, not a silent flip here.
+// Density is kept over calendar age on purpose: (1) confidence in a price
+// BASELINE is a function of how many observations back it, so a mature
+// pair that barely trades has a genuinely thin baseline and scoring it
+// conservatively is correct; (2) un-capping by calendar age raises
+// confidence on thin baselines, the LESS-safe direction for a
+// money-adjacent signal. The current behaviour errs LOW = safe. A calendar
+// maturity signal must be ADDITIVE (never a replacement for density) and
+// plumbed from storage's first-observation time.
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1

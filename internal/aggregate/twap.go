@@ -73,23 +73,12 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 	// weightedSum accumulates Σ(price_i × Δt_i) in FIXED POINT (scaled by
 	// twapScale), NOT as a big.Rat.
 	//
-	// It was a big.Rat, which made this loop super-linear and turned one
-	// anonymous GET into multiple CPU-seconds. big.Rat.Add puts both
-	// operands over a common denominator and renormalises: adding N
-	// prices with distinct base amounts accretes their LCM, so the
-	// running denominator grows without bound. Measured offline at the
-	// handler's own maxTrades=10000 cap: n=1000 → 144ms, n=4000 → 5.0s,
-	// n=8000 → 32.8s, n=10000 → 60.6s (final denominator 20.3 KB of
-	// bignum) — roughly n^2.6.
-	//
-	// Measured on production 2026-08-04, one request:
-	//   GET /v1/twap?base=native&quote=fiat:USD&window=48h
-	//   → 200, 295-byte body, 7.47 CPU-SECONDS (read from /proc/<pid>/stat)
-	// /v1/vwap over the identical DB path and the same 10000-trade cap
-	// costs 0.27s, which isolates the accumulator as the ~7.1s: the cost
-	// was flat across a 28x window range, the signature of the fixed
-	// trade cap rather than a scan. journalctl already held three
-	// 111-SECOND 200s with 296-byte bodies. Nothing could reclaim it —
+	// big.Rat.Add puts both operands over a common denominator and
+	// renormalises: adding N prices with distinct base amounts accretes
+	// their LCM, so the running denominator grows without bound and the
+	// loop goes super-linear (roughly n^2.6; n=10000, the handler's
+	// maxTrades cap, takes ~60s with a 20 KB denominator). One anonymous
+	// GET would cost multiple CPU-seconds, and nothing can reclaim it:
 	// aggregate.TWAP takes no ctx, and RequestTimeout only injects a
 	// deadline, it does not abort the handler goroutine.
 	//
@@ -101,21 +90,15 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 	// orders of magnitude below the served precision. Every intermediate
 	// stays ~320 bits wide, so the loop is linear.
 	//
-	// totalNanos accumulates Σ(Δt_i) as a *big.Int, NOT an int64. It was
-	// an int64 of nanoseconds, which overflows: time.Time.Sub SATURATES
-	// at MaxInt64 (~292.47 years), so a windowEnd far enough in the
-	// future produces a saturated Δt, and adding any further positive
-	// interval WRAPS THE SUM NEGATIVE — after which the final division
-	// flips the sign of the published price. The guard below only tested
-	// for zero, so a negative denominator sailed through.
-	//
-	// Reproduced against production 2026-08-04:
-	//   /v1/twap?base=native&quote=fiat:USD&from=2026-08-01&to=9999-12-31
-	//   → 200 {"price":"-0.1702543997", "flags":{"stale":false}}
-	// The API places no upper bound on an explicit `to`, so any client
-	// using a far-future sentinel for "no end bound" got a negative money
-	// string on a success response. A big.Int accumulator removes the
-	// overflow class rather than papering over this one entry point.
+	// totalNanos accumulates Σ(Δt_i) as a *big.Int, NOT an int64:
+	// time.Time.Sub SATURATES at MaxInt64 (~292.47 years), so a windowEnd
+	// far enough in the future produces a saturated Δt, and adding any
+	// further positive interval WRAPS THE SUM NEGATIVE, flipping the sign
+	// of the published price on the final division (the zero-only guard
+	// below would not catch it). The API places no upper bound on an
+	// explicit `to`, so a far-future "no end bound" sentinel would
+	// otherwise return a negative price. A big.Int accumulator removes
+	// the overflow class rather than papering over one entry point.
 	weightedSum := new(big.Int)
 	totalNanos := new(big.Int)
 	scratch := new(big.Int)

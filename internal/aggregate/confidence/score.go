@@ -29,7 +29,7 @@ const (
 // translation of [BootstrapDays] into the only unit this package is
 // ever handed.
 //
-// Why it is not simply [BootstrapDays] (RLT-260): the 30-day window
+// Why it is not simply [BootstrapDays]: the 30-day window
 // behind [Inputs.BaselineAgeDays] holds at most 43,200 one-minute
 // buckets, so the density reading is bounded ABOVE by 30.0 and
 // reaches it only for a window in which the pair traded in every
@@ -203,7 +203,7 @@ type Factors struct {
 	BaselineQuality        float64 `json:"baseline_quality"`
 
 	// CrossOracleChecked disambiguates the CrossOracle factor value
-	// per the CS-087 DivergenceChecked discipline: true means real
+	// per the DivergenceChecked discipline: true means real
 	// cross-oracle data fed the factor; false means the neutral
 	// no-data value was used. Without it a consumer cannot tell
 	// CrossOracle=0.7 "unverified" from CrossOracle=0.7 "verified,
@@ -212,23 +212,19 @@ type Factors struct {
 	CrossOracleChecked bool `json:"cross_oracle_checked"`
 
 	// LiquidityMeasured disambiguates the Liquidity factor value on
-	// exactly the same CS-087 discipline as CrossOracleChecked above:
+	// exactly the same discipline as CrossOracleChecked above:
 	// true means a real USD volume fed the factor, false means the
 	// neutral [LiquidityUnmeasuredFactor] was substituted because the
 	// pair could not be valued in USD.
 	//
 	// This is load-bearing, not symmetry for its own sake. The neutral
 	// is 0.5, and SOME measured bucket always maps to 0.5 too — the
-	// log-midpoint of the factor's own band. Until 2026-07-25 that
-	// collision was at its worst: the ceiling was $100K, which put the
-	// midpoint at exactly $10,000 — the production `min_usd_volume`
-	// floor, i.e. the single most likely measured value, since
-	// dropForMinUSDVolume rejects anything below it before confidence is
-	// computed. Raising the ceiling to $1M moved the collision volume to
-	// ≈ $31,623 and the publish floor now reads 0.333, so the two states
-	// are further apart in practice — but they are NOT distinguishable
-	// from the number alone, and a consumer that cannot tell them apart
-	// still MUST NOT read 0.5 as evidence of real liquidity.
+	// log-midpoint of the factor's own band (≈ $31,623), while the
+	// publish floor (dropForMinUSDVolume rejects anything below it before
+	// confidence is computed) reads 0.333. The two states are far apart in
+	// practice but NOT distinguishable from the number alone, and a
+	// consumer that cannot tell them apart still MUST NOT read 0.5 as
+	// evidence of real liquidity.
 	LiquidityMeasured bool `json:"liquidity_measured"`
 
 	// CrossOracleAgreement is the count of independent external
@@ -238,7 +234,7 @@ type Factors struct {
 	CrossOracleAgreement int `json:"cross_oracle_agreement"`
 
 	// TriangulationChecked disambiguates the TriangulationAgreement
-	// factor on the same CS-087 discipline as CrossOracleChecked: true
+	// factor on the same discipline as CrossOracleChecked: true
 	// means a real composite price (a configured triangulation chain's
 	// fresh output for this pair) was compared against the direct price;
 	// false means no composite was available and the neutral placeholder
@@ -261,7 +257,7 @@ type Factors struct {
 	BaselineAgeDays float64 `json:"baseline_age_days"`
 
 	// BootstrapCapped disambiguates a served confidence at or below
-	// [BootstrapConfidenceCap] on the CS-087 discipline: true means the
+	// [BootstrapConfidenceCap] on the same discipline: true means the
 	// bootstrap ceiling bounded this score because BaselineAgeDays is
 	// under [BootstrapDensityDays] (or, for a previously released pair,
 	// under [BootstrapReengageDensityDays]), so the value may be the cap rather
@@ -361,7 +357,7 @@ func Compute(in Inputs, w Weights) Score {
 	// a negative divergence means "no cross-oracle data" (neutral
 	// factor), so the served decomposition marks unchecked and the
 	// agreement count is forced to 0 (unchecked ≠ zero agreement —
-	// consumers read the pair together per CS-087). NaN divergence
+	// consumers read the pair together). NaN divergence
 	// (defensive-zero factor) also reads as unchecked.
 	if in.CrossOracleDivergencePct >= 0 && !math.IsNaN(in.CrossOracleDivergencePct) {
 		f.CrossOracleChecked = true
@@ -486,8 +482,7 @@ func safeLog(x float64) float64 {
 // weight of 0 effectively removes that factor from the product", that a
 // zero factor zeroes the mean only "with non-zero weight", and doc.go's
 // flat guarantee that "the geometric mean never produces NaN". A
-// zero-weighted factor is REMOVED, which is what the docs already say
-// (cold audit 2026-08-04).
+// zero-weighted factor is REMOVED, which is what the docs already say.
 func weightedLog(factor, weight float64) float64 {
 	if weight == 0 {
 		return 0
