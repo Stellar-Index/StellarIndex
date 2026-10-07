@@ -402,9 +402,8 @@ type windowResult struct {
 // classicMovementsAttemptWindow runs ONE attempt at decoding, writing,
 // and verifying the [wlo,whi] window, so classicMovementsBackfill's
 // loop can bound each attempt with a per-window deadline and a single
-// retry (see
-// classicMovementsWindowDeadline). Its own named function,
-// rather than a closure in the loop, to keep the caller's
+// retry (see classicMovementsWindowDeadline). It is its own named
+// function, rather than a closure in the loop, to keep the caller's
 // gocognit/gocyclo/funlen complexity down while it also has to
 // juggle the retry-once control flow; the four phases below are
 // FURTHER split into their own named functions for the same reason —
@@ -475,7 +474,7 @@ func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec
 	// ReplacingMergeTree part fans one op out to k*m identical rows.
 	// seen (threaded into classicMovementsDecodeOp) collapses the stream to
 	// one op per (ledger, tx_hash, op_index) before it is decoded or
-	// counted at all — CA2-A14.
+	// counted at all.
 	seen := make(map[classicMovementOpKey]struct{})
 	werr := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
 		classicMovementsDecodeOp(dec, seen, op, res)
@@ -489,7 +488,7 @@ func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec
 
 // classicMovementsDecodeOp handles one ClassicOp row from
 // classicMovementsDecodeOpsSurface's StreamClassicOps callback: dedupe
-// against seen (CA2-A14), decode, and accumulate into res. Split out of
+// against seen, decode, and accumulate into res. Split out of
 // the callback so the dedup is independently testable without a live
 // ClickHouse connection (StreamClassicOps dials its own).
 func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMovementOpKey]struct{}, op clickhouse.ClassicOp, res *windowResult) {
@@ -698,7 +697,7 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 		res.windowEntryChangeRead++
 		k := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
 		// Same StreamClassicOps duplication as classicMovementsDecodeOpsSurface
-		// above (CA2-A14) — collapse to one op before it drives a handler.
+		// above — collapse to one op before it drives a handler.
 		if _, dup := seenEC[k]; dup {
 			return nil
 		}

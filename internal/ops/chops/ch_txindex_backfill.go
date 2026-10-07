@@ -17,11 +17,11 @@ import (
 //
 // Operator cautions for the full-history run on r1 (perf-todo §4): the
 // operator serializes it (don't run alongside other heavy CH jobs), and runs
-// it under the root-<2G watchdog — heavy CH load has wedged the CH log
-// channel on the small root partition before. Each
+// it under the root-<2G watchdog — heavy CH load can wedge the CH log
+// channel on the small root partition. Each
 // window prints a resume point; on interrupt/failure re-run with that -from.
 //
-// Safe default: the flag defaults are -from 2 / -to 0(=tip), so unguarded a
+// Safe default: the flag defaults are -from 2 / -to 0(=tip), so, unguarded, a
 // BARE `ch-txindex-backfill` with no arguments would silently start the
 // entire ledger-2..tip (~10.2B row) backfill — an easy footgun for a heavy
 // job the cautions above say must be babysat. The full-history run is a real

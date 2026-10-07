@@ -85,8 +85,8 @@ func chCap67Movements(args []string) error {
 	// Without a metric on the watermark this job advances, a wedged
 	// -follow daemon (holding the watermark, and every
 	// downstream /movements read behind it, at a fixed ledger) looks
-	// exactly like a healthy one — ch-backfill /
-	// ch-holders-rollup / usd-volume-restamp publish through this same primitive.
+	// exactly like a healthy one. ch-backfill, ch-holders-rollup and
+	// usd-volume-restamp publish through this same primitive.
 	// record reports per-window, not just at run end: -follow's first-run
 	// backfill can run for hours, and a single end-of-run Progress call
 	// would leave the cursor flat (reading as hung) for the whole of it.
@@ -468,7 +468,7 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 	// it, which the caller's `last < start` guard treats as "nothing to do".
 	//
 	// The clamp is UNCONDITIONAL: an operator-supplied -to is min()'d against
-	// the tip rather than trusted. Gated only when to == 0,
+	// the tip rather than trusted. With the gate only in the to == 0 branch,
 	// `-to N` would walk straight past a hole below N and stamp the
 	// watermark at every window top on the way — the loss above, on the one
 	// invocation shape an operator reaches for after an incident.

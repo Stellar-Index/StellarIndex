@@ -411,7 +411,7 @@ type projectionDirtyWindowRecorder interface {
 // recordCHRebuildDirtyWindows records [lo,hi] as a pending projection dirty
 // window for every source in sources, stamped with reason(lo, hi), so the
 // next compute-completeness re-reconciles the range instead of carrying its
-// prior clean claim over it (as every -write run does too).
+// prior clean claim over it (-record-dirty-window and every -write run).
 //
 // One row PER SOURCE, under the catalogue names the reconcile keys on: the
 // table is keyed by source and compute-completeness looks a window up by

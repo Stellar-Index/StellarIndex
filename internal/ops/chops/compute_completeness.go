@@ -47,9 +47,9 @@ func sorobanEraFloor(cfg config.Config) uint32 {
 // break/absence lies before the source's own data). Correctness depends on
 // SubstrateProblem returning a COVERAGE-correct problem ledger — an empty or
 // tail-truncated lake returns the range tip, so `problem < genesis` is false for
-// every source and none can green itself on an absent lake (the F1 consumer
-// fail-open the reviewer caught: a point value like `from` let soroswap, genesis
-// 50.7M, read `2 < 50.7M = true` on an EMPTY lake). Pure — unit-testable.
+// every source and none can green itself on an absent lake (a point value
+// like `from` would let soroswap, genesis 50.7M, read `2 < 50.7M = true` on
+// an EMPTY lake). Pure — unit-testable.
 func sourceSubstrateOK(problem uint32, hasProblem bool, genesis uint32) bool {
 	return !hasProblem || problem < genesis
 }
@@ -218,7 +218,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	// Fail CLOSED on an unknown -source before the per-source loop, which
 	// would otherwise skip every source and report SUCCESS having verified
-	// nothing (F7 fail-open).
+	// nothing.
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("compute-completeness: %w", verr)
 	}
@@ -477,7 +477,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// SubstrateProblem returns coverage-correct problem ledgers for
 		// empty/head/tail absences (see its substrateHeadProblem doc) so
 		// a high-genesis source can't read a COVERAGE failure as "below
-		// my genesis, I'm fine" (F1 fail-open).
+		// my genesis, I'm fine".
 		srcScanFrom := subScanFrom
 		if genesis > srcScanFrom {
 			srcScanFrom = genesis
@@ -512,7 +512,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if p := lakeCoverageProblem(genesis, scanClean, substrateOK, priorSub[src.name]); p != 0 {
 			problems = append(problems, p)
 		}
-		// The substrate twin of detectFloorLoss.
+		// This is the substrate twin of detectFloorLoss.
 		// An incremental run scanned only [subScanFrom, tip] and
 		// substrateClaim rule 3 CARRIES the prior clean [genesis,
 		// subScanFrom] verdict — so a capacity-archive DROP PARTITION (the
@@ -583,10 +583,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		lakeComplete := srW.Complete && substrateOK
 		projOK := false
 		// The projection axis's own floor, published alongside the verdict
-		// (migration 0155). Left only inside `detail`'s free text, a
-		// consumer reading the typed fields sees genesis_ledger (the LAKE
-		// floor, often ledger 2) and reads the served-tier claim as
-		// reaching back to it. 0 stays "not
+		// (migration 0155). Without it a consumer reading the typed fields would
+		// see genesis_ledger (the LAKE floor, often ledger 2) and read the
+		// served-tier claim as reaching back to it. 0 stays "not
 		// evaluated" — the non-reconciling cases below leave it alone.
 		var projVerifiedFrom uint32
 		// Set only when the CH reconcile FOUND a failure; carried to the
@@ -625,7 +624,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				return fmt.Errorf("%s: served floor: %w", src.name, serr)
 			}
 			projVerifiedFrom = servedFrom
-			// N-F2 residual: a bottom-edge truncation is invisible to the
+			// A bottom-edge truncation is invisible to the
 			// reconcile itself, because the reconcile's own floor moves with
 			// it. Compare against the durable floor BEFORE reconciling, and
 			// treat loss as a hard projection failure — the surviving rows
@@ -1557,7 +1556,7 @@ func projectionEvidence(projOK bool, servedFrom, runFrom uint32, prior priorProj
 // published watermark (the -pass mode projection floor — see
 // projectionFloor).
 //
-// CA2-A16-correct-2: the three axes are NOT bounded by the same ledger.
+// The three axes are NOT bounded by the same ledger.
 // Substrate and recognition each reconcile to the true network tip (see
 // substrateClaim, sourceRecognitionOK), so s.Tip is their correct prior
 // bound. Projection's reconcile is bounded by srW.Ledger — published as
@@ -2059,9 +2058,9 @@ func expectedProjection(ctx context.Context, chStreamer completeness.EventStream
 // not necessarily a Symbol: phoenix publishes ("create","liquidity_pool") as
 // two ScvStrings, and the lake's topic_0_sym column is empty for those rows.
 // The streamer's prefilter matches both encodings for exactly that reason
-// (internal/storage/clickhouse/event_reader.go topic0Predicate): matching
-// Symbols alone, a walk over a String-topic factory returns zero rows and (b)
-// contributes nothing, silently degrading the prefilter to (a) alone.
+// (internal/storage/clickhouse/event_reader.go topic0Predicate): a prefilter
+// matching Symbols alone would return zero rows for a String-topic factory,
+// so (b) would contribute nothing and the prefilter would degrade to (a) alone.
 //
 // The walk runs the throwaway decoder under completeness.Guard: a creation
 // event whose decoder panics leaves its child unregistered on the expected
