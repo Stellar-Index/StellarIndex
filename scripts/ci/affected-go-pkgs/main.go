@@ -48,22 +48,9 @@ func main() {
 }
 
 func run(base string, filesMode bool) error {
-	changed, err := gitLines("diff", "--name-only", "--no-renames", base, "HEAD")
+	substantive, err := substantiveFiles(base)
 	if err != nil {
 		return err
-	}
-	var substantive []string
-	for _, f := range changed {
-		if strings.HasSuffix(f, ".go") {
-			same, err := commentOnly(base, f)
-			if err != nil {
-				return err
-			}
-			if same {
-				continue
-			}
-		}
-		substantive = append(substantive, f)
 	}
 	if filesMode {
 		for _, f := range substantive {
@@ -71,54 +58,105 @@ func run(base string, filesMode bool) error {
 		}
 		return nil
 	}
+	dirs, full, err := touchedDirs(substantive)
+	if err != nil {
+		return err
+	}
+	if full {
+		fmt.Println("./...")
+		return nil
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	pkgs, err := dependents(dirs)
+	if err != nil {
+		return err
+	}
+	for _, p := range pkgs {
+		fmt.Println(p)
+	}
+	return nil
+}
 
+// substantiveFiles lists the files changed since base, minus comment-only
+// Go edits.
+func substantiveFiles(base string) ([]string, error) {
+	changed, err := gitLines("diff", "--name-only", "--no-renames", base, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, f := range changed {
+		if strings.HasSuffix(f, ".go") {
+			same, err := commentOnly(base, f)
+			if err != nil {
+				return nil, err
+			}
+			if same {
+				continue
+			}
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// touchedDirs maps changed files to the package directories whose tests
+// they can reach; full reports a change that can reach every package.
+func touchedDirs(files []string) (map[string]bool, bool, error) {
 	dirs := map[string]bool{}
-	for _, f := range substantive {
+	for _, f := range files {
 		if fullTriggers[f] {
-			fmt.Println("./...")
-			return nil
+			return nil, true, nil
 		}
 		dir := path.Dir(f)
 		if strings.HasSuffix(f, ".go") && !hasGoFiles(dir) {
 			// A deleted package: unchanged importers may no longer compile.
-			fmt.Println("./...")
-			return nil
+			return nil, true, nil
 		}
 		// Non-Go files reach a package through go:embed or testdata, both of
 		// which live under the package directory.
-		inPkg := false
-		for d := dir; d != "."; d = path.Dir(d) {
-			if hasGoFiles(d) {
-				dirs[d] = true
-				inPkg = true
-			}
-		}
-		if inPkg || strings.HasSuffix(f, ".go") {
+		if markPackageDirs(dir, dirs) || strings.HasSuffix(f, ".go") {
 			continue
 		}
 		// Outside every package: a test reads it by path, if at all.
 		for _, p := range fullPrefixes {
 			if strings.HasPrefix(f, p) {
-				fmt.Println("./...")
-				return nil
+				return nil, true, nil
 			}
 		}
 		dirs[wiringPkg] = true
 		readers, err := gitLines("grep", "-lF", path.Base(f), "--", "*.go")
 		if err != nil && !isNoMatch(err) {
-			return err
+			return nil, false, err
 		}
 		for _, r := range readers {
 			dirs[path.Dir(r)] = true
 		}
 	}
-	if len(dirs) == 0 {
-		return nil
-	}
+	return dirs, false, nil
+}
 
+// markPackageDirs marks dir and every ancestor holding Go files, and
+// reports whether any did.
+func markPackageDirs(dir string, dirs map[string]bool) bool {
+	inPkg := false
+	for d := dir; d != "."; d = path.Dir(d) {
+		if hasGoFiles(d) {
+			dirs[d] = true
+			inPkg = true
+		}
+	}
+	return inPkg
+}
+
+// dependents returns the import paths of the packages in dirs and of
+// every package that depends on them.
+func dependents(dirs map[string]bool) ([]string, error) {
 	mod, err := cmdOutput("go", "list", "-m")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	mod = strings.TrimSpace(mod)
 	touched := map[string]bool{}
@@ -127,12 +165,9 @@ func run(base string, filesMode bool) error {
 	}
 	list, err := cmdOutput("go", "list", "-test", "-f", "{{.ImportPath}} {{join .Deps \" \"}}", "./...")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, p := range affected(list, touched) {
-		fmt.Println(p)
-	}
-	return nil
+	return affected(list, touched), nil
 }
 
 // affected reads `go list -test` lines ("importpath dep dep ...") and returns
@@ -171,7 +206,7 @@ func affected(list string, touched map[string]bool) []string {
 // commentOnly reports whether f differs from its base version only in
 // comments that the compiler and test runner ignore.
 func commentOnly(base, f string) (bool, error) {
-	old, err := exec.Command("git", "show", base+":"+f).Output()
+	old, err := exec.Command("git", "show", base+":"+f).Output() //nolint:gosec // base and f come from git diff in CI
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -179,7 +214,7 @@ func commentOnly(base, f string) (bool, error) {
 		}
 		return false, err
 	}
-	cur, err := os.ReadFile(f)
+	cur, err := os.ReadFile(f) //nolint:gosec // f is a repo-relative path from git diff
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil // deleted file
 	}
@@ -227,6 +262,7 @@ func tokens(src []byte) []string {
 			}
 		case token.SEMICOLON:
 			lit = "" // "\n" and ";" are the same token
+		default:
 		}
 		out = append(out, tok.String()+" "+lit)
 	}
@@ -276,7 +312,7 @@ func gitLines(args ...string) ([]string, error) {
 }
 
 func cmdOutput(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) //nolint:gosec // callers pass git or go with fixed verbs
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
