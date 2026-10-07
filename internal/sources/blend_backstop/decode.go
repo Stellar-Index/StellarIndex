@@ -26,39 +26,36 @@
 //	rw_zone_remove     — remove a pool from the reward zone (V2 only;
 //	                     never observed on mainnet — see below)
 //
-// SCHEMA PROVENANCE: the per-event field layouts here were originally
-// REVERSE-ENGINEERED from real mainnet lake samples (2026-06-15) and
-// validated against golden frames in decode_test.go. On 2026-07-09 a
-// read-only lake audit + a direct read of the Blend team's published
-// source (blend-contracts-v2, backstop/src/events.rs) found and fixed
-// six decode bugs:
+// SCHEMA PROVENANCE: the per-event field layouts were reverse-engineered
+// from real mainnet lake samples, validated against golden frames in
+// decode_test.go, and cross-checked by a read-only lake audit and a
+// direct read of the Blend team's published source (blend-contracts-v2,
+// backstop/src/events.rs). The shapes that are easy to get wrong:
 //
 //  1. V1 gulp_emissions carries only 1 topic (no pool) and a BARE i128
-//     body (not the V2 2-element Vec) — the old decoder hard-required
-//     2 topics and a 2-Vec body, so all 209 V1 rows errored out.
-//  2. The V1 reward-zone topic is literally `rw_zone`, not `rw_zone_add`
-//     — Classify() never matched it, so 5 real events were silently
-//     dropped end-to-end.
+//     body, not the V2 2-element Vec; requiring 2 topics and a 2-Vec
+//     body would error all 209 V1 rows.
+//  2. The V1 reward-zone topic is literally `rw_zone`, not
+//     `rw_zone_add`; a Classify() that knew only `rw_zone_add` would
+//     drop its 5 real events end-to-end.
 //  3. V2 rw_zone_add's body is Vec[to_add: Address, to_remove:
-//     Option<Address>] — the old decoder mis-typed the second element
-//     as a u32 reward-zone index, producing a spurious index_error
-//     attribute on every single row.
-//  4. rw_zone_remove was entirely unimplemented.
-//  5. gulp_emissions' topic[1] is the POOL address (matches the same
-//     pool topic every other event promotes), not a "token" — it was
-//     parsed correctly but mislabeled and stashed in attributes
-//     instead of the Pool column.
+//     Option<Address>]; the second element is not a u32 reward-zone
+//     index.
+//  4. rw_zone_remove is decoded from the source alone (see
+//     decodeRwZoneRemove).
+//  5. gulp_emissions' topic[1] is the POOL address (the same pool topic
+//     every other event promotes), not a "token", so it lands in the
+//     Pool column rather than in attributes.
 //  6. withdraw's body is (shares_burned, tokens_out) — the OPPOSITE
-//     order from deposit's (tokens_in, shares_minted) — but the old
-//     decoder promoted vec[0] to Amount uniformly, so Amount silently
-//     meant "shares" for withdraw and "tokens" for deposit.
+//     order from deposit's (tokens_in, shares_minted) — so promoting
+//     vec[0] to Amount uniformly would make Amount mean "shares" for
+//     withdraw and "tokens" for deposit.
 //
 // This source is still LIVE-CAPTURE ONLY for backfill purposes — the
-// fixes above are schema-CORRECTNESS fixes, not a completeness
-// guarantee for eras this decoder has never run against. A historical
-// replay (`projector-replay -source blend_backstop -from 51499923`)
-// is required before the corrected schemas apply retroactively; see
-// CHANGELOG.md. See events.go + README.md §Provenance.
+// shapes above are schema correctness, not a completeness guarantee for
+// eras this decoder has never run against. Applying them to stored rows
+// takes a historical replay (`projector-replay -source blend_backstop
+// -from 51499923`). See events.go + README.md §Provenance.
 //
 // Per ADR-0013 this decoder reads SCVal exclusively through
 // internal/scval — it never imports go-stellar-sdk/xdr directly
@@ -313,10 +310,8 @@ func decodeQueueWithdrawal(e *events.Event) (decoded, error) {
 // the two protocol_bespoke.go's "Backstop volume (token-units)" KPI
 // cares about most. Amount2 carries the backstop shares burned.
 //
-// BREAKING for already-stored rows: before this fix, Amount held
-// shares_burned (vec[0] promoted positionally) for every withdraw row
-// — the opposite of this convention. A historical re-derive is
-// required to correct existing rows; see CHANGELOG.md.
+// Promoting vec[0] positionally would put shares_burned in Amount — the
+// opposite of this convention.
 func decodeWithdraw(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 3 {
 		return decoded{}, fmt.Errorf("%w: withdraw needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -346,19 +341,18 @@ func decodeDistribute(e *events.Event) (decoded, error) {
 }
 
 // decodeGulpEmissions handles BOTH backstop versions — they diverge in
-// both topic arity and body shape (verified against the ClickHouse
-// lake 2026-07-09: all 209 V1 rows have topic_count=1 and a bare-i128
-// body; all 637 V2 rows have topic_count=2 and a 2-element-Vec body):
+// both topic arity and body shape (a ClickHouse lake census found all
+// 209 V1 rows with topic_count=1 and a bare-i128 body, and all 637 V2
+// rows with topic_count=2 and a 2-element-Vec body):
 //
 //   - V1: topics=[sym]; data=i128 (a single pull amount). No pool
 //     topic — Pool is left "" rather than guessed.
 //   - V2: topics=[sym, pool_address]; data=Vec[i128
 //     new_backstop_emissions, i128 new_pool_emissions]
-//     (blend-contracts-v2 backstop/src/events.rs
-//     `gulp_emissions(e, pool_address, new_backstop_emissions,
-//     new_pool_emissions)`). topic[1] is the POOL address — the same
-//     field every other event promotes — not a "token"; it is now
-//     promoted to Pool instead of stashed as a mislabeled attribute.
+//     (blend-contracts-v2 backstop/src/events.rs `gulp_emissions(e,
+//     pool_address, new_backstop_emissions, new_pool_emissions)`).
+//     topic[1] is the POOL address — the same field every other event
+//     promotes — not a "token", so it lands in the Pool column.
 func decodeGulpEmissions(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 2 {
 		// V1 shape: no pool topic, bare-i128 body.
@@ -438,12 +432,9 @@ func decodeDraw(e *events.Event) (decoded, error) {
 // Option<Address>)`, `publish(topics, (to_add, to_remove))`). to_add
 // is promoted to Pool (required — matches every other event's pool
 // field); to_remove is stashed in attributes ONLY when present — all 5
-// real lake rows carry `void` there (verified 2026-07-09), so the
-// common case emits no key rather than an empty-string placeholder.
-//
-// The old decoder mis-typed vec[1] as a u32 reward-zone index, which
-// produced a spurious index_error attribute on every single row (the
-// value is never a u32) — that field never existed on the wire.
+// real lake rows carry `void` there, so the common case emits no key
+// rather than an empty-string placeholder. vec[1] is never a u32
+// reward-zone index; no such field exists on the wire.
 func decodeRwZoneAdd(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -501,14 +492,12 @@ func decodeRwZone(e *events.Event) (decoded, error) {
 // decodeRwZoneRemove: topics=[sym]; data=Address (the pool removed
 // from the reward zone, promoted to Pool).
 //
-// SOURCE NOTE (2026-07-09): the Rust doc comment directly above this
-// function in blend-contracts-v2 claims `topics -
-// ["rw_zone_remove", pool_address: Address]`, but the actual
-// `let topics = (...)` + `publish()` call one line below it is a
-// ONE-element topic tuple with the pool passed as bare DATA, not a
-// second topic — a doc-comment/code mismatch in Blend's own source,
-// the same bug class this audit fixed in our own decoder (see the
-// package doc above). We trust the code (what actually serializes
+// SOURCE NOTE: the Rust doc comment directly above this function in
+// blend-contracts-v2 claims `topics - ["rw_zone_remove", pool_address:
+// Address]`, but the actual `let topics = (...)` + `publish()` call one
+// line below it is a ONE-element topic tuple with the pool passed as
+// bare DATA, not a second topic — a doc-comment/code mismatch in
+// Blend's own source. We trust the code (what actually serializes
 // on-chain), not the comment:
 //
 //	pub fn rw_zone_remove(e: &Env, to_remove: Address) {
@@ -516,9 +505,9 @@ func decodeRwZone(e *events.Event) (decoded, error) {
 //	    e.events().publish(topics, to_remove);
 //	}
 //
-// Zero lake occurrences as of 2026-07-09 (this event has never fired
-// on mainnet) — this decoder is SYNTHETIC-FROM-SOURCE, unverified
-// against real bytes. See decode_test.go
+// The lake held zero occurrences at the last census (this event had
+// never fired on mainnet) — this decoder is SYNTHETIC-FROM-SOURCE,
+// unverified against real bytes. See decode_test.go
 // TestDecodeRwZoneRemove_SyntheticFromSource.
 func decodeRwZoneRemove(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)

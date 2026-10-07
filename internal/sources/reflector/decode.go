@@ -18,21 +18,20 @@ import (
 const opIndexFanoutStride = 1024
 
 // eventFanoutStride bounds how many contract events ONE operation can
-// emit before their per-event op_index blocks would collide.
-// DAT-06/trap-15 (audit-2026-07-23): the fanout base used to be
-// OperationIndex ALONE, so two Reflector update events within the
-// SAME operation collided on their whole 1024-wide OpIndex block —
-// the second event's rows silently landed on top of (or lost to
-// ON CONFLICT DO NOTHING against) the first's. EventIndex ALONE isn't
-// a safe replacement either: per events.Event's own doc it is scoped
-// PER-OPERATION (resets to 0 for each new op), so swapping it straight
-// in would instead collide two DIFFERENT operations that each emit a
-// single event. Combining both dimensions — OperationIndex and
-// EventIndex — keeps every event's OpIndex block disjoint regardless
-// of whether the collision risk is same-op or cross-op. 64 is well
-// beyond any observed Reflector-adjacent event fanout (single digits)
-// and keeps the whole synthesized value comfortably inside uint32
-// even at Stellar's 100-ops/tx cap: (100*64+63)*1024+1023 ≈ 6.6M.
+// emit before their per-event op_index blocks would collide. A fanout
+// base of OperationIndex ALONE would collide two Reflector update
+// events within the SAME operation on their whole 1024-wide OpIndex
+// block — the second event's rows would land on top of (or lose to ON
+// CONFLICT DO NOTHING against) the first's. EventIndex ALONE isn't a
+// safe base either: per events.Event's own doc it is scoped
+// PER-OPERATION (resets to 0 for each new op), so it would collide two
+// DIFFERENT operations that each emit a single event. Combining both
+// dimensions — OperationIndex and EventIndex — keeps every event's
+// OpIndex block disjoint whether the collision risk is same-op or
+// cross-op. 64 is well beyond any observed Reflector-adjacent event
+// fanout (single digits) and keeps the whole synthesized value
+// comfortably inside uint32 even at Stellar's 100-ops/tx cap:
+// (100*64+63)*1024+1023 ≈ 6.6M.
 const eventFanoutStride = 64
 
 // opIndexFanoutMax bounds e.OperationIndex so the packed op_index stays
@@ -105,11 +104,10 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	}
 
 	// Timestamp: the contract puts it in topic[2] as u64
-	// MILLISECONDS (not seconds — verified against mainnet capture
-	// 2026-04-23 + reflector-contract/oracle/src/price_oracle.rs:74,
-	// which divides by 1000 to expose seconds via `last_timestamp`.
-	// Internal storage is ms; the event carries the raw internal
-	// value).
+	// MILLISECONDS (not seconds — verified against a mainnet capture
+	// and reflector-contract/oracle/src/price_oracle.rs:74, which
+	// divides by 1000 to expose seconds via `last_timestamp`. Internal
+	// storage is ms; the event carries the raw internal value).
 	//
 	// Fall back to ledger close time if the topic decode fails so an
 	// isolated encoding quirk doesn't drop an entire event's worth
@@ -125,13 +123,11 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	sourceName := variant.SourceName()
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, entry := range prices {
-		// Oracle capture-totality (PR-2): there is no unknown-symbol
-		// skip here any more. An unmapped symbol arrives from
-		// sdkDecodeUpdateBody as a raw:<symbol> PriceEntry and is
-		// emitted like any other slot, at the SAME vector position
-		// `i` the pre-totality Skip placeholder used to hold (DAT-03:
-		// no existing row's OpIndex moves — the raw row fills the
-		// gap the placeholder left).
+		// Oracle capture-totality: there is no unknown-symbol skip here.
+		// An unmapped symbol arrives from sdkDecodeUpdateBody as a
+		// raw:<symbol> PriceEntry and is emitted like any other slot, at
+		// its own vector position `i`, so no other row's OpIndex depends on
+		// the allow-list (see PriceEntry's godoc).
 		if entry.Price.Sign() <= 0 {
 			// Reflector filters zero-price entries at the contract
 			// level (oracle/src/events.rs:24 — zero prices skipped
@@ -177,10 +173,9 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Only reachable when EVERY slot was non-positive: since the
-		// oracle capture-totality change an unmapped symbol is a raw
-		// row, not a skip, so an all-unknown vector no longer lands
-		// here.
+		// Only reachable when EVERY slot was non-positive: an unmapped
+		// symbol is a raw row, not a skip, so an all-unknown vector does
+		// not land here.
 		return nil, ErrEmptyPrices
 	}
 	return out, nil
@@ -210,8 +205,8 @@ func checkFanoutBounds(e *events.Event, priceCount int) error {
 //     Reflector docs (ADR-0010 fiat sentinel).
 //   - DEX (CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M)
 //     returns Asset::Stellar(<pubnet USDC SAC>) from base() (confirmed
-//     2026-07-07 via simulateTransaction; USDC is absent from its feed and
-//     the XLM SAC reads ~0.20, not the 1.0 of an XLM self-price).
+//     via simulateTransaction; USDC is absent from its feed and the XLM
+//     SAC reads ~0.20, not the 1.0 of an XLM self-price).
 //
 // The DEX quote is stamped as that SAC, not fiat:USD: stablecoins are
 // never normalised at ingest (a depeg would vanish) — USDC→USD is a
@@ -264,16 +259,13 @@ func mustUSDFiat() canonical.Asset {
 // sdkDecodeUpdateBody keeps the SLOT COUNT stable — exactly one
 // PriceEntry per raw update_data[] position. An unmapped symbol
 // yields a canonical.AssetOracleRaw entry (`raw:<symbol>`) rather
-// than being compacted out (DAT-03, audit-2026-07-23): decodeUpdate's
-// synthetic OpIndex is derived from vector POSITION, so dropping a
-// slot from the slice would shift every OTHER entry's OpIndex
-// whenever the allow-list changed, orphaning or duplicating rows on a
-// re-derive instead of updating them in place. Before the oracle
-// capture-totality change (PR-2) that stability came from a
-// `Skip: true` placeholder that consumed the slot and emitted
-// nothing; the raw row now consumes the same slot and IS emitted, so
-// a later allow-list extension re-derives the same PK and promotes
-// `raw:X` → `crypto:X` in place.
+// than being compacted out: decodeUpdate's synthetic OpIndex is
+// derived from vector POSITION, so dropping a slot from the slice
+// would shift every OTHER entry's OpIndex whenever the allow-list
+// changed, orphaning or duplicating rows on a re-derive instead of
+// updating them in place. Because the raw row consumes its slot and
+// IS emitted, a later allow-list extension re-derives the same PK and
+// promotes `raw:X` → `crypto:X` in place.
 type PriceEntry struct {
 	Asset canonical.Asset
 	Price canonical.Amount
@@ -299,7 +291,7 @@ var (
 //	    update_data: Vec<(Val, i128)>,
 //	}
 //
-// On the wire (verified 2026-04-23 against four mainnet DEX-oracle
+// On the wire (verified against four mainnet DEX-oracle
 // captures in test/fixtures/reflector/v6-2026-04-23/), the
 // soroban-sdk #[contractevent] macro wraps non-topic fields in a
 // Map keyed by field name — even when there is only one such
@@ -353,8 +345,7 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 			// Unmapped symbol = gap in our canonical asset model,
 			// not a structural event problem. The slot is recorded
 			// verbatim as raw:<symbol> at its own vector position
-			// (DAT-03 — see PriceEntry's godoc). F-1234 (codex
-			// audit-2026-05-12): still count it on
+			// (see PriceEntry's godoc). Still count it on
 			// stellarindex_source_unknown_symbols_total — a raw row
 			// is a mapping gap the allow-list owner has to close,
 			// and the alert on this counter is how they learn of

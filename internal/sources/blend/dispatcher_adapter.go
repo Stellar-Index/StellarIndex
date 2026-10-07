@@ -32,13 +32,12 @@ type Decoder struct {
 // (correct for a from-genesis stream, insufficient for an incremental
 // restart — hence the DB warm in production wiring).
 //
-// The event surface already spans both pool-factory contract versions:
+// The event surface spans both pool-factory contract versions:
 // MainnetPoolFactories trusts V1 (CCZD6ESM…) and V2, and decodeByKind
 // dispatches the three V1-only event kinds (update_emissions /
-// new_liquidation_auction / delete_liquidation_auction, ROADMAP #89
-// residual) alongside the V2 vocabulary. A future per-WASM-hash dispatch
-// (per docs/architecture/ingest-pipeline.md#contract-schema-evolution) would still be
-// needed for a hypothetical V3.
+// new_liquidation_auction / delete_liquidation_auction) alongside the
+// V2 vocabulary. A hypothetical V3 would still need a per-WASM-hash
+// dispatch (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	// The factory trust-root set is intrinsic to the protocol (verified,
 	// hard-coded), so it's always installed first; caller opts (WithSeed /
@@ -56,7 +55,7 @@ func (*Decoder) Name() string { return SourceName }
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
-// not topic symbol (ADR-0035, F-1347): a non-Blend contract that emits a
+// not topic symbol (ADR-0035): a non-Blend contract that emits a
 // `supply`/`claim`/`set_admin`/… topic (SACs and other DeFi do) must NOT
 // be attributed to Blend.
 //
@@ -95,24 +94,26 @@ func (d *Decoder) Matches(ev events.Event) bool {
 // preserved in the returned struct's [Event.EventKind] string so
 // the sink can demultiplex.
 //
-// The three auction events return the legacy NewAuctionEvent /
+// The three auction events return the NewAuctionEvent /
 // FillAuctionEvent / DeleteAuctionEvent structs (sink-side
-// blend_auctions table unchanged). The 18 money-market / emission
-// / admin events return PositionEvent / EmissionEvent / AdminEvent
-// — the sink writes them to blend_positions / blend_emissions /
-// blend_admin via the migration-0042 schemas.
-// Decode routes the event by kind (decodeByKind) and stamps EventIndex onto the
-// position/emission/admin outputs — the per-event discriminator that
-// distinguishes multiple same-kind events emitted in a single operation. Without
-// it those rows collide on the blend_positions / blend_emissions / blend_admin
-// primary key and all but one are silently dropped (the coarse-PK data-loss bug;
-// emissions/admin fixed in migration 0053, positions in 0054 after (asset,user)
-// proved insufficient for same-(asset,user,kind)-per-op events).
+// blend_auctions table). The 18 money-market / emission / admin events
+// return PositionEvent / EmissionEvent / AdminEvent — the sink writes
+// them to blend_positions / blend_emissions / blend_admin via the
+// migration-0042 schemas.
 //
-// The three auction events (new/fill/delete) carry EventIndex too — their
-// decode functions set it directly from events.Event.EventIndex (blend_auctions
-// PK, migration 0058 / F-1324), so the loop below only needs to fan it onto the
-// non-auction structs whose decode helpers don't see the raw event.
+// Decode routes the event by kind (decodeByKind) and stamps EventIndex
+// onto the position/emission/admin outputs — the per-event
+// discriminator that distinguishes multiple same-kind events emitted in
+// a single operation. Without it those rows would collide on the
+// blend_positions / blend_emissions / blend_admin primary key and all
+// but one would be silently dropped; (asset, user) alone does not
+// separate same-(asset, user, kind)-per-op events.
+//
+// The three auction events (new/fill/delete) carry EventIndex too —
+// their decode functions set it directly from events.Event.EventIndex
+// (blend_auctions PK, migration 0058), so the loop below only needs to
+// fan it onto the non-auction structs whose decode helpers don't see
+// the raw event.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {
@@ -153,7 +154,7 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 	}
 	kind := classifyAny(&ev)
 	switch kind {
-	// ─── Auction events (legacy; blend_auctions table) ────────
+	// ─── Auction events (blend_auctions table) ───────────────
 	case EventNewAuction:
 		decode := decodeNewAuction
 		if len(ev.Topic) == v1NewAuctionTopicArity {

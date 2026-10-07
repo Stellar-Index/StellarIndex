@@ -47,14 +47,14 @@ import (
 // ADR-0003; the storage layer writes them as NUMERIC, the JSON
 // wire shape as a decimal string.
 // Field-for-field identical to [domain.BlendPositionEvent] — the
-// canonical, persisted-shape definition (D8 M0-1:
-// internal/storage/timescale reads/writes this shape and must not
-// import upward into this package to do so). PositionEvent is
-// declared as its OWN named type (not a `= domain.BlendPositionEvent`
-// alias) because it carries the EventKind()/Source() methods
-// (consumer.go) that satisfy consumer.Event — Go permits methods on
-// any type declared in this package, even one whose underlying type
-// comes from elsewhere, but NOT on a type alias to a foreign type.
+// canonical, persisted-shape definition (internal/storage/timescale
+// reads/writes this shape and must not import upward into this package
+// to do so). PositionEvent is declared as its OWN named type (not a
+// `= domain.BlendPositionEvent` alias) because it carries the
+// EventKind()/Source() methods (consumer.go) that satisfy
+// consumer.Event — Go permits methods on any type declared in this
+// package, even one whose underlying type comes from elsewhere, but
+// NOT on a type alias to a foreign type.
 // The one consequence: the call site that hands a PositionEvent
 // across the storage boundary (internal/pipeline/sink.go) converts
 // explicitly via domain.BlendPositionEvent(e) — legal because the
@@ -181,7 +181,7 @@ func classifyAny(e *events.Event) string { //nolint:gocyclo,cyclop // one case p
 	case TopicSymbolDeploy:
 		return EventDeploy
 
-	// V1 pool-factory events (ROADMAP #89 residual).
+	// V1 pool-factory events.
 	case TopicSymbolUpdateEmissions:
 		return EventUpdateEmissions
 	case TopicSymbolNewLiquidationAuction:
@@ -756,11 +756,11 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	}, nil
 }
 
-// ─── V1 pool-factory decoders (ROADMAP #89 residual) ───────────
+// ─── V1 pool-factory decoders ────────────────────────────────
 //
 // The V1 pool-factory (CCZD6ESM…) emits three topics not present in
 // blend-contracts-v2's pool/src/events.rs — verified against real
-// ClickHouse-lake bytes 2026-07-10 (see README.md "Known gap"):
+// ClickHouse-lake bytes (see README.md "Known gap"):
 //
 //	update_emissions:           1 topic  [Symbol]           body i128 (bare)
 //	new_liquidation_auction:    2 topics [Symbol, Address]   body Map{bid,lot,block}
