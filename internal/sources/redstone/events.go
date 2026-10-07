@@ -173,9 +173,10 @@ var (
 	// feed-keyed writes must equal the feed_ids set exactly. A
 	// mismatch means the args' feed identities don't describe what
 	// the contract actually stored (steering, or a storage-shape
-	// change) — refuse the whole event, never zip positionally on
-	// uncorroborated names. Same honest-blind arm as
-	// ErrAmbiguousSubset.
+	// change), so the decoder never zips positionally on
+	// uncorroborated names: it falls back to payload-median alignment
+	// and returns this error, refusing the whole event, only when that
+	// fallback also fails. Same honest-blind arm as ErrAmbiguousSubset.
 	ErrStateWriteFeedMismatch = errors.New("redstone: op-args feed_ids disagree with the op's value-changed state-write feed set")
 
 	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride.

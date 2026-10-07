@@ -44,15 +44,13 @@ const BackstopGenesisLedger = blend.FactoryGenesisLedger
 // `rw_zone` where V2 uses `rw_zone_add`; V2 additionally exposes
 // `rw_zone_remove`, unconfirmed in the lake — see decode.go).
 //
-// SCHEMA PROVENANCE: reverse-engineered from real mainnet lake samples
-// starting 2026-06-15. On 2026-07-09 the V2 shapes were cross-checked
-// against the Blend team's published source
-// (blend-contracts-v2 backstop/src/events.rs) — six decode bugs found
-// there are fixed in decode.go (see its package doc + CHANGELOG). V1
-// has no published source available to us; its arities are pinned
-// against real lake bytes only. Until a full historical replay lands,
-// this source remains LIVE-CAPTURE ONLY for backfill purposes — see
-// README.md §Provenance.
+// SCHEMA PROVENANCE: reverse-engineered from real mainnet lake samples;
+// the V2 shapes are cross-checked against the Blend team's published
+// source (blend-contracts-v2 backstop/src/events.rs) — see decode.go's
+// package doc. V1 has no published source available to us; its arities
+// are pinned against real lake bytes only. Until a full historical
+// replay lands, this source remains LIVE-CAPTURE ONLY for backfill
+// purposes — see README.md §Provenance.
 const (
 	EventDeposit           = "deposit"
 	EventClaim             = "claim"
@@ -68,13 +66,13 @@ const (
 	// renamed this to `rw_zone_add` (and added the separate
 	// `rw_zone_remove`). Same logical action, different wire symbol;
 	// kept as a distinct EventType so the stored event_kind reflects
-	// exactly what was on the wire. 5 lake events, ledgers
-	// 51.50M-55.18M (2026-07-09 lake census).
+	// exactly what was on the wire. A lake census found 5 events, ledgers
+	// 51.50M-55.18M.
 	EventRwZone = "rw_zone"
-	// EventRwZoneRemove: zero lake occurrences as of 2026-07-09 (this
-	// event has never fired on mainnet). Added per the EVERY-event
-	// principle; decode.go documents a doc-comment/code discrepancy in
-	// the upstream source for this one.
+	// EventRwZoneRemove: zero lake occurrences at the last census (this
+	// event had never fired on mainnet). Added per the EVERY-event
+	// principle; decode.go documents a doc-comment/code discrepancy in the
+	// upstream source for this one.
 	EventRwZoneRemove = "rw_zone_remove"
 )
 

@@ -31,9 +31,9 @@ const seedThrottle = 300 * time.Millisecond
 // The sweep is 1+3N sequential calls (N ≈ 214 pairs on pubnet, so ~640
 // calls) against what is, on r1, a PUBLIC third-party endpoint — the
 // host runs no stellar-rpc of its own. compute-completeness and
-// verify-reconciliation fail CLOSED on a seed error (RLT-416), so
-// without a retry a single dropped connection or 429 anywhere in those
-// ~640 calls aborts the nightly pass for every source. Fail-closed is
+// verify-reconciliation fail CLOSED on a seed error, so without a retry
+// a single dropped connection or 429 anywhere in those ~640 calls
+// aborts the nightly pass for every source. Fail-closed is
 // the right outcome for an endpoint that is down; it must not be the
 // outcome of one blip.
 //

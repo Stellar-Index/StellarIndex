@@ -2,10 +2,9 @@
 // of LCM bytes) tuples, used as a drift detector against retroactive
 // rewrites of upstream galexie objects.
 //
-// Motivation. Per ADR-0016 §"Trust model", regions that read galexie
-// data from a non-local bucket (R2 from AWS public bucket; R3 from
-// Vultr Object Storage) are exposed to a failure mode that R1's
-// full-mirror shape isn't: upstream may rewrite a previously-fetched
+// Motivation. A region that reads galexie data from a non-local
+// bucket rather than its own full mirror is exposed to a failure mode
+// a full-mirror region isn't: upstream may rewrite a previously-fetched
 // ledger's bytes. The bytes can still be internally consistent
 // (chain-link hash holds) and can still match SDF's signed history
 // (Tier B holds), yet differ from what the region first observed.

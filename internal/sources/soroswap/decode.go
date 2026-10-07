@@ -31,14 +31,13 @@ func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 // groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple we
 // use to correlate swap + sync. It's ordered so Go-map-ready.
 //
-// COR-08: the pair contract is part of the key. A router multi-hop
-// swaps through SEVERAL pools inside ONE operation, so (ledger, tx,
-// op) alone puts every pool's swap+sync in the same buffer slot. As
-// long as each pool emitted swap-then-sync contiguously that happened
-// to work — the slot completed and cleared before the next pool's
-// swap. But nothing in the protocol guarantees that interleaving:
-// pool A's swap followed by pool B's swap OVERWROTE the slot's Swap
-// while leaving Pair pinned to A, so A's sync then completed a trade
+// The pair contract is part of the key. A router multi-hop swaps
+// through SEVERAL pools inside ONE operation, so (ledger, tx, op)
+// alone would put every pool's swap+sync in the same buffer slot.
+// That works only while each pool emits swap-then-sync contiguously,
+// and nothing in the protocol guarantees that interleaving: pool A's
+// swap followed by pool B's swap would OVERWRITE the slot's Swap while
+// leaving Pair pinned to A, so A's sync would then complete a trade
 // carrying B's amounts under A's pair identity — and therefore under
 // A's token0/token1 mapping. Wrong assets, wrong price, silently.
 // Keying on the emitter makes the correlation correct across pools
@@ -140,11 +139,10 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 		return canonical.Trade{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	// Taker: SwapEvent.to — the swap recipient, on-chain in EVERY
-	// soroswap swap since genesis but dropped by this decoder until
-	// 2026-07-30 (found by the address-intelligence build: soroswap was
-	// the ONE venue with 0% trades.taker coverage while every sibling
-	// had 100%). Best-effort per the Trade.Taker contract: a decode
-	// failure leaves it empty rather than failing the trade.
+	// soroswap swap since genesis. Without it soroswap measured 0%
+	// trades.taker coverage while every sibling venue had 100%.
+	// Best-effort per the Trade.Taker contract: a decode failure leaves
+	// it empty rather than failing the trade.
 	taker := decodeSwapTaker(r.Swap.Value)
 
 	// Trade direction: whichever side had non-zero `in` is the base
@@ -168,10 +166,9 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 	//     (real case: ledger 57,403,300).
 	//   - three OR four amounts non-zero → the first matching arm below
 	//     would silently drop the extra leg and report a GROSS `in` as if
-	//     it were the net trade, fabricating a price into VWAP/OHLC. The
-	//     four-leg case was closed 2026-07-31; the three-leg sibling
-	//     (e.g. 0_in,1_in,1_out non-zero) slipped past that all-four-only
-	//     guard until audit 2026-08-03. Both → ErrAmbiguousSwapDirection.
+	//     it were the net trade, fabricating a price into VWAP/OHLC. That
+	//     includes the three-leg shape (e.g. 0_in,1_in,1_out non-zero),
+	//     not just all four. Both → ErrAmbiguousSwapDirection.
 	in0, in1 := amounts.Amount0In.Sign() > 0, amounts.Amount1In.Sign() > 0
 	out0, out1 := amounts.Amount0Out.Sign() > 0, amounts.Amount1Out.Sign() > 0
 	switch {

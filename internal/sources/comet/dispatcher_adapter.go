@@ -16,8 +16,8 @@ import (
 // Decoder is the dispatcher-facing view of Comet. Single instance
 // per indexer — Comet uses a shared ("POOL", <event_name>) topic
 // namespace across every pool contract, so event ROUTING is by topic
-// bytes, but ATTRIBUTION is gated on contract identity (ADR-0035/
-// 0040, CS-026): any pubnet contract deployed from (or mimicking)
+// bytes, but ATTRIBUTION is gated on contract identity
+// (ADR-0035/0040): any pubnet contract deployed from (or mimicking)
 // the Balancer-v1 WASM emits the identical topic shape, and without
 // the gate a look-alike could inject fabricated trades under
 // `source = "comet"`.
@@ -54,10 +54,10 @@ type Decoder struct {
 	// double-write — both decode the same live events, deduped at the
 	// DB layer by ON CONFLICT DO NOTHING). Without this gate both
 	// instances would increment the same detection event, doubling the
-	// exploit signal (Q018). Default true; the projector registry
-	// disables it via [Decoder.WithoutMetrics] so the dispatcher's
-	// instance — which exists whether or not the projector runs — stays
-	// the single canonical counter.
+	// exploit signal. Default true; the projector registry disables it
+	// via [Decoder.WithoutMetrics] so the dispatcher's instance — which
+	// exists whether or not the projector runs — stays the single
+	// canonical counter.
 	countMetrics bool
 }
 
@@ -65,7 +65,7 @@ type Decoder struct {
 // must be for it to bump the exploit-detection metric. The SAME Decode runs
 // during backfill re-ingest AND the completeness re-derive (which re-runs the
 // decoder over historical soroban_events to count expected rows) — both
-// re-process the 2026-08-25 exploit window, and counting there would re-fire
+// re-process the historical exploit window, and counting there would re-fire
 // the burst alert in present wall-clock time for a non-event. Gating on
 // close-time recency keeps the metric a "happening now" signal. The window is
 // generous (live decode lags by seconds; a real >1h tip lag is its own page).
@@ -84,7 +84,7 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // WithoutMetrics disables this Decoder's exploit-detection counter
 // increments. See the countMetrics field doc for why: it is the
 // projector registry's opt-out when the dispatcher already runs its
-// own comet.Decoder over the same event stream (Q018).
+// own comet.Decoder over the same event stream.
 func (d *Decoder) WithoutMetrics() *Decoder {
 	d.countMetrics = false
 	return d
@@ -92,8 +92,8 @@ func (d *Decoder) WithoutMetrics() *Decoder {
 
 // bumpDroppedSwapMetric increments counter for a determinate,
 // zero-row swap drop (self-pair or non-positive-amount) — gated on
-// countMetrics (Q018) and close-time recency (T108), same rationale
-// as the countMetrics field doc and selfPairLiveWindow.
+// countMetrics and close-time recency, same rationale as the
+// countMetrics field doc and selfPairLiveWindow.
 func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt time.Time) {
 	if d.countMetrics && d.now().Sub(closedAt) < selfPairLiveWindow {
 		counter.WithLabelValues(SourceName).Inc()
@@ -104,10 +104,10 @@ func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt
 func (d *Decoder) Name() string { return SourceName }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT
-// IDENTITY, not topic bytes (ADR-0035/0040, CS-026): the bare
-// ("POOL", <event>) tuple is the Balancer-v1 event family shared by
-// EVERY deployment of that code — forgeable by construction. An
-// event matches ONLY when emitted by a pool in the curated registry
+// IDENTITY, not topic bytes (ADR-0035/0040): the bare ("POOL",
+// <event>) tuple is the Balancer-v1 event family shared by EVERY
+// deployment of that code — forgeable by construction. An event
+// matches ONLY when emitted by a pool in the curated registry
 // (MainnetGatedSet + protocol_contracts warm). A comet-shaped event
 // from an unregistered contract is left for the recognition audit to
 // surface (ADR-0033 Claim 2a) — visible, never silently attributed.
@@ -149,13 +149,13 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		if err != nil {
 			// Determinate "not a serveable trade": the body decoded
 			// cleanly but maps to ZERO rows — a self-pair swap (token_in
-			// == token_out, the 2026-08 Blend/Comet exploit's primitive →
+			// == token_out, the Blend/Comet exploit's primitive →
 			// canonical.NewPair's ErrPairMismatch) or non-positive amounts.
 			// Return zero output with NO error so the completeness
 			// re-derive counts these as expected=0, NOT as undecodable
-			// blind spots (which fail the source's verdict closed forever —
-			// the INV-3 do-nothing re-derive trap: the 36 exploit
-			// self-swaps kept `comet` permanently `complete=false`). Safe
+			// blind spots, which would fail the source's verdict closed
+			// forever: the 36 exploit self-swaps alone would hold `comet`
+			// at `complete=false` through every re-derive. Safe
 			// precisely because the body FULLY decoded — we read both token
 			// addresses and saw they're equal — so there is no hidden-drop
 			// risk. The error path stays reserved for INDETERMINATE parse

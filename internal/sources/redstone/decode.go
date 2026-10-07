@@ -14,8 +14,8 @@ import (
 
 // opIndexFanoutStride spaces synthetic op_index values derived from
 // a single batch update, same concept as the Reflector decoder.
-// Redstone emits at most 30 entries today (19 original + the relayer
-// expansion); 1024 holds the full feed set with headroom for growth
+// A batch carries at most one entry per feed, a few dozen today (see
+// feedRegistry); 1024 holds the full feed set with headroom for growth
 // and stays inside uint32.
 const opIndexFanoutStride = 1024
 
@@ -146,8 +146,8 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// unbounded length — unlike the ScSymbol sources this
 			// branch was copied from, so the refusal is genuinely
 			// reachable; and write_prices batches EVERY updated feed
-			// into one event, so an event-level refusal would take all
-			// ~19 feeds dark until a code change. That is strictly
+			// into one event, so an event-level refusal would take
+			// every feed dark until a code change. That is strictly
 			// worse than skipping the one feed and the inverse of
 			// capture-totality. Same granularity rule the rest of this
 			// file follows: refuse the smallest unit that is actually
