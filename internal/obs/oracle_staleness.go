@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// Oracle staleness budgets (issue #478).
+// Oracle staleness budgets.
 //
 // `stellarindex_oracle_stale` asks one question per (source, asset):
 // has this pair gone longer without a publication than it is allowed
@@ -133,7 +133,7 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 // source's declared default.
 //
 // A source that never declared a resolution yields +Inf, which
-// reproduces the pre-#478 behaviour exactly: the old expression joined
+// reproduces the original per-source behaviour exactly: the old expression joined
 // against stellarindex_oracle_resolution_seconds, so a source with no
 // resolution series had no right-hand side and could not alert at all.
 // +Inf keeps that silence while still emitting a series, so the gap is
