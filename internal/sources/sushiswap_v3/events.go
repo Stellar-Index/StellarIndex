@@ -3,7 +3,7 @@
 // Soroban, whose pools are created by a single on-chain pool factory.
 //
 // Shape of the protocol, as proven from the certified ClickHouse lake
-// (`stellar.contract_events`, swept 2026-09-05 over ledgers
+// (`stellar.contract_events`, swept over ledgers
 // [61,487,379, 64,276,390]):
 //
 //   - One factory, CD3KRKGD… ([MainnetFactory]), emits `pool_created`
@@ -167,7 +167,7 @@ type PoolMeta struct {
 //
 // Provenance: decoded from all 60 `pool_created` events the factory
 // [MainnetFactory] emitted between ledgers 61,487,379 and 64,116,662
-// (swept 2026-09-05; 60 events name 58 distinct pools — CBRKPTX4… and
+// (60 events name 58 distinct pools — CBRKPTX4… and
 // CDNHCFJ6… each carry a duplicate emission inside their own creation
 // transaction). Nothing here comes from a third-party pool listing: the
 // six contracts a public listing names are all present below, but they are

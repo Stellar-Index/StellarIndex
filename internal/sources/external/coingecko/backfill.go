@@ -27,7 +27,7 @@ const marketChartRangePath = "/api/v3/coins/%s/market_chart/range"
 // FreeTierHistoryDays is how far back CoinGecko serves without a Pro key.
 // Past it the API answers 200-shaped JSON carrying error_code 10012 rather
 // than an HTTP error, so the failure has to be read out of the body.
-// Verified against the live demo key on 2026-09-08.
+// Verified against the live demo key.
 const FreeTierHistoryDays = 365
 
 // ErrOutsideFreeTier reports the 10012 window refusal distinctly, so a

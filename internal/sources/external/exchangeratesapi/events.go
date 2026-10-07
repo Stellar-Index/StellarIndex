@@ -29,7 +29,7 @@
 // triangulate through EUR which is the wrong shape for our USD-quoted
 // price surface.
 //
-// Wire format verified 2026-04-24 against
+// Wire format verified against
 // https://exchangeratesapi.io/documentation:
 //
 //	GET https://api.exchangeratesapi.io/v1/latest?access_key=KEY&base=USD&symbols=EUR,GBP,JPY,...

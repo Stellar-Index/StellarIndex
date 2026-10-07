@@ -9,7 +9,7 @@
 // on public data and a generous ~10-30 req/min limit. One batched call
 // per poll covers every (asset, quote) combo we care about.
 //
-// Wire shape (verified 2026-04-24):
+// Wire shape (verified):
 //
 //	GET https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin&vs_currencies=usd,eur&include_last_updated_at=true
 //
@@ -419,8 +419,8 @@ func (p *Poller) cooldownRemaining() time.Duration {
 // free tier returns Retry-After values consistently below MinBackoff
 // (commonly 30 s), so clamping landed us at exactly MinBackoff = 60 s
 // forever — which matches the runner's PollInterval = 60 s, producing
-// one 429 per minute indefinitely (observed live on r1 2026-05-09 →
-// 2026-05-10). The right behaviour for sustained throttling is to
+// one 429 per minute indefinitely (observed live on r1 for
+// a full day). The right behaviour for sustained throttling is to
 // back off even when the venue claims you can retry sooner — they
 // can't be trusted to slow YOU down enough when many clients share
 // the same IP cap.

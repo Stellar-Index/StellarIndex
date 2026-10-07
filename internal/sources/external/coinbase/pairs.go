@@ -19,7 +19,7 @@ import (
 //   - BTC-USD, ETH-USD — anchors.
 //   - {ADA,ATOM,AVAX,BCH,BNB,DOGE,DOT,LINK,LTC,NEAR,SHIB,SOL,TON,
 //     UNI,XRP}-USD — top-cap globals against USD. All verified live
-//     via /products/<symbol> on 2026-05-05.
+//     via /products/<symbol>.
 //
 // Notable absences: DASH (Coinbase delisted, US AML pressure) and
 // TRX (never listed). The Kraken/Bitstamp/Binance triple covers
@@ -72,7 +72,7 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		// BTC + ETH cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are
 		// single-source (only Bitstamp) and Phase 2 freeze fires on them
 		// permanently; these give VWAP multi-source corroboration.
-		// XLM-EUR (verified online on the Coinbase products API 2026-08-27).
+		// XLM-EUR (verified online on the Coinbase products API).
 		// Added because crypto:XLM/fiat:EUR had only TWO venues (kraken +
 		// bitstamp): a single venue going quiet dropped it to source_count=1,
 		// which is one of the three ADR-0019 phase-2 freeze signals, so a pair

@@ -19,8 +19,8 @@ import (
 // Kraken wire-format symbols use "/" separators — "XLM/USD", not
 // "XLMUSD".
 //
-// Top-cap globals all verified live via /0/public/Ticker on
-// 2026-05-05 (full set: ADA, ATOM, AVAX, BCH, BNB, DASH, DOGE,
+// Top-cap globals all verified live via /0/public/Ticker
+// (full set: ADA, ATOM, AVAX, BCH, BNB, DASH, DOGE,
 // DOT, LINK, LTC, NEAR, SHIB, SOL, TON, TRX, UNI, XRP).
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")

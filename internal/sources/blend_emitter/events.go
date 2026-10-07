@@ -4,7 +4,7 @@
 // pool/pool-factory decoder (internal/sources/blend) and the
 // Backstop decoder (internal/sources/blend_backstop).
 //
-// Wire shape, verified 2026-07-09 directly against the certified
+// Wire shape, verified directly against the certified
 // ClickHouse raw lake (ADR-0034; CH HTTP 8123, never MinIO's 9000) —
 // every event this contract has EVER emitted on mainnet (469 total,
 // 4 distinct topics, ALL single-topic):
@@ -48,7 +48,7 @@
 // factory namespace to anchor on: the Emitter has a single canonical
 // mainnet instance spanning Blend V1→V2).
 //
-// WASM audit CLOSED 2026-07-10 (docs/operations/wasm-audits/blend_emitter.md,
+// WASM audit CLOSED (docs/operations/wasm-audits/blend_emitter.md,
 // ClickHouse-lake-only — no MinIO wasm-history walk): the contract's
 // sole confirmed WASM hash
 // (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89)
@@ -75,8 +75,8 @@ const SourceName = "blend_emitter"
 
 // MainnetEmitter is the single canonical Blend Emitter contract on
 // mainnet — one instance spanning Blend V1→V2 (verified against the
-// ClickHouse lake 2026-07-09: 469 total events across its whole
-// history, no address change observed). WASM-audited 2026-07-10
+// ClickHouse lake: 469 total events across its whole
+// history, no address change observed). WASM-audited
 // (docs/operations/wasm-audits/blend_emitter.md): the contract's sole
 // confirmed on-chain WASM hash SHA256-verifies, and all 469 lifetime
 // events decode to the expected shape — BackfillSafe is true.
@@ -99,8 +99,8 @@ func MainnetGatedSet() []string { return []string{MainnetEmitter} }
 const emitterTopicArity = 1
 
 // Event-topic constants — the four topic[0] symbols the Emitter
-// contract has ever emitted on mainnet (full-topic census, 2026-07-09
-// ClickHouse lake read).
+// contract has ever emitted on mainnet (full-topic census of the
+// ClickHouse lake).
 const (
 	EventDistribute = "distribute"
 	EventDrop       = "drop"

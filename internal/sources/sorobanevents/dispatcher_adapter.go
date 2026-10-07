@@ -26,7 +26,7 @@ import (
 // up to the ledger walker, which is correct: cursor advance must
 // not outrun durable writes (otherwise -resume can't recover the
 // gap). The previous non-blocking buffer-full-drop semantics were
-// proved unsafe by the 2026-05-26 fill walk, which dropped ~0.43%
+// proved unsafe by a fill walk, which dropped ~0.43%
 // of rows across 8 chunks without a recovery path.
 type RawEventSink interface {
 	PushEvent(ev events.Event)

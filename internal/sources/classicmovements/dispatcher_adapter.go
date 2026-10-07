@@ -78,7 +78,7 @@ type Decoder struct {
 // Why 8M and not less: the 2021 claimable-balance spam era (ledgers
 // ~49M+) creates 2–3 MILLION balances per 10k-ledger backfill window.
 // The original 2M cap evicted a window's own creates before its
-// second-pass resolution ran (2026-07-13: "0 resolved (index)" with
+// second-pass resolution ran ("0 resolved (index)" with
 // 600k+ refs/window dumped onto the ClickHouse fallback, each such
 // scan ~2.5 min over 695M cb-create rows). 8M keeps ~3 spam windows
 // of locality — spam claims land seconds-to-minutes after their

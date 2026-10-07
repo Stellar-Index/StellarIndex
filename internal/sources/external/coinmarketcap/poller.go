@@ -10,7 +10,7 @@
 //     This is the minimum for production (earlier tiers prohibit
 //     redistributing the data).
 //
-// Wire shape (verified 2026-04-24):
+// Wire shape (verified):
 //
 //	GET https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=XLM,BTC,ETH&convert=USD
 //	Header: X-CMC_PRO_API_KEY: KEY

@@ -28,7 +28,7 @@
 // The on-wire topic is the symbol "Liquidation", but these events are
 // NOT distressed liquidations. A single keeper account
 // (GA3PWX3H…) executes ALL of them, ~1:1 with StatementPublished
-// (lake 2026-07-07: 187,926 statements vs 187,718 "Liquidation"s over the
+// (lake: 187,926 statements vs 187,718 "Liquidation"s over the
 // contract's life) and ~14/user/month uniformly — i.e. they are recurring
 // scheduled settlements of published statements, not risk events. We
 // therefore surface them as `settlement` (EventType [TypeSettlement],
@@ -44,7 +44,7 @@
 // [contractid.Registry] child set (a childgate, like blend). Every other
 // event is honored from the trust root OR a registered child. The topics
 // are distinctive, but two OTHER mainnet contracts emit the same symbols
-// (~159 events total, lake 2026-07-07) — the identity gate rejects them.
+// (~159 events total in the lake) — the identity gate rejects them.
 // In practice ALL 8 event types are emitted by the main contract and the
 // child contracts emit nothing (verified), so the childgate is
 // forward-compat defense-in-depth; the trust root does the real gating.
