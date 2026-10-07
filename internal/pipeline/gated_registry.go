@@ -68,8 +68,8 @@ type GatedMeta struct {
 // SoroswapPersistenceOptions.
 var gatedSources = map[string]GatedMeta{
 	comet.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 3, CS-026 closed
-		// 2026-07-08): comet has NO factory namespace — every
+		// Curated-set gate (ADR-0040 §1 mechanism 3): comet has NO
+		// factory namespace — every
 		// Balancer-v1 deployment shares the ("POOL",…) topic family —
 		// so there is no creation event to anchor on. The decoder's
 		// in-code seed (MainnetGatedSet: exactly one pool, Blend's
@@ -97,15 +97,13 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return blend_emitter.NewDecoder(opts...) },
 	},
 	phoenix.SourceName: {
-		// Factory-anchored gate (ADR-0040 §1 mechanism 1) since F048.
-		// The previous comment here said the factory's creation events
-		// predate the lake and that this entry was therefore inert:
-		// both were false. The ("create","liquidity_pool") events run
-		// from ledger 51,572,026 (captures under
-		// test/fixtures/phoenix/factory-create), and the decoder now
+		// Factory-anchored gate (ADR-0040 §1 mechanism 1). The factory's
+		// ("create","liquidity_pool") creation events are inside the
+		// lake: they run from ledger 51,572,026 (captures under
+		// test/fixtures/phoenix/factory-create), and the decoder
 		// admits the pool each one announces, gated on the factory
 		// trust root. The decoder's in-code seed (MainnetGatedSet) is
-		// the cold-start warm root — it still carries the stake
+		// the cold-start warm root — it also carries the stake
 		// contracts, which the factory does NOT announce (the POOL
 		// deploys them) — and this entry adds the protocol_contracts
 		// warm + live-upsert hook so an admitted pool is durable.
@@ -115,12 +113,12 @@ var gatedSources = map[string]GatedMeta{
 		// why the prefilter also matches topics_xdr (see
 		// internal/storage/clickhouse/event_reader.go topic0Predicate).
 		//
-		// CuratedSet carries ONLY the stake contracts (CA2-A22-correct-2):
-		// the factory's create events announce a POOL, never the stake
-		// contract the pool itself deploys (see NewDecoder's doc), so
-		// without an explicit trust root here nothing ever wrote them to
+		// CuratedSet carries ONLY the stake contracts: the factory's
+		// create events announce a POOL, never the stake contract the
+		// pool itself deploys (see NewDecoder's doc), so without an
+		// explicit trust root here nothing would write them to
 		// protocol_contracts — the decoder's own in-code seed
-		// (MainnetGatedSet) covered ingest/decode but never reached the
+		// (MainnetGatedSet) covers ingest/decode but never reaches the
 		// served roster. Pools are deliberately excluded: they already
 		// have a real trust root (the factory + live-upsert hook), and
 		// listing them here too would just be redundant.
@@ -137,10 +135,10 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
 	},
 	aquarius.SourceName: {
-		// Router-anchored gate (ADR-0040, CS-026): the router IS the
+		// Router-anchored gate (ADR-0040): the router IS the
 		// protocol's registry — its add_pool events announce exactly
 		// the pool set the protocol's public API serves (verified
-		// byte-identical 2026-07-05, docs/protocols/aquarius.md).
+		// byte-identical, docs/protocols/aquarius.md).
 		// The decoder's in-code seed (MainnetGatedSet) covers history
 		// (the PG soroban_events landing zone is capture-scoped and
 		// holds only recent add_pool rows); live add_pool events
@@ -198,18 +196,17 @@ var gatedSources = map[string]GatedMeta{
 		},
 	},
 	defindex.SourceName: {
-		// Curated-set gate (ADR-0035/0040; strategy create-body
-		// self-registration REMOVED 2026-08-25, W8 6c). Neither vaults
-		// NOR strategies self-register from factory `create` events any
-		// more: the create body's strategy addresses are attacker-
-		// controlled bytes (anyone can call the public factory naming
-		// arbitrary addresses), so auto-seeding them was a permissionless
+		// Curated-set gate (ADR-0035/0040). Neither vaults NOR
+		// strategies self-register from factory `create` events: the
+		// create body's strategy addresses are attacker-controlled
+		// bytes (anyone can call the public factory naming arbitrary
+		// addresses), so auto-seeding them would be a permissionless
 		// registry-poisoning vector — a named contract would then decode
 		// as a recognised DeFindex flow, contaminating TVL/flow
 		// attribution. The decoder's in-code evidence-verified seed
 		// (MainnetStrategies + MainnetVaults, lake-proven complete —
 		// the curated strategy set is byte-identical to the full
-		// create-body extraction, 16/16) is now the sole trust root, and
+		// create-body extraction, 16/16) is the sole trust root, and
 		// the protocol_contracts warm is the operator seam for admitting
 		// a newly-verified vault OR strategy without a redeploy. A new
 		// strategy first appearing after the curated freeze fail-closes
@@ -352,21 +349,21 @@ func seedCuratedContracts(
 //     writes their contracts to the table on its own.
 //
 // Seeding the curated set here is what makes the returned options
-// self-sufficient. Before this, the only thing that put a curated
-// source's contracts anywhere was an operator remembering to run
+// self-sufficient. Without it, the only thing that puts a curated
+// source's contracts anywhere is an operator remembering to run
 // `stellarindex-ops seed-protocol-contracts -source <name>`, and until
-// they did, two things were true. The options this map handed out
-// carried NOTHING for that source: the gate a caller ended up with held
-// only what the decoder package happened to re-install in its own
-// constructor (every curated decoder does today — which is a redundancy
-// this layer must not silently depend on, since GatedMeta.CuratedSet is
-// where the trust root is declared and blend's constructor deliberately
-// installs no children at all). And the table itself stayed empty, so
-// GET /v1/protocols/{name} served an empty roster and the explorer's
-// contract-attribution overlay tagged none of the contracts — silently,
+// they do, two things are true. The options this map hands out carry
+// NOTHING for that source: the gate a caller ends up with holds only
+// what the decoder package happens to re-install in its own constructor
+// (every curated decoder does today — which is a redundancy this layer
+// must not silently depend on, since GatedMeta.CuratedSet is where the
+// trust root is declared and blend's constructor deliberately installs
+// no children at all). And the table itself stays empty, so
+// GET /v1/protocols/{name} serves an empty roster and the explorer's
+// contract-attribution overlay tags none of the contracts — silently,
 // because "children=0" reads exactly like a protocol that has not
-// deployed a pool yet. Measured on r1 2026-09-09: aquarius 352, blend
-// 29, defindex 16, sushiswap_v3 58, upshift 0.
+// deployed a pool yet. Measured on r1 without the curated seed:
+// aquarius 352, blend 29, defindex 16, sushiswap_v3 58, upshift 0.
 //
 // withHook installs the live-upsert persistence callback (the indexer
 // path): when a decoder observes a NEW factory creation event it upserts
