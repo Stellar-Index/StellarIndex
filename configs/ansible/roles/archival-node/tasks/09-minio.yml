@@ -3,21 +3,17 @@
 # Production HA MinIO (9-node EC) is a later concern — tracked against
 # the HA plan. See TODO(#0).
 
-# F-1291 (codex audit-2026-05-13): fail fast if the operator
-# hasn't supplied the MinIO release SHA256. Pre-fix the get_url
-# had no `checksum:` — root-owned executable installed without
-# provenance. Same fail-fast pattern as F-1280/F-1285.
+# Fail fast if the operator hasn't supplied the MinIO release SHA256:
+# without a pinned digest a root-owned executable is installed without
+# provenance.
 #
-# INV-0706 (2026-09-28): dl.min.io 410s on every binary path now,
-# Docker Hub denies `minio/minio` and `minio/mc` outright, and
-# quay.io/minio no longer resolves — MinIO Inc went source-only
-# distribution on 2025-10-15 (its own GitHub releases ship no binary
-# assets) and closed free-tier registry pulls. The one channel still
-# serving a pullable, anonymously-accessible minio + mc pair is the
-# community `chainguard-forks/minio` build published to cgr.dev — both
-# binaries live in the same image, so one pinned pull now replaces both
-# prior HTTPS downloads. There is no separate `mc` release to pin
-# anymore, so `mc_version` is gone.
+# dl.min.io, Docker Hub (`minio/minio`, `minio/mc`) and quay.io/minio do
+# not serve pullable binaries — MinIO Inc distributes source only (its
+# GitHub releases ship no binary assets). The one channel serving a
+# pullable, anonymously-accessible minio + mc pair is the community
+# `chainguard-forks/minio` build published to cgr.dev — both binaries
+# live in the same image, so one pinned pull covers both. There is no
+# separate `mc` release to pin, so there is no `mc_version`.
 - name: assert minio_image is digest-pinned
   ansible.builtin.assert:
     that:
@@ -190,11 +186,10 @@
   # omitted, `mc alias set` reads them from stdin (one per line; it only
   # prints the "Enter … Key:" prompts on a tty). Anything on argv is
   # readable by every local uid in /proc/<pid>/cmdline (+ ps, + auditd
-  # execve records) for the life of the call — the comment here used to
-  # claim env-based auth while the task passed the root password on argv
-  # (2026-08-28 audit). MC_HOST_<alias> env would also avoid argv but is
-  # transient; the root-run ops scripts (galexie-archive-*.sh) rely on the
-  # PERSISTED `local` alias, so stdin it is. no_log prevents Ansible from echoing the stdin/vars on failure.
+  # execve records) for the life of the call. MC_HOST_<alias> env would also
+  # avoid argv but is transient; the root-run ops scripts
+  # (galexie-archive-*.sh) rely on the PERSISTED `local` alias, so stdin it
+  # is. no_log prevents Ansible from echoing the stdin/vars on failure.
   # Guarded by scripts/ci/lint-ansible-tasks.sh (secret-on-argv).
   ansible.builtin.command:
     argv:
@@ -214,9 +209,9 @@
   changed_when: "'Bucket created successfully' in mc_mb.stdout"
 
 # ──── Least-privilege user for galexie ────────────────────────────
-# galexie had been using MinIO root creds. Task #156 scoped it to
-# its own user with a bucket-restricted policy — can write to
-# galexie-live only, not backups or galexie-archive.
+# galexie gets its own user with a bucket-restricted policy, not MinIO
+# root creds — it can write to galexie-live only, not backups or
+# galexie-archive.
 
 # The policy JSONs below are copied into this dir; `copy` doesn't create
 # parents, so a fresh build (dir absent) failed here. r1 already had it.
@@ -312,20 +307,16 @@
   failed_when: false   # mc returns non-zero if policy already attached
 
 # ──── galexie-archive-writer (write on galexie-archive only) ───────
-# NOT ansible-managed until 2026-07-25, which is why it broke silently.
-# `/etc/default/galexie-backfill` (07-galexie.yml) has always exported
-# this identity's key pair from vault, and docs/operations/
-# credential-rotation.md has always listed it — but nothing ever created
-# the MinIO user, rendered a policy, or attached one. The identity was
-# hand-made once and then drifted: as of 2026-07-25 the `archivewriter`
-# mc alias fails `SignatureDoesNotMatch` on every call, i.e. the live
-# secret no longer matches the vaulted one. Nothing noticed because the
-# hourly galexie-archive-fill job writes as the `local` alias — MinIO
-# ROOT — so the archive's only working write path is a full-admin
-# credential (see the credential-hygiene section of
-# docs/operations/credential-rotation.md).
+# `/etc/default/galexie-backfill` (07-galexie.yml) exports this
+# identity's key pair from vault, and docs/operations/
+# credential-rotation.md lists it — so the MinIO user, its policy and
+# the attachment are codified here too. A hand-made identity drifts:
+# the live secret stops matching the vaulted one (`SignatureDoesNotMatch`
+# on every call) and nothing notices, because the hourly
+# galexie-archive-fill job writes as the `local` alias — MinIO ROOT (see
+# the credential-hygiene section of docs/operations/credential-rotation.md).
 #
-# Codifying it here does three things at once: `mc admin user add`
+# Codifying it does three things at once: `mc admin user add`
 # re-syncs the secret from vault on every apply (the drift can't
 # persist), the identity gains a bucket-scoped policy instead of none,
 # and the rehydrate/backfill procedures get an identity to use that
@@ -618,8 +609,7 @@
       AWS_SECRET_ACCESS_KEY={{ stellarindex_reader_secret_key }}
       # Endpoint + region MUST accompany the keys — without them the
       # SDK signs for AWS proper and MinIO rejects with
-      # SignatureDoesNotMatch (feedback_minio_cred_drift; found live
-      # 2026-07-03 drift audit — a render dropped them).
+      # SignatureDoesNotMatch.
       AWS_ENDPOINT_URL={{ galexie_s3_endpoint }}
       AWS_REGION={{ region_id }}
       STELLARINDEX_S3_ACCESS_KEY={{ stellarindex_reader_access_key }}
@@ -627,21 +617,21 @@
       STELLARINDEX_POSTGRES_DSN={{ postgres_dsn_stellarindex }}
       # Vendor keys for interactive stellarindex-ops runs (divergence
       # spot-checks, fixture capture) — same values the indexer env
-      # carries; codified 2026-07-03.
+      # carries.
       CHAINLINK_RPC_URL={{ vault_chainlink_rpc_url | default('') }}
       COINGECKO_DEMO_API_KEY={{ vault_coingecko_demo_api_key | default('') }}
       COINGECKO_API_KEY={{ vault_coingecko_api_key | default('') }}
       MASSIVE_API_KEY={{ vault_massive_api_key | default('') }}
-      # ClickHouse ops-batch identity (2026-08-28 r1: a ch-rebuild
-      # running as CH `default` starved the aggregator's supply
-      # refresher). internal/storage/clickhouse/ops_auth.go reads this
+      # ClickHouse ops-batch identity: a heavy job running as CH `default`
+      # starves the aggregator's supply refresher.
+      # internal/storage/clickhouse/ops_auth.go reads this
       # pair so every stellarindex-ops CH connection — interactive,
       # run-heavy-job.sh, the *-tier-*/ch-schema-* timers, scripts/ops
       # wrappers — runs under the low-priority ops_batch profile
       # (20-clickhouse-serving-profile.yml). Emitted only when the CH
       # side is enabled AND the vault password exists, so a partial
       # apply cannot hand jobs a credential CH does not know; absent
-      # = CH default user, the pre-fix behaviour. NEVER copy these
+      # = CH default user. NEVER copy these
       # into /etc/default/stellarindex — the services would demote
       # themselves to lowest priority.
       {% if clickhouse_ops_batch_profile_enabled | bool and (clickhouse_ops_batch_password | default('')) | length > 0 %}
@@ -649,19 +639,18 @@
       STELLARINDEX_CLICKHOUSE_OPS_PASSWORD={{ clickhouse_ops_batch_password }}
       {% endif %}
       # Live-era floor for ch-live-catchup.sh — the lake's only
-      # self-healer (#371 F10). One past the ceiling of the certified
+      # self-healer. One past the ceiling of the certified
       # bulk backfill: below it ch-backfill already wrote a contiguous
       # range, at or above it a dual-sink hole can form. It is a
       # per-HOST fact (each network has its own backfill ceiling), so
-      # the role deliberately carries NO default: the script used to
-      # hardcode r1's mainnet ceiling and 08-clickhouse.yml copies that
-      # script verbatim to every provisioned host, which on another
-      # network is a floor above its own tip — a healer that silently
-      # scans an empty range. Unset here ⇒ absent from the file ⇒ the
-      # script exits 1 naming this variable, which surfaces as
-      # stellarindex_systemd_unit_failed rather than as a lake that
-      # quietly stops healing. Same "every inventory states its own
-      # answer" shape as allowed_ssh_cidrs.
+      # the role deliberately carries NO default: 08-clickhouse.yml copies
+      # the script verbatim to every provisioned host, and a hardcoded
+      # mainnet ceiling would be, on another network, a floor above its
+      # own tip — a healer that silently scans an empty range. Unset here
+      # ⇒ absent from the file ⇒ the script exits 1 naming this variable,
+      # which surfaces as stellarindex_systemd_unit_failed rather than as
+      # a lake that quietly stops healing. Same "every inventory states its
+      # own answer" shape as allowed_ssh_cidrs.
       {% if stellarindex_ch_live_era_from is defined %}
       LIVE_ERA_FROM={{ stellarindex_ch_live_era_from }}
       {% endif %}
