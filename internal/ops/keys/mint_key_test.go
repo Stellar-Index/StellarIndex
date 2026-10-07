@@ -1,6 +1,8 @@
 package keys
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,5 +127,19 @@ func TestUpgradeKey_RequiresReasonAndCeiling(t *testing.T) {
 	if err := Upgrade(append(append([]string{}, base...), "-reason", "r", "-rate-limit-per-min", "10000000")); err == nil ||
 		!strings.Contains(err.Error(), "must be in [0, 100000]") {
 		t.Errorf("upgrade-key above the ceiling = %v, want a bound error", err)
+	}
+}
+
+// Without -write mint-key validates and previews the grant and never reaches
+// the key store: Redis points at a closed port, so a run that tried to mint
+// would fail on the ping.
+func TestMintKey_DryRunMintsNothing(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "closed-redis.toml")
+	if err := os.WriteFile(cfg, []byte("[storage]\nredis_addr = \"127.0.0.1:1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := Mint([]string{"-config", cfg, "-identifier", "customer-acme", "-label", "Acme", "-actor", "alice", "-reason", "r"})
+	if err != nil {
+		t.Fatalf("dry run reached a store: %v", err)
 	}
 }

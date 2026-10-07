@@ -3,7 +3,6 @@ package chops
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -166,17 +165,17 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // "historical-only" invariant; nothing upstream (the decoder, the CH
 // reader) knows about the P23 boundary at all.
 func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write+verify loop, report.
-	fs := flag.NewFlagSet("classic-movements-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("classic-movements-backfill")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required) — HARD-CLAMPED below the P23 boundary (58762517) regardless of what is passed here (ADR-0047 D2: this source is historical-only)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address — both the read (lake) and write (stellar.account_movements, ADR-0048 D2) target; no Postgres connection is opened by this command")
 	window := fs.Uint("window", classicMovementsDefaultWindow, "ledger-window size per streamed ClickHouse read + ClickHouse batch write; bounds memory and gives a resumable checkpoint every window")
 	resume := fs.Bool("resume", true, "resume from the highest ledger already written to stellar.account_movements in [-from,-to], if any (data-derived — see doc comment)")
-	write := fs.Bool("write", false, "actually write to ClickHouse (default: dry-run, count only)")
 	verify := fs.Bool("verify", false, "after each window, recount stellar.account_movements and compare against this run's decode-time per-kind counts (cheap reconciliation, not full ADR-0033 machinery)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	write := gate.Enabled()
 	if *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-from, -to are required; -to must be >= -from")
 	}
@@ -228,7 +227,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	}
 
 	mode := "DRY-RUN (count only)"
-	if *write {
+	if write {
 		mode = "WRITE"
 	}
 	windowSize := uint32(*window) //nolint:gosec // operator-supplied window size; zero guarded below.
@@ -254,7 +253,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		}
 
 		windowCtx, windowCancel := context.WithTimeout(ctx, classicMovementsWindowDeadline)
-		res, werr := classicMovementsAttemptWindow(windowCtx, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, *write, *verify)
+		res, werr := classicMovementsAttemptWindow(windowCtx, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, write, *verify)
 		windowCancel()
 		if werr != nil && errors.Is(werr, context.DeadlineExceeded) && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] hit its %s deadline (2026-07-12 half-dead-connection stall class) — retrying once on fresh connections\n",
@@ -267,7 +266,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 			// double up on refs the failed attempt already queued.
 			dec.TakePendingClaimableBalances()
 			windowCtx2, cancel2 := context.WithTimeout(ctx, classicMovementsWindowDeadline)
-			res, werr = classicMovementsAttemptWindow(windowCtx2, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, *write, *verify)
+			res, werr = classicMovementsAttemptWindow(windowCtx2, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, write, *verify)
 			cancel2()
 		}
 		if werr != nil {
@@ -331,7 +330,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	fmt.Printf("%-24s %14d\n", "CAP-0038 checked", totalCAP0038Checked)
 	fmt.Printf("%-24s %14d\n", "CAP-0038 skipped (fidelity)", totalCAP0038Skipped)
 	fmt.Printf("%-24s %14d\n", "CAP-0038 liquidations", totalCAP0038Liquidations)
-	if *write {
+	if write {
 		fmt.Printf("%-24s %14d\n", "TOTAL rows written", totalWritten)
 		fmt.Println("(rows, post-fan-out — 1-2 rows per movement; not deduped, ReplacingMergeTree resolves at merge time)")
 	} else {

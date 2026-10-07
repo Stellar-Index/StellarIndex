@@ -6,7 +6,6 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -64,7 +63,7 @@ type backfillIndexPlan struct {
 // walk would otherwise discover halfway through a long run.
 func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	var plan backfillIndexPlan
-	fs := flag.NewFlagSet("backfill-index", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("backfill-index")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	source := fs.String("source", "coingecko", "index source: coingecko (coinmarketcap and cryptocompare have no historical adapter yet)")
 	pairArg := fs.String("pair", "crypto:XLM/fiat:USD", "canonical pair, e.g. crypto:XLM/fiat:USD")
@@ -73,7 +72,6 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	chunkDays := fs.Int("chunk-days", 80, "walk the range in chunks of this many days. CoinGecko picks its own granularity from the window width — under ~90 days it serves hourly, wider it serves daily — so a smaller chunk buys resolution at the cost of more requests")
 	sleepMs := fs.Int("sleep-ms", 1500, "pause between chunk requests; the demo tier throttles aggressively")
 	progressEvery := fs.Int("progress-every", 500, "print a progress line every N updates")
-	write := fs.Bool("write", false, "actually insert; default is a dry run")
 	if err := fs.Parse(args); err != nil {
 		return plan, err
 	}
@@ -120,7 +118,7 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	plan = backfillIndexPlan{
 		cfgPath: *cfgPath, source: *source, pair: pair, from: from, to: to,
 		chunkDays: *chunkDays, sleep: time.Duration(*sleepMs) * time.Millisecond,
-		progressEvery: *progressEvery, write: *write,
+		progressEvery: *progressEvery, write: gate.Enabled(),
 	}
 	return plan, nil
 }
@@ -160,12 +158,7 @@ func BackfillIndex(args []string) error {
 	// into the indexer's catalogue would couple an ops one-shot to the
 	// live service's startup state.
 
-	dryRun := !plan.write
-	if dryRun {
-		fmt.Fprintln(os.Stderr, "═══ DRY RUN — no writes; pass -write to apply ═══")
-	} else {
-		fmt.Fprintln(os.Stderr, "═══ WRITING — applying changes ═══")
-	}
+	dryRun := !opsutil.PrintWriteBanner(plan.write)
 	fmt.Fprintf(os.Stderr, "backfill-index: source=%s pair=%s from=%s to=%s chunk=%dd dry-run=%v\n",
 		plan.source, plan.pair.String(), plan.from.Format(time.RFC3339), plan.to.Format(time.RFC3339), plan.chunkDays, dryRun)
 	fmt.Fprintf(os.Stderr, "backfill-index: auth=%s (only a pro key reaches past %d days)\n", authMode, coingecko.FreeTierHistoryDays)

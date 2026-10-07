@@ -3,7 +3,6 @@ package keys
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"regexp"
@@ -66,6 +65,7 @@ type mintKeyOpts struct {
 	scopes                                    []string
 	rateLimit                                 int
 	expires                                   time.Duration
+	write                                     bool
 }
 
 // keyMinter is the slice of *auth.RedisAPIKeyStore mint-key uses.
@@ -88,12 +88,14 @@ type keyMinter interface {
 //	  -label 'ACME Corp - production' \
 //	  -tier apikey \
 //	  -rate-limit-per-min 1000 \
-//	  -reason 'onboarding ticket 1234'
+//	  -reason 'onboarding ticket 1234' \
+//	  -write
 //
 // Every mint lands a "key.mint" audit_log row (actor, reason, tier,
 // scopes, budget, expiry), the same record POST /v1/admin/keys writes; a
 // mint whose row cannot be written is revoked and its plaintext never
-// shown. -tier operator also needs -confirm-operator.
+// shown. -tier operator also needs -confirm-operator. Without -write the
+// grant is validated and printed, and nothing is minted.
 //
 // The plaintext key is printed to stdout ONCE — the store hashes
 // it before persistence and there is no recovery path. Operators
@@ -107,6 +109,10 @@ func Mint(args []string) error {
 	cfg, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
 		return err
+	}
+	if !opsutil.PrintWriteBanner(opts.write) {
+		printMintPreview(opts)
+		return nil
 	}
 
 	rdb := redisclient.Build(cfg.Storage)
@@ -138,7 +144,7 @@ func Mint(args []string) error {
 // parseMintKeyFlags parses and validates mint-key's argv without touching
 // config, Redis or Postgres.
 func parseMintKeyFlags(args []string) (mintKeyOpts, error) {
-	fs := flag.NewFlagSet("mint-key", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("mint-key")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	identifier := fs.String("identifier", "",
 		"Owner identifier for the new key — kebab-case slug, e.g. customer-acme-corp (required)")
@@ -169,6 +175,7 @@ func parseMintKeyFlags(args []string) (mintKeyOpts, error) {
 	opts := mintKeyOpts{
 		cfgPath: *cfgPath, identifier: *identifier, label: *label, reason: *reason,
 		tier: auth.Tier(*tier), scopes: opsutil.SplitCSV(*scopes), rateLimit: *rateLimit, expires: *expires,
+		write: gate.Enabled(),
 	}
 	if err := validateMintKeyGrant(opts, *confirmOperator); err != nil {
 		return mintKeyOpts{}, err
@@ -245,6 +252,20 @@ func runMintKey(ctx context.Context, store keyMinter, audit AuditSink, opts mint
 			aerr, rec.KeyID, rerr)
 	}
 	return auth.APIKeyRecord{}, "", fmt.Errorf("audit_log append failed, so key %s was revoked and its plaintext discarded: %w", rec.KeyID, aerr)
+}
+
+// printMintPreview reports the grant a -write run would mint, touching no store.
+func printMintPreview(opts mintKeyOpts) {
+	scopes := "(none — full access)"
+	if len(opts.scopes) > 0 {
+		scopes = strings.Join(opts.scopes, ",")
+	}
+	expires := "never"
+	if opts.expires > 0 {
+		expires = opts.expires.String()
+	}
+	fmt.Fprintf(os.Stderr, "Would mint (no key created, no audit_log row):\n  identifier: %s\n  label: %s\n  tier: %s\n  scopes: %s\n  rate_limit_per_min: %d\n  expires_in: %s\n  actor: %s\n  reason: %s\n",
+		opts.identifier, opts.label, opts.tier, scopes, opts.rateLimit, expires, opts.actor, opts.reason)
 }
 
 // printMintedKey writes the public-safe record to stderr and the plaintext

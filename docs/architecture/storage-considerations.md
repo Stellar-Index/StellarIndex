@@ -108,11 +108,12 @@ for the genesis baseline built on them).
   via its decode-at-ingest CH sink.
 - The API's `SupplyReader.TokenSupply()` sums it live with `FINAL` on
   every request: no rollup, no refresh lag.
-- `stellarindex-ops ch-supply -seed-flows` (`internal/ops/chops/ch_supply.go`)
+- `stellarindex-ops ch-supply -seed-flows -write` (`internal/ops/chops/ch_supply.go`)
   re-seeds `[last-seeded+1, tip]` from the lake. `run-ch-supply.sh` runs
   it daily under `ch-supply.timer` as a defensive gap-filler (normally a
-  no-op). The `-write` flag and its `stellar.token_supply` rollup are
-  retired; do not confuse the two flags.
+  no-op). `-write` is the shared ops write gate: `-seed-flows -dry-run`
+  counts the rows without writing, and a bare `-seed-flows` is refused.
+  The old `stellar.token_supply` rollup is retired.
 - Amount decode type-tests a bare `i128` or the map variant's `amount`
   field; ~99.997% of flows decode (the rest are U32/Vec/Void bodies).
 - Open caveat: the sample re-run partitions 25/45/62 are still

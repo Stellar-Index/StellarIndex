@@ -1013,6 +1013,7 @@ Classify:
 - `ch-supply: tip unresolved`: the Postgres `ingestion_cursors` tip query returned empty/0. Check Postgres and the `ledgerstream` cursor.
 - `ch-supply: supply_flows watermark unresolved (got '...')`: the ClickHouse `max(ledger_seq)` probe failed (curl error on stderr above it) or returned non-digits. Check ClickHouse on `:8123` and that `stellar.supply_flows` exists; nothing was seeded.
 - Any `Permission denied` / disk write: regression of the original bug; the script must not write to disk (see `run-ch-supply.sh`).
+- `ch-supply -seed-flows: state the mode` or `flag provided but not defined: -write`: the binary and `run-ch-supply.sh` are from different releases (the script must pass `-seed-flows -write`). Re-run the ansible deploy so both match; nothing was seeded.
 
 Mitigation (15 min):
 

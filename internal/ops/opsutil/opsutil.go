@@ -173,6 +173,10 @@ func (g *WriteGate) RequireStatedMode() error {
 // unchanged after the flip.
 func (g *WriteGate) DryRun() bool { return !*g.write }
 
+// DryRunStated reports whether the operator passed -dry-run explicitly, for a
+// command whose stated preview does more than its bare default.
+func (g *WriteGate) DryRunStated() bool { return *g.dryRun }
+
 // Banner prints the loud fail-closed mode banner to stderr. Call it once,
 // after flags are parsed and the command's own required-flag checks pass,
 // so the operator sees the mode before any slow or mutating work begins.

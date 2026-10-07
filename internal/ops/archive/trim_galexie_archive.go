@@ -3,7 +3,7 @@ package archive
 import (
 	"cmp"
 	"context"
-	"flag"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -39,10 +39,10 @@ import (
 // Safety stack (each is independent):
 //
 //   1. --dry-run is the DEFAULT. Actual deletion requires the
-//      explicit --commit flag — there is no "are you sure?" prompt
-//      because the dry-run output IS the review step. Mismatched
-//      flags (e.g. --dry-run --commit) report which dominates and
-//      stop before any S3 call.
+//      explicit --commit flag (or its alias, the shared -write) —
+//      there is no "are you sure?" prompt because the dry-run output
+//      IS the review step. Mismatched flags (e.g. --dry-run --commit)
+//      are refused before any S3 call.
 //   2. Upstream verification is the DEFAULT (there is no flag to
 //      turn it on). Every candidate is HEAD'd against the cold tier
 //      before being marked for deletion. If cold.Exists returns
@@ -88,9 +88,6 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	}
 	if opts.olderThan == 0 {
 		return fmt.Errorf("--older-than-ledger is required (no implicit cutoff — name a specific ledger sequence)")
-	}
-	if opts.dryRun && opts.commit {
-		return fmt.Errorf("--dry-run and --commit are mutually exclusive; pick one")
 	}
 	// Default to dry-run when neither is set. The explicit lack
 	// of --commit is the safety primitive.
@@ -695,7 +692,7 @@ func evaluateTrimFile(ctx context.Context, logger *slog.Logger, cold trimColdChe
 }
 
 func parseTrimFlags(args []string) (trimOpts, error) {
-	fs := flag.NewFlagSet("trim-galexie-archive", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("trim-galexie-archive")
 	var (
 		opts      trimOpts
 		olderThan int64
@@ -703,13 +700,19 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	)
 	fs.StringVar(&opts.cfgPath, "config", "/etc/stellarindex.toml", "Path to stellarindex.toml")
 	fs.Int64Var(&olderThan, "older-than-ledger", 0, "REQUIRED. Files whose entire ledger range is below this sequence become deletion candidates. No default to prevent unintentional trims.")
-	fs.BoolVar(&opts.dryRun, "dry-run", false, "List would-delete candidates without deleting. Default when neither --dry-run nor --commit is set.")
-	fs.BoolVar(&opts.commit, "commit", false, "Actually delete. Requires explicit opt-in (default behaviour is dry-run).")
+	fs.BoolVar(&opts.commit, "commit", false, "Actually delete: an alias for -write. Requires explicit opt-in (default behaviour is dry-run).")
 	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
 	fs.BoolVar(&opts.iHaveVerifiedOutOfBand, "i-have-verified-cold-out-of-band", false, "Required alongside --no-verify-upstream: an explicit second acknowledgement that you have confirmed the cold tier holds these files by some other means. --no-verify-upstream alone is refused.")
 	fs.IntVar(&opts.maxFiles, "max-files", 100000, fmt.Sprintf("Hard cap on candidates per run, at most %d.", trimMaxFilesCeiling))
 	if err := fs.Parse(args); err != nil {
 		return trimOpts{}, err
+	}
+	opts.commit = opts.commit || gate.Enabled()
+	opts.dryRun = gate.DryRunStated()
+	// Unlike the shared gate, -write does not win over -dry-run here: the
+	// write is an irreversible DELETE, so contradictory flags are refused.
+	if opts.dryRun && opts.commit {
+		return trimOpts{}, errors.New("--dry-run and --commit/--write are mutually exclusive; pick one")
 	}
 	if olderThan < 0 || olderThan > int64(^uint32(0)) {
 		return trimOpts{}, fmt.Errorf("--older-than-ledger out of uint32 range: %d", olderThan)

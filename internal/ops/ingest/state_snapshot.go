@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -86,28 +85,11 @@ func parseSnapScope(s string) (snapScope, error) {
 // ledger_entry_changes. -limit caps entries processed so a read-only proof
 // stays bounded; -write refuses a -limit-truncated read (see writeSnapshot).
 func stateSnapshot(args []string) error {
-	fs := flag.NewFlagSet("state-snapshot", flag.ContinueOnError)
-	cfgPath := fs.String("config", "/etc/stellarindex.toml", "config path (optional for a public-archive read)")
-	archiveURL := fs.String("archive", "", "history archive URL (default: cfg.Stellar.HistoryArchiveURL)")
-	checkpoint := fs.Uint("checkpoint", 0, "checkpoint ledger (default: latest checkpoint)")
-	limit := fs.Uint64("limit", 2_000_000, "max entries to read (0 = full snapshot)")
-	write := fs.Bool("write", false, "BACKFILL: write entries into ClickHouse ledger_entry_changes (DATA-TRUTH-PLAN G1-G3)")
-	scope := fs.String("scope", "contracts", "write scope: 'contracts' (G1: code+instances), 'all' (G2/G3: +account/trustline/offer/data/claimable/LP), or 'storage' (contract_data STORAGE + LP — the dormant SAC/Blend/LP current-state fill)")
-	maxModLedger := fs.Uint("max-modified-ledger", 0, "collect only entries last modified BELOW this ledger (0 = all); use ~62000000 to write only the dormant tail the live-capture floor never captured")
-	dryRun := fs.Bool("dry-run", false, "collect + report the write set (per-type counts + total) WITHOUT writing — size the fill before committing")
-	chAddr := fs.String("ch", "127.0.0.1:9300", "ClickHouse native address for -write (r1 native port is 9300; 9000 is MinIO)")
-	throttleMS := fs.Uint("throttle-ms", 50, "pause between insert chunks (keeps the live CH gentle)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	sc, err := parseSnapScope(*scope)
+	o, err := parseStateSnapshotFlags(args)
 	if err != nil {
 		return err
 	}
-	// -dry-run collects the write set (so it can be counted) but never writes.
-	collect := *write || *dryRun
-
-	url, passphrase, err := resolveArchiveTarget(*cfgPath, *archiveURL, *write)
+	url, passphrase, err := resolveArchiveTarget(o.cfgPath, o.archiveURL, o.write)
 	if err != nil {
 		return err
 	}
@@ -121,30 +103,68 @@ func stateSnapshot(args []string) error {
 		return fmt.Errorf("connect history archive %q: %w", url, err)
 	}
 
-	seq, err := resolveCheckpoint(arch, uint32(*checkpoint)) //nolint:gosec // operator-supplied ledger
+	seq, err := resolveCheckpoint(arch, o.checkpoint)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "state-snapshot: reading checkpoint %d from %s (limit=%d, write=%v, dry-run=%v, scope=%s, max-modified-ledger=%d)\n",
-		seq, url, *limit, *write, *dryRun, *scope, *maxModLedger)
+		seq, url, o.limit, o.write, o.collect && !o.write, o.scopeName, o.maxModLedger)
 
-	t, err := tallyCheckpoint(ctx, arch, seq, *limit, collect, sc, uint32(*maxModLedger)) //nolint:gosec // operator-supplied ledger
+	t, err := tallyCheckpoint(ctx, arch, seq, o.limit, o.collect, o.scope, o.maxModLedger)
 	if err != nil {
 		return err
 	}
 	printTally(seq, t)
-	if collect {
+	if o.collect {
 		printWriteSet(t)
 	}
 
-	if *write {
-		return writeSnapshot(ctx, clickhouse.InsertEntryChanges, t, *limit, *scope, *chAddr,
-			time.Duration(*throttleMS)*time.Millisecond)
+	if o.write {
+		return writeSnapshot(ctx, clickhouse.InsertEntryChanges, t, o.limit, o.scopeName, o.chAddr, o.throttle)
 	}
-	if *dryRun {
-		fmt.Printf("\n─── DRY RUN ─── %d entries would be written (scope=%s); nothing written.\n", len(t.rows), *scope)
+	if o.collect {
+		fmt.Printf("\n─── DRY RUN ─── %d entries would be written (scope=%s); nothing written.\n", len(t.rows), o.scopeName)
 	}
 	return nil
+}
+
+type stateSnapshotOpts struct {
+	cfgPath, archiveURL, scopeName, chAddr string
+	checkpoint, maxModLedger               uint32
+	limit                                  uint64
+	scope                                  snapScope
+	throttle                               time.Duration
+	// write inserts the collected set; collect gathers and prints the write
+	// set. A bare run does neither: it is the bounded read-only tally.
+	write, collect bool
+}
+
+func parseStateSnapshotFlags(args []string) (stateSnapshotOpts, error) {
+	fs, gate := opsutil.NewMutatingFlagSet("state-snapshot")
+	cfgPath := fs.String("config", "/etc/stellarindex.toml", "config path (optional for a public-archive read)")
+	archiveURL := fs.String("archive", "", "history archive URL (default: cfg.Stellar.HistoryArchiveURL)")
+	checkpoint := fs.Uint("checkpoint", 0, "checkpoint ledger (default: latest checkpoint)")
+	limit := fs.Uint64("limit", 2_000_000, "max entries to read (0 = full snapshot)")
+	scope := fs.String("scope", "contracts", "write scope: 'contracts' (G1: code+instances), 'all' (G2/G3: +account/trustline/offer/data/claimable/LP), or 'storage' (contract_data STORAGE + LP — the dormant SAC/Blend/LP current-state fill)")
+	maxModLedger := fs.Uint("max-modified-ledger", 0, "collect only entries last modified BELOW this ledger (0 = all); use ~62000000 to write only the dormant tail the live-capture floor never captured")
+	chAddr := fs.String("ch", "127.0.0.1:9300", "ClickHouse native address for -write (r1 native port is 9300; 9000 is MinIO)")
+	throttleMS := fs.Uint("throttle-ms", 50, "pause between insert chunks (keeps the live CH gentle)")
+	if err := fs.Parse(args); err != nil {
+		return stateSnapshotOpts{}, err
+	}
+	sc, err := parseSnapScope(*scope)
+	if err != nil {
+		return stateSnapshotOpts{}, err
+	}
+	return stateSnapshotOpts{
+		cfgPath: *cfgPath, archiveURL: *archiveURL, scopeName: *scope, chAddr: *chAddr,
+		checkpoint:   uint32(*checkpoint),   //nolint:gosec // operator-supplied ledger
+		maxModLedger: uint32(*maxModLedger), //nolint:gosec // operator-supplied ledger
+		limit:        *limit, scope: sc,
+		throttle: time.Duration(*throttleMS) * time.Millisecond,
+		// An explicit -dry-run sizes the write set, which a bare run does not.
+		write: gate.Enabled(), collect: gate.Enabled() || gate.DryRunStated(),
+	}, nil
 }
 
 // entryChangeInserter is clickhouse.InsertEntryChanges' shape, split out so

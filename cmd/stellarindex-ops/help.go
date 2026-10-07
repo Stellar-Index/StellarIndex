@@ -774,13 +774,14 @@ Subcommands:
                           trades in a minute a recomputed twap bucket reads
                           (a dropped stretch above that bucket); -size names
                           it as a gap and raises the floor past it.
-  ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
+  ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows (-write | -dry-run)]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback
                           flows per contract (ADR-0034). Defaults to a
-                          top-N report; -seed-flows writes one decoded row
-                          per flow event into stellar.supply_flows
-                          (idempotent). Read-only unless -seed-flows.
+                          top-N report; -seed-flows -write writes one decoded
+                          row per flow event into stellar.supply_flows
+                          (idempotent), -seed-flows -dry-run counts them.
+                          A bare -seed-flows is refused.
   ch-txindex-backfill (-full | -from N | -to N) (-write | -dry-run) [-ch-addr H:P] [-window N]
                           Fill stellar.tx_hash_index (the hash-ordered
                           GET /v1/tx/{hash} lookup table, perf-todo §4)
@@ -1396,7 +1397,7 @@ Subcommands:
                           history + any crash drift. Run ONCE post-
                           backfill (scans every trades chunk). Idempotent
                           — SETs not ADDs, so re-running converges.
-  trim-galexie-archive -config PATH -older-than-ledger N [-dry-run|-commit] [-no-verify-upstream] [-max-files N]
+  trim-galexie-archive -config PATH -older-than-ledger N [-dry-run|-commit|-write] [-no-verify-upstream] [-max-files N]
                           Per ADR-0027 §Decision: DESTRUCTIVE — deletes
                           LCM files from the local hot tier
                           (galexie-archive on MinIO) whose ledger range
@@ -1406,7 +1407,8 @@ Subcommands:
                           capacity by tiering off historical mirror.
                           Safety stack:
                             * --dry-run is the DEFAULT when neither
-                              flag is set; --commit MUST be explicit.
+                              flag is set; --commit (alias -write) MUST
+                              be explicit, and is refused beside --dry-run.
                             * Upstream verification is the DEFAULT (no
                               flag enables it); every candidate is
                               HEAD'd against cold before deletion.
@@ -1466,7 +1468,7 @@ Subcommands:
                           difference count, first 20 differences); exits 1
                           on any difference. -window (default 100) bounds
                           the ledgers held in memory per export.
-  mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
+  mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR] [-write]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path
                           to bootstrap a customer's first key —
@@ -1483,6 +1485,8 @@ Subcommands:
                           encrypted email) immediately. Tiers:
                           apikey | sep10 | operator (operator needs
                           -confirm-operator). Rate 0..100000.
+                          Without -write it prints the grant and
+                          mints nothing.
                           Example:
                             stellarindex-ops mint-key \
                               -config /etc/stellarindex.toml \
@@ -1490,7 +1494,8 @@ Subcommands:
                               -label 'ACME Corp - production' \
                               -tier apikey \
                               -rate-limit-per-min 1000 \
-                              -reason 'onboarding ticket 1234'
+                              -reason 'onboarding ticket 1234' \
+                              -write
   upgrade-key -config PATH -key-id KID -rate-limit-per-min N -reason TEXT [-actor NAME]
                           Lift (or lower) an existing API key's
                           per-minute rate-limit budget. Operator-

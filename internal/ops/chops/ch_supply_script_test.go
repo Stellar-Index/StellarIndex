@@ -159,7 +159,7 @@ func runCHSupplyScript(t *testing.T, env map[string]string) chSupplyRun {
 }
 
 func seedRange(from, to string) string {
-	return "ch-supply -config /stub.toml -ch-addr 127.0.0.1:9300 -from " + from + " -to " + to + " -seed-flows"
+	return "ch-supply -config /stub.toml -ch-addr 127.0.0.1:9300 -from " + from + " -to " + to + " -seed-flows -write"
 }
 
 func TestCHSupplyScript_WatermarkProbeFailureFailsTheUnit(t *testing.T) {
