@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ansible-galexie-backfill-status-test.sh — galexie-backfill-status.sh must
 # survive an empty/missing backfill log under `set -u`: the rate section
-# reads now_epoch, which used to be assigned only when the log had a start
+# reads now_epoch, which must be assigned even when the log has no start
 # timestamp. Runs a path-stubbed copy against temp files; no hosts.
 set -uo pipefail
 

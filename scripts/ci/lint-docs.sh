@@ -565,9 +565,7 @@ fi
 #   (a) it lives under `annotations:`, NOT `labels:` — Alertmanager keeps
 #       .Labels and .Annotations strictly separate and both Discord
 #       templates render the runbook line from .Annotations.runbook_url,
-#       so a runbook_url stashed in `labels:` renders nothing (audit C4-1:
-#       266/270 alerts had it in the wrong block → no page ever showed a
-#       runbook link);
+#       so a runbook_url stashed in `labels:` renders nothing;
 #   (b) a local runbook target points at a file that exists — a 404 URL
 #       dumps the responder on a GitHub error page at 3 AM.
 # The pre-C4-1 version of this check was a blind grep over raw text, so it

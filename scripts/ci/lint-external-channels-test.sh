@@ -21,7 +21,7 @@ FIX="docs/zz-external-channels-fixture.md"
 FIXTURE_PAT="zz-dead-channel-fixture-string"
 TMP=$(mktemp -d)
 PASS=0; FAIL=0
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() { rm -f "$FIX"; rm -rf "$TMP"; }
 trap cleanup EXIT
 
@@ -89,8 +89,8 @@ check "a manifest with zero channel rows fails" red "$TMP/norows.md"
 write_manifest "$TMP/bogus.md" "swiched-on" "\`$FIXTURE_PAT\`"
 check "an unrecognised state fails instead of meaning 'not disabled'" red "$TMP/bogus.md"
 
-# A whitespace-only cell used to yield a pattern of literal spaces,
-# which matched almost every line in the tree instead of failing.
+# A whitespace-only cell must fail, not yield a pattern of literal spaces
+# that matches almost every line in the tree.
 write_manifest "$TMP/nopat.md" disabled " "
 check "a disabled channel naming no string fails" red "$TMP/nopat.md"
 

@@ -23,12 +23,13 @@
 # Judge it by whether its tip is an ancestor of main, by `main..branch`
 # (two-dot) for commits, and by the DELETE lines in `git diff --name-status`.
 #
-# ANCESTRY IS NOT THE ONLY WAY WORK LANDS. Over 143 local branches once, the ancestor test called 10 of them
-# LANDED. A per-branch content audit put the real figure at 106. The gap is
-# how this repository merges: a rebase and a squash PR both re-author the
+# ANCESTRY IS NOT THE ONLY WAY WORK LANDS. On a large set of local
+# branches the ancestor test calls few of them LANDED while a per-branch
+# content check finds most of them landed. The gap is how this repository
+# merges: a rebase and a squash PR both re-author the
 # commit, so the tip is not an ancestor of the base and every file reads as
 # changed — a landed branch is the same shape as a forgotten one. Reporting
-# 96 landed branches as "unlanded, would delete 500 files" is how a report
+# landed branches as "unlanded, would delete 500 files" is how a report
 # gets ignored, which is the original failure wearing different clothes.
 #
 # `git cherry` closes part of it: it matches by PATCH ID, which survives a

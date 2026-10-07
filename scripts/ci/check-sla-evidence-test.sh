@@ -366,11 +366,10 @@ check("the summary export includes p(99), the second headline SLA number",
       "cannot support the p99 <= 500 ms claim")
 
 # test/load/reports/ permanently contains checked-in historical evidence
-# (README.md + 2026-06-13/00-acceptance.json, kept by the .gitignore rule
+# (README.md + a dated acceptance JSON, kept by the .gitignore rule
 # `!/test/load/reports/2026-*/`). Uploading that directory wholesale
-# republished an eleven-week-old all-green summary as the artifact of the
-# current run: run 33299745709 had `Run scenario: skipped` and still
-# shipped k6-summary-33299745709 (1,691 B) asserting 30,600 passes, 0 fails.
+# would republish an old all-green summary as the artifact of the current
+# run, even when `Run scenario` was skipped.
 stale_uploads = [
     str(st.get("name", "?")) for st in upload_steps
     if str((st.get("with") or {}).get("path", "")).strip().rstrip("/")

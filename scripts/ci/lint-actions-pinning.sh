@@ -11,15 +11,11 @@
 # The gate enumerates `uses:` lines across the workflow tree and
 # fails when a third-party one is not pinned to a 40-hex commit SHA.
 #
-# WHY THE WHOLE TREE AND NOT A DIFF. The hard-fail arm used to look
-# only at `git diff origin/main -- .github/workflows/*.yml`, so it
-# judged the tree against the ref the tree was standing on: on a
-# push-to-main checkout HEAD *is* origin/main, the diff is empty and
-# the arm never evaluated. With this project pushing direct to main
-# until 1.0 (which bypasses ci.yml's PR-only matrix in the same
-# stroke), that made the supply-chain guard inert for every commit
-# that actually landed — a commit introducing an unpinned action
-# passed it. Scanning the tree is one grep per workflow file and is
+# WHY THE WHOLE TREE AND NOT A DIFF. A diff-only hard-fail arm
+# (`git diff origin/main -- .github/workflows/*.yml`) would judge the tree
+# against the ref it is standing on: on a push-to-main checkout HEAD *is*
+# origin/main, the diff is empty and the arm never evaluates, so a commit
+# introducing an unpinned action would pass. Scanning the tree is one grep per workflow file and is
 # true on every event, so there is no diff base to get wrong.
 #
 # Workflow:

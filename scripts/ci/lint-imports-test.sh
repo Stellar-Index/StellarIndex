@@ -5,7 +5,7 @@
 # weaken it (the same self-test discipline as lint-baseline-growth-test.sh
 # and check-*-test.sh).
 #
-# The regression this file was added for:
+# The regression this file guards:
 # the RULES ban matched banned packages by EXACT string
 # (`if imp not in rule["banned"]`), so importing a SUBPACKAGE of a
 # banned package — e.g. `.../protocols/horizon/operations` under banned

@@ -2,7 +2,7 @@
 # lint-deploy-systemd-authority-test.sh — fixture tests for the
 # reference-vs-template content check.
 #
-# Being templated used to be the whole REFERENCE test: any .j2 sharing a
+# Being templated must not be the whole REFERENCE test: any .j2 sharing a
 # unit's filename made the gate skip it, no matter what either file
 # said. The load-bearing case below is a reference copy and its .j2
 # twin that share one directive (RestartSec) with two different

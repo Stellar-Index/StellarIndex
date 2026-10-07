@@ -6,9 +6,9 @@
 # The case that matters is the last one: a branch whose tip is NOT an
 # ancestor of the base, which nonetheless deletes files the base has.
 # That is the shape a three-dot diff cannot show you, and the shape that
-# would have destroyed a day's work on 2026-09-08.
+# would destroy a day's work.
 #
-# A FIXTURE IS ONLY THROWAWAY IF GIT AGREES (2026-09-09). `scripts/dev/
+# A FIXTURE IS ONLY THROWAWAY IF GIT AGREES. `scripts/dev/
 # lint-changed.sh` runs any changed `*-test.sh`, and the pre-commit hook runs
 # lint-changed. A hook is invoked with GIT_DIR, GIT_INDEX_FILE and friends
 # EXPORTED, and `git -C "$tmp" init` honours an inherited GIT_DIR over its own

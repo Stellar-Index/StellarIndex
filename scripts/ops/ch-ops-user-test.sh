@@ -142,7 +142,7 @@ check supply-seed ch-supply-flows-seed.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers"
 # d2-ordinal-reproject.sh is retired: it ranks rows in the
 # EntryWalkVersion-1 order. It must refuse before its first query even with
-# the destructive-DDL acknowledgement that used to let it proceed.
+# the destructive-DDL acknowledgement that would otherwise let it proceed.
 run d2 set "$OPS_DIR/d2-ordinal-reproject.sh" 45 45
 d2_rc=$?
 if [ "$d2_rc" -ne 0 ] && [ ! -s "$REC" ] && grep -q 'is retired' "$TMP/out.d2.set"; then
@@ -167,9 +167,9 @@ check backfill-monitor ch-backfill-monitor.sh \
 # (.github/workflows/ci.yml, scripts/dev/verify.sh) — a guard nothing
 # invokes is not a guard.
 #
-# ch-live-catchup.sh used to default LIVE_ERA_FROM to r1's mainnet
-# backfill ceiling and ansible copied the script verbatim to every
-# host, so a different network inherited a floor above its own tip and
+# ch-live-catchup.sh must not default LIVE_ERA_FROM to r1's mainnet
+# backfill ceiling: ansible copies the script verbatim to every
+# host, so a different network would inherit a floor above its own tip and
 # the lake's ONLY self-healer silently scanned an empty range. The
 # value is now required, and both ways of supplying a bad one must
 # fail BEFORE any ClickHouse query — hence the "never invoked"
@@ -332,7 +332,7 @@ catchup_heals() {
 
 # Present {105..110, 113..120}: floor hole [100,104] AND interior [111,112].
 catchup_heals floor-hole 105 '111\t112' 0 100-104 111-112
-# Floor hole with no interior hole at all — the scan used to say "no holes".
+# Floor hole with no interior hole at all — the scan must not say "no holes".
 catchup_heals floor-hole-only 105 '' 0 100-104
 # Floor present: interior-only behaviour is unchanged.
 catchup_heals floor-present 100 '111\t112' 0 111-112

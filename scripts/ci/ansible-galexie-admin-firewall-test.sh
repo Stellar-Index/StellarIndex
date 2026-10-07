@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ansible-galexie-admin-firewall-test.sh — pins Q011/T622: galexie's
+# ansible-galexie-admin-firewall-test.sh — pins that galexie's
 # admin_port setting is a bare int with no bind-host option (upstream
 # stellar-galexie internal/app.go newAdminServer does
-# `fmt.Sprintf(":%d", adminPort)` — all interfaces). Two template
-# comments and one defaults comment used to claim it was "bound
+# `fmt.Sprintf(":%d", adminPort)` — all interfaces). Template and
+# defaults comments must not claim it is "bound
 # loopback" / "loopback only", which is false at the process level;
 # the actual control is 11-firewall.yml's default-deny, which only
 # holds as long as galexie_admin_port / galexie_backfill_admin_port

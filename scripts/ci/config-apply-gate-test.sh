@@ -236,7 +236,7 @@ expect "no previous tag skips" 0 "skipping config-drift gate"
 # --- 7. deploy-ansible-gate-4: surfaces the role renders/copies that the
 #        list did not name. One fixture per added entry; a defaults-only
 #        release (e.g. a galexie_ledgers_per_file bump that re-renders
-#        galexie.toml) used to pass as "binary deploy is complete".
+#        galexie.toml) must not pass as "binary deploy is complete".
 for p in \
   configs/ansible/roles/archival-node/defaults/main.yml \
   configs/ansible/roles/archival-node/handlers/main.yml \
@@ -360,14 +360,12 @@ expect "a loose prefix does not exempt a sibling rule tree" 1 "changed 1 config 
 
 # ═══ Three-way classification: comment-only / applied / substantive ═══
 #
-# The gate used to know only "changed" and "unchanged", so every
-# diff was an operator decision, and failed deploys were
-# spent discovering that a deploy/clickhouse/*.sql diff was comment-only.
-# The rule generalised from that — "comment-only, so acknowledge" — is
-# FALSE: v0.61.1..v0.62.0 added CREATE TABLE stellar.account_creators_ops
-# to account_creators_rollup.sql AND tier1_schema.sql, and the
-# acknowledgement was right only because the DDL had been applied by hand
-# first. Both halves are pinned here: the comment-only diff must pass
+# A gate that knew only "changed" and "unchanged" would make every diff an
+# operator decision, and failed deploys would be spent discovering that a
+# deploy/clickhouse/*.sql diff was comment-only. But "comment-only, so
+# acknowledge" is FALSE as a general rule: a CREATE TABLE added to a .sql
+# file is DDL that must be applied, and an acknowledgement is right only
+# if it was applied by hand first. Both halves are pinned here: the comment-only diff must pass
 # WITHOUT an acknowledgement, and the DDL diff dressed in the same comments
 # must still block.
 
@@ -660,11 +658,10 @@ else
   else
     check_caller "deploy.yml passes the host baseline as the 3rd argument (got $argc args — without it a catch-up or skip-ahead deploy gets a false 'the binary deploy is complete')" "no"
   fi
-  # ORDERING, not mere presence. The check below used to be two
-  # independent greps for `id: baseline` and `deployed-versions`, and its
-  # message asserted the baseline is read BEFORE the playbook — which
-  # nothing verified. Moving the baseline step below the deploy step
-  # would have kept this green while making the gate permanently
+  # ORDERING, not mere presence. Two independent greps for
+  # `id: baseline` and `deployed-versions` would not verify that the
+  # baseline is read BEFORE the playbook: moving the baseline step below
+  # the deploy step would keep them green while making the gate permanently
   # vacuous: the "live" version would be the version just deployed, so
   # the diff range collapses to nothing and every config change passes.
   bl_line=$(grep -n 'id: baseline' "$WF" | sed -n 1p | cut -d: -f1)
@@ -1117,20 +1114,16 @@ fi
 
 # --- 30. off at boot but RUNNING still deploys -------------------------
 #
-# This case used to be structural — a grep forbidding `is-enabled` — on the
-# ground that testnet's aggregator was UnitFileState=disabled with
-# ActiveState=active, so reading enablement would have excluded a unit that
-# must still deploy, re-creating the skew the manifest exists to prevent.
+# A structural grep forbidding `is-enabled` would be the wrong proxy. The
+# hazard: a unit UnitFileState=disabled with ActiveState=active (testnet's
+# aggregator) must still deploy, and reading enablement would exclude it,
+# re-creating the skew the manifest exists to prevent.
 #
-# The hazard is real and is still asserted here. What expired is the proxy.
 # Forbidding a property read is not the same statement as forbidding the
-# wrong conclusion, and holding the proxy cost a real dispatch: testnet's
-# aggregator later STOPPED (run_aggregator: false on both test nets), at
-# which point this step's LoadState read and preflight-deploy.sh's
-# enabled/active read disagreed about the same unit. The dispatch was
-# refused as stale-manifest drift and the remedy it printed,
-# --refresh-manifest, re-derived a byte-identical row. Two implementations
-# of one derivation is the defect the proxy was protecting.
+# wrong conclusion: if this step's LoadState read and preflight-deploy.sh's
+# enabled/active read disagree about the same unit, the dispatch is refused
+# as stale-manifest drift and --refresh-manifest re-derives a
+# byte-identical row. Two implementations of one derivation is the defect.
 #
 # So the hazard is now tested directly, in both directions, which the
 # comment above said could not be done — it can, because the hazard is a

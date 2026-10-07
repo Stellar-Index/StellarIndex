@@ -173,7 +173,7 @@ expect galexie_archive_scan_ok 0 "a truncated read reports scan_ok 0"
 expect galexie_archive_scan_listing_lines 3 "a truncated read reports the rows it did get"
 stamped "a truncated read still stamps last_run_unix"
 
-# A dead read used to publish unexpected_gaps 1, which pages with a
+# A dead read must not publish unexpected_gaps 1, which pages with a
 # DR-corruption claim about a bucket nobody managed to look at.
 run dead
 absent galexie_archive_unexpected_gaps "a dead read publishes NO gap verdict"

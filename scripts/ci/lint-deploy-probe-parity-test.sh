@@ -2,7 +2,7 @@
 # lint-deploy-probe-parity-test.sh — regression test for GH-1167: the
 # deploy gate's API health probe must use the readiness probe HAProxy
 # routes on (`/v1/readyz`), not the constant-200 liveness probe
-# (`/v1/healthz`) — a binary readyz would refuse used to pass the deploy
+# (`/v1/healthz`) — a binary readyz would refuse could pass the deploy
 # gate and then get drained by HAProxy the moment it served. Caddy stays
 # on /v1/healthz on purpose: it fronts one upstream, so a readyz-driven
 # drain would be a full outage.

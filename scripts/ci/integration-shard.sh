@@ -24,11 +24,11 @@
 # covers (INT_TEST_PKGS minus SHARDED_PKG — see the Makefile for the list and
 # why each package is on it; they finish in seconds), so the union of all shards
 # == the Makefile target. That list is DERIVED from the Makefile at run time
-# (`make print-int-test-pkgs`), not copied here: the copy that used to live
-# in this file was guarded only by a "keep in lockstep" comment, so a package
-# added to INT_TEST_PKGS ran under `make test-integration` and compiled under
-# `make test-integration-build` but was executed by NO shard, and a failing
-# test in it shipped green.
+# (`make print-int-test-pkgs`), not copied here: a copy guarded only by a
+# "keep in lockstep" comment would let a package added to INT_TEST_PKGS run
+# under `make test-integration` and compile under `make
+# test-integration-build` but be executed by NO shard, so a failing test in
+# it would ship green.
 #
 # Fail-closed: an empty shard, an empty listing, a bad index, or a listing
 # that yields fewer tests than shards all exit non-zero — a shard that ran

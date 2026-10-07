@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# preflight-deploy-baseline-test.sh — regression fixture for RLT-047 / #556(a):
+# preflight-deploy-baseline-test.sh — regression fixture:
 # preflight-deploy.sh's config-apply baseline must be the lowest version
 # across EVERY deployed-versions sidecar on the host, exactly as
 # deploy.yml's "Capture the host's live version" step computes it —

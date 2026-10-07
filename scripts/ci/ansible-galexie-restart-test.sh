@@ -6,12 +6,12 @@
 #   1. None of the five galexie-input render tasks in 07-galexie.yml
 #      (wrapper copy, captive cfg, galexie.toml, /etc/default/galexie,
 #      unit) notifies `Restart galexie` directly — a comment-only edit
-#      used to cost a ~9-minute mainnet cold catchup. The galexie BINARY
+#      would cost a ~9-minute mainnet cold catchup. The galexie BINARY
 #      install/copy tasks may (a new binary is a real restart).
 #   2. The bootstrap binary-install task in 14-stellarindex-services.yml
 #      notifies a restart for every long-running unit it replaces
-#      (indexer, aggregator, api) — it used to notify the indexer only, so
-#      the api kept running the old binary from memory.
+#      (indexer, aggregator, api) — notifying the indexer only would leave
+#      the api running the old binary from memory.
 #
 #   3. Only inputs the running galexie has loaded at start (captive cfg,
 #      galexie.toml, /etc/default/galexie, the unit) are in the effective-

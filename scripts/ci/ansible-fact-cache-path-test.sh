@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# ansible-fact-cache-path-test.sh — pins Q258: configs/ansible/ansible.cfg's
-# fact_caching_connection used to point at /tmp/ansible_fact_cache, a fixed,
+# ansible-fact-cache-path-test.sh — pins configs/ansible/ansible.cfg's
+# fact_caching_connection away from /tmp/ansible_fact_cache, a fixed,
 # guessable path under the world-writable /tmp namespace with no
 # ownership/mode hardening anywhere in the file. Any other local user on a
 # shared ops box could pre-create or write that directory before an
 # archival-node.yml run and poison the cached ansible_distribution_release
 # that playbook's apt-repo tasks key off, within fact_caching_timeout
-# (3600s) of a prior gather. The fix moves the cache under the operator's
+# (3600s) of a prior gather. The cache lives under the operator's
 # own home directory, matching vault_password_file and collections_paths
 # already in this file.
 #

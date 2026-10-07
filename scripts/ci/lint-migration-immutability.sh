@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# lint-migration-immutability.sh — freeze already-shipped migrations (W1-migrations-5).
+# lint-migration-immutability.sh — freeze already-shipped migrations.
 #
-# Why this gate exists (audit W1-migrations-5):
+# Why this gate exists:
 #
 #   cmd/stellarindex-migrate/main.go is a thin wrapper over
 #   golang-migrate/migrate: it opens `file://migrations` and calls

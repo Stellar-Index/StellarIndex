@@ -263,7 +263,7 @@ detect_growth() {
 # <watched-file>. Both greps read from here-strings (a REDIRECTION, not a
 # pipeline element) so `grep -q` closing its input early cannot make
 # `set -o pipefail` observe a SIGPIPE'd writer — the exact trap the
-# range-size regression (PR #38) taught this file to avoid. Piping into
+# range-size case in lint-baseline-growth-test.sh pins. Piping into
 # grep -q here, in any form, reintroduces it.
 has_scoped_trailer() {
   local file="$1" body="$2" trailers

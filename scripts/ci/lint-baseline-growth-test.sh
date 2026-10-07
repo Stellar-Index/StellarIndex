@@ -21,13 +21,13 @@
 #     than failing a first push;
 #   - and the verdict does not depend on how BIG the commit range is.
 #
-# The range-size case reproduces a real CI failure: the trailer check used
-# to be `git log --format=%B "$BASE..HEAD" | grep -qE ...` under
+# The range-size case reproduces a CI failure mode: a trailer check of the
+# form `git log --format=%B "$BASE..HEAD" | grep -qE ...` under
 # `set -o pipefail`. `grep -q` exits at the first match and closes the
 # pipe; once the log exceeded the 64KB pipe buffer, `git log` took SIGPIPE
 # and reported 141, and pipefail surfaced that as the pipeline's status —
 # so the `if` read "trailer found" as "no trailer" and failed a PR that had
-# correctly declared its growth. PR #38 passed locally and failed in CI on
+# correctly declared its growth, passing locally and failing in CI on
 # byte-identical inputs. The big-range case below reproduces it
 # deterministically.
 #

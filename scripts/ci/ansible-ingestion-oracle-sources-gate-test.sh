@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ansible-ingestion-oracle-sources-gate-test.sh — pins T188: stellarindex.toml.j2
-# used to render `[ingestion] enabled_sources` unconditionally from
+# ansible-ingestion-oracle-sources-gate-test.sh — pins that stellarindex.toml.j2
+# must not render `[ingestion] enabled_sources` unconditionally from
 # stellarindex_enabled_sources while the [oracle.*] blocks a few lines below
 # are gated on `run_aggregator | default(true) | bool`. The pubnet default
 # list includes the oracle sources (reflector-dex/cex/fx, redstone, band),

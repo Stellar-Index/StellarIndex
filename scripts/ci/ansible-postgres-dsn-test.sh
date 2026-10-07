@@ -4,9 +4,9 @@
 #
 # The DSN is a URL. A raw '/', '#', '@', '?' or ':' in the password ends the
 # userinfo early, so pgx / lib/pq fail with `invalid port ":ab" after host`
-# and the migrate step and every service refuse to start — and the bootstrap
-# runbook used to recommend `openssl rand -base64 32`, which emits '/' about
-# half the time.
+# and the migrate step and every service refuse to start. `openssl rand
+# -base64 32` emits '/' about half the time, so the bootstrap runbook must
+# not use it.
 #
 # What must hold:
 #   1. no Ansible file composes `postgres://{{ user }}:{{ pass }}@` inline;

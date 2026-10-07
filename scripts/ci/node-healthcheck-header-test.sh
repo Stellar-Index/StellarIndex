@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # node-healthcheck-header-test.sh — T238: the script's leading "Checks"
 # comment block must describe the checks the script actually runs, not a
-# stale headcount. It previously claimed "All 7 systemd services" over a
-# 6-item list while SERVICES held 9 units and Check 1b (API /v1/healthz)
-# existed uncounted and undocumented.
+# stale headcount (service count, list length and Check 1b, API /v1/healthz,
+# must all agree with what SERVICES holds).
 #
 # Run: bash scripts/ci/node-healthcheck-header-test.sh
 set -uo pipefail

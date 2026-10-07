@@ -290,7 +290,7 @@ if declared:
                     f"so any assertion built on it certifies behaviour that cannot occur.")
 
 # ─────────────────────────────────────────────────────────────────────
-# `for:` equal to a zero-compared event window (audit Q261).
+# `for:` equal to a zero-compared event window.
 #
 # `increase(m[W]) > 0` with `for: W` parses, is structurally perfect, and
 # cannot fire on one isolated increment. Ten rules per tree had the shape;

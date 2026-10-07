@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
+# Migration lint: money-column (ADR-0003) + file integrity
 # + register completeness (wave-D PS-01) + ClickHouse money-column
 # + hypertable index builds + CAGG re-materialization + atomicity
 # + priceable leg division.
@@ -38,8 +38,7 @@
 # ── register-completeness detail ──
 #
 # migrations/README.md mandates a register row per migration, and the
-# register had drifted: 0138-0143, 0145-0147, 0149 and 0150 were all
-# missing when this pass was added. The reader who pays for that is the
+# register can drift. The reader who pays for a missing row is the
 # one the register exists for — someone bringing up a FRESH database
 # (docs/operations/archival-node-bringup.md), for whom the row is where
 # an "⚠ operator must re-materialize" warning lives. 0147 is exactly
@@ -136,7 +135,7 @@ if [ "$fail" -eq 0 ]; then
   echo "✅ migration money-column lint passed."
 fi
 
-# ─── Pass 2: pairing / numbering / non-empty (audit C4-7) ───
+# ─── Pass 2: pairing / numbering / non-empty ───
 # A missing or empty .down.sql means a migration can't be rolled back —
 # a silent operational trap discovered only during an incident. This
 # pass makes it a CI failure. EXISTING gaps are WARN-only (see header):
@@ -195,7 +194,7 @@ if [ -n "$gaps" ]; then
   echo "lint-migrations ⚠️  numbering gap(s) (non-fatal — squashed/removed migrations): ${gaps}" >&2
 fi
 
-# ── back-numbering guard (GH-1164) ──
+# ── back-numbering guard ──
 # Nothing asserted a NEW migration's number exceeds the head that
 # existed when it was added, so a file back-numbered into a gap (a
 # historical one, or a fresh one from this same change) sails through

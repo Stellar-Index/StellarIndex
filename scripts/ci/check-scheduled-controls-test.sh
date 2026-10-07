@@ -190,8 +190,8 @@ expect_absent() {
 # A control that STOPPED BEING SCHEDULED and a control that is SCHEDULED
 # AND RED both produce "no passing scheduled run past N", and they need
 # opposite remedies: re-arm the cron, or go read what the control found.
-# The sweep used to call both DEAD. Everything below pins the
-# distinction in both directions.
+# Everything below pins the distinction in both directions: a RED control
+# is reporting, not DEAD.
 
 # ansible-drift's real shape: weekly cron, registered 53 days ago, every
 # scheduled run failed and the newest of them was TODAY. This is the case
@@ -201,11 +201,9 @@ expect_absent() {
 # for eight weeks, naming two drifted tasks each time. It had not stopped
 # reporting — it was reporting, and being read as broken.
 #
-# The assertion that used to stand here wanted DEAD. That expectation WAS
-# the defect, so it is inverted deliberately, not relaxed: the exit code
-# is still 1 (see BOTH EXIT 1 in the script header), the control is still
-# named, still counted and still blocks a clean sweep. What changed is
-# only which remedy it is filed under.
+# Expecting DEAD here would be the defect. The exit code is still 1 (see
+# BOTH EXIT 1 in the script header), the control is still named, counted
+# and blocks a clean sweep; only the remedy it is filed under differs.
 reset_case
 workflow ansible-drift.yml '17 6 * * 1'
 history ansible-drift.yml active 53 \

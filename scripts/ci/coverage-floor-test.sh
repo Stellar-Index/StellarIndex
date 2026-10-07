@@ -4,9 +4,8 @@
 # A coverage gate is the easiest kind of gate to make vacuous: it reads a
 # file that is generated somewhere else, so it can silently start
 # measuring nothing and go on printing a green tick forever. This repo
-# has that scar twice over — 11 of 37 CI gates were found vacuous in the
-# August 2026 audit, and the weekly SLA run published an eleven-week-old
-# all-green artifact for months.
+# has that scar twice over — CI gates found vacuous, and a weekly SLA run
+# that published a stale all-green artifact for months.
 #
 # So the gate is required to be PROVABLY able to fail, and these fixtures
 # are that proof. Every hard-failure branch gets a case that exercises it

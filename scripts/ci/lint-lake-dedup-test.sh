@@ -18,8 +18,8 @@
 #     were not is CAUGHT in a .sql header, and its countDistinct form
 #     passes;
 #   - dropping `FINAL` from the tree's one aggregating read
-#     (opTypeStatsQuery, whose own comment records the same class as
-#     audit C2-12) is CAUGHT;
+#     (opTypeStatsQuery, whose own comment records the same class)
+#     is CAUGHT;
 #   - a GROUP BY over HALF the operations identity is CAUGHT — a
 #     partial key is not a collapse;
 #   - the five per-entity detail readers' shape is NOT flagged, nor is
@@ -181,7 +181,7 @@ cat > "$verify_ok/$SQLDIR/reconcile.sql" <<'SQL'
 SQL
 check "the countDistinct/uniqExact form of the same query passes" 0 "$verify_ok"
 
-# ── opTypeStatsQuery: FINAL is what makes count() exact (audit C2-12) ─
+# ── opTypeStatsQuery: FINAL is what makes count() exact ─
 final_ok="$(mk final_ok)"
 cat > "$final_ok/$GODIR/op_type_stats.go" <<'GO'
 package clickhouse
