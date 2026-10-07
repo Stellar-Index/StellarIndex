@@ -17,8 +17,8 @@
 
 BEGIN;
 
-ALTER TABLE asset_volume_24h
-    ADD COLUMN IF NOT EXISTS unpriced_trades bigint NOT NULL DEFAULT 0; -- lint-money:ok a trade count, not an amount
+ALTER TABLE asset_volume_24h ADD COLUMN IF NOT EXISTS
+    unpriced_trades bigint NOT NULL DEFAULT 0; -- lint-money:ok trade count, not an amount
 
 COMMENT ON COLUMN asset_volume_24h.unpriced_trades IS
     'Trades in the trailing 24h (asset as base OR quote) with no trade-time '
