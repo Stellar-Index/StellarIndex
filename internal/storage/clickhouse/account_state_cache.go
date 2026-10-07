@@ -168,12 +168,12 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	if !owner {
 		return fl, false
 	}
-	// Global bound across keys: the per-account flight
-	// collapses same-account bursts, but the account space is
-	// attacker-chosen (fabricated G-addresses), so without this gate key
-	// churn queued one unbounded detached scan per key on the 8-conn
-	// pool. On saturation SKIP — the waiter misses honestly and a later
-	// request re-kicks — never queue (see RefreshGate).
+	// Global bound across keys: the per-account flight collapses
+	// same-account bursts, but the account space is attacker-chosen
+	// (fabricated G-addresses), so without this gate key churn would queue
+	// one unbounded detached scan per key on the shared explorer pool. On
+	// saturation SKIP — the waiter misses honestly and a later request
+	// re-kicks — never queue (see RefreshGate).
 	if !r.refreshGate.TryAcquireClass("account_state") {
 		fl.saturated = true // published to waiters by end()'s close
 		r.stateFlight.end(account, fl)

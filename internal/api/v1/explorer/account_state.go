@@ -593,7 +593,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 
 	// Cached + single-flighted: this is an
 	// unauthenticated route over two ledger_entries_current FINAL scans on
-	// the shared 8-connection explorer pool, so a single client looping it
+	// the shared explorer pool, so a single client looping it
 	// could hold every connection and stall every other lake-backed
 	// endpoint. Snapshot-served: a stale
 	// board is 200 + flags.stale + its real as_of while the detached

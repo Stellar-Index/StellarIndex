@@ -36,10 +36,9 @@ func Jitter(d time.Duration) time.Duration {
 // KeepAliveHTTPClient returns the shared keep-alive HTTP client used by the
 // WS streamers' upgrade dials (HTTP/2 disabled, bounded idle pool).
 //
-// Its Transport dials TCP with a 30 s OS-level keepalive. Go's net.Dialer
-// defaults to no keepalive on the underlying socket; venues that issue TCP
-// RST after their own timeout window then surface as "connection reset by
-// peer" reads instead of being detected earlier by the dialer.
+// Its Transport dials TCP with KeepAlive set explicitly to 30 s. Go applies
+// that value as the idle time before the first probe (zero would mean 15 s);
+// the probe interval and count stay at Go's defaults of 15 s and 9.
 func KeepAliveHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,

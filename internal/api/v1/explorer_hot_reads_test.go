@@ -11,14 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// C3-002 + C3-009 (audit-2026-07-23) — the two unauthenticated explorer
-// reads whose cost is set by the lake rather than the request.
+// These tests cover the two unauthenticated explorer reads whose cost is
+// set by the lake rather than the request.
 //
 // GET /v1/assets/{asset_id}/holders ran two ledger_entries_current FINAL
 // scans per request; the GET /v1/contracts directory ran a GROUP BY over
 // up to a year of contract_events per request, across 365 distinct
-// accepted window sizes. Both on the shared 8-connection explorer pool,
-// with no credential required.
+// accepted window sizes. Both ran on the shared explorer pool with no
+// credential required.
 
 // countingExplorerReader wraps the shared stub and counts the two heavy
 // reads (plus the tip read each window floor needs), so these tests can
