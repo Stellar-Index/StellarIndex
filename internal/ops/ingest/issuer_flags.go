@@ -60,23 +60,23 @@ type issuerFlagsCounts struct {
 //
 // The flags ALREADY resolve on the read path
 // (Server.enrichIssuerFromAccountState decodes them from the lake per
-// request, 39 of the top 40 issuers measured 2026-08-27). What that path
+// request, 39 of the top 40 issuers when measured). What that path
 // cannot survive is a cold account-state cache: under burst the refresh
 // gate degrades and an issuer page renders "not yet resolved". The
-// Postgres columns were created for exactly this fallback in migration
-// 0023 and have never been populated — 0 of 59,189.
+// Postgres columns exist for exactly this fallback (migration 0023), and
+// this job is what populates them.
 //
 // So this is durability work, not a missing capability, and it is
 // deliberately incremental: -limit bounds a run, and the queue is
 // "auth_required IS NULL" ordered by primary key, so repeated bounded
 // runs make forward progress instead of re-walking the same head.
 //
-// # MERGED ISSUERS (#374)
+// # MERGED ISSUERS
 //
 // A live-entry read alone leaves every issuer that has MERGED ITS ACCOUNT
-// AWAY permanently unresolved — r1 2026-09-03: 10,239 of 59,241, and a
+// AWAY permanently unresolved — on r1, 10,239 of 59,241, and a
 // 1,000-key sample says 985 (98.5%) are merged accounts, not coverage gaps.
-// Their flags ARE knowable, so a miss now falls through to
+// Their flags ARE knowable, so a miss falls through to
 // RemovedAccountsLastKnownAuthFlags, which recovers the pre-image the
 // account_merge left in the removing ledger. Such a reading is persisted
 // with its provenance (`last_known_before_removal` + the removal ledger)
@@ -89,7 +89,7 @@ type issuerFlagsCounts struct {
 // the provenance column would be a one-way latch: those rows have
 // auth_required set, so the primary queue can never see them again.
 //
-// # FILLED ROWS GO STALE TOO (RSEC-V1 / RLT-470)
+// # FILLED ROWS GO STALE TOO
 //
 // The same latch closes on every OTHER filled row, and there it holds an
 // identity claim rather than a flag set: `issuers.home_domain` is written by
@@ -97,16 +97,16 @@ type issuerFlagsCounts struct {
 // anchor that moves domain with SetOptions and lets the old name lapse keeps
 // the lapsed name indefinitely — the hourly SEP-1 refresh keeps fetching it,
 // and whoever registers it next can serve a stellar.toml listing the anchor's
-// issuer account back and inherit its verified org identity. Making the
-// column overwritable was necessary and not sufficient: `issuer-enrich`, the
-// job that syncs it, is a manual one-shot with no timer, so nothing scheduled
-// re-read a filled row at all.
+// issuer account back and inherit its verified org identity. An
+// overwritable column is necessary and not sufficient: `issuer-enrich`, the
+// job that syncs it, is a manual one-shot with no timer, so without a
+// scheduled pass nothing would re-read a filled row at all.
 //
 // A third pass therefore re-offers every filled, live-sourced row to the live
 // reader and writes back the ones the chain has moved past. It is ordered
 // last and bounded by its own -chain-recheck-limit so it cannot take budget
 // from the primary drain, and it writes only rows that actually DIFFER, so
-// re-reading the whole filled set (r1 2026-09-03: 49,002 rows) is ~98 bulk
+// re-reading the whole filled set (49,002 rows on r1) is ~98 bulk
 // lake reads and, in the steady state, no Postgres writes at all.
 func issuerFlagsCmd(args []string) error {
 	fs := flag.NewFlagSet("issuer-flags", flag.ContinueOnError)
@@ -377,9 +377,9 @@ func issuerFlagsRecheckChunk(
 // This is the pass that lets an on-chain correction reach a row the drain has
 // already filled. Both other queues are one-shot by construction — the
 // primary is `auth_required IS NULL` and the re-check covers only last-known
-// rows — so before it existed, `issuers.home_domain` was re-read by nothing
-// on a timer, and an anchor that moved domain and let the old name lapse kept
-// the lapsed name until someone ran a backfill by hand (RSEC-V1 / RLT-470).
+// rows — so without it `issuers.home_domain` would be re-read by nothing on
+// a timer, and an anchor that moved domain and let the old name lapse would
+// keep the lapsed name until someone ran a backfill by hand.
 //
 // Ordered LAST and bounded by its own limit, so widening the re-offer cannot
 // take budget from the primary drain: by the time this runs, that pass has
@@ -439,8 +439,8 @@ func rotateChainRecheck(recs []timescale.IssuerAuthFlagsOnRecord, batch, day int
 // exactly as in the primary drain: absence from the current-state projection
 // is what a merged account and a lake-coverage gap both look like, so only
 // the fallback, which reads an actual `removed` row, may conclude "merged".
-// Without it an issuer that merged after its row was filled kept its `live`
-// label and its home_domain for good, and the SEP-1 refresh kept fetching
+// Without it an issuer that merged after its row was filled would keep its
+// `live` label and its home_domain for good, and the SEP-1 refresh would keep fetching
 // that domain for whoever registers it once it lapses. A key neither reader
 // answers for changes NOTHING.
 func issuerFlagsChainRecheckChunk(

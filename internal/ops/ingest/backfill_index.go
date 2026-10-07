@@ -23,8 +23,8 @@ import (
 // (currently CoinGecko) as oracle updates.
 //
 // This is the cascade's last resort, and it exists because the preferred
-// venues cannot reach certain windows even in principle. Probed 2026-09-08
-// for 2017-11-15: kraken, binance, coinbase and bitstamp each return zero
+// venues cannot reach certain windows even in principle. For 2017-11-15,
+// kraken, binance, coinbase and bitstamp each return zero
 // trades, because Binance listed XLM in 2018 and Coinbase in 2019. Two
 // windows are unreachable from venues for that reason — 2017-08-23..
 // 2018-02-15 (177 days) and everything before Kraken's floor of 2017-01-17
@@ -130,8 +130,8 @@ func BackfillIndex(args []string) error {
 	}
 	// LoadWithEnv, never bare Load: r1 carries the real postgres
 	// credentials in STELLARINDEX_POSTGRES_DSN, and a bare Load ignores
-	// the override and falls back to the file's password-less DSN. That
-	// is the C3-14 bug class the archive commands already guard against.
+	// the override and falls back to the file's password-less DSN. The
+	// archive commands guard against the same failure.
 	cfg, err := config.LoadWithEnv(plan.cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -204,7 +204,7 @@ func BackfillIndex(args []string) error {
 // walkIndexRange steps the window in chunk-sized pieces and writes what each
 // returns. Split out of BackfillIndex so the command's setup (flags, config,
 // auth, store) and its work loop can each be read on their own; together they
-// were past the complexity budget, and the loop is the half that matters.
+// would exceed the complexity budget, and the loop is the half that matters.
 func walkIndexRange(
 	ctx context.Context,
 	plan backfillIndexPlan,

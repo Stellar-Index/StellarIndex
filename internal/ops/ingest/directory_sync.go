@@ -28,7 +28,7 @@ import (
 // github.com/stellar-expert/public-directory account labels into the
 // `account_directory` table (migration 0136): one HTTPS GET of the
 // repo tarball, parse accounts/*.json, upsert the full set, prune
-// rows upstream removed. ~18.5k entries as of 2026-08.
+// rows upstream removed (~18.5k entries when last measured).
 //
 // Run from a daily timer:
 //
@@ -137,7 +137,7 @@ func directorySync(args []string) error {
 		return nil
 	}
 
-	// RLT-317: the only signal a stalled/failed sync had was the generic
+	// Without a heartbeat, the only signal a stalled/failed sync has is the generic
 	// stellarindex_systemd_unit_failed catch-all, which covers nothing
 	// but a nonzero process exit and takes 15m+ to ticket. Wiring the
 	// same JobHeartbeat every other stellarindex-ops job uses gives
@@ -198,10 +198,8 @@ func fetchDirectoryTarball(ctx context.Context, url, wantSHA256 string) (entries
 	}
 	// http.DefaultClient has NO timeout. A tarball fetch against a
 	// third-party host that accepts the connection and then stops sending
-	// would hang this command forever — same class as the kraken REST
-	// call fixed alongside this (#371 F5), and the reason that one was
-	// worth finding: an operator command that never returns looks like a
-	// slow network, not a bug.
+	// would hang this command forever, and an operator command that
+	// never returns looks like a slow network, not a bug.
 	//
 	// ctx still bounds it when the caller supplies a deadline; this makes
 	// the bound unconditional.

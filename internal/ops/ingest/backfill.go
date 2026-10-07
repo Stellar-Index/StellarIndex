@@ -87,16 +87,15 @@ type backfillOpts struct {
 	resume   bool // when true, look up the prior cursor and skip already-processed ledgers
 	parallel int  // number of concurrent chunks to run; 1 = sequential (default)
 	// refreshCAGGs controls the post-chunk continuous-aggregate
-	// materialisation call. Defaults to true. Pre-2026-05-13
-	// backfills did not refresh CAGGs and consequently lost their
-	// data to the 90-day raw-trades retention before the policy
-	// refresher's natural cadence picked the inserts up. Operators
+	// materialisation call. Defaults to true. Without it a backfilled
+	// range's CAGG buckets stay unmaterialised until the policy
+	// refresher's natural cadence picks the inserts up. Operators
 	// should leave this on; the only legitimate reason to disable
 	// is debugging a refresh failure where re-running the
 	// underlying chunk is the desired recovery path.
 	refreshCAGGs bool
-	// heartbeat publishes liveness + progress for the whole run
-	// (C6-020). Shared by every chunk goroutine — JobHeartbeat is
+	// heartbeat publishes liveness + progress for the whole run.
+	// Shared by every chunk goroutine — JobHeartbeat is
 	// mutex-guarded and walkedTotal is atomic, so the per-chunk
 	// callbacks can report into it concurrently. nil-safe: an inert
 	// heartbeat (no node_exporter textfile dir) makes every call a
@@ -211,7 +210,7 @@ func backfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// A-CRIT-2 (audit-2026-07-24): the main on-chain backfill re-processes ledgers
+	// The main on-chain backfill re-processes ledgers
 	// that may overlap live ingest (gap-fill within the trades window / running
 	// alongside live). It writes the same trade PKs, so ON CONFLICT UPDATEs the
 	// existing rows. Without the USD-volume resolvers installed it computes
@@ -219,7 +218,7 @@ func backfill(args []string) error {
 	// overwriting live-ingested correct values with NULL. Mirror the indexer /
 	// backfill_external / ch_rebuild wiring: a positive generation so a corrected
 	// re-derive is authoritative, AND the resolvers so it writes real values (not
-	// NULL). The reDeriveNullVolumeGuard now backstops any future omission.
+	// NULL). The reDeriveNullVolumeGuard backstops any future omission.
 	store.SetDeriveGeneration(time.Now().Unix())
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
@@ -239,7 +238,7 @@ func backfill(args []string) error {
 		"chunks", len(chunks),
 	)
 
-	// C6-020: liveness + progress for the whole walk, so a wedged backfill
+	// The heartbeat reports liveness + progress for the whole walk, so a wedged backfill
 	// (stalled S3 read, storage write that never returns, OOM-killed chunk
 	// goroutine) is distinguishable from a working one without tailing the
 	// journal. Inert off-r1 — see opsutil.NewJobHeartbeat.
@@ -287,7 +286,7 @@ func backfill(args []string) error {
 
 // runChunkGuarded runs one chunk's work (run) with panic recovery so a
 // panic inside a single parallel chunk cannot take the whole backfill
-// process down (NS27): an unrecovered panic in any goroutine terminates
+// process down: an unrecovered panic in any goroutine terminates
 // the entire Go process, not just the goroutine that panicked. The
 // panicking chunk is reported via worker.Report (same accounting as every
 // other detached worker) and surfaced through errCh so the backfill still
@@ -416,7 +415,7 @@ func buildChunkDispatcher(
 // chunks never share a cursor row.
 //
 //nolint:gocognit,funlen // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
-func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error { //nolint:gocyclo // one cohesive backfill orchestration: chunk stream -> async drain -> post-drain durable cursor (C2-14); splitting scatters the watermark narrative
+func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error { //nolint:gocyclo // one cohesive backfill orchestration: chunk stream -> async drain -> post-drain durable cursor; splitting scatters the watermark narrative
 	chunkOpts := opts
 	chunkOpts.from = chunk.from
 	chunkOpts.to = chunk.to
@@ -484,16 +483,13 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	streamCfg := pipeline.LedgerstreamConfig(cfg, opts.bucket)
 	// Count actual LCM callbacks so the chunk-complete log line can
 	// distinguish "this chunk walked N ledgers" from "the chunk
-	// covered an N-ledger range." F-0159 (2026-05-26): a backfill
-	// run against a bucket with no files in the target range logged
-	// `chunk complete ... ledgers=5331` and exited in 200ms — the
-	// `ledgers=` value was the chunk's [from,to] range size, not the
-	// count of ledgers actually walked. Operators read the log as a
-	// false-positive "backfill complete" and moved on without the
-	// gap being filled.
+	// covered an N-ledger range." On a run against a bucket with no
+	// files in the target range, a `ledgers=` value holding the chunk's
+	// [from,to] range size reads as a false-positive "backfill
+	// complete", and the operator moves on with the gap unfilled.
 	var (
 		walked uint64
-		// C2-14: the last ledger whose events were FULLY enqueued onto the
+		// lastFullyEnqueued is the last ledger whose events were FULLY enqueued onto the
 		// sink channel (ProcessLedger returned nil). This is NOT yet a
 		// "durably persisted" marker — the async PersistEvents drain (+
 		// batched trades + the soroban rawSink) commit the rows later. The
@@ -507,18 +503,18 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, cfg.Stellar.Passphrase()); err != nil {
 				return err
 			}
-			// C6-020: report into the run-wide heartbeat AFTER the ledger
+			// Report into the run-wide heartbeat AFTER the ledger
 			// was actually processed — a counter bumped before the work
 			// would keep advancing while ProcessLedger wedges, which is
 			// the exact hang the progress alert exists to catch.
 			if opts.walkedTotal != nil {
 				opts.heartbeat.Progress(opts.walkedTotal.Add(1), uint64(lcm.LedgerSequence()))
 			}
-			// C2-14 (durability): DO NOT advance the cursor here. Advancing
-			// at enqueue time moved the resume watermark PAST rows that were
-			// still buffered in the sink channel / trade batch / rawSink — a
-			// crash between this enqueue and the async commit lost those rows
-			// with the cursor already beyond them (same class as C2-1). Record
+			// DO NOT advance the cursor here. Advancing at enqueue time
+			// would move the resume watermark PAST rows still buffered in the
+			// sink channel / trade batch / rawSink — a crash between this
+			// enqueue and the async commit would lose those rows with the
+			// cursor already beyond them. Record
 			// only the last fully-enqueued ledger; the durable advance happens
 			// after <-sinkDone + rawSink.Stop() below prove the rows committed.
 			lastFullyEnqueued = lcm.LedgerSequence()
@@ -534,8 +530,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// is durable; every checkpoint below uses the capped value.
 	lastFullyEnqueued, lossErr := capCheckpointAtLoss(lastFullyEnqueued, startFrom, persistLoss, rawMin, rawUnlanded)
 
-	// C2-14 (durability): the resume cursor advances ONLY after this
-	// point, and (DAT-09 / REL-08) ONLY after a successful — or
+	// The resume cursor advances ONLY after this point, and ONLY
+	// after a successful — or
 	// explicitly-skipped — CAGG refresh below. The sink goroutine has
 	// fully drained (<-sinkDone: every enqueued event either committed
 	// or block-and-retried per ADR-0041) and the soroban rawSink has
@@ -547,9 +543,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// chunk.to` → short-circuit, skip re-walk AND re-refresh) would
 	// otherwise trust a chunk whose trades are durably inserted but
 	// still invisible to the served price views, and a crash between
-	// the old early cursor-advance and materialisation left them
-	// un-refreshed forever (the May 2026 ~80M-trade loss this refresh
-	// exists to prevent, reintroduced one layer up).
+	// an early cursor-advance and materialisation would leave them
+	// un-refreshed forever.
 	streamFailed := streamErr != nil && !errors.Is(streamErr, context.Canceled)
 	if streamFailed || (lossErr != nil && ctx.Err() == nil) {
 		// The stream itself aborted, or a sink left rows unlanded (the
@@ -560,7 +555,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// refresh: the chunk failed outright (the returned error fails
 		// the run visibly), and a subsequent successful resume performs
 		// its own CAGG refresh before ITS checkpoint.
-		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 		if !streamFailed {
 			return lossErr
 		}
@@ -571,23 +566,21 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// drained and stop HERE — `ctx` is dead, so the CAGG refresh
 		// below would fail spuriously. The chunk is NOT complete, so it
 		// fails the run; see backfillChunkInterrupted.
-		checkpointBackfillChunk(logger, store, cursorSub, interruptedCheckpoint(chunk, lastFullyEnqueued), startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		checkpointBackfillChunk(logger, store, cursorSub, interruptedCheckpoint(chunk, lastFullyEnqueued), startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 		if lossErr != nil {
 			ierr = errors.Join(ierr, lossErr)
 		}
 		return ierr
 	}
 
-	// F-0159: report BOTH the chunk's range size and the count of
-	// ledgers actually walked. The old `ledgers=` field was the
-	// range size; if it didn't match `ledgers_walked` the bucket
-	// was missing files. Fail loudly on a complete miss across a
-	// non-zero range — that's almost always a bucket-mistargeting
-	// bug (wrong --bucket flag, wrong endpoint, wrong region) and
-	// the silent success was misleading enough to ship a
-	// false-positive "gap filled" signal in production.
+	// Report BOTH the chunk's range size and the count of ledgers
+	// actually walked; when they differ, the bucket was missing
+	// files. Fail loudly on a complete miss across a non-zero range —
+	// that's almost always a mistargeted bucket (wrong --bucket flag,
+	// wrong endpoint, wrong region), and a silent success would send
+	// a false-positive "gap filled" signal.
 	//
-	// RLT-266: a PARTIAL walk fails too — see backfillChunkCoverage.
+	// A PARTIAL walk fails too — see backfillChunkCoverage.
 	// The check sits BEFORE the CAGG refresh and the completing
 	// checkpoint so a short chunk is never refreshed-and-recorded as
 	// done; the rows that did drain are checkpointed exactly as the
@@ -602,7 +595,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			"ledgers_walked", walked,
 			"last_fully_enqueued", lastFullyEnqueued,
 		)
-		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 		return cerr
 	}
 	logger.Info("chunk complete",
@@ -621,15 +614,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
 	case opts.refreshCAGGs:
 		// Force-materialise the long-lived CAGGs over the chunk's
-		// timestamp range. Historically this was data-loss protection:
-		// a 90-day retention policy on raw `trades` dropped historical
-		// inserts before the refresher's natural cadence materialised
-		// them (the May 2026 SDEX backfill — cursors completed, trades
-		// inserted, retention dropped them within 24h, ~80M trades of
-		// work lost). Migration 0031 REMOVED that policy (and the
-		// 30-day one on prices_1m/15m); per ADR-0034 raw trades are
-		// kept forever. What is left is a correctness-of-the-served-
-		// view concern, not a loss one: without this refresh the
+		// timestamp range. Raw `trades` carry no retention policy
+		// (migration 0031, ADR-0034), so this is a correctness-of-the-
+		// served-view concern, not a data-loss one: without this refresh the
 		// backfilled range's CAGG buckets stay unmaterialised — the
 		// rows are in `trades` but absent from every OHLC/VWAP read —
 		// until the next policy run or a manual refresh covers them.
@@ -638,7 +625,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// ([timescale.TradesCAGGs], [timescale.OracleCAGGs]): a view left
 		// out keeps a permanent hole in every backfilled range.
 		//
-		// DAT-09 / REL-08: a refresh failure here is FATAL to the
+		// A refresh failure here is FATAL to the
 		// chunk — the function returns before the checkpoint below, so
 		// the durable cursor does NOT advance past an unmaterialised
 		// chunk. A resume re-walks and re-attempts the refresh.
@@ -651,25 +638,25 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		)
 	}
 
-	checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+	checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 	return nil
 }
 
 // backfillChunkCoverage turns a chunk walk that did not cover its range
-// into a hard error, naming the bucket it read (RLT-266).
+// into a hard error, naming the bucket it read.
 //
-// `backfill` was the third copy of the "vacuous success on a tolerated
-// trailing miss" class and the only one that still failed open: it
-// errored on walked == 0 alone (F-0159), while chops.backfillCoverage and
-// censusCoverage both fail a PARTIAL walk. pipeline.LedgerstreamConfig
+// `backfill` is the third copy of the "vacuous success on a tolerated
+// trailing miss" class: erroring on walked == 0 alone fails open, so like
+// chops.backfillCoverage and censusCoverage it fails a PARTIAL walk. pipeline.LedgerstreamConfig
 // opts every walk into TolerateTrailingMissing, and ledgerstream measures
 // that tolerance window against the walk's own `to` — the CHUNK's top,
 // not the network tip — so for any chunk (or any request under 65,536
 // ledgers) "trailing edge" degrades to "anywhere in the range": a missing
 // object ends the walk WITHOUT an error. The SDK also drops its prefetch
 // buffer on the miss, so the walk stops up to a buffer short of the hole.
-// The chunk then logged "chunk complete", refreshed the CAGGs over what
-// it got and exited 0 — a trade hole whose only evidence was a success.
+// Without this check the chunk would log "chunk complete", refresh the
+// CAGGs over what it got and exit 0 — a trade hole whose only evidence is
+// a success.
 //
 // The bar is the command's contract: "[from,to] has been walked". The
 // default bucket is the archive, an hourly MIRROR of live, so a `-to`
@@ -769,7 +756,7 @@ func capCheckpointAtLoss(lastFullyEnqueued, startFrom uint32, loss pipeline.Shut
 // backfillChunkInterrupted fails a chunk whose walk was stopped by
 // SIGINT/SIGTERM (ctxErr != nil). An interrupted chunk has not had its
 // CAGGs refreshed and usually has not walked its range, so returning nil
-// let `backfill` log "backfill complete" and exit 0 on a partial range.
+// would let `backfill` log "backfill complete" and exit 0 on a partial range.
 func backfillChunkInterrupted(ctxErr error, chunk chunkRange, lastFullyEnqueued uint32) error {
 	if ctxErr == nil {
 		return nil
@@ -797,14 +784,14 @@ func interruptedCheckpoint(chunk chunkRange, lastFullyEnqueued uint32) uint32 {
 // bounded context: on a graceful SIGINT the parent ctx is already
 // canceled by the time callers reach this point, and passing it would
 // make the checkpoint fail instantly — silently discarding the resume
-// watermark for the ledgers just drained (F-1318 pattern).
+// watermark for the ledgers just drained.
 func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursorSub string, lastFullyEnqueued, startFrom uint32) {
 	if lastFullyEnqueued == 0 || lastFullyEnqueued < startFrom {
 		return
 	}
 	cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer ccancel()
-	if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil { //nolint:contextcheck // deliberate fresh ctx: the parent is already canceled on a graceful SIGINT (F-1318) — using it would silently drop the resume watermark; see the doc comment above
+	if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil { //nolint:contextcheck // deliberate fresh ctx: the parent is already canceled on a graceful SIGINT — using it would silently drop the resume watermark; see the doc comment above
 		logger.Warn("backfill cursor upsert (post-drain)",
 			"ledger", lastFullyEnqueued,
 			"err", err)
@@ -812,8 +799,8 @@ func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursor
 }
 
 // caggRefresher is the storage seam refreshCAGGsForChunk depends on —
-// split out so its failure-aggregation logic (DAT-09 / REL-08: a
-// per-view failure must make the WHOLE refresh fail, not just log and
+// split out so its failure-aggregation logic (a per-view failure
+// must make the WHOLE refresh fail, not just log and
 // continue) is unit-testable with a fake, without a live Postgres.
 // *timescale.Store satisfies this structurally.
 type caggRefresher interface {
@@ -832,27 +819,27 @@ type caggRefresher interface {
 // refreshes of the SAME continuous aggregate — but it does it by
 // rejecting the loser with 55P03 immediately, not by making it wait.
 // [timescale.Store.RefreshContinuousAggregate] absorbs that with a
-// bounded retry, which held while the contended view was prices_1mo (a
-// handful of calendar buckets). It does not hold for prices_1m, now
-// first in the list and by far the longest rung: its cost is the
+// bounded retry, which is enough for a cheap view such as prices_1mo (a
+// handful of calendar buckets). It is not enough for prices_1m, first
+// in the list and by far the longest rung: its cost is the
 // chunk's trade count, hundreds of thousands of rows for a sub-chunk
 // of the documented `-parallel 4` weekly loop. A worker that loses
-// that race retries for a fixed budget and then fails — and per
-// DAT-09 / REL-08 a refresh failure is FATAL to the chunk, so the
+// that race retries for a fixed budget and then fails — and a
+// refresh failure is FATAL to the chunk, so the
 // cursor does not checkpoint and the loop halts on a collision that
 // is not a fault at all.
 //
 // The lock is BROADER than the race it removes, and that is a real
 // cost rather than a free one. Timescale's 55P03 is per continuous
-// aggregate: two workers refreshing DIFFERENT views never collided and
-// would have run concurrently. Holding one mutex across the whole loop
+// aggregate: two workers refreshing DIFFERENT views never collide and
+// could run concurrently. Holding one mutex across the whole loop
 // serialises those too, so W workers over V views take W×V×t where a
 // per-view lock would pipeline to (W+V−1)×t. What stays parallel is
 // the decode + insert phase, which is where the wall-clock of a
 // backfill actually goes and which runs outside this lock.
 //
 // It is taken anyway because a lost race here is not a slow chunk but
-// a FAILED one — DAT-09 / REL-08 makes a refresh error fatal, the
+// a FAILED one — a refresh error is fatal to the chunk, the
 // cursor does not checkpoint, and the operator re-walks the chunk
 // under `-resume`. Paying refresh throughput to remove that is the
 // right trade at V=19 views; a per-view lock is the shape to reach for
@@ -868,8 +855,8 @@ var caggRefreshMu sync.Mutex
 // prices_1m has been forced under them. Idempotent.
 //
 // Every independent view is still attempted after one fails — a single
-// wedged view must not leave the rest un-materialised — but (DAT-09 /
-// REL-08) any failure makes the function return a non-nil error, so the
+// wedged view must not leave the rest un-materialised — but any
+// failure makes the function return a non-nil error, so the
 // caller does NOT advance the durable cursor past the chunk. A view built
 // on prices_1m is skipped when prices_1m's own refresh failed:
 // recomputing it from stale minute rows would overwrite good history.
@@ -949,10 +936,10 @@ func chunkCAGGRefreshPlan(ctx context.Context, logger *slog.Logger, store caggRe
 	return plan, nil
 }
 
-// logCAGGRefreshFailure logs one failed view. W8-19: a per-CALL bound
-// firing names the view, the window and the bound, because that case
-// used to hold every `-parallel` worker behind caggRefreshMu until
-// SIGINT. It is still fatal to the chunk (DAT-09 / REL-08).
+// logCAGGRefreshFailure logs one failed view. A per-CALL bound firing
+// names the view, the window and the bound, because an unbounded refresh
+// would hold every `-parallel` worker behind caggRefreshMu until SIGINT.
+// It is still fatal to the chunk.
 func logCAGGRefreshFailure(logger *slog.Logger, view string, err error) {
 	var tErr *timescale.CAGGRefreshTimeoutError
 	if errors.As(err, &tErr) {
@@ -970,8 +957,7 @@ func logCAGGRefreshFailure(logger *slog.Logger, view string, err error) {
 // validateBackfillRangeFlags checks the flags that need no config load:
 // the config path is present, the range is non-empty and does not default
 // to genesis, and -parallel is sane. Split out of parseBackfillFlags purely
-// so that function stays under the funlen ceiling; the checks and their
-// messages are unchanged.
+// so that function stays under the funlen ceiling.
 func validateBackfillRangeFlags(cfgPath string, from, to uint, parallel int) error {
 	if cfgPath == "" {
 		return errors.New("-config required")
@@ -1074,13 +1060,13 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			SorobanEventsPseudoSource, sources)
 	}
 
-	// Deliberately NOT opsutil.ResolveStreamBucket (RLT-266): that
+	// Deliberately NOT opsutil.ResolveStreamBucket: that
 	// policy's no-seam default is the LIVE bucket, kept for
 	// ch-live-catchup.sh, and live cannot hold the historic ranges this
 	// command exists to walk. The archive is the full history plus an
 	// hourly mirror of live, so it is the right default on both sides of
 	// a seam; its one weakness — the mirror lagging a -to near the tip —
-	// now fails the chunk in backfillChunkCoverage instead of exiting 0.
+	// fails the chunk in backfillChunkCoverage instead of exiting 0.
 	bucket := cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
 		bucket = *bucketOverride
@@ -1217,7 +1203,6 @@ func checkBackfillSourcePolicy(sources []string, cfg config.Config, fromLedger, 
 // blocked the run and why. Distinguishes supply-observer names
 // from genuinely audit-pending Soroban sources so the operator
 // gets a targeted message rather than the generic WASM-audit one.
-// F-1243 (audit-2026-05-12).
 //
 // Special-case: the `soroban-events` pseudo-source is exempt from
 // the BackfillSafe gate. It captures raw events to the
@@ -1301,8 +1286,7 @@ func unsafeBackfillSources(sources []string) []string {
 // external.Registry (supply observers plug into a different
 // dispatcher hook than price/oracle sources) — but we want a
 // targeted error message when an operator tries to backfill one,
-// rather than the generic "WASM-hash audit pending" message that
-// drove the F-1243 audit finding.
+// rather than the generic "WASM-hash audit pending" message.
 //
 // Update this set when a new supply observer ships under
 // internal/supply/. Keeping the list local to backfill.go avoids

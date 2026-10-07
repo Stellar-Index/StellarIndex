@@ -252,7 +252,7 @@ func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
 			// (cctp, rozo, defindex, reflector-dex, redstone, …).
 			// projector.KnownProjectorSources is buildSource's own
 			// registered-name set, so this can't drift the way a
-			// hand-copied switch did (cold audit 2026-08-03: replay
+			// hand-copied switch would (replay
 			// refuses an unknown source, so a wrong command fails loudly
 			// rather than exiting 0 — but a false "not projected" message
 			// is worse, since the operator never tries the real command).

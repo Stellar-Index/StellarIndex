@@ -23,13 +23,13 @@ import (
 // remaining range, producing a sequence of `backfill -resume`-shape
 // invocations that march each cursor to its assigned `to` ledger.
 //
-// Why this exists. The audit-2026-05-26 density read (F-0020 / F-0028
-// cluster) showed 167 stalled `backfill` cursors with cumulative
+// Why this exists. A decoder-density read found 167 stalled `backfill`
+// cursors with cumulative
 // 100-150 K missing ledgers per source — the dominant population
 // preventing 100% decoder density. Each stalled cursor's sub_source
 // embeds its target as `<from>-<to>:<decoder-csv>`, so the remaining
-// range is well-defined; what was missing was a one-shot way to
-// resume every stall without a hand-rolled SQL+shell loop.
+// range is well-defined; this command resumes every stall in one shot,
+// without a hand-rolled SQL+shell loop.
 //
 // This subcommand:
 //
@@ -60,7 +60,7 @@ const dataGapGateTimeout = 10 * time.Minute
 
 var stalledCursorSubRE = regexp.MustCompile(stalledCursorSubPattern)
 
-// newDataGapGateContext bounds the data-gap gate queries (RLT-409):
+// newDataGapGateContext bounds the data-gap gate queries:
 // rootCtx only cancels on SIGINT/SIGTERM, and the per-decoder and sdex
 // gap scans are full-table reads. Without a deadline one can wedge
 // resume-stalled — an automated cursor-recovery path — indefinitely,
@@ -94,10 +94,10 @@ type stalledCursorPlan struct {
 //
 // Derived from pipeline.SorobanSourceNames — the same set
 // BuildDispatcher's switch accepts into the soroban_events catch-all.
-// Do NOT hand-maintain this list again: a source added to
+// Do NOT hand-maintain this list: a source added to
 // BuildDispatcher's switch without a matching entry in
 // pipeline.SorobanSourceNames silently mis-gates its stalled cursors
-// here (CA2-A19-correct-3). The SorobanEventsPseudoSource (raw
+// here. The SorobanEventsPseudoSource (raw
 // soroban_events-only cursor) is included; with the ClickHouse projector
 // source on, gateSourcePolicy skips it before the gate.
 var sorobanDecoderNames = func() map[string]struct{} {
@@ -117,7 +117,7 @@ var sorobanDecoderNames = func() map[string]struct{} {
 // gateAgainstDataGaps), but a clean Soroban side is NOT on its own
 // sufficient to skip a mixed plan — see gateMixedPlan, which
 // additionally runs the SDEX data-derived gate on the classic portion
-// (DAT-11) rather than trusting sibling-cursor coverage on faith.
+// rather than trusting sibling-cursor coverage on faith.
 func planHasSorobanDecoder(sources []string) bool {
 	for _, s := range sources {
 		if _, ok := sorobanDecoderNames[s]; ok {
@@ -201,7 +201,7 @@ func hasNonSorobanDecoder(sources []string) bool {
 // anyPlanNeedsClassicGate reports whether any parsed, not-yet-skipped
 // plan has an SDEX (non-Soroban) portion — classic-only OR mixed —
 // i.e. whether the SDEX gap scan is needed at all this run. Mixed
-// plans need it too (DAT-11): a clean soroban_events check alone
+// plans need it too: a clean soroban_events check alone
 // does not verify the SDEX side of a mixed plan.
 func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 	for _, p := range plans {
@@ -218,9 +218,9 @@ func anyPlanNeedsClassicGate(plans []stalledCursorPlan) bool {
 // resolved=false means no [timescale.GapDetectorTarget] is registered
 // for this decoder at all — there is NO table this gate can check.
 // Callers MUST treat unresolved as "cannot confirm clean", never as
-// "clean": the whole point of per-decoder gating (CA2-A19) is that a
-// decoder's OWN table is the only honest evidence of its own rows: the
-// soroban_events pseudo-table it used to be checked against is written
+// "clean": the whole point of per-decoder gating is that a decoder's
+// OWN table is the only honest evidence of its own rows: the
+// soroban_events pseudo-table is written
 // by live ingest regardless of which decoders are backfilled, so it
 // says nothing about a specific decoder's rows.
 type decoderGapResult struct {
@@ -283,7 +283,7 @@ func distinctSorobanDecoderNames(plans []stalledCursorPlan) []string {
 // present in `plans` is resolved against the UNION of its OWN
 // registered [timescale.GapDetectorTarget] tables (see
 // [perDecoderGapTargets]) — never against soroban_events, which the
-// resumed decoders don't write (CA2-A19). A decoder with no registered
+// resumed decoders don't write. A decoder with no registered
 // target resolves to resolved=false; the gate then fails closed
 // (stays actionable) rather than trusting evidence that doesn't exist.
 func buildDecoderGapIndex(ctx context.Context, store *timescale.Store, plans []stalledCursorPlan, sorobanEventsGaps []timescale.LedgerGap, tip uint32, minGapSize int64) (decoderGapIndex, error) {
@@ -315,8 +315,8 @@ func buildDecoderGapIndex(ctx context.Context, store *timescale.Store, plans []s
 // decoderPortionHasGap reports whether ANY source in `sources` shows a
 // real data-derived gap overlapping [from,to] — OR could not be
 // resolved at all. Unresolved counts as "has a gap" so the caller
-// fails closed: it is the fix for CA2-A19's false-skip class (a
-// decoder's own table said nothing because nothing checked it).
+// fails closed: a decoder whose own table nothing checks must never let
+// its plan be skipped as clean.
 func decoderPortionHasGap(sources []string, from, to uint32, idx decoderGapIndex) bool {
 	for _, s := range sources {
 		res, ok := idx[s]
@@ -346,13 +346,13 @@ func sorobanSourcesOf(sources []string) []string {
 // gateAgainstDataGaps narrows the actionable plan list to those
 // whose remaining range overlaps a real data-gap. Soroban-era plans
 // gate against their OWN registered per-decoder tables (see
-// [decoderGapIndex] / CA2-A19); SDEX-only plans gate against
+// [decoderGapIndex]); SDEX-only plans gate against
 // the per-source trades[source='sdex'] scan carried in classic
 // (retention-scoped — see classicGapGate). MIXED plans (both Soroban
 // and SDEX decoders present) gate against BOTH — see gateMixedPlan.
 //
-// This is the F-0020 follow-up fix to resume-stalled: the original
-// dry-run on r1 surfaced 50 "actionable" plans, most of which were
+// Without this gate, a dry-run on r1 surfaced 50 "actionable" plans,
+// most of which were
 // false positives — sibling cursors had already completed the work
 // and the data was already served. Walking them would
 // have been days of redundant LCM I/O.
@@ -379,12 +379,12 @@ func gateAgainstDataGaps(plans []stalledCursorPlan, decoderGaps decoderGapIndex,
 }
 
 // gateMixedPlan handles a plan whose decoder CSV contains BOTH a
-// Soroban decoder and a non-Soroban (SDEX) decoder. DAT-11: a clean
+// Soroban decoder and a non-Soroban (SDEX) decoder. A clean
 // soroban side alone is NOT sufficient grounds to call the whole plan
 // a cursor-inventory false positive — SDEX flows through a different
 // table (trades[source='sdex']), so a real SDEX-side gap could exist
 // even when the Soroban side is fully covered by sibling cursors. A
-// real (or unresolved — CA2-A19) gap on EITHER side keeps the plan
+// real (or unresolved) gap on EITHER side keeps the plan
 // actionable; only when BOTH sides are independently confirmed clean
 // (or the operator opted into --force-classic-cursors) is it skipped.
 func gateMixedPlan(p *stalledCursorPlan, decoderGaps decoderGapIndex, classic classicGapGate, forceClassic bool) {
@@ -440,7 +440,7 @@ func overlapsAnyDataGap(from, to uint32, gaps []timescale.LedgerGap) bool {
 // plans to at most maxResumes, marking any excess actionable plans as
 // skipped with a clear reason rather than dropping them from the
 // printed plan. maxResumes<=0 means no cap. MUST run AFTER
-// gateAgainstDataGaps (AGT-08): applying the cap to raw candidates
+// gateAgainstDataGaps: applying the cap to raw candidates
 // before gating could act on zero real gaps while cursors past the
 // cap boundary that WERE genuinely actionable never even got a
 // chance to run.
@@ -483,7 +483,7 @@ func decoderPortion(sub string) string {
 // the decoder-CSV portion, never the numeric `<from>-<to>` ledger
 // range prefix — otherwise a filter substring that happens to appear
 // in a ledger number (e.g. "22") could sweep in unrelated cursors
-// whose FROM/TO digits merely contain it (AGT-08).
+// whose FROM/TO digits merely contain it.
 func matchesSourceFilter(sub, filter string) bool {
 	if filter == "" {
 		return true
@@ -618,13 +618,13 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 //   - a POSITIVE derive generation (time.Now().Unix()) so a corrected
 //     re-derive wins the served-tier writers' ON CONFLICT guard
 //     (`derive_generation <= EXCLUDED.derive_generation`) and can never be
-//     reverted by a live gen-0 replay (INV-3 re-derive-trap fix); and
+//     reverted by a live gen-0 replay (the INV-3 re-derive trap); and
 //   - the USD-volume resolvers ([timescale.InstallUSDVolumeResolution]) so
 //     on-chain DEX trades resolve a real usd_volume instead of NULL.
 //
 // The two are inseparable: a positive generation without resolvers makes
 // every re-derived DEX trade WIN the guard while computing usd_volume=NULL,
-// silently overwriting correct stored values (A-CRIT-1). InstallUSDVolumeResolution
+// silently overwriting correct stored values. InstallUSDVolumeResolution
 // also arms the reDeriveNullVolumeGuard fail-closed for any future omission.
 func ArmTradeWriteStore(store *timescale.Store, cfg config.Config) error {
 	store.SetDeriveGeneration(time.Now().Unix())
@@ -655,14 +655,14 @@ func resumeStalled(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// CWR-1 (audit-2026-08-14): resume-stalled marches stalled cursors
+	// resume-stalled marches stalled cursors
 	// through the SAME runBackfillChunk trade-write path as the main
 	// `backfill` subcommand, so it MUST arm the store for a trade-writing
 	// re-derive exactly like backfill.go does — a positive generation so a
 	// corrected re-derive wins the writers' ON CONFLICT guard, AND the
 	// USD-volume resolvers so on-chain DEX trades resolve a real usd_volume
-	// instead of NULL. Skipping this wrote DEX usd_volume=NULL at gen 0 for
-	// the whole resumed range, and left the A-CRIT-1 reDeriveNullVolumeGuard
+	// instead of NULL. Skipping this would write DEX usd_volume=NULL at gen 0
+	// for the whole resumed range and leave the reDeriveNullVolumeGuard
 	// inert (it only fires once the generation is positive).
 	if err := ArmTradeWriteStore(store, cfg); err != nil {
 		return err
@@ -670,7 +670,7 @@ func resumeStalled(args []string) error {
 
 	// maxResumes is intentionally NOT passed to planResumeStalled: it
 	// gathers every matching candidate, and the cap is applied AFTER
-	// gateAgainstDataGaps below (AGT-08) — capping candidates before
+	// gateAgainstDataGaps below — capping candidates before
 	// gating could exhaust the cap on cursors the gate would have
 	// skipped as false-positives, silently acting on zero real gaps
 	// while genuinely-actionable cursors past the raw-candidate cap
@@ -803,8 +803,7 @@ func executeResumePlans(
 // does the walk-forward to the real remaining range for us. Without
 // this, opts.from = rangeFrom (last_ledger+1) makes backfillCursorSub
 // key a NEW sub_source (last_ledger+1 .. to), so UpsertCursor writes a
-// SIBLING row and the real stalled row is never advanced or completed
-// (AGT-01 / DAT-12 / REL-09).
+// SIBLING row and the real stalled row is never advanced or completed.
 //
 // At parallel>1 the range is split into multiple independent
 // sub-chunks that each need their OWN cursor row regardless (a single
@@ -911,8 +910,7 @@ func gateSourcePolicy(plans []stalledCursorPlan, cfg config.Config) []stalledCur
 //
 // Gathers EVERY matching candidate — no -max-resumes cap here. The cap
 // is applied by applyMaxResumesCap, AFTER gateAgainstDataGaps, so it
-// counts genuinely-actionable cursors rather than raw candidates
-// (AGT-08).
+// counts genuinely-actionable cursors rather than raw candidates.
 func planResumeStalled(
 	ctx context.Context,
 	store *timescale.Store,

@@ -50,10 +50,10 @@ import (
 // PR): the on-chain value is authoritative for identity, but the
 // TOML's physical location can rot independently — Circle's
 // circle.com/.well-known/stellar.toml 404s (redirect chain to
-// www.circle.com then "Invalid .well-known request", verified
-// 2026-07-03) while the legacy Centre consortium domain still serves
+// www.circle.com then "Invalid .well-known request", when last
+// verified) while the legacy Centre consortium domain still serves
 // the full document, incl. the USDC image + org metadata wallets
-// need (board #47).
+// need.
 var sep1DomainOverrides = map[string]string{
 	// USDC / EURC issuers — Circle (Centre) toml.
 	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "centre.io",
@@ -270,7 +270,6 @@ func refreshOneSep1Issuer(
 		// Reachable from attacker-authored TOML: a NUL codepoint in a
 		// string field marshals to an escape Postgres jsonb rejects. The
 		// pre-mark has already taken this row off the head of the queue.
-		// Cold audit 2026-08-03.
 		fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
 		return sep1Failed
 	}
@@ -396,7 +395,7 @@ func sep1Candidates(
 // So the run judges ITSELF, on the one population whose failures carry
 // that information: domains that HAVE served a stellar.toml (the row holds
 // a payload). A domain that has never answered failing again says nothing
-// about us. Counting those made the verdict a property of the network, not
+// about us. Counting those would make the verdict a property of the network, not
 // of the run: on testnet, where nearly every home_domain is junk, a healthy
 // run went 19 ok / 731 failed every hour, tripped the guard, and its unwind
 // kept the junk off the ladder so the next run was the same. Previously-
@@ -413,7 +412,7 @@ func sep1Candidates(
 //     reports "0 succeeded, 750 failed" to a journal nobody reads and
 //     exits 0.
 //
-// On r1, 2026-09-12, a healthy run failed 291 of 500, and all 291 were
+// On r1, a healthy run failed 291 of 500, and all 291 were
 // domains that had never produced a payload (migration 0159), so the
 // regression rate of a healthy run is near zero. 90% sits far above that
 // and below "everything is broken". minAttempts counts only the reached
@@ -529,8 +528,8 @@ func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 
 // marshalSep1Payload builds the compact sep1_payload JSON persisted to the
 // issuers row: OrgName/OrgVerified/Documentation for /v1/issuers, plus the
-// per-currency overlay /v1/assets/{id} reads (that handler used to live-fetch
-// per request; this cron is now the source of truth so it's a DB lookup). Raw
+// per-currency overlay /v1/assets/{id} reads (this cron is the source of
+// truth, so that handler does a DB lookup rather than a live fetch). Raw
 // is excluded — nothing reads it.
 func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 	currencies := make([]map[string]any, 0, len(sep.Currencies))

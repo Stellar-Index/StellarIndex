@@ -96,19 +96,19 @@ type assetRegistryCounts struct {
 // assetRegistryBackfill populates `classic_assets` (and therefore
 // `issuers`) from trustline holdings in the ClickHouse lake.
 //
-// # THE DEFECT THIS CLOSES
+// # THE GAP THIS CLOSES
 //
-// `classic_assets` had exactly one population path: a trade. The registry
+// Without this job, `classic_assets` has one population path: a trade. The registry
 // writer is called from InsertTrade and BatchInsertTrades and from nowhere
 // else, and `issuers` is written only from inside that writer. So the whole
 // attestation chain hung off a trade:
 //
 //	trade -> classic_assets -> issuers -> SEP-1 fetch -> RWA candidacy
 //
-// An asset that is HELD but never traded on the SDEX was invisible at every
-// step. Measured on the production lake 2026-09-10: 512,496 distinct classic
+// An asset that is HELD but never traded on the SDEX is invisible at every
+// step. Measured on the production lake: 512,496 distinct classic
 // assets have a trustline, 199,793 have a registry row — 312,703 absent, 61%
-// of the population. Franklin Templeton's BENJI is the case that surfaced it:
+// of the population. Franklin Templeton's BENJI is the clearest case:
 // 12,498 trustlines, more than all eighteen impersonating BENJIs combined,
 // zero rows in classic_assets and zero in issuers, because a money-market
 // fund is bought and held rather than day-traded.

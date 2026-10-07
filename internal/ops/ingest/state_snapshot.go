@@ -35,8 +35,8 @@ type snapTally struct {
 	partial       bool
 
 	// collect=true accumulates rows for InsertEntryChanges. scope widens the
-	// set from the G1 contract scope (contract_code + instances) to the
-	// account-state/supply types for G2/G3 (scope.all) or to contract_data
+	// set from the contract scope (contract_code + instances) to the
+	// account-state/supply types (scope.all) or to contract_data
 	// STORAGE + LP for the dormant current-state fill (scope.storage).
 	// closeTime stamps every collected row (metadata only — readers key on
 	// ledger_seq = the entry's LastModifiedLedgerSeq). maxModLedger, when
@@ -50,9 +50,9 @@ type snapTally struct {
 }
 
 // snapScope is the collection decision derived from the -scope flag. The zero
-// value is the G1 contract scope (contract_code + contract_data instances).
+// value is the contract scope (contract_code + contract_data instances).
 type snapScope struct {
-	all     bool // G2/G3: + account/trustline/offer/data/claimable/liquidity_pool
+	all     bool // + account/trustline/offer/data/claimable/liquidity_pool
 	storage bool // dormant current-state fill: contract_data STORAGE + liquidity_pool
 }
 
@@ -73,8 +73,7 @@ func parseSnapScope(s string) (snapScope, error) {
 
 // stateSnapshot reads a history-archive checkpoint's full current ledger-entry
 // state (the bucket list) and tallies it by entry type. This is the read-only
-// foundation of the data-truth backfill (docs/archive/page-audit-2026-06-19/
-// DATA-TRUTH-PLAN.md, gaps G1–G3): the served current-state projection
+// foundation of the data-truth backfill: the served current-state projection
 // (ledger_entries_current) only holds entries that CHANGED since ledger ~62M,
 // so a checkpoint snapshot is the source of truth for the dormant-pre-62M tail
 // — contract code/instances (→ WASM), accounts/trustlines (→ account state +
@@ -297,7 +296,7 @@ func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint
 }
 
 // observe folds one live entry into the tally, classifying contract instances
-// as WASM vs SAC (the G1 signal — SACs have no WASM, WASM instances point at a
+// as WASM vs SAC (SACs have no WASM, WASM instances point at a
 // contract_code blob we need for the "see the code" view).
 func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 	t.byType[typ]++
@@ -327,9 +326,9 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 }
 
 // withinModWindow reports whether an entry last modified at ledgerSeq is in the
-// collection window. maxModLedger=0 collects everything (the historical G1-G3
-// posture); a non-zero bound restricts collection to the dormant tail — entries
-// whose last change predates the live-capture floor and so are absent from the
+// collection window. maxModLedger=0 collects everything; a non-zero bound
+// restricts collection to the dormant tail — entries whose last change
+// predates the live-capture floor and so are absent from the
 // current-state projection. Writing an entry already present is idempotent
 // (ledger_entry_changes is a ReplacingMergeTree keyed by the entry's ledger),
 // so the bound is purely a cost control, never a correctness gate.
@@ -338,9 +337,9 @@ func (t *snapTally) withinModWindow(ledgerSeq uint32) bool {
 }
 
 // shouldCollect decides whether an entry of this type is in the write scope.
-// contract_code + contract instances are always in (G1); the account-state /
-// supply types join when scope=all (G2/G3). contract_data STORAGE entries join
-// when scope=storage — the dormant current-state fill (2026-07-06): the
+// contract_code + contract instances are always in; the account-state /
+// supply types join when scope=all. contract_data STORAGE entries join
+// when scope=storage — the dormant current-state fill: the
 // ledger_entries_current MV only projects contract_data changes captured after
 // the ~62M live-capture floor, so a SAC/SEP-41 Balance(Address) or Blend
 // reserve entry idle since before then is ABSENT from current-state and
