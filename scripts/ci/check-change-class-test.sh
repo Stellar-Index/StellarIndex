@@ -21,9 +21,11 @@ fail=0
 asserts=0
 
 # run <class> <file> [<file> ...] — via argv (no stdin involved)
+# argv cases detach stdin: the script drains any non-tty stdin, which an
+# inherited open pipe never closes.
 run() {
   local class="$1"; shift
-  OUT="$(bash "$CHECK" "$class" "$@" 2>&1)"
+  OUT="$(bash "$CHECK" "$class" "$@" 2>&1 </dev/null)"
   RC=$?
 }
 
@@ -58,13 +60,13 @@ expect "internal/storage diff: integration class MATCHES (shards must run)" 0
 # ── Every listed integration-triggering location ────────────────────
 
 run integration "internal/pipeline/router.go"
-expect "internal/pipeline/** triggers integration" 0
+expect "internal/pipeline/** does not trigger integration (nightly covers it)" 1
 
 run integration "internal/sources/kraken/decode.go"
-expect "internal/sources/** triggers integration" 0
+expect "internal/sources/** does not trigger integration (nightly covers it)" 1
 
 run integration "internal/api/v1/handlers.go"
-expect "internal/api/** triggers integration" 0
+expect "internal/api/** does not trigger integration (nightly covers it)" 1
 
 run integration "migrations/0160_add_column.up.sql"
 expect "migrations/** triggers integration" 0
@@ -103,7 +105,7 @@ expect "test/harness/** triggers integration (INT_TEST_PKGS member)" 0
 # classifier while prepush's kept them.
 
 run integration "internal/ops/runbook.go"
-expect "internal/ops outside archive/ DOES trigger integration (internal/** is matched as a whole)" 0
+expect "internal/ops outside archive/ does not trigger integration" 1
 
 for f in go.sum Makefile scripts/ci/integration-shard.sh .github/workflows/ci.yml \
   deploy/clickhouse/account_activity.sql configs/ansible/roles/redis-sentinel/templates/users.acl.j2; do
@@ -118,7 +120,7 @@ expect "scripts/ci (not scripts/ops) does NOT trigger integration" 1
 # enumerated subtrees must trigger BOTH classes — internal/** is matched as
 # a whole for `integration`, not just storage/pipeline/sources/api.
 run integration "internal/platform/logging.go"
-expect "internal/platform DOES trigger integration (internal/** is matched as a whole)" 0
+expect "internal/platform outside postgresstore/ does not trigger integration" 1
 
 run go "internal/platform/logging.go"
 expect "internal/platform DOES trigger the go class" 0
@@ -209,7 +211,7 @@ matrix() { # <label> <expected go,integration,web,ansible as 0/1 exit codes> <fi
 matrix "docs-only" 1 1 1 1 docs/architecture/x.md README.md
 matrix "web-only" 1 1 0 1 web/explorer/src/app/page.tsx
 matrix "ansible-only" 1 1 1 0 configs/ansible/roles/a/tasks/main.yml
-matrix "docs + go (mixed) must run go and integration" 0 0 1 1 docs/x.md internal/api/v1/h.go
+matrix "docs + go (mixed) must run go and integration" 0 0 1 1 docs/x.md internal/storage/timescale/h.go
 matrix "openapi runs go and web, not integration" 0 1 0 1 openapi/stellar-index.v1.yaml
 
 # ── stdin path (the real `git diff --name-only | check-change-class.sh`
@@ -223,10 +225,10 @@ expect "stdin: a mixed diff containing one storage file DOES trigger integration
 
 # ── Fail-closed on malformed calls ──────────────────────────────────
 
-OUT="$(bash "$CHECK" 2>&1)"; RC=$?
+OUT="$(bash "$CHECK" 2>&1 </dev/null)"; RC=$?
 expect "no class argument at all → usage error, not a silent skip" 2
 
-OUT="$(bash "$CHECK" not-a-real-class "internal/storage/x.go" 2>&1)"; RC=$?
+OUT="$(bash "$CHECK" not-a-real-class "internal/storage/x.go" 2>&1 </dev/null)"; RC=$?
 expect "unknown class name → usage error" 2
 
 OUT="$(: | bash "$CHECK" integration 2>&1)"; RC=$?

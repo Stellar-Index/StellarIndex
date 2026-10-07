@@ -275,7 +275,7 @@ without ever reporting a `skipped` job conclusion itself:
 
 | diff touches | jobs that do real work |
 |---|---|
-| `internal/storage/**`, `internal/pipeline/**`, `internal/sources/**`, `internal/api/**`, `internal/ops/archive/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
+| `internal/storage/**`, `internal/platform/postgresstore/**`, `internal/ops/archive/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
 | any `*.go`, `go.mod`, `go.sum` | `lint`, `test`, `build`, `toolchain-gates`' `govulncheck` and fuzz-smoke steps |
 | `web/**`, `openapi/**` | `toolchain-gates`' web/explorer and web/status steps |
 | `configs/ansible/**` | `toolchain-gates`' ansible steps |

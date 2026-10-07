@@ -48,6 +48,12 @@ on:
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
+  # PRs and pushes test only the packages a diff reaches and run the
+  # integration shards only for storage/migration paths. The nightly run and
+  # a dispatched run test everything; release.yml requires one on the tag.
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
 
 # N2-01: scope the GITHUB_TOKEN to read-only at the workflow level.
 # No job here writes to the repo (tests, lint, build, artifact upload all
@@ -88,9 +94,10 @@ env:
   # names the tarball and shows expected-vs-actual.
   GITLEAKS_TARBALL_SHA256_DEFAULT: "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba"
 
-# Cancel old runs on the same ref when a new one starts.
+# Cancel old runs on the same ref when a new one starts; a full run never
+# cancels, and is never cancelled by, a diff-scoped one.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || 'diff' }}
   cancel-in-progress: true
 
 jobs:
@@ -118,10 +125,11 @@ jobs:
   preflight:
     name: preflight (fast-fail)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       integration: ${{ steps.resolve.outputs.integration }}
       go: ${{ steps.resolve.outputs.go }}
+      go_pkgs: ${{ steps.resolve.outputs.go_pkgs }}
       web: ${{ steps.resolve.outputs.web }}
       ansible: ${{ steps.resolve.outputs.ansible }}
       base: ${{ steps.base.outputs.resolved }}
@@ -293,16 +301,15 @@ jobs:
             # Guarded by test/controlwiring/
             # integration_pkgs_trigger_evidence_test.go and mirrored in
             # scripts/ci/check-change-class.sh (cross-checked below).
-            # internal/** as a whole, not an enumerated subset: `go list
-            # -deps -test -tags integration ./test/integration/...
-            # ./test/harness/...` pulls in 44 of the 54 top-level internal/
-            # directories, most with no obvious "integration" flavour
-            # (internal/canonical, internal/config, internal/obs). An
-            # enumerated subset drifts — internal/projector and
-            # internal/dispatcher were both missing here while
-            # test/integration/projector_*_test.go imports them directly.
+            # Deliberately narrower than what the suite imports (44 of the
+            # 54 internal/ directories): only storage, schema and the
+            # suite's own code run the shards on a PR. The nightly full run
+            # catches the rest within a day, and release.yml refuses a tag
+            # without a green full run.
             integration:
-              - 'internal/**'
+              - 'internal/storage/**'
+              - 'internal/platform/postgresstore/**'
+              - 'internal/ops/archive/**'
               - 'cmd/stellarindex-ops/**'
               - 'migrations/**'
               - 'scripts/ops/**'
@@ -413,21 +420,39 @@ jobs:
           FILTER_ANSIBLE: ${{ steps.filter.outputs.ansible }}
         run: |
           set -euo pipefail
+          # schedule and workflow_dispatch have no diff base, so they land in
+          # the first branch: the full run.
           if [ -z "$RESOLVED" ]; then
             {
               echo "integration=true"
               echo "go=true"
               echo "web=true"
               echo "ansible=true"
+              echo "go_pkgs=./..."
             } >> "$GITHUB_OUTPUT"
-          else
-            {
-              echo "integration=${FILTER_INTEGRATION:-false}"
-              echo "go=${FILTER_GO:-false}"
-              echo "web=${FILTER_WEB:-false}"
-              echo "ansible=${FILTER_ANSIBLE:-false}"
-            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          integration="${FILTER_INTEGRATION:-false}"
+          if [ "$integration" = true ]; then
+            # A comment-only Go edit to a storage path does not need Docker.
+            mapfile -t substantive < <(go run ./scripts/ci/affected-go-pkgs -files "$RESOLVED")
+            if [ "${#substantive[@]}" -eq 0 ] ||
+              ! ./scripts/ci/check-change-class.sh integration "${substantive[@]}" >/dev/null 2>&1; then
+              integration=false
+            fi
+          fi
+          go_pkgs=""
+          if [ "${FILTER_GO:-false}" = true ]; then
+            go_pkgs="$(go run ./scripts/ci/affected-go-pkgs "$RESOLVED" | tr '\n' ' ')"
+          fi
+          echo "unit tests will run: ${go_pkgs:-(none: no package code changed)}"
+          {
+            echo "integration=${integration}"
+            echo "go=${FILTER_GO:-false}"
+            echo "web=${FILTER_WEB:-false}"
+            echo "ansible=${FILTER_ANSIBLE:-false}"
+            echo "go_pkgs=${go_pkgs% }"
+          } >> "$GITHUB_OUTPUT"
 
   # ────────────────────────────────────────────────────────────────
   # Fast path — runs on every commit. < 2 min target.
@@ -540,8 +565,13 @@ jobs:
       - name: Test with race detector
         # Go's default 10m per-binary timeout: api/v1 and canonical take up
         # to 240 s here under race+coverage. The job's 20m cap backstops a hang.
-        if: needs.preflight.outputs.go == 'true'
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+        # PRs test the packages the diff reaches; the full run tests ./...
+        if: needs.preflight.outputs.go_pkgs != ''
+        env:
+          GO_PKGS: ${{ needs.preflight.outputs.go_pkgs }}
+        run: |
+          read -r -a pkgs <<<"$GO_PKGS"
+          go test -race -coverprofile=coverage.txt -covermode=atomic "${pkgs[@]}"
       - name: Compile integration-tagged tests (no Docker)
         # F-1334: catches build-tag breakage (an interface change that
         # doesn't update an `//go:build integration` test) without
@@ -557,8 +587,9 @@ jobs:
         #
         # Enforced: a total under COVERAGE_FLOOR fails the PR, as does a
         # missing/empty/unparseable profile or a collapsed package count.
-        # This is a repo-wide total, not a per-changed-package diff.
-        if: needs.preflight.outputs.go == 'true'
+        # This is a repo-wide total, so it runs only when every package was
+        # tested.
+        if: needs.preflight.outputs.go_pkgs == './...'
         env:
           COVERAGE_ENFORCE: "1"
         run: bash scripts/ci/coverage-floor.sh
@@ -571,7 +602,7 @@ jobs:
         run: bash scripts/ci/coverage-floor-test.sh
 
       - name: Upload coverage
-        if: needs.preflight.outputs.go == 'true'
+        if: needs.preflight.outputs.go_pkgs != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage
