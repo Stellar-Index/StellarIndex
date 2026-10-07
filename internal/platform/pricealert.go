@@ -149,12 +149,12 @@ type PriceAlertStore interface {
 	// ListEnabledPriceAlerts at the top of the sweep. Two evaluators —
 	// an operator running a second aggregator, an R2/R3 standby, or a
 	// deploy in which the old and new process overlap — both pass that
-	// check on the same crossing, and an unconditional stamp would let
-	// BOTH fan out, so the customer would get two webhooks per crossing
-	// and the once-per-cooldown-window guarantee would hold only for a
-	// single instance. Postgres serialises the concurrent
-	// UPDATEs on the row lock, so the loser re-evaluates the predicate
-	// against the winner's committed row and matches nothing.
+	// check on the same crossing, and an unconditional stamp would let BOTH
+	// fan out, so the customer would get two webhooks per crossing and the
+	// once-per-cooldown-window guarantee would hold only for a single
+	// instance. Postgres serialises the concurrent UPDATEs on the row lock,
+	// so the loser re-evaluates the predicate against the winner's committed
+	// row and matches nothing.
 	//
 	// a is the snapshot the caller evaluated: the claim also requires the
 	// row to still be enabled with the same pair, condition and threshold.

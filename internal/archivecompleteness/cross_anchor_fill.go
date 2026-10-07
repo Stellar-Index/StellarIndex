@@ -424,12 +424,12 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 }
 
 // fetchAndValidate performs one source GET and writes the response
-// to tmpPath atomically. Validates gzip integrity AND checkpoint
-// CONTENT (a valid-gzip-but-wrong-content body — a stale
-// mirror serving a different checkpoint, or a truncated write that
-// happens to still gzip-decompress — must not be placed) before
-// returning nil. On any failure leaves tmpPath in an unspecified
-// state; the caller is responsible for cleanup.
+// to tmpPath atomically. Validates gzip integrity AND checkpoint CONTENT
+// (a valid-gzip-but-wrong-content body — a stale mirror serving a
+// different checkpoint, or a truncated write that happens to still
+// gzip-decompress — must not be placed) before returning nil. On any
+// failure leaves tmpPath in an unspecified state; the caller is
+// responsible for cleanup.
 func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, relPath, tmpPath string, seq uint32) error {
 	url := src.URL + "/" + relPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -505,9 +505,9 @@ const maxDecompressedBytes = 4 << 20
 // validateGzip reads the file, attempts to decompress it, and
 // confirms the gzip footer is intact. Returns the decompressed byte
 // count and nil on success — callers that need to reject an
-// empty-but-technically-valid gzip stream (a
-// present, valid-gzip, EMPTY file must not count as a real
-// checkpoint) check the returned size themselves.
+// empty-but-technically-valid gzip stream (a present, valid-gzip, EMPTY
+// file must not count as a real checkpoint) check the returned size
+// themselves.
 //
 // Decompression is bounded to [maxDecompressedBytes] to prevent
 // a malicious source from sending a tiny compressed payload that
@@ -545,11 +545,11 @@ const maxCheckpointEntries = 64
 
 // validateCheckpointContent opens the gzip'd XDR checkpoint file at
 // path and confirms it decodes to a stream of LedgerHeaderHistoryEntry
-// records containing an entry whose LedgerSeq equals wantSeq.
-// Presence + valid gzip alone don't prove a fetched body is
-// the RIGHT checkpoint — a misconfigured/stale mirror can serve 200 +
-// valid-gzip content for the wrong ledger range, or a corrupted
-// stream can still happen to decompress cleanly.
+// records containing an entry whose LedgerSeq equals wantSeq. Presence +
+// valid gzip alone don't prove a fetched body is the RIGHT checkpoint — a
+// misconfigured/stale mirror can serve 200 + valid-gzip content for the
+// wrong ledger range, or a corrupted stream can still happen to
+// decompress cleanly.
 func validateCheckpointContent(path string, wantSeq uint32) error {
 	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot + checkpoint hex
 	if err != nil {

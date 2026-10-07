@@ -414,6 +414,9 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // does the quote leg, which the SAC bypass would otherwise re-open one
 // orientation at a time.
 //
+// internal/api/v1's TestScamGateWithholdsSACSpellingOnEveryPriceSurface
+// pins the withholding on each of those surfaces.
+//
 // Direction matters and is one-way. A configured classic↔SAC family is
 // ordered classic-first (canonical.NewAliasRegistry), so the canonical
 // form of a classic asset is itself and a classic-keyed request is

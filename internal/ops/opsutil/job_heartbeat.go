@@ -22,11 +22,11 @@ import (
 //
 // A long-running ops job defaults its heartbeat here rather than taking a
 // mandatory flag, because the failure this closes is precisely that nobody
-// remembers to add the flag: long backfills are the dominant ops activity and
-// a HUNG one is otherwise invisible in both rule trees. Defaulting means an
-// operator who types the same `ch-backfill` command they always typed gets
-// the heartbeat for free on r1, and gets nothing (silently) on a laptop where
-// the directory does not exist — see [NewJobHeartbeat].
+// remembers to add the flag, and a HUNG long backfill is otherwise invisible
+// in both rule trees. Defaulting means an operator who types the same
+// `ch-backfill` command they always typed gets the heartbeat for free on r1,
+// and gets nothing (silently) on a laptop where the directory does not exist
+// — see [NewJobHeartbeat].
 const DefaultTextfileDir = "/var/lib/node_exporter/textfile_collector"
 
 // jobHeartbeatInterval is how often the background ticker rewrites the

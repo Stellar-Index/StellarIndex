@@ -66,16 +66,15 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 	// (80-bit) value from bytes 22..32 of word 0, not just the low
 	// 64 bits.
 	//
-	// The proxy contract's roundId is
-	// (phaseId<<64)|aggregatorRoundId. Reading only the low 64 bits
-	// (bytes[24:32]) discards the phase. On a proxy phase upgrade the
-	// aggregatorRoundId resets to ~1 while the phaseId increments, so
-	// the FULL roundId still strictly increases even though the low
-	// 64 bits regress. Dedup keyed on the low 64 bits would see
-	// round=1 <= prev=<big> and silently stop emitting until restart.
-	// Keying on the full uint80 keeps monotonicity across phase
-	// rollovers. The storage PK (source, ledger, tx_hash, op_index,
-	// ts) is idempotent, so even a re-emit on phase boundary is safe.
+	// The proxy contract's roundId is (phaseId<<64)|aggregatorRoundId.
+	// Reading only the low 64 bits (bytes[24:32]) discards the phase. On a
+	// proxy phase upgrade the aggregatorRoundId resets to ~1 while the
+	// phaseId increments, so the FULL roundId still strictly increases even
+	// though the low 64 bits regress. Dedup keyed on the low 64 bits would
+	// see round=1 <= prev=<big> and silently stop emitting until restart.
+	// Keying on the full uint80 keeps monotonicity across phase rollovers.
+	// The storage PK (source, ledger, tx_hash, op_index, ts) is idempotent,
+	// so even a re-emit on phase boundary is safe.
 	roundID := decodeRoundID(bytes[22:32])
 
 	// answer — int256, two's complement, in word 1.

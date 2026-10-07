@@ -60,11 +60,10 @@ const (
 // that serves market/network data is `read`; the account
 // self-service surface is `account`; the session-dashboard
 // management surface is `dashboard`; the operator surface is
-// `admin`. A key with an EMPTY scope list retains full access (so
-// every key minted before scopes existed keeps working); a key WITH
-// scopes is confined to the listed families.
-// Enforcement lives in the API's KeyPolicy middleware
-// (internal/api/v1/middleware/keypolicy.go).
+// `admin`. A key with an EMPTY scope list retains full access (so every
+// key minted before scopes existed keeps working); a key WITH scopes is
+// confined to the listed families. Enforcement lives in the API's
+// KeyPolicy middleware (internal/api/v1/middleware/keypolicy.go).
 const (
 	KeyScopeRead      = "read"      // public data surfaces (price, history, chart, assets, explorer, …)
 	KeyScopeAccount   = "account"   // /v1/account/* self-service

@@ -137,8 +137,8 @@ const ondoIssuer = "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"
 // fund (BENJI, FOCGX, gBENJI, grBENJI, sgBENJI); only BENJI is bound
 // here, because only BENJI is what the oracle prices.
 //
-// This account holds 12,498 trustlines and has never traded, so a
-// registry populated from trades alone never lists it.
+// When measured, this account held 12,498 trustlines and had never
+// traded, so a registry populated from trades alone did not list it.
 const franklinTempletonIssuer = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
 
 // instrumentBindings is the curated set.
@@ -148,10 +148,11 @@ const franklinTempletonIssuer = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJG
 // code-keyed join again with extra steps, so a code is bound only once
 // THIS issuer is observed to have issued it.
 //
-// GILTS and KTB meet that ground: both are issued by this account and
-// carry holding evidence on chain. Neither has ever traded — which is
-// what a held-to-maturity instrument looks like — so a registry
+// GILTS and KTB meet that bar: both are issued by this account and
+// carry holding evidence on chain. Neither had traded when measured —
+// which is what a held-to-maturity instrument looks like — so a registry
 // populated from trades alone would not see them.
+//
 // Evidence grade is stated per entry, because the file's own policy
 // above says the weaker form is marked as such and a grade recorded only
 // on the issuer constant does not travel with the row a reviewer reads.

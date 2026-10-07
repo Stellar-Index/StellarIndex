@@ -3,9 +3,9 @@
 
 // Package opsutil holds the small set of helpers shared across the
 // stellarindex-ops subcommand packages (internal/ops/{ingest,archive,
-// discovery,supply,diagnostics,chops}). Each helper is called directly
-// by subcommands in more than one package, so it lives here rather
-// than being duplicated or forcing an odd cross-bucket import.
+// discovery,supply,diagnostics,chops}). Most are called directly by
+// subcommands in more than one package, so they live here rather than
+// being duplicated or forcing an odd cross-bucket import.
 package opsutil
 
 import (
