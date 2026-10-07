@@ -25,21 +25,21 @@ type feedEntry struct {
 	// Only MXNe needs this today: RedStone emits ~17.4 (pesos/USD)
 	// while every other currency/RWA feed — including the Mexican
 	// CETES bond (~$0.067) and the EUR-pegged EUROB (~$1.17) — is
-	// already emitted as value-in-USD. Post-invert MXNe reads
-	// ~0.0575, matching reflector-fx MXN (~0.0573). Verified against
-	// live r1 rows 2026-07-07. See docs/adr/0028 + the reflector
-	// stablecoin-proxy note in AGENTS.md (normalise orientation here,
-	// NOT the asset identity — a MXNe depeg still shows through 1/x).
+	// already emitted as value-in-USD. Post-invert MXNe read ~0.0575,
+	// matching reflector-fx MXN (~0.0573), verified against live r1
+	// rows. See docs/adr/0028 + the reflector stablecoin-proxy note in
+	// AGENTS.md (normalise orientation here, NOT the asset identity — a
+	// MXNe depeg still shows through 1/x).
 	Invert bool
 }
 
 // quoteUSD / quoteEUR are the two quote CURRENCIES the registry
 // uses. RedStone publishes USD-denominated MARKET prices unless the
 // feed_id carries an explicit `/<QUOTE>` suffix — EUROC/EUR is the
-// only non-USD suffix; the 2026-07-24 feeds carry explicit `/USD`
-// suffixes that simply restate the default. NAV feeds are the
-// exception to the default — see quoteBTC / quoteSolvBTC below.
-// See ADR-0028 §Decision.
+// only non-USD suffix; the relayer-expansion feeds carry explicit
+// `/USD` suffixes that simply restate the default. NAV feeds are the
+// exception to the default — see quoteBTC / quoteSolvBTC below. See
+// ADR-0028 §Decision.
 var (
 	quoteUSD = mustFiat("USD")
 	quoteEUR = mustFiat("EUR")
@@ -52,8 +52,8 @@ var (
 // feeds_test.go). For the SolvBTC family the reserve is crypto, so
 // the published number is a RATIO and the quote must name the asset
 // the ratio is denominated in. Registering those two feeds as
-// `fiat:USD` was D8: it served "a BTC-backed token is worth $1.00"
-// on /v1/oracle/streams with mapped=true, for a token its own
+// `fiat:USD` would serve "a BTC-backed token is worth $1.00" on
+// /v1/oracle/streams with mapped=true, for a token its own
 // `_FUNDAMENTAL/USD` sibling priced at $78,313.
 var (
 	quoteBTC     = mustCrypto("BTC")
@@ -62,13 +62,10 @@ var (
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
 // canonical (base, quote) pair it prices — the 32 RedStone Stellar
-// mainnet feeds: 19 captured on-chain 2026-05-22 (ecc289c6; see
-// ADR-0028), 11 from the 2026-07-24 relayer expansion (ledger
-// 63624934 — unknown ids were skipped fail-closed, ~5,600 events
-// dropped, until the expansion block below landed), and USDT0 added
-// 2026-08-31 (3c7e7440, #439) — that one arrived without this count
-// being updated, which is what a stale magic number in a comment does.
-// It is asserted below rather than trusted.
+// mainnet feeds: 19 captured on-chain (see ADR-0028), 11 from the
+// relayer expansion at ledger 63624934, and USDT0. The count is
+// asserted by TestFeedRegistry_CountMatchesItsDocComment rather than
+// trusted.
 //
 // Invariant (pinned by TestFeedRegistry_UniquePairs): no two
 // feed_ids map to the same (Base, Quote) pair — feeds arrive
@@ -79,12 +76,11 @@ var (
 // write_prices(updater, feed_ids, payload) — which is NOT always the
 // display name. EUROC's feed_id is `EUROC/EUR`; BENJI's is
 // `BENJI_ETHEREUM_FUNDAMENTAL`. Matching a plain-ticker allow-list
-// against these silently dropped 5 feeds (the pre-ecc289c6 bug — EUROC
-// among them never decoded).
+// against these would silently drop 5 feeds, EUROC among them.
 //
-// Pre-ecc289c6 this was `canonical.IsKnownCrypto(feedID)`; an explicit
-// registry is required because (a) feed_id ≠ ticker for 5 feeds and
-// (b) the quote currency is per-feed, not a global USD assumption.
+// An explicit registry, not `canonical.IsKnownCrypto(feedID)`, is
+// required because (a) feed_id ≠ ticker for 5 feeds and (b) the quote
+// currency is per-feed, not a global USD assumption.
 // earnUSDCVaultContract is the Gami earnUSDC vault on Stellar — a
 // TOKENIZED vault that accepts native USDC deposits and mints
 // proportional earnUSDC shares, so the vault contract IS the share
@@ -96,11 +92,11 @@ var (
 // Held as a named constant because it is an IDENTITY, not a tunable:
 // changing it re-points a published price at a different instrument.
 //
-// It is now an ALIAS of internal/sources/upshift's own constant rather
-// than a second copy of the string (#503). The vault's on-chain activity
-// is decoded there and its price is published here; two independently
-// maintained literals for one instrument is precisely how a price and
-// the activity underneath it drift onto different asset ids.
+// It is an ALIAS of internal/sources/upshift's own constant rather than
+// a second copy of the string. The vault's on-chain activity is decoded
+// there and its price is published here; two independently maintained
+// literals for one instrument is precisely how a price and the activity
+// underneath it drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
 var feedRegistry = map[string]feedEntry{
@@ -118,10 +114,10 @@ var feedRegistry = map[string]feedEntry{
 	// Capital) that allocates USDC across Stellar yield sources. The base
 	// is the vault's own Soroban contract, not a bare ticker and NOT
 	// USDC: a yield-bearing claim on USDC is a different instrument from
-	// USDC, and collapsing the two is the asset-identity error that put
-	// attacker-authored pricing on a served surface once already.
-	// Identifying it by contract id also means this price lands on the
-	// same asset id as any on-chain activity we index for the token.
+	// USDC, and collapsing the two is the asset-identity error class that
+	// puts attacker-authored pricing on a served surface. Identifying it
+	// by contract id also means this price lands on the same asset id as
+	// any on-chain activity we index for the token.
 	//
 	// REPORTED AS PUBLISHED. RedStone price this feed at ~0.72 while the
 	// vault's own share price is ~1.01; that gap is RedStone's to explain,
@@ -138,25 +134,25 @@ var feedRegistry = map[string]feedEntry{
 	// Tokenized-BTC feeds — BTC-backed crypto tokens (crypto, not rwa).
 	// `SolvBTC` is the market price in dollars; the two bare
 	// `_FUNDAMENTAL` feeds are NAV RATIOS, denominated in the reserve
-	// each token is a claim on — NOT in USD (D8, fixed 2026-08-29;
-	// the `/USD` siblings further down carry the dollar figures).
+	// each token is a claim on — NOT in USD (the `/USD` siblings further
+	// down carry the dollar figures).
 	//
-	// Denominators derived from the live r1 rows
-	// (/v1/oracle/streams?include_unmapped=true, 2026-08-29), where the
-	// two `_FUNDAMENTAL/USD` legs are byte-identical — 78313.02974310
-	// each, as they were on 2026-07-27 (6543063913439 each):
+	// Denominators were derived from the live r1 rows
+	// (/v1/oracle/streams?include_unmapped=true), where the two
+	// `_FUNDAMENTAL/USD` legs were byte-identical — 78313.02974310 each,
+	// as they were in an earlier capture (6543063913439 each):
 	//
 	//   SolvBTC_FUNDAMENTAL     1.00295305 = NAV_USD / BTC_USD
 	//     (78313.03 / 78082.5) ⇒ denominated in BTC.
 	//   SolvBTC.BBN_FUNDAMENTAL 1.00000000 exactly, on three
-	//     independent captures (lake ledger 60104689, 2026-07-27,
-	//     2026-08-29), while its NAV_USD equals SolvBTC's NAV_USD
+	//     independent captures (lake ledger 60104689 and two live
+	//     reads), while its NAV_USD equals SolvBTC's NAV_USD
 	//     ⇒ SolvBTC.BBN is 1:1 with SolvBTC and the ratio is
 	//     denominated in SolvBTC. Quoting it BTC would contradict our
 	//     own SolvBTC.BBN_FUNDAMENTAL_USD row by the SolvBTC premium.
 	//
-	// The base codes are unchanged (each feed_id keeps its own code
-	// per ADR-0028 §Decision) — only the mislabelled denominator moves.
+	// Each feed_id keeps its own base code (per ADR-0028 §Decision);
+	// only the denominator departs from USD.
 	"SolvBTC":                 {Base: mustCrypto("SolvBTC"), Quote: quoteUSD},
 	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteBTC},
 	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteSolvBTC},
@@ -171,12 +167,12 @@ var feedRegistry = map[string]feedEntry{
 	"USTRY":                       {Base: mustRWA("USTRY"), Quote: quoteUSD},
 	"SPXU":                        {Base: mustRWA("SPXU"), Quote: quoteUSD},
 
-	// ── 2026-07-24 relayer expansion (ledger 63624934) ─────────────
-	// Orientation + magnitude for every entry below verified live
-	// 2026-07-27 against api.redstone.finance (?provider=redstone)
-	// with CoinGecko cross-checks, plus r1 oracle_updates for the
-	// pre-existing SolvBTC baselines. None needs Invert — all are
-	// published token-in-quote like the rest of the registry.
+	// ── Relayer expansion (ledger 63624934) ───────────────────────
+	// Orientation + magnitude for every entry below were verified live
+	// against api.redstone.finance (?provider=redstone) with CoinGecko
+	// cross-checks, plus r1 oracle_updates for the SolvBTC baselines
+	// above. None needs Invert — all are published token-in-quote like
+	// the rest of the registry.
 
 	// Bare EUROC is USD-quoted: live 1.1398 ≈ EUR/USD (CG euro-coin
 	// 1.14) — DISTINCT from the EUR-quoted `EUROC/EUR` feed above
@@ -206,8 +202,8 @@ var feedRegistry = map[string]feedEntry{
 	"SolvBTC_FUNDAMENTAL/USD":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL_USD"), Quote: quoteUSD},
 	"SolvBTC.BBN_FUNDAMENTAL/USD": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL_USD"), Quote: quoteUSD},
 
-	// Tokenized RWAs (ADR-0028 Amendments, 2026-07-27). RWA codes
-	// strip the feed-id suffix per the BENJI precedent.
+	// Tokenized RWAs (ADR-0028). RWA codes strip the feed-id suffix
+	// per the BENJI precedent.
 	"USDY_FUNDAMENTAL/USD":    {Base: mustRWA("USDY"), Quote: quoteUSD},    // Ondo USDY: live 1.1408 (CG 1.14, accruing note)
 	"USST_FUNDAMENTAL":        {Base: mustRWA("USST"), Quote: quoteUSD},    // STBL USST: live 1.0096
 	"XAUm_FUNDAMENTAL/USD":    {Base: mustRWA("XAUm"), Quote: quoteUSD},    // Matrixdock gold: live 4115.67/oz (CG pax-gold 4088)
@@ -217,9 +213,8 @@ var feedRegistry = map[string]feedEntry{
 
 // lookupFeed resolves a feed_id to its registry entry. ok is false
 // for a feed_id outside the registry — RedStone deploying a feed
-// beyond the registered set surfaces here (as the 2026-07-24
-// expansion did); the decoder skips + counts it, the same graceful
-// per-feed skip as the pre-ecc289c6 unknown path.
+// beyond the registered set surfaces here; resolveFeedEntry then
+// records it as a raw row and counts the miss.
 func lookupFeed(feedID string) (entry feedEntry, ok bool) {
 	entry, ok = feedRegistry[feedID]
 	return entry, ok

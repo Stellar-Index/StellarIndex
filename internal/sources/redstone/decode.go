@@ -14,24 +14,22 @@ import (
 
 // opIndexFanoutStride spaces synthetic op_index values derived from
 // a single batch update, same concept as the Reflector decoder.
-// Redstone emits at most 30 entries today (19 original + the
-// 2026-07-24 expansion); 1024 holds the full feed set with headroom
-// for growth and stays inside uint32.
+// Redstone emits at most 30 entries today (19 original + the relayer
+// expansion); 1024 holds the full feed set with headroom for growth
+// and stays inside uint32.
 const opIndexFanoutStride = 1024
 
 // eventFanoutStride bounds how many contract events ONE operation can
-// emit before their per-event op_index blocks would collide.
-// DAT-06/trap-15 (audit-2026-07-23): the fanout base used to be
-// OperationIndex ALONE, so two REDSTONE events within the SAME
-// operation collided on their whole 1024-wide OpIndex block.
-// EventIndex ALONE isn't a safe replacement either: per events.Event's
-// own doc it is scoped PER-OPERATION (resets to 0 for each new op), so
-// swapping it straight in would instead collide two DIFFERENT
-// operations that each emit a single event. Combining both dimensions
-// — OperationIndex and EventIndex — keeps every event's OpIndex block
-// disjoint regardless of whether the collision risk is same-op or
-// cross-op. See the identical rationale + bound arithmetic in
-// internal/sources/reflector/decode.go.
+// emit before their per-event op_index blocks would collide. A fanout
+// base of OperationIndex ALONE would collide two REDSTONE events within
+// the SAME operation on their whole 1024-wide OpIndex block. EventIndex
+// ALONE isn't a safe replacement either: per events.Event's own doc it
+// is scoped PER-OPERATION (resets to 0 for each new op), so it would
+// instead collide two DIFFERENT operations that each emit a single
+// event. Combining both dimensions — OperationIndex and EventIndex —
+// keeps every event's OpIndex block disjoint regardless of whether the
+// collision risk is same-op or cross-op. See the identical rationale +
+// bound arithmetic in internal/sources/reflector/decode.go.
 const eventFanoutStride = 64
 
 // opIndexFanoutMax bounds e.OperationIndex so the packed op_index
@@ -69,10 +67,10 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	// (`{updated_feeds: [], updater}`) carries nothing to attribute, so
 	// it must classify as a no-op REGARDLESS of whether the producing
 	// op's args were captured — and in practice those pushes often lack
-	// usable args, which is exactly why the 2026-07-29 replay left
-	// 1,624 ledgers "undecodable-but-matched" even after the first
-	// empty-batch fix landed BELOW the OpArgs gate. Order matters:
-	// body → empty short-circuit → args for the non-empty path only.
+	// usable args: with an empty-batch check placed BELOW the OpArgs
+	// gate, a full replay left 1,624 ledgers "undecodable-but-matched".
+	// Order matters: body → empty short-circuit → args for the non-empty
+	// path only.
 	prices, bodyUpdater, err := sdkDecodeBody(e.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
@@ -80,21 +78,19 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	if len(prices) == 0 {
 		// Empty ON-WIRE batch: a write_prices push whose freshness
 		// verifier dropped every candidate feed still emits
-		// `{updated_feeds: [], updater}`. The old assumption that "the
-		// adapter only emits when at least one feed passes" is
-		// disproven by the lake — ~1.5% of ALL REDSTONE events ever
-		// (small ~156-byte bodies, every ledger band since source
-		// genesis) are this shape, and treating them as errors is what
-		// kept redstone `projection_ok=false` under the v0.21.2
-		// honest-blind completeness accounting (866 "undecodable"
-		// ledgers, root-caused 2026-07-29). A recognized no-op projects
-		// zero rows and reconciles; it is not an error.
+		// `{updated_feeds: [], updater}`. The lake disproves the
+		// assumption that "the adapter only emits when at least one feed
+		// passes": ~1.5% of ALL REDSTONE events (small ~156-byte bodies,
+		// every ledger band since source genesis) were this shape when
+		// measured, and treating them as errors held redstone at
+		// `projection_ok=false` under honest-blind completeness
+		// accounting (866 "undecodable" ledgers). A recognized no-op
+		// projects zero rows and reconciles; it is not an error.
 		return nil, nil
 	}
 
 	// Non-empty batch: feed attribution requires the producing op's
-	// args (the event body carries no feed_ids) — from here on the
-	// original requirements apply unchanged.
+	// args (the event body carries no feed_ids).
 	if len(e.OpArgs) == 0 {
 		return nil, ErrMissingOpArgs
 	}
@@ -120,17 +116,16 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 
 	// Positional zip requires matching arity. When the adapter's
 	// freshness verifier dropped ≥1 feed (updated_feeds SHORTER than
-	// feed_ids — a real, ongoing class: 1,626 events blind on the
-	// 2026-07-29 full verify, still occurring at tip), the accepted
-	// subset is recovered EXACTLY from the op's value-changing
-	// contract-data writes when available (only accepted feeds' stored
-	// PriceData changes — events.Event.StateWriteKeys), falling back
-	// to the signed payload in args[2]: the adapter
-	// stores each accepted feed's signer-value MEDIAN, so a surviving
-	// price must equal exactly one candidate feed's payload median at
-	// its package_timestamp (verified byte-exact on the
-	// ledger-59258375 event). Anything non-unique refuses the whole
-	// event — better honest-blind than misattributed.
+	// feed_ids — a real, ongoing class: a full verify found 1,626 events
+	// blind, with more arriving at tip), the accepted subset is
+	// recovered EXACTLY from the op's value-changing contract-data writes
+	// when available (only accepted feeds' stored PriceData changes —
+	// events.Event.StateWriteKeys), falling back to the signed payload
+	// in args[2]: the adapter stores each accepted feed's signer-value
+	// MEDIAN, so a surviving price must equal exactly one candidate
+	// feed's payload median at its package_timestamp (verified
+	// byte-exact on the ledger-59258375 event). Anything non-unique
+	// refuses the whole event — better honest-blind than misattributed.
 	attributed, err := resolveFeedAttribution(prices, feedIDs, e)
 	if err != nil {
 		return nil, err
@@ -146,18 +141,18 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		entry, err := resolveFeedEntry(attributed[i])
 		if err != nil {
 			// The feed_id is off the registry AND the record layer
-			// cannot hold it verbatim. Drop THIS SLOT, not the event
-			// (#291): RedStone feed_ids are ScString — arbitrary
-			// bytes, unbounded length — unlike the ScSymbol sources
-			// this branch was copied from, so the refusal is
-			// genuinely reachable; and write_prices batches EVERY
-			// updated feed into one event, so an event-level refusal
-			// would take all ~19 feeds dark until a code change. That
-			// is strictly worse than the pre-totality skip and the
-			// inverse of capture-totality. Same granularity rule the
-			// rest of this file follows: refuse the smallest unit
-			// that is actually unusable (cf. ErrAmbiguousSubset,
-			// which refuses one event and not the source).
+			// cannot hold it verbatim. Drop THIS SLOT, not the event:
+			// RedStone feed_ids are ScString — arbitrary bytes,
+			// unbounded length — unlike the ScSymbol sources this
+			// branch was copied from, so the refusal is genuinely
+			// reachable; and write_prices batches EVERY updated feed
+			// into one event, so an event-level refusal would take all
+			// ~19 feeds dark until a code change. That is strictly
+			// worse than skipping the one feed and the inverse of
+			// capture-totality. Same granularity rule the rest of this
+			// file follows: refuse the smallest unit that is actually
+			// unusable (cf. ErrAmbiguousSubset, which refuses one event
+			// and not the source).
 			noteUnrepresentableFeed(e, i, attributed[i], err)
 			continue
 		}
@@ -197,9 +192,8 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			Asset:     entry.Base,
 			// Per-feed quote (ADR-0028): USD for most, EUR for
 			// EUROC/EUR, and the reserve ASSET for the bare
-			// `_FUNDAMENTAL` NAV-ratio feeds. Pre-ecc289c6 this was
-			// hardcoded USD, mislabelling EUROC; pre-D8 the SolvBTC
-			// NAV ratios were still fiat:USD.
+			// `_FUNDAMENTAL` NAV-ratio feeds. A hardcoded USD quote
+			// would mislabel EUROC and the SolvBTC NAV ratios.
 			Quote:          entry.Quote,
 			Price:          price,
 			PublishedPrice: published,
@@ -210,11 +204,11 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	}
 	if len(out) == 0 {
 		// Only reachable when EVERY attributed entry was non-positive
-		// (before or after inversion) or unrepresentable: since the oracle capture-totality change
-		// an unregistered feed_id is a raw row, not a skip, so an
-		// all-unknown batch no longer lands here. Surfaces to the
-		// dispatcher as a decode error counter bump — correct, because
-		// a batch that produced no row IS undecoded, and the
+		// (before or after inversion) or unrepresentable: under oracle
+		// capture-totality an unregistered feed_id is a raw row, not a
+		// skip, so an all-unknown batch never lands here. Surfaces to
+		// the dispatcher as a decode error counter bump — correct,
+		// because a batch that produced no row IS undecoded, and the
 		// honest-blind completeness accounting must see it.
 		return nil, ErrEmptyUpdates
 	}
@@ -239,17 +233,17 @@ func orientedPrice(entry feedEntry, raw canonical.Amount) (price canonical.Amoun
 
 // resolveFeedEntry returns the registry entry for feedID, or — when
 // the feed_id is outside the ADR-0028 registry — its record-layer raw
-// entry. Oracle capture-totality (PR-2): an unregistered feed_id is
-// RECORDED verbatim as a raw:<feed_id> row at its own vector position,
-// not skipped. A miss means RedStone deployed a feed beyond the
-// registered set — the 2026-07-24 relayer expansion (11 new feed_ids,
-// ledger 63624934) was exactly this, and under the old partial-event
-// skip (plus ErrEmptyUpdates for all-new batches) ~5,600 events were
-// lost until feeds.go caught up AND history was replayed. Now the row
-// lands immediately; a later registry entry re-derives the same PK
-// and promotes it in place. The miss is still counted (F-1234, codex
-// audit-2026-05-12): a raw row is a mapping gap the registry owner
-// has to close, and the alert on that counter is how they learn of it.
+// entry. Oracle capture-totality: an unregistered feed_id is RECORDED
+// verbatim as a raw:<feed_id> row at its own vector position, not
+// skipped. A miss means RedStone deployed a feed beyond the registered
+// set, as the relayer expansion at ledger 63624934 did (11 new
+// feed_ids); a per-feed skip (plus ErrEmptyUpdates for all-new
+// batches) lost ~5,600 of those events until feeds.go caught up AND
+// history was replayed. A recorded row lands immediately; a
+// later registry entry re-derives the same PK and promotes it in
+// place. The miss is also counted: a raw row is a mapping gap the
+// registry owner has to close, and the alert on that counter is how
+// they learn of it.
 func resolveFeedEntry(feedID string) (feedEntry, error) {
 	if entry, ok := lookupFeed(feedID); ok {
 		return entry, nil
@@ -327,9 +321,7 @@ func rawFeedEntry(feedID string) (feedEntry, error) {
 
 // ─── SCVal decoders ─────────────────────────────────────────────
 // sdkDecodeBody / sdkDecodeFeedIDsFromArg / sdkDecodeAddress are
-// called directly below. (A package-var indirection seam used to sit
-// here for test fixture-swapping; removed as unused — no test ever
-// swapped them.)
+// called directly below.
 
 // priceDataDecoded mirrors the adapter's PriceData struct
 // (common/src/lib.rs:12-18) at the canonical-types boundary. The
@@ -570,23 +562,22 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 // refused as genuinely malformed.
 //
 // EQUAL arity is additionally CORROBORATED against the state writes
-// when they are plumbed (2026-07-31 hardening): equal arity means the
-// adapter accepted every requested feed, and an accepted feed's stored
-// PriceData always changes — so the op's value-changed feed-keyed
-// writes must equal the feed_ids set exactly (order-insensitive;
-// feed_ids are duplicate-free by the decodeWritePrices gate). A
-// mismatch does not trust the positional zip (that would be exactly
-// the misattribution this file exists to prevent) but, like the
-// unequal-arity class below, falls back to payload-median alignment
-// (attributeSubset) before refusing: the payload's own bijection check
-// is independent of the state-write claim, so a mismatch there merely
-// forces the fallback the rest of this file already relies on, never a
-// guess. Only when the fallback ALSO fails to produce a unique
-// alignment is the event refused (ErrStateWriteFeedMismatch) — the
-// claimed names are uncorroborated by both what the contract stored
-// and what it signed. When no keys were plumbed (stellar-rpc fixtures,
-// non-opted readers) the positional zip stands alone, as before —
-// absence is "unknown", not "no writes".
+// when they are plumbed: equal arity means the adapter accepted every
+// requested feed, and an accepted feed's stored PriceData always
+// changes — so the op's value-changed feed-keyed writes must equal the
+// feed_ids set exactly (order-insensitive; feed_ids are duplicate-free
+// by the decodeWritePrices gate). A mismatch does not trust the
+// positional zip (that would be exactly the misattribution this file
+// exists to prevent) but, like the unequal-arity class below, falls
+// back to payload-median alignment (attributeSubset) before refusing:
+// the payload's own bijection check is independent of the state-write
+// claim, so a mismatch there merely forces the fallback the rest of
+// this file already relies on, never a guess. Only when the fallback
+// ALSO fails to produce a unique alignment is the event refused
+// (ErrStateWriteFeedMismatch) — the claimed names are uncorroborated
+// by both what the contract stored and what it signed. When no keys
+// were plumbed (stellar-rpc fixtures, non-opted readers) the
+// positional zip stands alone — absence is "unknown", not "no writes".
 func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
 		if len(e.StateWriteKeys) > 0 {
@@ -669,11 +660,10 @@ func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) 
 	for _, f := range feedIDs {
 		if written[f] {
 			sub = append(sub, f)
-			// Count each WRITTEN feed once (audit F2): feed_ids are
-			// duplicate-free by the decodeWritePrices gate, but this
-			// projection must never let a repeated candidate inflate
-			// the subset's arity into a spurious match — belt to that
-			// gate's braces.
+			// Count each WRITTEN feed once: feed_ids are duplicate-free
+			// by the decodeWritePrices gate, but this projection must
+			// never let a repeated candidate inflate the subset's arity
+			// into a spurious match — belt to that gate's braces.
 			delete(written, f)
 		}
 	}

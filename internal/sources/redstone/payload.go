@@ -17,17 +17,17 @@ import (
 // SHORTER than the op-args feed_ids and the positional zip in
 // decodeWritePrices cannot attribute prices to feeds.
 //
-// That class is real and ongoing, not a legacy quirk: the 2026-07-29 full
-// completeness run left 1,626 events blind across [59258375, tip], and the
-// count grows by a few per day at tip. The payload closes it rigorously:
-// the adapter stores the MEDIAN of the signer values for each feed it
-// accepts, so a surviving updated_feeds entry's price MUST equal one
-// candidate feed's payload median at that entry's package_timestamp —
-// verified byte-exact against the real ledger-59258375 event (price
-// 12,449,969,251,710 == BTC's median of three signer values; ETH was the
-// dropped feed). Attribution demands a UNIQUE such feed and a bijection
-// overall; anything ambiguous refuses the whole event, which keeps it in
-// the completeness verifier's honest-blind class rather than guessing.
+// That class is real and ongoing, not a legacy quirk: a full completeness
+// run left 1,626 events blind across [59258375, tip], and the count grew
+// by a few per day at tip. The payload closes it rigorously: the adapter
+// stores the MEDIAN of the signer values for each feed it accepts, so a
+// surviving updated_feeds entry's price MUST equal one candidate feed's
+// payload median at that entry's package_timestamp — verified byte-exact
+// against the real ledger-59258375 event (price 12,449,969,251,710 ==
+// BTC's median of three signer values; ETH was the dropped feed).
+// Attribution demands a UNIQUE such feed and a bijection overall;
+// anything ambiguous refuses the whole event, which keeps it in the
+// completeness verifier's honest-blind class rather than guessing.
 //
 // Wire layout (all integers big-endian; parsed from the END, per the
 // RedStone protocol docs):
@@ -46,39 +46,39 @@ import (
 // accepted on-chain by the adapter (the event is the proof); this parser
 // only needs the (feed, value, timestamp) triples the contract aggregated.
 //
-// ACCEPTED RESIDUAL RISK (2026-07-31 hardening review): because we do
-// not vendor redstone-core's signer filtering, this parser aggregates
-// EVERY package in the payload, whereas the on-chain adapter first
-// discards packages from non-trusted signers and enforces its
-// unique-signer threshold. The two medians can therefore disagree when
-// a payload carries extra non-trusted packages. USUALLY that disagreement
-// is honest-blind: our candidate median matches no surviving price and
-// the event refuses.
+// ACCEPTED RESIDUAL RISK: because we do not vendor redstone-core's
+// signer filtering, this parser aggregates EVERY package in the
+// payload, whereas the on-chain adapter first discards packages from
+// non-trusted signers and enforces its unique-signer threshold. The two
+// medians can therefore disagree when a payload carries extra
+// non-trusted packages. USUALLY that disagreement is honest-blind: our
+// candidate median matches no surviving price and the event refuses.
 //
-// F1 CAVEAT (audit 2026-08-03): "no surviving price matches → refuse" is
-// NOT unconditional. If our (diverged) median for a SURVIVING feed
-// instead byte-exact-matches a DROPPED feed that sits BETWEEN the
-// surviving feeds in feed_ids order, attributeSubset finds a UNIQUE
+// F1 CAVEAT: "no surviving price matches → refuse" is NOT
+// unconditional. If our (diverged) median for a SURVIVING feed instead
+// byte-exact-matches a DROPPED feed that sits BETWEEN the surviving
+// feeds in feed_ids order, attributeSubset finds a UNIQUE
 // order-preserving bijection and emits that price under the wrong
 // feed_id — a misattribution, not a refusal. Requires (1) signer-filter
-// median divergence for a surviving feed (the even-count rule is verified
-// to match the adapter, so this is the ONLY divergence source), (2) a
-// dropped feed whose median coincidentally equals the surviving price
-// (cross-feed median collisions are real — see the BENJI twins below),
-// and (3) order-preserving position — a rare compound, and only on the
-// payload-FALLBACK path (the primary state-write path is exact). When
-// the op's state-write keys name ANY of its feeds, the fallback's result
-// must be a subset of the changed feeds (decode.go corroborateFallback):
-// a dropped feed's entry is rewritten unchanged, so it cannot carry an
-// accepted price and the compound refuses. What remains is the fallback
-// with no feed-keyed writes plumbed (non-opted readers, stellar-rpc
-// fixtures, pre-plumb stored events) and the case where the dropped
-// feed's own entry was restored in the same op (no visible pre-image, so
-// it reads as changed). The attacker-steering
-// inverse additionally requires the ADAPTER to have accepted the payload
-// on-chain, where the signer filter did run. Fully closing it would mean
-// vendoring redstone-core's secp256k1 recovery + trusted-updater roster in
-// lockstep with contract upgrades.
+// median divergence for a surviving feed (the even-count rule is
+// verified to match the adapter, so this is the ONLY divergence
+// source), (2) a dropped feed whose median coincidentally equals the
+// surviving price (cross-feed median collisions are real — see the
+// BENJI twins below), and (3) order-preserving position — a rare
+// compound, and only on the payload-FALLBACK path (the primary
+// state-write path is exact). When the op's state-write keys name ANY
+// of its feeds, the fallback's result must be a subset of the changed
+// feeds (decode.go corroborateFallback): a dropped feed's entry is
+// rewritten unchanged, so it cannot carry an accepted price and the
+// compound refuses. What remains is the fallback with no feed-keyed
+// writes plumbed (non-opted readers, stellar-rpc fixtures, pre-plumb
+// stored events) and the case where the dropped feed's own entry was
+// restored in the same op (no visible pre-image, so it reads as
+// changed). The attacker-steering inverse additionally requires the
+// ADAPTER to have accepted the payload on-chain, where the signer
+// filter did run. Fully closing it would mean vendoring redstone-core's
+// secp256k1 recovery + trusted-updater roster in lockstep with contract
+// upgrades.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (
@@ -173,7 +173,7 @@ func parsePayload(payload []byte) (map[string][]payloadPackage, error) {
 // when no package matches the timestamp.
 //
 // The even-count rule (floor((a+b)/2)) was VERIFIED against the deployed
-// adapter source 2026-08-03: redstone-rust-sdk's Avg impl is
+// adapter source: redstone-rust-sdk's Avg impl is
 // (a>>1)+(b>>1)+((a&1 + b&1)>>1) == floor((a+b)/2), and its even-count
 // aggregation test expects avg(2000,3000)=2500 — byte-identical to this.
 // So the even-count aggregation is NOT a divergence source. (The one
@@ -209,10 +209,10 @@ func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 // alignment of prices onto an ordered subsequence of candidates, and
 // the constraint can only DISAMBIGUATE relative to the unordered rule
 // (any true assignment is order-preserving by construction) — it can
-// never misattribute. It resolved the 2026-07-30 residual class where
-// one price matched two feeds' medians simultaneously (170 ledgers,
-// first 60104689: a price matching both iBENJI_ETHEREUM_FUNDAMENTAL
-// and SolvBTC.BBN_FUNDAMENTAL) that the unordered rule refused.
+// never misattribute. It resolved a measured residual class where one
+// price matched two feeds' medians simultaneously (170 ledgers, first
+// 60104689: a price matching both iBENJI_ETHEREUM_FUNDAMENTAL and
+// SolvBTC.BBN_FUNDAMENTAL) that the unordered rule refused.
 //
 // The alignment count is computed by DP; refusal cases (error → the
 // event stays honest-blind):
