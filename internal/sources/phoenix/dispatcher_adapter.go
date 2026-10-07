@@ -46,15 +46,14 @@ type Decoder struct {
 
 // NewDecoder constructs a phoenix Decoder with a fresh buffer.
 //
-// Contract-identity gating (ADR-0035/0040), factory-anchored since F048:
-// the curated mainnet set (pools + stake contracts,
+// Contract-identity gating (ADR-0035/0040), factory-anchored: the
+// curated mainnet set (pools + stake contracts,
 // docs/protocols/phoenix.md) is ALWAYS seeded as the cold-start warm
 // root, and the factory's ("create","liquidity_pool") events — in the
 // lake from ledger 51,572,026, real captures under
-// test/fixtures/phoenix/factory-create — now self-register the pools
-// they announce, blend/aquarius style. Before this, classifyAny had no
-// create action, so a pool created after the last hand-edit of
-// MainnetPools was fail-closed until someone noticed.
+// test/fixtures/phoenix/factory-create — self-register the pools they
+// announce, blend/aquarius style, so a pool created after the last
+// hand-edit of MainnetPools is still admitted.
 //
 // The trust this extends is stated deliberately: admission is on
 // contract IDENTITY (upstream, create_liquidity_pool requires the
@@ -62,7 +61,7 @@ type Decoder struct {
 // and publishes the address the FACTORY deployed, never a caller
 // argument), but the factory is admin-upgradeable, so an admitted pool
 // ultimately trusts the phoenix factory admin — the same trust the
-// curated seed already extended by hand, now automatic. Tokens are
+// curated seed extends by hand. Tokens are
 // creator-chosen, so this is not price trust; the pricing guards
 // downstream are. See docs/operations/wasm-audits/phoenix.md, "Factory
 // create event".
@@ -103,7 +102,7 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 // topic slot carries the field name; the buffer routes it
 // internally. The claimed actions:
 //
-//   - swap — TWO on-wire shapes: the legacy 8-event ScvString schema
+//   - swap — TWO on-wire shapes: the older 8-event ScvString schema
 //     (actionSwap) and the newer single-event ScvSymbol("swap") +
 //     ScvMap body schema (actionSwapMap, Q5). classifyAny picks the
 //     shape from the topic; both reconstruct into the same TradeEvent.
@@ -126,7 +125,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		// must not be able to inject one (aquarius add_pool, same shape).
 		return d.reg.IsFactory(ev.ContractID)
 	}
-	// ADR-0035/0040 (CS-026): topic shape alone is forgeable — any
+	// ADR-0035/0040: topic shape alone is forgeable — any
 	// pubnet contract can publish ("swap","sender") string tuples.
 	// Only the registered phoenix set (pools + stake contracts) is
 	// attributed; a foreign emitter of the same shape is left for
@@ -220,7 +219,6 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		// so the dispatcher doesn't file it as unmatched, but nothing to
 		// project. Explicit per the EVERY-event policy: a NEW phoenix
 		// action lands here and trips `exhaustive` until it's decided.
-		// (initialize + admin are now projected — see above.)
 		return nil, nil
 	}
 	return nil, nil
@@ -255,7 +253,7 @@ func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]co
 // isNotATrade reports a swap that decoded FULLY but maps to zero rows:
 // a zero leg or a self-pair. Returning it as an error would count it
 // undecodable and fail the source's ADR-0033 verdict closed forever
-// (the INV-3 trap — comet's dispatcher_adapter.go states the rule).
+// (comet's dispatcher_adapter.go states the rule).
 // Indeterminate parse failures keep the error path.
 func isNotATrade(err error) bool {
 	return errors.Is(err, ErrZeroAmountSwap) || errors.Is(err, canonical.ErrPairMismatch)
@@ -299,8 +297,8 @@ func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt 
 	return out, nil
 }
 
-// rescueEvicted decodes the swap groups the buffer aged or rotated out
-// (sources-decode audit 2026-08-04, finding 1): a group whose
+// rescueEvicted decodes the swap groups the buffer aged or rotated out:
+// a group whose
 // decode-consumed slots are all present is a pre-upgrade 7-event swap
 // (that era never sends ActualReceived / SpreadAmount / ReferralFee) or
 // the first of two same-pool swaps in one op, not an orphan. Only
@@ -420,10 +418,9 @@ func (d *Decoder) Drain() []consumer.Event {
 	return out
 }
 
-// EvictedOrphans is the count of incomplete RawSwaps dropped by
-// buffer age-out since this Decoder was constructed. Production
-// callers will read this via obs.SourceOrphanEventsTotal once the
-// indexer binary is rewritten in PR 165d.
+// EvictedOrphans is the count of incomplete correlation groups dropped
+// since this Decoder was constructed. The dispatcher reads it through
+// its optional EvictedOrphans() interface (see evictedOrphans).
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -447,9 +444,8 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 		// token_a/token_b slot, so it maps to no phoenix_initialize row.
 		// Recognised (EVERY-event policy; the raw event lives in the
 		// soroban_events landing zone, ADR-0029) but not projected: emit
-		// nothing rather than the old ErrMalformedPayload. This clears the
-		// 20 undecodable-but-matched blind ledgers the stake-contract gated
-		// seed (2026-08-18) introduced into the projection re-derive
+		// nothing rather than ErrMalformedPayload, which would leave 20
+		// undecodable-but-matched blind ledgers in the projection re-derive
 		// (first=51,572,026, r1 lake). See events.go TopicInitLPShareStaking.
 		return nil, nil
 	default:

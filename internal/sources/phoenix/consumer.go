@@ -66,7 +66,7 @@ type LiquidityChange struct {
 	OpIndex int
 	// EventIndex is the first field-event's in-op index — the per-event
 	// discriminator added to the phoenix_liquidity PK by migration 0060
-	// (F-1324) so two provides/withdraws in one op don't collide.
+	// so two provides/withdraws in one op don't collide.
 	EventIndex   int
 	ClosedAt     time.Time
 	Sender       string
@@ -117,7 +117,7 @@ type StakeChange struct {
 	OpIndex  int
 	// EventIndex is the first field-event's in-op index — the per-event
 	// discriminator added to the phoenix_stake_events PK by migration
-	// 0060 (F-1324) so two bonds/unbonds in one op don't collide.
+	// 0060 so two bonds/unbonds in one op don't collide.
 	EventIndex int
 	ClosedAt   time.Time
 	User       string
@@ -206,7 +206,7 @@ var _ consumer.Event = AdminEvent{}
 // ─── 8-field correlation buffer ─────────────────────────────────
 // Phoenix emits one swap as 8 separate events (one per field).
 // An entry sits in the buffer until all 8 slots are populated —
-// a missing field (pagination race, contract bug, malformed pool)
+// a missing field (pagination race, faulty contract, malformed pool)
 // otherwise leaves it hanging forever. Age-based eviction bounds
 // memory usage.
 
@@ -285,7 +285,7 @@ func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) 
 		// arbitrage). The pre-upgrade 7-field era never Complete()s, so
 		// absorb never emit-and-clears mid-op; without this guard the second
 		// swap's field-events overwrite the first's slots in place and the
-		// first trade is lost with no orphan count (audit W1-protocol-tables-3).
+		// first trade is lost with no orphan count.
 		// Rotate the current (incomplete) group out as a rescue candidate —
 		// the caller decodes Decodable evictions — and start a fresh
 		// generation keyed on THIS event's index so the two trades fan to
