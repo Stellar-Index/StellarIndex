@@ -14,17 +14,11 @@
 // `chan consumer.Event` and gets sunk by
 // `internal/pipeline` (driven from `cmd/stellarindex-indexer`).
 //
-// # Retired: the per-source-goroutine Orchestrator
+// # Ingest is dispatcher-based
 //
-// This package used to also hold a `Source` interface
-// (`BackfillRange` / `StreamLive` / `Health`) and an `Orchestrator`
-// that ran one goroutine per source over stellar-rpc. That topology
-// was retired when r1 dropped stellar-rpc (2026-04-23) and the
-// one-writer-per-domain projection architecture landed (ADR-0031 /
-// ADR-0032); the code was deleted once it had zero production
-// callers. Production ingest is dispatcher-based:
-// Galexie MinIO → internal/ledgerstream → internal/dispatcher →
-// per-source decoders. New on-chain sources register a
+// Production ingest runs Galexie MinIO → internal/ledgerstream →
+// internal/dispatcher → per-source decoders. New on-chain sources
+// register a
 // [github.com/Stellar-Index/StellarIndex/internal/dispatcher.Decoder]
 // (or OpDecoder / ContractCallDecoder / LedgerEntryChangeDecoder) —
 // never a per-source goroutine with its own RPC client. See

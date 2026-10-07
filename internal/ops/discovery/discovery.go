@@ -17,9 +17,7 @@ import (
 // Run is the internal/ops/discovery package's entry point. main.go's
 // dispatch table (cmd/stellarindex-ops) maps every subcommand name this
 // package owns to Run — currently just `discovery` — passing the FULL
-// argv starting at the verb (args[0] is the verb itself, args[1:] its
-// flags), mirroring the shape realMain used before the package split
-// (maintainability audit 2026-07-01, D1 finding M1-5).
+// argv starting at the verb (args[0] is the verb itself, args[1:] its flags).
 func Run(args []string) error {
 	switch args[0] {
 	case "discovery":

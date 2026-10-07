@@ -80,14 +80,13 @@ func isDigits(s string) bool {
 //
 // Formats to EXACTLY `decimals` places so strconv.FormatFloat performs
 // the rounding (round-to-nearest) — NOT `decimals+2` places then a
-// truncate inside DecimalStringToScaledInt, which dropped the two extra
-// fractional digits toward zero and gave every value a one-signed
-// downward bias. That is the same systematic bias InvertScaled was fixed
-// to remove (ADR-0003: no biased estimator in the money path; audit
-// MNY-06 / 2026-08-03). The callers here (ecb, coingecko, coinmarketcap,
-// cryptocompare) feed only VWAP-excluded reference/oracle feeds, so the
-// practical delta is <1 ulp, but the correction is free and consistent
-// with the sibling rounding.
+// truncate inside DecimalStringToScaledInt, which would drop the two
+// extra fractional digits toward zero and give every value a one-signed
+// downward bias. That is the same systematic bias InvertScaled's rounding
+// removes (ADR-0003: no biased estimator in the money path). The callers
+// here (ecb, coingecko, coinmarketcap, cryptocompare) feed only
+// VWAP-excluded reference/oracle feeds, so the practical delta is <1 ulp,
+// but the correction is free and consistent with the sibling rounding.
 func FloatToScaledInt(v float64, decimals int) (*big.Int, error) {
 	if v < 0 || v != v {
 		return nil, fmt.Errorf("bad value %v", v)
@@ -116,7 +115,7 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 		// Format to EXACTLY targetDecimals places, same as
 		// FloatToScaledInt, so strconv.FormatFloat performs the
 		// rounding (round-to-nearest) instead of DecimalStringToScaledInt
-		// truncating two extra digits toward zero (GH-998: a one-signed
+		// truncating two extra digits toward zero (a one-signed
 		// downward bias, the same class ADR-0003 rejects — see
 		// FloatToScaledInt's comment above).
 		s = strconv.FormatFloat(f, 'f', targetDecimals, 64)
@@ -131,10 +130,10 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // units". v must be > 0 (callers skip non-positive rates before
 // inverting).
 //
-// The rounding is the point. This used to be a plain Div, which
-// truncates toward zero — so every inverted rate landed at or below
-// the true value and never above it. Unlike ordinary rounding error
-// that averages out, a truncation bias is systematic and one-signed:
+// The rounding is the point. A plain Div truncates toward zero, so
+// every inverted rate would land at or below the true value and never
+// above it. Unlike ordinary rounding error that averages out, a
+// truncation bias is systematic and one-signed:
 // it accumulates in the same direction across every poll of every
 // inverted pair, on every venue that calls this (ECB,
 // exchangeratesapi and Chainlink). At DefaultDecimals the per-rate
@@ -143,9 +142,8 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // estimator has no business in the money path (ADR-0003: exact
 // big.Int arithmetic, never float, never silent truncation).
 //
-// The formula mirrors [redstone.reciprocalAtScale], which already did
-// this correctly for its Invert feeds — same operation, and the two
-// implementations disagreeing was the actual defect (audit MNY-06).
+// The formula mirrors [redstone.reciprocalAtScale] for its Invert feeds:
+// the same operation, so the two implementations must not disagree.
 //
 // InvertScaled is the srcDecimals == dstDecimals case of
 // [InvertScaledToDecimals]; see that doc for why a caller inverting a
@@ -165,7 +163,7 @@ func InvertScaled(v *big.Int, decimals int) *big.Int {
 // re-emitting that inverse at the SAME scale as the input rate leaves
 // only one or two significant digits — a ~1.2% quantisation error for
 // VND, more than double the 50bps divergence threshold this feed
-// exists to police (GH-945). dstDecimals lets a caller widen the
+// exists to police. dstDecimals lets a caller widen the
 // output scale independently of the scale it inverted, without
 // touching the source rate's own precision.
 func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {

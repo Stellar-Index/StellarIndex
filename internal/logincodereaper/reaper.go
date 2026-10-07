@@ -1,5 +1,5 @@
 // Package logincodereaper bounds the `login_code_lockouts` table
-// (migration 0122) that the C3-032 durable login-code lockout writes to.
+// (migration 0122) that the durable login-code lockout writes to.
 //
 // # Why this exists
 //
@@ -15,13 +15,14 @@
 //
 // That row is permanent. `ClearLoginCodeLockout` only fires on a
 // SUCCESSFUL sign-in for that exact address, which can never happen for
-// a synthetic one — nobody owns it. The only bound was the anonymous
-// per-IP rate limit (default 60/min, and 0 is an accepted config value),
-// which on a disk-fixed host is a slow, cheap, remote table-fill whose
-// first alarm would otherwise be the volume-level disk page.
+// a synthetic one — nobody owns it. Without a reaper the only bound is
+// the anonymous per-IP rate limit (default 60/min, and 0 is an accepted
+// config value), which on a disk-fixed host makes this a slow, cheap,
+// remote table-fill whose first alarm would otherwise be the
+// volume-level disk page.
 //
-// Gating the INSERT on "this address has live tokens" would fix the fill
-// and re-open the finding: a grinder targeting a REAL address always has
+// Gating the INSERT on "this address has live tokens" would stop the
+// fill and re-open the hole: a grinder targeting a REAL address always has
 // live tokens, but one probing for valid addresses would dodge the
 // durable counter entirely, and the counter's whole purpose is to bound
 // guessing across mints. So the insert stays unconditional and the
@@ -202,7 +203,7 @@ func (r *Reaper) Sweep(ctx context.Context) bool {
 		r.logger.Info("login-code-lockout reaper: deleted settled rows", "deleted", deleted)
 	}
 	r.refreshGauge(ctx)
-	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
+	// Liveness: the sweep COMPLETED — including the failure arm
 	// above; only the cancelled early return skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperLoginCode).Set(float64(r.now().Unix()))
 	return err == nil && more

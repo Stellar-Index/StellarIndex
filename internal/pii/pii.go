@@ -1,14 +1,11 @@
 // Package pii holds the redaction helpers that must behave IDENTICALLY
 // everywhere personal data can reach a log line.
 //
-// It exists because the alternative failed. `maskEmail` lived as two
-// byte-identical unexported copies — one in internal/api/v1, one in
-// internal/api/v1/dashboardauth — with a comment explaining that the
-// duplication was deliberate (package v1 must not import dashboardauth;
-// the dependency is one-way) and asserting that "the contract is pinned
-// by a test in each package". That last part was not true: only
-// dashboardauth had the table test, so the v1 copy could have drifted
-// into leaking an address and nothing would have failed (#346 F8).
+// It exists because duplicated copies drift. Package v1 must not import
+// dashboardauth (the dependency is one-way), so two unexported
+// `maskEmail` copies, one per package, would each need their own table
+// test, and a copy without one could drift into leaking an address
+// with nothing failing.
 //
 // A leaf package with no internal imports dissolves the problem instead
 // of policing it. Both packages import this one, there is no import

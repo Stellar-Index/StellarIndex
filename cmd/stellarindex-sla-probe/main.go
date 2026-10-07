@@ -13,11 +13,9 @@
 //	                    defaultClosedBucketFreshTarget)
 //	availability ≥ 99.9 %  (sampled per-tick error rate)
 //
-// Closes Codex medium-7 / Task #52 / coverage matrix rows
-// S5.2, S9.1, S9.2, F3.1-F3.4. Provides the executable evidence
-// the SLAs require; the rest of those rows (HA
-// posture, SEV detection time) are operational SLAs that need a
-// production deployment to measure, not a pre-launch CLI.
+// It provides the executable evidence for the SLAs above; operational
+// SLAs such as HA posture and SEV detection time need a production
+// deployment to measure, not a CLI.
 //
 // Usage:
 //
@@ -77,8 +75,8 @@ const (
 	// sub-second observed_at) and is measured there; this bound exists
 	// to catch the closed-bucket pipeline falling behind its design
 	// (aggregator down, CAGG refresh job stuck, trades-insert
-	// backpressure — the 2026-06-02/03 chunk-perf regression read
-	// 166–186 s and would correctly fail this).
+	// backpressure — one chunk-perf regression read 166–186 s and would
+	// correctly fail this).
 	defaultClosedBucketFreshTarget = 150 * time.Second
 
 	// maxRequestTimeout caps one request. It must sit well inside the run
@@ -138,12 +136,6 @@ type endpoint struct {
 // load. Without these, a regression on /v1/assets would only
 // surface as "the explorer is slow" — well after the SLA probe
 // gate would have caught it.
-//
-// Migrated from /coins → /assets in rc.49: the standalone
-// /v1/coins route was removed in rc.48; the asset-catalogue
-// fields it surfaced are now overlay-fields on every /v1/assets
-// row (rc.47 commit 578c4581). Hitting /assets keeps the same
-// read-heavy fan-out coverage with the live URL.
 func staticEndpoints() []endpoint {
 	return []endpoint{
 		{Name: "healthz", Path: "/healthz", Critical: true},
@@ -470,16 +462,16 @@ func main() {
 // response was received.
 //
 // receivedAt is what freshness is measured against. It is NOT
-// decoration: freshness used to be computed as time.Since(observedAt)
-// during aggregation, which happens once, AFTER the whole run has
-// finished — so every sample was charged the time between its own
-// request and the end of the run. Over a uniformly-sampled run of
-// length D that biases the MEDIAN by D/2 and the oldest sample by a
-// full D. On r1 (D = 30 s) it reported /price/tip's ~0.1 s freshness
-// as ~15 s, half of the 30 s page threshold spent on measurement
-// error; at the SLA_PROBE_DURATION=120 s the wrapper recommends for
-// memory-pressured hosts it would have read ~60 s and paged forever
-// on a perfectly healthy tip.
+// decoration: computing freshness as time.Since(observedAt) during
+// aggregation, which happens once, AFTER the whole run has finished,
+// would charge every sample the time between its own request and the
+// end of the run. Over a uniformly-sampled run of length D that biases
+// the MEDIAN by D/2 and the oldest sample by a full D. On r1 (D = 30 s)
+// that computation reported /price/tip's ~0.1 s freshness as ~15 s, half
+// of the 30 s page threshold spent on measurement error; at the
+// SLA_PROBE_DURATION=120 s the wrapper recommends for memory-pressured
+// hosts it would have read ~60 s and paged forever on a perfectly
+// healthy tip.
 type probeSample struct {
 	latency time.Duration
 	ok      bool
