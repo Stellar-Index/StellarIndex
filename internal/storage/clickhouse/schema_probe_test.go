@@ -47,13 +47,12 @@ func (c *probeConn) Query(context.Context, string, ...any) (driver.Rows, error) 
 	return &probeRows{}, nil
 }
 
-// TestProbeSchema_TransientErrorDoesNotLatch pins C1-048
-// The schema probes were a plain sync.Once, so the
-// FIRST call's outcome was final for the process lifetime: a transient
-// ClickHouse error at that instant — a restart mid-deploy, a reset
-// connection, a request-context deadline — latched the probe to false and
-// silently degraded every subsequent read until the process was
-// restarted. No error, no metric, no self-heal.
+// TestProbeSchema_TransientErrorDoesNotLatch pins that a transient probe
+// error is retried. With a plain sync.Once the FIRST call's outcome is
+// final for the process lifetime: a transient ClickHouse error at that
+// instant — a restart mid-deploy, a reset connection, a request-context
+// deadline — latches the probe to false and silently degrades every
+// subsequent read until the process is restarted. No error, no metric, no self-heal.
 func TestProbeSchema_TransientErrorDoesNotLatch(t *testing.T) {
 	conn := &probeConn{results: []error{
 		// 1st: a transport failure — the server never answered.

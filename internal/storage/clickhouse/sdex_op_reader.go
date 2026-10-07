@@ -105,8 +105,8 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 // The successful-tx restriction is a grace_hash INNER JOIN over a derived
 // table, not an IN-subquery: IN materialises the whole window's tx-hash set in
 // memory first (CreatingSetsTransform blew the 10 GiB query budget on a dense
-// 250k-ledger window — the sibling contractCallOpsQuery was fixed
-// then, these two were not). GROUP BY tx_hash gives the derived table the SET
+// 250k-ledger window — the sibling contractCallOpsQuery hit
+// it first). GROUP BY tx_hash gives the derived table the SET
 // semantics IN had, so an un-merged duplicate transactions part cannot fan one
 // op row out into two — this reader takes NO FINAL, deliberately.
 //

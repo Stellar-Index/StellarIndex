@@ -227,7 +227,7 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 			// A ClickHouse SERVER exception — the shape clickhouse-go
 			// actually returns (*clickhouse.Exception). It is what makes
 			// the absence DEFINITIVE, so the probe caches it and stops
-			// asking; a bare error would mean "no answer" and re-probe
+			// asking; a bare error would mean "no answer" and re-probe.
 			return nil, &clickhouse.Exception{
 				Code: 60, Name: "UNKNOWN_TABLE",
 				Message: "Table stellar.tx_hash_index does not exist",

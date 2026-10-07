@@ -314,7 +314,7 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 // remaining ORDER BY columns (address, tx_hash, op_index, leg_index,
 // direction) for a fully deterministic, reproducible batch.
 //
-// Ledger-first is a resume-safety requirement, not a cosmetic choice
+// Ledger-first is a resume-safety requirement, not a cosmetic choice.
 // A batch larger than accountMovementsInsertChunk is sent as
 // several INSERTs, and ClickHouse has no transaction spanning them: a
 // send that fails partway leaves the earlier chunks durably written.
