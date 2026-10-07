@@ -1721,8 +1721,8 @@ func verdictNotStoredNote(pub timescale.VerdictPublication, tip uint32, windowPe
 // The gap it closes: `computeCompleteness` scans substrate over
 // [scanFrom, hi], where scanFrom is the `-from` incremental floor — but
 // publishes `lake_complete` / `coverage_pct` over [genesis, hi]. On a clean
-// suffix the `problems` slice comes back empty, so the watermark reads
-// genesis-to-tip and the verdict asserts "the certified archive is
+// suffix the `problems` slice comes back empty, so without this gate the watermark
+// would read genesis-to-tip and the verdict would assert "the certified archive is
 // contiguous + hash-chained from genesis" on evidence covering only the
 // newest window. Worse, it is an UPGRADE path: the production driver
 // (run-compute-completeness.sh) re-runs each source from its prior
