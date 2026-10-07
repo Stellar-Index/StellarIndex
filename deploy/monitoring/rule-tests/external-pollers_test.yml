@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for the C2-030 FX sanity-band alert.
+# promtool unit tests for the FX sanity-band alert.
 #
 #   promtool test rules deploy/monitoring/rule-tests/external-pollers_test.yml
 #

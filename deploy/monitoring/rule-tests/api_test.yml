@@ -26,7 +26,7 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── C3-082: sustained fail-open tickets ──────────────────────────
+  # ── sustained fail-open tickets ──────────────────────────
   # The month-to-date read has been erroring continuously: one bypassed
   # request per minute for an hour. Every metered key is uncapped.
   - interval: 1m
@@ -59,7 +59,7 @@ tests:
                 store. If this fires ALONE, suspect the usage-counter key
                 namespace or an eviction policy rather than Redis availability.
 
-  # ── C3-082: the healthy state is SILENT ──────────────────────────
+  # ── the healthy state is SILENT ──────────────────────────
   # The counter exists and is pre-seeded at zero (obs.registerAppMetrics).
   # A flat zero must not ticket — otherwise the alert is permanently
   # firing and worthless, which is the failure mode a zero-seeded
@@ -75,7 +75,7 @@ tests:
         alertname: stellarindex_monthly_quota_fail_open
         exp_alerts: []
 
-  # ── C3-082: a single blip is absorbed ────────────────────────────
+  # ── a single blip is absorbed ────────────────────────────
   # One bypassed request during a Redis failover, then clean. The 10m
   # `for:` is what makes this a non-event; without it every failover
   # would ticket.
@@ -138,7 +138,7 @@ tests:
         alertname: stellarindex_monthly_quota_fail_closed
         exp_alerts: []
 
-  # ── C3-067: ONE lost audit row tickets, labelled by surface ──────
+  # ── ONE lost audit row tickets, labelled by surface ──────
   # A single failed append is the whole trigger: the operator has to
   # reconstruct that row from application logs before the journal's
   # retention closes on it. increase()[1h] keeps it firing long enough
@@ -175,7 +175,7 @@ tests:
                 window closes on them, then fix whatever made the audit store
                 unwritable.
 
-  # ── C3-067: the zero-seeded healthy state is SILENT ──────────────
+  # ── the zero-seeded healthy state is SILENT ──────────────
   # All six surfaces are pre-seeded at zero so the series exist before
   # the first failure. They must not ticket.
   - interval: 1m
@@ -994,7 +994,7 @@ tests:
         alertname: stellarindex_directory_sync_unflagged
         exp_alerts: []
 
-  # ── GH-1277: sustained usage-counter write failures ticket ───────
+  # ── sustained usage-counter write failures ticket ───────
   # The write side of the usage meter had no observability at all — a
   # failed Increment logged at Debug and was otherwise invisible. This
   # proves the new consumer of stellarindex_usage_units_dropped_total
@@ -1029,7 +1029,7 @@ tests:
                 are mutually exclusive per request. Check Redis health and the
                 usage-counter key namespace first.
 
-  # ── GH-1277: the zero-seeded healthy state is SILENT ─────────────
+  # ── the zero-seeded healthy state is SILENT ─────────────
   # obs.registerRedisFailureMetrics pre-seeds both label values at
   # zero; a flat zero must not ticket.
   - interval: 1m
@@ -1043,7 +1043,7 @@ tests:
         alertname: stellarindex_usage_write_failing
         exp_alerts: []
 
-  # ── GH-1277: a single blip is absorbed ────────────────────────────
+  # ── a single blip is absorbed ────────────────────────────
   - interval: 1m
     name: a single usage-write blip does not ticket
     input_series:

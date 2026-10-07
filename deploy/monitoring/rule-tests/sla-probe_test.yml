@@ -1,14 +1,14 @@
 ---
-# promtool unit tests for stellarindex_sla_probe_stale (audit-2026-08-14 OBS-2).
+# promtool unit tests for stellarindex_sla_probe_stale.
 #
 #   promtool test rules deploy/monitoring/rule-tests/sla-probe_test.yml
 #
-# OBS-2: the probe emits stellarindex_sla_probe_last_pass_timestamp ONLY on a
+# The probe emits stellarindex_sla_probe_last_pass_timestamp ONLY on a
 # passing run and rewrites the whole node_exporter textfile each run, so a run
 # that fails DROPS the series. On the every-run-failed case the series is
-# therefore ABSENT (not old), so the original `time() - last_pass_timestamp >
+# therefore ABSENT (not old), so a bare `time() - last_pass_timestamp >
 # 90m` branch evaluates over an empty vector and can never fire — the exact
-# case the alert documents. The fix adds an
+# case the alert documents. An
 # `absent_over_time(...[90m])` branch that fires when no passing run has been
 # recorded in 90 min (timer dead OR every run failing).
 #
@@ -19,25 +19,24 @@
 # so the fire test is the non-vacuous one and it exercises the real alert
 # (its 90m window and 5m `for`), not a mock.
 #
-# ── stellarindex_sla_probe_freshness_breach (2026-09-05) ──────────────
-# The freshness selector used to read
+# ── stellarindex_sla_probe_freshness_breach ───────────────────────────
+# A negative-matcher freshness selector
 #
 #     stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} > 30
 #     or
 #     stellarindex_sla_probe_freshness_sec{endpoint!="price-tip"} > 180
 #
-# which grants /price's ADR-0015 closed-bucket exemption (180 s) to
-# every endpoint that merely is not the tip. Only /price emits freshness
-# today, so it was latent — but the exemption is a property of the
+# would grant /price's ADR-0015 closed-bucket exemption (180 s) to
+# every endpoint that merely is not the tip. The exemption is a property of the
 # closed-bucket contract, not of "not being the tip", and the first
 # other endpoint to publish an observed_at would have silently inherited
-# a bound six times the pricing SLA. Inverted to a positive matcher:
+# a bound six times the pricing SLA. So the matcher is positive:
 # /price gets 150 s by name, everything else falls back to the 30 s SLA.
 #
 # PROVEN-RED: restore the `{endpoint!="price-tip"} > 180` pair and the
 # oracle-latest case below reports 0 firing alerts (FAIL) — a 120 s
-# stale oracle sits under the closed-bucket bound it should never have
-# been given. The price-tip and price cases pass either way; the
+# stale oracle sits under the closed-bucket bound it must not be
+# given. The price-tip and price cases pass either way; the
 # oracle-latest case is the non-vacuous one.
 
 rule_files:
@@ -217,10 +216,10 @@ tests:
                 aggregator → Redis → API path; bisect by which stage's
                 `observed_at` is lagging.
 
-  # ── /price between the published 150s bound and the old 180s line ──
+  # ── /price between the published 150s bound and a 180s line ───────
   # /sla publishes 150 s for /price and the probe's verdict fails there;
-  # the alert used to wait for 180 s, so a CAGG slip holding /price at
-  # 170 s breached the public bound with the page silent (#741).
+  # an alert waiting for 180 s would leave a CAGG slip holding /price at
+  # 170 s breaching the public bound with the page silent.
   # PROVEN-RED: restore `{endpoint="price"} > 180` and this case reports
   # 0 firing alerts.
   - interval: 1m

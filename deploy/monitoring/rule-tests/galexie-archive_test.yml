@@ -35,8 +35,8 @@ evaluation_interval: 1m
 tests:
   # ══ stellarindex_galexie_archive_tip_lag_metric_stale ═════════════
   #
-  # An unreadable bucket used to publish lag 0 with a fresh success
-  # stamp — "archive exactly at the live tip". The script now publishes
+  # Publishing lag 0 with a fresh success stamp for an unreadable bucket
+  # would read as "archive exactly at the live tip". The script publishes
   # probe_success 0, omits the lag, and carries the last success stamp
   # (t=10m here) forward. At t=30m that stamp is only 20 min old, so the
   # probe arm alone must fire, and the lag thresholds stay quiet.
@@ -198,8 +198,8 @@ tests:
                 stellarindex_ingestion_ledger_stalled.
 
   # The door an exit-status check alone leaves open: `journalctl -u <unit
-  # that does not exist>` exits 0 and prints nothing (confirmed on r1
-  # 2026-09-05), so the refusal count is a genuine, correctly-derived
+  # that does not exist>` exits 0 and prints nothing (confirmed on r1),
+  # so the refusal count is a genuine, correctly-derived
   # zero over an empty input and nothing errors. Only the line count
   # sees it — galexie logged 364-409 lines per 5 min across twelve
   # consecutive buckets, so zero is never the healthy value.

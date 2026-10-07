@@ -1,26 +1,24 @@
-# verify-archive staleness — the timer-vs-service confusion (wave-D
-# ALERT-10).
+# verify-archive staleness — the timer-vs-service confusion.
 #
-# These alerts used to read node_systemd_timer_last_trigger_seconds:
-# when the TIMER last FIRED, independent of the triggered service's exit
-# status. A nightly job that failed every single night kept that gauge
-# perfectly fresh, so the R1 integrity-leader PAGE was defeated by
-# exactly the scenario its own description names ("every recent attempt
-# failed").
+# node_systemd_timer_last_trigger_seconds says when the TIMER last
+# FIRED, independent of the triggered service's exit status. A nightly
+# job that fails every single night keeps that gauge perfectly fresh,
+# so an R1 integrity-leader PAGE reading it is defeated by exactly the
+# scenario its own description names ("every recent attempt failed").
 #
-# They now read stellarindex_verify_archive_last_success_unix, which the
+# These alerts read stellarindex_verify_archive_last_success_unix, which the
 # verify-archive binary advances ONLY on a clean exit.
 #
 # The firing cases below hold last_success FIXED while time advances —
-# which is precisely what a job failing every night looks like on the
-# new signal, and what was indistinguishable from health on the old one.
+# which is precisely what a job failing every night looks like on this
+# signal, and what is indistinguishable from health on the timer gauge.
 #
 # Q280: both rules select `stellarindex_verify_archive_last_success_unix
 # {tier=...} > 0`, so a host that has NEVER written the textfile at all
 # (node_exporter down, the collector directory misconfigured, the unit
 # never scheduled) leaves the series absent — not old. `time() - x` over
 # an empty vector is itself empty, so the bare comparison can never fire,
-# exactly the scenario the page exists for (same OBS-2 pattern as
+# exactly the scenario the page exists for (same absent-series pattern as
 # restore-drill.yml, curated-rwa-sync.yml, storage.yml's
 # ch-schema-snapshot alert). The "never written" cases below cover that.
 #

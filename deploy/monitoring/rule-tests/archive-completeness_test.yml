@@ -3,8 +3,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/archive-completeness_test.yml
 #
-# These pin the two structural blind spots the 2026-07-23 audit found
-# (C4-037 / C4-038 / C4-039 / C4-054), both of which made an alert
+# These pin two structural blind spots, both of which made an alert
 # *evaluate to nothing* rather than evaluate to false — the failure
 # mode where absence reads as health:
 #
@@ -28,14 +27,14 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── C4-038/039/054 ───────────────────────────────────────────────
-  # A host whose verify runs keep ending with residuals. Post-fix the
+  # ── staleness pair ───────────────────────────────────────────────
+  # A host whose verify runs keep ending with residuals. The
   # emitter still writes last_success on every rewrite (carried
   # forward, or 0 when no clean run was ever recorded), so the series
   # is continuously present and both staleness tiers evaluate.
   #
-  # Pre-fix the series was simply absent here and BOTH alerts below
-  # produced zero samples.
+  # Without the carried-forward stamp the series is absent here and
+  # BOTH alerts below produce zero samples.
   - interval: 1m
     name: staleness tiers fire while the series persists through failures
     input_series:
@@ -84,16 +83,16 @@ tests:
                 playbook; manual archive-completeness verify run is the
                 first diagnostic.
 
-  # ── C4-037 ───────────────────────────────────────────────────────
+  # ── repair-degradation ratio ─────────────────────────────────────
   # One daily verify run at t=20h places 10 checkpoints' worth of
   # tries against each of two sources. `lobstr-v1` failed half of
   # them; `sdf-core-live-001` failed none (so it has no failure
   # series at all). The ratio must fire for lobstr-v1 and stay silent
   # for the healthy source.
   #
-  # Pre-fix this could not fire for any real source: the failure
-  # samples carried source="multi-source-exhausted", which matched no
-  # attempt sample, so `by (source)` produced an empty numerator.
+  # With synthetic labels this cannot fire for any real source: failure
+  # samples carrying source="multi-source-exhausted" match no attempt
+  # sample, so `by (source)` produces an empty numerator.
   - interval: 1m
     name: per-source repair degradation fires for the failing source only
     input_series:

@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for stellarindex_data_freshness_probe_frozen (T599),
+# promtool unit tests for stellarindex_data_freshness_probe_frozen,
 # which lives in data-freshness.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/data-freshness-probe-frozen_test.yml

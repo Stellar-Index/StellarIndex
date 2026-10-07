@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for api-security.yml (GH-1039).
+# promtool unit tests for api-security.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/api-security_test.yml
 

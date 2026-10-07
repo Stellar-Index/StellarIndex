@@ -4,9 +4,8 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/projector_test.yml
 #
-# Written for issue #325 (2026-08-29): stellarindex_projector_lag_high now
-# carries an `unless` arm that excuses an OPERATOR-INITIATED replay, and the
-# new stellarindex_projector_replay_stalled covers the window the excuse
+# stellarindex_projector_lag_high carries an `unless` arm that excuses an
+# OPERATOR-INITIATED replay, and stellarindex_projector_replay_stalled covers the window the excuse
 # opens. A suppression is only ever as good as the proof that it stays
 # narrow, so every case below is one of the four states that arm can be in:
 #
@@ -80,7 +79,7 @@ tests:
         exp_alerts: []
 
   # ══ 2. a CLIMBING operator replay is silent ════════════════════════
-  # The 2026-08-29 reflector-fx shape: the cursor was rewound 2.57M
+  # The reflector-fx shape: the cursor was rewound 2.57M
   # ledgers on purpose, so lag is enormous but falling every cycle. The
   # ticket carried no information the operator did not already have.
   - interval: 1m

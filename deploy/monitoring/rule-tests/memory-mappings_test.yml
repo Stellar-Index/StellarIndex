@@ -1,7 +1,7 @@
 ---
 # promtool unit tests for deploy/monitoring/rules/memory-mappings.yml
-# (per-process vm.max_map_count headroom, after the 2026-09-10 r1
-# ClickHouse mapping-limit crash).
+# (per-process vm.max_map_count headroom, after an r1 ClickHouse
+# mapping-limit crash).
 #
 #   promtool test rules deploy/monitoring/rule-tests/memory-mappings_test.yml
 #
@@ -170,7 +170,7 @@ tests:
   #    245,000 (23 % of the limit, under the 25 % ticket line) on a slope
   #    that reaches 1,048,576 inside the hour. This is the case a static
   #    threshold cannot cover, and the reason the arm exists: the
-  #    2026-09-10 excursion was ~20x with no recorded ramp rate.
+  #    observed excursion was ~20x with no recorded ramp rate.
   - interval: 1m
     name: a fast ramp pages on trend before it reaches the ticket level
     input_series:
@@ -314,7 +314,7 @@ tests:
   #
   # Ansible never applied, the timer never enabled, the collector
   # directory lost. Nothing is present to compare, so only the
-  # absent_over_time branch can fire — the OBS-2 pattern.
+  # absent_over_time branch can fire — the absent-series pattern.
   - interval: 1m
     name: a probe that never reported fires via absent_over_time
     input_series: []

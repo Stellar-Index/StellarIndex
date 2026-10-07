@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for stellarindex_backup_offsite_stale (2026-08-29).
+# promtool unit tests for stellarindex_backup_offsite_stale.
 #
 #   promtool test rules deploy/monitoring/rule-tests/backup-offsite_test.yml
 #
@@ -12,7 +12,7 @@
 #   3. a repo2 backup landed 2d ago → silent.
 #   4. exporter DOWN with stale repo2 → silent (exporter_down owns it).
 #
-# PROVEN-RED (2026-08-29): change `repo_key="2"` to `repo_key=~".*"` in
+# PROVEN-RED: change `repo_key="2"` to `repo_key=~".*"` in
 # backup-offsite.yml and re-run — cases 1 and 2 report 0 firing alerts
 # (FAIL) because repo1's fresh series then satisfies the "young backup"
 # branch; that is the exact cross-repo blindness of storage.yml's

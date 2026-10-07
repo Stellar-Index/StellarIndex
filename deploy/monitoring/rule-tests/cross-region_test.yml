@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for cross-region.yml (GH-1039).
+# promtool unit tests for cross-region.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/cross-region_test.yml
 
