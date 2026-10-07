@@ -6,13 +6,9 @@
 # Promtail ships journald logs to the local Loki (:3100).
 
 # Node-exporter source-of-truth: the Debian package
-# `prometheus-node-exporter` (176596608 cutover 2026-05-20). Previously
-# we hand-downloaded /usr/local/bin/node_exporter and a custom
-# systemd unit, which (a) silently squatted :9100 against any
-# parallel-installed package, (b) didn't auto-update for CVE
-# coverage, and (c) ran a 2024 binary. The package version of the
-# unit + binary is the canonical setup; we keep the same
-# collectors and the same textfile_collector dir for full
+# `prometheus-node-exporter`. It auto-updates for CVE coverage and owns
+# :9100, so no hand-installed binary can squat the port. We keep the
+# same collectors and the same textfile_collector dir for full
 # metric-source continuity (archive_completeness.prom,
 # sla_probe.prom, galexie_archive_tip_lag.prom etc.).
 - name: Install prometheus-node-exporter Debian package
@@ -27,9 +23,8 @@
 # archive-completeness + supply-snapshot write here too. Without
 # this dir + the matching --collector.textfile flag below, every
 # alert in deploy/monitoring/rules/{sla-probe,archive-completeness,
-# supply-snapshot,verify-archive}.yml is permanently silent —
-# this is exactly what the 2026-05-12 audit's F-1219 + F-1221
-# documented as the SLA-evidence-chain gap.
+# supply-snapshot,verify-archive}.yml is permanently silent — the
+# SLA evidence chain has a gap.
 - name: Ensure node_exporter textfile-collector dir
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
@@ -65,18 +60,16 @@
       TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_snapshot.prom
   tags: [observability, supply-snapshot]
 
-# ── GO sla-probe stack RETIRED (2026-08-24) ──────────────────────
-#
-# This role used to install + enable a second probe stack here
+# ── GO sla-probe stack (retired) ──────────────────────────────────
+# One owner per metric file. A second probe stack
 # (deploy/systemd/sla-probe.{service,timer} + /etc/default/sla-probe
-# + sla-probe.secret) alongside 17-stellarindex-healthchecks' wrapper
-# stack (stellarindex-sla-probe.*). Both targeted the local API and
-# wrote THE SAME textfile (sla_probe.prom) — last-writer-wins, so the
-# GO stack's runs (keyless/stale-key → 401/429s → availability ~7%)
-# stomped the wrapper's passing verdicts and held
-# stellarindex_sla_probe_unit_failed red. One owner per metric file:
-# the wrapper stack (Healthchecks.io fanout + textfile) survives; the
-# tasks below remove the GO stack wherever it was previously applied.
+# + sla-probe.secret) beside 17-stellarindex-healthchecks' wrapper
+# stack (stellarindex-sla-probe.*) would write THE SAME textfile
+# (sla_probe.prom) — last-writer-wins, so a keyless/stale-key GO run
+# (401/429s → availability ~7%) stomps the wrapper's passing verdicts
+# and holds stellarindex_sla_probe_unit_failed red. The wrapper stack
+# (Healthchecks.io fanout + textfile) is the owner; the tasks below
+# remove the GO stack wherever it exists.
 - name: Retire the GO sla-probe timer + service (superseded by stellarindex-sla-probe)
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -123,10 +116,9 @@
     enabled: true
     daemon_reload: true
 
-# Idempotent cleanup for boxes that ran the old (pre-176596608)
-# playbook: stop + disable the hand-rolled node_exporter.service
-# so the two binaries no longer collide on :9100. The unit file +
-# /usr/local/bin/node_exporter binary are left in place as a
+# Idempotent cleanup for boxes with a hand-rolled node_exporter.service:
+# stop + disable it so the two binaries never collide on :9100. The
+# unit file + /usr/local/bin/node_exporter binary are left in place as a
 # zero-downtime rollback path (`systemctl stop
 # prometheus-node-exporter && systemctl start node_exporter`).
 - name: Stop legacy node_exporter.service (176596608 cutover)
@@ -302,15 +294,15 @@
       failed_when: false
 
 - name: galexie catchup-refusal probe (script + timer)
-  # 'History: Skipping catchup' sat verbatim in the journal for 11h
-  # (2026-07-05) with nothing watching. Every minute: count refusals
-  # in the last 5min, write node-exporter textfile metrics; the rule
-  # trees alert on >0 sustained.
+  # 'History: Skipping catchup' in the journal means galexie has stopped
+  # ingesting, and nothing else watches for it. Every minute: count
+  # refusals in the last 5min, write node-exporter textfile metrics; the
+  # rule trees alert on >0 sustained.
   #
   # It also reports ITS OWN health — the _probe_read_ok, _probe_journal_lines
   # and _probe_last_run_unix series below, written on every run — because
   # its consumer stellarindex_galexie_catchup_refused is severity `page`
-  # and EVERY way this producer could fail landed on the count 0, which
+  # and EVERY way this producer could fail would land on the count 0, which
   # is also the healthy value. A page frozen at zero is indistinguishable
   # from a quiet one. stellarindex_galexie_catchup_probe_degraded reads
   # those three.
@@ -327,37 +319,33 @@
       set -euo pipefail
       # MUST be the --collector.textfile.directory the running
       # node_exporter reads (the ansible-managed dir above), NOT
-      # Debian's /var/lib/prometheus/node-exporter default. The probe
-      # originally wrote to the Debian dir — the metric never reached
-      # Prometheus and the page alert silently couldn't fire, which is
-      # exactly what happened in the 2026-07-08 P27 catchup-refusal
-      # incident (found + fixed during it). The TEXTFILE_DIR override is
-      # the same seam timescale-jobs-probe.sh and
-      # galexie-archive-tip-lag.sh carry, and exists for the same reason:
-      # it lets scripts/ci/galexie-catchup-probe-test.sh execute these
-      # exact bytes rather than a hand-copied twin. The service unit sets
-      # no environment, so a real run always takes the default.
+      # Debian's /var/lib/prometheus/node-exporter default: a file written
+      # there never reaches Prometheus and the page alert silently cannot
+      # fire. The TEXTFILE_DIR override is the same seam
+      # timescale-jobs-probe.sh and galexie-archive-tip-lag.sh carry, and
+      # exists for the same reason: it lets
+      # scripts/ci/galexie-catchup-probe-test.sh execute these exact bytes
+      # rather than a hand-copied twin. The service unit sets no
+      # environment, so a real run always takes the default.
       DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
       mkdir -p "$DIR"
 
       # THE READ AND THE COUNT ARE SEPARATE NUMBERS.
       #
-      # This used to be one line:
-      #   N=$(journalctl … | grep -c "Skipping catchup" || true)
-      # `grep -c` prints 0 and exits 1 when nothing matches, which is the
-      # HEALTHY outcome here, so the `|| true` had to be there — and it
-      # swallowed the journal read's own failure along with it. Measured
-      # on r1 2026-09-05, all four of these produced N=0 and exit 0:
-      # a healthy read, a unit name that does not exist, a journal that
-      # could not be opened, and a missing journalctl binary. Identical
-      # files, so the page above sat at zero forever with nothing saying
-      # it had gone blind.
+      # A one-liner `N=$(journalctl … | grep -c "Skipping catchup" || true)`
+      # cannot work: `grep -c` prints 0 and exits 1 when nothing matches,
+      # which is the HEALTHY outcome, so it needs the `|| true` — and that
+      # swallows the journal read's own failure along with it. A healthy
+      # read, a unit name that does not exist, a journal that cannot be
+      # opened and a missing journalctl binary would all produce N=0 and
+      # exit 0, so the page would sit at zero with nothing saying it had
+      # gone blind.
       #
-      # The read now keeps its own exit status and the count is taken
-      # from the buffered output afterwards. grep's exit 1 is the
-      # no-match case and must NOT invalidate anything; only rc > 1 is a
-      # grep error. Buffering also keeps the read off a pipe, so an
-      # early-exiting consumer cannot SIGPIPE it under pipefail (#475).
+      # So the read keeps its own exit status and the count is taken from
+      # the buffered output afterwards. grep's exit 1 is the no-match case
+      # and must NOT invalidate anything; only rc > 1 is a grep error.
+      # Buffering also keeps the read off a pipe, so an early-exiting
+      # consumer cannot SIGPIPE it under pipefail.
       journal=""
       read_rc=0
       journal=$(journalctl -u galexie --since "-5min" --no-pager 2>/dev/null) || read_rc=$?
@@ -384,10 +372,9 @@
         echo "# HELP stellarindex_galexie_catchup_refusals_5m 'History: Skipping catchup' journal lines in the last 5 minutes."
         echo "# TYPE stellarindex_galexie_catchup_refusals_5m gauge"
         # Omitted rather than zeroed when the read failed. A fabricated 0
-        # is the assertion "no refusals", which is exactly the lie this
-        # probe used to tell; saying nothing, and saying WHY below, is
-        # the honest degrade. The alert on that silence is
-        # stellarindex_galexie_catchup_probe_degraded.
+        # is the assertion "no refusals", which would be a lie; saying
+        # nothing, and saying WHY below, is the honest degrade. The alert on
+        # that silence is stellarindex_galexie_catchup_probe_degraded.
         if [ -n "$refusals" ]; then
           echo "stellarindex_galexie_catchup_refusals_5m $refusals"
         fi
@@ -398,9 +385,8 @@
         #                   way the refusal count silently becomes 0 — a
         #                   renamed unit, a journal filtered down to
         #                   nothing — and it raises no exit status at
-        #                   all. galexie logged 364-409 lines per 5 min
-        #                   across twelve consecutive buckets on r1
-        #                   (2026-09-05), so zero is never the healthy
+        #                   all. galexie logs several hundred lines per
+        #                   5 min on r1, so zero is never the healthy
         #                   value while galexie is running.
         #   _last_run_unix  when this file was last WRITTEN. Deliberately
         #                   not _last_success_unix: it stamps the RUN, so
@@ -424,8 +410,7 @@
         echo "stellarindex_galexie_catchup_probe_last_run_unix $(date +%s)"
       } > "$TMP"
       # mktemp creates 0600; node_exporter runs unprivileged and
-      # SILENTLY skips unreadable textfiles (second way this probe
-      # was invisible, 2026-07-08).
+      # SILENTLY skips unreadable textfiles.
       chmod 644 "$TMP"
       mv "$TMP" "$DIR/galexie_catchup.prom"
       trap - EXIT
@@ -474,16 +459,11 @@
 
 # ── Stellar-stack upstream version-lag probe ─────────────────────────
 #
-# Two incidents in ONE week, same root cause: nothing watched whether
-# the installed Stellar toolchain lagged upstream.
-#   - 2026-07-08: mainnet Protocol 27 activated; r1's stellar-core
-#     (26.0.1) had no P27 support and froze ingest for 2.5h until
-#     upgraded.
-#   - 2026-07-09: the hand-installed galexie binary (an April build)
-#     crash-looped on the first ledger carrying CAP-0071 XDR.
-#     galexie-v27.0.0 had been published upstream 2026-06-10 — a
-#     full month of unnoticed lag before it became a 5+ hour ingest
-#     outage.
+# Watches whether the installed Stellar toolchain lags upstream. A
+# stellar-core without support for a newly activated protocol freezes
+# ingest until upgraded, and a stale galexie crash-loops on the first
+# ledger carrying new XDR — both can sit unnoticed for weeks after the
+# upstream release unless something compares versions.
 #
 # Daily probe, same textfile-collector shape as the galexie catchup
 # probe above (script + oneshot service + timer, all root-owned,
@@ -606,17 +586,14 @@
 
           # Resolve the release's commit date from the TAG's own
           # commit — NEVER from target_commitish. For most releases
-          # target_commitish is the literal branch name "main", so the
-          # previous revision compared the installed tag-commit date
-          # against CURRENT MAIN HEAD: any post-release commit
-          # upstream made a current install read "behind", and the
-          # protocol-major disambiguation then classified it lag=2.
-          # That paged 2026-08-04 for a galexie that was byte-for-byte
-          # the latest release (upstream merged to main 2026-08-03
-          # 20:38Z; our v27.0.0 tag-commit is 2026-06-10 16:18:48Z —
-          # the exact commit we run). Falls back to published_at
-          # silently on any failure (never a branch, at worst ~30 min
-          # after the tag commit).
+          # target_commitish is the literal branch name "main", so comparing
+          # against it compares the installed tag-commit date against
+          # CURRENT MAIN HEAD: any post-release commit upstream makes a
+          # current install read "behind", and the protocol-major
+          # disambiguation then classifies it lag=2 and pages for a binary
+          # that is byte-for-byte the latest release. Falls back to
+          # published_at silently on any failure (never a branch, at worst
+          # ~30 min after the tag commit).
           latest_commit_date=""
           commit_json=$(curl -sS --max-time 10 \
             "https://api.github.com/repos/stellar/stellar-galexie/commits/${latest_tag}" 2>/dev/null || true)
@@ -686,7 +663,7 @@
       # node_exporter runs unprivileged — mktemp defaults to 0600, so
       # make the rendered file world-readable before the atomic swap or
       # the collector silently skips it (the same textfile-permissions
-      # trap the galexie catchup probe above hit on 2026-07-08).
+      # trap as the galexie catchup probe above).
       chmod 644 "$TMP"
       mv "$TMP" "$OUT"
       trap - EXIT
@@ -747,17 +724,12 @@
 
 # ── StellarIndex OWN-binary version-skew probe ────────────────────
 # The probe above watches THIRD-PARTY components (core, archivist,
-# galexie). Nothing watched our own binaries, and the gap bit twice.
+# galexie). This one watches our own binaries: a binary missing from
+# the deploy workflow's list is never updated, and a deploy that never
+# touches a binary still exits 0, so drift across releases goes
+# unreported.
 #
-# F-1314 (2026-05-13) found stellarindex-sla-probe drifting because
-# the deploy workflow's default binary list omitted it. The list was
-# fixed for that one binary — but not the blind spot, so on
-# 2026-08-28 the identical failure surfaced for stellarindex-ops:
-# v0.44.7 installed while indexer/aggregator/api/sla-probe were all
-# v0.46.1. Two releases of drift that no deploy ever reported,
-# because a deploy that never touches a binary still exits 0.
-#
-# stellarindex-ops is not a bystander: 13 units on r1 exec it,
+# stellarindex-ops is not a bystander: many units on r1 exec it,
 # including the data-integrity gates (verify-archive tier-a/b,
 # archive-completeness, ch-schema-drift, restore-drill). A stale
 # gate binary validates the lake with retired rules — it PASSES
@@ -791,16 +763,14 @@
       # exactly the binaries a release tag produces and the deploy
       # workflow can ship. Skew is computed over THIS set only.
       #
-      # Why an explicit list rather than the stellarindex-* glob. Live
-      # r1 (measured 2026-08-28) also carries hand-built operator
-      # one-offs — stellarindex-ops-ch (v0.21.3, Jul 29),
-      # stellarindex-ops-claimable and stellarindex-ops-sacfix (both
-      # "dev", Jul 27) — referenced by no systemd unit. They are not
-      # release artifacts, no deploy will ever update them, and folding
-      # them into the comparison would pin the alert firing forever on
-      # a condition nobody can clear. They are still REPORTED (as
-      # unmanaged) so the cruft stays visible instead of being
-      # laundered into silence.
+      # Why an explicit list rather than the stellarindex-* glob. r1
+      # also carries hand-built operator one-offs (stellarindex-ops-ch,
+      # stellarindex-ops-claimable, stellarindex-ops-sacfix) referenced by
+      # no systemd unit. They are not release artifacts, no deploy will
+      # ever update them, and folding them into the comparison would pin
+      # the alert firing forever on a condition nobody can clear. They are
+      # still REPORTED (as unmanaged) so the cruft stays visible instead of
+      # being laundered into silence.
       #
       # Under-reporting is the safe failure here: a new cmd/ binary
       # missing from this list is simply not compared, which is quiet.
@@ -931,8 +901,7 @@
 
       # node_exporter runs unprivileged and mktemp defaults to 0600 —
       # without this the collector silently skips the file (the same
-      # textfile-permissions trap the galexie catchup probe hit on
-      # 2026-07-08).
+      # textfile-permissions trap as the galexie catchup probe).
       chmod 644 "$TMP"
       mv "$TMP" "$OUT"
       trap - EXIT
@@ -997,13 +966,12 @@
 # ── Ledger-meta decode probe (reactive protocol backstop) ─────────
 # The version-lag probe above is the PRIMARY defence, but it compares
 # released upstream versions and so cannot know the network has begun
-# emitting new XDR. Observed 2026-08-27: testnet ingested 240 P28
-# ledgers on a galexie that could NOT decode P28, because the breaking
-# arm only appears once a ledger actually contains parallel-execution
-# structures; futurenet (which exercises that path) died at ledger
-# 92747. This probe watches for the decode failure itself and names
-# the cause, so it surfaces as "component is behind a protocol"
-# instead of generic tip-lag. See docs/operations/protocol-upgrades.md.
+# emitting new XDR. A galexie that cannot decode a new protocol can
+# still ingest that protocol's ledgers until one actually contains the
+# breaking arm (e.g. parallel-execution structures), then dies. This
+# probe watches for the decode failure itself and names the cause, so
+# it surfaces as "component is behind a protocol" instead of generic
+# tip-lag. See docs/operations/protocol-upgrades.md.
 - name: Install ledger-meta decode probe
   ansible.builtin.copy:
     src: ledger-meta-decode-probe.sh
@@ -1064,15 +1032,11 @@
 
 # ── Per-process memory-mapping headroom probe ─────────────────────
 #
-# On 2026-09-10 13:53 CEST ClickHouse exhausted the kernel's
-# per-process mapping limit on r1 — 1,048,578 mappings against a
-# vm.max_map_count of 1,048,576 — went into a std::bad_alloc storm and
-# crashed; systemd restarted it and holders-rollup.service failed as
-# collateral. The limit is already raised far above the 65530 default
-# and codified (/etc/sysctl.d/10-map-count.conf), but NOTHING watched
-# headroom against it: no metric, no rule, no reference to
-# max_map_count anywhere in the tree. A server crash was the first and
-# only signal.
+# ClickHouse can exhaust the kernel's per-process mapping limit
+# (vm.max_map_count), then goes into a std::bad_alloc storm and crashes,
+# taking dependent jobs with it. The limit is raised far above the 65530
+# default and codified (/etc/sysctl.d/10-map-count.conf); this probe
+# watches headroom against it so a crash is not the first signal.
 #
 # node_exporter has no per-process mapping series (its procfs
 # collector is system-wide), so this is a textfile producer.
@@ -1119,34 +1083,30 @@
 
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────
 #
-# Producer for three metrics that deploy/monitoring/rules/storage.yml
-# has referenced since it landed but that NOTHING emitted, leaving
-# stellarindex_timescale_cagg_stale and
-# stellarindex_timescale_compression_lag permanently unable to fire
-# (tracked in scripts/ci/lint-metric-refs.sh KNOWN_INERT). Same shape
-# as the galexie-catchup and stellar-stack-version probes above:
-# script + oneshot service + timer, root-owned, writing to the SAME
-# node_exporter textfile dir with the SAME chmod-644-before-mv
-# discipline — see the galexie probe for why both of those matter.
+# Producer for the metrics stellarindex_timescale_cagg_stale and
+# stellarindex_timescale_compression_lag in
+# deploy/monitoring/rules/storage.yml read; without it they can never
+# fire. Same shape as the galexie-catchup and stellar-stack-version
+# probes above: script + oneshot service + timer, root-owned, writing
+# to the SAME node_exporter textfile dir with the SAME
+# chmod-644-before-mv discipline — see the galexie probe for why both
+# of those matter.
 #
 # It also emits stellarindex_timescale_job_failures_total, which is
-# not decoration: r1 was silently failing 37–69% of every CAGG refresh
-# run with "failed to start job" (background-worker starvation, fixed
-# in postgresql.conf.j2) and NOTHING surfaced it. The jobs got a slot
-# on a later tick, so last_run_status read Success and the caggs were
-# never stale — the only evidence was a counter nobody exported.
+# not decoration: CAGG refresh runs can fail with "failed to start job"
+# (background-worker starvation, sized in postgresql.conf.j2) while the
+# jobs get a slot on a later tick, so last_run_status reads Success and
+# the caggs are never stale — the counter is the only evidence.
 #
 # It also reports ITS OWN health — stellarindex_timescale_probe_query_ok,
 # _probe_rows and _probe_last_run_unix, written on every run — because
-# every way this producer could fail was previously silent, and the
-# three alerts above all fail quiet: `>` and `time() - x` over an absent
-# series are empty, so a blind alert is indistinguishable from a healthy
-# one. stellarindex_timescale_probe_degraded reads those three.
+# the three alerts above all fail quiet: `>` and `time() - x` over an
+# absent series are empty, so a blind alert is indistinguishable from a
+# healthy one. stellarindex_timescale_probe_degraded reads those three.
 #
-# It also carries the PG lock-convoy gauges (2026-09-10), which live
-# here rather than in postgres_exporter because the exporter was
-# itself in the convoy they exist to report — see the block comment
-# on the query.
+# It also carries the PG lock-convoy gauges, which live here rather
+# than in postgres_exporter because the exporter can itself be in the
+# convoy they exist to report — see the block comment on the query.
 #
 # Runbooks: docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale,
 # docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded,
@@ -1164,7 +1124,7 @@
       # MUST be the --collector.textfile.directory the running
       # node_exporter reads, NOT Debian's /var/lib/prometheus/
       # node-exporter default (which nothing scrapes here — see the
-      # galexie probe's 2026-07-08 note). The TEXTFILE_DIR override is
+      # galexie probe's note). The TEXTFILE_DIR override is
       # the same seam galexie-archive-tip-lag.sh and the pgBackRest
       # wrapper carry, and exists for the same reason: it lets
       # scripts/ci/timescale-jobs-probe-test.sh execute these exact
@@ -1180,24 +1140,23 @@
       # superuser but postgres is the account this host already uses
       # for local maintenance.
       #
-      # DEGRADE-AND-CONTINUE, BUT NEVER SILENTLY. The helper used to end
-      # in `2>/dev/null || true`, which gave a failed query an empty
-      # result AND a zero exit: the file was rewritten without that
-      # query's families, node_exporter served it, and every alert built
-      # on them evaluated over an absent series and stayed quiet. A
-      # producer that cannot report its own failure reads exactly like a
-      # healthy one.
+      # DEGRADE-AND-CONTINUE, BUT NEVER SILENTLY. Ending the helper in
+      # `2>/dev/null || true` would give a failed query an empty result
+      # AND a zero exit: the file is rewritten without that query's
+      # families, node_exporter serves it, and every alert built on them
+      # evaluates over an absent series and stays quiet. A producer that
+      # cannot report its own failure reads exactly like a healthy one.
       #
-      # The degrade itself is deliberate and is KEPT. Dying on the first
-      # bad query under `set -e` fires the EXIT trap, so `mv` never runs
-      # and the PREVIOUS timescale_jobs.prom stays on disk indefinitely —
-      # stale values re-scraped every interval with a fresh sample
-      # timestamp, which is the shape stellarindex_config_assertions_stale
-      # exists for (W5-mon) and strictly worse than losing one family. It
-      # also keeps a host where one view is legitimately unavailable from
-      # losing the two families that still answer.
+      # The degrade itself is deliberate. Dying on the first bad query
+      # under `set -e` fires the EXIT trap, so `mv` never runs and the
+      # PREVIOUS timescale_jobs.prom stays on disk indefinitely — stale
+      # values re-scraped every interval with a fresh sample timestamp,
+      # which is the shape stellarindex_config_assertions_stale exists
+      # for and strictly worse than losing one family. It also keeps a
+      # host where one view is legitimately unavailable from losing the
+      # two families that still answer.
       #
-      # What is removed is the silence. Every query now records its own
+      # What is ruled out is the silence. Every query records its own
       # exit status and its own emitted-row count, both published in the
       # same file, and stellarindex_timescale_probe_degraded alerts on
       # either. Rows are load-bearing next to the status: a query that
@@ -1238,25 +1197,22 @@
 
       # is_num <field> — true iff the field is a Prometheus float.
       #
-      # WHY EVERY VALUE GOES THROUGH THIS (r1 2026-09-10). psql narrates.
-      # `-At` drops the column header and the row separator; it does NOT
-      # drop a command tag, and the probe ran its convoy query as
-      # `SET statement_timeout = '10s'; SELECT …`, so psql wrote the bare
-      # word `SET` on its own line ahead of the row. `IFS='|' read` took
+      # WHY EVERY VALUE GOES THROUGH THIS. psql narrates. `-At` drops the
+      # column header and the row separator; it does NOT drop a command
+      # tag, so `SET statement_timeout = '10s'; SELECT …` writes the bare
+      # word `SET` on its own line ahead of the row. `IFS='|' read` takes
       # it as the first field and `${convoyed:-0}` cannot tell a number
-      # from a word, so the file got
+      # from a word, so the file gets
       #
       #     stellarindex_pg_lock_convoy_backends SET
       #
       # node_exporter does not skip an unparseable line — it rejects the
-      # WHOLE file. The three convoy gauges went, and so did 127
-      # pre-existing stellarindex_timescale_* series that share
-      # timescale_jobs.prom and had nothing to do with the convoy work.
-      # For twenty minutes the CAGG and job-failure alerts could not fire,
-      # and nothing said so, because the metric that would have said so
-      # was in the same file.
+      # WHOLE file, including every unrelated stellarindex_timescale_*
+      # series sharing timescale_jobs.prom, and the CAGG and job-failure
+      # alerts go blind with nothing saying so, because the metric that
+      # would say so is in the same file.
       #
-      # The command tag is fixed at the source (the timeout travels in
+      # The command tag is avoided at the source (the timeout travels in
       # PGOPTIONS, set in q()) and gated in CI
       # (scripts/ci/lint-textfile-exposition.sh). This is the
       # second half: the reply is an EXTERNAL input, and a command tag is
@@ -1276,52 +1232,44 @@
 
       # ── THE LOCK CONVOY, AND WHY IT IS THE FIRST QUERY HERE ──────
       #
-      # r1 2026-09-10 00:12–00:31 UTC. A deploy restarted the
-      # aggregator; its cold-start VWAP alias-map aggregation spilled
-      # to disk and held AccessShareLock on `trades` for 18+ minutes.
-      # A usd-volume-restamp -chunks run's decompress_chunk wanted
-      # AccessExclusiveLock on a chunk of that hypertable, could not
-      # have it, and QUEUED — and PostgreSQL puts every LATER request
+      # A long-running reader (e.g. the aggregator's cold-start VWAP
+      # aggregation spilling to disk) holds AccessShareLock on `trades`.
+      # A decompress_chunk wants AccessExclusiveLock on one of its chunks,
+      # cannot have it, and QUEUES — and PostgreSQL puts every LATER request
       # for an object behind a PENDING exclusive one, however trivial:
+      # UPDATEs, postgres_exporter scrapes and chunks_detailed_size all
+      # block for many minutes behind it.
       #
-      #   decompress_chunk (restamp)      blocked 1,984 s
-      #   UPDATE trades  x2 (restamp)     blocked 1,164 s
-      #   postgres_exporter scrapes x3    blocked   917 s
-      #   chunks_detailed_size (watcher)  blocked   904 s
-      #
-      # THE EXPORTER WAS IN THE CONVOY. Its scrape returned HTTP 000
-      # after 30 s and Prometheus logged `context deadline exceeded`,
-      # so for the whole window the alerting layer was blind — and any
-      # alert carried by postgres_exporter would have been blind with
-      # it. That is why this check lives HERE, in a probe with its own
-      # short-lived connection whose result reaches Prometheus through
-      # node_exporter's textfile collector: two independent processes,
-      # neither of which is the one that gets stuck.
+      # THE EXPORTER CAN BE IN THE CONVOY. Its scrape times out and
+      # Prometheus logs `context deadline exceeded`, so for the whole window
+      # the alerting layer is blind — and any alert carried by
+      # postgres_exporter is blind with it. That is why this check lives
+      # HERE, in a probe with its own short-lived connection whose result
+      # reaches Prometheus through node_exporter's textfile collector: two
+      # independent processes, neither of which is the one that gets stuck.
       #
       # And it is answerable from inside a convoy because it reads
       # nothing but shared memory. pg_stat_activity and
-      # pg_blocking_pids() take no lock on `trades`; the watcher that
-      # DID block was chunks_detailed_size, which calls
-      # pg_relation_size and therefore opens the chunk at
-      # AccessShareLock. Measured on the deployed pair (TimescaleDB
-      # 2.26.4 / PG 15) with a real convoy in place: this query
-      # answered in 7.5 ms while chunks_detailed_size was stuck.
+      # pg_blocking_pids() take no lock on `trades`; chunks_detailed_size
+      # does block, because it calls pg_relation_size and therefore opens
+      # the chunk at AccessShareLock. Measured on the deployed pair
+      # (TimescaleDB 2.26.4 / PG 15) with a real convoy in place: this query
+      # answers in ~7.5 ms while chunks_detailed_size is stuck.
       #
       # WHAT IT COUNTS, AND WHY NOT SIMPLY "BACKENDS WAITING". A long
       # decompress legitimately holds AccessExclusiveLock for up to
-      # ~1.5 h on the 159.7 GB chunk, and everything that reads that
+      # ~1.5 h on the largest chunk, and everything that reads that
       # chunk legitimately waits behind it. Alerting on "someone is
       # waiting" would fire on every healthy restamp, and an alert
       # that fires on every healthy run is one the operator stops
       # reading — the same blindness by another route.
       #
       # The convoy has a signature that a healthy hold does not: a
-      # backend blocked by a blocker that is ITSELF blocked. In the
-      # incident the exporter waited on the decompress, which was
-      # waiting on the aggregator — depth 2. Under a healthy decompress
-      # the waiters' blocker is RUNNING, so the count is zero. That is
-      # the whole predicate: a lock request that is pending behind
-      # another pending lock request.
+      # backend blocked by a blocker that is ITSELF blocked. The exporter
+      # waiting on the decompress, which waits on the aggregator, is
+      # depth 2. Under a healthy decompress the waiters' blocker is
+      # RUNNING, so the count is zero. That is the whole predicate: a lock
+      # request that is pending behind another pending lock request.
       #
       # q()'s statement_timeout bounds it, belt and braces: this query
       # must never be the thing that hangs the probe past TimeoutStartSec.
@@ -1657,11 +1605,11 @@
       #
       # Refuse rather than publish. A malformed file published is silent
       # (node_exporter drops it and only node_textfile_scrape_error moves,
-      # which is a metric nobody was watching on 2026-09-10); a file NOT
-      # published ages, and `time() - stellarindex_timescale_probe_last_
-      # run_unix` is precisely the arm of stellarindex_timescale_probe_
-      # degraded that notices. Exiting non-zero also fails the oneshot
-      # unit, which is a second, independent way for this to be seen.
+      # which is a metric nothing alerts on); a file NOT published ages,
+      # and `time() - stellarindex_timescale_probe_last_run_unix` is
+      # precisely the arm of stellarindex_timescale_probe_degraded that
+      # notices. Exiting non-zero also fails the oneshot unit, which is a
+      # second, independent way for this to be seen.
       if ! awk '
         /^[ \t]*$/ { next }
         /^#/ { next }
@@ -1741,8 +1689,8 @@
     state: started
     daemon_reload: true
   # check-mode: the unit install above is only simulated, so enabling a
-  # unit the host has never had fails the dry-run (2026-07-27 drift
-  # run). Real applies are unaffected.
+  # unit the host has never had fails the dry-run. Real applies are
+  # unaffected.
   when: not (ansible_check_mode and timescale_jobs_probe_units is changed)
 
 # ── Redirect the Debian collectors into the dir we actually read ───
@@ -1752,20 +1700,19 @@
 # /var/lib/prometheus/node-exporter — Debian's default textfile dir.
 # This host runs node_exporter with
 # --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
-# (see the ARGS above), so every one of those samples has been written
-# and thrown away: nvme_percentage_used_ratio,
+# (see the ARGS above), so without a redirect every one of those
+# samples is written and thrown away: nvme_percentage_used_ratio,
 # nvme_available_spare_ratio, nvme_media_errors_total,
-# apt_upgrades_pending and node_reboot_required all scrape 0 series.
+# apt_upgrades_pending and node_reboot_required would scrape 0 series.
 #
-# That is the same class of failure as the galexie probe writing to the
-# wrong dir in the 2026-07-08 incident, just inherited from the package
-# instead of written here — and it matters more than it looks: r1's
+# That is the same wrong-dir failure the galexie probe guards against,
+# inherited from the package — and it matters more than it looks: r1's
 # NVMe is not replaceable on demand, so drive wear and media errors are
 # exactly what we want a long lead time on.
 #
 # Fixed with systemd drop-ins rather than by editing the packaged units
 # (drop-ins survive package upgrades) and rather than by moving OUR
-# probes to Debian's dir (that would churn 8 working producers). The
+# probes to Debian's dir (that would churn every working producer). The
 # empty `ExecStart=` is required to clear the packaged value before
 # setting a new one.
 - name: Install prometheus-node-exporter-collectors Debian package

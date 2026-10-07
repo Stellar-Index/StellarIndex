@@ -1,25 +1,19 @@
 ---
-# Codifies the disk-fill prevention work that came out of incident
-# 2026-05-10-redis-writes-blocked-disk-full (root FS hit 100% with
-# 35 GB of stale logs; Redis BGSAVE blocked; aggregator VWAP cache
-# writes failed; /v1/price 404'd on every rewritten/triangulated
-# pair for ~9 hours).
+# Disk-fill prevention for the root FS. A full root blocks Redis
+# BGSAVE, which fails the aggregator's VWAP cache writes and 404s
+# /v1/price on every rewritten/triangulated pair.
 #
-# Two layered fixes, both applied here so a from-scratch r1 rebuild
+# Two layered caps, both applied here so a from-scratch rebuild
 # can't regress:
 #
 #   1. rsyslog logrotate drop-in: cap the live syslog at 100M with
-#      7-rotation history, gzip-compressed. Pre-fix, /var/log/syslog
-#      had grown to 8.6 GB and rotated-but-not-compressed copies
-#      had piled up.
+#      7-rotation history, gzip-compressed. Uncapped, /var/log/syslog
+#      grows to many GB and rotated-but-not-compressed copies pile up.
 #
-#   2. systemd-journald cap: SystemMaxUse=500M. Pre-fix the journal
-#      held 3.5 GB unbounded.
+#   2. systemd-journald cap: SystemMaxUse=500M. Uncapped, the journal
+#      grows to several GB.
 #
-# These map directly to the postmortem's open follow-ups (see
-# `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
-# under "Operational follow-ups" — items 1 and 4). The Prometheus
-# alerts on root-FS fill (deploy/monitoring/rules/storage.yml,
+# The Prometheus alerts on root-FS fill (deploy/monitoring/rules/storage.yml,
 # `stellarindex_node_root_disk_warning` + `_full`) catch the
 # downstream symptom; this task addresses the upstream cause so
 # the alert never has to fire in steady state.
@@ -32,8 +26,8 @@
     mode: "0644"
     content: |
       # Managed by ansible (archival-node role / 15-log-discipline.yml).
-      # Caps the live syslog + auth.log + kern.log family so the
-      # 2026-05-10 disk-fill incident class can't repeat.
+      # Caps the live syslog + auth.log + kern.log family so the root FS
+      # cannot fill with logs.
       #
       # `maxsize 100M` — rotate as soon as a file crosses 100 MB,
       #                  even mid-cycle. Without this the file
@@ -68,15 +62,13 @@
       /var/log/debug
       /var/log/messages
       {
-              # su directive (2026-08-05, root-disk-warning incident):
-              # /var/log is root:syslog group-writable on noble, and
-              # logrotate REFUSES group-writable parents unless told
-              # which user/group to rotate as — so this whole override
-              # was being SKIPPED with "insecure permissions" errors
-              # and the 100M maxsize cap never applied (syslog reached
-              # 2.6 GB). Stock Ubuntu ships `su root adm` in
-              # logrotate.conf for exactly this reason; a per-file
-              # override must repeat it.
+              # su directive: /var/log is root:syslog group-writable on noble,
+              # and logrotate REFUSES group-writable parents unless told
+              # which user/group to rotate as — without it this whole override
+              # is SKIPPED with "insecure permissions" errors and the 100M
+              # maxsize cap never applies. Stock Ubuntu ships `su root adm` in
+              # logrotate.conf for exactly this reason; a per-file override
+              # must repeat it.
               su root adm
               rotate 7
               daily
@@ -108,21 +100,19 @@
       #
       # Why: Loki single-binary mode at info-or-below logs ~4M
       # `caller=mock.go msg=Get key=collectors/...` lines per day —
-      # the same poll-loop noise that filled /var/log/syslog to 7 GB
-      # in 4 days on r1 (2026-05-13). The Loki config itself was
-      # also lowered to log_level=warn (configs/ansible/roles/loki/
+      # poll-loop noise that can fill /var/log/syslog by GBs within days.
+      # The Loki config itself sets log_level=warn (configs/ansible/roles/loki/
       # templates/loki-config.yaml.j2); this filter is the
       # belt-and-braces guarantee that an accidental log_level
-      # regression doesn't blow the disk again.
+      # regression doesn't blow the disk.
       if $programname == "loki" then stop
       # clickhouse-server: on a full root, CH's log rotation throws and
       # its async log channel wedges ("Cannot log message in
       # OwnAsyncSplitChannel"), spamming ~80k lines/min to journald →
       # rsyslog → /var/log/syslog and re-filling root in a self-
-      # sustaining loop (2026-06-11 recurrence of the 2026-05-10 class;
-      # crashed PG twice). CH's own log is also moved to ZFS below so
-      # the channel can't wedge; this filter keeps the journald flood
-      # off /var/log/syslog as belt-and-braces. journalctl -u
+      # sustaining loop that can crash Postgres. CH's own log is also moved
+      # to ZFS below so the channel can't wedge; this filter keeps the
+      # journald flood off /var/log/syslog as belt-and-braces. journalctl -u
       # clickhouse-server still has the messages.
       if $programname == "clickhouse-server" then stop
   notify:
@@ -146,23 +136,19 @@
     mode: "0644"
     content: |
       # Managed by ansible (archival-node role / 15-log-discipline.yml).
-      # Two policies, both informed by 2026-05-26 audit findings:
+      # Two policies:
       #
-      # 1) Storage cap (F-0001 / 2026-05-10 incident).
-      #    Pre-fix the journal was unbounded and consumed 3.5 GB of
-      #    /var/log on r1, contributing to the disk-fill incident.
-      #    500 MB matches the value the operator set manually during
-      #    recovery.
+      # 1) Storage cap. An unbounded journal grows to several GB of /var/log
+      #    and contributes to root-FS fill. 500 MB is enough local buffer;
+      #    Loki is the archive.
       #
-      # 2) Rate-limit bump (F-0031 — 2026-05-26 audit observed a 3 h
-      #    log gap on `journalctl -u stellarindex-indexer` despite the
-      #    indexer running continuously; startup logs were missing).
-      #    journald's default RateLimitBurst (10000 over 30 s) is hit
-      #    during the indexer's startup burst — dispatcher registration,
-      #    source connections, ledgerstream tier scan all log within
-      #    a few seconds. Once the burst limit hits, journald drops
-      #    messages for the remainder of the interval, producing the
-      #    audit's observed gap.
+      # 2) Rate-limit bump. journald's default RateLimitBurst (10000 over
+      #    30 s) is hit during the indexer's startup burst — dispatcher
+      #    registration, source connections, ledgerstream tier scan all log
+      #    within a few seconds. Once the burst limit hits, journald drops
+      #    messages for the remainder of the interval, leaving hours-long
+      #    gaps in `journalctl -u stellarindex-indexer` with startup logs
+      #    missing.
       #    50000-over-10s is generous enough to never legitimately
       #    drop messages from our binaries while still throttling
       #    pathological flood scenarios (e.g. a log loop bug). The
@@ -175,20 +161,16 @@
       # final guardrail above SystemMaxUse).
       SystemKeepFree=300M
       # MaxRetentionSec is an explicit UPPER BOUND on how long any
-      # journal entry may live (#346 F5). It is a no-op on volume today
-      # — Caddy's access-log volume hits SystemMaxUse first, giving an
+      # journal entry may live. It is usually a no-op on volume —
+      # Caddy's access-log volume hits SystemMaxUse first, giving an
       # effective retention of roughly TEN HOURS on r1 — but it makes
       # "we keep logs for at most N" a property of the configuration
       # rather than a coincidence of current traffic. Without it, a drop
       # in request volume silently EXTENDS retention and the privacy
       # page would be claiming something nothing enforces.
       #
-      # 14 days, not a month: r1 was already running 14d via a
-      # hand-written drop-in (size-limit.conf, root, 2026-05-10) that
-      # sorts AFTER this file and therefore won. Rather than loosen the
-      # live ceiling to match a codified value, the codified value
-      # adopts the tighter live one and the stray file is removed below,
-      # so ansible is authoritative and the two can never disagree again.
+      # 14 days, not a month: the tighter of the two candidate ceilings,
+      # so codifying it never loosens what the host already enforced.
       #
       # The BINDING number for anything PUBLISHED is Loki's
       # retention_period (720h / 30 days, configs/loki/loki.r1.yml) —
@@ -197,21 +179,21 @@
       # Carried over from the same stray file so removing it changes
       # nothing about the running configuration.
       SystemMaxFileSize=50M
-      # Rate-limit override (F-0031 closure).
+      # Rate-limit override.
       RateLimitIntervalSec=10s
       RateLimitBurst=50000
   notify:
     - Restart systemd-journald
   tags: [log-discipline, journald]
 
-# The drop-in above supersedes a hand-written one that predates it
-# (/etc/systemd/journald.conf.d/size-limit.conf, root-owned, created
-# 2026-05-10). It sorted lexically AFTER 00-cap.conf, so ITS values won
-# — the applied-but-never-codified case, the mirror image of the usual
+# The drop-in above supersedes a hand-written one
+# (/etc/systemd/journald.conf.d/size-limit.conf, root-owned). It sorts
+# lexically AFTER 00-cap.conf, so ITS values would win — the
+# applied-but-never-codified case, the mirror image of the usual
 # codified-but-never-applied drift. Every setting it carried
-# (SystemMaxUse, SystemMaxFileSize, MaxRetentionSec) is now in the
+# (SystemMaxUse, SystemMaxFileSize, MaxRetentionSec) is in the
 # managed file at the same or tighter value, so removing it is a no-op
-# on behaviour and makes ansible the single authority (#346 F5).
+# on behaviour and makes ansible the single authority.
 - name: Remove the superseded hand-written journald drop-in
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d/size-limit.conf
@@ -221,8 +203,7 @@
   tags: [log-discipline, journald]
 
 - name: Install /etc/logrotate.d/stellarindex
-  # Wave-2 fix for F-0009/F-0015 from 2026-05-26 audit. Rotates
-  # /var/log/stellarindex/*.log weekly + on 500M size. Uses
+  # Rotates /var/log/stellarindex/*.log weekly + on 500M size. Uses
   # copytruncate so long-running stellarindex-ops processes
   # (backfill/replay) holding open FDs don't end up writing to the
   # renamed file forever.
@@ -251,13 +232,13 @@
 # There are EIGHT of them; scripts/ci/ansible-clickhouse-host-gate-test.sh
 # re-derives the set from this file, so a ninth cannot be added ungated.
 - name: Ensure ClickHouse log directory exists on the ZFS pool
-  # 2026-06-11 incident. CH's <log> defaulted to /var/log/clickhouse-server
-  # on the 49 GB root (1000M x 10 rotation). On a full root the rotation
-  # throws and the async log channel wedges ("Cannot log message in
-  # OwnAsyncSplitChannel"), spamming ~80k lines/min and re-filling root in a
-  # self-sustaining loop that crashed PG twice. /var/lib/clickhouse is the
-  # 9 TB ZFS pool, which never fills — moving CH's logs there removes the
-  # failure mode at the source.
+  # CH's <log> defaults to /var/log/clickhouse-server on the 49 GB root
+  # (1000M x 10 rotation). On a full root the rotation throws and the
+  # async log channel wedges ("Cannot log message in
+  # OwnAsyncSplitChannel"), spamming ~80k lines/min and re-filling root in
+  # a self-sustaining loop that can crash Postgres. /var/lib/clickhouse is
+  # the 9 TB ZFS pool, which never fills — moving CH's logs there removes
+  # the failure mode at the source.
   ansible.builtin.file:
     path: /var/lib/clickhouse/logs
     state: directory
@@ -289,12 +270,11 @@
   when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [log-discipline, clickhouse]
 
-# ─── Redis memory cap (2026-06-16 incident-sweep fix, codified
-# 2026-07-03 during the r1↔ansible drift audit) ──────────────────────
+# ─── Redis memory cap ────────────────────────────────────────────────
 # r1 runs the Debian-packaged redis-server (the redis-sentinel role is
-# the future HA-cluster shape, NOT applied to archival nodes). The
-# incident sweep set maxmemory by hand; without codification a rebuild
-# ships an uncapped Redis that can eat the host under cache pressure.
+# the future HA-cluster shape, NOT applied to archival nodes). Without
+# this cap a rebuild ships an uncapped Redis that can eat the host under
+# cache pressure.
 - name: Cap Redis memory (Debian-packaged redis on the archival node)
   ansible.builtin.lineinfile:
     path: /etc/redis/redis.conf
@@ -304,15 +284,15 @@
     - Restart redis
   tags: [log-discipline, redis]
 
-# T611: maxmemory alone leaves maxmemory-policy at the packaged
+# maxmemory alone leaves maxmemory-policy at the packaged
 # default (noeviction) implicitly — a rebuild that changes Debian's
 # shipped default silently changes eviction behavior. Pin it
 # explicitly. noeviction (not allkeys-lru) is deliberate: this
 # instance also holds the `apikey:` credential records (see
 # redis-sentinel/defaults/main.yml), and allkeys-lru would evict an
-# unrecoverable key under memory pressure (GH #1317, open) instead of
-# rejecting the write with OOM — a rejected write is loud and
-# recoverable, a silently evicted credential is not.
+# unrecoverable key under memory pressure instead of rejecting the
+# write with OOM — a rejected write is loud and recoverable, a
+# silently evicted credential is not.
 - name: Pin Redis eviction policy (Debian-packaged redis on the archival node)
   ansible.builtin.lineinfile:
     path: /etc/redis/redis.conf
@@ -322,8 +302,7 @@
     - Restart redis
   tags: [log-discipline, redis]
 
-# ─── nft-drop log routing (hand-applied 2026-06-30, codified 2026-07-03
-# in the drift audit) ────────────────────────────────────────────────
+# ─── nft-drop log routing ────────────────────────────────────────────
 # Firewall drop logs go to their own small rotated file instead of
 # /var/log/syslog — the security record is preserved but syslog stays
 # readable and the root FS stays bounded (same class of guard as the
@@ -360,10 +339,10 @@
       }
   tags: [log-discipline, firewall]
 
-# ─── config-assertions watchdog (2026-07-03 drift audit) ─────────────
+# ─── config-assertions watchdog ──────────────────────────────────────
 # Hourly content-assertions over the load-bearing guard configs; the
 # textfile gauge feeds stellarindex_config_assertion_failed. A rebuild
-# without this ships a host whose incident fixes can silently regress.
+# without this ships a host whose guards can silently regress.
 - name: Install config-assertions script
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../scripts/ops/config-assertions.sh"
@@ -398,17 +377,16 @@
   tags: [log-discipline, config-assertions]
 
 - name: ClickHouse server tuning drop-in (formerly hand-managed)
-  # zz-ratesengine.xml predates ansible management (old-brand name
-  # kept: renaming needs a coordinated restart; the file is loaded by
-  # name-sort so the prefix matters). max_server_memory_usage history:
-  # 64G (pre-lake conservatism) -> 96G CRASHED under
-  # vm.overcommit_memory=2 (commit budget: swap 16G + 80% x 188G;
-  # CH's startup mmaps overshot) -> 72G stable (2026-07-08). The
-  # completeness reconcile needs real headroom, but the binding
-  # constraint is the KERNEL commit budget, not RAM. r1 default = 72G;
-  # small test-net VMs override clickhouse_max_server_memory_usage_bytes
-  # DOWN (e.g. 4G) so CH can't starve the 20 GB VM (its default cap is
-  # 90% of RAM, and even the commit — not the RSS — crowds out the API).
+  # zz-ratesengine.xml keeps its old-brand name: renaming needs a
+  # coordinated restart, and the file is loaded by name-sort so the
+  # prefix matters. max_server_memory_usage: 96G crashes under
+  # vm.overcommit_memory=2 (commit budget: swap 16G + 80% x 188G; CH's
+  # startup mmaps overshoot), 72G is stable. The completeness reconcile
+  # needs real headroom, but the binding constraint is the KERNEL commit
+  # budget, not RAM. r1 default = 72G; small test-net VMs override
+  # clickhouse_max_server_memory_usage_bytes DOWN (e.g. 4G) so CH can't
+  # starve the 20 GB VM (its default cap is 90% of RAM, and even the
+  # commit — not the RSS — crowds out the API).
   ansible.builtin.copy:
     dest: /etc/clickhouse-server/config.d/zz-ratesengine.xml
     owner: clickhouse
@@ -428,7 +406,7 @@
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse CLIENT port drop-in (must match the server tcp_port above)
-  # The server moved its native port to 9300 because MinIO owns 9000 on
+  # The server's native port is 9300 because MinIO owns 9000 on
   # this box (minio binds 127.0.0.1:9000, [::1]:9000 AND *:9000). The
   # client's compiled-in default is still 9000 — so a bare
   # `clickhouse-client` opens a TCP connection to MinIO's S3 API, sends
@@ -438,8 +416,7 @@
   # error, it HANGS FOREVER. An operator following any runbook that says
   # "run clickhouse-client" gets a dead terminal at the exact moment they
   # are trying to diagnose an incident, with nothing in any log to say
-  # why. (Cost ~15 minutes of a live investigation on 2026-07-25, which
-  # is how this was found — the box was healthy the whole time.)
+  # why.
   #
   # ROOT-ELEMENT GOTCHA, the reason this needs ansible rather than a
   # one-off file: a drop-in is only merged when its root element matches
@@ -447,10 +424,8 @@
   # is rooted at <clickhouse>, but the packaged
   # /etc/clickhouse-client/config.xml is rooted at <config>. A
   # hand-written <clickhouse>-rooted client drop-in is parsed, ignored,
-  # and reported nowhere — which is exactly the state this box was in:
-  # the correct port had been sitting in zz-port.xml since 2026-06-05
-  # doing nothing. Keep this <config>-rooted, and do not "fix" it to
-  # match the server drop-in above.
+  # and reported nowhere. Keep this <config>-rooted, and do not "fix" it
+  # to match the server drop-in above.
   ansible.builtin.copy:
     dest: /etc/clickhouse-client/config.d/zz-port.xml
     owner: root
@@ -478,18 +453,18 @@
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse merge-memory guard drop-in
-  # 2026-07-09 incident: the contract_events_daily uniqExact(UInt128)
-  # merge's allocation exceeded the KERNEL COMMIT BUDGET
-  # (vm.overcommit_memory=2 — see the tuning drop-in above) and failed
-  # with an allocator ErrnoException inside AggregatingSortedAlgorithm;
-  # the background executor retried in a loop, each attempt starving
-  # queries + the live sink until the server was effectively wedged.
+  # A merge whose allocation exceeds the KERNEL COMMIT BUDGET
+  # (vm.overcommit_memory=2 — see the tuning drop-in above) fails with an
+  # allocator ErrnoException (e.g. contract_events_daily's
+  # uniqExact(UInt128) state inside AggregatingSortedAlgorithm); the
+  # background executor retries in a loop, each attempt starving
+  # queries + the live sink until the server is effectively wedged.
   # This soft limit makes an oversized merge ABORT CLEANLY
   # (MEMORY_LIMIT_EXCEEDED) instead of exhausting the commit budget.
   # It does NOT fix that table's merge — that is parked persistently
   # via ALTER TABLE stellar.contract_events_daily MODIFY SETTING
   # max_bytes_to_merge_at_max_space_in_pool = 1 until the MV's
-  # uniqExact state is redesigned (tracked in notes/ROADMAP.md).
+  # uniqExact state is redesigned.
   ansible.builtin.copy:
     dest: /etc/clickhouse-server/config.d/zz-merge-memory-guard.xml
     owner: clickhouse
@@ -504,13 +479,13 @@
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse default-profile max_query_size raise (users.d drop-in)
-  # 2026-07-29: `supply seed-sac-balances -full-history` failed with
-  # "Max query size exceeded" — ClassifyTTLLiveness batches 5,000
-  # unhex('<64-hex>') keys per IN-list (~350 KiB of query TEXT), over
-  # the 256 KiB default parse cap. 4 MiB caps only the query text a
-  # client may send (a parse-stage bound), not memory/rows/execution —
+  # `supply seed-sac-balances -full-history` needs this:
+  # ClassifyTTLLiveness batches 5,000 unhex('<64-hex>') keys per IN-list
+  # (~350 KiB of query TEXT), over the 256 KiB default parse cap, which
+  # fails with "Max query size exceeded". 4 MiB caps only the query text
+  # a client may send (a parse-stage bound), not memory/rows/execution —
   # raising it carries no resource-limit risk. users.d hot-reloads; no
-  # restart needed. Applied live on r1 the same day (drift-clean).
+  # restart needed.
   ansible.builtin.copy:
     dest: /etc/clickhouse-server/users.d/zz-max-query-size.xml
     owner: clickhouse
@@ -575,8 +550,7 @@
   tags: [clickhouse, log-discipline]
 
 - name: Stop rsyslog duplicating stellarindex unit logs into /var/log/syslog
-  # 2026-08-05 (stellarindex_node_root_disk_warning at 81%): the API's
-  # per-request JSON access log alone writes ~2.5 GB/day into
+  # The API's per-request JSON access log alone writes ~2.5 GB/day into
   # /var/log/syslog — a straight DUPLICATE of what journald (capped at
   # 500M above) and Loki already hold. The logrotate maxsize cap above
   # can't help intra-day: Ubuntu's logrotate.timer is daily, so maxsize
@@ -593,34 +567,27 @@
     content: |
       # Managed by ansible (archival-node role / 15-log-discipline.yml).
       # stellarindex-* unit output is journald+Loki-only; writing it to
-      # /var/log/syslog too duplicated ~2.5 GB/day onto the root FS
-      # (2026-08-05 root-disk-warning incident).
+      # /var/log/syslog too would duplicate ~2.5 GB/day onto the root FS.
       if $programname startswith "stellarindex-" then stop
   notify: Reload rsyslog
 
-# ─── Postgres server log: an intra-day size cap (2026-09-10) ─────────
-# The third root-disk-warning incident in this file's history, and the
-# first one this role did not already cover. Everything above bounds
-# journald (500M), the syslog family, ClickHouse's system.*_log tables
-# (14-day TTL) and /var/log/stellarindex — but NOTHING bounded
-# /var/log/postgresql, which is on the root filesystem.
+# ─── Postgres server log: an intra-day size cap ──────────────────────
+# Everything above bounds journald (500M), the syslog family,
+# ClickHouse's system.*_log tables (14-day TTL) and /var/log/stellarindex;
+# this bounds /var/log/postgresql, which is also on the root filesystem.
 #
-# WHAT HAPPENED. `log_min_duration_statement = 1000` logs every
+# WHY IT GROWS. `log_min_duration_statement = 1000` logs every
 # statement slower than a second, which is the right setting in steady
 # state and the wrong one during heavy maintenance — because heavy
 # maintenance is precisely what makes ordinary statements slow. A
-# usd_volume restamp campaign drove the live server log to 2.86 GB with
-# a 1.88 GB uncompressed predecessor beside it (delaycompress), 4.74 GB
-# of a 49 GB root filesystem, and tripped the 81% warning. Steady-state
-# growth is ~17 MiB/day; under the campaign it was ~2.8 GB/day, roughly
-# 170x.
+# restamp campaign can drive the log at ~2.8 GB/day against ~17 MiB/day
+# steady state, roughly 170x, enough to trip the root-disk warning on a
+# 49 GB root.
 #
-# WHY THE EXISTING CAP DID NOT SAVE IT — the same trap this file already
-# documents for syslog, one section down. r1's /etc/logrotate.d/
-# postgresql-common carried a hand-added `maxsize 500M`, and the file still
-# reached 2.86 GB, because `maxsize` is only evaluated when logrotate RUNS
-# and Ubuntu's logrotate.timer is `OnCalendar=daily`. A daily cap cannot
-# bound a file that gains 2.8 GB in a day.
+# WHY A `maxsize` IN /etc/logrotate.d IS NOT ENOUGH — the same trap this
+# file documents for syslog. `maxsize` is only evaluated when logrotate
+# RUNS, and Ubuntu's logrotate.timer is `OnCalendar=daily`. A daily cap
+# cannot bound a file that gains 2.8 GB in a day.
 #
 # SO THE FIX IS CADENCE PLUS A CAP THE ROLE OWNS. The stock dpkg conffile
 # has no `maxsize` at all (weekly, rotate 10, copytruncate, compress +
@@ -632,9 +599,8 @@
 #
 # copytruncate is what makes this safe against a running server: it
 # copies then truncates in place, so postgres keeps writing to the same
-# inode and needs no reopen, no HUP and no restart. Verified live on
-# 2026-09-10 — inode unchanged across two forced rotations, and the
-# server was still appending 25 s later.
+# inode and needs no reopen, no HUP and no restart (verified live: inode
+# unchanged across forced rotations, server still appending after).
 - name: Install the size-capped Postgres logrotate policy
   ansible.builtin.copy:
     src: pg-logrotate.conf
