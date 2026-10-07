@@ -48,7 +48,7 @@ func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entity
 	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
 }
 
-// TestHandleChangeSummary_ResolvesXLMSACForm is the C4-015 proven-red
+// TestHandleChangeSummary_ResolvesXLMSACForm is the proven-red
 // guard: when the change-summary worker has written the XLM rollup
 // only under the SAC C-address (a Soroban-sourced row), a caller
 // asking for /v1/changes/coin/native must still resolve it. Without the SAC form
@@ -394,7 +394,7 @@ func TestHandleChangeSummary_StaleFlag(t *testing.T) {
 	}
 }
 
-// TestChangeSummary_MoneyFieldsAreJSONStrings is the M7 (INV-2) guard: the
+// TestChangeSummary_MoneyFieldsAreJSONStrings is the money-as-string guard: the
 // /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
 // (like every other money field the API serves), while the *_delta_pct
 // PERCENTAGE fields stay JSON numbers. The stub feeds the rollup's exact

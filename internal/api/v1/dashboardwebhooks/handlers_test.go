@@ -633,7 +633,7 @@ func TestHandleUpdate_RejectsBadURL(t *testing.T) {
 	}
 }
 
-// TestHandleUpdate_RejectsEmptyName pins T154: PATCHing an empty (or
+// TestHandleUpdate_RejectsEmptyName pins the behaviour: PATCHing an empty (or
 // whitespace-only) name must 400, matching the create path's
 // validation, instead of silently writing an empty name.
 func TestHandleUpdate_RejectsEmptyName(t *testing.T) {
@@ -673,7 +673,7 @@ func (s *failGetStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.C
 	return s.fakeStore.GetWebhook(ctx, id)
 }
 
-// TestHandleUpdate_ReloadFailureReturns500 pins T155: when the
+// TestHandleUpdate_ReloadFailureReturns500 pins the behaviour: when the
 // post-update GetWebhook reload fails, the handler must surface a
 // 500, not silently write 200 with a zero-value DTO.
 func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {
@@ -708,7 +708,7 @@ func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {
 	}
 }
 
-// TestHandleListDeliveries_ZeroTimestampsOmitted pins T153: a
+// TestHandleListDeliveries_ZeroTimestampsOmitted pins the behaviour: a
 // delivery row with no scheduled retry and no delivery yet must
 // genuinely omit next_attempt_at/delivered_at, not serialize the
 // year-1 zero timestamp (omitempty is a no-op on a struct-typed

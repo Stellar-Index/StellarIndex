@@ -335,7 +335,7 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 }
 
 // TestAccountKeysCreate_ScopedCallerEmptyRequestInherits proves the
-// delegation clamp (finding F-B): a caller narrowed to ["account"]
+// delegation clamp: a caller narrowed to ["account"]
 // that omits the scopes field must NOT mint a full-access (empty
 // scope) key — the child inherits the caller's own scopes instead, so
 // the narrowed key cannot mint an unrestricted sibling and escape its
@@ -390,7 +390,7 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 	}, store)
 
 	// The subject is operator-tier, so the admin-write X-Reason contract
-	// applies (api-security-1); supply it so this test keeps exercising
+	// applies; supply it so this test keeps exercising
 	// the scope clamp rather than the reason gate.
 	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "scope clamp test", `{"label":"x","scopes":["admin"]}`)
 	if resp.StatusCode != http.StatusForbidden {
@@ -835,8 +835,7 @@ func TestAccountUsage_RollupEmptyFallsBack(t *testing.T) {
 // a user who never verified their email or never logged in must render
 // as an ABSENT field on the wire, not the zero instant serialized as a
 // literal string, which the SDK's *time.Time side would happily
-// unmarshal into a non-nil pointer indistinguishable from a real time
-// (T531).
+// unmarshal into a non-nil pointer indistinguishable from a real time.
 func TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing(t *testing.T) {
 	u := v1.AccountUser{ID: "usr_1", Email: "new@example.com"}
 	body, err := json.Marshal(u)

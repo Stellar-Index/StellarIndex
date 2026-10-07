@@ -14,9 +14,8 @@ import (
 // Every reference_valuation on /v1/rwa/assets is circulating_supply
 // multiplied by an oracle price, so the completeness of the supply is half
 // of every total this surface publishes. The row served the supply and
-// nothing else: no basis, no floor marker — verified against production on
-// 2026-09-15, where a BENJI row came back with exactly two supply-adjacent
-// keys, `basis` (the MEMBERSHIP basis) and `circulating_supply`.
+// nothing else: no basis, no floor marker — as in production, where a BENJI
+// row came back with exactly two supply-adjacent keys, `basis` (the MEMBERSHIP basis) and `circulating_supply`.
 //
 // These tests drive the production fills and then the production
 // projection, because the defect was not in the reading. The reading names
@@ -25,7 +24,7 @@ import (
 
 // TestRWARowDeclaresTheTrustlineFallbackAsAFloor runs the RWA fill over an
 // asset the lake cannot answer for. That is a reachable degraded state
-// rather than a hypothetical: measured on r1 2026-09-12, ~19h after the
+// rather than a hypothetical: on r1, ~19h after the
 // last request had warmed the lake cache, the listing served PYUSD at
 // 3,149,454 against a lake total of 11,778,001 and XRF at 21,895,149
 // against 118,333,629.

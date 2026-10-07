@@ -16,16 +16,16 @@ import (
 )
 
 // These tests pin the two cap67 merge-boundary defects on
-// GET /v1/accounts/{g}/movements (audit-2026-08-14):
+// GET /v1/accounts/{g}/movements:
 //
-//   - W1-chrollup-1 (HIGH): a cap67 watermark READ ERROR must not disable
+//   - a cap67 watermark READ ERROR must not disable
 //     the ClickHouse ceiling. The old code set wm=0 on error and guarded
 //     the CH trim with `if wm > 0`, so a populated cap67 archive was served
 //     untrimmed across the whole post-P23 range AND the Postgres tail
 //     served the same watched-token transfers — every post-P23 movement
 //     double-listed. The fix fails closed to the static P23 boundary.
 //
-//   - W1-chrollup-2 (MED): the CH/PG split must not move under a paginated
+//   - the CH/PG split must not move under a paginated
 //     scroll. The watermark that produced page 1 is pinned into the cursor
 //     and reused on continuation pages; otherwise a mid-session derive
 //     advance re-reads a higher live watermark, moving the boundary and
@@ -43,7 +43,7 @@ type movementsArmReader struct {
 	chRows                 []clickhouse.AccountMovementRow
 
 	// gotFilter is the filter the handler actually passed to the CH arm
-	// — the seam F055's ceiling travels through.
+	// — the seam the ceiling travels through.
 	gotFilter clickhouse.AccountMovementFilter
 }
 
@@ -58,7 +58,7 @@ func (r *movementsArmReader) Cap67SupplyCoverage(context.Context) (uint32, uint3
 func (r *movementsArmReader) AccountMovements(ctx context.Context, _ string, limit int, _ clickhouse.AccountMovementCursor, f clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
 	r.probe.record(ctx)
 	r.gotFilter = f
-	// Model the real reader's SQL semantics (F055): the ledger ceiling
+	// Model the real reader's SQL semantics: the ledger ceiling
 	// is a WHERE predicate applied BEFORE the LIMIT, so a fixture row
 	// above filter.MaxLedger is never returned at all. A fake that
 	// ignored the filter would let a post-read trim in the handler look
@@ -118,7 +118,7 @@ func callMovements(t *testing.T, reader ExplorerReader, tail SEP41MovementsReade
 }
 
 // TestAccountMovements_WatermarkReadError_DoesNotDoubleServe pins
-// W1-chrollup-1: on a cap67 watermark read error with a POPULATED archive,
+// that on a cap67 watermark read error with a POPULATED archive,
 // the CH arm must be clamped to the static P23 boundary so its post-P23
 // cap67_derived rows are NOT served alongside the Postgres tail's identical
 // watched-token rows. Against the un-fixed code (wm=0 disables the CH trim)
@@ -172,7 +172,7 @@ func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_PaginationPinsWatermark pins W1-chrollup-2: a
+// TestAccountMovements_PaginationPinsWatermark pins the behaviour: a
 // continuation page must reuse the watermark pinned into the cursor by
 // page 1, NOT the live (advanced) watermark. Against the un-fixed code the
 // handler re-reads the live watermark, moving the CH ceiling up and making

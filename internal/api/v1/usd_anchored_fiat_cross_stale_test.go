@@ -9,7 +9,7 @@ import (
 )
 
 // TestPriceUSDAnchoredFiatCrossRejectsStaleTickerEvenWithFreshSnapshot —
-// T670. The snapshot's own PublishedAt is fresh here; only the BRL
+// The snapshot's own PublishedAt is fresh here; only the BRL
 // ticker's own UpdatedAt is 77h stale. Proves [Server.fxCrossMaxAge]
 // gates on the OLDER of the two (the same held-rate rule
 // [tryFiatCrossRate] applies), not just the snapshot's publication

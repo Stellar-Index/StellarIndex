@@ -90,7 +90,7 @@ func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool)
 // an attacker walking known asset_ids would add a permanent ~1-4 KB entry
 // per distinct id — TTL-expiry only checks freshness at READ time and
 // never removes anything — climbing resident memory to hundreds of MB / a
-// slow OOM on a long-lived API instance (audit W6-perf-1). Every sibling
+// slow OOM on a long-lived API instance. Every sibling
 // response cache is bounded (accountStateCacheMax=4096, assetHoldersCacheMax
 // =512); this makes the asset-detail cache match. The verified-currency set
 // + native + the realistic exotic-classic tail sits well under the cap; it

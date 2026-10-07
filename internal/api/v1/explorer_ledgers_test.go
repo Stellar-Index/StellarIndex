@@ -564,7 +564,7 @@ func TestExplorer_LedgerTransactions(t *testing.T) {
 	}
 }
 
-// TestExplorer_LedgerTransactions_Truncated pins the T172 fix: when a
+// TestExplorer_LedgerTransactions_Truncated pins the behaviour: when a
 // ledger's header reports more transactions than the page-size cap
 // returned, the response must say so — the caller would otherwise have no way
 // to distinguish a genuinely short ledger from a silently truncated one.

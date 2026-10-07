@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// K033 — the money leg, on the surface a client actually lands on.
+// The money leg, on the surface a client actually lands on.
 //
 // A SEP-1 fiat anchor codes its deposit token with the ISO code of the
 // currency it denominates (`anchor_asset_type: fiat`, `anchor_asset:

@@ -222,7 +222,7 @@ func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 }
 
 // TestLendingPoolReserves_AssetsTimeoutReturns503 and its sibling below
-// pin C-F2: the reserves handler's 15s ceiling must surface as a
+// pin the behaviour: the reserves handler's 15s ceiling must surface as a
 // RETRYABLE 503 + `lending-timeout`, exactly like handleLendingPools in
 // the same file already does — not a 500.
 //

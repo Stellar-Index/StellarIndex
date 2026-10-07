@@ -250,7 +250,7 @@ func TestOperationsDirectory_CursorPageBypassesTheCache(t *testing.T) {
 	}
 }
 
-// K053: two DIFFERENT accepted `?limit=` values on the first page must share
+// Two DIFFERENT accepted `?limit=` values on the first page must share
 // ONE warm cache entry, not mint an independent lake read (and cache slot)
 // per limit. If opsDirCache keyed strictly by the requested limit, so
 // a caller sweeping ?limit=50..200 would buy a fresh lake read for every value.
@@ -281,7 +281,7 @@ func TestOperationsDirectory_DifferentLimitsShareOneCacheEntry(t *testing.T) {
 	}
 }
 
-// K053: sliceOperationsView must recompute NextCursor from the RETAINED
+// sliceOperationsView must recompute NextCursor from the RETAINED
 // rows' own identity, not reuse the ceiling page's cursor — reusing it
 // would skip every row between the requested limit and the ceiling.
 func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
@@ -308,7 +308,7 @@ func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
 	}
 }
 
-// F062: a NEVER-COMPUTED cache (cold path) must single-flight, exactly like
+// A NEVER-COMPUTED cache (cold path) must single-flight, exactly like
 // the stale-entry path already does. If operationsDirectory's cold
 // branch fell through to an inline `buildOperationsDirectory` call bound to
 // EACH request's own context — so a burst of concurrent first-page
@@ -328,7 +328,7 @@ func TestOperationsDirectory_ColdCacheSingleFlightsConcurrentFirstPageRequests(t
 
 	// Concurrent first-page requests — the real-world shape is a caller
 	// sweeping `?limit=` before the cache has ever filled; each accepted
-	// value slices the SAME warm entry (K053), so they must also share the
+	// value slices the SAME warm entry, so they must also share the
 	// one read that fills it.
 	const n = 5
 	var wg sync.WaitGroup

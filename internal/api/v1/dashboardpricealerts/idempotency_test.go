@@ -10,7 +10,7 @@ import (
 )
 
 // TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering proves
-// T284: a client that retries POST /v1/dashboard/price-alerts with
+// that a client that retries POST /v1/dashboard/price-alerts with
 // the same Idempotency-Key header (e.g. after a timed-out response)
 // gets the ORIGINAL alert replayed, not a second alert registered.
 // Routed through h.Mount so the idempotency middleware wired there is

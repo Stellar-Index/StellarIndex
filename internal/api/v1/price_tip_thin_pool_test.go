@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The thin-pool third-alias shape (launch-plan D7, C4-012/13) on
+// The thin-pool third-alias shape on
 // /v1/price/tip — the one served-price surface that MERGES trades across
 // alias forms rather than taking the first form that answers.
 //

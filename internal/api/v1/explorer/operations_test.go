@@ -41,7 +41,7 @@ func TestOpsDirCache(t *testing.T) {
 		t.Error("entry carries no fill time — the served as_of would be a lie")
 	}
 
-	// ONE entry serves every limit (K053): the cache itself is limit-
+	// ONE entry serves every limit: the cache itself is limit-
 	// agnostic now — slicing to the caller's requested limit is the
 	// handler's job (sliceOperationsView), not this cache's.
 	e2, ok, _ := c.get()

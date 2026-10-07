@@ -335,7 +335,7 @@ func TestUsageTracker_UnmatchedRouteBuckets(t *testing.T) {
 // ahead of the gate, obs.CaptureRoute never runs (the mux is never
 // reached) and endpointFamily() had no route information left — every
 // production 429 landed under "unmatched" instead of its real
-// endpoint (Q177).
+// endpoint.
 func TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

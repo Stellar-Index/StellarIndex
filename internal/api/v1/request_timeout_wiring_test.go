@@ -76,7 +76,7 @@ func TestRequestTimeout_BoundsReachDBSeam(t *testing.T) {
 // This hits /v1/price/tip rather than /v1/vwap: handlePriceTip calls
 // s.computeTip(r.Context(), ...) straight through to TradesInRange with
 // no per-handler context.WithTimeout anywhere in that path (unlike
-// /v1/vwap's own 8s wrap, which used to satisfy this assertion whether
+// /v1/vwap's own 8s wrap, which would satisfy this assertion whether
 // or not defaultRequestTimeout was ever installed — replacing
 // durationOr(opts.RequestTimeout, defaultRequestTimeout) with
 // opts.RequestTimeout left this test green with the middleware never

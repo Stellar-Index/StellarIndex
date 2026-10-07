@@ -125,7 +125,7 @@ func TestAccountMovements_PinBelowFloorDoesNotHidePreP23Archive(t *testing.T) {
 }
 
 // TestAccountMovements_ValidPinStillHonoured: a pin at or below the live
-// boundary is the legitimate case and keeps working (W1-chrollup-2).
+// boundary is the legitimate case and keeps working.
 func TestAccountMovements_ValidPinStillHonoured(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	reader := &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}, wm: base + 1300}

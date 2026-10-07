@@ -6,7 +6,7 @@ import (
 )
 
 // The public status page renders "Active sources: N / M" from these two
-// queries. On 2026-09-01 it read **26 / 25** — a numerator larger than
+// queries. A bug once rendered **26 / 25** — a numerator larger than
 // its own denominator.
 //
 // Two independent faults produced that, and both are pinned here.

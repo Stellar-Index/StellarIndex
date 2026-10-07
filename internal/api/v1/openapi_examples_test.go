@@ -16,7 +16,7 @@ import (
 // `quote` / `asset_ids` parameter example is a value the canonical
 // asset parser actually accepts.
 //
-// Why this exists: 2026-05-08 the user reported every Scalar
+// Why this exists: a user reported every Scalar
 // default test request returning 400 Bad Request — examples in the
 // spec used short symbols like `USDC` / `XLM` that the
 // canonical-asset validator rejects. The fix updated the examples;

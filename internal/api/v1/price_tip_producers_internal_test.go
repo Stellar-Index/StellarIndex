@@ -269,7 +269,7 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 }
 
 // TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected
-// is the Q164 regression.
+// is the regression.
 //
 // worker.Recover stops a panicking compute loop's goroutine without
 // releasing the registry entry: refs stays whatever it was, since

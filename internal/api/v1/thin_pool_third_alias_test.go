@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The thin-pool third-alias shape (launch-plan D7, C4-012/13), pinned on
+// The thin-pool third-alias shape, pinned on
 // /v1/price — the surface that publishes "the price of X is P".
 //
 // Every classic asset with a configured SAC wrapper has two markets that

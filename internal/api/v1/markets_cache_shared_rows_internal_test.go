@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Findings F014 / K038, cache half: CachedMarketsReader owns the
+// Cache half: CachedMarketsReader owns the
 // immutability of what it stores. Each of fetchPairs' / fetchPools' four
 // serving branches — (C) cold leader, (A) fresh hit, (A') stale-while-
 // revalidate, (B) cold waiter — must hand the caller rows it can scribble

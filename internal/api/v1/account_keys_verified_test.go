@@ -22,7 +22,7 @@ func postJSONNoReason(t *testing.T, url, body string) *http.Response {
 	return resp
 }
 
-// api-security-2 (audit 2026-08-28): with SignupRequireEmailVerification
+// With SignupRequireEmailVerification
 // on (the default), a verified /v1/signup customer who rotated via
 // POST /v1/account/keys got a child record with Identifier signup-<hash>
 // and ZERO EmailVerifiedAt — RequireEmailVerified then 403'd that child

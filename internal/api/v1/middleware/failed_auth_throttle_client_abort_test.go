@@ -15,7 +15,7 @@ import (
 )
 
 // TestAuth_FailedAuthThrottle_ClientAbortsDoNotArmFailClosed pins the
-// Q153 hazard on the failed-auth (credential-stuffing) throttle: unlike
+// hazard on the failed-auth (credential-stuffing) throttle: unlike
 // [middleware.RateLimit] / [middleware.RateLimitBySubject], which detach
 // from the request's cancellation via throttleContext before calling
 // into [ratelimit.Bucket],

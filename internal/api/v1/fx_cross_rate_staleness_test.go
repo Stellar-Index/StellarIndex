@@ -8,7 +8,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// staleFXAge is comfortably past the T650 fx-cross staleness budget
+// staleFXAge is comfortably past the fx-cross staleness budget
 // (default 76h, pricing_guard.fx_cross_max_age_hours) — the forex
 // worker has stopped refreshing (upstream outage past its own
 // maxHeldRateAge hold, or the worker itself wedged) and nothing has

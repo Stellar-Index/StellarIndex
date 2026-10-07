@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Regression suite for F002/K001 — the LAST two surfaces that asked the
+// Regression suite for the LAST two surfaces that asked the
 // scam gate the BASE-ONLY question: /v1/price/tip (computeTip) and the
 // closed-bucket SSE stream (closedStreamWithheld).
 //

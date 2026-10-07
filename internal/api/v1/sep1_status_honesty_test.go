@@ -28,7 +28,7 @@ func (s *sep1StateStub) IssuerSep1Unreachable(_ context.Context, g string) (bool
 	return s.attempted, s.stateErr
 }
 
-// payloadOnlyStub is the pre-2026-09-16 shape: it answers about payloads and
+// payloadOnlyStub is a payload-only shape: it answers about payloads and
 // knows nothing about attempts.
 type payloadOnlyStub struct{}
 
@@ -42,7 +42,7 @@ const sep1TestIssuer = "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6
 // Both states reach this code as a nil payload, and they are opposite
 // findings: one is our queue, the other is the issuer's published document.
 //
-// Measured on 2026-09-16: an asset manager's stellar.toml carried an
+// Measured in production: an asset manager's stellar.toml carried an
 // unterminated string on line 20. One missing quote made the file
 // unparseable, so thirteen live RWA-class declarations were refused — and
 // every asset page reported `not_fetched`, which says we never tried. The

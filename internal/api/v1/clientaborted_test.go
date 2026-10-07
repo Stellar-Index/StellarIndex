@@ -23,7 +23,7 @@ import (
 // with the client still waiting, and must flow through to the 503
 // timeout-response branch: the cold-path WithTimeout guards inside
 // handlers, and the blanket
-// middleware.RequestTimeout deadline, which since C3-102 wraps
+// middleware.RequestTimeout deadline, which wraps
 // r.Context() itself.
 //
 // The cases this test pins:

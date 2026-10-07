@@ -43,7 +43,7 @@ func pegTestServer(t *testing.T, fx FXHistoryReader) *Server {
 }
 
 // TestFillDeclaredPegPrices_AfterSubstanceGate — the core contract of
-// the declared-peg fill (operator approval 2026-08-24): an asset whose
+// the declared-peg fill: an asset whose
 // dust-authored market price the substance gate correctly withholds
 // gets its price filled from the declared fiat peg × the fresh AUD/USD
 // rate, stamped price_basis="declared_peg". The gate-then-fill ORDER
@@ -56,7 +56,7 @@ func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 	}}
 	s := pegTestServer(t, fx)
 	// Gate denies everything (no allow entries) — AUDD's USD books are
-	// the inconsistent bot dust the 2026-08-24 census found.
+	// the inconsistent bot dust seen in production.
 	s.Substance = &stubListingGate{allow: map[string]bool{}}
 
 	dust, ch := "0.80", "+1.00"

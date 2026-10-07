@@ -88,7 +88,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // handlers still read the session for its account.
 //
 // Every mutation is wrapped in [middleware.RequireSameSiteWrite]
-// (C3-031 / C3-057): these routes authenticate with the session
+// because these routes authenticate with the session
 // COOKIE, so a cross-site page could otherwise drive them on a
 // logged-in customer's behalf — registering an endpoint that
 // exfiltrates the victim's webhook payloads is the concrete attack.

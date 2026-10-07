@@ -17,9 +17,7 @@ import (
 )
 
 // Shared fakes for the tier-clamp (key-budget) seam. These lived in
-// stripe_webhook_test.go until the Stripe integration was removed
-// (2026-08-10, the platform went free); the admin clamp tests are the
-// remaining consumers.
+// stripe_webhook_test.go by the admin clamp tests, the only remaining consumers.
 
 // fakeSelfServiceKeyManager is the test double for
 // [v1.SelfServiceKeyManager]. Records every UpdateRateLimit call so

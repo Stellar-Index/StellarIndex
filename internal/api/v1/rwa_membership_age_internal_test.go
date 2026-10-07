@@ -12,7 +12,7 @@ import (
 
 // The membership set's own age, on the wire.
 //
-// These tests pin what the response could not say on 2026-09-15. The
+// These tests pin what the response must say. The
 // envelope's `as_of` is the RESPONSE's instant and moves sub-second
 // between requests; read as the set's build time it says the set is
 // refreshing continuously, and the conclusion drawn from it — that

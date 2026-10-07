@@ -28,7 +28,7 @@ func (deadlineMarketSourceReader) AssetSourceStats(context.Context, []string) ([
 }
 
 // TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503 is the
-// T049 regression guard. /v1/markets/sources had no per-handler budget
+// regression guard: /v1/markets/sources had no per-handler budget
 // and no handlerTimedOut branch, so a store-side deadline — however it
 // fired — fell through the bare `if err != nil` as a plain 500
 // market-sources-error: indistinguishable from a real bug, and booked as

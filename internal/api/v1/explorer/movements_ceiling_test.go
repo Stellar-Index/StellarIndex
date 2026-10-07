@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin F055 on GET /v1/accounts/{g}/movements: the cap67
+// These tests pin the rule on GET /v1/accounts/{g}/movements: the cap67
 // ceiling that separates the ClickHouse archive arm from the Postgres
 // tail must be a PREDICATE ON THE CLICKHOUSE READ, never a trim of the
 // page the read already returned.
@@ -27,7 +27,7 @@ import (
 // BELOW the ceiling (the account's whole pre-watermark history) became
 // unreachable through this endpoint.
 
-// TestAccountMovements_CeilingIsAppliedBeforeTheLimit is the F055
+// TestAccountMovements_CeilingIsAppliedBeforeTheLimit is the
 // regression: with a cap67 watermark below the account's newest rows, a
 // first page must come back FULL of rows at-or-below the watermark and
 // carry a next_cursor, instead of being emptied by a post-read trim.

@@ -23,7 +23,7 @@ import (
 // rejection writer that forgets the override ships a per-key/per-IP
 // denial with shared-cacheable headers — a CDN keyed on the URL
 // would replay one caller's 401/403 to everyone else. Regression
-// test for the 2026-07-02 finding (writeAuthProblem,
+// test (writeAuthProblem,
 // writeKeyPolicyDenied, writeEmailUnverified, and the monthly-quota
 // writer all inherited the public directive).
 //

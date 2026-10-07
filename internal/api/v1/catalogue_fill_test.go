@@ -15,8 +15,7 @@ import (
 
 // listingOnlyAssets serves change fields ONLY via ListAssetsExt — the
 // production shape (the per-asset reader's row carries nil changes),
-// which the 2026-07-03 live debug proved after the first enrichment
-// deploy merged nothing.
+// which a live debug showed when enrichment merged nothing.
 type listingOnlyAssets struct {
 	AssetsReader
 }

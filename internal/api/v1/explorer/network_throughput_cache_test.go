@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the §2.6b (2026-08-13) contract for
+// These tests pin the contract for
 // GET /v1/network/throughput: the year-window FINAL scan never runs on a
 // request deadline again — a warm entry is sliced, a stale one is SERVED
 // (flags.stale + its real as_of) while ONE detached refresh runs, a
@@ -298,11 +298,11 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h.PrewarmNetworkThroughput(cancelled)
 }
 
-// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins Q206:
+// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins the behaviour:
 // `partial` must be the value ExplorerReader.NetworkThroughput already
 // derived from the query's own max(close_time), passed through verbatim —
 // never recomputed against the handler's wall clock. A wall-clock recompute
-// reintroduces exactly the multi-region/stale-cache disagreement §2.6b's
+// reintroduces exactly the multi-region/stale-cache disagreement the
 // data-derived flag exists to prevent: a bucket whose day has rolled past
 // per the SERVER's clock is not necessarily a complete day — a cache entry
 // served past its TTL, or a peer region whose clock has already ticked

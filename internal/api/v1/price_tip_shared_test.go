@@ -27,8 +27,8 @@ func (r *countingPriceReader) LatestPrice(ctx context.Context, a, q canonical.As
 	return r.stubPriceReader.LatestPrice(ctx, a, q)
 }
 
-// TestPriceTipStream_HubSharesOneProducerAcrossConnections is the RT-1
-// regression pin (audit 2026-08-04: "tip stream = 6 DB queries/s PER
+// TestPriceTipStream_HubSharesOneProducerAcrossConnections is the
+// regression pin ("tip stream = 6 DB queries/s PER
 // CONNECTION"). With a Hub wired, N viewers of the same pair must
 // share ONE compute loop: every connection still receives events
 // (fan-out works), but total compute calls stay near

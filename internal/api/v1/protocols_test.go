@@ -233,7 +233,7 @@ func TestHandleProtocolsList_CompletenessCarriesProjectionFloor(t *testing.T) {
 }
 
 // TestHandleProtocolDetail_AquariusEventKindsMatchDecoder is the
-// registry↔decoder lockstep check the T068 finding asked for: the
+// registry↔decoder lockstep check: the
 // published /v1/protocols/aquarius event_kinds list must contain every
 // EventKind() the aquarius consumer package's event types emit, so a
 // decoder kind can never again silently go unpublished.

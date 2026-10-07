@@ -329,9 +329,7 @@ type coverageSet struct {
 // is by construction one where every constituent — held-back included —
 // was read and returned nothing. Leaving them out would put the probe
 // behind the read, so a window a SAC-quoted pool could have served
-// would carry no explanation at all. That was the state before
-// launch-plan row 1.15, when the read could not reach the pool either
-// and silence was the truth. A test pins the probed and requested
+// would carry no explanation at all. A test pins the probed and requested
 // populations equal.
 func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	if pair.Quote.Type != canonical.AssetFiat {

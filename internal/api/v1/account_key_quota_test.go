@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// C3-015 (audit-2026-07-23) — self-service key-mint quota.
+// Self-service key-mint quota.
 //
 // POST /v1/account/keys minted on every call with no count check, so
 // one authenticated caller could mint live credentials in a loop until

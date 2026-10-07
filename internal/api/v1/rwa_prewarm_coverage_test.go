@@ -16,7 +16,7 @@ import (
 // ordered by observation count or 24h volume, never be warmed, and serve the
 // trustline floor permanently rather than for one TTL gap.
 //
-// Measured on r1 2026-09-16: USDY served 461,621,813.40 against 467,502,151.70
+// Measured on r1: USDY served 461,621,813.40 against 467,502,151.70
 // across all holding domains, USTRY 9.31% short, TESOURO 14.91% short.
 func TestPrewarmCoversRWAMembersTheListingNeverRanks(t *testing.T) {
 	const (

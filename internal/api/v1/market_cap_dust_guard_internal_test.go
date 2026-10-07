@@ -42,8 +42,8 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 		{"multi-source thin $10", 2, strptr("10"), floor, false},
 		{"multi-source thin, 3 venues", 3, strptr("5"), floor, false},
 		{"floor disabled (0)", 1, strptr("10"), 0, false},
-		// 2026-08-04: an unmeasured venue count (0) with a POSITIVE,
-		// measured, sub-floor volume now suppresses — the measured dust
+		// An unmeasured venue count (0) with a POSITIVE,
+		// measured, sub-floor volume suppresses — the measured dust
 		// volume is itself the positive evidence, and the unmeasured-
 		// count arm is where impersonator assets lived.
 		{"unmeasured source count (0) + measured dust vol suppresses", 0, strptr("10"), floor, true},
@@ -107,7 +107,7 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCap_UnverifiedCollisionSuppressed — 2026-08-04: an
+// TestFillRowMarketCap_UnverifiedCollisionSuppressed: an
 // unverified look-alike of a verified ticker must not publish
 // price × supply as a headline valuation (XRP-GBXRPL45… published a
 // $109.5M cap under XRP's ticker off its own manipulable market).

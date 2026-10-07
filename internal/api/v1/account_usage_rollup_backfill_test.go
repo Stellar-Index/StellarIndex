@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// TestAccountUsage_RollupBackfillsMissingDay — Q160. A day the
+// TestAccountUsage_RollupBackfillsMissingDay. A day the
 // rollup worker never produced a row for at all (an outage gap, not
 // a legitimate zero-traffic day) must be filled in from the legacy
 // per-day reader rather than silently dropped from the trailing

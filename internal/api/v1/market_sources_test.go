@@ -145,8 +145,8 @@ func TestMarketSources_ExpandsXLMAliasForms(t *testing.T) {
 	}
 }
 
-// TestMarketSources_MembershipMatchesSACValuation is the C4-012
-// regression guard (audit-2026-07-23). The per-source breakdown SQL has
+// TestMarketSources_MembershipMatchesSACValuation is the
+// regression guard. The per-source breakdown SQL has
 // always VALUED a `CAS3J7GY…` leg as XLM (its volume CASE applies the
 // XLM/USD rate to it), while the handler's form set passed only
 // `native` + `crypto:XLM` — so every Soroban XLM trade was excluded

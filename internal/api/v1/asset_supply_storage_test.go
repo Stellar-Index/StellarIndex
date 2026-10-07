@@ -22,7 +22,7 @@ import (
 var _ ContractStorageSupplyReader = (*clickhouse.ExplorerReader)(nil)
 
 // storageDealContractID and storageDealTotal are the private-credit deal token
-// measured on r1 2026-09-15: six balance entries summing to this figure, which
+// measured on r1: six balance entries summing to this figure, which
 // equals the contract's own declared TotalSupply and matches its declared
 // HolderCount of six.
 const (

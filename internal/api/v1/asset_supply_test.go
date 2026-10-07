@@ -339,8 +339,7 @@ func TestAssetSupply_ClassicViaSACWrapper(t *testing.T) {
 // "crypto:XLM"`) was case-SENSITIVE, so /v1/assets/xlm/supply 404'd while
 // /v1/assets/XLM/supply returned 200 — even though canonical.ParseAsset is
 // case-insensitive and every other asset route accepts `xlm`. A 404 on a
-// legitimate spelling reads as "this asset has no supply data" (cold audit
-// 2026-08-04, measured on prod v0.24.0).
+// legitimate spelling reads as "this asset has no supply data".
 func TestAssetSupply_NativeAliasIsCaseInsensitive(t *testing.T) {
 	// `crypto:xlm` is deliberately absent: canonical.ParseAsset requires an
 	// exact-case code after the `crypto:` prefix, so it is rejected

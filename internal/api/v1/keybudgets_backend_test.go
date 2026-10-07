@@ -57,7 +57,7 @@ func registerStyleFixture(
 }
 
 // TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential pins
-// findings F056 / K050 / Q145 at the handler seam.
+// the credential-retention contract at the handler seam.
 //
 // Under the default auth_backend=redis, `apikey:<hash>` IS the
 // credential. Stores that carry a key-cache invalidator whenever

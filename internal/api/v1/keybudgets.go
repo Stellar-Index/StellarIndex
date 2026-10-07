@@ -69,7 +69,7 @@ type APIKeyBudgetStores struct {
 	// validator store. Non-nil only when the deployment wires Redis;
 	// POST /v1/register uses it so the key it hands back authenticates
 	// against the REDIS validator r1 actually runs (a Postgres-only
-	// key 401s — v0.32.0 post-deploy finding).
+	// key 401s).
 	RedisMirror KeyMirror
 	// CacheInvalidator evicts each lowered Postgres key from the auth
 	// read-through cache so the new budget is enforced on the next

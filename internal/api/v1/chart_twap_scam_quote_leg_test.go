@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Regression suite for F019/F032 — the two call sites the pair-aware
+// Regression suite for the two call sites the pair-aware
 // conversion left behind: /v1/twap and the chart/since-inception series
 // gate both asked the scam gate about the BASE leg alone.
 //

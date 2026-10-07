@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the §2.6b (2026-08-13) contract for the bespoke
+// These tests pin the contract for the bespoke
 // analytics block of /v1/protocols/{name}: a build whose battery is slow,
 // failing, or starved keeps the page's visual suite (the last good block)
 // instead of dropping it — the CCTP "missing visual suite" report — and
@@ -233,7 +233,7 @@ func TestCachedBespoke_SingleFlightCollapsesColdCallers(t *testing.T) {
 
 // TestCachedBespoke_SaturatedGateSkipsRatherThanQueues pins the
 // backpressure contract: a full class gate SKIPS the build (a cold key
-// degrades exactly as it did before this cache, the next build re-kicks)
+// degrades exactly as an uncached key does, the next build re-kicks)
 // and a cached key keeps serving.
 func TestCachedBespoke_SaturatedGateSkipsRatherThanQueues(t *testing.T) {
 	stub := &bespokeStub{}

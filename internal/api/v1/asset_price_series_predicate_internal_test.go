@@ -89,7 +89,7 @@ func TestWithholdPriceSeries_DeclaredPegDropsHistory(t *testing.T) {
 // A declared-peg asset also publishes no all-time high, and that is a
 // DELIBERATE wire change rather than a side effect — pinned here because
 // it shipped unpinned and undescribed, and a reviewer had to reproduce
-// it to find out whether it was intended (review sweep 2026-08-31).
+// it to find out whether it was intended.
 //
 // The reasoning is the same as for the series: GetAssetATH reads the
 // asset's own USD-QUOTED market, which for a declared-peg asset is the
