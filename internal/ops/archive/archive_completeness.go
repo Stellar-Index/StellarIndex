@@ -133,9 +133,8 @@ func archiveCompletenessVerify(args []string) error {
 
 	startedAt := time.Now()
 	// The fix phase fetches over HTTP and writes/renames/chowns into
-	// -archive-root; a signal-aware ctx here lets
-	// a mid-fill SIGTERM/SIGINT stop the fetch loop cleanly instead of
-	// running to completion regardless.
+	// -archive-root; a signal-aware ctx here lets a mid-fill SIGTERM/SIGINT
+	// stop the fetch loop cleanly instead of running to completion regardless.
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 

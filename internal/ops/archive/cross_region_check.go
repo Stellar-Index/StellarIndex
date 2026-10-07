@@ -131,9 +131,8 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 		return err
 	}
 	if len(regions) < 2 {
-		// Before R2/R3 bring-up only R1 is deployed; treating that
-		// as an error trains
-		// operators to ignore the command. Return nil so the
+		// Before R2/R3 bring-up only R1 is deployed; treating that as
+		// an error trains operators to ignore the command. Return nil so the
 		// pre-launch smoke flow can call this unconditionally and
 		// get a meaningful no-op until multi-region lands.
 		_, _ = fmt.Fprintf(os.Stdout,

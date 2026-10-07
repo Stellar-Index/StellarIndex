@@ -350,10 +350,9 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		// regardless of whether the high-water advanced. A clean walk
 		// always verifies at least one ledger (the all-Done resume
 		// re-walks rather than returning a zero-ledger success, and
-		// `verified == 0` is an error), so
-		// highestLedger == 0 here is defensive only. Re-read first so
-		// the per-chunk Done updates the walker wrote during the run
-		// aren't clobbered.
+		// `verified == 0` is an error), so highestLedger == 0 here is
+		// defensive only. Re-read first so the per-chunk Done updates the
+		// walker wrote during the run aren't clobbered.
 		if *stateFile != "" {
 			latestState, rerr := readVerifyArchiveState(*stateFile)
 			if rerr != nil {
@@ -464,7 +463,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	//
 	// Resolution: build a one-shot DataStore from the same DataStore
 	// config the walkers will use, query FindLatestLedgerSequence,
-	// adopt that as the upper bound for splitRange. Closed
+	// adopt that as the upper bound for opsutil.SplitRange. Closed
 	// immediately — the parallel walkers each construct their own.
 	// Skipped when workers ≤ 1 (single-chunk serial walk is what
 	// `to=0` is FOR; resolving tip there would defeat the live-tail

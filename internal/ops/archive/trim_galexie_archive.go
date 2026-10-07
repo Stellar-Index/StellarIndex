@@ -155,10 +155,9 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		// chain, which on r1 carries local MinIO's keys (the hot tier
 		// authenticates through it). Presenting those to real AWS
 		// fails every cold read with `InvalidAccessKeyId ... does not
-		// exist in our records`. That matters
-		// doubly HERE: this operator DELETES hot files, and a cold
-		// tier that cannot authenticate is a cold tier that cannot
-		// prove the upstream copy exists.
+		// exist in our records`. That matters doubly HERE: this operator
+		// DELETES hot files, and a cold tier that cannot authenticate is a
+		// cold tier that cannot prove the upstream copy exists.
 		cold, err = pipeline.NewColdDataStore(rootCtx, cfg.Storage)
 		if err != nil {
 			return fmt.Errorf("cold datastore: %w", err)
@@ -389,9 +388,8 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 //
 // The per-file safety chain (ParseRangeFromObjectKey bucketing, the
 // cold-tier HEAD, --max-files, --dry-run) applies to every enumerated
-// file. --max-files caps DELETIONS FOR
-// THE WHOLE RUN, not per partition: the counter lives on trimPlan,
-// which spans every partition scanned.
+// file. --max-files caps DELETIONS FOR THE WHOLE RUN, not per partition: the
+// counter lives on trimPlan, which spans every partition scanned.
 
 // trimListPageSize is the SDK's hard per-call ceiling (see above). We
 // request it explicitly rather than relying on the Limit:0 default,
@@ -491,9 +489,8 @@ func parsePartitionPrefix(prefix string) hotPartition {
 //
 // It pages, deliberately: MaxKeys caps CommonPrefixes at 1000 exactly
 // as it caps objects, and the 1001st partition begins at ledger
-// 64,000,000. An unpaged delimited listing would silently truncate once
-// the network passes that ledger, reintroducing the 1000-key truncation
-// one level up.
+// 64,000,000, which the network has passed: an unpaged delimited listing
+// would silently truncate, reintroducing the 1000-key truncation one level up.
 //
 // Discovery is ground truth rather than derived from the schema
 // manifest: a partition already trimmed empty stops being returned, so

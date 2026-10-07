@@ -80,9 +80,8 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 		return err
 	}
 	if len(regions) < 2 {
-		// Before R2/R3 bring-up only R1 is deployed. Refusing to
-		// start trains operators to
-		// disable the monitor; instead log + exit cleanly so a
+		// Before R2/R3 bring-up only R1 is deployed. Refusing to start
+		// trains operators to disable the monitor; instead log + exit cleanly so a
 		// systemd unit wrapper can stay disabled until R2/R3 land
 		// and a healthy `systemctl status` reports the reason.
 		_, _ = fmt.Fprintf(os.Stdout,
@@ -174,8 +173,9 @@ func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 // be a LATCH, not a health check: the first sweep sets it and nothing
 // clears it, so a monitor whose tick goroutine had died, or whose every
 // region had been unreachable for a week, would answer 200 forever.
-// This is a sidecar whose entire job is to notice cross-region divergence; a frozen-healthy /healthz means the thing
-// watching for silent breakage is itself silently broken.
+// This is a sidecar whose entire job is to notice cross-region divergence;
+// a frozen-healthy /healthz means the thing watching for silent breakage is
+// itself silently broken.
 //
 // Two independent liveness facts, both recency-bounded:
 //
