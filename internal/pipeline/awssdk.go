@@ -15,7 +15,7 @@ import (
 )
 
 // checksumWarnSubstring is the marker every aws-sdk-go-v2 line we want
-// to drop contains. The full line shipped by the SDK reads
+// to drop contains. The full line emitted by the SDK reads
 //
 //	SDK 2026/05/24 14:39:14 WARN Response has no supported checksum. Not validating response payload.
 //
@@ -27,7 +27,7 @@ const checksumWarnSubstring = "Response has no supported checksum"
 
 // silenceOnce guards against accidental double-install (e.g. a test
 // calling the function alongside the real main). The second call is
-// a no-op and returns the previously-installed flush func.
+// a no-op and returns the already-installed flush func.
 var (
 	silenceOnce  sync.Once
 	silenceFlush func()
@@ -48,16 +48,15 @@ var (
 // /tmp/va-full.log to 1.65 GB and burying the real verify-archive
 // failure under noise journald then rate-dropped).
 //
-// The previous attempt (rc.72: QuietS3ChecksumWarnings) set
-// AWS_RESPONSE_CHECKSUM_VALIDATION=when_required so the SDK's
-// default-config layer would skip the validation attempt entirely.
-// That fix is a no-op for our use because
+// Setting AWS_RESPONSE_CHECKSUM_VALIDATION=when_required, so the
+// SDK's default-config layer skips the validation attempt, is a
+// no-op for our use because
 // go-stellar-sdk/support/datastore/s3.go:161 hardcodes
 //
 //	ChecksumMode: types.ChecksumModeEnabled
 //
 // on every GetObjectInput, overriding whatever the env-var default
-// produced. The upstream-respect path is to fix that line in
+// produced. The upstream-respect path is to change that line in
 // go-stellar-sdk; until that lands, stderr filtering is the
 // reliable workaround.
 //
@@ -86,15 +85,14 @@ var (
 //     stderr (e.g. journald rate-limit) can't deadlock the
 //     writer side beyond the pipe buffer.
 //
-// # Drain-on-exit (rc.78)
+// # Drain-on-exit
 //
 // Returns a `flush func()` the caller MUST run before the process
 // exits. Without it, short-lived processes lose output: the
 // consumer goroutine reads from the pipe in the background and is
-// killed mid-buffer when the runtime tears down. This first
-// manifest in rc.77 as `stellarindex-ops backfill -dry-run`
-// printing only its first line and `stellarindex-ops backfill`
-// errors printing nothing at all.
+// killed mid-buffer when the runtime tears down. The symptom is
+// `stellarindex-ops backfill -dry-run` printing only its first line
+// and `stellarindex-ops backfill` errors printing nothing at all.
 //
 // The flush func:
 //
@@ -248,17 +246,16 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 // contains checksumWarnSubstring, and forwards the rest verbatim to
 // `realStderr`.
 //
-// INVARIANT (2026-07-10 indexer-seizure incident): this loop may exit
-// ONLY when the pipe itself reports EOF/error — i.e. flush() closed
-// the writer. The previous implementation used bufio.Scanner with a
-// 1 MiB cap; a single oversized line made Scan() return false, the
-// goroutine returned, and the pipe silently lost its only reader.
-// From then on the 64 KiB pipe filled and EVERY stderr write in the
-// process blocked forever — log flood → whole-binary seizure (the
-// aquarius-replay PG error flood triggered exactly this, freezing
-// ingest for ~28 min; even SIGQUIT's traceback couldn't flush).
-// Oversized lines are now forwarded in raw chunks instead of
-// terminating the drain.
+// INVARIANT: this loop may exit ONLY when the pipe itself reports
+// EOF/error — i.e. flush() closed the writer. A reader that gives up
+// early (bufio.Scanner with a 1 MiB cap returns false on a single
+// oversized line) leaves the pipe silently without its only reader.
+// The 64 KiB pipe then fills and EVERY stderr write in the process
+// blocks forever — log flood → whole-binary seizure (an
+// aquarius-replay PG error flood did exactly this, freezing ingest
+// for ~28 min; even SIGQUIT's traceback couldn't flush). Oversized
+// lines are therefore forwarded in raw chunks instead of terminating
+// the drain.
 func filteringForwarder(r io.Reader, realStderr *os.File) {
 	br := bufio.NewReaderSize(r, 64*1024)
 	for {

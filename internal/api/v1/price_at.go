@@ -63,8 +63,7 @@ const priceAtMaxLookback = 24 * time.Hour
 
 // handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339 —
 // the point-in-time price for portfolio cost-basis / PnL / tax
-// tooling (wallet-builder accommodation, board #46). The answer is
-// the closed VWAP bucket at-or-before ts from the finest CAGG
+// tooling. The answer is the closed VWAP bucket at-or-before ts from the finest CAGG
 // resolution that covers it (prices_1m for recent instants, coarser
 // bars back to prices_1d for older ones); observed_at is the BUCKET's
 // close time, never ts, and window_seconds reports the resolution
@@ -105,7 +104,7 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling (RLT-455): the alias walk tries up to 4
+	// Per-request DB ceiling: the alias walk tries up to 4
 	// combinations directly, then every configured USD peg on the
 	// stablecoin-fallback path, each a ClosedVWAPAtOrBefore CAGG
 	// lookup. Without a bounded context a slow run holds its pool
@@ -194,7 +193,7 @@ func (s *Server) resolvePriceAt(
 	return PriceSnapshot{}, Flags{}, false, withheld, nil
 }
 
-// lookupPriceAt walks the alias combinations (F-1340, same as every
+// lookupPriceAt walks the alias combinations (same as every
 // other price surface) and returns the first in-lookback bucket.
 // withheld is the first ErrPriceWithheld-class error any orientation
 // returned (a substance/scam gate or the serving-sanity guard refused an
@@ -250,7 +249,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // lookupPriceAtStablecoinFallback is the CAGG sibling of the
 // raw-trades stablecoin fallback (vwap.go's
 // tradesInRangeWithStablecoinFallback / chart.go's
-// chartStablecoinFallback) — the deferred half of the 6505934b5 family.
+// chartStablecoinFallback).
 // The 1m VWAP CAGG keys buckets by the REAL stored quote asset, so a
 // historical X/fiat:USD lookup misses unless something traded
 // directly in fiat:USD at that instant. When the literal + alias

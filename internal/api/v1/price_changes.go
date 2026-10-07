@@ -143,7 +143,7 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling (RLT-455): the endpoint issues up to five
+	// Per-request DB ceiling: the endpoint issues up to five
 	// sequential PriceAt reads (the current anchor plus one per
 	// horizon), each walking alias combinations and, for a fiat:USD
 	// quote, every configured USD peg. Without a bounded context a slow
@@ -283,7 +283,7 @@ type priceAtResult struct {
 // resolvePriceChangePair finds the (base, quote) orientation that
 // yields a current price for the request and returns that pair so
 // every horizon is measured against the SAME market. It walks the XLM
-// dual-form aliases (F-1340) and, when the quote is fiat:USD and no
+// dual-form aliases and, when the quote is fiat:USD and no
 // direct/aliased bucket exists, the operator's USD-pegged classics
 // (the same stablecoin-proxy chain /v1/price and /v1/price/at use) —
 // flagging triangulated=true on that path. found=false when no
@@ -373,7 +373,7 @@ func (s *Server) currentPriceForAliases(
 // available=false would claim the pair has no history that far back. A
 // withheld reference (ErrPriceWithheld, which includes
 // ErrPriceAtGuarded) additionally sets Withheld: the gates are asked
-// about `target`, not `now` (T038), so one horizon can be withheld while
+// about `target`, not `now`, so one horizon can be withheld while
 // its siblings are not, and a consumer must not read that null as "no
 // history that far back". The reason is the withheld reference's.
 func (s *Server) priceChangeHorizon(
@@ -392,8 +392,8 @@ func (s *Server) priceChangeHorizon(
 	// dex-nonstandard-decimals forward normalization (M2) on the absolute
 	// reference price. `currentPrice` was already normalized against this SAME
 	// pair (resolvePriceChangePair), so pctChange sees both legs scaled by the
-	// identical K and the returned percentage is byte-identical to pre-fix —
-	// only the emitted reference_price absolute value changes. No-op at 7dp.
+	// identical K and the returned percentage is unaffected; only the
+	// emitted reference_price absolute value is rescaled. No-op at 7dp.
 	value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 	pct, err := pctChange(currentPrice, value)
 	if err != nil {

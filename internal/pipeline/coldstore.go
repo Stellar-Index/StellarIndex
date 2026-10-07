@@ -15,8 +15,8 @@ import (
 
 // ─── ADR-0027 cold-tier datastore construction ───────────────────
 //
-// Why this exists instead of datastore.NewDataStore (2026-07-25
-// incident, "the cold tier could never authenticate"):
+// Why this exists instead of datastore.NewDataStore (through the SDK
+// constructor, the cold tier can never authenticate):
 //
 // The vendored SDK builds EVERY S3 datastore through the AWS
 // default credential chain —
@@ -43,19 +43,18 @@ import (
 //     that wants NO credentials.
 //
 // So on r1 cfg.Credentials.Retrieve() SUCCEEDS (it hands back
-// MinIO's keys), the anonymous fallback never fires, and the cold
-// client presents MinIO's access key to real AWS. Enabling the
-// tier on r1 fails every read with:
+// MinIO's keys), the anonymous fallback never fires, and an
+// SDK-built cold client presents MinIO's access key to real AWS.
+// Every cold read then fails with:
 //
 //	InvalidAccessKeyId: The AWS Access Key Id you provided does not
 //	exist in our records
 //
-// This went unnoticed for the tier's whole life because
-// ledgerstream's cold-init failure is non-fatal by design (WARN +
-// degrade to hot-only), so a permanently-broken tier looked like a
-// quiet log line.
+// That failure is easy to miss: ledgerstream's cold-init failure is
+// non-fatal by design (WARN + degrade to hot-only), so a
+// permanently-broken tier looks like a quiet log line.
 //
-// datastore.FromS3Client is exported, so the correct fix is to
+// datastore.FromS3Client is exported, so the correct approach is to
 // build the cold *s3.Client ourselves and hand it over, which is
 // what NewColdDataStore does. Note we deliberately do NOT call
 // config.LoadDefaultConfig at all: it resolves AWS_ENDPOINT_URL
