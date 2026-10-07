@@ -452,7 +452,7 @@ func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) err
 	return err
 }
 
-// chRebuild is the ADR-0034 Phase-4 write path: it re-derives a ledger range's
+// chRebuild is the write path (ADR-0034): it re-derives a ledger range's
 // protocol output from the ClickHouse Tier-1 lake using the EXISTING decoders
 // and WRITES it to the Postgres served tier via the production sink
 // (pipeline.HandleEvent — idempotent ON CONFLICT). It is the write-enabled

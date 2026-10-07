@@ -18,7 +18,7 @@ import (
 )
 
 // runCHBackfill walks a bounded ledger range from galexie and writes the
-// Tier-1 structural rows to ClickHouse (ADR-0034 Phase 2). Mirrors the
+// Tier-1 structural rows to ClickHouse (ADR-0034). Mirrors the
 // census-backfill ledgerstream walk; the per-ledger work is
 // clickhouse.ExtractLedger -> Sink. Idempotent (ReplacingMergeTree), so a
 // re-run over the same range is safe.

@@ -697,7 +697,7 @@ Subcommands:
                           Timer mode recomputes today + missing days;
                           -backfill walks from the lake's first event.
   ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] [-changes-only] (-write | -dry-run)
-                          ADR-0034 Phase 2: structurally decode [from,to]
+                          Structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1
                           tables (ledgers/txs/ops/op_results/contract_events).
                           Decoder-independent; retains raw XDR. Idempotent
@@ -709,7 +709,7 @@ Subcommands:
                           marker) and ledger_entry_changes: re-derives entry
                           ordinals without rewriting the other tables.
   ch-gate -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-project-to TIP]
-                          ADR-0034 Phase 2 §6 gates over a backfilled range:
+                          ADR-0034 §6 gates over a backfilled range:
                           recompute the census + structural extract from
                           galexie, assert extract==census, then read the
                           range back from ClickHouse and assert STORED and
@@ -718,7 +718,7 @@ Subcommands:
                           and walk throughput. Writes nothing; exits non-zero
                           if the completeness gate fails.
   ch-reproject -config PATH -from N -to N [-ch-addr H:P] [-max-list N]
-                          ADR-0034 Phase 4 validation: re-derive the range
+                          Validation: re-derive the range
                           from the ClickHouse lake with the production
                           decoders and compare per-ledger counts with the
                           served protocol tables. Writes nothing; exits

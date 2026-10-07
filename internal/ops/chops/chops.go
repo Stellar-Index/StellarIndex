@@ -11,7 +11,7 @@
 // `sdex-claim-audit`, `classic-movements-backfill`, `projected-rebuild`,
 // `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
 // `verify-lake`, `verify-network-state` — ADR-0033/ADR-0034 completeness + reconciliation checks,
-// the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild tools, the
+// the ADR-0034 lake backfill/gate/reproject/rebuild tools, the
 // ADR-0047 pre-P23 classic-movement reconstruction backfill, the ADR-0048
 // D3 bulk catch-up path for projected sources, the reconcile-balances
 // external (Horizon) balance-reconciliation verifier, verify-contiguity's

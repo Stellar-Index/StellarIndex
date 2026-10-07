@@ -17,7 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chGate runs the ADR-0034 Phase-2 §6 gates over a backfilled ledger range:
+// chGate runs the ADR-0034 §6 gates over a backfilled ledger range:
 //
 //   - Gate 2 (completeness): for every ledger it recomputes the
 //     decoder-independent census (dispatcher.CensusLedger, plus tx/op
@@ -120,7 +120,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	}
 
 	// ─── report ──────────────────────────────────────────────────
-	fmt.Printf("\n=== ch-gate: ADR-0034 Phase-2 §6 ===\n")
+	fmt.Printf("\n=== ch-gate: ADR-0034 §6 ===\n")
 	fmt.Printf("range:           %d..%d (%d ledgers requested, %d walked)\n", *from, *to, *to-*from+1, walked)
 	fmt.Printf("CH ledger rows:  %d (min=%d max=%d)\n", ch.LedgerRows, ch.MinLedger, ch.MaxLedger)
 
