@@ -172,17 +172,12 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context,
 	})
 }
 
-// LatestOracleStreams — cached like its siblings (#332 F5, 2026-09-02).
+// LatestOracleStreams — cached like its siblings.
 //
-// This was the reader's one pass-through, on the theory that the endpoint
-// was low-frequency enough not to be worth a cache slot. Measurement
-// refuted it: /v1/oracle/streams is fetched by BOTH /oracles and the home
-// page, and every hit re-ran the oracle_updates scan and rebuilt ~34 KB —
-// 0.43–0.46 s per request WARM on production. (The superseded reasoning is
-// recorded rather than deleted because "wrapping it would scatter the
-// working set" is the right instinct in general; what made it wrong here
-// is that this call has no per-request dimensions, so it occupies exactly
-// one slot.)
+// /v1/oracle/streams is fetched by BOTH /oracles and the home page, and
+// uncached every hit re-runs the oracle_updates scan and rebuilds ~34 KB —
+// 0.43–0.46 s per request WARM on production. The call has no per-request
+// dimensions, so it occupies exactly one cache slot.
 func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
 	rows, _, err := c.LatestOracleStreamsAt(ctx)
 	return rows, err
@@ -253,7 +248,7 @@ func (c *CachedOracleReader) fetch(
 		//nolint:gosec,contextcheck // G118 / contextcheck:
 		// intentional detached fill — the leader's own ctx must not
 		// abort a fill every other single-flighted waiter depends on;
-		// see fetch's and fill's doc comments (RLT-439).
+		// see fetch's and fill's doc comments.
 		go c.fill(key, entry, done, upstream)
 	}
 	flight := entry.flight

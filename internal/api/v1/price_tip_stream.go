@@ -20,13 +20,12 @@ import (
 // signals teardown).
 const tipStreamProducerQueueDepth = 4
 
-// tipStreamTickTimeout bounds a single per-tick computeTip call
-// (REL-01, partial fix of G2-04). RequestTimeout deliberately excludes
-// `/stream` paths (the connection is long-lived by design), so without
-// a per-tick bound a slow tip computation could hold this producer's
-// goroutine — and whatever DB connection it's using — open
-// indefinitely, once per open connection. Mirrors observationsScanTimeout's
-// 8s ceiling, the same fix already applied to the observations-stream
+// tipStreamTickTimeout bounds a single per-tick computeTip call.
+// RequestTimeout deliberately excludes `/stream` paths (the connection
+// is long-lived by design), so without a per-tick bound a slow tip
+// computation could hold this producer's goroutine — and whatever DB
+// connection it's using — open indefinitely, once per open connection.
+// Mirrors observationsScanTimeout's 8s ceiling on the observations-stream
 // producer.
 //
 // It bounds the tip COMPUTATION. The per-event divergence lookup that
@@ -43,7 +42,7 @@ const tipStreamTickTimeout = 8 * time.Second
 // SSE response headers were not written and no further event was
 // emitted. That is backwards. The cadence is the product; the verdict is
 // an overlay whose documented absent state, `divergence_checked: false`,
-// already means "could not verify" (CS-087) — so a degraded auxiliary
+// already means "could not verify" — so a degraded auxiliary
 // signal must degrade the FLAG, never the stream.
 //
 // One second is chosen against two references rather than picked. The
@@ -102,10 +101,10 @@ const tipStreamDivergenceStallInterval = time.Minute
 // after the stream body starts there's no way to set status, so
 // failures must be detected pre-flight.
 func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
-	// REL-05: admit against the concurrency caps FIRST, before the
+	// Admit against the concurrency caps FIRST, before the
 	// synchronous pre-flight compute below (computeTip) runs. Without
-	// this, a client already at its stream cap still paid for the full
-	// pre-flight tip computation before being rejected. release is
+	// this, a client already at its stream cap would still pay for the
+	// full pre-flight tip computation before being rejected. release is
 	// idempotent and deferred here so every return path releases
 	// exactly once; the stream is handed off via
 	// StreamFromChannelPreAdmitted below so it doesn't also acquire a
@@ -158,16 +157,14 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// BOUNDED, like the tick path. This pre-flight runs on the handler
 	// goroutine under the raw request context, and /stream paths are
 	// deliberately excluded from the request-timeout middleware — so
-	// before this it had no deadline ANYWHERE: no middleware, no
+	// without this bound it has no deadline ANYWHERE: no middleware, no
 	// per-call timeout, and r1 runs statement_timeout = 0. A slow query
-	// during a Postgres stall pinned the handler goroutine AND its pool
-	// connection until the client disconnected, and WriteTimeout does
-	// not cancel an in-flight query. 20 such connections from one IP
-	// (the shipped per-IP cap) plus a second IP exhausts the 25-conn
+	// during a Postgres stall would pin the handler goroutine AND its
+	// pool connection until the client disconnected, and WriteTimeout
+	// does not cancel an in-flight query. 20 such connections from one
+	// IP (the shipped per-IP cap) plus a second IP exhaust the 25-conn
 	// pool, and the held connections never self-release — an outage
-	// that outlives the hiccup that caused it. These two pre-flights
-	// were the only handler paths in the API with no deadline at all
-	// (cold audit 2026-08-04).
+	// that outlives the hiccup that caused it.
 	preflightCtx, cancelPreflight := context.WithTimeout(r.Context(), tipStreamTickTimeout)
 	defer cancelPreflight()
 	first, firstSources, err := s.computeTip(preflightCtx, asset, quote, window)
@@ -187,8 +184,8 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	var gen streaming.Generator
 	firstEv, _ := s.tipStreamEvent(preflightCtx, &gen, asset, quote, first, firstSources)
 
-	// Two producer shapes (RT-1, audit 2026-08-04 "tip stream = 6 DB
-	// queries/s PER CONNECTION"):
+	// Two producer shapes, because a per-connection producer costs ~6 DB
+	// queries/s for every viewer:
 	//
 	//   - Hub-wired deployments (production): ONE shared producer per
 	//     distinct (asset, quote, window) publishes into the Hub; this
@@ -270,7 +267,7 @@ func (s *Server) writeTipPreflightError(w http.ResponseWriter, r *http.Request, 
 }
 
 // writeTipProducerRefused answers a connection whose pair has no shared
-// producer running and may not mint one (wave-D UNAUTH-DOS-1).
+// producer running and may not mint one.
 //
 // Refusing is the point: falling through to the per-connection tick loop
 // would reintroduce exactly the unbounded detached compute the bounds
@@ -323,7 +320,7 @@ func (s *Server) writeTipProducerRefused(
 // reconnect time, so its ID is newer than anything already buffered.
 // Prepending it ahead of the replay then sends a newer id: first and
 // older ones after, so the SSE cursor (and whatever the client renders
-// as "current") walks backwards through the reconnect (Q170/T161). The
+// as "current") walks backwards through the reconnect. The
 // backlog itself already carries the pair's current state, so firstEv
 // adds nothing a resuming client needs — skip it.
 func (s *Server) forwardTipStream(
@@ -380,7 +377,7 @@ func (s *Server) runTipStreamProducer(
 	windowSeconds int,
 	firstEv streaming.Event,
 ) {
-	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// This producer runs in its OWN goroutine, so an
 	// unrecovered panic in the compute path below terminates the WHOLE process —
 	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
 	// stream is reachable unauthenticated. Recover here so a panic tears down only
@@ -479,7 +476,7 @@ func tipWithheldEvent(gen *streaming.Generator, asset, quote canonical.Asset, re
 // the same base at the same instant. That is the trade stated on
 // [tipStreamDivergenceBudget]: the stream is a cadence product and a
 // slow flag is dropped rather than waited for. `divergence_checked:
-// false` is the honest report of it — "could not verify" (CS-087), which
+// false` is the honest report of it — "could not verify", which
 // is exactly what happened — and it is the safe direction: the stream
 // never manufactures an all-clear the GET would not give.
 //
@@ -518,7 +515,7 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 // The lookup is a nice-to-have; the cadence is the product. So on a
 // stall the stream degrades the FLAG and emits on time: the verdict goes
 // out unchecked, which is exactly what `divergence_checked: false` means
-// on this surface (CS-087 — "could not verify", never "prices agree").
+// on this surface ("could not verify", never "prices agree").
 // An emission is never dropped or delayed because this read was slow.
 //
 // The stall is distinguished from ordinary teardown by comparing the two

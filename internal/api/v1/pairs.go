@@ -101,7 +101,7 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 }
 
 // pairMarketWithAliases resolves the single-pair market trying each XLM
-// dual-form alias combination of base and quote (F-1340) and returning
+// dual-form alias combination of base and quote and returning
 // the FIRST form with a row — the same first-hit gate
 // [Server.ohlcSeriesWithAliases] applies on the series side. An
 // XLM-flavoured pair lives under whichever id the contributing trades

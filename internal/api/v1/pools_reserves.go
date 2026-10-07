@@ -24,8 +24,7 @@ const sourceSoroswap = "soroswap"
 //
 // Honest-coverage contract: reserves are served ONLY for venues whose
 // pool-contract storage layout we have verified against the lake.
-// Today that is Soroswap alone (u32-keyed pair instance storage,
-// verified 2026-07-05). Phoenix / Aquarius / Comet pools are NOT
+// Today that is Soroswap alone (u32-keyed pair instance storage). Phoenix / Aquarius / Comet pools are NOT
 // served — their layouts are unverified and we refuse to guess.
 // Historical reserve series are not served anywhere: reserves are not
 // persisted by ingest (Soroswap SyncEvents are consumed transiently at
@@ -146,7 +145,7 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 			// background refresher fills that snapshot at startup and every
 			// 10 minutes on its own 3-minute budget, so this window is the
 			// first minutes of a process at most and a retry lands warm — a
-			// truthful retryable 503, not a 500 (route-sweep 2026-07-29).
+			// truthful retryable 503, not a 500.
 			s.logger.Warn("SoroswapPairReserves deadline exceeded (cold TTL-verdict snapshot; background refresh will fill it)")
 			writeProblem(w, r, "https://api.stellarindex.io/errors/pool-reserves-timeout",
 				"Pool reserves timed out", http.StatusServiceUnavailable,
@@ -295,10 +294,9 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 // token appearing in the decoded states. Best-effort for the reserves
 // (a failure never blocks them), but ok=false on a fetch failure so
 // callers can tell "the lookup errored" apart from "the token declares
-// no metadata": conflating the two stamped decimals=7 on EVERY token
-// and computed mid-prices from those decimals — one transient CH error
-// mis-scaled every non-7dp pair's mid price by 10^(d-7) with no signal
-// (cold audit 2026-08-03).
+// no metadata": conflating the two would stamp decimals=7 on EVERY token
+// and compute mid-prices from those decimals, so one transient CH error
+// would mis-scale every non-7dp pair's mid price by 10^(d-7) with no signal.
 func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	tokenSet := make(map[string]struct{}, len(states)*2)
 	for _, st := range states {

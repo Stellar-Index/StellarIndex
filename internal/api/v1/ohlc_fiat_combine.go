@@ -36,30 +36,30 @@ import (
 //     open/close are exact there. Base-volume weighting matches the VWAP
 //     definition (Σ price·base / Σ base).
 //
-// SCALE (CS-040 money-path, series arm). Every one of those sums is over
+// SCALE (series arm of the money path). Every one of those sums is over
 // SMALLEST-UNIT amounts, and the smallest unit is a per-SOURCE scale: an
 // on-chain DEX leg is 7-decimal stroops, a CEX leg 8, an FX poller 6. The
-// constituent set really does span them — on r1 today `native/fiat:USD`
-// combines `native/<USDC classic>` (sdex, 7dp) with
-// `crypto:XLM/crypto:USDT` (binance, 8dp) and `crypto:XLM/fiat:USD`
-// (bitstamp/coinbase/kraken, 8dp) in the SAME buckets — so summing the
-// raw integers adds incommensurable quantities and weights the 8dp legs
-// 10x per decimal against the 7dp one. Measured on the 2026-09-05 02:00Z
-// 1h bar: the sdex leg's 135,713.79 XLM entered the combine as 13,571.38,
-// the served v_base understated the market by 3.41%, and that leg carried
-// 0.39% of the open/close weight where it should carry 3.79%.
+// constituent set really does span them — `native/fiat:USD` combines
+// `native/<USDC classic>` (sdex, 7dp) with `crypto:XLM/crypto:USDT`
+// (binance, 8dp) and `crypto:XLM/fiat:USD` (bitstamp/coinbase/kraken,
+// 8dp) in the SAME buckets — so summing the raw integers adds
+// incommensurable quantities and weights the 8dp legs 10x per decimal
+// against the 7dp one. Measured unscaled on one r1 1h
+// bar: the sdex leg's 135,713.79 XLM entered the combine as 13,571.38,
+// v_base understated the market by 3.41%, and that leg carried 0.39% of
+// the open/close weight where it should carry 3.79%.
 //
 // So every bar is lifted to one common scale before it is accumulated —
 // the MAXIMUM scale present in the response, so each lift is an exact
 // integer multiply by 10^(max−scale) ≥ 1 with no division and no
 // precision loss (ADR-0003). This is the bar-level twin of
 // [aggregate.NormalizeAmountScale], which [Server.fiatCombinedTrades]
-// already applies to the raw-trade POINT path over the identical
-// constituent set; the two now agree by construction rather than by the
-// accident of every fixture being single-scale. A response whose bars all
-// share one scale — every non-fiat quote, and any fiat window served by
-// one venue class — is byte-identical to before, because every factor is
-// 10^0 = 1.
+// applies to the raw-trade POINT path over the identical constituent
+// set, so the two agree by construction rather than by the accident of
+// every fixture being single-scale. A response whose bars all share one
+// scale — every non-fiat quote, and any fiat window served by one venue
+// class — is byte-identical to its unlifted sums, because every factor
+// is 10^0 = 1.
 //
 // A bar states its own scale rather than having one guessed from its pair
 // spelling: [OHLCSeriesBar.Sources] carries the CAGG's own
@@ -68,9 +68,9 @@ import (
 // — so inferring 7 from a classic quote id would be a guess that happens
 // to hold today.
 //
-// REACH (launch-plan row 1.15). The constituents come in two sets. The
-// established spellings — the aggregator's own source set — are combined
-// as they always have been. The held-back ones, a declared peg's SAC
+// REACH. The constituents come in two sets. The established spellings —
+// the aggregator's own source set — are combined unconditionally. The
+// held-back ones, a declared peg's SAC
 // wrapper, are read too, but a held-back bar is admitted ONLY into a
 // bucket no established spelling answered. That gate is what makes the
 // widening safe rather than merely wider:
@@ -144,7 +144,7 @@ func (s *Server) ohlcSeriesFiatCombined(
 
 // newestCombinedBars keeps the NEWEST `limit` of an ascending merged
 // series. Which end survives is not a presentation choice here — it is
-// what decides whether the served bars are CORRECT (RLT-453).
+// what decides whether the served bars are CORRECT.
 //
 // Every constituent read carries the same `limit`, and a capped
 // [timescale.Store.OHLCSeries] read keeps that constituent's newest
@@ -206,9 +206,9 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 // ASSET, not a spelling: Soroban AMMs trade the wrapper, so a token
 // whose only USD depth is an Aquarius / Phoenix / Soroswap pool is
 // stored quoted in the USDC SAC and in nothing the expansion names.
-// Measured on r1 2026-09-05 over 365 days of prices_1d, 43 assets are in
-// exactly that state, carrying 260,833 prints and $14.63M of volume that
-// both the series and the point path answered as absent.
+// Measured on r1 over 365 days of prices_1d, 43 assets are in
+// exactly that state, carrying 260,833 prints and $14.63M of volume that a
+// spelling-only expansion answers as absent.
 //
 // The split is [tipMergePairs]'s merge/last rule at the constituent-set
 // grain, and the two passes are [Server.usdPegProxyQuotes]'s
@@ -300,24 +300,18 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // into one chronologically-ordered population, lifted to one amount scale.
 // Returns (window, proxied, err); `proxied` drives flags.triangulated.
 //
-// C1-024 (audit-2026-07-23): the point path used to read the LITERAL pair
-// and, only when that came back empty, retry each operator-declared classic
-// peg and take the FIRST non-empty one. So exactly one constituent ever
-// backed a point quote, while the series combined all of them — and the
-// point path's fallback set was structurally narrower besides: no base
-// aliases (the CEX `crypto:XLM/fiat:USD` stream was unreachable from
-// `?base=native`), no `crypto:USDC`/`crypto:USDT`/… backers, and hard-gated
-// on quote.Code == "USD" so a fiat:EUR point 404'd against a populated EUR
-// series. `/v1/vwap?base=native&quote=fiat:USD` and
+// Reading the LITERAL pair and falling back to the FIRST non-empty
+// classic peg would back a point quote with exactly one constituent while
+// the series combines all of them, so
+// `/v1/vwap?base=native&quote=fiat:USD` and
 // `/v1/ohlc?interval=1h&base=native&quote=fiat:USD` — the same question
-// asked two ways — therefore answered from different trade populations, and
-// a point quote could not be reconciled against the series it belongs to.
-// The series methodology is the authority (it is the live aggregator's own
+// asked two ways — would answer from different trade populations. The
+// series methodology is the authority (it is the live aggregator's own
 // source set, aggregate.ExpandTargetPairWithClassicPegs — see
-// [Server.ohlcSeriesFiatCombined]); the point path now derives from the
+// [Server.ohlcSeriesFiatCombined]); the point path derives from the
 // identical constituent selection, so point == series at shared timestamps.
 //
-// Since rows 1.14/1.15 that statement carries a grain. Both paths run one
+// That statement carries a grain. Both paths run one
 // rule over one constituent split — established spellings answer, and a
 // held-back spelling answers a bucket they left empty — but a "bucket" is
 // whatever the caller asked for. This path resolves at
@@ -327,12 +321,12 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // print. That is the question changing, not the population splitting.
 //
 // Constituent read errors PROPAGATE rather than being skipped: dropping a
-// constituent would silently narrow the methodology back to the divergence
-// this fix removes, and a quietly-narrower money answer is worse than a 500.
+// constituent would silently split point and series, and a
+// quietly-narrower money answer is worse than a 500.
 // This matches [Server.ohlcSeriesFiatCombined], which also propagates.
 //
 // Each constituent is fetched with the caller's `maxTrades` cap (newest-N
-// per pair, per the reader's `ts DESC` LIMIT — F-1319) and the merged set is
+// per pair, per the reader's `ts DESC` LIMIT) and the merged set is
 // then trimmed to the newest `maxTrades` overall, preserving the callers'
 // `len(trades) == maxTrades` truncation signal.
 func (s *Server) fiatCombinedTrades(
@@ -347,15 +341,13 @@ func (s *Server) fiatCombinedTrades(
 	// ones left empty — the series' per-bucket rule
 	// ([Server.ohlcSeriesFiatCombined]) at this path's own resolution.
 	//
-	// A first attempt gated on the whole window ("read the held-back set
-	// only when the established set returned nothing at all") on the
-	// reasoning that a point window is its own bucket. That is true only
-	// when the window IS one bucket, and it put the two surfaces back on
-	// two populations the moment it was not: a two-hour window with the
-	// book trading in the first hour and the pool in the second served a
-	// two-bar series carrying both and a `/v1/vwap` carrying only the
-	// book — the same window, answered from different trade sets, which
-	// is the C1-024 defect this path exists to remove.
+	// Gating on the whole window ("read the held-back set only when the
+	// established set returned nothing at all") treats a point window as
+	// its own bucket, which is true only when the window IS one bucket.
+	// Otherwise a two-hour window with the book trading in the first hour
+	// and the pool in the second serves a two-bar series carrying both and
+	// a `/v1/vwap` carrying only the book — the same window, answered from
+	// different trade sets.
 	//
 	// The gate is therefore per bucket here too, at
 	// [fiatPointGateInterval] — the FINEST interval the series can be
@@ -398,7 +390,7 @@ func (s *Server) fiatCombinedTrades(
 	// (crypto:XLM/crypto:USDT, 8dp) into one population, so without lifting
 	// every trade to a common smallest-unit scale the Σquote/Σbase weighted
 	// mean would over-weight the finer-scaled source ~10× per decimal of
-	// scale difference (CS-040 money-path). Uniform windows — all-CEX or
+	// scale difference. Uniform windows — all-CEX or
 	// all-on-chain, the common case — are returned byte-identical, so only
 	// genuinely mixed windows move, toward the true real-volume-weighted
 	// price. TWAP is time-weighted and thus unaffected either way (the
@@ -487,7 +479,7 @@ func fiatPointGateBucket(ts time.Time) time.Time {
 
 // amountScaleDecimalsFor resolves a trade source's smallest-unit scale from
 // the external registry (8 for CEX/aggregator, 7 for on-chain DEX, 6 for the
-// FX pollers — CS-040). Extracted as a package-level func so
+// FX pollers). Extracted as a package-level func so
 // aggregate.NormalizeAmountScale can stay free of an internal/sources/external
 // import (that package imports aggregate — the reverse edge is a cycle).
 func amountScaleDecimalsFor(source string) int {
@@ -516,30 +508,29 @@ func sortTradesChronological(trades []canonical.Trade) {
 // source) would re-introduce exactly the 10x mis-weight this file
 // corrects. It never survives a production read — the CAGG populates
 // `sources` for every materialised bucket — and it lifts by a factor of
-// 1, which is the pre-fix behaviour and so can only ever leave a bar
-// where it already was.
+// 1, so it can only ever leave a bar where it already was.
 const ohlcBarScaleUnknown = -1
 
 // barScaleDecimals resolves a combined bar's smallest-unit scale from
 // the venues that contributed to it, via the SAME resolver the raw-trade
 // point path hands to [aggregate.NormalizeAmountScale]. Sharing the
-// resolver is what keeps point and series on one answer (C1-024).
+// resolver is what keeps point and series on one answer.
 //
 // The MAXIMUM across the bar is taken. Every bar on r1 is homogeneous —
 // 129,854 distinct pair spellings over 400 days of prices_1d, not one of
-// them written at two scales, checked 2026-09-05 — so max is that single
-// scale and the lift is exact. If a bar ever does mix scales internally
-// its stored volume is already a sum of incommensurable integers that no
-// read-time factor can repair, and max is the choice that gives such a
-// bar the SMALLEST lift, so it can never inflate its own weight against
-// its peers. That is the same direction launch-plan row 1.15 requires of
-// a thin venue beside book data.
+// them written at two scales — so max is that single
+// scale and the lift
+// is exact. If a bar ever does mix scales internally its stored volume
+// is already a sum of incommensurable integers that no read-time factor
+// can repair, and max is the choice that gives such a bar the SMALLEST
+// lift, so it can never inflate its own weight against its peers, the
+// same direction a thin venue beside book data is held to.
 // Also unknown when any contributing source has no [external.Registry]
 // entry: [external.Lookup] answers such a source with the registry's
 // CEX-flavoured 8-decimal default, and stating that as fact for a
-// source this deployment does not recognise would re-introduce the
-// F096 tenfold error for the opposite population — an unregistered
-// on-chain DEX would be reported at 8 (GH-1285). Mirrors
+// source this deployment does not recognise would misstate the scale
+// tenfold for the opposite population: an unregistered on-chain DEX
+// would be reported at 8. Mirrors
 // [commonAmountScaleDecimals], the point-path twin.
 func barScaleDecimals(sources []string) int {
 	scale := ohlcBarScaleUnknown
@@ -801,15 +792,14 @@ func sortedSources(set map[string]struct{}) []string {
 // per-constituent extremes: the plain max / min, with NO price-distance
 // filtering.
 //
-// It used to drop candidates outside `combinedOutlierBandRatio` (2×) of the
-// bucket VWAP. That band is GONE (audit B11-F1; operator decision 2026-07-22 in
-// docs/operations/finding-dust-trades-set-chart-extremes.md): every wick it was
-// built for was DUST, and dust is now excluded upstream by the $0.01 notional
-// floor on the CAGG extremes (migration 0115) — at the individual-trade level
-// the band could never reach. The band was also both too weak and too strong: it
-// missed the 2026-07-17 XLM/USD 0.1333 wick (0.73× VWAP, comfortably in band)
-// while being able to clip a genuine large move. Filter on trade SIZE, never on
-// price divergence: a $100,000 fat-finger is a real market event and must show.
+// A price band around the bucket VWAP is the wrong filter (see
+// docs/operations/finding-dust-trades-set-chart-extremes.md): the wicks it
+// would target are DUST, which the $0.01 notional floor on the CAGG extremes
+// (migration 0115) excludes upstream at the individual-trade level. A band is
+// also both too weak and too strong: a measured XLM/USD 0.1333 wick sat at
+// 0.73× VWAP, comfortably inside a 2× band, while a band can clip a genuine large
+// move. Filter on trade SIZE, never on price divergence: a $100,000
+// fat-finger is a real market event and must show.
 //
 // Returns a zero Rat when there are no candidates (defensive: finalize only
 // runs with ≥1 bar).
