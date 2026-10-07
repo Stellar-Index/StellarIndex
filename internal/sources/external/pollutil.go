@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // pollutil.go — shared scaffolding for the polling connectors (the
-// FX pollers in particular: ecb / exchangeratesapi).
-// Extracted from three near-identical per-package copies
-// (maintainability audit D3 cluster 1 / D1 M0-1 follow-up): the HTTP
-// GET plumbing, the secret-redacting transport-error formatter, and
-// the fiat interest-set derivation from the configured pair list.
-// New pollers should build on these instead of re-pasting them.
+// FX pollers in particular: ecb / exchangeratesapi): the HTTP GET
+// plumbing, the secret-redacting transport-error formatter, and the
+// fiat interest-set derivation from the configured pair list. New
+// pollers should build on these instead of re-pasting them.
 
 package external
 
@@ -40,7 +38,7 @@ type GetRequest struct {
 	// only accept an API key as a query parameter (exchangeratesapi's
 	// access_key) leak the key through *url.Error, which embeds the
 	// full request URL — pass the query-less endpoint here and the
-	// error is rewritten with the query string redacted (G10-04).
+	// error is rewritten with the query string redacted.
 	// Setting it also refuses redirects, because Go copies the full
 	// previous URL into the next hop's Referer header.
 	RedactURL string
@@ -92,7 +90,7 @@ func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
 // redactURLError converts a transport error into a string with the
 // secret-bearing URL scrubbed. *url.Error.Error() embeds the full
 // request URL — including any key-carrying query param — so we
-// replace it with a query-stripped, path-only form. G10-04.
+// replace it with a query-stripped, path-only form.
 //
 // Non-*url.Error inputs are returned via Error() unchanged (they
 // don't carry the request URL).
@@ -121,7 +119,7 @@ func redactQuery(rawURL string) string {
 // currency. Shared between cmd/stellarindex-indexer's production
 // wiring and the verify-external diagnostic so the two can't drift
 // apart — a base currency present here but missing from one copy
-// silently drops that reference rate for that copy only (CA2-A26).
+// silently drops that reference rate for that copy only.
 var DefaultFXPairTargets = []string{
 	"USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "NZD", "SEK", "NOK", "MXN",
 }

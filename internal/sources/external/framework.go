@@ -174,7 +174,7 @@ type Metadata struct {
 	// source stamps on canonical.Trade (Quote/BaseAmount): 8 for the
 	// CEX/aggregator 1e8 convention, 6 for the FX pollers' 1e6
 	// (DefaultDecimals). 0 means "unset → treat as 8" via
-	// AmountScaleDecimals(). Read this instead of assuming 1e8 (CS-040):
+	// AmountScaleDecimals(). Read this instead of assuming 1e8:
 	// the USD-volume gate mis-scales FX ~100× otherwise.
 	AmountDecimals int
 

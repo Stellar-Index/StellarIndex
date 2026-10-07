@@ -138,11 +138,10 @@ func (t Trade) ID() string {
 // Ledger is NOT required to be non-zero. On-chain sources stamp the
 // real pubnet sequence; off-chain sources (Binance/Kraken/Bitstamp/
 // Coinbase — any venue without a ledger concept) stamp 0 and rely on
-// Source + TxHash + OpIndex + Timestamp for storage uniqueness. The
-// zero-ledger check that used to live here caught stub decoders at the
-// cost of rejecting valid off-chain inserts; TxHash validation
-// (64-char hex, synthesised deterministically for off-chain) already
-// catches stubs.
+// Source + TxHash + OpIndex + Timestamp for storage uniqueness. A
+// zero-ledger check here would catch stub decoders at the cost of
+// rejecting valid off-chain inserts; TxHash validation (64-char hex,
+// synthesised deterministically for off-chain) already catches stubs.
 //
 // Amounts must be non-negative and not both zero. Exactly one zero leg
 // is a valid trade: SDEX settles fills whose base or quote rounded to

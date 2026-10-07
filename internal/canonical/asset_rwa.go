@@ -31,20 +31,20 @@ var knownRWACodes = map[string]struct{}{
 	"TESOURO": {}, // tokenized Brazilian treasury (Tesouro)
 	"USTRY":   {}, // tokenized US treasury
 	"SPXU":    {}, // ProShares UltraPro Short S&P 500 (inverse ETF)
-	// 2026-07-24 RedStone relayer expansion (ledger 63624934; see the
-	// ADR-0028). Per the convention above the code
-	// strips the feed-id suffix (`_FUNDAMENTAL`, `/USD`) — the
-	// decoder's feed registry maps the raw feed_id onto it.
+	// RedStone relayer expansion (ledger 63624934; see ADR-0028). Per
+	// the convention above the code strips the feed-id suffix
+	// (`_FUNDAMENTAL`, `/USD`) — the decoder's feed registry maps the
+	// raw feed_id onto it.
 	"USDY":    {}, // Ondo US Dollar Yield — tokenized note backed by short-term US Treasuries + bank deposits
 	"USST":    {}, // STBL treasury-backed stablecoin (feed_id USST_FUNDAMENTAL)
 	"XAUm":    {}, // Matrixdock tokenized gold (1 token ≈ 1 troy oz)
 	"deJAAA":  {}, // Centrifuge deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
 	"deJTRSY": {}, // Centrifuge deRWA token of the Janus Henderson treasury fund (JTRSY)
-	// 2026-08-29: the Reflector FX oracle's spot-gold slot (ISO-4217
-	// X-code, 1 troy oz in USD). A commodity reference, not a currency —
-	// kept OFF the fiat list (ADR-0010) and OFF crypto; it shares the
-	// rwa: namespace with XAUm but is a DISTINCT asset (spot vs the
-	// Matrixdock token). See the ADR-0028.
+	// The Reflector FX oracle's spot-gold slot (ISO-4217 X-code, 1 troy
+	// oz in USD). A commodity reference, not a currency — kept OFF the
+	// fiat list (ADR-0010) and OFF crypto; it shares the rwa: namespace
+	// with XAUm but is a DISTINCT asset (spot vs the Matrixdock token).
+	// See ADR-0028.
 	"XAU": {}, // spot gold, troy ounce (Reflector FX slot)
 }
 

@@ -35,13 +35,12 @@ type Amount struct {
 	value *big.Int
 
 	// noCompare makes Amount non-comparable, so `a == b` is a COMPILE
-	// ERROR rather than a pointer comparison. Without it `==` was legal
-	// and compared the *big.Int addresses: FromString("100") ==
-	// FromString("100") was false, and the natural "was this set?" guard
-	// `amt == (canonical.Amount{})` returned true for an unset Amount but
-	// false for one legitimately decoded as zero — silently reclassifying
-	// real zero-amount events as present. Use Cmp or Equal
-	// (cold audit 2026-08-04).
+	// ERROR rather than a pointer comparison. Without it `==` would be
+	// legal and compare the *big.Int addresses: FromString("100") ==
+	// FromString("100") would be false, and the natural "was this set?"
+	// guard `amt == (canonical.Amount{})` would return true for an unset
+	// Amount but false for one legitimately decoded as zero — silently
+	// reclassifying real zero-amount events as present. Use Cmp or Equal.
 	//
 	// Zero-width, so it costs nothing at runtime. Never read — its
 	// presence in the struct IS the effect.

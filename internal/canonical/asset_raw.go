@@ -1,16 +1,15 @@
 package canonical
 
 // Oracle-published raw symbol helpers — see
-// docs/design/oracle-capture-totality-design.md (Wave B, 2026-08-28).
+// docs/design/oracle-capture-totality-design.md.
 //
 // The Asset type carries an AssetOracleRaw variant for a symbol an
 // indexed on-chain oracle (Reflector / RedStone / Band) published
 // that maps to NO canonical asset. The record layer must be total —
 // every price entry the oracle wrote on-chain is recorded — while
-// only the interpretation layer is selective. Before this variant
-// existed an unmapped symbol was dropped at decode time (counted on
-// `stellarindex_source_unknown_symbols_total`) and recovering it
-// needed a code change AND a lake replay.
+// only the interpretation layer is selective. Without this variant an
+// unmapped symbol would be dropped at decode time and recovering it
+// would need a code change AND a lake replay.
 //
 // Wire form: `raw:<symbol>` (e.g. `raw:NOTACOIN`,
 // `raw:SolvBTC.BBN_FUNDAMENTAL/USD`). The symbol is stored VERBATIM;

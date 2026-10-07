@@ -13,7 +13,7 @@ import (
 // [SafeUnixMillis] treat it as garbage and fall back to the ledger
 // close time. Absorbs relayer/oracle clock skew without admitting
 // sentinel / overflow values that error the timestamptz INSERT
-// (cf. the soroswap-router deadline_ts fix).
+// (cf. the soroswap-router deadline_ts guard).
 const SafeUnixFutureWindow = 24 * time.Hour
 
 // safeUnixEpochFloorSeconds is the lower sanity bound for a decoded
@@ -33,14 +33,15 @@ const safeUnixEpochFloorSeconds = 1_000_000_000
 //     anything > math.MaxInt64 (~9.2e18) WRAPS NEGATIVE in an int64()
 //     cast and would stamp a far-PAST time that a cast-first
 //     future-only After() guard misses in both directions — the same
-//     overflow class as the router deadline_ts bug. Bound-checking the
-//     raw u64 first catches both ends and keeps the cast provably in
-//     range. The ceiling itself is int64-checked before its own uint64
-//     cast — a pre-1970 closedAt would otherwise wrap it and disable the
-//     whole guard (cold audit 2026-08-04).
+//     overflow class as an unguarded router deadline_ts cast.
+//     Bound-checking the raw u64 first catches both ends and keeps the
+//     cast provably in range. The ceiling itself is int64-checked before
+//     its own uint64 cast — a pre-1970 closedAt would otherwise wrap it
+//     and disable the whole guard.
 //
-// One copy each for the three oracle decoders (reflector / band /
-// redstone) that previously hand-rolled this guard (D3 cluster 9).
+// The decoders share this guard rather than each hand-rolling one: band
+// and sorocredit call it, reflector and redstone its sibling
+// [SafeUnixMillis].
 func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	ceil := closedAt.Add(SafeUnixFutureWindow).Unix()
 	if ceil < 0 {
@@ -48,11 +49,11 @@ func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 		// unchecked uint64() cast would wrap it to ~1.8e19 — silently
 		// disabling the guard this function exists to be. Every raw value
 		// including 2^63 would then pass and int64(raw) would stamp a
-		// far-PAST time, the exact overflow class the router deadline_ts
-		// bug was. No production caller can reach it today (all three
+		// far-PAST time, the overflow class of an unguarded router
+		// deadline_ts cast. No production caller can reach it (all three
 		// LedgerClosedAt producers are >=1970 and all three call sites
 		// fail closed on a missing close time), but the guard must not
-		// depend on that (cold audit 2026-08-04).
+		// depend on that.
 		return closedAt.UTC()
 	}
 	if raw < safeUnixEpochFloorSeconds || raw > uint64(ceil) {
