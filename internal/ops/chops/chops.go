@@ -28,9 +28,7 @@
 // by ch-rebuild, ch-reproject, compute-completeness, and
 // verify-reconciliation) live here too rather than in a 7th package.
 //
-// Extracted from cmd/stellarindex-ops (maintainability audit
-// 2026-07-01, D1 finding M1-5); main.go's dispatch table calls Run
-// below.
+// cmd/stellarindex-ops main.go's dispatch table calls Run below.
 package chops
 
 import (

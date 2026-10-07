@@ -27,12 +27,10 @@ import (
 // [from,to] per partition for the full-history run; a single all-history pass
 // holds one in-memory map (thousands of contracts — bounded).
 //
-// NB: this used to have a -write flag that persisted the per-token rollup to
-// a materialized `stellar.token_supply` CH table. That table + writer were
-// removed (ROADMAP #66, 2026-07-10): nothing has read `stellar.token_supply`
-// since the serving path moved to summing `stellar.supply_flows` live
+// NB: the per-token supply is not persisted: the serving path sums
+// `stellar.supply_flows` live
 // (internal/storage/clickhouse/supply_flows.go SupplyReader.TokenSupply —
-// "no rollup refresh" by design). -seed-flows below is the still-live
+// "no rollup refresh" by design). -seed-flows below is the
 // mechanism that keeps supply_flows itself complete; the shared -write gate
 // applies it, and without -write a -seed-flows run counts the rows it would
 // write.

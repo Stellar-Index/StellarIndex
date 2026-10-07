@@ -21,20 +21,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ch-cap67-movements — inventory item #1 (open-fixes-inventory-2026-08-08):
-// derive post-P23 account movements for EVERY asset (native XLM included)
+// ch-cap67-movements derives post-P23 account movements for EVERY asset (native XLM included)
 // from the lake's own CAP-67 transfer, mint, burn and clawback events into
 // stellar.account_movements, provenance 'cap67_derived'.
 //
 // WHY: the Postgres sep41_transfers tail projects only WATCHED token
-// contracts — native XLM's SAC is deliberately unwatched (volume), so a
-// classic-payment account's /movements feed "stopped" at the P23
-// boundary (the GATL report, 2026-08-08) even though the lake captures
+// contracts — native XLM's SAC is deliberately unwatched (volume), so
+// without this job a classic-payment account's /movements feed stops at
+// the P23 boundary even though the lake captures
 // all of it (native SAC: 44.76M active ledgers).
 //
 // SHAPE: windowed + resumable via stellar.cap67_movements_watermark
 // (deploy/clickhouse/cap67_movements.sql). `-follow` runs it as the
-// continuous real-time daemon (5.3): each iteration catches up from the
+// continuous real-time daemon: each iteration catches up from the
 // watermark (or the P23 boundary on first run) to the CONTIGUOUS lake tip,
 // then sleeps -follow-interval and repeats — this is the movement feed a user
 // watches their transactions land on. Without -follow it is a one-shot
@@ -83,11 +82,11 @@ func chCap67Movements(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	// INV-0793: the watermark this job advances had no metric publisher at
-	// all, so a wedged -follow daemon (holding the watermark, and every
-	// downstream /movements read behind it, at a fixed ledger) looked
-	// exactly like a healthy one — same gap C6-020 closed for ch-backfill /
-	// ch-holders-rollup / usd-volume-restamp with this same primitive.
+	// Without a metric on the watermark this job advances, a wedged
+	// -follow daemon (holding the watermark, and every
+	// downstream /movements read behind it, at a fixed ledger) looks
+	// exactly like a healthy one — ch-backfill /
+	// ch-holders-rollup / usd-volume-restamp publish through this same primitive.
 	// record reports per-window, not just at run end: -follow's first-run
 	// backfill can run for hours, and a single end-of-run Progress call
 	// would leave the cursor flat (reading as hung) for the whole of it.
@@ -129,8 +128,8 @@ func chCap67Movements(args []string) error {
 // cap67Progress accumulates one process's derived-row total and delegates
 // to the shared ops-job heartbeat (opsutil.JobHeartbeat) — the same
 // liveness/progress primitive ch-backfill, ch-holders-rollup and
-// usd-volume-restamp already publish, reused rather than a bespoke gauge
-// (INV-0793). total is cumulative across every catch-up tick in the
+// usd-volume-restamp publish, reused rather than a bespoke gauge.
+// total is cumulative across every catch-up tick in the
 // process's lifetime, so -follow's steady-state small ticks still read as
 // forward progress rather than resetting to near-zero every tick.
 type cap67Progress struct {
@@ -212,7 +211,7 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // progress, when non-nil, is called after each window advances with that
 // window's row count and the ledger it reached (see cap67Progress.record) —
 // the per-window granularity a long -follow tick needs so a stalled watermark
-// is distinguishable from a hung process (INV-0793).
+// is distinguishable from a hung process.
 func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
@@ -270,8 +269,8 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 // idles a few ticks per ledger (5 s cadence against a 1 s tick) and never
 // many in a row, so a long idle run is either upstream ingest stalled, a
 // hole ch-live-catchup has yet to heal, or a resume point the lake will
-// never reach — the silent-forever shape the test nets sat in for months
-// (start=1 against a lake that begins at 2, 2026-09-17). Two responses:
+// never reach — the silent-forever shape of start=1 against a lake that
+// begins at 2. Two responses:
 // say so in the journal at a bounded rate, and stop paying the
 // ContiguousWatermark window-function scan every second for nothing.
 const (
@@ -407,8 +406,8 @@ func followLoop(ctx context.Context, interval time.Duration, catchUp func(ctx co
 // lake does not hold as a boundary hole and answers from-1, so a floor
 // below the lake's first ledger (genesis=1 against a lake that begins at
 // 2, which is every net's lake) would idle the daemon forever without
-// deriving a row — the test nets' empty account_movements archive
-// (2026-09-17). A floor above the lake's start (pubnet's) is kept as is;
+// deriving a row, leaving a test net's account_movements archive
+// empty. A floor above the lake's start (pubnet's) is kept as is;
 // an empty lake (lakeMin == 0) leaves the floor alone and the run idles
 // until the lake reaches it.
 func resolveStart(wm, floor, lakeMin uint32) uint32 {
@@ -469,8 +468,8 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 	// it, which the caller's `last < start` guard treats as "nothing to do".
 	//
 	// The clamp is UNCONDITIONAL: an operator-supplied -to is min()'d against
-	// the tip rather than trusted. The gate used to sit inside the to == 0
-	// branch, so `-to N` walked straight past a hole below N and stamped the
+	// the tip rather than trusted. Gated only when to == 0,
+	// `-to N` would walk straight past a hole below N and stamp the
 	// watermark at every window top on the way — the loss above, on the one
 	// invocation shape an operator reaches for after an incident.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
