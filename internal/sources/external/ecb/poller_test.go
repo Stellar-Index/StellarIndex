@@ -96,7 +96,7 @@ func TestPollOnce_HappyPath(t *testing.T) {
 		t.Errorf("USD quote = %+v want EUR", usdU.Quote)
 	}
 	// ECB: 1 EUR = 1.0825 USD → 1 USD = 1/1.0825 EUR ≈ 0.9238 EUR.
-	// Emitted at InvertedDecimals (12dp, not the rate's 6dp — GH-945):
+	// Emitted at InvertedDecimals (12dp, not the rate's 6dp):
 	// 923787528868 / 10^12.
 	priceInt := usdU.Price.BigInt().Int64()
 	if priceInt < 923_000_000_000 || priceInt > 925_000_000_000 {
@@ -251,10 +251,9 @@ func TestPollInterval_Default(t *testing.T) {
 
 // TestInversionMath_MatchesExpected pins the poller's full rate->price
 // pipeline: scale the venue rate, then INVERT it (ECB publishes
-// EUR-per-unit; the poller emits unit-per-EUR). #947: this test's name
-// promised the inversion step but its first block only asserted the
-// scaling step — scaled.Int64() == 1082500 is 1.0825 itself, not its
-// reciprocal — so a broken InvertScaled would have passed unnoticed.
+// EUR-per-unit; the poller emits unit-per-EUR). Asserting only the scaling
+// step — scaled.Int64() == 1082500 is 1.0825 itself, not its
+// reciprocal — would let a broken InvertScaled pass unnoticed.
 func TestInversionMath_MatchesExpected(t *testing.T) {
 	// ECB's rate=1.0825 -> emitted price = 1/1.0825 = 0.923787... at
 	// 10^6 scale, round-half-up = 923788.
@@ -270,7 +269,7 @@ func TestInversionMath_MatchesExpected(t *testing.T) {
 		t.Errorf("InvertScaled(1.0825 at 10^6) = %d want %d (round_half_up(1e12/1082500))", inverted.Int64(), want)
 	}
 
-	// GH-945: inverting a weak-currency rate at the SAME scale as the
+	// Inverting a weak-currency rate at the SAME scale as the
 	// input quantises it hard. VND at "1 EUR = 25335 VND": inverting
 	// at 6dp gives round(10^12/25_335_000_000) = 39 → 0.000039, vs
 	// the true 0.00003947 — about -1.2% error. The poller must widen

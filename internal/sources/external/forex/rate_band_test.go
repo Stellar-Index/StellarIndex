@@ -50,13 +50,13 @@ func rateFor(batch []FXQuote, ticker string) float64 {
 	return -1
 }
 
-// TestPersistSnapshot_RejectsOneBadUpstreamBar pins C2-030
-// (audit-2026-07-23). fx_quotes is the denominator of every fiat-quoted
+// TestPersistSnapshot_RejectsOneBadUpstreamBar pins the fx
+// sanity band. fx_quotes is the denominator of every fiat-quoted
 // usd_volume the X2.5 triangulation derives, so a single mis-scaled
 // upstream bar — the classic case is a decimal shift, here EUR jumping
 // from 0.92 to 9.2 — silently re-scales that currency's entire
-// conversion. persistSnapshot wrote whatever the upstream said, with no
-// comparison against the last stored rate for the ticker.
+// conversion if persistSnapshot writes whatever the upstream says, with
+// no comparison against the last stored rate for the ticker.
 func TestPersistSnapshot_RejectsOneBadUpstreamBar(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestPersistSnapshot_RejectsOneBadUpstreamBar(t *testing.T) {
 }
 
 // TestPersistSnapshot_ConfirmedDevaluationIsAccepted is the other half of
-// the C2-030 decision: the band must not WEDGE a currency. A real
+// the band decision: the band must not WEDGE a currency. A real
 // devaluation (EGP ~38% in a day, NGN ~40%) the upstream keeps reporting
 // is accepted on the next refresh, so the worst case is one refresh
 // interval of lag rather than an indefinitely stale rate.

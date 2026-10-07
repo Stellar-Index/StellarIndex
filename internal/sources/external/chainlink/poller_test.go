@@ -146,11 +146,11 @@ func TestRoundCache_dedup(t *testing.T) {
 	}
 }
 
-// TestRoundCache_phaseRollover_resumesEmission is the F-1323/G10-01
+// TestRoundCache_phaseRollover_resumesEmission is the phase-rollover
 // regression: a Chainlink proxy phase upgrade resets the aggregator-
-// local roundId to ~1 while the phaseId increments. With the old
-// low-64-bit dedup key the post-upgrade round=1 read as <= prev=<big>
-// and the feed silently stopped emitting until restart. Keying on the
+// local roundId to ~1 while the phaseId increments. With a
+// low-64-bit dedup key the post-upgrade round=1 reads as <= prev=<big>
+// and the feed silently stops emitting until restart. Keying on the
 // FULL uint80 (phaseId<<64|aggRound) keeps the wide id monotonic, so
 // emission resumes.
 func TestRoundCache_phaseRollover_resumesEmission(t *testing.T) {
@@ -184,7 +184,7 @@ func TestRoundCache_phaseRollover_resumesEmission(t *testing.T) {
 
 // TestDecodeLatestRoundData_phaseBits confirms the decoder reads the
 // upper uint80 phase bits, not just the low 64. The wide roundId
-// must equal (phaseID<<64)|aggRound. F-1323/G10-01.
+// must equal (phaseID<<64)|aggRound.
 func TestDecodeLatestRoundData_phaseBits(t *testing.T) {
 	t.Parallel()
 	raw := buildProxyRoundDataReturn(t, 2, 1, big.NewInt(2_500_00000000), 1767225600)
@@ -441,7 +441,7 @@ func buildLatestRoundDataReturn(t *testing.T, roundID uint64, answer *big.Int, s
 
 // buildProxyRoundDataReturn assembles the same 5-tuple but encodes a
 // FULL uint80 proxy roundId = (phaseID<<64)|aggRound across bytes
-// 22..32 of word 0. Used by the phase-rollover test (F-1323/G10-01)
+// 22..32 of word 0. Used by the phase-rollover test
 // to reproduce the case where aggRound resets to ~1 but phaseID
 // increments — the wide id still strictly increases.
 func buildProxyRoundDataReturn(t *testing.T, phaseID uint16, aggRound uint64, answer *big.Int, updatedAt uint64) string {
@@ -511,7 +511,7 @@ func publishedPriceOf(t *testing.T, u canonical.OracleUpdate) (string, bool) {
 	return s, true
 }
 
-// TestProject_invertRecordsPublishedAnswer pins INV-2590 for chainlink:
+// TestProject_invertRecordsPublishedAnswer pins published_price for chainlink:
 // an Invert feed keeps the reciprocal as price and the feed's own answer
 // verbatim as published_price; a non-Invert feed records none.
 func TestProject_invertRecordsPublishedAnswer(t *testing.T) {

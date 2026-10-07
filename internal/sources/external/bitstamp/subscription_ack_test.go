@@ -14,7 +14,7 @@ import (
 // TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs is the
 // CA2-A18-harden-3 guard: a rejected bts:error subscription must flip
 // obs.CEXStreamSubscriptionRejected and log, not vanish silently the
-// way "swallow and continue" used to leave it.
+// way "swallow and continue" would leave it.
 func TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs(t *testing.T) {
 	// Distinct pair from other bitstamp tests so the shared gauge's
 	// state can't collide across parallel test runs.

@@ -7,7 +7,7 @@ import (
 
 // TestIsFiniteFloat covers the large-magnitude case that the old
 // `f != f+1` inf check got wrong: for |f| >= 2^53, f+1 rounds back
-// to f, so a perfectly finite value used to read as non-finite.
+// to f, so a perfectly finite value reads as non-finite.
 func TestIsFiniteFloat(t *testing.T) {
 	cases := []struct {
 		name string

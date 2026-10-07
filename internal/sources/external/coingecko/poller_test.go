@@ -213,7 +213,7 @@ func TestPollInterval_Default(t *testing.T) {
 	}
 	// Pin the demo-tier-safe 300s default so a future cadence drop
 	// past 300s — which would push burn rate back toward the 10K/day
-	// ceiling on a shared IP — fails this test (F-0030).
+	// ceiling on a shared IP — fails this test.
 	if DefaultPollInterval != 300*time.Second {
 		t.Errorf("DefaultPollInterval = %v; expected 300s — dropping this below 300s risks tripping CoinGecko's 10K/day demo cap (F-0030)", DefaultPollInterval)
 	}

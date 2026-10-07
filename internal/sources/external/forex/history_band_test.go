@@ -39,12 +39,12 @@ func TestGuardSnapshot_StuckStreakCountsRefreshesNotBars(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_HistoryRowRejectsBadBar is the MR-1 proven-red guard
-// (audit-2026-08-14). Regression (1): the trailing-7d history rows were
-// written with ONLY a >0/finite filter — no [maxRateDeviation] band — so a
+// TestPersistSnapshot_HistoryRowRejectsBadBar is the proven-red guard
+// for history rows. Regression (1): trailing-7d history rows written
+// with ONLY a >0/finite filter — no [maxRateDeviation] band — let a
 // transiently-wrong-but-positive upstream bar for a PAST date (provider
 // glitch: EUR 0.85 instead of 0.92 two days ago, but here a decimal shift
-// to 9.2 to sit unambiguously outside the 50% band) overwrote the correct
+// to 9.2 to sit unambiguously outside the 50% band) overwrite the correct
 // stored rate in place. fx_quotes.rate_usd is the denominator of every
 // fiat-quoted usd_volume, so that one bad history bar re-scales every
 // EUR-quoted trade valued off that date, with nothing to revert it.
@@ -138,7 +138,7 @@ func hasHistoryRow(batch []FXQuote, ticker string, date time.Time, rate float64)
 }
 
 // TestAcceptHistoryRate_StuckUpstreamReclassifies is the Massive ETB=44
-// incident (2026-08-24): a provider serving the SAME broken history bar
+// incident: a provider serving the SAME broken history bar
 // refresh after refresh must keep being REFUSED, but stop counting as
 // fresh `history_deviation` once the streak passes the threshold — so
 // the rejection alert only carries new information. A different rejected
@@ -218,7 +218,7 @@ func TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck(t *testing.T) {
 }
 
 // TestPersistSnapshot_BootstrapPoisonHealedByHistoryMajority is the
-// 2026-08-24 Massive UZS incident, end to end. At process restart the
+// Massive UZS incident, end to end. At process restart the
 // current feed served a broken 1820 (true level ≈ 11,800); the bootstrap
 // arm accepted it sight-unseen, and the guard then rejected the ticker's
 // entire CORRECT trailing-7d series against the poisoned baseline —
@@ -380,7 +380,7 @@ func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
 }
 
 // TestPersistSnapshot_SplitRejectedSeriesFailsAgreement pins the
-// mutual-agreement band itself (verifier 2026-08-24: the redenomination
+// mutual-agreement band itself (the redenomination
 // test above actually exercises the min-bars floor — its in-band old-level
 // bars are accepted, so only 2 bars reach the rejected set). Here the
 // bootstrap sample is far from BOTH levels, every bar lands in the

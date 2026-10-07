@@ -81,8 +81,8 @@ const DefaultDecimals uint8 = 6
 
 // InvertedDecimals is the scale of the EMITTED price, after
 // inverting the venue's base-per-symbol rate. Inverting at the same
-// scale as the input quantises weak-currency prices by up to ~1.2%
-// (GH-945): a rate in the tens of thousands leaves only 1-2
+// scale as the input quantises weak-currency prices by up to ~1.2%:
+// a rate in the tens of thousands leaves only 1-2
 // significant digits once re-expressed at 6dp. Widening the output
 // to 12dp keeps the round-trip accurate regardless of the rate's
 // magnitude.

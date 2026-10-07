@@ -11,13 +11,12 @@ import (
 	"time"
 )
 
-// The served in-memory snapshot and the C2-030 sanity band (F004 / F026 /
-// K032, audit-2026-09-02).
+// The served in-memory snapshot and the fx sanity band.
 //
-// /v1/price's two fiat paths read the forex Cache directly. The worker
-// used to install the snapshot built from the RAW upstream map and only
-// afterwards run the band, inside persistSnapshot — so the band protected
-// fx_quotes and nothing else. During the 2026-08-24 Massive UZS incident
+// /v1/price's two fiat paths read the forex Cache directly. A worker that
+// installs the snapshot built from the RAW upstream map and only
+// afterwards runs the band, inside persistSnapshot, protects fx_quotes
+// and nothing else. During the Massive UZS incident
 // the guard kept 1820 (true level ~11,800) out of fx_quotes all day while
 // the cache served it to every fiat:UZS request.
 //
@@ -165,8 +164,8 @@ func TestRefreshOnce_BandRejectedRateIsNeverInstalled(t *testing.T) {
 		cacheOnly bool
 	}{
 		{name: "with fx_quotes writer"},
-		// The band used to live behind `if w.writer == nil { return }`,
-		// so a cache-only worker served every upstream bar unbanded.
+		// A band behind `if w.writer == nil { return }` would let a
+		// cache-only worker serve every upstream bar unbanded.
 		{name: "cache-only (nil writer)", cacheOnly: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

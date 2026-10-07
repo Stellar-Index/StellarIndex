@@ -16,12 +16,11 @@ import (
 
 // On-chain decimals() verification for the ingest poller.
 //
-// FeedSpec.Decimals used to be taken from config (or the built-in 8)
-// and stamped onto every oracle_updates row without ever asking the
-// AggregatorV3 proxy what scale it actually publishes at — a wrong or
-// drifted value would have stored every reading 10^(configured-actual)
-// off, silently. The poller now reads `decimals()` (SelDecimals) over
-// the same Client it uses for latestRoundData(), on the first poll of
+// FeedSpec.Decimals from config (or the built-in 8), stamped onto every
+// oracle_updates row without asking the AggregatorV3 proxy what scale it
+// actually publishes at, would store every reading 10^(configured-actual)
+// off, silently, if wrong or drifted. The poller reads `decimals()`
+// (SelDecimals) over the same Client it uses for latestRoundData(), on the first poll of
 // each feed and again every decimalsRefreshInterval, and:
 //
 //   - configured value ABSENT (0) → adopts the on-chain value;

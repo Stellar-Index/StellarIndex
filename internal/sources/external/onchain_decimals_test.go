@@ -20,7 +20,7 @@ import (
 // Phase-2 3-signal freeze AND down to the z-score alone.
 //
 // framework.go's own comment on AmountDecimals warns "Read this instead of
-// assuming 1e8 (CS-040)" — this test makes that warning enforceable for the
+// assuming 1e8" — this test makes that warning enforceable for the
 // sources where it matters, including any DEX source added later.
 func TestOnChainSourcesDeclareSevenDecimals(t *testing.T) {
 	const stellarStroopDecimals = 7

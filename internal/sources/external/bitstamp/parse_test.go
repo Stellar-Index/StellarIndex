@@ -172,8 +172,8 @@ func TestParseFrame_DustTradeReturnsTypedSentinel(t *testing.T) {
 	// now returns ErrDustTrade, which the streamer's handleFrame drops
 	// instead of counting it as a decode error.
 	//
-	// Reproduces the production log signature from r1 2026-05-10
-	// 15:26:51 UTC ("insert trade failed … quote_amount must be
+	// Reproduces the production log signature from r1
+	// ("insert trade failed … quote_amount must be
 	// positive, got 0" with source=bitstamp).
 	raw := []byte(`{
       "event":"trade",

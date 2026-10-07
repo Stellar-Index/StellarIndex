@@ -12,13 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// C2-016 (audit-2026-07-23). The streamer dust guard used to be a
-// flat 100_000 units at the external 10^8 scale — 0.001 of WHATEVER
-// the quote asset is. binance/pairs.yaml and bitstamp/pairs.go both
-// configure XLM/BTC, where 0.001 BTC is ~$100, so every XLM/BTC print
-// under roughly a thousand XLM was silently dropped. The drop is
-// size-biased, so the surviving XLM/BTC volume + VWAP skewed toward
-// large trades.
+// A streamer dust guard of a flat 100_000 units at the external 10^8
+// scale is 0.001 of WHATEVER the quote asset is. binance/pairs.yaml and
+// bitstamp/pairs.go both configure XLM/BTC, where 0.001 BTC is ~$100, so
+// every XLM/BTC print under roughly a thousand XLM would be silently
+// dropped. The drop is size-biased, so the surviving XLM/BTC volume +
+// VWAP would skew toward large trades.
 //
 // These tests pin the CORRECTED thresholds: the floor is $0.001 of
 // notional expressed in the quote asset's own units, so the same
@@ -66,13 +65,13 @@ func TestMinStreamQuoteUnits_IsUSDDenominated(t *testing.T) {
 		quote canonical.Asset
 		want  string
 	}{
-		// $1/unit → 0.001 units → 100_000 at 10^8. This is the
-		// pre-fix constant; USDT/fiat behaviour must not change.
+		// $1/unit → 0.001 units → 100_000 at 10^8. This matches
+		// the flat constant; USDT/fiat behaviour must not change.
 		{"usdt_stablecoin", cryptoAsset(t, "USDT"), "100000"},
 		{"fiat_usd", fiatAsset(t, "USD"), "100000"},
 		{"fiat_eur", fiatAsset(t, "EUR"), "100000"},
-		// ~$100k/unit → $0.001 is 1e-8 BTC → 1 unit at 10^8. The
-		// pre-fix code used 100_000 here, i.e. ~$100 of notional.
+		// ~$100k/unit → $0.001 is 1e-8 BTC → 1 unit at 10^8. A flat
+		// 100_000 here would be ~$100 of notional.
 		{"btc", cryptoAsset(t, "BTC"), "1"},
 		// ~$3k/unit → 1e11/3e9 = 33 units.
 		{"eth", cryptoAsset(t, "ETH"), "33"},
@@ -108,10 +107,10 @@ func TestDustFloorUnits_ClampsToOne(t *testing.T) {
 }
 
 // TestForwardTrades_DustFloorIsQuoteAssetAware drives the real
-// streamer path. The BTC-quoted case is the C2-016 regression: a
+// streamer path. The BTC-quoted case is the quote-blind-floor regression: a
 // 0.0005 BTC fill (~$50 of notional) is a genuine retail-size
-// XLM/BTC print and MUST reach the sink. Pre-fix it was dropped by
-// the flat 100_000-unit floor.
+// XLM/BTC print and MUST reach the sink; a flat 100_000-unit floor
+// drops it.
 func TestForwardTrades_DustFloorIsQuoteAssetAware(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -120,7 +119,7 @@ func TestForwardTrades_DustFloorIsQuoteAssetAware(t *testing.T) {
 		wantForward bool
 	}{
 		{
-			// 0.0005 BTC ≈ $50. Real print; pre-fix: DROPPED.
+			// 0.0005 BTC ≈ $50. Real print; a flat floor DROPS it.
 			name:        "btc_half_milli_is_real_money",
 			quote:       cryptoAsset(t, "BTC"),
 			quoteAmount: 50_000,
@@ -155,7 +154,7 @@ func TestForwardTrades_DustFloorIsQuoteAssetAware(t *testing.T) {
 			wantForward: true,
 		},
 		{
-			// Fiat quote legs keep the pre-fix threshold.
+			// Fiat quote legs keep the flat threshold.
 			name:        "fiat_eur_sub_tenth_cent_is_dust",
 			quote:       fiatAsset(t, "EUR"),
 			quoteAmount: 99_999,

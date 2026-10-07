@@ -107,7 +107,7 @@ func TestPollOnce_HappyPath(t *testing.T) {
 	}
 	// Venue said USD→EUR = 0.9235. We invert to EUR→USD = 1 / 0.9235
 	// ≈ 1.0828. Emitted at InvertedDecimals (12dp, not the rate's
-	// 6dp — GH-945): ~1082837033027. Verify ±rounding tolerance.
+	// 6dp): ~1082837033027. Verify ±rounding tolerance.
 	priceInt := eurUpdate.Price.BigInt().Int64()
 	if priceInt < 1_080_000_000_000 || priceInt > 1_085_000_000_000 {
 		t.Errorf("EUR price (inverted) = %d, want ~1082837033027", priceInt)
@@ -156,9 +156,9 @@ func TestPollOnce_BaseMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestPollOnce_MissingTimestamp_Rejected pins #371 F7: a response with
-// `timestamp: 0` carries rates of UNKNOWN age, and the poller used to
-// substitute time.Now() — re-labelling a possibly-stale (or replayed)
+// TestPollOnce_MissingTimestamp_Rejected pins undated boards: a response with
+// `timestamp: 0` carries rates of UNKNOWN age, and substituting
+// time.Now() would relabel a possibly-stale (or replayed)
 // board as freshly observed. This connector is IncludeInVWAP, so those
 // rows would have out-ranked genuinely older quotes in every freshness
 // gate downstream. Refuse instead, same error class as the base
@@ -267,7 +267,7 @@ func TestPollInterval_DefaultsTo60s(t *testing.T) {
 	}
 }
 
-// TestPollOnce_WeakCurrencyInversionPrecision pins GH-945: inverting a
+// TestPollOnce_WeakCurrencyInversionPrecision pins inversion precision: inverting a
 // weak-currency rate (large magnitude, e.g. VND) at the SAME scale as
 // the input rate quantises the emitted price by up to ~1.2%. The
 // poller must emit at InvertedDecimals, not DefaultDecimals.
@@ -308,7 +308,7 @@ func TestPollOnce_WeakCurrencyInversionPrecision(t *testing.T) {
 		t.Fatalf("decimals = %d want %d", u.Decimals, InvertedDecimals)
 	}
 	// True value: 1/25335 = 0.0000394710873... at 10^12 → 39471087.
-	// The pre-fix same-scale inversion (round(10^12/25_335_000_000))
+	// A same-scale inversion (round(10^12/25_335_000_000))
 	// would have produced 39 (0.000039), a ~1.2% error.
 	got := u.Price.BigInt().Int64()
 	const want = 39_471_087

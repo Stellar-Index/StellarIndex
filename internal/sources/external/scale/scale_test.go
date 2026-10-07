@@ -31,8 +31,8 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 		{"5.", 8, "500000000", false},
 		{"+1.5", 8, "150000000", false},
 		// Malformed input must error, never mis-decode: a doubled sign
-		// used to parse as its own negation, and junk past the target
-		// precision was truncated away unvalidated.
+		// must not parse as its own negation, and junk past the target
+		// precision must not be truncated away unvalidated.
 		{"--1.5", 8, "", true},
 		{"-+1", 8, "", true},
 		{"-", 8, "", true},
@@ -61,10 +61,10 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 
 // An exponent spelling must round the same way FloatToScaledInt does
 // for the same float — round-to-nearest at exactly targetDecimals,
-// not decimals+2-then-truncate. GH-998: the old
-// "format(decimals+2)+truncate" idiom dropped the two extra
+// not decimals+2-then-truncate. The
+// "format(decimals+2)+truncate" idiom drops the two extra
 // fractional digits toward zero, giving every value a one-signed
-// downward bias — the same class of bug InvertScaled was fixed for.
+// downward bias — the same class of bug InvertScaled guards against.
 func TestSciDecimalStringToScaledInt_MatchesFloatRounding(t *testing.T) {
 	for _, sci := range []string{
 		"1.2345678956e-1",
@@ -90,8 +90,8 @@ func TestSciDecimalStringToScaledInt_MatchesFloatRounding(t *testing.T) {
 }
 
 // TestSciDecimalStringToScaledInt_RoundsNotTruncates pins the exact
-// GH-998 regression: 5.55555555e-7 truncated at decimals+2-then-8
-// (the old idiom) gives 55, one-signed below the true value; correct
+// truncation regression: 5.55555555e-7 truncated at decimals+2-then-8
+// gives 55, one-signed below the true value; correct
 // rounding at exactly 8 decimals gives 56.
 func TestSciDecimalStringToScaledInt_RoundsNotTruncates(t *testing.T) {
 	got, err := SciDecimalStringToScaledInt("5.55555555e-7", 8)

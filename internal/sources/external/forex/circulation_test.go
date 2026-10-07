@@ -49,7 +49,7 @@ func TestLoadCirculationTable_MajorsPresent(t *testing.T) {
 	}
 }
 
-// TestLoadCirculationTable_BroadCoverage — after the 2026-05-08 WB
+// TestLoadCirculationTable_BroadCoverage — with the WB
 // expansion the table covers ~106 of 110 Massive currencies. Lock
 // the floor at 100 so a future curation regression that drops most
 // of the WB rows fails the test.

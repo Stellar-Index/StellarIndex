@@ -12,10 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Pre-fix, an upstream 429 returned an error and the poll loop's
+// If an upstream 429 only returned an error, the poll loop's
 // fixed-cadence ticker would re-fire 60 s later, hitting the venue
-// again — observed live on r1 2026-05-09 as one WARN per minute.
-// These tests pin the new behaviour:
+// again — observed live on r1 as one WARN per minute.
+// These tests pin the behaviour:
 //   - 429 arms a cooldown using Retry-After (or exponential backoff).
 //   - Subsequent PollOnce calls during cooldown skip the HTTP request
 //     entirely and return (nil, nil, nil) — distinct from an error.
@@ -260,24 +260,24 @@ func TestPollOnce_ProAPIKeyWinsOverDemo(t *testing.T) {
 	}
 }
 
-// TestPollOnce_429_LowRetryAfter_StillGrowsBackoff — pre-fix the
-// Retry-After branch took the hint at face value (clamped to
-// MinBackoff) and bypassed the doubling. CoinGecko's free tier
+// TestPollOnce_429_LowRetryAfter_StillGrowsBackoff — a Retry-After
+// branch that takes the hint at face value (clamped to MinBackoff)
+// bypasses the doubling. CoinGecko's free tier
 // returns Retry-After consistently below MinBackoff (≈30s), so
-// clamping landed the cooldown at exactly MinBackoff = 60s
+// clamping lands the cooldown at exactly MinBackoff = 60s
 // forever. The runner's PollInterval is also 60s, so each
-// recovery attempt produced another 429 → another 60s cooldown
+// recovery attempt produces another 429 → another 60s cooldown
 // → indefinite throttling at one 429-per-minute. Observed live
-// on r1 2026-05-09 → 2026-05-10.
+// on r1 for a full day.
 //
-// Post-fix, applyBackoff treats Retry-After as a FLOOR, not a
+// applyBackoff treats Retry-After as a FLOOR, not a
 // ceiling — consecutive 429s grow the cooldown exponentially
 // regardless of what the venue claims you can retry after.
 func TestPollOnce_429_LowRetryAfter_StillGrowsBackoff(t *testing.T) {
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Simulate CoinGecko free tier: Retry-After consistently
-		// below MinBackoff. Pre-fix this kept us pinned to MinBackoff;
-		// post-fix the doubling wins.
+		// below MinBackoff. Clamping would pin us to MinBackoff;
+		// the doubling wins.
 		w.Header().Set("Retry-After", "10")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
