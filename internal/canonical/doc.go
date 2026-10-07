@@ -4,16 +4,14 @@
 //
 // # Why this is package zero
 //
-// Every ingestion source, every aggregation result, every API
-// response passes through these types. They are the stability
-// boundary of the project: if these shapes change, the whole
-// repository reacts. They land in Week 1 Day 1 of the delivery
-// per docs/discovery/delivery-plan.md §Week 1.
+// Every ingestion source, every aggregation result, every API response
+// passes through these types. They are the stability boundary of the
+// project: if these shapes change, the whole repository reacts.
 //
 // # Invariants
 //
 //   - Amount values are ALWAYS *big.Int. They never truncate to
-//     int64. See ADR-0003 and docs/discovery/decisions.md §i128.
+//     int64. See ADR-0003.
 //   - Asset identity is unambiguous, with seven canonical shapes:
 //     native (XLM), classic ((code, issuer) tuple), soroban
 //     (single C-address SEP-41 contract), fiat (off-chain ISO-4217
@@ -44,7 +42,5 @@
 //   - ADR-0005 (monorepo, single Go module)
 //   - ADR-0010 (off-chain fiat representation)
 //   - ADR-0014 (crypto-ticker representation)
-//   - docs/discovery/decisions.md
-//   - docs/discovery/notes/sep-41-token-events.md (amount shapes
-//     from Soroban token events)
+//   - docs/architecture/domain-traps.md (SEP-41 transfer amount shapes)
 package canonical

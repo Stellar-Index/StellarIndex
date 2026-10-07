@@ -14,8 +14,6 @@ import (
 // keys + version. Adding optional fields is fine; flipping the
 // version string or removing required fields is a breaking
 // change and must be coordinated with pkg/client + the explorer.
-//
-// R-023 in `docs/review-2026-05-10.md`.
 func TestMethodology_BaselineShape(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httpTestServer(t, srv)

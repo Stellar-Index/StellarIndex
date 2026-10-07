@@ -210,15 +210,14 @@ func TestPriceBatch_RedisFallbackForRewrittenPair(t *testing.T) {
 }
 
 // TestPriceBatch_StablecoinFallback exercises the X / fiat:USD →
-// X / <USD-pegged classic> retry inside fetchBatchRow. Mirrors the
-// /v1/price behaviour shipped in 6505934b5 / tryStablecoinFiatProxy.
+// X / <USD-pegged classic> retry inside fetchBatchRow. Mirrors
+// /v1/price's tryStablecoinFiatProxy.
 //
-// Pre-2026-05-10 the batch path inlined only the Redis-VWAP and
-// fiat-cross-rate fallbacks, so an asset_id whose only price came
-// via the stablecoin-proxy chain (e.g. USDT-G… / USDC-G… on a
-// deployment with [aggregate].enable_stablecoin_fiat_proxy=false)
-// returned 200 from /v1/price but was silently dropped from the
-// batch envelope. R-005 in docs/review-2026-05-10.md.
+// Without it, a batch path that inlined only the Redis-VWAP and
+// fiat-cross-rate fallbacks would drop an asset_id whose only price
+// comes via the stablecoin-proxy chain (e.g. USDT-G… / USDC-G… on a
+// deployment with [aggregate].enable_stablecoin_fiat_proxy=false):
+// /v1/price would return 200 while the batch envelope omits it.
 func TestPriceBatch_StablecoinFallback(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset(
 		"USDC",

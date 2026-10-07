@@ -20,7 +20,7 @@ import (
 // boot (the `protocol_contracts` table → contractid.WithSeed), and
 // genesis-seeded by walking the factory's `deploy` events from the lake
 // (`stellarindex-ops seed-protocol-contracts -source blend`, and the
-// ADR-0033 reconcile pre-seed). See docs/discovery/dexes-amms/blend.md
+// ADR-0033 reconcile pre-seed). See docs/protocols/blend.md
 // (Pool Factory V2 = CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU).
 type Decoder struct {
 	reg *contractid.Registry

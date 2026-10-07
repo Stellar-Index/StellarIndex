@@ -184,7 +184,7 @@ func beUint64(b []byte) uint64 {
 // from a fixed byte pattern so the checksum round-trips through
 // strkey.Decode/Encode without depending on key generation.
 // adapterC is the real mainnet adapter from
-// docs/discovery/oracles/redstone.md.
+// docs/protocols/redstone.md.
 const (
 	adapterC  = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 	oneBTCAt8 = 50_000_000_000_000 // $500,000 at 8 decimals

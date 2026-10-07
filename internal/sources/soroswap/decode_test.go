@@ -208,9 +208,8 @@ func TestSdkDecodeNewPair_missingPair(t *testing.T) {
 
 func TestSdkDecodeSkim_phase1Shape(t *testing.T) {
 	// SkimEvent { skimmed_0: i128, skimmed_1: i128 } — the field
-	// names captured in docs/discovery/dexes-amms/soroswap.md from
-	// the Phase-1 audit of contracts/pair/src/event.rs. No `to`
-	// field in this shape — current Soroswap WASM omits it.
+	// names in Soroswap's contracts/pair/src/event.rs. No `to` field
+	// in this shape — current Soroswap WASM omits it.
 	body := b64(t, scMap(
 		xdr.ScMapEntry{Key: symbol("skimmed_0"), Val: i128(big.NewInt(7_500))},
 		xdr.ScMapEntry{Key: symbol("skimmed_1"), Val: i128(big.NewInt(1_234_567))},

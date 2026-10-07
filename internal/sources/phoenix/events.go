@@ -1,7 +1,7 @@
 // Package phoenix ingests trade events from the Phoenix Soroban DEX.
 //
 // Design reference: internal/sources/phoenix/README.md and
-// docs/discovery/dexes-amms/phoenix.md. Read the Q1–Q5 quirks
+// docs/protocols/phoenix.md. Read the Q1–Q5 quirks
 // before modifying the decoder, especially the 8-events-per-swap
 // correlation (Q1).
 package phoenix

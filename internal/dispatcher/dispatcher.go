@@ -197,8 +197,8 @@ type OpContext struct {
 // Soroban InvokeContract calls *regardless of whether the contract
 // emits an event*. The canonical use case is Band's Soroban
 // StandardReference: its `relay()` / `force_relay()` methods update
-// storage but publish no events (verified
-// docs/discovery/oracles/band.md) — a conventional event-based
+// storage but publish no events (verified in
+// docs/protocols/band.md) — a conventional event-based
 // Decoder would never run on a Band update. ContractCallDecoder
 // observes the InvokeContract op itself, decoding the call's
 // arguments as the authoritative payload.
