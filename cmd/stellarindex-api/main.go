@@ -3730,8 +3730,8 @@ func prewarmLight(
 	//
 	// Per-handler order semantics MUST match the cache key the
 	// handler will look up:
-	// - /v1/markets defaults to MarketsOrderPair (handler accepts
-	//   ""|"pair" → 0). Prewarming with 0 hits the right key.
+	// - /v1/markets defaults to MarketsOrderVolume24hDesc ("" → 1); "pair"
+	//   → 0 is explicit-only. The cache key includes the order, so both are warmed.
 	// - /v1/pools defaults to MarketsOrderVolume24hDesc (handler
 	//   accepts ""|"volume_24h_usd_desc" → 1). Prewarming with 0 would be a
 	//   phantom slot — every cold-
