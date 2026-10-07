@@ -18,7 +18,7 @@
 // same rate with a fresh Observer timestamp — harmless idempotent
 // insert given the stable tx_hash synthesis.
 //
-// Wire shape (verified 2026-04-24 against
+// Wire shape (verified against
 // https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml):
 //
 //	<gesmes:Envelope xmlns:gesmes="..." xmlns="...">

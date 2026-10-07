@@ -89,7 +89,7 @@ type frameResult struct {
 
 // tradePayload is one entry in a v2 trade frame's `data` array.
 // Field names verified against
-// docs.kraken.com/api/docs/websocket-v2/trade (2026-04-24).
+// docs.kraken.com/api/docs/websocket-v2/trade.
 //
 // qty / price are json.Number so the decimal-string form reaches
 // our scaling helper losslessly — float64 is fine at Kraken's

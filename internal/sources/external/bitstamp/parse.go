@@ -25,7 +25,7 @@ type eventEnvelope struct {
 
 // tradePayload matches Bitstamp's live_trades_* data shape.
 // Field names + types verified against
-// https://www.bitstamp.net/websocket/v2/ (2026-04-24).
+// https://www.bitstamp.net/websocket/v2/.
 //
 // We read the *_str variants for price/amount — the float64
 // siblings exist but the string form is authoritative and

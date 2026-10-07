@@ -14,7 +14,7 @@
 //
 // # Shape of the protocol, proven from the certified ClickHouse lake
 //
-// Swept 2026-09-09 over `stellar.contract_events` (ledgers up to
+// Swept over `stellar.contract_events` (ledgers up to
 // 64,345,4xx). TWO vault contracts exist and no others: the two are the
 // ONLY contracts in the lake at or after ledger 62,000,000 that emit
 // any of this protocol's five bespoke symbols (`deployed_assets_changed`,
@@ -176,7 +176,7 @@ const (
 	MainnetVaultEarnUSDC = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
 
 	// MainnetVaultEarnXLM is the earnXLM vault: native XLM in, earnXLM
-	// shares out. Identified from the lake on 2026-09-09 by the same
+	// shares out. Identified from the lake by the same
 	// method used for earnUSDC (see the package doc): it is one of only
 	// two contracts emitting this protocol's bespoke symbols, it was
 	// deployed in the same batch onto the same operator and custody
@@ -217,7 +217,7 @@ type VaultMeta struct {
 
 // MainnetVaults is the curated Upshift vault set on pubnet — the
 // ADR-0040 curated-set trust root. Verified complete against the lake
-// on 2026-09-09 (see the package doc): these are the only two contracts
+// (see the package doc): these are the only two contracts
 // emitting the protocol's bespoke event vocabulary.
 //
 // Completeness of this map is load-bearing exactly as a factory set

@@ -11,7 +11,7 @@
 // pattern powers the predecessor system's Binance connector and it's been
 // stable at production volume there for years.
 //
-// Wire format (verified 2026-04-24 against
+// Wire format (verified against
 // https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams):
 //
 //	wss://stream.binance.com:9443/stream?streams=<sym1>@aggTrade/<sym2>@aggTrade

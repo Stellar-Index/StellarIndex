@@ -126,7 +126,7 @@ func decodeCreateAccount(ledger uint32, closedAt time.Time, txHash string, opInd
 	// (Protocol 15): a sponsor covers the reserve, so the created
 	// account can start with zero XLM. Treating it as malformed dropped
 	// every sponsored account creation from the archive (caught live on
-	// the 2026-07-12 backfill at ledger ~37.12M — a sponsorship-bot
+	// a backfill at ledger ~37.12M — a sponsorship-bot
 	// storm). Zero emits a real create_account movement with amount 0;
 	// only a NEGATIVE balance is malformed.
 	if body.StartingBalance < 0 {

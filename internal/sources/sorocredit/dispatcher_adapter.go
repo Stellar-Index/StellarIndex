@@ -20,7 +20,7 @@ import (
 //
 // COVERAGE NOTE: in practice ALL eight event types are emitted by the
 // trust root and the child contracts emit NOTHING (verified against the
-// r1 lake 2026-07-07). So the child branch (Has) never fires today and
+// r1 lake). So the child branch (Has) never fires today and
 // the trust-root check (IsFactory) is what actually gates. The childgate
 // is forward-compat defense-in-depth for a future contract version that
 // might route events through the per-position children — which is also

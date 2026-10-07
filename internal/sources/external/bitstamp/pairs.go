@@ -24,8 +24,7 @@ import (
 //   - BTC/EUR — European fiat BTC depth, used for triangulation.
 //   - {ADA,ATOM,AVAX,BCH,BNB,DASH,DOGE,DOT,LINK,LTC,NEAR,SHIB,SOL,
 //     TON,TRX,UNI,XRP}/USD — top-cap globals against USD for
-//     cross-venue VWAP coverage. All verified live via /api/v2/ticker
-//     on 2026-05-05.
+//     cross-venue VWAP coverage. All verified live via /api/v2/ticker.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

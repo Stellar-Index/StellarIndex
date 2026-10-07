@@ -31,8 +31,7 @@ const (
 // it straight into [BuildFeedSet]. Decimals=8 throughout (Chainlink's
 // standard for every entry here).
 //
-// Verified against https://docs.chain.link/data-feeds/price-feeds/addresses
-// as of 2026-05-14.
+// Verified against https://docs.chain.link/data-feeds/price-feeds/addresses.
 func DefaultFeedMap() map[string]FeedSpec {
 	return map[string]FeedSpec{
 		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: 8, MaxAge: DefaultMaxAgeCrypto},

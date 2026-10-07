@@ -33,7 +33,7 @@ const MainnetRouter = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
 // entry points; admin / read-only methods (set_pair_fee,
 // router_pairs, init, …) don't move tokens and aren't useful
 // for attribution. Per docs/operations/wasm-audits/soroswap-router.md
-// (2026-05-19 export-name dump of the router's single, never-upgraded
+// (export-name dump of the router's single, never-upgraded
 // WASM hash), these two entry points are the router's COMPLETE
 // token-moving surface — there is no third swap function this decoder
 // could be missing.
