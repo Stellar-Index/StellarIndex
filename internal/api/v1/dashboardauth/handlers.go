@@ -36,15 +36,14 @@ import (
 // speculative Account rows before the email-unique-index Users
 // insert decides a winner.
 //
-// Without this seam, two valid
-// magic links for the same just-verified email racing through
-// the callback both pass `GetUserByEmail → ErrNotFound`, both
-// `Accounts.Create` succeed (slug uniqueness gets resolved with
-// the 4-hex retry), then only the first `Users.CreateUser` wins.
-// The losing caller's Account row is then orphaned. A best-
-// effort Suspend-mark on the orphan exists as defence-in-depth,
-// but acquiring a per-email lock BEFORE the Account.Create
-// removes the orphan creation entirely.
+// Without this seam, two valid magic links for the same
+// just-verified email racing through the callback both pass
+// `GetUserByEmail → ErrNotFound`, both `Accounts.Create` succeed
+// (slug uniqueness gets resolved with the 4-hex retry), then only
+// the first `Users.CreateUser` wins. The losing caller's Account
+// row is then orphaned. A best-effort Suspend-mark on the orphan
+// exists as defence-in-depth, but acquiring a per-email lock
+// BEFORE the Account.Create removes the orphan creation entirely.
 //
 // Implementations:
 //   - production: Redis SETNX with a 30s TTL (the
@@ -423,10 +422,8 @@ type loginResponse struct {
 
 // refuseLoginWithoutMail answers 503 — and reports true — when the
 // deployment's mail transport holds no provider credential
-// ([notify.IsUnconfigured]), so no sign-in email can be delivered. The
-// sibling signup flow guards the same state (signupVerifyEmailerOrNil →
-// `email_verification_sent: false`); without this, login would answer
-// 200 "sent" for mail that never left.
+// ([notify.IsUnconfigured]), so no sign-in email can be delivered.
+// Without this, login would answer 200 "sent" for mail that never left.
 //
 // It runs BEFORE the throttle and BEFORE any side effect, on purpose:
 //
