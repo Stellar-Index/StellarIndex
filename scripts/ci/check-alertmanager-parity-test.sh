@@ -8,7 +8,7 @@
 # case below MUTATES a fixture copy of the Ansible template and requires
 # the gate to fail, naming the thing that moved.
 #
-# Case 1 reproduces the real 2026-09-08 regression (#501): informational
+# Case 1 reproduces a real regression: informational
 # routed to `chat-informational` in one file and to `silent` — a receiver
 # that delivers to nobody — in the other.
 #
@@ -104,7 +104,7 @@ fi
 # ── 2. a Discord payload bound that drifted on one path only ───────
 # The header of both files calls the Go templates byte-identical. This
 # is what makes that claim enforceable: a description cap of 3000 on one
-# path renders an embed the other cannot, which is the 2026-09-07 outage.
+# path renders an embed the other cannot, which caused an outage.
 F="$TMPD/bound"
 new_fixture "$F"
 perl -0pi -e 's/%\.300s/%.3000s/' "$F/$J2_REL"

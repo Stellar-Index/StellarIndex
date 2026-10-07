@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-alerts-catalog-test.sh — prove lint-alerts-catalog.py's Runbook-column
-# check can go red (RLT-010). It runs the gate against a mutated COPY of the
+# check can go red. It runs the gate against a mutated COPY of the
 # catalogue (ALERTS_CATALOG), so the tracked file is never touched.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
@@ -27,7 +27,7 @@ check() { # <name> <expected ok|red> <catalogue path> [<problem substring>]
 check "unmodified catalogue passes" ok "$CATALOG"
 
 # The SLO latency fast-burn rule's runbook_url is api.md#stellarindex_api_latency_p95_high;
-# point the row's first link at the per-tier page instead — the drift RLT-010 found.
+# point the row's first link at the per-tier page instead — a drift seen for real.
 sed -E '/^\| .stellarindex_slo_latency_burn_fast. /s#\[api-latency\]\(runbooks/api\.md\#stellarindex_api_latency_p95_high\)#[slo-latency-burn-fast](runbooks/slo.md\#stellarindex_slo_latency_burn_fast)#' \
   "$CATALOG" >"$TMP"
 check "first Runbook link differing from runbook_url is rejected" red "$TMP" \

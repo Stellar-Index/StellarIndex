@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # dependabot-config-test.sh — structural assertions on .github/dependabot.yml
-# for the two gaps found in the 2026-09-18 reverification sweep (F145/K083,
-# RLT-201):
+# for the two gaps found in a reverification sweep:
 #
 #   1. The `gomod` `groups.go-minor-patch` group must exclude
 #      github.com/stellar/go-stellar-sdk. Without an exclude, a same-PR

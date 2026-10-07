@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-orphans-truth-test.sh — regression for T235: deploy/systemd/ORPHANS
+# lint-orphans-truth-test.sh — regression: deploy/systemd/ORPHANS
 # claiming an ExecStart script "does not exist anywhere in this repo" when
 # it does (scripts/ops/completeness-incremental.sh). An ORPHANS reason that
 # asserts non-existence for a script that is actually live and referenced

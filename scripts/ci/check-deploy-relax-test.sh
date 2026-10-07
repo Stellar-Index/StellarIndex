@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check-deploy-relax-test.sh — fixture tests for the deploy-approval-gate
-# relaxation expiry (K079, ops-deploy).
+# relaxation expiry.
 #
-# Pins the fail-CLOSED contract added for K079: a relaxation with no
+# Pins the fail-CLOSED contract: a relaxation with no
 # expiry, an unparseable expiry, or a past expiry must NOT skip the
 # gate. Only a well-formed, still-future expiry may.
 #
@@ -42,7 +42,7 @@ expect() {
 run "" ""
 expect 'not relaxed → fall through to real check' 2
 
-# The K079 defect: relaxed with no expiry at all must NOT be treated
+# The defect: relaxed with no expiry at all must NOT be treated
 # as an indefinite pass.
 run "true" ""
 expect 'relaxed with no expiry → fail closed' 1 'no DEPLOY_APPROVAL_RELAXED_UNTIL'

@@ -3,7 +3,7 @@
 #
 # The gate in lint-migration-compat.sh is the only thing standing
 # between a `DROP COLUMN` and a deploy whose rollback cannot undo it
-# (CID-14). A gate that silently stops matching is worse than no gate,
+# A gate that silently stops matching is worse than no gate,
 # so its behaviour is pinned here rather than assumed:
 #
 #   - each violation class actually fires (including `rename`, whose
@@ -17,7 +17,7 @@
 #     but are tolerated under `--staged` (older tag, fewer files);
 #   - `dml` (DELETE/TRUNCATE/UPDATE) needs a file-level RAISE EXCEPTION
 #     row-count guard — the inline marker alone does not clear it
-#     (GH #1163: 0137's bare `DELETE FROM comet_liquidity;` passed every
+#     (0137's bare `DELETE FROM comet_liquidity;` passed every
 #     other class).
 #
 # Run: bash scripts/ci/lint-migration-compat-test.sh
@@ -110,7 +110,7 @@ expect 'stale baseline entry tolerated under --staged' 0 'passed'
 run 'ALTER TABLE trades DROP COLUMN legacy_price;' '' --staged
 expect 'staged mode still blocks a new violation' 1 'drop-column'
 
-# 6. `dml` (GH #1163): unguarded DELETE/TRUNCATE/UPDATE, and its
+# 6. `dml`: unguarded DELETE/TRUNCATE/UPDATE, and its
 #    file-level RAISE EXCEPTION escape (stronger than the inline marker
 #    — see escape hatch 3 in lint-migration-compat.sh's header).
 run 'DELETE FROM comet_liquidity;' ''

@@ -2,9 +2,9 @@
 # check-dependabot-toolchain-bump-test.sh — fixture tests for the
 # Dependabot toolchain-bump guard (scripts/ci/check-dependabot-toolchain-bump.sh).
 #
-# The load-bearing case reproduces PR #495's actual go.mod diff verbatim
+# The load-bearing case reproduces a real dependabot go.mod diff verbatim
 # (github.com/Stellar-Index/StellarIndex, dependabot/go_modules/
-# go-minor-patch-4a08daf3b0, open as of 2026-09-07):
+# go-minor-patch-4a08daf3b0):
 #
 #   -go 1.25.10
 #   -
@@ -78,7 +78,7 @@ expect() {
   pass=$((pass + 1))
 }
 
-# ── PR #495's actual shape ───────────────────────────────────────────
+# ── the real dependabot shape ───────────────────────────────────────────────────────────────────────────────────
 
 OLD_GOMOD_495='module github.com/Stellar-Index/StellarIndex
 

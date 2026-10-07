@@ -112,3 +112,4 @@ Accepted ADR records its hash with `scripts/ci/lint-adr-refs.sh --record`.
 - [docs/engineering-standards.md](../engineering-standards.md)
   §5.5 — why decisions live in ADRs, not scattered architecture
   docs.
+| [0098](0098-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint-docs self-test | 2026-09-21 |

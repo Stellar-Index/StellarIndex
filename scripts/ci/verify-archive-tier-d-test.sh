@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # verify-archive-tier-d-test.sh — pins the archival-node role's Tier D
 # fork-detection cron to arguments `stellarindex-ops verify-archive` can
-# actually parse (issue #362, verified live on r1 2026-09-02).
+# actually parse (verified live on r1).
 #
 # Why this exists. The task rendered `-to {{ stellarindex_live_seam_ledger
 # | default(0) | int - 1 }}` unconditionally. `stellarindex_live_seam_ledger`
@@ -26,7 +26,7 @@
 #   4. the flags the cron passes still exist in verify_archive.go, and
 #      `-to` is still an fs.Uint — if either changes, premise (2) needs
 #      re-deriving rather than silently drifting;
-#   5. (#1232) the walk runs under run-heavy-job.sh — lock, MemoryMax scope,
+#   5. the walk runs under run-heavy-job.sh — lock, MemoryMax scope,
 #      disk watchdog — with a lock name of its own (sharing tier A/B's
 #      would let a long tier-A run swallow the weekly check), and starts
 #      outside the nightly band of daily heavy-job timers (first start to

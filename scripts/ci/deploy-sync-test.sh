@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # deploy-sync-test.sh — the migrations sync in deploy-binary.yml must be
-# ONE transfer with synchronize's delete semantics (2026-08-29 incident:
+# ONE transfer with synchronize's delete semantics (incident:
 # r1 deploy of v0.49.0, run 33244745680).
 #
-# PR #268 replaced `ansible.posix.synchronize` (one rsync, `delete: true`)
+# A change replaced `ansible.posix.synchronize` (one rsync, `delete: true`)
 # with `ansible.builtin.copy` pointed at a DIRECTORY src. copy is
 # connection-agnostic (the ProxyJump goal was right) but O(files): one
 # SFTP round-trip + remote checksum per file, no ControlPersist across

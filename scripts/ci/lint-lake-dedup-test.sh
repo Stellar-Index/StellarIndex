@@ -3,7 +3,7 @@
 # (scripts/ci/lint-lake-dedup.sh).
 #
 # The gate exists because three separate reads of an un-merged
-# duplicate-bearing archive went wrong in one day (2026-09-07) and none
+# duplicate-bearing archive went wrong in one day and none
 # of them was visible in a total. A gate against that class is only
 # worth its line count if it fails on the shapes that reproduce it, so
 # the verdicts are pinned here against the ACTUAL defects rather than
@@ -260,7 +260,7 @@ SQL
 catches "an executable .sql statement is checked, not only header prose" \
   "$stmt" stellar.transactions
 
-# ── a comment naming GROUP BY does not collapse anything (RLT-050) ───
+# ── a comment naming GROUP BY does not collapse anything ───
 # sql_line() and go_line() only stripped a `--` comment whose LINE
 # started with it. An inline trailing comment on an unterminated .sql
 # statement, or a full-line `--` doc comment inside a Go raw string, was
@@ -413,7 +413,7 @@ GO
 check "prose and a Go comment quoting the bad query are not flagged" 0 "$prose"
 
 # ── the aggregate/collapse floor (the canary) ─────────────────────────
-# RLT-050: `examined == 0` proves the FROM/JOIN extraction is alive, but
+# `examined == 0` proves the FROM/JOIN extraction is alive, but
 # nothing proved the AGGREGATE half (mult_agg()) was — a regression
 # there stops every real read from registering as aggregating, and a
 # tree that legitimately aggregates nothing (like "good" above) looks

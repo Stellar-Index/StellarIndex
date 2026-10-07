@@ -3,7 +3,7 @@
 #
 # lint-replay-plan.sh is the gate that stops a decoder / asset allow-list
 # change from landing without stating what happens to already-served
-# history (the 2026-08-27 e17288bd fiat widening: 190,228 rows missing
+# history (a fiat widening: 190,228 rows missing
 # for a day, no replay planned). Its verdict has to be a function of the
 # inputs and nothing else — so its behaviour is pinned here rather than
 # assumed:
@@ -23,7 +23,7 @@
 #   - and the verdict does not depend on how BIG the commit range is (the
 #     SIGPIPE-under-pipefail class lint-baseline-growth-test.sh pins).
 #
-# Plus the wrong-command ADVISORY (#333): a plan that replays a PROJECTED
+# Plus the wrong-command ADVISORY: a plan that replays a PROJECTED
 # source with backfill/ch-rebuild warns (never fails), the projected
 # commands do not, and the projector source names are DERIVED from the
 # fixture's own SourceSpec registry rather than listed in the gate. This
@@ -356,7 +356,7 @@ runGate
 expect "ch-rebuild on a real projected source warns" 0 "WARNING: the plan replays projected source 'sep41_transfers'"
 
 # --- 13. a registry the parser cannot read fails loudly, never vacuously ---
-# legacy is the shape #2558 removed; the derivation must red the gate even
+# legacy is a removed shape; the derivation must red the gate even
 # on a range with nothing to declare, so the PR that moves it goes red.
 MOVED="derived no projected source names"
 mkrepo 0 legacy

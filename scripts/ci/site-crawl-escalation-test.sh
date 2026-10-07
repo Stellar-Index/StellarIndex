@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# site-crawl-escalation-test.sh — structural regression test for T332.
+# site-crawl-escalation-test.sh — structural regression test for the escalation path.
 #
-# T332: .github/workflows/site-crawl.yml ran the weekly production crawl
+# .github/workflows/site-crawl.yml ran the weekly production crawl
 # with no escalation path on failure — a regression just turned the
 # Actions tab red for a run nobody watches, indistinguishable from every
 # other quiet failure. This asserts the workflow carries the same

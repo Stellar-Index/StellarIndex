@@ -231,7 +231,7 @@ fi
 
 # ─── 6. the partition walk answers SHORT ────────────────────────────
 #
-# THE DEFECT (2026-09-10 class, pre-existing). The walk's result was
+# THE DEFECT (pre-existing). The walk's result was
 # consumed by a bare
 #   read -r count first last unexpected <<< "$result"
 # with nothing between it and the heredoc that writes those four
@@ -243,7 +243,7 @@ fi
 # the scan's own health gauges — galexie_archive_scan_ok,
 # _scan_listing_lines, _scan_last_run_unix, the three series that exist
 # to say the verdict is untrustworthy — down with the verdict itself.
-# The blindness this producer was hardened against in 2026-09-05,
+# The blindness this producer was hardened against,
 # arriving through a different door.
 #
 # The stub fails ONLY the walk (it is the one awk invocation carrying

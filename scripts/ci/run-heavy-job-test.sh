@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-heavy-job-test.sh — fixture tests for the heavy-job wrapper's
-# ClickHouse ops-batch identity import (2026-08-28 r1).
+# ClickHouse ops-batch identity import on r1.
 #
 # The wrapper lives INSIDE ansible
 # (configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml,
@@ -626,7 +626,7 @@ done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/ar
 # A dropped label ("run-heavy-job.sh stellarindex-ops supply …" instead
 # of "run-heavy-job.sh <label> stellarindex-ops supply …") shifts every
 # word left, so the wrapper would otherwise try to exec the binary's
-# own subcommand ("supply") as the command (F155).
+# own subcommand ("supply") as the command.
 echo "  [NAME validation]"
 for bin in stellarindex-ops stellarindex-api stellarindex-migrate stellarindex-aggregator stellarindex-indexer stellarindex-sla-probe; do
   env -u INVOCATION_ID "$WRAP" "$bin" supply seed-sac-balances >"$TMP/out" 2>"$TMP/err"

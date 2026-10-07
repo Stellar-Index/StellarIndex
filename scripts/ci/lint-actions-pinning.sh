@@ -33,8 +33,9 @@
 #   3. This gate refuses the merge until that step has happened.
 #
 # The repository-policy half (allowed_actions=selected,
-# require_sha_pinning) is set in the GitHub admin UI; check it with
-# `gh api repos/<owner>/<repo>/actions/permissions`. See
+# require_sha_pinning) is meant to be set in the GitHub admin UI, but is
+# NOT: `gh api repos/<owner>/<repo>/actions/permissions` returns
+# `allowed_actions: "all"`, `sha_pinning_required: false` on this repo. See
 # docs/operations/audit-remediation-operator-actions.md for the operator
 # steps. This script enforces only the workflow-side
 # discipline (the `uses:` lines below); it cannot enforce the repo setting.
