@@ -12,8 +12,7 @@ import (
 )
 
 // RedisTouchDebouncer is the Redis-SETNX adapter for the
-// `middleware.TouchDebouncer` seam (F-1226 wave 39, codex audit-
-// 2026-05-12). Gates calls into `APIKeyStore.TouchUsage` so the
+// `middleware.TouchDebouncer` seam. Gates calls into `APIKeyStore.TouchUsage` so the
 // hot api_keys row gets at most one UPDATE per (keyID, TTL)
 // window even under sustained customer traffic.
 //
@@ -28,11 +27,9 @@ type RedisTouchDebouncer struct {
 }
 
 // DefaultTouchDebounceTTL is the recommended SETNX TTL when the
-// caller doesn't pass a custom value. 5 minutes matches the
-// audit's "debounce to once-per-minute" guidance with safety
-// margin (operators reading "last seen" tolerate up-to-5-minute
-// staleness; tighter intervals add UPDATE pressure with no
-// product benefit).
+// caller doesn't pass a custom value. Operators reading "last
+// seen" tolerate up-to-5-minute staleness; tighter intervals add
+// UPDATE pressure with no product benefit.
 const DefaultTouchDebounceTTL = 5 * time.Minute
 
 // NewRedisTouchDebouncer constructs a debouncer. rdb MUST be
@@ -49,10 +46,10 @@ func NewRedisTouchDebouncer(rdb redis.Cmdable, ttl time.Duration) *RedisTouchDeb
 }
 
 // touchKey returns the Redis key for a debounce window. Kept
-// separate from the F-1255 `signup:lock:` family and the
-// F-1218 `signup:` reservation family so the three namespaces
-// don't collide; the `touch:apikey:*` family is pre-listed in
-// the Redis ACL allow-list (F-1254).
+// separate from the `signup:lock:` family and the `signup:`
+// reservation family so the three namespaces don't collide; the
+// `touch:apikey:*` family is pre-listed in the Redis ACL
+// allow-list.
 func touchKey(keyID string) string {
 	return "touch:apikey:" + keyID
 }

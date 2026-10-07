@@ -44,9 +44,9 @@ func RequiredScope(path string) string {
 }
 
 // HasScope reports whether the subject may exercise the given
-// capability scope. An EMPTY scope list grants everything — that is
-// the back-compat contract for every key minted before scopes
-// shipped, and the documented meaning of "no scopes" at mint time.
+// capability scope. An EMPTY scope list grants everything — the
+// documented meaning of "no scopes" at mint time, which keeps keys
+// minted without scopes working.
 // The "*" wildcard is honoured defensively for hand-seeded records
 // even though the mint surfaces reject it.
 func (s Subject) HasScope(scope string) bool {
