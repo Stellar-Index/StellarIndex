@@ -20,12 +20,11 @@ import (
 // ChartEnvelope.data shape. See ADR-0020 for the contract decision.
 //
 // `truncated` + `data_starts_at` signal that the requested timeframe
-// extends beyond the deployment's actual retention. R1 today only
-// has ~7 days of high-resolution history but still accepts
-// `?timeframe=1y` — without these fields a consumer can't tell
-// whether the returned 7 daily points are "the last 7 days of a
-// long history" or "all the history this deployment has". R-013 in
-// `docs/review-2026-05-10.md`.
+// extends beyond the deployment's actual retention. A deployment with
+// only 7 days of history still accepts `?timeframe=1y`; without these
+// fields a consumer can't tell whether the returned 7 daily points are
+// "the last 7 days of a long history" or "all the history this
+// deployment has".
 type ChartSeries struct {
 	AssetID       string             `json:"asset_id"`
 	Quote         string             `json:"quote"`
@@ -59,7 +58,7 @@ type ChartSeries struct {
 // continuous line whether or not the buckets between two entries exist.
 // That is the right rendering for a market that was quiet and the wrong
 // one for a series the deployment cannot answer over part of its own
-// span, and before this signal the two were indistinguishable on the
+// span, and without this signal the two are indistinguishable on the
 // wire: `truncated` describes only the series' START (and is
 // deliberately never raised for `timeframe=all`), and the coverage
 // annotation ([Server.coverageAnnotationIfEmpty]) speaks only for a
@@ -72,9 +71,9 @@ type ChartSeries struct {
 // months and every 31-day one is longer than any fixed month-sized
 // grace. Measured against a fixed 30-day grace, 7 of the 12 adjacencies
 // in a contiguous 2025 monthly series tripped the flag — a series with
-// no hole in it reporting `discontinuous: true` and naming
-// 2025-01-01 → 2025-02-01 as its widest gap, which is the field's own
-// documented meaning inverted. Every other grain is fixed-width in UTC
+// no hole in it reporting `discontinuous: true` and naming January to
+// February as its widest gap, which is the field's own documented
+// meaning inverted. Every other grain is fixed-width in UTC
 // and unaffected either way.
 //
 // Only the WIDEST gap is reported, mirroring `truncated`'s single
@@ -180,29 +179,25 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // the series must not be served. `surface` is the low-cardinality
 // metric label for the calling endpoint ("chart", "history_series").
 //
-// /v1/chart served a full price SERIES for a flagged issuer while
 // /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap, /v1/twap, the
-// SEP-40 oracle and the asset headline all withheld it (#366). A series
-// is arguably worse than a point: withholding one number denies a quote,
-// but an ungated chart hands over the whole trajectory, which is what
-// makes a manufactured market look legitimate.
+// SEP-40 oracle and the asset headline all withhold a flagged issuer's
+// price. A series is arguably worse than a point: withholding one number
+// denies a quote, but an ungated chart hands over the whole trajectory,
+// which is what makes a manufactured market look legitimate.
 //
 // Called from handleChart after the pair is known and BEFORE
 // dispatchSpecialisedChart, and from handleHistorySinceInception after
 // its pair is known — the load-bearing placement. It asks about BOTH
 // legs through the package's one spelling of the decision
 // ([scamWithheld]): the base question survives the frontend's XLM
-// triangulation, and the quote question closes the orientation swap
-// that republished the whole withheld trajectory, inverted, whenever
-// the client named the flagged asset as the quote (F019). And
-// sitting ahead of the dispatch covers the default path plus every
-// specialised variant (market-cap, fiat-cross, TWAP) with ONE check —
-// gating each variant separately is precisely how this class keeps
-// recurring, since a surface added later simply misses it. This is its
-// third appearance: MSP-02 found /v1/vwap and /v1/twap ungated after
-// pricingguard/scam.go's own doc claimed a single reader-seam gate
-// covered everything, which was never true of endpoints that compute
-// from their own fetch. /v1/chart reads history directly, same shape.
+// triangulation, and the quote question stops a client from getting
+// the whole withheld trajectory, inverted, by naming the flagged asset
+// as the quote. Sitting ahead of the dispatch covers the default path
+// plus every specialised variant (market-cap, fiat-cross, TWAP) with
+// ONE check; gating each variant separately lets a surface added later
+// simply miss it. A single reader-seam gate does not cover endpoints
+// that compute from their own fetch, and /v1/chart reads history
+// directly.
 //
 // Deliberately NOT pushed down into the history reader: that reader also
 // backs /v1/history and /v1/observations, and scam.go, substance.go and
@@ -213,7 +208,7 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // raw trades versus an AGGREGATED price claim, not the route prefix:
 // /v1/history/since-inception is named for the raw family but serves
 // the CAGG VWAP series, so it takes this gate while /v1/history's trade
-// rows do not (audit-2026-09-02 T012).
+// rows do not.
 //
 // Extracted rather than inlined because inlining pushed handleChart to
 // cognitive complexity 21 against the package's ceiling of 20. The lint
@@ -343,7 +338,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	// when the consumer asked for a bounded window AND the earliest
 	// returned bucket starts more than one granularity unit after
 	// `from` — that's the difference between "the last 7 days are
-	// flat" and "this deployment only has 7 days of data". R-013.
+	// flat" and "this deployment only has 7 days of data".
 	//
 	// `timeframe=all` (from.IsZero()) intentionally never trips the
 	// flag — that timeframe explicitly means "everything you have",
@@ -475,44 +470,41 @@ func chartGranularityFits(gran string, window time.Duration) bool {
 // The reader caps every response at [historyMaxPoints] and the
 // truncation takes the EARLIEST buckets, so a (timeframe,
 // granularity) pair whose grid is wider than that cap cannot be
-// answered as asked — and the surface answered it anyway. Measured on
-// production 2026-09-07, `?timeframe=1y&granularity=1m` returned 200
-// with 50,000 points covering 2026-05-05 to 2026-06-10: 36 of the 365
-// days requested, ending three months before the request did, under a
-// response that still said `granularity: "1m"`. None of the existing
-// signals says that — `truncated` describes RETENTION at the series'
-// start, `discontinuous` an interior hole, `stale` a source walk that
-// was cut — so the wire carried a year-of-minutes shape with a month
-// of stale minutes in it and nothing to tell the two apart.
+// answered as asked. Measured on production with no coarsening,
+// `?timeframe=1y&granularity=1m` returned 200 with 50,000 points
+// covering 36 of the 365 days requested, ending three months before the
+// request did, under a response that still said `granularity: "1m"`.
+// None of the other signals says that — `truncated`
+// describes RETENTION at the series' start, `discontinuous` an interior
+// hole, `stale` a source walk that was cut.
 //
 // The response's own `granularity` carries the answer, and no new
 // field is added, because that field already means "the grain this
-// series is ON": the TWAP path has reported its snapped grain there
-// since it shipped ([twapChartGranularity]), and a consumer plotting
-// the array reads it to label the axis. A caller that sends `1m` and
-// reads back `15m` knows precisely what happened; one that sends a
-// pair that fits reads back what it sent.
+// series is ON": the TWAP path reports its snapped grain there
+// ([twapChartGranularity]), and a consumer plotting the array reads it
+// to label the axis. A caller that sends `1m` and reads back `15m`
+// knows precisely what happened; one that sends a pair that fits reads
+// back what it sent.
 //
-// Coarsening is also what makes [chartWindow.covered] REACHABLE, which
-// is the second half of the same defect: at 1y/1m the grid has
-// ~525,600 points and the reader can never return more than 50,000, so
-// the merge could not hold a full grid however complete the data was
-// and the walk ran to [chartWalkBudget] on every request (measured
-// 3.40-4.27s warm against 1.26-1.31s for the same window at 15m). The
-// predicate is untouched — it was verified exact over 155 holed-set
-// variants and stays that way; what changes is that the grid it
-// measures against now fits under the cap.
+// Coarsening is also what makes [chartWindow.covered] REACHABLE: at
+// 1y/1m the grid has ~525,600 points and the reader can never return
+// more than 50,000, so the merge could not hold a full grid however
+// complete the data was and the walk would run to [chartWalkBudget] on
+// every request (measured 3.40-4.27s warm against 1.26-1.31s for the
+// same window at 15m). The predicate itself was verified exact over 155
+// holed-set variants; coarsening only makes the grid it measures fit
+// under the cap.
 //
 // It is a property of the REQUEST alone — window width over bucket
 // width — so it costs no read and cannot vary with how much data a
 // pair happens to hold. That is also why it is applied ONLY where the
 // window has a requested width. `timeframe=all` and
 // /v1/history/since-inception ask for "everything you have", whose
-// point count is a property of the DATA: measured the same day,
-// `?timeframe=all&granularity=1h` serves 47,823 points spanning
-// 2017-01-17 to now, complete and under the cap, because the pair's
-// hourly buckets are sparse — while a grid laid from pubnet genesis
-// would count 96,600 and coarsen a response that is already right.
+// point count is a property of the DATA: measured on production,
+// `?timeframe=all&granularity=1h` served 47,823 points spanning January
+// 2017 to the present, complete and under the cap, because the pair's
+// hourly buckets are sparse, while a grid laid from pubnet genesis would count 96,600 and
+// coarsen a response that is already right.
 // A `window <= 0` therefore returns `gran` untouched.
 //
 // A ladder that runs out returns `gran` as well. Unreachable with
@@ -883,23 +875,21 @@ func chartGranularityGrace(gran string) time.Duration {
 //
 // That per-bucket rule is the one
 // [docs/architecture/aggregation-plan.md] §"The fiat quote leg, per bucket" settled for the
-// fiat OHLC series, applied at this surface's own grain. The chart used
-// to resolve first-hit ONCE PER RESPONSE — the first source pair holding
-// any bucket at all served the whole window — and §7.5's objection to
-// that shape is a property rather than a preference: it makes the source
+// fiat OHLC series, applied at this surface's own grain. Resolving
+// first-hit ONCE PER RESPONSE — the first source pair holding any bucket
+// at all serves the whole window — is what §7.5 objects to, and the
+// objection is a property rather than a preference: it makes the source
 // set a function of the WINDOW, so the same bucket renders one way
 // inside a window an earlier source also covers and another way inside
 // one it does not, from one unchanged database. Resolving per bucket
 // depends only on the bucket.
 //
-// Measured on the flagship pair 2026-09-06: `native/fiat:USD` at `1d`
-// served 1,070 points with a 1,919-day break between 2021-01-31 and
-// 2026-05-05, because `crypto:XLM/fiat:USD` answered first and won the
-// whole response; 763 of those days sit in `<XLM SAC>/<USDC SAC>` — the
-// same pool `/v1/ohlc` had already been serving since 2026-09-05 — and
-// were never read. The proxy walk could reach that pool
-// ([Server.chartFiatProxyPairs] enumerates it) and was gated on the
-// series being EMPTY, which a series with a hole in it is not.
+// Measured on the flagship pair under per-response resolution,
+// `native/fiat:USD` at `1d` served 1,070 points with a 1,919-day break,
+// because `crypto:XLM/fiat:USD` answered first and won the whole
+// response; 763 of those days sat in `<XLM SAC>/<USDC SAC>`, the same
+// pool `/v1/ohlc` serves, and were never read. A proxy walk gated on the
+// series being EMPTY cannot fill a series with a hole in it.
 //
 // Sources are NOT blended within a bucket. A bucket carries one venue
 // set's own published aggregate, exactly as the CAGG wrote it, so this
@@ -1090,16 +1080,15 @@ func chartBucketPrev(t time.Time, gran string) time.Time {
 
 // chartWalkBudget bounds the reads a source walk makes ONCE IT ALREADY
 // HOLDS A SERIES TO SERVE. Reads taken while the merge is still empty
-// are NOT bounded by it: those are the reads that produce the answer
-// this surface served before the walk existed, and they keep the
-// handler's own 8s ceiling and its error handling untouched.
+// are NOT bounded by it: those reads produce the base answer, and they
+// keep the handler's own 8s ceiling and its error handling untouched.
 //
-// It exists because the walk multiplied the reads a populated request
+// It exists because the walk multiplies the reads a populated request
 // makes by up to 24 (3 alias spellings + 21 proxies), inside one 8s
 // budget, and the reads are NOT cached — [CachedHistoryReader] wraps
 // only LatestTradePerSource, so every HistoryPointsInRange is a fresh
 // CAGG scan (handleChart's own comment records 5-10s for a cold one).
-// Measured on production 2026-09-06 at `timeframe=1y&granularity=1m`,
+// Measured on production at `timeframe=1y&granularity=1m`,
 // where each constituent returns the full historyMaxPoints cap:
 // `native/USDC-GA5Z…` alone takes 8.112s and three other constituents
 // sum to 5.867s, while the flagship `native/fiat:USD` serves in
@@ -1521,10 +1510,10 @@ func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) erro
 // chartFiatProxyPairs is the ordered proxy-source list a fiat-quoted
 // chart series is filled from. It is the chart's analogue of the
 // constituent set the live aggregator's VWAP and the OHLC-series path
-// ([Server.ohlcSeriesFiatCombined]) combine — the earlier
-// classic-pegs-only form (BACKLOG #37 gap) missed the abstract
-// stablecoin backers, so a chart for a pair whose USD depth is
-// CEX-sourced (crypto:XLM/crypto:USDT, from binance) found nothing.
+// ([Server.ohlcSeriesFiatCombined]) combine. It includes the abstract
+// stablecoin backers because a classic-pegs-only list finds nothing for
+// a pair whose USD depth is CEX-sourced (crypto:XLM/crypto:USDT, from
+// binance).
 //
 // Order is deterministic for cross-region stability (ADR-0015), and it
 // is load-bearing rather than cosmetic: under [chartBucketMerge] the
@@ -1645,7 +1634,7 @@ func (s *Server) chartProxyPairsFor(
 }
 
 // chartAliasPairs is the requested pair in every canonical spelling of
-// both its legs — the XLM dual-form cross (F-1340) — in
+// both its legs — the XLM dual-form cross — in
 // [canonical.AssetAliases] priority order, so the literal form leads and
 // the SAC forms trail. Degenerate combinations (one asset against
 // itself) are dropped rather than read.
@@ -1748,8 +1737,7 @@ func (s *Server) chartVWAPReader(gran string) chartRead {
 // SAC-quoted Soroban pools (asset-SAC/XLM-SAC) and the pivot leg
 // reaches the CEX series stored under `crypto:XLM` AND the pool buckets
 // that CEX series does not hold: a pivot with a five-year hole in it
-// would punch that hole through into every series derived from it, which
-// is the defect this surface is being repaired for, one level down. The
+// would punch that hole through into every series derived from it. The
 // asset leg is read first so an asset with no XLM market at all — the
 // common miss — costs no pivot read. Only buckets present on BOTH legs
 // are emitted; a leg the reader truncated at its row cap yields the
@@ -2057,7 +2045,7 @@ func (s *Server) handleChartMarketCap(
 		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
 		return
 	}
-	// Exact circulating supply in whole units (INV-2 / ADR-0003 — the
+	// Exact circulating supply in whole units (ADR-0003 — the
 	// catalogue carries supply as an exact decimal STRING; parsing it
 	// to float64 truncates once it exceeds a float's 53-bit mantissa,
 	// e.g. a quadrillion-unit fiat M2). Scale by supply_decimals via
@@ -2121,9 +2109,8 @@ func (s *Server) handleChartMarketCap(
 }
 
 // writeChartTimeout answers a chart read that blew its own budget while
-// the request was still live. The fiat and fiat-cross legs used to fall
-// through to an empty series at 200 with no flag — the same shape the
-// market-cap leg had — and a deadline is retryable capacity, not an
+// the request was still live, rather than falling through to an empty
+// series at 200 with no flag: a deadline is retryable capacity, not an
 // absence of data.
 func (s *Server) writeChartTimeout(w http.ResponseWriter, r *http.Request, leg, ticker string) {
 	w.Header().Set("Retry-After", "5")
@@ -2152,13 +2139,11 @@ func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx
 // deadline with the same `chart-timeout` 503 the vwap and twap chart
 // paths already use.
 //
-// The market-cap legs used to degrade to emptyMarketCapSeries at 200 on
-// ANY read error, deadline included. An empty series is a syntactically
-// valid answer, so a caller renders "market cap $0" for an asset with
-// real supply and has no way to tell that from a genuine no-data
-// window — the same wrong-answer-with-full-confidence failure as the
-// bodyless 200 this endpoint's own budget was supposed to prevent. A
-// deadline is retryable, and only a 5xx says so.
+// A deadline must not degrade to emptyMarketCapSeries at 200. An empty
+// series is a syntactically valid answer, so a caller renders "market
+// cap $0" for an asset with real supply and has no way to tell that
+// from a genuine no-data window. A deadline is retryable, and only a
+// 5xx says so.
 //
 // Both legs share one writer because both are the same statement to the
 // caller ("this series is unavailable right now, retry"); which leg blew
@@ -2400,9 +2385,9 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint,
 // (e.g. "21700000000000" = $21.7T); for tokens decimals would be
 // 7 / 18 / etc, and we divide by 10^decimals via big.Rat.
 //
-// Exact by construction (INV-2 / ADR-0003): the earlier float64 form
-// truncated any supply past a float's 53-bit mantissa (~9.0e15) — a
-// real risk for high-denomination fiat M2 figures. Returns ok=false
+// Exact by construction (ADR-0003): a float64 form would truncate any
+// supply past a float's 53-bit mantissa (~9.0e15), a real risk for
+// high-denomination fiat M2 figures. Returns ok=false
 // when supplyStr isn't a decimal or decimals is negative.
 func fiatSupplyWholeUnits(supplyStr string, decimals int) (*big.Rat, bool) {
 	if decimals < 0 {

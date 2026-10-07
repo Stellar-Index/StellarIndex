@@ -27,8 +27,8 @@ type APIKeyValidator interface {
 }
 
 // AccountIdentifierPrefix namespaces a [Subject.Identifier] that
-// belongs to a platform account (as opposed to a legacy
-// `signup-<emailhash>` identifier minted by POST /v1/signup).
+// belongs to a platform account (as opposed to a
+// `signup-<emailhash>` identifier minted by the retired POST /v1/signup).
 const AccountIdentifierPrefix = "acct:"
 
 // AccountIdentifier renders the [Subject.Identifier] the platform

@@ -18,11 +18,11 @@ import (
 // Four store methods answer a question the Redis key cannot: "which
 // records does this owner hold" (ListKeysForIdentifier) and "which
 // record carries this KeyID" (RevokeKeyByID, UpdateRateLimit,
-// MarkEmailVerified). They used to answer it by walking `apikey:*`
-// with one GET per credential in the deployment — on request paths
-// any anonymously registered key can drive (F057 / K051).
+// MarkEmailVerified). Walking `apikey:*` with one GET per credential
+// in the deployment would put that cost on request paths any
+// anonymously registered key can drive.
 //
-// They now read [cachekeys.APIKeyIndex]: one HASH holding a pointer
+// They read [cachekeys.APIKeyIndex] instead: one HASH holding a pointer
 // per KeyID, a record list per owner, and a `ready` marker. See the
 // family comment in internal/cachekeys/keys.go for why it is ONE key
 // (allkeys-lru eviction must take the marker with the entries).

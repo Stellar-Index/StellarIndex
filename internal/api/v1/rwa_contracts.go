@@ -27,7 +27,7 @@ import (
 // The classic arm walks issuers, and only the classic-asset registry
 // writes that table (registerIssuerSeen, insertIssuersBatch). An
 // entity issuing only contract tokens gets no row there, so it gets no
-// SEP-1 fetch and never becomes a candidate. Measured on r1 2026-09-10,
+// SEP-1 fetch and never becomes a candidate. Measured on r1,
 // `sep1-refresh -issuer` for Franklin Templeton and for Spiko both
 // return `sql: no rows in result set`, while both accounts sit in the
 // curated directory tagged `issuer` with their real domains.
@@ -44,7 +44,7 @@ import (
 //     each refusal attributed.
 //  2. Entities that are recognised, unflagged, real — and for which this
 //     index holds no Stellar token at all. Those are not refused by any
-//     requirement; there is nothing to refuse. Before this they were
+//     requirement; there is nothing to refuse. Unnamed, they would be
 //     invisible, and a reader could not tell such an entity from one
 //     that does not exist. They are named on the response.
 

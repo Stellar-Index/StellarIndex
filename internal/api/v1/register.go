@@ -39,7 +39,7 @@ type RegisterAccountCreator interface {
 	// store — as a `signup-race:` suspension so the existing
 	// signupreaper (suspended + signup-race: reason + no child
 	// users/api_keys) reclaims it, instead of leaving a permanent active
-	// account that can never authenticate (NS-3). Backed by the same
+	// account that can never authenticate. Backed by the same
 	// postgresstore.AccountStore.Suspend the admin path uses.
 	Suspend(ctx context.Context, id uuid.UUID, reason string) error
 }
@@ -100,7 +100,7 @@ const registerBodyMaxBytes = 4 * 1024
 //
 // Abuse posture:
 //   - Per-IP volume: the SAME per-IP signup throttle /v1/signup uses
-//     ([SignupIPThrottle], default 5/hour/IP, F-1232) gates every
+//     ([SignupIPThrottle], default 5/hour/IP) gates every
 //     mint, sharing one budget across both endpoints so an abuser
 //     can't double-dip. The global anonymous rate limit applies
 //     upstream of that.
@@ -138,7 +138,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	plaintext, rec, err := s.mintRegisterKey(r.Context(), acct)
 	if err != nil {
 		// The account row exists but its first credential never reached
-		// the validator store — an orphan (NS-3). Quarantine it as a
+		// the validator store — an orphan. Quarantine it as a
 		// suspended `signup-race:` orphan so the signupreaper reclaims it
 		// (suspended + reason + no child users/api_keys), instead of
 		// leaving a permanent active account that can never authenticate.
@@ -248,11 +248,11 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		Permissions:     platform.KeyPermissions{All: true},
 	}
 	// Mirror the credential into the Redis validator store FIRST — before
-	// the durable Postgres management row (NS-3). r1 runs the REDIS
+	// the durable Postgres management row. r1 runs the REDIS
 	// validator (`backend=redis` at startup), so the mirror IS the working
 	// credential; the Postgres api_keys row is the MANAGEMENT record
 	// (listing, tier-clamp fan-out, revocation). A Postgres-only key 401s
-	// the instant the caller uses it — the v0.32.0 post-deploy defect.
+	// the instant the caller uses it.
 	//
 	// Ordering matters for orphan reaping: writing the mirror first means a
 	// mirror failure leaves NO durable api_keys row — only the account row,
@@ -261,7 +261,7 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	// authenticate and no reaper matches. The mirror is keyed by the SAME
 	// plaintext so one secret validates on either backend, and carries an
 	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
-	// allkeys-lru keyspace without bound (W1-flow-register-2).
+	// allkeys-lru keyspace without bound.
 	if s.APIKeyBudgets.RedisMirror != nil {
 		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
 		if err != nil {
@@ -306,7 +306,7 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 }
 
 // suspendRegisterOrphan quarantines the account left behind when key
-// minting failed after the account row committed (NS-3). It stamps a
+// minting failed after the account row committed. It stamps a
 // `signup-race:` suspended_reason — the exact prefix
 // signupreaper.ReapSuspendedOrphans matches — so the existing reaper
 // (suspended + signup-race: reason + no child users/api_keys, older than
@@ -373,9 +373,9 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 	// CSRF gate, same reasoning as /v1/signup: application/json is not
 	// a CORS "simple request" type, so any cross-site browser POST
 	// carrying it must be preflighted (and refused). The header is
-	// REQUIRED, not merely validated-when-present (audit 2026-08-13 F4);
-	// see requireJSONContentType, the helper shared with /v1/signup so
-	// the two anon durable-write gates cannot drift again.
+	// REQUIRED, not merely validated-when-present; see
+	// requireJSONContentType, the helper shared with /v1/signup so the
+	// two anon durable-write gates cannot drift apart.
 	if !requireJSONContentType(w, r, "/v1/register") {
 		return registerRequest{}, false
 	}

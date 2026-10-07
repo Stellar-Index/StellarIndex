@@ -21,8 +21,7 @@ import (
 // the same claim the demo makes ("every protocol, verified complete")
 // rather than taking a marketing badge on faith.
 //
-// Two axes (ADR-0033/ADR-0034 two-axis verdict, decision brief
-// notes/DECISION-genesis-complete-verdict-2026-07-16.md Option B):
+// Two axes (ADR-0033/ADR-0034 two-axis verdict):
 //   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous +
 //     hash-chained + recognition-complete from genesis to tip
 //     (substrate ∧ recognition only).
@@ -47,8 +46,8 @@ type CoverageVerdictView struct {
 	// only, genesis-to-tip, decoupled from the retention-scoped
 	// projection reconcile. This is "the certified ClickHouse archive is
 	// contiguous + hash-chained + recognition-complete from genesis to
-	// tip for this source's domain" — the two-axis verdict from
-	// notes/DECISION-genesis-complete-verdict-2026-07-16.md (Option B).
+	// tip for this source's domain" — the ADR-0033/ADR-0034 two-axis
+	// verdict.
 	// A source can be lake_complete=true, complete=false: the archive is
 	// genesis-proven even though the served tier only holds a retention
 	// window of it.
@@ -105,7 +104,7 @@ type CoverageVerdictView struct {
 }
 
 // NotApplicableSourceView is one source that does not exist on the
-// serving network (#483).
+// serving network.
 type NotApplicableSourceView struct {
 	Source string `json:"source"`
 	Reason string `json:"reason"`
@@ -115,23 +114,24 @@ type NotApplicableSourceView struct {
 // on-chain event shapes in the certified lake that sit on contracts NO
 // indexed source owns.
 //
-// It is deliberately NOT a [CoverageVerdictView]. It used to be one —
+// It is deliberately NOT a [CoverageVerdictView], although
 // compute-completeness writes it to the same completeness_snapshots
-// table under the reserved source name "recognition", so it arrived in
-// `sources[]` and the public headline counted it as a 21st source that
-// had failed. Every per-source field on it was a fiction of that shape:
-// substrate_ok/projection_ok were hardcoded true, complete/lake_complete
-// were false PERMANENTLY BY CONSTRUCTION (they can only be true if no
-// un-indexed Soroban contract exists anywhere on the network), and
-// coverage_pct measured ledgers-until-the-first-foreign-contract, a
-// number that only ever decreases. A permanently-red row in a
-// completeness board teaches every reader to ignore the board.
+// table under the reserved source name "recognition". As a row in
+// `sources[]` the public headline would count it as one more source
+// that had failed, and every per-source field on it would be a fiction
+// of that shape: substrate_ok/projection_ok hardcoded true,
+// complete/lake_complete false PERMANENTLY BY CONSTRUCTION (they can
+// only be true if no un-indexed Soroban contract exists anywhere on the
+// network), and coverage_pct measuring
+// ledgers-until-the-first-foreign-contract, a number that only ever
+// decreases. A permanently-red row in a completeness board teaches
+// every reader to ignore the board.
 //
 // So it gets its own vocabulary here, at the top level, with the
 // numbers the audit actually produces. The deployed metrics already
 // draw this line — see the two `WHERE source <> 'recognition'` clauses
-// in configs/ansible/roles/archival-node/files/data-freshness.sh
-// (PR #465) — this is the public API agreeing with them.
+// in configs/ansible/roles/archival-node/files/data-freshness.sh —
+// this is the public API agreeing with them.
 //
 // What it does NOT mean: it is not missing data and not a gap in any
 // source we publish. A source silently dropping its OWN events is a
@@ -148,7 +148,7 @@ type RecognitionAxisView struct {
 	// across how many distinct contracts.
 	//
 	// Omitted — NOT zeroed — when they cannot be read from the audit's
-	// stored detail (a snapshot written before this format existed).
+	// stored detail (a snapshot written in an older format).
 	// "0 unrecognized shapes" is a claim of cleanliness; inventing it
 	// from a parse failure would be exactly the laundering this axis
 	// exists to prevent. Detail is still served verbatim.
@@ -214,7 +214,7 @@ type CoverageVerdictsView struct {
 	// contract identities (ADR-0035), so on a test net they do not
 	// exist — they are listed in NotApplicableSources with a reason and
 	// EXCLUDED from Sources and every total, instead of being counted
-	// incomplete by construction (#483).
+	// incomplete by construction.
 	Network string `json:"network"`
 	// NotApplicableSources names the sources that do not exist on this
 	// network. Always empty on pubnet.
@@ -329,9 +329,9 @@ const coverageIngestStallAge = 10 * time.Minute
 // audit runs (manually or on its timer), so a 60s public cache is
 // generous to edges without hiding anything meaningful.
 //
-// `flags.stale` carries the live-tip gate (MNY-04): true when the
+// `flags.stale` carries the live-tip gate: true when the
 // published verdicts no longer describe the current chain. See
-// [Server.coverageVerdictsStale] — without it this surface served
+// [Server.coverageVerdictsStale] — without it this surface would serve
 // "15/15 complete" forever after the audit died, since every field on
 // the row (including tip_ledger and coverage_pct) is frozen at the
 // verdict's own compute time and reads perfectly healthy in isolation.
@@ -471,7 +471,7 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 }
 
 // coverageVerdictsStale is the live-tip gate on the completeness
-// verdicts (MNY-04 / audit A-H-4). It answers the only question a
+// verdicts. It answers the only question a
 // consumer of a trust surface actually has — "is this `complete: true`
 // a statement about the chain as it is NOW?" — which the rows
 // themselves cannot answer: `tip_ledger`, `coverage_pct` and every

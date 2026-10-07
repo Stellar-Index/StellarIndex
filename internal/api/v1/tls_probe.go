@@ -13,8 +13,8 @@ import (
 )
 
 // TLSCertProbeInterval is the cadence at which [RunTLSCertProbe]
-// re-probes a host's leaf cert. F-0051 (audit-2026-05-26): the
-// gauge feeds an alert that fires at 14-days-remaining; a 6 h
+// re-probes a host's leaf cert. The gauge feeds an alert that fires at
+// 14-days-remaining; a 6 h
 // cadence means we re-confirm the expiry timestamp 56× before the
 // alert fires, so a single failed probe never starves the
 // gauge.
@@ -31,10 +31,9 @@ const tlsCertProbeTimeout = 10 * time.Second
 // probing the configured hostnames via TLS handshake and emitting
 // the leaf cert's NotAfter as a Prometheus gauge.
 //
-// F-0051 (audit-2026-05-26): public TLS is fronted by Caddy
-// which auto-renews Let's Encrypt 30 days before expiry. If
-// renewal fails (DNS, rate limit, ACME quota) we historically
-// discovered only at cert expiry. This probe gives a
+// Public TLS is fronted by Caddy, which auto-renews Let's Encrypt
+// 30 days before expiry. A failed renewal (DNS, rate limit, ACME
+// quota) is otherwise silent until the cert expires. This probe gives a
 // `stellarindex_tls_cert_not_after_unix` gauge that an alert can
 // chart against `time()` to catch a stuck renewal cycle.
 //

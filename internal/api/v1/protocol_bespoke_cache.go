@@ -16,18 +16,17 @@ import (
 // analytics block of /v1/protocols/{name} — the visual suite (KPIs,
 // series, tables) the CCTP/DEX/lending/yield/oracle pages render.
 //
-// Why (§2.6b grounding incident): the detail VIEW has been prewarmed +
-// stale-served since 2026-07-31, but the bespoke block inside it had no
-// cache of its own. The block is built LAST in buildProtocolDetail, so it
-// inherits whatever is left of the rebuild's 90-second budget after the
-// roster + lake analytics; under load that remainder went to zero and the
-// store returned `context deadline exceeded` ("protocol bespoke build
-// failed …"). enrichBespoke then honestly dropped the block, and — when
-// no HEALTHY entry existed yet (cold process, fresh deploy, a whole
-// window that has never built) — the bespoke-less view was cached and
-// stamped fresh, so the page rendered its suite as ABSENT.
+// Why: the detail VIEW is prewarmed + stale-served, but the bespoke block
+// is built LAST in buildProtocolDetail, so it inherits whatever is left of
+// the rebuild's 90-second budget after the roster + lake analytics. Under
+// load that remainder reaches zero and the store returns `context deadline
+// exceeded` ("protocol bespoke build failed …"). enrichBespoke then
+// honestly drops the block, and — when no HEALTHY entry exists yet (cold
+// process, fresh deploy, a whole window that has never built) — without a
+// cache of its own the bespoke-less view would be cached and stamped
+// fresh, so the page would render its suite as ABSENT.
 //
-// The fix is the pattern already used for every other expensive read
+// This uses the pattern already used for every other expensive read
 // here: the block gets its own TTL-less cache with a detached,
 // single-flighted, GATED refresh. A build serves the previous block
 // instantly and never waits — except on a TRUE first-ever miss, which
@@ -54,7 +53,7 @@ import (
 const bespokeStaleAfter = 45 * time.Minute
 
 // bespokeRefreshTimeout bounds ONE detached bespoke battery. Measured on
-// r1 UNDER replay load (2026-07-31): soroswap 90d ~1.9s, cctp ~0.4s. A
+// r1 UNDER replay load: soroswap 90d ~1.9s, cctp ~0.4s. A
 // minute is two orders of magnitude of headroom for contention while
 // still bounding a wedged query so it cannot pin the single-flight.
 const bespokeRefreshTimeout = time.Minute
@@ -186,9 +185,9 @@ func (c *bespokeCache) refreshGate() *clickhouse.RefreshGate {
 
 // refreshBespoke kicks ONE detached bespoke build for key (returning the
 // live flight when one is already up) and returns it to optionally wait
-// on. Detached on purpose: bound to the rebuild's remaining budget the
-// battery died at the deadline and the block was dropped from the page —
-// the incident this cache exists for.
+// on. Detached on purpose: a build bound to the caller's remaining budget
+// lets the battery die at the deadline and drops the block from the page,
+// which is the failure this cache exists to prevent.
 func (s *Server) refreshBespoke(key, source, category string, windowDays int) *bespokeFlight {
 	fl, owner := s.protocolBespokeCache.begin(key)
 	if !owner {
@@ -242,7 +241,7 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 //     ctx. The build outlives the wait, so the next one lands warm.
 //   - ok=false means no block could be produced at all (no reader wired,
 //     or the first-ever build failed / was starved / outran ctx) — the
-//     caller degrades exactly as it did before this cache existed.
+//     caller drops the bespoke block.
 func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
 	if s.ProtocolBespoke == nil {
 		return nil, false, false

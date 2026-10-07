@@ -28,12 +28,13 @@ import (
 // silent-discard shape the contract arm itself was built to close on
 // the classic side, reproduced one level down.
 //
-// Measured 2026-09-15: the curated directory names 387 contract
+// Measured on production: the curated directory names 387 contract
 // addresses and the listing directory names 17 on Stellar, with FOUR in
 // both. The in-repo curated binding set names five, and the directory
-// names NONE of them. So the whole curated binding set — verified
-// addresses, named instruments, known classes, nine figures of supply
-// sitting in the certified lake — was unreachable by construction.
+// names NONE of them. So with the directory as the only gate, the whole
+// curated binding set — verified addresses, named instruments, known
+// classes, nine figures of supply sitting in the certified lake — would
+// be unreachable by construction.
 //
 // So the population becomes the UNION of two sets: the contract
 // addresses the curated directory recognises, and every address the
@@ -226,13 +227,13 @@ type rwaListingCensus struct {
 	// listingUnavailable counts bindings refused because the LISTING
 	// read did not answer. One source, named exactly.
 	//
-	// A failed curated-tag lookup used to land here too, and the
-	// conflation was wrong in the way this surface exists to prevent.
+	// A failed curated-tag lookup does not land here, because that
+	// conflation is wrong in the way this surface exists to prevent.
 	// The two reads are unrelated sources with unrelated failure modes,
 	// and they are not even correlated: the curated directory can be
 	// unreadable while the listing directory sits there perfectly
-	// fresh. Folded together, the funnel then reported an outage of the
-	// source that ANSWERED and sent an operator to a working sync.
+	// fresh. Folded together, the funnel would report an outage of the
+	// source that ANSWERED and send an operator to a working sync.
 	listingUnavailable int
 	// tagsUnavailable counts bindings refused because the CURATED
 	// DIRECTORY's tag read did not answer, leaving C3 unevaluated.
@@ -267,7 +268,7 @@ type rwaListingCensus struct {
 	// produced by a directory nobody has ever synced, by a sync that
 	// died two days ago, and by a healthy directory this set simply
 	// predates — three states with three different responses, and
-	// nothing on the wire separated them. These counts do:
+	// the verdict alone does not separate them. These counts do:
 	//
 	//   - Entries 0                 → never synced
 	//   - Entries > 0, Stale = all  → the sync stopped
@@ -357,8 +358,8 @@ func (s *Server) rwaListingCandidates(
 		// listing read is this arm's RECOGNITION source, so its absence
 		// closes the arm whatever the curated directory said; only when
 		// the listing answered can a tag failure be the thing standing
-		// in the way, and that is exactly the case that used to be
-		// reported as a listing outage.
+		// in the way, and that case must not be reported as a listing
+		// outage.
 		switch {
 		case !listing.available:
 			census.listingUnavailable++

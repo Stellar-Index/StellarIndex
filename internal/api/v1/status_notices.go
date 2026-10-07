@@ -98,7 +98,7 @@ func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 		// banner is a nicety layered over the SLA-truth /v1/status. But an
 		// empty body here must not be byte-identical to a genuine "no
 		// active notices" — flags.stale marks it a failed read so a caller
-		// can tell "nothing to announce" from "couldn't ask" (RLT-465).
+		// can tell "nothing to announce" from "couldn't ask".
 		s.logger.Warn("status notices list failed; returning empty", "err", err)
 		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{Stale: true, Degraded: true})
 		return
@@ -350,7 +350,7 @@ func (s *Server) recordStatusNoticeAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.Audit.Append(r.Context(), entry); err != nil {
-		// C3-067: a public status notice changed with no record of who did it.
+		// A public status notice changed with no record of who did it.
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("status_notice").Inc()
 		s.logger.Warn("admin status notice: audit append failed (best-effort)",
 			"err", err, "notice_id", noticeID, "action", action)

@@ -32,10 +32,10 @@ type ChangeSummaryReader interface {
 //
 // Powers every multi-window delta strip on the explorer per
 // data-inventory §6.1.
-// M7 (INV-2): the *_value fields are MONEY (a price / market-cap snapshot)
+// The *_value fields are MONEY (a price / market-cap snapshot)
 // and cross the wire as JSON STRINGS, matching every other money field the
 // API serves (e.g. /v1/price's `price`), and carry the exact decimal string
-// the changesummary rollup stored — no float64 round-trip (GH #602). The
+// the changesummary rollup stored — no float64 round-trip. The
 // *_delta_pct fields are percentages, not money, and stay JSON numbers,
 // display-grade by design; streak_days stays an int.
 type ChangeSummaryResponse struct {
@@ -134,7 +134,7 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if a, err := canonical.ParseAsset(entityID); err == nil {
 		add(a.String())
 	}
-	// C4-015 (W2-tail): fold in the FULL canonical alias family for
+	// Fold in the FULL canonical alias family for
 	// every form gathered so far, so the XLM SAC C-address (and any
 	// configured classic↔SAC pair) is a candidate too — the change-
 	// summary worker writes a Soroban-sourced XLM rollup under the SAC
@@ -196,10 +196,10 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	// even when the underlying data exists. Expand into candidate
 	// forms, then try each in order; first hit wins.
 	//
-	// Deliberately NOT the same set as `oracleAssetCandidates` (which
-	// it once mirrored): that helper's ticker translation is gated on
-	// the verified-currency catalogue since #336, because it answers a
-	// per-ISSUER identity with global-ticker rows. This one only ever
+	// Deliberately NOT the same set as `oracleAssetCandidates`: that
+	// helper's ticker translation is gated on the verified-currency
+	// catalogue, because it answers a per-ISSUER identity with
+	// global-ticker rows. This one only ever
 	// promotes a BARE code the caller typed — an id carrying `-` or `:`
 	// is left alone (see changeSummaryCoinCandidates), so no
 	// (code, issuer) pair is ever widened to a ticker here.
@@ -402,7 +402,7 @@ func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 // scaledMoneyStr applies the decimals factor to a stored decimal string. A
 // nil scale returns v unchanged.
 //
-// v is already the exact decimal the rollup stored (GH #602) — no float64
+// v is already the exact decimal the rollup stored — no float64
 // round-trip here or in the multiply. big.Rat carries the multiply exactly,
 // and ratDecimalString renders it back to decimal exactly: the scale is
 // always a power of ten (see [aggregate.DecimalsAdjustment]), so the

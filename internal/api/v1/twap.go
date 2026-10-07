@@ -66,32 +66,28 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate (wave-D MSP-02). /v1/vwap and /v1/twap served a
-	// flagged issuer's aggregated price at 200 while /v1/price,
-	// /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the asset
-	// headline all withheld it — reproduced live against a directory-
-	// flagged issuer, 200 with a price on both. Worse, pricingguard's own
-	// package doc (scam.go) and PR #182's merged body BOTH asserted these
-	// two endpoints were covered by the reader-seam gate. They never
-	// were: the ScamGate is consumed at exactly four sites, none of them
-	// here, and no middleware does asset-level withholding.
+	// Scam-issuer gate. /v1/vwap and /v1/twap must withhold a flagged
+	// issuer's aggregated price exactly as /v1/price, /v1/price/tip,
+	// /v1/price/batch, the SEP-40 oracle and the asset headline do. The
+	// reader-seam gate does not cover these two endpoints, and no
+	// middleware does asset-level withholding.
 	//
 	// Asked about BOTH legs, via the package's one spelling of the
 	// decision (scamWithheld → pricingguard's pair fold). Keyed on the
-	// base alone it covered every quote but not itself as one: the price
-	// of XLM in a flagged issuer's asset IS the flagged market's price,
-	// inverted, so `?base=native&quote=<FLAGGED>` served the exact
-	// reciprocal of the number this handler had just withheld for the
-	// other orientation (F019). Both orientations name one market.
+	// base alone it would cover every quote but not itself as one: the
+	// price of XLM in a flagged issuer's asset IS the flagged market's
+	// price, inverted, so `?base=native&quote=<FLAGGED>` would serve the
+	// exact reciprocal of the number this handler withholds for the other
+	// orientation. Both orientations name one market.
 	//
 	// SCAM ONLY, deliberately not the substance gate. The scam gate is
-	// targeted (flagged issuers) and directly implements the 2026-08-25
-	// decision. The substance gate would newly 404 every THIN pair here,
-	// which is both a breaking change for existing clients and arguably
+	// targeted (flagged issuers) and directly implements the scam
+	// withholding decision. The substance gate would newly 404 every
+	// THIN pair here, which is both a breaking change for existing clients and arguably
 	// wrong on principle: VWAPResult's own doc and ADR-0015 position
 	// /v1/vwap as the "narrow the window and compute it yourself" surface
-	// OPPOSITE /v1/price. That is an owner decision, not something to
-	// smuggle in with a scam fix.
+	// OPPOSITE /v1/price. That is an owner decision, not part of the
+	// scam gate.
 	//
 	// The gate goes in the HANDLER, not in the shared
 	// tradesInRangeWithStablecoinFallback: that helper is also the fetch
@@ -118,7 +114,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): /v1/twap
+	// Per-request DB ceiling: /v1/twap
 	// scans raw `trades` on every query — same posture as /v1/vwap.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()

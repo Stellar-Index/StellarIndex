@@ -47,27 +47,24 @@ var (
 	// ErrSignupRateLimited — returned by the per-IP signup throttle
 	// (`v1.SignupIPThrottle`) when a single IP exhausts its
 	// hourly signup budget. Distinct from the global rate-limit
-	// 429 so the handler can ship a more specific error envelope.
-	// F-1232 (audit-2026-05-12).
+	// 429 so the handler can return a more specific error envelope.
 	ErrSignupRateLimited = errors.New("auth: signup rate limited for this IP")
 
 	// ErrThrottleUnavailable — the throttle layer has been failing
-	// long enough that fail-open is no longer safe; the handler must
+	// long enough that fail-open is unsafe; the handler must
 	// return 503 + Retry-After. Returned by abuse-prevention seams
 	// ([RedisSignupIPThrottle.CheckIP] + [ratelimit.Bucket.Take]) once
 	// their dwell-time threshold is crossed on a sustained Redis
 	// outage.
 	//
-	// Dwell-time inversion (F-0049 / F-0050 / F-0149 / F-0150,
-	// audit-2026-05-27): transient Redis blips (< dwell-time, default
-	// 30s) still fall open so a single MISCONF / network hiccup
+	// Dwell-time inversion: transient Redis blips (< dwell-time,
+	// default 30s) fall open so a single MISCONF / network hiccup
 	// doesn't take signup or the rate limiter offline. Sustained
-	// outages — the J40 adversarial vector where an attacker holds
-	// Redis down to disable abuse prevention — flip to fail-CLOSED
-	// once the dwell-time elapses. The 30s window preserves the
-	// existing UX defence (better to accept unthrottled briefly than
-	// reject every request during a blip) while closing the
-	// indefinitely-disabled-throttle attack surface.
+	// outages — where an attacker holds Redis down to disable abuse
+	// prevention — flip to fail-CLOSED once the dwell-time elapses.
+	// The 30s window keeps the UX defence (better to accept
+	// unthrottled briefly than reject every request during a blip)
+	// while closing the indefinitely-disabled-throttle attack surface.
 	ErrThrottleUnavailable = errors.New("auth: throttle layer unavailable (sustained backend errors)")
 
 	// ErrAccountStatusUnavailable — the account-level kill-switch read
@@ -75,17 +72,16 @@ var (
 	// suspension status) is degraded and there is no usable last-known
 	// status to ride out on. 503 + Retry-After, NOT 401.
 	//
-	// auth-ks-1 (audit-2026-08-14): the Redis validator does an uncached
-	// per-request GetBySlug on the hot path to honour the account
-	// suspension gate. A transient Postgres degradation (failover,
-	// restart, pool exhaustion, statement_timeout, vacuum stall) made
-	// GetBySlug return a non-[platform.ErrNotFound] error, which fell
-	// through the middleware's default branch to 401 for EVERY active
-	// customer — turning a partial-dependency blip into a total API-key
-	// auth outage AND mis-signalling "your credential is invalid" so
-	// clients rotated keys during a server-side outage. A short-TTL
-	// status cache now rides a blip out on last-known status; this
-	// sentinel is returned only for the truly-unknown case (no cached
+	// The Redis validator reads the account on the hot path to honour
+	// the account suspension gate. A transient Postgres degradation
+	// (failover, restart, pool exhaustion, statement_timeout, vacuum
+	// stall) makes GetBySlug return a non-[platform.ErrNotFound] error;
+	// mapped to 401, that would reject EVERY active customer — turning a
+	// partial-dependency blip into a total API-key auth outage AND
+	// mis-signalling "your credential is invalid" so clients rotate keys
+	// during a server-side outage. A short-TTL status cache rides a blip
+	// out on last-known status; this sentinel is returned only for the
+	// truly-unknown case (no cached
 	// status within the staleness bound), so the degradation is a
 	// retryable "auth layer degraded" rather than a credential rejection.
 	// Distinct from [ErrUnauthorized] so [isCredentialRejection] does not

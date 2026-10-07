@@ -5,11 +5,16 @@ package chops
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -61,15 +66,12 @@ func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 				// base-unit scaling itself is pinned by
 				// TestServedSupplyField_ScalesBaseUnits.
 				served: servedSupplyField("native", "total_supply", 0),
-				truth: func(ctx context.Context, c *http.Client) (float64, error) {
+				truth: func(ctx context.Context, c *http.Client) (*big.Rat, error) {
 					var body map[string]any
 					if err := getJSON(ctx, c, truth.URL, &body); err != nil {
-						return 0, err
+						return nil, err
 					}
-					if tc.truth != 0 {
-						return tc.truth, nil
-					}
-					return 0, nil
+					return new(big.Rat).SetFloat64(tc.truth), nil
 				},
 			}
 			results := runChecksForTest(ctx, api.URL, []servedValueCheck{check})
@@ -114,7 +116,7 @@ func TestServedFetchErrorIsNotAZeroRelErr(t *testing.T) {
 	check := servedValueCheck{
 		name: "probe", tolerance: 0.005,
 		served: servedSupplyField("native", "total_supply", 0),
-		truth:  func(context.Context, *http.Client) (float64, error) { return 100, nil },
+		truth:  func(context.Context, *http.Client) (*big.Rat, error) { return big.NewRat(100, 1), nil },
 	}
 	results := runChecksForTest(context.Background(), api.URL, []servedValueCheck{check})
 	if results[0].ok || results[0].skipped {
@@ -149,15 +151,9 @@ func TestServedValueLastRunOnlyWhenAVerdictWasReached(t *testing.T) {
 	}
 }
 
-// runChecksForTest mirrors runServedValueChecks with an injected
-// check table.
+// runChecksForTest runs the production runner over an injected check table.
 func runChecksForTest(ctx context.Context, apiBase string, checks []servedValueCheck) []servedValueResult {
-	c := &http.Client{Timeout: 5 * time.Second}
-	out := make([]servedValueResult, 0, len(checks))
-	for _, chk := range checks {
-		out = append(out, reconcileOneCheck(ctx, c, apiBase, chk))
-	}
-	return out
+	return runServedValueChecks(ctx, &http.Client{Timeout: 5 * time.Second}, apiBase, checks, 5*time.Second, io.Discard)
 }
 
 // TestRenderServedValueProm — the textfile body has the three gauge
@@ -212,8 +208,8 @@ func TestServedSupplyField_ScalesBaseUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := 50_001_806_812.0; got != want {
-		t.Fatalf("scaled supply = %v, want %v", got, want)
+	if want := big.NewRat(50_001_806_812, 1); got.value.Cmp(want) != 0 {
+		t.Fatalf("scaled supply = %s, want %s", got.value.RatString(), want.RatString())
 	}
 }
 
@@ -277,5 +273,111 @@ func TestServedValuesVerdict_ListCheckIsNotAValueCheck(t *testing.T) {
 				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestRunServedValueChecks_Recheck pins the snapshot-race handling: a drift
+// re-reads both sides, passes if the gap clears, and fails only when it
+// persists, naming a stale served snapshot when supply_as_of_ledger did not
+// advance. The 2^53 row passes under a float64 comparison (both sides round to
+// the same double) and must fail exactly.
+func TestRunServedValueChecks_Recheck(t *testing.T) {
+	type read struct {
+		served string
+		ledger uint32
+		truth  string
+	}
+	cases := []struct {
+		name      string
+		tolerance float64
+		reads     []read
+		wantOK    bool
+		wantNote  string
+		wantReads int
+	}{
+		{"transient gap clears on re-read", 0.02, []read{{"100", 1000, "97"}, {"97", 1001, "97"}}, true, "cleared on recheck", 2},
+		{"persistent gap with advanced ledger fails", 0.02, []read{{"100", 1000, "97"}, {"100", 1001, "97"}}, false, "gap persisted after the served snapshot advanced", 2},
+		{"persistent gap on a stale snapshot fails as stale", 0.02, []read{{"100", 1000, "97"}, {"100", 1000, "97"}}, false, "served supply snapshot stale", 2},
+		{"in tolerance never rechecks", 0.02, []read{{"100", 1000, "99"}}, true, "probe note", 1},
+		{"one base unit above 2^53 is a drift", 0, []read{{"9007199254740993", 1000, "9007199254740992"}, {"9007199254740993", 1001, "9007199254740992"}}, false, "gap persisted", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var n atomic.Int32
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				rd := tc.reads[min(int(n.Add(1)), len(tc.reads))-1]
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"total_supply":%q,"supply_as_of_ledger":%d}}`, rd.served, rd.ledger)
+			}))
+			t.Cleanup(api.Close)
+			check := servedValueCheck{
+				name: "probe", tolerance: tc.tolerance, note: "probe note",
+				served: servedSupplyField("native", "total_supply", 0),
+				// The truth side follows the served read it is paired with.
+				truth: func(context.Context, *http.Client) (*big.Rat, error) {
+					return decimalRat(json.RawMessage(tc.reads[min(int(n.Load()), len(tc.reads))-1].truth))
+				},
+			}
+			r := runChecksForTest(context.Background(), api.URL, []servedValueCheck{check})[0]
+			if r.ok != tc.wantOK || r.skipped {
+				t.Errorf("ok=%v skipped=%v, want ok=%v (note=%s)", r.ok, r.skipped, tc.wantOK, r.note)
+			}
+			if !strings.Contains(r.note, tc.wantNote) {
+				t.Errorf("note = %q, want it to contain %q", r.note, tc.wantNote)
+			}
+			if got := int(n.Load()); got != tc.wantReads {
+				t.Errorf("served reads = %d, want %d", got, tc.wantReads)
+			}
+		})
+	}
+}
+
+// TestRunServedValueChecks_RecheckFailuresStayFailed — a re-read that cannot
+// complete (truth dark, or the run cancelled during the wait) keeps the first
+// drift verdict rather than turning it into a skip or a pass.
+func TestRunServedValueChecks_RecheckFailuresStayFailed(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"total_supply":"100","supply_as_of_ledger":1000}}`))
+	}))
+	t.Cleanup(api.Close)
+	var truthCalls atomic.Int32
+	check := servedValueCheck{
+		name: "probe", tolerance: 0.02,
+		served: servedSupplyField("native", "total_supply", 0),
+		truth: func(context.Context, *http.Client) (*big.Rat, error) {
+			if truthCalls.Add(1) > 1 {
+				return nil, errors.New("down")
+			}
+			return big.NewRat(90, 1), nil
+		},
+	}
+	r := runChecksForTest(context.Background(), api.URL, []servedValueCheck{check})[0]
+	if r.ok || r.skipped || !strings.Contains(r.note, "recheck read failed") {
+		t.Errorf("dark truth on recheck: ok=%v skipped=%v note=%q, want the first drift verdict", r.ok, r.skipped, r.note)
+	}
+
+	truthCalls.Store(0)
+	check.recheckAfter = time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	r = runServedValueChecks(ctx, &http.Client{}, api.URL, []servedValueCheck{check}, 5*time.Second, io.Discard)[0]
+	if r.ok || r.skipped || !strings.Contains(r.note, "recheck aborted") {
+		t.Errorf("cancelled wait: ok=%v skipped=%v note=%q, want the first drift verdict", r.ok, r.skipped, r.note)
+	}
+}
+
+// TestDecimalRat_ExactAbove2Pow53 — both truth-side encodings (quoted string
+// and bare JSON number) parse exactly where float64 would round.
+func TestDecimalRat_ExactAbove2Pow53(t *testing.T) {
+	want, _ := new(big.Rat).SetString("90071992547409930000001.0000001")
+	for _, raw := range []string{`"90071992547409930000001.0000001"`, `90071992547409930000001.0000001`} {
+		got, err := decimalRat(json.RawMessage(raw))
+		if err != nil || got.Cmp(want) != 0 {
+			t.Errorf("decimalRat(%s) = %v, %v; want %s", raw, got, err, want.RatString())
+		}
+	}
+	if _, err := decimalRat(json.RawMessage(`{"x":1}`)); err == nil {
+		t.Error("an object must not parse as a decimal")
 	}
 }

@@ -58,11 +58,10 @@ const defaultTokenDecimals = 7
 // a documented default or a null field, so blocking a whole request on
 // one is never the right trade. Without a sub-budget they inherit the
 // request context and a slow lake stalls the caller for the FULL request
-// budget to produce a field that was optional anyway (#371 F9).
+// budget to produce a field that was optional anyway.
 //
-// 2s is what resolveTokenDecimals has always used; naming it is what
-// keeps the sibling call sites from drifting apart again — the F9 finding
-// was precisely that two of the three had no bound at all.
+// One named constant keeps the sibling call sites from drifting apart,
+// so none of them is left without a bound.
 const tokenMetadataReadTimeout = 2 * time.Second
 
 // sep41TransfersReadTimeout is the whole budget the per-contract read
@@ -126,9 +125,8 @@ func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemTyp
 // handleSEP41Transfers serves GET
 // /v1/contracts/{contract_id}/transfers[?from=&to=&limit=].
 //
-// F-0021 closure (audit-2026-05-26): unlocks per-account net-
-// position queries — the Stellar moat feature CG/CMC structurally
-// cannot offer.
+// It enables per-account net-position queries, which CG/CMC
+// structurally cannot offer.
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	if s.SEP41Transfers == nil {
 		writeProblem(w, r,

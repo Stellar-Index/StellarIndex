@@ -27,10 +27,8 @@
 //     with a signing seed + JWT secret. [NoopSEP10Validator]
 //     remains as the explicit disabled-state fallback.
 //
-// The package still keeps noop validators around as the explicit
-// disabled-state fallback, but the runtime auth path is no longer
-// speculative: the API binary can serve API-key and SEP-10-backed
-// authenticated surfaces in this snapshot.
+// The noop validators are the explicit disabled-state fallback; the
+// API binary serves API-key and SEP-10-backed authenticated surfaces.
 //
 // References:
 //
