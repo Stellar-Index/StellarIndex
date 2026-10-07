@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// INV-0759 invariant: no unused anonymous /v1/register account outlives
+// Invariant: no unused anonymous /v1/register account outlives
 // accounterasure.AbandonedRegistrationRetention. Seeds the register shape
 // plus one near-miss per predicate and runs the real sweep.
 func TestAbandonedRegistrationSweep(t *testing.T) {

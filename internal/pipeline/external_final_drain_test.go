@@ -10,8 +10,8 @@ import (
 // shutdown-loss site: external trades still in the retry ring after the
 // final bounded pass have nowhere left to go, and must be counted on
 // SinkUndrainedRowsTotal by row exactly like an abandoned on-chain batch
-// (reportAbandonedTrades) — previously only a Warn line recorded them, so
-// the alert never saw a vendor-refillable loss (RLT-190).
+// (reportAbandonedTrades) — a Warn line alone would leave the alert
+// blind to a vendor-refillable loss.
 func TestExternalRetryBuffer_FinalDrainCountsUndrainedRows(t *testing.T) {
 	before := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
 	store := &fakeTradeStore{} // stays unhealthy: every insert is an infra fault

@@ -15,7 +15,7 @@ import (
 // validation happens upstream at config.Validate.
 const realisticGStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins Q054: the
+// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins that the
 // dispatcher's own switch must normalise ingestion.enabled_sources entries
 // the SAME way internal/config/validate.go's KnownSources check already
 // does (lowercase + trim). Before this fix the dispatcher only lowercased,
@@ -217,8 +217,8 @@ func TestRegisterSupplyEventDecoders_NoOpWhenEmpty(t *testing.T) {
 // TestRegisterSupplyEventDecoders_RegistersWhenWatched confirms
 // the sep41_supply + sep41_transfers decoders attach when
 // WatchedSEP41Contracts is set. Algorithm 3 mint/burn/clawback
-// event sums start landing in `sep41_supply_events`; F-0021
-// audit-trail events start landing in `sep41_transfers`.
+// event sums start landing in `sep41_supply_events`; audit-trail
+// events start landing in `sep41_transfers`.
 func TestRegisterSupplyEventDecoders_RegistersWhenWatched(t *testing.T) {
 	disp := dispatcher.New()
 	cfg := config.SupplyConfig{

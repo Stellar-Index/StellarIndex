@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
-// TestBuildVerifyDispatcher_unionsProtocolContractsSeed pins CA2-A28:
+// TestBuildVerifyDispatcher_unionsProtocolContractsSeed pins that
 // a pool admitted only via protocol_contracts (not yet in the
 // in-code curated set) must be visible to verify-decoders when
 // -seed-protocol-contracts is used, mirroring production's

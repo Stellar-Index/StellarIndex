@@ -194,8 +194,8 @@ func TestServedSupplyField_NullIsAFailure(t *testing.T) {
 	}
 }
 
-// TestServedSupplyField_ScalesBaseUnits pins the empirical 2026-07-02
-// finding: the F2 supply fields are BASE-UNIT decimal strings
+// TestServedSupplyField_ScalesBaseUnits pins the empirical
+// finding: the supply fields are BASE-UNIT decimal strings
 // (stroops for classic), so the reader must scale by 10^-decimals
 // before comparing against natural-unit ground truth.
 func TestServedSupplyField_ScalesBaseUnits(t *testing.T) {

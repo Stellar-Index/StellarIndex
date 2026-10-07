@@ -15,10 +15,10 @@ import (
 )
 
 // TestClickHouseStringTopicPrefilterAdmitsPhoenixPool is the live-ClickHouse
-// proof for the lake half of F048.
+// proof for the lake half of the string-topic prefilter.
 //
-// StreamContractEventsFiltered's topic[0] prefilter used to be
-// `topic_0_sym IN (…)` alone. extract.go fills that column from
+// StreamContractEventsFiltered's topic[0] prefilter must not be
+// `topic_0_sym IN (…)` alone: extract.go fills that column from
 // `Topics[0].GetSym()` — Symbol ONLY — so it is EMPTY for every event whose
 // topic[0] is an ScvString. Phoenix's factory publishes
 // ("create","liquidity_pool") as two Strings, so every consumer that asks the

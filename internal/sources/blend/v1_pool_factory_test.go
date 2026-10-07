@@ -172,3 +172,31 @@ func TestDecodeUpdateEmissionsV1_TopicArityMismatch(t *testing.T) {
 		t.Fatal("expected ErrMalformedPayload for arity mismatch")
 	}
 }
+
+// TestGolden_DeployV1Factory pins decodeDeploy against the V1 factory's
+// first real deploy: ledger 51,499,915, tx 951cea40…, which deploys pool
+// CDVQVKOY…. Topic: [Symbol("deploy")]. Body: Address(pool).
+func TestGolden_DeployV1Factory(t *testing.T) {
+	t.Parallel()
+	ev := &events.Event{
+		Type:       "contract",
+		ContractID: MainnetPoolFactoryV1,
+		Ledger:     51_499_915,
+		TxHash:     "951cea4049cad28cb5a7194c6752b946d2b6362335f96a1d919b69da6f25cd9f",
+		Topic:      []string{"AAAADwAAAAZkZXBsb3kAAA=="},
+		Value:      "AAAAEgAAAAHrCqnY1iV5aQL6m+Y0EpHeB36N1SOnN45GpKYVLagYOw==",
+	}
+	out, err := decodeDeploy(ev, time.Unix(0, 0).UTC())
+	if err != nil {
+		t.Fatalf("decodeDeploy: %v", err)
+	}
+	if out.Kind != EventDeploy {
+		t.Errorf("Kind=%q want %q", out.Kind, EventDeploy)
+	}
+	if want := "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP"; out.Target != want {
+		t.Errorf("Target=%q want %q", out.Target, want)
+	}
+	if out.ContractID != MainnetPoolFactoryV1 {
+		t.Errorf("ContractID=%q want %q", out.ContractID, MainnetPoolFactoryV1)
+	}
+}

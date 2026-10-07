@@ -1,6 +1,6 @@
 ---
 title: Phoenix WASM-history audit
-last_verified: 2026-09-30
+last_verified: 2026-10-07
 status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum; 2026-09-30 lake lineage (14th pool; all 64 hashes string-checked)
 source: phoenix
 backfill_safe: true
@@ -611,6 +611,64 @@ Consequences:
 - Three stakes are tombstoned at 63,770,079 – 63,770,103 and one pool + stake
   at 63,767,534/536. They stay in the registry; a re-audit finding a new hash
   on them should expect a stub, not a schema.
+
+### Per-hash string check — 40 more hashes, 2026-10-07
+
+`projected-rebuild -source phoenix -from 50457424` refused on 40 hashes that
+26 registry contracts ran at some point and that `audited_wasm.json` did not
+list: 10 pool and 30 stake builds, most of them short-lived intermediate
+upgrades from 53,134,167 – 58,449,380. The lake query above returned all 40
+(21 – 39 KB each). Every blob carries every literal its role's decoder watches
+(the pool list includes the 8 swap fields and `actual received amount`; the
+stake list is the 9 field names above). No stub or tombstone among them.
+
+| hash | role | contracts | first ledger |
+| --- | --- | --- | --- |
+| `9e398ab7…` | stake | 4 | 51,572,026 |
+| `a757fd97…` | stake | 3 | 51,572,699 |
+| `9f10e052…` | pool | 4 | 53,134,167 |
+| `c16ef042…` | stake | 4 | 53,329,371 |
+| `94cb92e7…` | stake | 4 | 53,329,628 |
+| `86ecec90…` | stake | 1 | 53,329,754 |
+| `8a22bf38…` | stake | 1 | 53,329,855 |
+| `c8c2c8c4…` | stake | 1 | 53,330,275 |
+| `95e79483…` | stake | 2 | 53,330,287 |
+| `4d919ea5…` | stake | 1 | 53,330,339 |
+| `087b17c2…` | stake | 1 | 53,330,403 |
+| `fc1bbe9c…` | stake | 1 | 53,330,575 |
+| `d3926a27…` | stake | 1 | 53,341,461 |
+| `0f683898…` | stake | 1 | 53,341,656 |
+| `ac838c1d…` | stake | 1 | 53,341,684 |
+| `98205bc5…` | stake | 1 | 53,341,706 |
+| `1b7e2860…` | stake | 1 | 53,341,863 |
+| `a81ccd98…` | stake | 4 | 53,341,976 |
+| `f586eb35…` | stake | 4 | 53,583,795 |
+| `28301f81…` | stake | 3 | 53,586,149 |
+| `e827a658…` | stake | 11 | 53,587,210 |
+| `67338d2e…` | stake | 1 | 53,587,331 |
+| `b4e621fb…` | pool | 4 | 53,587,347 |
+| `0293730a…` | pool | 4 | 53,587,535 |
+| `e747f94b…` | pool | 11 | 53,587,580 |
+| `24f14565…` | pool | 3 | 53,761,215 |
+| `91631504…` | pool | 1 | 53,761,323 |
+| `7e834fa1…` | pool | 3 | 53,880,977 |
+| `14ed2bb1…` | pool | 2 | 53,881,266 |
+| `27635b9a…` | pool | 2 | 53,882,816 |
+| `e235ace4…` | pool | 1 | 53,955,787 |
+| `7a2f0c36…` | stake | 1 | 54,517,253 |
+| `f4705e20…` | stake | 1 | 54,517,305 |
+| `7bab3100…` | stake | 2 | 54,724,961 |
+| `9eacbd2d…` | stake | 1 | 54,725,055 |
+| `e5ba3bbf…` | stake | 1 | 56,206,733 |
+| `a27578aa…` | stake | 2 | 56,206,856 |
+| `57ba0367…` | stake | 10 | 57,405,650 |
+| `3cda0d78…` | stake | 1 | 57,406,743 |
+| `649715de…` | stake | 6 | 58,449,245 |
+
+A string check does not see topic order: `9e398ab7…` and `a757fd97…` are the
+stake builds whose unbond arrives as `("unbond","user")` + two `bond` fields,
+which the correlation buffer already handles (above). All 40 are now in
+`audited_wasm.json`.
 
 ## Decision
 

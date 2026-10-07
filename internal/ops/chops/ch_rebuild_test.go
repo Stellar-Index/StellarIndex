@@ -430,8 +430,8 @@ func TestContractAllowed(t *testing.T) {
 	}
 }
 
-// TestDropReconSources pins the de-dup guard added alongside the
-// 2026-07-11 sep41 catalogue promotion: buildReconciliationCatalogue now
+// TestDropReconSources pins the de-dup guard that accompanies the
+// sep41 catalogue promotion: buildReconciliationCatalogue
 // hands ch-rebuild a `cat` that may already carry sep41_transfers/
 // sep41_supply (when a watched set is configured), but ch-rebuild's
 // -sep41 pass folds in its OWN freshly-built sep41Cat afterward — so the
@@ -466,7 +466,7 @@ func TestDropReconSources(t *testing.T) {
 
 // TestSEP41RollupResetPlan pins WHEN a -sep41 -write run resets the
 // sep41_supply_rollup fold checkpoint, and for WHICH contracts. This is the
-// footgun guard from incident 2026-07-06: a re-derive that rewrites
+// footgun guard: a re-derive that rewrites
 // sep41_supply_events below the worker's checkpoint must reset the fold, or the
 // worker double-counts a full re-derive (KALE 2×) / undercounts a scoped
 // recovery. The reset must fire ONLY when the SUPPLY source is actually being
@@ -508,8 +508,7 @@ func TestSEP41RollupResetPlan(t *testing.T) {
 // -write` is a SECOND writer of a domain ADR-0031/0032 gives the projector
 // alone, and it stamps a positive derive_generation so its rows win the
 // upsert over the live projector's. projected-rebuild has refused that
-// since ADR-0048 D3; ch-rebuild did not (grep `cursor` in ch_rebuild.go
-// before this change: zero hits), and a guard on one of two bulk writers
+// since ADR-0048 D3; ch-rebuild must too, because a guard on one of two bulk writers
 // is not a guard. Scripted cursor, mirroring TestCheckLiveCursorGuard.
 func TestCheckCHRebuildLiveOverlap(t *testing.T) {
 	// The live projector is at 63,000,000 for aquarius, is still behind at

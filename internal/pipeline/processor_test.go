@@ -15,12 +15,11 @@ import (
 )
 
 // TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring pins
-// GH-1307: a decoder-reported UnknownContractDrops delta (a fully
+// a decoder-reported UnknownContractDrops delta (a fully
 // decoded event dropped for want of a pair/pool token mapping — see
 // soroswap.Decoder.UnknownContractDrops / sushiswap_v3.Decoder.
-// UnknownContractDrops) must reach obs.SourceDecodeErrorsTotal. Before
-// the fix, dispatcher.Stats had no UnknownContractDrops field and
-// this loop did not exist, so the drop reached no metric at all.
+// UnknownContractDrops) must reach obs.SourceDecodeErrorsTotal. Without
+// this wiring the drop would reach no metric at all.
 func TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring(t *testing.T) {
 	const source = "soroswap"
 	before := testutil.ToFloat64(obs.SourceDecodeErrorsTotal.WithLabelValues(source))

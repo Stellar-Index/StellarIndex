@@ -11,12 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPricelessCoverage_PricedDirectAppliesSubstanceFloors is GH-942's
-// regression guard: priced_direct used to count an asset as priced on a
-// SINGLE unqualified prices_1m row, while its sibling one_hop CTE applied
+// TestPricelessCoverage_PricedDirectAppliesSubstanceFloors is a
+// regression guard: priced_direct must not count an asset as priced on a
+// SINGLE unqualified prices_1m row, while its sibling one_hop CTE applies
 // three substance floors (vol_usd >= 1000, buckets >= 20, span_s >=
-// 21600) and said in its own comment that they are "NOT decoration". The
-// two arms of "is this asset priced?" disagreed.
+// 21600) and says in its own comment that they are "NOT decoration". The
+// two arms of "is this asset priced?" must agree.
 //
 // THIN: one $50 trade against a USD proxy — a single bucket, single
 // minute of span, well under every floor. Must NOT be priced.

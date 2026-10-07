@@ -235,7 +235,7 @@ func TestSEP41SupplyEvents_LargeI128(t *testing.T) {
 
 // TestSEP41SupplyRollup_AdvanceDeltaAndFallback exercises the
 // migration-0085 rollup path end-to-end against real TimescaleDB
-// (incident 2026-07-06). It pins that:
+// (the 0085 incident). It pins that:
 //
 //   - the reader returns the FULL correct totals via the fallback
 //     full-sum when no checkpoint exists yet;
@@ -351,7 +351,7 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 
 // TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd proves the migration-0088
 // fix through the REAL store → reader → computer path against TimescaleDB
-// (incident 2026-07-06):
+// (the 0088 incident):
 //
 //   - A SAC-wrapper with pre-Soroban issuance (seeded genesis mint) + a large
 //     Soroban-era burn computes a POSITIVE LIFETIME total and does NOT trip the
@@ -598,7 +598,7 @@ func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyRollupFoldReset proves the incident-2026-07-06 re-derive
+// TestSEP41SupplyRollupFoldReset proves the re-derive
 // footgun fix: ResetSEP41SupplyRollupFold (which `ch-rebuild -sep41 -write`
 // calls automatically) rebuilds the worker-owned fold columns from zero over
 // a re-derived history, in place, WITHOUT wiping the migration-0088 genesis
@@ -797,8 +797,8 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	}
 }
 
-// TestSEP41GenesisBaseline_SeedAfterUnflooredFold proves the audit-2026-09-02
-// F022/F029 defect is gone: seeding the pre-Soroban baseline AFTER the rollup
+// TestSEP41GenesisBaseline_SeedAfterUnflooredFold proves the
+// double-count defect is gone: seeding the pre-Soroban baseline AFTER the rollup
 // worker has already folded pre-boundary rows must not double-count that band
 // into served lifetime supply.
 //
@@ -973,9 +973,9 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 }
 
 // TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor pins the
-// half of #596 a floor-move trigger cannot reach: a row that was ALREADY
-// seeded while its fold still held the pre-boundary band (the 13 contracts
-// measured on r1 2026-08-04, written before the seed touched the fold at all).
+// half a floor-move trigger cannot reach: a row that was ALREADY
+// seeded while its fold still held the pre-boundary band (written before the
+// seed touched the fold at all).
 // Re-running the seed with the same boundary is the documented remedy, and it
 // must repair the row even though the floor does not move.
 func TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor(t *testing.T) {
@@ -1128,12 +1128,12 @@ func TestSEP41SupplyRollup_ContendedWritersYield(t *testing.T) {
 }
 
 // TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded proves the
-// audit-2026-09-02 K005/F108 defect is gone: a fold reset that commits while
+// fold-reset race is gone: a fold reset that commits while
 // the aggregator's rollup worker is mid-pass must not be stranded.
 //
 // Both writers of the fold's input boundary run against a LIVE aggregator:
-// `ch-rebuild -sep41 -write` resets the fold after a re-derive, and (since the
-// F022/F029 fix) `supply seed-sep41-genesis -write` resets it whenever the
+// `ch-rebuild -sep41 -write` resets the fold after a re-derive, and
+// `supply seed-sep41-genesis -write` resets it whenever the
 // genesis floor moves. When the pass decided its own boundary in a round trip
 // BEFORE the write, a reset landing in that gap was silently undone: the pass
 // added its delta over (stale last_ledger, mx) on top of the freshly-zeroed
@@ -1331,7 +1331,7 @@ func lifetimeSEP41Mint(t *testing.T, ctx context.Context, store *timescale.Store
 //     last_ledger) reconciles CLEAN, and the re-sum is correctly bounded
 //     at the checkpoint's own last_ledger (NOT the tip — the deferred
 //     tip must not count as drift);
-//   - the KALE 2× double-fold (incident 2026-07-06) — a fold column
+//   - the KALE 2× double-fold — a fold column
 //     wrongly doubled below the checkpoint — is FLAGGED with Delta =
 //     +truth, the exact signature the row-count reconciles miss;
 //   - the -contracts scope filters ListSEP41RollupCheckpoints.
@@ -1495,9 +1495,9 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 //
 // This bit harder than the classic case. 40 of 48 watched assets are
 // C-address SEP-41 tokens that never touch the classic component tables, so
-// this path froze the MAJORITY of served supply. Measured on r1 2026-07-28:
-// producer watermark 63,671,020, frozen contracts 46k-169k ledgers behind it,
-// and the one asset still publishing had a last event landing exactly ON the
+// this path froze the MAJORITY of served supply: with the producer watermark
+// at 63,671,020, frozen contracts sat 46k-169k ledgers behind it, and the one
+// asset still publishing had a last event landing exactly ON the
 // watermark.
 //
 // The old behaviour was also perverse in a way worth pinning: a contract with

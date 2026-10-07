@@ -11,10 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The XLM-BASE BOUND closes the class that shipped invisible for 13
-// days: estimated-tier rows whose base is XLM have a checkable anchor
-// (Σusd_volume ≈ Σbase/1e7 × XLM/USD), and the 2026-08-04 poisoning
-// was 10×–10⁶× outside any honest tolerance.
+// The XLM-BASE BOUND closes a class that can ship invisible:
+// estimated-tier rows whose base is XLM have a checkable anchor
+// (Σusd_volume ≈ Σbase/1e7 × XLM/USD), and a poisoned
+// row is 10×–10⁶× outside any honest tolerance.
 func TestCheckXLMBaseBound(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {
@@ -86,10 +86,10 @@ func TestCheckXLMBaseBound(t *testing.T) {
 	})
 }
 
-// TestCheckXLMBaseBound_CEXScale — regression for the first live run of
-// the bound (2026-08-04): base-leg scale is a CONNECTOR property, and
-// off-chain CEX rows stamp 1e8 (not stroops). The un-fixed 1e7
-// hardcode flagged every honest kraken XLM/EUR day at ratio ≈ 0.100.
+// TestCheckXLMBaseBound_CEXScale — regression for the bound's first live run:
+// base-leg scale is a CONNECTOR property, and
+// off-chain CEX rows stamp 1e8 (not stroops). A hardcoded 1e7
+// would flag every honest kraken XLM/EUR day at ratio ≈ 0.100.
 func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
 	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
 	if err != nil {
@@ -168,9 +168,9 @@ func TestCheckXLMBaseBound_SubCentDust(t *testing.T) {
 	}
 }
 
-// TestCheckXLMQuoteBound is [TestCheckXLMBaseBound]'s mirror (CA2-A17):
+// TestCheckXLMQuoteBound is [TestCheckXLMBaseBound]'s mirror:
 // checkXLMBaseBound can never match a group whose XLM leg is the QUOTE
-// side (-tier xlm-quote), so before this fix a 10x-off xlm-quote rewrite
+// side (-tier xlm-quote), so without this bound a 10x-off xlm-quote rewrite
 // would report 0 violations from the "acceptance:" verify-usd-volume run
 // the tool itself prints after every estimated-tier restamp.
 func TestCheckXLMQuoteBound(t *testing.T) {

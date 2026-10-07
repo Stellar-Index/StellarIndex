@@ -112,13 +112,13 @@ func TestPersistEvents_DrainTimeoutBoundsHang(t *testing.T) {
 	}
 }
 
-// TestDrainBudget_FitsShutdownDeadline — CON-10 (audit-2026-07-23).
+// TestDrainBudget_FitsShutdownDeadline —
 // The sink's post-cancellation drain, PLUS the final best-effort pass
 // that runs after it, must finish INSIDE the process-level shutdown
 // window; otherwise main hard-exits first and worker 0's deadline arm —
 // the only thing that reports the exact undrained ledger range for
-// re-derive — never runs. Production had drainTimeout=90s against a 30s
-// process deadline, so the loss report could never fire.
+// re-derive — never runs. A drainTimeout of 90s against a 30s
+// process deadline would mean the loss report can never fire.
 func TestDrainBudget_FitsShutdownDeadline(t *testing.T) {
 	if drainTimeout <= 0 {
 		t.Fatalf("drainTimeout = %v; must be positive", drainTimeout)
@@ -138,7 +138,7 @@ func TestDrainBudget_FitsShutdownDeadline(t *testing.T) {
 	}
 }
 
-// TestShutdownDeadline_MainUsesConstant — the other half of CON-10: the
+// TestShutdownDeadline_MainUsesConstant — the other half of the shutdown budgets: the
 // budgets above are only consistent if the indexer's shutdown context is
 // actually built from [ShutdownDeadline]. A literal there is exactly how
 // the two drifted apart (90s of sink drain inside a 30s process
@@ -175,11 +175,11 @@ func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
 	}
 }
 
-// TestIndexerStopTimeout_UnitsCoverDrainBudgets — CON-10 lifted to the
-// process (#1018). main drains the ClickHouse live sink, the
+// TestIndexerStopTimeout_UnitsCoverDrainBudgets — the shutdown budgets lifted to
+// the process. main drains the ClickHouse live sink, the
 // soroban-events sink and the discovery sink AFTER the ShutdownDeadline
 // window, so the unit's TimeoutStopSec must cover their sum; at systemd's
-// 90s default a slow ClickHouse plus a slow Postgres got SIGKILLed
+// 90s default a slow ClickHouse plus a slow Postgres gets SIGKILLed
 // mid-drain, silently discarding the buffers the drains exist to save.
 func TestIndexerStopTimeout_UnitsCoverDrainBudgets(t *testing.T) {
 	sum := ShutdownDeadline + CHLiveSinkStopBudget + RawEventDrainBudget + DiscoveryDrainBudget
@@ -231,7 +231,7 @@ func unitTimeoutStopSec(t *testing.T, path string) (time.Duration, bool) {
 // TestShutdownBudgets_MainWiresConstants — the sum above only bounds the
 // real drains if main passes each budget into its sink. A literal (or
 // omitting the field and inheriting the sink's default) lets the two
-// drift apart exactly as CON-10's 90s-vs-30s did.
+// drift apart exactly as a 90s sink drain inside a 30s process would.
 func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 	fset := token.NewFileSet()
 	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
@@ -266,12 +266,11 @@ func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 	}
 }
 
-// TestSinkDrain_NonTradeWritesAreResilient — REL-08(c)
-// (audit-2026-07-23). The dispatcher drain carries served-tier writes
+// TestSinkDrain_NonTradeWritesAreResilient. The dispatcher drain carries served-tier writes
 // NOBODY else makes (band oracle_updates, external.UpdateEvent, the
 // supply observers' LedgerEntry observations, soroswap_router swaps,
-// defindex flows). Every drain site used to call `_ = HandleEvent(...)`,
-// discarding the error, so a Postgres infra fault dropped the row while
+// defindex flows). A drain site calling `_ = HandleEvent(...)`
+// would discard the error, so a Postgres infra fault would drop the row while
 // the cursor advanced. They must all go through persistEventResilient
 // (block-and-retry on infra, isolate+count on a permanent data fault).
 //
@@ -309,8 +308,8 @@ func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
 			return true
 		})
 	}
-	// Out-of-old-scope canaries: the scan used to name only persistWorker
-	// and drainBufferedEvents, so these three shutdown drains went unread.
+	// Shutdown-drain canaries: the scan must reach these drains too, not
+	// only persistWorker and drainBufferedEvents.
 	for _, fn := range []string{"persistWorker", "drainBufferedEvents", "drainInFlightNow", "persistCarried", "drainFinalPass"} {
 		if resilient[fn] == 0 {
 			t.Errorf("drain site %s has no persistEventResilient call — non-trade served-tier writes are unprotected on that path (REL-08), or the scan no longer reaches it", fn)
@@ -350,13 +349,13 @@ func packageFuncDecls(t *testing.T) []*ast.FuncDecl {
 	return out
 }
 
-// TestPersistEvents_DataFaultEventIsCountedAsDropped — REL-08(c)
+// TestPersistEvents_DataFaultEventIsCountedAsDropped —
 // end-to-end through the real drain: an oracle update the store rejects
 // as permanently invalid (canonical.ErrInvalidOracle, returned by
 // Validate before any SQL runs) must be ISOLATED — counted on the
 // ADR-0041 drop label and skipped — and must NOT wedge the drain in a
-// retry loop. Before the fix the error was discarded: no drop was
-// counted anywhere, so the loss was invisible to metrics.
+// retry loop. Discarding the error would count no drop
+// anywhere, leaving the loss invisible to metrics.
 func TestPersistEvents_DataFaultEventIsCountedAsDropped(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(band.SourceName, "dropped"))
 
@@ -427,12 +426,12 @@ var processedCount atomic.Int64
 func init() { processedCount.Store(0) }
 
 // TestDrainFinalPass_SkipInSinkExcludedFromReport is the regression
-// test for REL-02 (audit-2026-07-23, low): drainBufferedEvents' final
-// best-effort pass used to bump undrained_events/undrained_trades
-// (and widen the ledger range) for EVERY event still in the channel,
-// including ones skipInSink was about to skip — a projector-owned
+// test: drainBufferedEvents' final
+// best-effort pass must not bump undrained_events/undrained_trades
+// (or widen the ledger range) for events still in the channel
+// that skipInSink will skip — a projector-owned
 // event that was never going to be persisted by this drain even on a
-// clean shutdown. That inflated the drain-timeout recovery hint,
+// clean shutdown. Counting them would inflate the drain-timeout recovery hint,
 // telling an operator to re-derive a range the projector already
 // durably owns.
 //
@@ -561,7 +560,7 @@ func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
 }
 
 // TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged pins the
-// no-op-on-live-ctx half of CON-09's fix: a still-live parent context
+// no-op-on-live-ctx half of the shutdown-safe context: a still-live parent context
 // must be returned as-is (not wrapped), so the normal (non-racy) path
 // through persistWorker is unaffected.
 func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
@@ -574,9 +573,9 @@ func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
 }
 
 // TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx is the
-// regression test for CON-09 (audit-2026-07-23): persistWorker's
-// flushTicker and `<-in` arms used to pass the worker's ctx straight
-// into flush()/persistEventResilient() with no check. Go's select has
+// regression test: persistWorker's
+// flushTicker and `<-in` arms must not pass the worker's ctx straight
+// into flush()/persistEventResilient() unchecked. Go's select has
 // no priority, so on the exact iteration the parent ctx is cancelled,
 // one of those arms can still win the race against `<-ctx.Done()` —
 // passing the already-dead ctx through makes every write fail
@@ -617,7 +616,7 @@ func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
 // flushTicker and `<-in` select arms, rather than the fix regressing
 // to a direct `flush(ctx)` / `persistEventResilient(ctx, ...)` call —
 // which would compile and pass every other test while silently
-// reopening CON-09.
+// reopening the shutdown race.
 func TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
@@ -643,7 +642,7 @@ func TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms(t *testing.T) {
 }
 
 // TestBlendEmitterUnlockTime_overflowSentinelRejected is the
-// regression test for RLT-115 at this call site: a Blend Emitter
+// regression test for this call site: a Blend Emitter
 // UnlockTime near math.MaxUint64 (a plausible "unlimited" sentinel)
 // wrapped NEGATIVE under a bare int64(e.UnlockTime) cast, landing near
 // the 1970 epoch — a bogus but postgres-representable time that would
@@ -683,10 +682,10 @@ func entriesBumpReachesStore(ctx context.Context) (reached bool) {
 	return false
 }
 
-// TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector pins GH-1021:
+// TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector pins that
 // under SinkModeSkipSoleWriter (persist_per_source=true) the dispatcher and
-// the projector both persist every un-promoted projected event, and both
-// used to count it — doubling the `entries` column and
+// the projector both persist every un-promoted projected event, and counting
+// it in both would double the `entries` column and
 // stellarindex_source_events_total for every projected source. The
 // dispatcher's copy must count nothing; events only it writes (sdex, band)
 // and every event under SinkModeAll (no projector) still count once.
@@ -759,7 +758,7 @@ func TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector(t *testing.T) {
 	}
 }
 
-// TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset pins Q099: a
+// TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset pins that a
 // capture-totality "raw:<symbol>" row must never mint its own
 // stellarindex_oracle_last_update_unix / _staleness_budget_seconds
 // label value, or an unbounded set of unmapped oracle symbols would

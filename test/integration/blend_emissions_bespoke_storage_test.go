@@ -92,7 +92,7 @@ func TestBlendEmissionWindowStatsAndBespoke(t *testing.T) {
 	assertKPI(t, kpis, "Emissions claimed (90d)", claimHuge.String())
 	assertKPI(t, kpis, "Credit-risk events (90d)", "2")
 	// The Blend position KPIs must still be present (emissions ADD, never
-	// replace). Count-first since audit 2026-07-31: the old cross-asset
+	// replace). Count-first: the old cross-asset
 	// "Net supplied" sum was dropped as mixed-decimal.
 	if _, ok := kpis["Active users (90d)"]; !ok {
 		t.Errorf("blend block lost its existing 'Active users' KPI after adding emissions; KPIs=%+v", blk.KPIs)

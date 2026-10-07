@@ -571,7 +571,7 @@ func TestBuildRangesFromTransitions(t *testing.T) {
 }
 
 // TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition is the
-// regression test for CA2-A20-harden-4: worker 0's chunk sees hash
+// regression test: worker 0's chunk sees hash
 // "a" deployed at ledger 100 and no further change before its chunk
 // ends at 500. Worker 1's chunk [501,1000] sees NO instance write at
 // all for this contract (the hash simply continued unchanged) — the
@@ -642,8 +642,8 @@ func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_WatermarkAuthoritative proves the
-// regression fix for CA2-A20-correct-3: when a worker's JSONL file
+// TestReadTransitionJSONL_WatermarkAuthoritative proves that
+// when a worker's JSONL file
 // carries a watermark line, that value — not the highest transition
 // at_ledger — is the returned extent, even when it's LOWER than the
 // last transition would suggest (the worker kept scanning after its

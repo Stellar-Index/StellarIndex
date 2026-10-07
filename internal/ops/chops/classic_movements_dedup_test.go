@@ -57,7 +57,7 @@ func mkDedupTestClassicOp(t *testing.T) clickhouse.ClassicOp {
 	}
 }
 
-// TestClassicMovementsDecodeOp_DedupesUnmergedDuplicateRows pins CA2-A14:
+// TestClassicMovementsDecodeOp_DedupesUnmergedDuplicateRows pins dedup:
 // classicOpsQuery joins two ReplacingMergeTree tables without FINAL, so an
 // unmerged part streams the SAME op twice. Feeding the same (ledger,
 // tx_hash, op_index) through classicMovementsDecodeOp twice must count it

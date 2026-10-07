@@ -48,7 +48,7 @@ func (s harvestEventStreamer) StreamContractEvents(
 // harvest-row count).
 //
 // The served data is CORRECT: the decoder emits a DirectionHarvest StrategyFlow
-// for a ("BlendStrategy","harvest") event (audit 2026-08-04 finding 4; body
+// for a ("BlendStrategy","harvest") event (body
 // {from, amount, price_per_share}), the sink persists it to defindex_flows
 // (direction=harvest, migration 0138), and this event mirrors the r1 first
 // mismatch at ledger 57,485,721 (contract CDPWNUW7…, op_index=0, event_index=2,

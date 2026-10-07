@@ -20,8 +20,8 @@ import (
 // twin of pipeline.TestHandleEvent_EntryCountFollowsTheLandedInsert: the
 // soroswap-router `entries` tally moves only when a row LANDS. A row the
 // store rejects contributes nothing, and a landed row contributes exactly
-// one — the bump used to run ahead of the insert, so a rejected row (or
-// every REL-08 infra-retry attempt of one event) inflated the tally (Q062).
+// one — the bump must not run ahead of the insert, or a rejected row (or
+// every infra-retry attempt of one event) inflates the tally.
 func TestSourceEntryCounts_RouterBumpFollowsTheLandedInsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

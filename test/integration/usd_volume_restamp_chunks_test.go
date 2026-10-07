@@ -500,8 +500,8 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// USDC/XLM — the dollar leg is the BASE: tier 2b, the exact class the
-	// 2026-07-30 sweep found dirty on every one of its 66 days.
+	// USDC/XLM — the dollar leg is the BASE: tier 2b, the exact class a sweep
+	// found dirty on every day it covered.
 	pair, err := c.NewPair(usdc, c.NativeAsset())
 	if err != nil {
 		t.Fatal(err)
@@ -603,7 +603,7 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		return scheduled
 	}
 
-	// ── the pre-2026-07-23 state, imposed by hand ─────────────────────
+	// ── the pre-fix state, imposed by hand ─────────────────────
 	exec(t, `UPDATE trades SET usd_volume = usd_volume * 1.007 WHERE source='sdex' AND ledger=$1`, ledger["resolver-priced"])
 	exec(t, `UPDATE trades SET usd_volume = NULL WHERE source='sdex' AND ledger=$1`, ledger["stored NULL"])
 	correctBefore := readRow(t, ledger["already correct"])

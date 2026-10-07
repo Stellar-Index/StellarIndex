@@ -12,12 +12,12 @@ import (
 )
 
 // TestClickHouseAccountActivityWatermarkBoundedOps is the live-ClickHouse
-// proof for the #31 activity-watermark bound on AccountOperations.
+// proof for the activity-watermark bound on AccountOperations.
 //
 // Scenario (the measured live pathology): a long-idle account whose rows all
-// sit far below the tip — the reader's reverse primary-key resolves used to
-// walk granules from the tip back to the account's last activity (~4s live
-// for a 46d-idle account, 2026-08-24). The fix bounds each arm with
+// sit far below the tip — without the bound, the reader's reverse primary-key
+// resolves walk granules from the tip back to the account's last activity
+// (seconds live for a 46d-idle account). The fix bounds each arm with
 // `ledger_seq <= max(account_activity.last_ledger)`.
 //
 // What this test proves, in order of importance:
@@ -177,8 +177,8 @@ func TestClickHouseAccountActivityWatermarkBoundedOps(t *testing.T) {
 	// pruned without it). The scan SHAPE, not the full IN-arm: on a toy
 	// dataset ClickHouse's set-based index analysis resolves the IN
 	// subquery to exact granules either way, which is precisely the
-	// heuristic that did NOT save the 10.6B-row live table (~4s tip walk,
-	// 2026-08-24) — the watermark's value is DETERMINISTIC partition +
+	// heuristic that does NOT save the 10.6B-row live table (multi-second tip
+	// walk) — the watermark's value is DETERMINISTIC partition +
 	// primary-key range pruning, independent of set-analysis heuristics
 	// and their size caps, and that is the mechanism asserted here.
 	armSQL := func(bound string) string {

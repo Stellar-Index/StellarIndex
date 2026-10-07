@@ -31,11 +31,8 @@
 //   error_rate_critical is `severity: page` (SEV-1) in
 //   configs/prometheus/rules.r1/api.yml — if the spike genuinely pushes
 //   5xx that high, that IS a real page, not planned-burst noise, and
-//   on-call must see it. (audit-2026-06-14 R-A20-1 follow-up: the
-//   first fix for the "matches no alert" typo bug over-corrected by
-//   also silencing both error-rate alerts, which masked exactly the
-//   failure this scenario's own threshold is designed to catch — the
-//   inverse HIGH failure mode of the original bug.)
+//   on-call must see it. (Silencing both error-rate alerts would mask exactly
+//   the failure this scenario's own threshold is designed to catch.)
 //
 // scripts/ci/lint-docs.sh §17 enforces both invariants in CI: every
 // default matcher must resolve to a real `alert:` name in both rule

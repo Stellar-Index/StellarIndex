@@ -634,9 +634,9 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 
 // TestRecordComposite_PublishesRouteCorroborationGauge: the
 // router corroboration count behind the last published composite is
-// exported per (pair, window) — previously it lived only in the
-// in-process lastComposites map, so the audit trail carried no series
-// distinguishing it from path_count or the venue source count.
+// exported per (pair, window), not only held in the in-process
+// lastComposites map, so the audit trail has a series distinguishing it
+// from path_count or the venue source count.
 func TestRecordComposite_PublishesRouteCorroborationGauge(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	o := New(nil, cache, Config{})
@@ -691,8 +691,8 @@ func (m *perPairFreezeMarker) Clear(_ context.Context, asset, quote canonical.As
 	return nil
 }
 
-// TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered
-// (CA2-A21-correct-2): a leg of the chain freezes and the route around
+// TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered:
+// a leg of the chain freezes and the route around
 // it is unreachable (ErrNoRoute), but the TARGET published its own
 // fresh direct print this same tick. That value is not a last-known-
 // good — inheriting the freeze onto it would Expire a fresh key down to

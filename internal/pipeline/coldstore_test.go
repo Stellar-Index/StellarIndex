@@ -74,7 +74,7 @@ func coldOnlyStorage() config.StorageConfig {
 		S3AccessKeyEnv:  "STELLARINDEX_S3_ACCESS_KEY",
 		S3SecretKeyEnv:  "STELLARINDEX_S3_SECRET_KEY",
 		// Cold block = the public AWS Open Data bucket. Region
-		// us-east-2 verified live 2026-07-25 (us-east-1 301s).
+		// us-east-2 (us-east-1 301s).
 		S3ColdEndpoint:      "https://s3.us-east-2.amazonaws.com",
 		S3ColdRegion:        "us-east-2",
 		S3ColdBucketArchive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet",
@@ -82,7 +82,7 @@ func coldOnlyStorage() config.StorageConfig {
 }
 
 // TestNewColdS3Client_AnonymousDespiteAmbientCredentials is the
-// regression test for the 2026-07-25 cold-tier incident: with MinIO's
+// regression test for the cold-tier anonymous-read incident: with MinIO's
 // credentials live in the process environment (which is r1's steady
 // state, because the hot tier needs them there), a cold client
 // configured for anonymous reads must be anonymous — not signed with
@@ -353,8 +353,8 @@ func TestNewColdDataStore_RequiresBucket(t *testing.T) {
 	}
 }
 
-// TestNewColdDataStore_RequiresRegion is (half of) the T209 regression:
-// a bucket set without its region used to sail past NewColdDataStore
+// TestNewColdDataStore_RequiresRegion is (half of) a regression:
+// a bucket set without its region must not sail past NewColdDataStore
 // straight into newColdS3Client and out to FromS3Client's live bucket
 // probe, which (with a local stand-in endpoint) fails deep inside the
 // AWS SDK's own endpoint-rule evaluation ("A region must be set when

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestAccountObservationSeedProvenance — GH #1201: seed-observations wrote no
-// audit trail, so a pass run weeks ago was indistinguishable from one that
+// TestAccountObservationSeedProvenance — seed-observations must leave an
+// audit trail, or a pass run weeks ago is indistinguishable from one that
 // never ran. This pins the record shape supplySeedObservations upserts only
 // at the end of a COMPLETE pass (never on -dry-run, never mid-loop): nil
 // ledger bounds when nothing was seeded, populated bounds otherwise, and the

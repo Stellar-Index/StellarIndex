@@ -28,9 +28,9 @@
 // Issuers below are mainnet, deterministic on r1:
 //   USDC  — Circle:    GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
 //   AQUA  — Aqua:      GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA
-//            (vanity issuer — ends in `AQUA`; a pre-2026-06-13 fixture
-//            had `…M67AB6V`, an invalid CRC, which 400'd every request
-//            on the AQUA pair and inflated the acceptance error rate.)
+//            (vanity issuer — ends in `AQUA`; an invalid-CRC issuer such as
+//            `…M67AB6V` 400s every request on the AQUA pair and inflates the
+//            acceptance error rate.)
 //
 // EVERY pair below is verified to return 200 on ALL FOUR endpoints the
 // acceptance scenario drives (/price, /price/tip, /ohlc, /assets/{base})

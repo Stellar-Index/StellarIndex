@@ -101,7 +101,7 @@ func TestBackfillBucket_SeamAware(t *testing.T) {
 }
 
 // TestBackfillCoverage_ZeroLedgersIsAHardError is the other half of the
-// 2026-07-25 defect: ch-backfill exited 0 after streaming ZERO ledgers of a
+// vacuous-success guard: ch-backfill must not exit 0 after streaming ZERO ledgers of a
 // nonzero request. That exit code is load-bearing — ch-full-backfill.sh
 // appends the window to its resume state only on exit 0 — so a vacuous
 // success removes the window from the backfill permanently.
@@ -158,10 +158,10 @@ func TestBackfillCoverage_FullWalkPasses(t *testing.T) {
 	}
 }
 
-// TestCHBackfill_RefusesWithoutAStatedMode pins #868: ch-backfill used to
-// WRITE unless -dry-run was passed. A run naming neither -write nor -dry-run
-// must now refuse before loading config, so a caller written for the old
-// contract (ch-live-catchup.sh on a timer) fails loudly instead of silently
+// TestCHBackfill_RefusesWithoutAStatedMode pins that ch-backfill does not
+// WRITE by default. A run naming neither -write nor -dry-run
+// must refuse before loading config, so a caller assuming write-by-default
+// (ch-live-catchup.sh on a timer) fails loudly instead of silently
 // previewing and exiting 0.
 func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "absent.toml")

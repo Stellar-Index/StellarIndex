@@ -144,9 +144,8 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 // TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak is the
 // regression: a checkpoint-only run (Tier B, the nightly —
 // doCheckpoint=true, no "chain" tier requested) skipped the
-// internal sequence/hash continuity check entirely, because it was
-// gated on a doChain flag runVerifyChunks/verifyChunk no longer
-// accept. A hash break planted mid-chunk must still be caught.
+// internal sequence/hash continuity check entirely, because the check was
+// gated on a separate doChain flag. A hash break planted mid-chunk must still be caught.
 func TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak(t *testing.T) {
 	const (
 		from = uint32(300)

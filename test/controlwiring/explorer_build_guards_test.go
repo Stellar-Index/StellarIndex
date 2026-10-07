@@ -16,11 +16,11 @@ import (
 // build command is `cd web/explorer && pnpm install --frozen-lockfile &&
 // pnpm build` (docs/operations/explorer-deployment.md §Recommended). The
 // `__next.*` segment prune, scripts/ci/explorer-file-budget.sh and
-// scripts/ci/explorer-seo-lint.sh used to live only in
+// scripts/ci/explorer-seo-lint.sh live in
 // .github/workflows/explorer-deploy.yml, which is workflow_dispatch-only
-// — so the path that actually deploys ran none of them, which is how the
-// Next 15→16 segment-file explosion froze the site on a June-24 build for
-// nine days (ADR-0044:36-41).
+// — so the path that actually deploys would run none of them, which is how
+// the Next 15→16 segment-file explosion froze the site on a stale build
+// (ADR-0044:36-41).
 //
 // The one hook every invoker of `pnpm build` shares — CF Pages, the
 // dispatch workflow, the web-explorer CI job, a laptop — is package.json's

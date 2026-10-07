@@ -84,8 +84,8 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 
 		// Update tier; verify.
-		// Legacy tier in → CANONICAL tier out (free-platform pivot
-		// 2026-08-10): the store persists a CHECK-legal legacy string
+		// Legacy tier in → CANONICAL tier out:
+		// the store persists a CHECK-legal legacy string
 		// and canonicalises on read, so writing the deprecated `pro`
 		// must round-trip as `partner`. Asserting `pro` back would pin
 		// the pre-pivot behaviour.
@@ -599,9 +599,9 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// Revoke pre-accept (separate token).
 		hash2 := sha256.Sum256([]byte("invite-2"))
-		// Check the create error: a swallowed failure here made the
+		// Check the create error: a swallowed failure here would make the
 		// downstream ErrNotFound assertion pass for the WRONG reason —
-		// row never created vs. row revoked (audit-2026-06-14 A20).
+		// row never created vs. row revoked.
 		if err := tokens.CreateInvite(ctx, platform.Invite{
 			TokenHash:       hash2[:],
 			AccountID:       acct.ID,
@@ -621,12 +621,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// COR-15 (audit-2026-07-23): ListInvitesForAccount used to filter
-	// on SQL `now()` (the Postgres server's clock) instead of the
-	// injected [postgresstore.TokenStore.WithClock] like every other
-	// expiry check in the file — so WithClock had NO effect on this
-	// method despite the type's doc claiming tests use it, and no
-	// test exercised WithClock at all. Asserts the corrected value: a
+	// ListInvitesForAccount must filter on the injected
+	// [postgresstore.TokenStore.WithClock] like every other expiry check in the
+	// file, not on SQL `now()` (the Postgres server's clock) — otherwise WithClock
+	// has NO effect on this method. Asserts the corrected value: a
 	// TokenStore whose injected clock has advanced past an invite's
 	// expiry excludes it from the pending list, while the SAME invite
 	// still appears through a real-clock store (real time hasn't
@@ -718,12 +716,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 			Description:     "production traffic",
 			KeyHash:         hash[:],
 			// `sip_` — the namespace every minter actually emits
-			// (auth/store.go, dashboardkeys/handlers.go). This fixture
-			// said `rek_` (the pre-rebrand namespace) and so matched
-			// migration 0027's stale CHECK instead of production
-			// reality, masking the fact that EVERY real key mint failed
-			// a check_violation until migration 0133 (cold audit
-			// 2026-08-03).
+			// (auth/store.go, dashboardkeys/handlers.go). The pre-rebrand `rek_`
+			// namespace would match migration 0027's stale CHECK instead of production
+			// reality, masking that every real key mint failed a check_violation until
+			// migration 0133.
 			KeyPrefix:              "sip_4f9c1d8b",
 			Tier:                   platform.APIKeyTierAPIKey,
 			RateLimitPerMin:        1000,
@@ -1019,10 +1015,9 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// F-1248 (codex audit-2026-05-12): per-account webhook quota
-	// must hold under concurrent CreateWebhook calls. Pre-fix the
-	// unlocked count-CTE allowed two snapshot-readers at n=cap-1
-	// to both insert. The advisory-lock-wrapped transaction now
+	// Per-account webhook quota must hold under concurrent CreateWebhook calls.
+	// An unlocked count-CTE would allow two snapshot-readers at n=cap-1
+	// to both insert. The advisory-lock-wrapped transaction
 	// serialises them — verify here.
 	t.Run("WebhookStore/Concurrent_QuotaCap_Holds", func(t *testing.T) {
 		webhooks := postgresstore.NewWebhookStore(store)
@@ -1092,7 +1087,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// F-1257 (codex audit-2026-05-12): same shape for the API key
+	// Same shape for the API key
 	// quota. Concurrent Create calls at the cap boundary must end
 	// at exactly the cap, with the losers receiving
 	// ErrAPIKeyQuotaExceeded.
@@ -1123,20 +1118,17 @@ func TestPlatformPostgresStores(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				// F-1263 (codex audit-2026-05-13): both `id` and
-				// `key_prefix` have schema CHECK constraints that
-				// the prior fixture violated:
+				// Both `id` and `key_prefix` have schema CHECK constraints that
+				// the fixture must satisfy:
 				//
 				//   - `api_keys_id_check       (id ~ '^kid_[a-f0-9]{12,}$')`
 				//   - `api_keys_key_prefix_check (key_prefix ~ '^rek_[a-f0-9]{8}$')`
 				//
-				// `uuid.New().String()` includes hyphens; the
-				// previous `plaintext := "rek_race_%d_%s"` shape
-				// also tripped the prefix regex. Build hex-only
-				// values that match what the production
+				// `uuid.New().String()` includes hyphens, which trips the prefix regex.
+				// Build hex-only values that match what the production
 				// `generateKeyID` / `generatePlaintext` emit
 				// (`sip_` namespace), so the test reaches the
-				// actual advisory-lock assertions for F-1257.
+				// actual advisory-lock assertions.
 				hexA := strings.ReplaceAll(uuid.New().String(), "-", "")
 				hexB := strings.ReplaceAll(uuid.New().String(), "-", "")
 				plaintext := "sip_" + hexA[:8]

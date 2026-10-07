@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// C3-032 (audit-2026-07-23) — the store half of the durable per-email
+// The store half of the durable per-email
 // code-guess lockout (migration 0122).
 //
 // The handler half lives in

@@ -20,7 +20,7 @@ import (
 // reduction exhaustively; what only a real server can prove is the SQL — the
 // PREWHERE on entry_type, the single argMax over a TUPLE of every projected
 // column, and the tuple's within-ledger ordering — which is exactly where the
-// SAC seed's audit-2026-07-16 C2-4 bug lived.
+// SAC seed's tie-break bug lived.
 //
 // Every test scopes its assertions to its OWN claimable ids, because the
 // reader is deliberately network-wide (no watched set) and the shared test
@@ -40,8 +40,8 @@ import (
 const (
 	cbsIssuer   = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 	cbsAssetKey = "AQUA:" + cbsIssuer
-	// Well below the live claimable observer's floor (ledger 63,301,831,
-	// measured on r1 2026-07-27) — the population this seed exists to
+	// Well below the live claimable observer's floor (ledger 63,301,831)
+	// — the population this seed exists to
 	// recover.
 	cbsPreFloorLedger = uint32(33_000_000)
 
@@ -174,9 +174,8 @@ func cbsWalkWindows(t *testing.T, ctx context.Context) (uint64, string) {
 // TestClaimableSeed_RecoversPreFloorBalance is the headline case: a claimable
 // balance created long before the live observer existed, never claimed, is
 // recovered from the append-log with its exact asset, amount and TRUE
-// last-modified ledger. Before this reader existed that balance simply did not
-// appear in claimable_observations, which is the whole of AQUA's 13.2%
-// under-read vs Horizon (2026-07-27).
+// last-modified ledger. Without this reader that balance would not
+// appear in claimable_observations, under-reading AQUA's supply.
 func TestClaimableSeed_RecoversPreFloorBalance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -255,7 +254,7 @@ func TestClaimableSeed_ClaimedBalanceIsNotSeeded(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_SameLedgerRemovalCoherence is audit-2026-07-16 C2-4 on the
+// TestClaimableSeed_SameLedgerRemovalCoherence is the same-ledger tie-break on the
 // real server. A claimable balance created AND claimed inside ONE ledger is an
 // ordinary pattern (one transaction can do both), so ledger_seq alone cannot
 // order the changes. With independent per-column argMax aggregates ClickHouse

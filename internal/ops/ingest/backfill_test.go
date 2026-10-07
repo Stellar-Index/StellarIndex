@@ -490,7 +490,7 @@ func discardLogger() *slog.Logger {
 
 // TestRefreshCAGGsForChunk_ViewFailurePropagates is the
 // view-failure regression: a single failing CAGG view must make the WHOLE function
-// return a non-nil error (previously it logged and returned nil),
+// return a non-nil error (not log and return nil),
 // so the caller does not advance the durable cursor past an
 // unmaterialised chunk. Every OTHER view must still be attempted —
 // one wedged view must not block refreshing the rest.

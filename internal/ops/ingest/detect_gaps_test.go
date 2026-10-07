@@ -191,7 +191,7 @@ func TestCatalogueMissingProjectorSources_NothingMissing(t *testing.T) {
 	}
 }
 
-// TestMinLedgerBySource_ExcludesOneShotJobNamespaces pins CA2-A19-correct-9:
+// TestMinLedgerBySource_ExcludesOneShotJobNamespaces pins that
 // a finished one-shot job's shard rows (backfill, projected-rebuild,
 // census-backfill, …) must not surface in the per-source verdict at
 // all — their last_ledger is a historical range end, millions of

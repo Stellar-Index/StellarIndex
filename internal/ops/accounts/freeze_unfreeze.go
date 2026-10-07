@@ -236,7 +236,7 @@ type markerPresenceReader interface {
 //	            the row.
 //
 // Reporting a rehydrated pair as `live` would be defensible (it is frozen);
-// reporting it as `GONE` — which is what a marker-only probe used to say —
+// reporting it as `GONE` — which is what a marker-only probe would say —
 // is not, because an operator reads GONE as "nothing to do here" on exactly
 // the pair whose marker just evaporated. An ESCALATED pair is one that will
 // never clear on its own.

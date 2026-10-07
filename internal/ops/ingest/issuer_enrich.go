@@ -161,7 +161,7 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 // the row: keeping a domain the account has cleared leaves the lapsed name in
 // the SEP-1 refresh's fetch queue for whoever registers it next.
 //
-// A single row's write failure no longer aborts the rest of the batch —
+// A single row's write failure does not abort the rest of the batch —
 // every domain in the batch still gets its write attempt, and the caller
 // learns via the returned error how many failed.
 func updateIssuerHomeDomains(ctx context.Context, store homeDomainWriter, domains map[string]string) (int, error) {

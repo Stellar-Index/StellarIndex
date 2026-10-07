@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestPipelineGoroutinesRecover is the package-wide guard for GH-1017:
+// TestPipelineGoroutinesRecover is the package-wide guard:
 // every `go` statement in this package's non-test files must defer
 // worker.Recover/worker.Report, EXCEPT the sink's two crash-by-design
 // drain goroutines (persistWorker and extBuf.run). Those are deliberately
@@ -20,7 +20,7 @@ import (
 //
 // awssdk.go's stderr-filter goroutine is not exempt: it is a log-plumbing
 // side channel, not part of the write path, so it recovers and this test
-// subsumes the file-scoped guard that used to check it alone.
+// subsumes a file-scoped guard on it.
 //
 // Proven red: adding any bare `go func(){}()` to a non-test file in this
 // package fails this test — either as a new unguarded, non-exempt site,

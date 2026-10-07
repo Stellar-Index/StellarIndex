@@ -77,7 +77,7 @@ func TestRestampSourceAllowList(t *testing.T) {
 	}
 }
 
-// TestValidateRestampSourceAllowList_unknownNameRefused pins CA2-A13: an
+// TestValidateRestampSourceAllowList_unknownNameRefused pins that an
 // estimated tier's -sources value that names a source outside the tier's
 // own registry must be refused, not silently dropped by
 // [timescale.restampScanSources] into an empty, "clean-looking" scan.

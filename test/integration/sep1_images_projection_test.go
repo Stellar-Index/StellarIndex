@@ -26,7 +26,7 @@ import (
 // pushes either below the lateral. The CASE is there because that is a
 // property of the plan rather than of the query; see allSep1ImagesQuery.
 //
-// It also re-runs the brand hijack from cold audit 2026-08-03 through the
+// It also re-runs the brand hijack through the
 // real SQL. The provenance rule lives in Go (timescale.sep1ImageFrom, unit
 // tested), but "the rule is applied to what the query actually returns" is
 // a claim about the two together.

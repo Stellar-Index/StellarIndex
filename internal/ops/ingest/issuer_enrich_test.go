@@ -79,7 +79,7 @@ func TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares(t *test
 }
 
 // TestIssuerEnrichLoop_ContinuesPastBatchFailure proves that a single
-// batch's lookup failure no longer aborts every batch behind it: with 3
+// batch's lookup failure does not abort every batch behind it: with 3
 // batches of 10 ids and the middle batch's lookup failing, the loop must
 // still attempt (and count) all 3 batches, only skipping the one that
 // failed.

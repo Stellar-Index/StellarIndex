@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMigration0209_OraclePublishedPrice pins INV-2590 end to end: the column
+// TestMigration0209_OraclePublishedPrice pins the migration end to end: the column
 // lands on a hypertable with a compressed chunk, pre-existing rows read as
 // "not recorded", the writer round-trips the on-chain integer bit-for-bit
 // beside an unchanged price, the derive_generation guard governs it like

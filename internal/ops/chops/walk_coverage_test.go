@@ -161,8 +161,8 @@ func TestChGate_GatesOnRequestedCoverage(t *testing.T) {
 
 // TestSdexClaimAudit_GatesOnRequestedCoverage pins the sdex-claim-audit
 // call site. REQUESTED is -to minus -from plus one; DELIVERED is
-// `walked`, now incremented once per ledger inside the stream callback
-// (the command previously counted no ledgers at all). Coverage matters
+// `walked`, incremented once per ledger inside the stream callback.
+// Coverage matters
 // more here than almost anywhere: the tool's output exists to be
 // differenced against an EXTERNAL anchor's trade count for the same
 // range, so ledgers the walk never read become a phantom decoder gap of

@@ -560,9 +560,9 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 	}
 
 	// ── FindClaimableBalanceCreates: the ClickHouse Phase-3 batched fallback
-	// lookup (2026-07-12: replaces a serial per-ref FindClaimableBalanceCreate
-	// after the idx_cb_balance_id skip index made per-lookup cost negligible
-	// but per-window lookup COUNT still mattered) — one query resolving a
+	// lookup (one query per window rather than a serial per-ref
+	// FindClaimableBalanceCreate; the idx_cb_balance_id skip index makes
+	// per-lookup cost negligible but per-window lookup COUNT still matters) — one query resolving a
 	// found id, a missing id, and (via the empty-input short-circuit) the
 	// no-op case together.
 	foundCB, err := chstore.FindClaimableBalanceCreates(ctx, addr, []string{balanceID, "nonexistent"})

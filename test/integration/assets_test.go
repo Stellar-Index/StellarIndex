@@ -48,7 +48,7 @@ func TestAssetsReader(t *testing.T) {
 	//
 	// It is not a hollow yes. The asset detail an index serves for native
 	// is supply, decimals, markets_count and sep1_status — read from
-	// ledger entries, not trades. Measured 2026-09-09: futurenet has ONE
+	// ledger entries, not trades. Futurenet has ONE
 	// XLM trade in its whole history and still serves a full native
 	// payload, while a trade-windowed existence check would have 404'd
 	// the native asset of a network we ask developers to build against.
@@ -136,7 +136,7 @@ func TestAssetsReader(t *testing.T) {
 	}
 
 	// The non-classic arm (timescale.Store.hasNonClassicAsset) is a
-	// window-bounded, alias-complete probe since 2026-09-09. Two halves
+	// window-bounded, alias-complete probe. Two halves
 	// of its contract only a real Timescale can settle, and the
 	// package's scripted-driver tests deliberately cannot:
 	//
@@ -217,10 +217,9 @@ func TestAssetsReaderPagination(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	// Seed 5 soroban assets with strkey-valid C-addresses derived
-	// from seed bytes. Previous hand-written literals
-	// (e.g. "CA001JYLG…XOWMA") were 55 chars — one short of the
-	// strkey 56-char requirement, so canonical.NewSorobanAsset
-	// rejected them as of 2026-04-23. strkey.Encode produces
+	// from seed bytes. Hand-written literals (e.g. "CA001JYLG…XOWMA") would be
+	// 55 chars — one short of the strkey 56-char requirement — and
+	// canonical.NewSorobanAsset rejects them.
 	// checksum-valid addresses indexed deterministically by seed so
 	// pagination ordering stays reproducible.
 	assets := []c.Asset{

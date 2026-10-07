@@ -23,9 +23,8 @@ func TestUsageRollupBackfillUsageDocumentsWriteFlag(t *testing.T) {
 	}
 }
 
-// TestUsageRollupBackfillRunbookDocumentsCatchup pins T166 (audit
-// 2026-09-18): the runbook this alert points operators at must name
-// the usage-rollup-backfill catch-up tool and must NOT still assert
+// TestUsageRollupBackfillRunbookDocumentsCatchup pins that the runbook this alert points operators at names
+// the usage-rollup-backfill catch-up tool and does NOT assert
 // that no catch-up step exists.
 func TestUsageRollupBackfillRunbookDocumentsCatchup(t *testing.T) {
 	root := repoRootForOpsTest(t)

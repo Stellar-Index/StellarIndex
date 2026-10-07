@@ -156,7 +156,7 @@ func TestNewBoundedLedgerStreamConfig_BucketPassThrough(t *testing.T) {
 }
 
 // TestNewBoundedLedgerStreamConfig_BoundedBuffer is the regression for
-// the 2026-07-15 ch-backfill -parallel OOM: the helper must return an
+// the ch-backfill -parallel OOM: the helper must return an
 // explicit, small Buffered override rather than leaving Buffered nil
 // (which would fall through to the SDK's
 // ingest.DefaultBufferedStorageBackendConfig — BufferSize=10000,

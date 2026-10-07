@@ -16,7 +16,7 @@ import (
 )
 
 // TestSACFullHistorySeed_RecoversDormantPoolHolder reproduces the exact
-// PHO/BLND VERDICT shape (incident 2026-07-06, docs/architecture/
+// PHO/BLND VERDICT shape (docs/architecture/
 // supply-pipeline.md "Dormant contract-held SAC balances"): a pool
 // contract's SAC Balance(Address) entry whose last write predates the
 // ClickHouse ledger_entries_current current-state MV's ~62M coverage
@@ -204,8 +204,8 @@ func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 	}
 }
 
-// TestSACFullHistorySeed_SameLedgerRemovalCoherence proves audit-2026-07-16
-// C2-4: when one storage key is BOTH present and removed within the SAME
+// TestSACFullHistorySeed_SameLedgerRemovalCoherence proves: when one
+// storage key is BOTH present and removed within the SAME
 // ledger, the full-history seed must resolve the single genuine latest change
 // coherently (every projected column from that one row) so the removed-entry
 // skip fires and the deleted balance is NOT resurrected.

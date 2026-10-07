@@ -14,13 +14,12 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// legacyAccountOperationsSQL is the AccountOperations page query EXACTLY as
-// it stood before the 2026-08-28 rewrite (origin/main 6762d0a1,
-// accountOperationsQuery(hasCursor, hasBound=true) with opCols expanded),
-// frozen here as the differential oracle: the rewrite must serve
-// byte-identical pages — same rows, order, cursor semantics and
-// source/participant dedupe — while no longer reading one
-// stellar.operations granule per key the account ever touched.
+// legacyAccountOperationsSQL is the AccountOperations page query as it stood
+// before the primary-key-pruning rewrite (accountOperationsQuery(hasCursor,
+// hasBound=true) with opCols expanded), frozen here as the differential
+// oracle: the rewrite must serve byte-identical pages — same rows, order,
+// cursor semantics and source/participant dedupe — while no longer reading
+// one stellar.operations granule per key the account ever touched.
 func legacyAccountOperationsSQL(hasCursor bool) string {
 	cursorClause := ""
 	if hasCursor {
@@ -75,9 +74,9 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 }
 
 // TestClickHouseAccountOperationsPageBoundedByPageSize is the live-ClickHouse
-// proof for the 2026-08-28 AccountOperations rewrite (r1: `explorer
-// AccountOperations deadline exceeded` 503s, 14×/24h, for an account with
-// 11,925 sourced + 26,064 participant ops).
+// proof for the AccountOperations rewrite (explorer `AccountOperations
+// deadline exceeded` 503s for an account with 11,925 sourced + 26,064
+// participant ops).
 //
 // Pathology: the arms resolved their keys OVER stellar.operations with
 // `pk IN (SELECT pk FROM ops_by_source WHERE source_account = ?)`.

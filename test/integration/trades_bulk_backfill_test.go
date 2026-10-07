@@ -183,7 +183,7 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	bulkTS := time.Date(2024, 5, 5, 12, 0, 0, 0, time.UTC)
 
 	// Same logical rows, two disjoint identities. Both sets carry a one-side-
-	// zero fill (INV-6 unstorable) and an exact intra-batch PK duplicate, so
+	// zero fill (unstorable) and an exact intra-batch PK duplicate, so
 	// the comparison covers the storability gate and the dedupe collapse too,
 	// not just the happy path.
 	// BOTH sets are source "sdex". A fabricated source name would make this
@@ -195,7 +195,7 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	const bulkLo, bulkHi = 55_000_000, 55_999_999
 	upsertRows := bulkTradeSet(t, n, upsertLo, upsertTS, "sdex")
 	bulkRows := bulkTradeSet(t, n, bulkLo, bulkTS, "sdex")
-	// One unstorable one-side-zero fill (INV-6) and one exact intra-batch PK
+	// One unstorable one-side-zero fill and one exact intra-batch PK
 	// duplicate, so the comparison covers the storability gate and the dedupe
 	// collapse. The duplicate is EXACT rather than a differing later copy:
 	// sortTradesByConflictKey uses a non-stable sort, so which of two
@@ -234,7 +234,7 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 	if int64(len(got)) != res.Copied {
 		t.Fatalf("COPY reported %d rows, %d are stored", res.Copied, len(got))
 	}
-	// The one-side-zero fill must be absent from BOTH (INV-6), and the dupe
+	// The one-side-zero fill must be absent from BOTH, and the dupe
 	// collapsed to one row in BOTH.
 	if len(got) != n {
 		t.Fatalf("stored %d rows for %d distinct storable inputs — the unstorable fill or the "+
@@ -303,7 +303,7 @@ func TestBulkBackfillTrades_IdenticalToBatchUpsert(t *testing.T) {
 // TestBulkBackfillTrades_RefusesNonEmptyRange proves the precondition is
 // CHECKED, not assumed from the caller: one pre-existing row inside the
 // buffer's (source, ledger, ts) box is enough to push the whole buffer onto
-// the upsert path — where the stored row keeps its INV-3 generation guard.
+// the upsert path — where the stored row keeps its generation guard.
 func TestBulkBackfillTrades_RefusesNonEmptyRange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()

@@ -119,8 +119,8 @@ func TestShouldCollectDoc_DoesNotCiteUnrelatedPR(t *testing.T) {
 	}
 }
 
-// TestResolveArchiveTarget_WriteRefusesUnresolvedConfig is the regression for
-// T240: -write inserts the checkpoint straight into the target ClickHouse's
+// TestResolveArchiveTarget_WriteRefusesUnresolvedConfig is the regression test:
+// -write inserts the checkpoint straight into the target ClickHouse's
 // ledger_entry_changes with no cross-check against the network that
 // ClickHouse instance actually tracks. On a config load failure,
 // resolveArchiveTarget must not log one stderr line and silently fall back to

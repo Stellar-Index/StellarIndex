@@ -125,7 +125,7 @@ type Inputs struct {
 	// TriangulationChecked gates [TriangulationDivergencePct]. False —
 	// the ZERO VALUE — means "no composite was compared", and [Compute]
 	// then drops the factor's weight entirely, so an un-triangulated
-	// pair scores exactly as it did before this input existed.
+	// pair scores as if this input were absent.
 	//
 	// This is the one place this package does NOT mirror
 	// [CrossOracleDivergencePct]'s negative-sentinel-only shape, and the

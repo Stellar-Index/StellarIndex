@@ -360,7 +360,7 @@ func TestGatedRegistryOptions_emptyGateWarns(t *testing.T) {
 				"source that has not deployed a pool yet", name)
 		}
 	}
-	// Curated sources can no longer reach the empty-gate state at all.
+	// Curated sources cannot reach the empty-gate state at all.
 	for name := range curatedSources(t) {
 		if warned[name] {
 			t.Errorf("%s warned about an empty gate, but its curated set is seeded from code", name)
@@ -414,8 +414,8 @@ func TestGatedRegistryOptions_defindexRosterReconciled(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_phoenixStakeContractsReconciled is the
-// CA2-A22-correct-2 regression guard: phoenix's stake contracts are never
+// TestGatedRegistryOptions_phoenixStakeContractsReconciled is a
+// regression guard: phoenix's stake contracts are never
 // announced by the factory (only the pools are — see the decoder's
 // NewDecoder doc), so unless GatedMeta.CuratedSet declares them nothing
 // ever writes them to protocol_contracts and GET /v1/protocols/phoenix

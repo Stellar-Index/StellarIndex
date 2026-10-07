@@ -254,7 +254,7 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 	for k, v := range env {
 		vars[k] = v
 	}
-	// Bounded: a script that never terminates (WIN=0 used to spin forever)
+	// Bounded: a script that never terminates (e.g. WIN=0 spinning forever)
 	// must read as a failure here, not as a stuck suite.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -393,9 +393,9 @@ func TestChRebuildProjectedScript_DeletesOnlyTradeSourcesItRederives(t *testing.
 }
 
 // ch-rebuild's refusals (BackfillSafe, the live-cursor one-writer
-// guard, the buffered-range ceiling) used to fire only inside the -write
-// run, AFTER the script's DELETE had committed — so the guard doing its job
-// left the window's tables empty. A refusal must now cost nothing.
+// guard, the buffered-range ceiling) must fire before the -write
+// run, not after the script's DELETE has committed — or the guard doing its
+// job would leave the window's tables empty. A refusal must cost nothing.
 //
 // Every shape a "no" can arrive in is covered, not just the polite one: a
 // guard refusal, a deployed binary that predates -preflight (flag parse

@@ -32,13 +32,12 @@ const defaultDivergenceMinSources = 2
 // sentinel — safer to neutralise the factor than to score a single
 // reference's hiccup as a multi-source signal.
 //
-// Sourced from Config.DivergenceMinSources — previously a
-// hardcoded const, independent of the operator's
-// `divergence.min_sources_for_warning`. Raising that knob moved the
-// worker's own WarningFired gate and the API's divergence_checked
-// predicate, but not this one: a pair below the RAISED quorum still
-// counted as corroborated here, so Phase 2's freeze could hold and
-// release on a cross-oracle signal the API had stopped publishing.
+// Sourced from Config.DivergenceMinSources, not a hardcoded const, so it
+// follows the operator's `divergence.min_sources_for_warning`. A const
+// would not move with that knob while the worker's own WarningFired gate
+// and the API's divergence_checked predicate did: a pair below the RAISED
+// quorum would still count as corroborated here, so Phase 2's freeze could
+// hold and release on a cross-oracle signal the API had stopped publishing.
 func (o *Orchestrator) divergenceMinSources() int {
 	if o.cfg.DivergenceMinSources > 0 {
 		return o.cfg.DivergenceMinSources

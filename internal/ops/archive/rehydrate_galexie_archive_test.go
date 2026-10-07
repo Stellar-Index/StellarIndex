@@ -270,8 +270,7 @@ func TestRehydrateFiles_AlreadyInHotIsSkipped(t *testing.T) {
 	}
 }
 
-// TestRehydrateExitError_AllMissingFailsClosed: CA2-A20-correct-7 —
-// a run where every requested path is missing in cold (the symptom
+// TestRehydrateExitError_AllMissingFailsClosed: a run where every requested path is missing in cold (the symptom
 // of a hot/cold schema mismatch, where every hot-shaped key 404s
 // against cold) must exit non-zero, not report a clean run.
 func TestRehydrateExitError_AllMissingFailsClosed(t *testing.T) {

@@ -130,7 +130,7 @@ func TestCheckSACSeedShrink(t *testing.T) {
 	}
 }
 
-// TestSACSeedProvenance_FullHistoryNeedsLakeEvidence — GH #713: the
+// TestSACSeedProvenance_FullHistoryNeedsLakeEvidence — the
 // full_history stamp comes from what the walk proved, not from -full-history.
 // A pass with no lake verification stamps nothing; a verified one records the
 // ledger it was verified through and its retractions.

@@ -72,7 +72,7 @@ func oracleSourceFixtures() map[string]oracleSourceFixture {
 // exactly the wrong thing to ship for an enabled source. So
 // every oracle source the dispatcher can enable must come out of
 // BuildDispatcher with a FINITE budget, equal to the same
-// 10 × resolution the alert used to compute inline.
+// 10 × resolution the alert computes.
 func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 	fixtures := oracleSourceFixtures()
 	for source := range config.OracleSourceNames {

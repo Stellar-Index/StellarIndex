@@ -13,8 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// Q142 (audit-2026-09-18) — the reaper sweeps over `magic_link_tokens`,
-// `login_code_lockouts` and `accounts` used to issue a single unbounded
+// The reaper sweeps over `magic_link_tokens`,
+// `login_code_lockouts` and `accounts` must not issue a single unbounded
 // DELETE with no LIMIT. Every one of those tables is grown by an
 // unauthenticated or attacker-influenced write path, so a sweep landing
 // on a large backlog held row locks and WAL for as long as the DELETE
