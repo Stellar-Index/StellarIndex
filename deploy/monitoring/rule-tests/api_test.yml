@@ -1,16 +1,16 @@
 ---
-# promtool unit tests for the two audit-2026-07-23 API observability
-# alerts added with their counters:
+# promtool unit tests for the API observability alerts on
+# silent-path counters:
 #
-#   stellarindex_monthly_quota_fail_open      (C3-082)
+#   stellarindex_monthly_quota_fail_open
 #   stellarindex_monthly_quota_fail_closed
-#   stellarindex_admin_audit_write_failing    (C3-067)
-#   stellarindex_usage_write_failing          (GH-1277)
+#   stellarindex_admin_audit_write_failing
+#   stellarindex_usage_write_failing
 #
 #   promtool test rules deploy/monitoring/rule-tests/api_test.yml
 #
-# Both counters guard a path that is SILENT when healthy and silent when
-# broken — that is the whole finding. `promtool check rules` only proves
+# Each counter guards a path that is SILENT when healthy and silent when
+# broken. `promtool check rules` only proves
 # the PromQL parses; these prove each rule actually fires on the state it
 # claims to catch, stays quiet on the healthy state, and (for the
 # quota one) absorbs a single blip rather than ticketing on it.
@@ -288,7 +288,7 @@ tests:
         alertname: stellarindex_sdex_orderbook_maintain_failing
         exp_alerts: []
 
-  # ── INV-0780: a held cursor tickets without ever erroring ────────
+  # ── a held cursor tickets without ever erroring ──────────────────
   # advance_held increments every tick for an hour; no error outcome
   # increments at all. maintain_failing must stay silent (it only
   # selects error outcomes) while advance_held fires — proving the two
@@ -482,15 +482,14 @@ tests:
         alertname: stellarindex_sdex_orderbook_crossed_book
         exp_alerts: []
 
-  # ══ stellarindex_customer_webhook_mark_errors (#368 M6) ═══════════
+  # ══ stellarindex_customer_webhook_mark_errors ════════════════════
   # `mark_error` means the POST reached a decision (2xx, 4xx, 5xx or a
   # network fault) and the store write that RECORDS that decision
   # failed. The row keeps the 5-minute claim lease
   # ListPendingDeliveries set, attempt_count never advances, and the
   # same payload is re-POSTed to the customer every lease interval —
   # forever. markTerminal's godoc says the counter "makes the loop
-  # visible to an alert"; until this rule there was no such alert in
-  # either tree.
+  # visible to an alert"; this rule is that alert.
   #
   # ── firing: one mark_error tickets ────────────────────────────────
   # Deliberately a SINGLE step, not a rate: one wedged row is the
@@ -592,7 +591,7 @@ tests:
         alertname: stellarindex_customer_webhook_mark_errors
         exp_alerts: []
 
-  # ── #338: a permanently-refused protocol tickets ─────────────────
+  # ── a permanently-refused protocol tickets ───────────────────────
   # One protocol's reserve read fails every cycle, so its figure is
   # carried forward and the reconciliation refuses it every 10 min:
   # `divergent` ticks, `ok` never does. The published tvl_total has
@@ -628,7 +627,7 @@ tests:
                 snapshot's as_of. Read `excluded[].reason` on /v1/protocols
                 first — it names the protocol and the rule it failed.
 
-  # ── #338: a SINGLE divergent refresh is absorbed ─────────────────
+  # ── a SINGLE divergent refresh is absorbed ───────────────────────
   # One refusal at t=0 (a ClickHouse merge window), then clean cycles.
   # `rate(divergent[30m])` stays non-zero for half an hour afterwards,
   # so only the `ok == 0` conjunct and the 1h `for:` keep this quiet —
@@ -650,7 +649,7 @@ tests:
         alertname: stellarindex_dex_tvl_total_divergent
         exp_alerts: []
 
-  # ── #338: a clean reconciliation is SILENT ───────────────────────
+  # ── a clean reconciliation is SILENT ─────────────────────────────
   # Every cycle admits every protocol; the zero-seeded `divergent`
   # child (obs/metrics.go seeds both) must not read as "no data".
   - interval: 1m
@@ -889,7 +888,7 @@ tests:
         alertname: stellarindex_ch_schema_probe_absent
         exp_alerts: []
 
-  # ══ stellarindex_customer_webhook_delivery_failing (#1272) ═════════
+  # ══ stellarindex_customer_webhook_delivery_failing ════════════════
   # Every rate this alert can carry is between its threshold and ~1/s,
   # which `humanize` renders in milli-units ("200m/s" for 0.2/s).
   - interval: 1m
@@ -918,10 +917,10 @@ tests:
                    AND created_at > now() - interval '15 min'
                  GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
 
-  # ── firing: ONE black-holed endpoint, the case the alert names (#1268) ─
+  # ── firing: ONE black-holed endpoint, the case the alert names ────
   # Its lane is serial under a 10s attempt timeout, so it can never exceed
-  # 0.1 network_errors/s; `> 0.1` was unreachable for it. 4 timeouts/min
-  # (0.067/s, a lane two-thirds saturated) must ticket.
+  # 0.1 network_errors/s; a `> 0.1` threshold is unreachable for it. 4
+  # timeouts/min (0.067/s, a lane two-thirds saturated) must ticket.
   - interval: 1m
     name: a single black-holed endpoint below the one-lane ceiling tickets
     input_series:
