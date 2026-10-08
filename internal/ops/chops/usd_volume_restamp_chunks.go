@@ -23,141 +23,52 @@ import (
 
 // ─── `usd-volume-restamp -chunks` — the chunk-by-chunk walk ─────────────
 //
-// This file is the TIER-AGNOSTIC driver. It owns the chunks, the
-// compression policy, the run lock and the free-space guard; it knows
-// nothing about which usd_volume tier is being repaired. The rows are the
-// tier's business, reached through [chunkRestampTier] — implemented by
-// estimatedChunkTier in usd_volume_restamp_chunks_estimated.go (the
-// row-list tiers: the XLM-base anchor re-derive, its XLM-quote mirror and
-// the CEX fiat-quote re-derive) and exactChunkTier in
-// usd_volume_restamp_chunks_exact.go (the exact-tier peg identity). Every
-// tier lives in COMPRESSED chunks and pays the same price for writing into
-// one, so they share the walk rather than each growing their own.
+// The TIER-AGNOSTIC driver: it owns the chunks, the compression policy, the
+// run lock and the free-space guard. Rows are the tier's business, reached
+// through [chunkRestampTier] (estimatedChunkTier, exactChunkTier). Every tier
+// lives in COMPRESSED chunks and pays the same price to write into one, so
+// they share this walk.
 //
-// # Why a second walk exists
+// The day walk UPDATEs rows wherever they are, and a DML into a compressed
+// chunk decompresses it wholesale: on production one 2,000-row UPDATE took
+// over 14 minutes and a run committed 0 rows. Without its own `ts` bound a
+// batch also makes every compressed chunk a result relation (a 23-row UPDATE
+// ran 60 minutes and wrote ~270 GB of WAL); that bound lives with the
+// statement, and this walk keeps the ONE chunk it targets out of the slow
+// path. Per chunk, oldest first: decompress (if compressed at listing), the
+// SAME restamp restricted to that chunk in -chunk-batch transactions,
+// re-compress (restoring the listed state, not deciding one), and a
+// progress line plus heartbeat for run-heavy-job.sh.
 //
-// The day walk (usd_volume_restamp_xlmbase.go) UPDATEs rows in place, in
-// -batch transactions, wherever they are. Measured on production, every
-// one of the 90 `trades` chunks in the repair window
-// was COMPRESSED (policy: compress_after 7 days; TimescaleDB 2.26.4;
-// max_tuples_decompressed_per_dml_transaction = 100000), and a DML into a
-// compressed chunk is serviced by decompressing it wholesale: one
-// 2,000-row UPDATE took over 14 minutes, the run sustained ~1,574
-// rows/min against a 28.6M-row write set, and it was stopped with 0 rows
-// committed. The dry run never showed it — it only reads.
-//
-// Decompressing the chunk is necessary but not sufficient. The batch
-// statement names the HYPERTABLE, so without its own `ts` bound
-// every one of the 258 compressed chunks is a result relation of every
-// batch and gets decompressed too — measured: a 23-row UPDATE
-// inside a freshly decompressed chunk ran 60 minutes and wrote ~270 GB
-// of WAL. The bound lives with the statement
-// ([timescale.Store.ApplyXLMBaseUSDVolumeRestamp]); this walk is what
-// keeps the ONE chunk it targets out of the slow path.
-//
-// This walk inverts the order. For each chunk intersecting the window,
-// oldest first:
-//
-//  1. SELECT decompress_chunk(<chunk>, if_compressed => true) — for a
-//     chunk that was compressed at listing;
-//  2. the SAME restamp (plan + apply, the same functions, the same
-//     generation guard) restricted to that chunk's slice of the window,
-//     in -chunk-batch UPDATE transactions (a plain heap UPDATE now);
-//  3. SELECT compress_chunk(<chunk>, if_not_compressed => true) — again
-//     only for a chunk that was compressed at listing: the bracket
-//     RESTORES the listed state, it does not decide one;
-//  4. a progress line (rows changed, seconds, bytes before → decompressed
-//     → after) and a heartbeat tick, so it runs unattended under
-//     run-heavy-job.sh.
-//
-// Sizing that motivates every guard below: 379 GB uncompressed / 25 GB
-// compressed across the 90 chunks, largest chunk 160 GB, pool 4.69 TB
-// free.
-//
-// # The guards
-//
-//   - ONE RUN AT A TIME. run-heavy-job.sh's lock is per job NAME, so the
-//     wrapper does not stop a second `-chunks -write` launched under
-//     another name from starting beside a live one. A
-//     -write run therefore holds the session advisory lock
-//     hashtext('usd-volume-restamp:trades') on a dedicated connection for
-//     its whole life ([timescale.Store.TryUSDVolumeRestampLock]); a held
-//     lock is a refusal, before the policy is touched. The server drops
-//     the lock with the connection, so a SIGKILL cannot leave it behind.
-//   - THE COMPRESSION POLICY IS PAUSED for a -write run. migrations/0001
-//     attaches add_compression_policy('trades', '7 days') on a 12-hour
-//     schedule, and its proc compresses every chunk older than the lag
-//     that is not fully compressed — which a chunk this walk has just
-//     decompressed is. Over a multi-day run the policy would re-compress
-//     the open chunk between two batches, and the next batch would crawl
-//     through the per-row path this mode exists to escape, without an
-//     error. The job is resolved by what it is (trades_compression_policy,
-//     migration 0205), re-read under the lock, paused before the first decompress,
-//     and re-enabled on EVERY exit path on a context that survives the
-//     run's cancellation — BEFORE the lock is released, so a run waiting
-//     on the lock never inherits a paused policy; the re-enable SQL is
-//     printed before the pause is issued so a SIGKILL leaves a trace. No
-//     policy to resolve is a refusal, never a silent "nothing to pause".
-//   - A POLICY THAT IS ALREADY UNSCHEDULED at start is a refusal unless
-//     -resume-paused-policy is given. The state means a previous attempt
-//     was killed before its re-enable (the runbook's by-hand repair is
-//     alter_job(scheduled => true)) or something else paused it on
-//     purpose; either way this run does not silently take ownership of
-//     it. With the flag it proceeds and re-enables the policy at exit.
-//   - A POLICY RUN IN FLIGHT IS WAITED OUT. The pause stops the NEXT fire;
-//     a fire that started before it finishes on its own, and a decompress
-//     issued while it runs races it. After the pause the run polls
-//     timescaledb_information.job_stats and waits — bounded, with a
-//     progress line per poll — while the job reads Running, and the
-//     chunks are LISTED AGAIN once it is idle, so the compressed state the
-//     walk restores is the one nothing else is changing.
-//   - THE CHUNK IS CHECKED AHEAD OF EVERY BATCH. A pause is not a fence: a
-//     by-hand compress_chunk can take the open chunk back between two
-//     batches, and an UPDATE into a compressed chunk does not fail, it
-//     crawls. Every batch inside a chunk goes through
-//     [timescale.Store.ApplyXLMBaseUSDVolumeRestampInChunk], which reads
-//     the chunk's is_compressed first; true STOPS the walk, loudly, with
-//     the chunk's name and the RESUME line. Never the slow path.
-//   - DRY RUN is still the default. It prints the chunk plan (count, the
-//     two byte totals, the largest chunk), the pre-flight verdict and
-//     what it would do to the policy, then walks the window READ-ONLY on
-//     the chunks as they are, exactly as the day walk's dry run does.
-//     Nothing is decompressed, nothing is paused.
-//   - PRE-FLIGHT: a -write run refuses to start unless free space on the
-//     data volume EXCEEDS 2 x the largest chunk's uncompressed size, and
-//     the same figure is checked again before EVERY decompress against
-//     that chunk's own size. Free space is MEASURED by statfs on the
-//     directory the database reports for `trades` — which is only
-//     meaningful on the database host, so a DSN dialling a non-loopback
-//     host skips it — or, when it cannot be measured,
-//     taken from an explicit -min-free-bytes with a loud warning.
-//   - LIVE-ADJACENT REFUSAL: a window whose right edge reaches into the
-//     policy's lag (to + 1 day > now - compress_after) is refused unless
-//     -allow-live-adjacent is given. Chunks there are deliberately
-//     uncompressed — the ledgerstream cursor-regression replay upserts
-//     into them — and the in-place walk is the right tool for them.
-//   - the live-tail refusal and the -from/-to window rules run BEFORE the
-//     dispatch into this walk (usdVolumeRestamp), unchanged; the
-//     derive_generation guard is inside the apply, unchanged; a
-//     -generation in the future is refused there too.
-//   - A FAILED CHUNK IS RE-COMPRESSED before the tool exits non-zero —
-//     [timescale.Store.RestampTradesChunk]'s contract, including on a
-//     cancelled context. The walk stops at the failing chunk. Before each
-//     decompress and each re-compress the by-hand repair (the exact
-//     compress_chunk and the policy re-enable) is printed to stderr,
-//     because either statement can outlive the window between
-//     run-heavy-job.sh's SIGTERM and its SIGKILL (the wrapper's
-//     TimeoutStopSec: 5min by default, 2h where the
-//     runbook's launch line exports HEAVY_JOB_STOP_TIMEOUT=2h, and 90 s
-//     on a host that has not had the heavy-job-wrapper tag applied).
-//   - RESUMABLE: every chunk is first PROBED read-only, slice by slice,
-//     stopping at the first slice that would change a row. A chunk with
-//     nothing to change — its rows already at the run's generation, or
-//     already holding the anchor's value — probes clean to its end and is
-//     skipped without being decompressed, so a rerun of the same command
-//     walks past the finished prefix at dry-run cost and resumes at the
-//     first unfinished chunk. -generation lets the rerun carry the first
-//     run's generation so the whole span ends up at ONE generation.
+// Guards:
+//   - ONE RUN AT A TIME: run-heavy-job.sh locks per job NAME, so a -write run
+//     also holds a session advisory lock on a dedicated connection; a SIGKILL
+//     cannot leave it behind.
+//   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses
+//     the open chunk between batches and the next batch crawls without an
+//     error. It is re-enabled on EVERY exit path before the lock is released,
+//     and the re-enable SQL is printed first so a SIGKILL leaves a trace. An
+//     already-unscheduled policy is refused without -resume-paused-policy:
+//     this run does not silently take ownership of someone else's pause.
+//   - A POLICY RUN IN FLIGHT IS WAITED OUT (the pause stops only the next
+//     fire), and the chunks are listed again once it is idle.
+//   - THE CHUNK IS CHECKED AHEAD OF EVERY BATCH: a by-hand compress_chunk can
+//     take it back, and an UPDATE into a compressed chunk crawls rather than
+//     fails, so a compressed chunk STOPS the walk with the RESUME line.
+//   - DRY RUN is the default and decompresses or pauses nothing.
+//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed
+//     size (largest measured: 160 GB), rechecked before every decompress.
+//     statfs is only meaningful on the database host, so a non-loopback DSN
+//     needs -min-free-bytes.
+//   - LIVE-ADJACENT REFUSAL without -allow-live-adjacent: chunks inside the
+//     policy's lag are uncompressed on purpose (the cursor-regression replay
+//     upserts into them) and the in-place walk is the right tool there.
+//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, and the by-hand
+//     repair is printed before each decompress and re-compress, because either
+//     statement can outlive the wrapper's SIGTERM-to-SIGKILL window.
+//   - RESUMABLE: each chunk is first probed read-only and skipped undecompressed
+//     when nothing would change, so a rerun walks the finished prefix at
+//     dry-run cost; -generation keeps the whole span at ONE generation.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
@@ -655,74 +566,26 @@ type chunkRestampWalk struct {
 // catalog reads for the whole phase.
 const defaultChunkBytesPoll = 30 * time.Second
 
-// watchChunkBytes publishes the chunk's live on-disk size as byte
-// progress for as long as the walk is inside that chunk, and returns the
-// stop that shuts the poll down.
+// watchChunkBytes publishes the chunk's live on-disk size as byte progress
+// while the walk is inside that chunk, and returns the stop for the poll.
 //
-// WHY THIS EXISTS. The walk cannot restamp a row in a compressed chunk
-// until the chunk is decompressed, and on r1 that decompress is the
-// longest single step of the run: 49+ minutes measured on a 17.3 GB
-// chunk, and about 1.5 hours on the 159.7 GB outlier chunk.
-// Row progress is structurally zero for all of it, so on row progress alone
-// `stellarindex_ops_job_no_progress` (30 min flat + 15 min `for`)
-// would ticket on every healthy run — and an alert that fires on every
-// healthy run is one the operator stops reading, which is the blindness
-// the alert exists to prevent.
+// A decompress is the longest step of a run (49+ min on a 17.3 GB chunk,
+// ~1.5 h on the 159.7 GB outlier) and row progress is zero throughout, so
+// stellarindex_ops_job_no_progress would ticket every healthy run. Muting or
+// widening the alert would blind it during the step most likely to wedge.
+// decompress_chunk grows the chunk's OWN relations, which an observer sizes
+// by stat, so the figure climbs while a decompress runs and stays flat when
+// one is wedged (measured: every sample moved over a 44.1 s decompress).
 //
-// WHY BYTES, AND WHY THESE BYTES. Muting the alert for the phase, or
-// widening its window past 1.5 hours, would blind it during the longest
-// and most dangerous step of the run — `running==1 ∧ fresh heartbeat ∧
-// flat progress` is real there (decompress_chunk takes a lock the
-// ledgerstream replay can hold; a stalled read never returns). So the
-// walk reports the work that IS happening instead. decompress_chunk
-// extends the chunk's OWN heap and indexes — relations that already
-// exist and are already in the catalog — and chunks_detailed_size sizes
-// them with pg_relation_size, which stats the files rather than reading
-// them through the writing transaction's snapshot. An observer session
-// therefore sees the figure climb continuously while a decompress runs,
-// and sees NOTHING move when one is wedged.
+// The re-compress is NOT covered: it builds a new relation invisible to the
+// observer until commit. At the measured 0.52x of the decompress, the
+// outlier's re-compress (~47 min) outlasts the alert's 45 min. That fails
+// SAFE, one extra ticket rather than silence; the runbook says to confirm it
+// with pg_stat_activity. Cluster-wide counters keep moving while this job is
+// wedged, so they would be a mute dressed as progress.
 //
-// Measured on TimescaleDB 2.26.4 / PG 15.17 (the deployed pair), one
-// chunk, one observer session polling chunks_detailed_size:
-//
-//	decompress_chunk  98.9 MB → 522 MB, EVERY sample moved (44.1 s)
-//	compress_chunk    flat at 547 MB for the whole statement (23.0 s),
-//	                  one step at commit
-//
-// The re-compress is the phase this cannot cover: TimescaleDB builds the
-// compressed chunk as a NEW relation inside the compressing transaction,
-// so the polling session's catalog snapshot cannot see it and the
-// chunk's own relation does not change until the commit-time truncate.
-// The poll runs across the whole bracket anyway — it costs one catalog
-// read per 30 s, it is uniform, and it picks the movement back up the
-// moment the commit lands.
-//
-// So the re-compress is NOT covered, and on the one outlier chunk it can
-// outlast the alert. Both counters are flat through it — progress_total
-// is ticked only after RestampTradesChunk returns, i.e. after the
-// deferred re-compress — and the alert fires at 45 min (a 30 min flat
-// window plus a 15 min `for`). Measured at 0.52x the decompress
-// (23.0 s against 44.1 s on the same chunk), the 159.7 GB outlier's
-// ~90 min decompress implies a ~47 min re-compress, which is over that
-// threshold.
-//
-// This is accepted because it fails in the SAFE direction: an extra
-// ticket on one chunk, not a silence, and strictly better than
-// ticketing through the whole decompress of EVERY
-// chunk. The runbook tells the operator to confirm a `re-compressing`
-// ticket with pg_stat_activity before treating it as a hang.
-// TimescaleDB 2.26.4 publishes no compression-progress view to do better
-// with (timescaledb_information has none), and every cluster-wide
-// alternative — pg_database_size, WAL LSN, free space on the volume —
-// keeps moving while THIS job is wedged, which would be a mute wearing a
-// counter's clothes.
-//
-// FAIL-SOFT, like the heartbeat it feeds: a failed poll is skipped, not
-// raised. The size read is observability for a run whose actual work is
-// re-deriving a money column, and failing a multi-hour chunk because a
-// catalog read timed out would be strictly worse than losing a sample.
-// A poll that never succeeds leaves the counter flat, which is exactly
-// the state the alert already covers.
+// FAIL-SOFT: a failed poll is skipped. A never-succeeding poll leaves the
+// counter flat, which the alert already covers.
 func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
 	poll := w.copts.ChunkBytesPoll
 	if poll <= 0 {

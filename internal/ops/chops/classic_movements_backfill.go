@@ -56,114 +56,40 @@ const classicMovementsDefaultWindow = 500_000
 // under 10 minutes when healthy.
 const classicMovementsWindowDeadline = 20 * time.Minute
 
-// classicMovementsBackfill is the ADR-0047 write path for ALL FOUR
-// phases, RETARGETED by ADR-0048 D2 to write ClickHouse's
-// stellar.account_movements instead of Postgres' classic_movements
-// (migration 0105, never populated, dropped by migration 0113):
-// stellarindex-ops
-// classic-movements-backfill -ch-addr ADDR -from N -to N [-window N]
-// [-resume] [-write] [-verify]. Lake-in, lake-out — no Postgres
-// anywhere in this command's loop (ADR-0048 D2's explicit
+// classicMovementsBackfill is the ADR-0047 write path for ALL FOUR phases,
+// retargeted by ADR-0048 D2 to ClickHouse's stellar.account_movements:
+// lake-in, lake-out, with no Postgres in the loop (ADR-0048 D2's explicit
 // requirement).
 //
-// Each window streams TWO decode surfaces from ClickHouse:
-//   - the op-only surface (classicmovements.SupportedOpTypes /
-//     Decoder.Decode) — Phases 1-3 plus Phase 4's AccountMerge;
-//   - the entry-changes-correlated surface
-//     (classicmovements.EntryChangeOpTypes /
-//     classicmovements.DecodeLiquidityPoolOp /
-//     classicmovements.DecodeCAP0038Revocation) — Phase 4's
-//     LiquidityPoolDeposit/Withdraw and the CAP-0038 AllowTrust/
-//     SetTrustLineFlags edge case, correlated per-op against
-//     clickhouse.StreamEntryChanges output gathered for the same
-//     window (see entrychanges.go's package doc for why this can't
-//     go through Decoder.Decode).
+// Each window streams two decode surfaces into one batch: the op-only one
+// (Phases 1-3 and AccountMerge) and the entry-changes-correlated one
+// (LiquidityPoolDeposit/Withdraw and the CAP-0038 revocation case), which
+// cannot go through Decoder.Decode (see entrychanges.go). It is its own
+// writer rather than ch-rebuild's pipeline.HandleEvent path because
+// MovementEvent is historical-only and has no persist arm by design.
 //
-// Both surfaces write into the SAME per-window batch, fanned out
-// (one classicmovements.Movement -> 1-2 stellar.account_movements
-// rows, ADR-0048 D2's direction discriminator) and batch-inserted via
-// clickhouse.InsertAccountMovements.
+// Phase 3 claim/clawback correlation resolves in-memory first, then with
+// one batched lookup of creates this command already wrote, then as an
+// explicit unresolved count, never a guessed amount. Decoder memory grows
+// with the range, so chunk -from/-to once Phase 3 volume is in play.
 //
-// Phase 3's ClaimableBalance claim/clawback correlation (research
-// §2's "b+own-index" path) resolves in three tiers per window:
-// Decoder's free in-memory BalanceId index first, a single batched
-// ClickHouse lookup (clickhouse.FindClaimableBalanceCreates — ONE call
-// for the whole window's misses, internally chunked at 2,000 ids per
-// query to stay under ClickHouse's max_query_size,
-// scanning what THIS command has itself already written to
-// stellar.account_movements) second for creates outside this run, and
-// an explicit unresolved count — never a guessed amount — for
-// anything neither finds. See
-// classicmovements/dispatcher_adapter.go's Decoder doc for the memory-
-// scaling reason operators should chunk `-from`/`-to` into multi-
-// million-ledger invocations once Phase 3 volume is in play.
+// Phase 4 runs a fidelity probe per window. Pool ops treat missing entry
+// changes as unavailable fidelity, since a real deposit always mutates the
+// pool. AllowTrust/SetTrustLineFlags are SKIPPED in a zero-fidelity window:
+// their empty case looks like "no liquidation", and treating it as checked
+// would silently under-report CAP-0038 liquidations.
 //
-// Phase 4's entry-changes surface runs a cheap per-window fidelity
-// probe (clickhouse.CountOpScopedEntryChanges) before deciding how to
-// treat "no correlated entry changes found" for each op type:
-// LiquidityPoolDeposit/Withdraw treat it as
-// classicmovements.ErrEntryChangesUnavailable regardless (a real
-// deposit/withdraw always mutates the pool, so absence always means
-// unavailable fidelity); AllowTrust/SetTrustLineFlags are SKIPPED
-// entirely for the window when the probe finds zero fidelity (their
-// empty-changes case is indistinguishable from "no liquidation
-// happened," which is by far the common case, so treating it as
-// "checked, none found" during the fidelity-absent era would
-// silently under-report CAP-0038 liquidations). Phase 0 backfilled
-// ledger_entry_changes over the whole addressable range, so the probe
-// should find fidelity; a window where it doesn't is counted and
-// logged, never guessed.
+// Resume is DATA-DERIVED, not cursor-persisted: it restarts FROM the highest
+// ledger already written, a one-ledger overlap ReplacingMergeTree absorbs.
+// That is enough only because InsertAccountMovements sends in LEDGER order,
+// so every ledger below the highest written one is complete. The jump is
+// trusted only when data starts exactly at -from: a run that widens -from
+// below a prior run's start would otherwise skip the new prefix.
 //
-// Deliberately does NOT reuse ch-rebuild's generic
-// pipeline.HandleEvent write path: classicmovements.MovementEvent is
-// historical-only (ADR-0047 D2) and has no HandleEvent persist arm
-// by design (see internal/pipeline/lockstep_ast_test.go's
-// notSunkEvents entry) — this command is its own dedicated,
-// self-contained writer.
-//
-// Defaults to DRY-RUN (count only); pass -write to persist.
-// Windowed + resumable, but — per ADR-0048 D2's "no Postgres in the
-// loop" — resume is DATA-DERIVED rather than cursor-persisted:
-// -resume (default true) queries clickhouse.MaxAccountMovementLedger
-// for the highest ledger already written in [-from,-to] and restarts
-// FROM that ledger (not past it — a deliberate one-ledger overlap so
-// a crash mid-window can never silently skip a partially-written
-// ledger; ReplacingMergeTree absorbs the resulting duplicate insert
-// for free). That overlap is only sufficient because
-// clickhouse.InsertAccountMovements sends its chunks in LEDGER order:
-// a batch interrupted mid-send leaves every ledger below
-// its highest written one COMPLETE, so re-processing that one ledger
-// is the whole of the repair. This mirrors ch-participant-backfill / ch-txindex-
-// backfill's "the data IS the checkpoint" convention rather than a
-// separate ingestion_cursors row. Idempotent either way — ClickHouse
-// re-inserting an already-written window collapses at merge time.
-//
-// MaxAccountMovementLedger alone is only sound when [-from,-to]
-// itself is what was actually written before: it reports the highest
-// ledger ANYWHERE in that range, not a contiguous frontier from
-// -from. A later run that WIDENS -from below a prior, narrower run's
-// start would otherwise find that prior run's tip and jump straight
-// to it, never revisiting the newly-widened earlier range. So
-// -resume also checks clickhouse.MinAccountMovementLedger([-from,-to])
-// and only trusts the jump when data starts exactly at -from; if the
-// range's data starts anywhere above -from, that's a gap between
-// -from and it, and the run starts at -from instead (slower, never
-// wrong — the re-processed prefix is idempotent).
-//
-// -verify (default false) recounts each window from
-// stellar.account_movements right after it's processed (whether or
-// not -write persisted anything new this run) and compares per-
-// movement_kind counts against what THIS run's decode produced for
-// that window — a cheap, window-scoped reconciliation (ADR-0047 D4
-// applied to the CH write target), not full ADR-0033 machinery.
-// Mismatches are logged loudly but non-fatal; the final summary
-// reports the total.
-//
-// -to is HARD-CLAMPED below classicMovementsP23StartLedger regardless
-// of what the operator passes — loudly, via a stderr warning, never
-// silently. This is the one enforcement point for ADR-0047 D2's
-// "historical-only" invariant; nothing upstream (the decoder, the CH
-// reader) knows about the P23 boundary at all.
+// -verify recounts each window per movement_kind against this run's decode
+// and logs mismatches without failing. -to is HARD-CLAMPED below
+// classicMovementsP23StartLedger, loudly: this is the one enforcement point
+// for ADR-0047 D2's historical-only invariant.
 func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write+verify loop, report.
 	fs, gate := opsutil.NewMutatingFlagSet("classic-movements-backfill")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
