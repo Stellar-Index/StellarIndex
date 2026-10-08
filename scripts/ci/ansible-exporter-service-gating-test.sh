@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ansible-exporter-service-gating-test.sh — pins T485: tasks/main.yml
+# ansible-exporter-service-gating-test.sh — pins that tasks/main.yml
 # imports 16-prometheus-exporters.yml gated only on `run_observability`
 # (no run_postgres / pgbackrest_backup_enabled). Inside that file, the
 # postgres_exporter tasks (including a `psql -d stellarindex` GRANT run

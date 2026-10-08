@@ -36,7 +36,7 @@
 -- MV dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT
 -- emptiness is deliberately NOT trusted as authoritative "no events":
 -- ExplorerReader.ContractEventsRecent (internal/storage/clickhouse/
--- explorer_reader.go, audit W1-chrollup-3) treats an empty per-contract
+-- explorer_reader.go) treats an empty per-contract
 -- walk as "unknown, fall back" and re-reads contract_events directly,
 -- exactly as it did before this index existed — because the table-global
 -- probe cannot see PARTIAL backfill coverage. Apply this DDL (the MV

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sla-probe-concurrency-doc-test.sh — regression coverage for T487.
+# sla-probe-concurrency-doc-test.sh — regression coverage for the SLA probe's concurrency doc.
 #
 # The documented SLA_PROBE_CONCURRENCY default in README.md and the
 # placeholder install.sh writes into /etc/default/stellarindex-healthchecks

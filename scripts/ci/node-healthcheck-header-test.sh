@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# node-healthcheck-header-test.sh — T238: the script's leading "Checks"
+# node-healthcheck-header-test.sh — the script's leading "Checks"
 # comment block must describe the checks the script actually runs, not a
 # stale headcount (service count, list length and Check 1b, API /v1/healthz,
 # must all agree with what SERVICES holds).

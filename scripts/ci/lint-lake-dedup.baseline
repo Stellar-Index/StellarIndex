@@ -13,7 +13,7 @@
 # CURRENT STATE: 0 entries. The tree's one aggregating read of a lake
 # archive — opTypeStatsQuery in
 # internal/storage/clickhouse/explorer_reader.go — already collapses
-# with FINAL, for the reason audit C2-12 recorded: a re-ingested
+# with FINAL, for this reason: a re-ingested
 # operation leaves an un-merged duplicate part that inflates count()
 # until a background merge. Keeping this file empty is the goal, not an
 # accident.

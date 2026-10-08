@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// C3-032 follow-up — `login_code_lockouts` retention.
+// `login_code_lockouts` retention.
 //
 // The lockout table's primary key is attacker-chosen (POST
 // /v1/auth/verify-code is unauthenticated and takes any well-formed

@@ -154,7 +154,7 @@ def walk(tasks, task_file, role):
 # Role tasks/ (recursive — a role may nest tasks in subdirectories) and
 # handlers/, plus the play-level surfaces that are NOT under any role:
 # playbooks/ and the shared configs/ansible/tasks/ imported by them.
-# T492: the original scan covered only ROLES_DIR/*/tasks/*.yml, so a
+# The original scan covered only ROLES_DIR/*/tasks/*.yml, so a
 # secret-rendering template task anywhere else was invisible to this lint.
 task_files = sorted(set(
     glob.glob(os.path.join(ROLES_DIR, "*", "tasks", "**", "*.yml"), recursive=True)

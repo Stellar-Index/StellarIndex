@@ -1,6 +1,6 @@
 name: chaos-nightly
 
-# T430: test/chaos/ (Task #75, Wave 1) has existed since it shipped but was
+# test/chaos/ has existed since it shipped but was
 # never wired into any CI job — grep of .github/workflows/*.yml for 'chaos'
 # returned zero matches. The design note (docs/architecture/
 # chaos-suite-design-note.md, "Open questions" #1) explicitly decided

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ansible-node-exporter-collectors-install-test.sh — pins T630: the
+# ansible-node-exporter-collectors-install-test.sh — pins that the
 # archival-node role's apt/nvme systemd drop-ins repoint
 # ExecStart=/usr/share/prometheus-node-exporter-collectors/{apt_info.py,
 # nvme_metrics.py}, but nothing in the role ever apt-installed the

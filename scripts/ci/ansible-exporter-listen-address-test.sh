@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ansible-exporter-listen-address-test.sh — pins T575: the Debian-packaged
+# ansible-exporter-listen-address-test.sh — pins that the Debian-packaged
 # redis_exporter / postgres_exporter systemd units in the archival-node
 # role read `EnvironmentFile=/etc/default/<pkg>` and exec
 # `<binary> $ARGS` (same pattern this role already uses for node_exporter
