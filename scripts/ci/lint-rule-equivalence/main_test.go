@@ -9,12 +9,11 @@ import (
 	"testing"
 )
 
-// TestCompareFile_DetectsAnnotationDrift is the GH-686 regression: two
+// TestCompareFile_DetectsAnnotationDrift guards annotation drift: two
 // rule files that are byte-identical on expr/for/labels but differ in
 // a load-bearing annotation (here, the operator-facing description)
-// must be reported as a divergence. Before this fix, annotation prose
-// was excluded from comparison entirely and this scenario passed
-// silently.
+// must be reported as a divergence. Annotation prose has to take part
+// in the comparison, or this scenario passes silently.
 func TestCompareFile_DetectsAnnotationDrift(t *testing.T) {
 	dir := t.TempDir()
 	multiDir := filepath.Join(dir, "multi")

@@ -1056,10 +1056,9 @@ jobs:
       - name: lint-go-typographic-quotes
         # `make fmt` runs gofumpt, whose doc-comment reformatter applies Go's
         # legacy TeX quoting rule: a doubled apostrophe in a DOC comment
-        # becomes U+201D. Six comments quoting SQL empty-string predicates
-        # (`entry_xdr != ''`, `WHERE s.signer <> ''`) had already been
-        # rewritten in place, so each documented an invariant it no longer
-        # stated. The rewrite is fmt-STABLE — `gofumpt -l` lists nothing
+        # becomes U+201D. A comment quoting a SQL empty-string predicate
+        # (`entry_xdr != ''`, `WHERE s.signer <> ''`) then documents an
+        # invariant it no longer states. The rewrite is fmt-STABLE — `gofumpt -l` lists nothing
         # afterwards — so only a scan for the character itself sees it.
         run: python3 ./scripts/ci/lint-go-typographic-quotes.py
       - name: lint-go-typographic-quotes self-test

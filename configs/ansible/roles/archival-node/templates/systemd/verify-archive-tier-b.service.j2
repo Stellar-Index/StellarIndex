@@ -101,8 +101,8 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # this unit at 04:38 UTC, that trailing block is present on EVERY run.
 # The binary now counts it as `unmirrored`, not `missed`, so the flag
 # reads only genuine holes inside the mirror's own coverage — 0 of them
-# today. Wiring the flag before that distinction existed would have
-# failed this unit on its next fire, every night.
+# today. Without that distinction the flag would fail this unit on
+# every nightly fire.
 #
 # On failure the run returns before the state write, so the checkpoint
 # tier's high-water FREEZES at its last certified value and every later

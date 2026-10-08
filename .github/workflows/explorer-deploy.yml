@@ -88,8 +88,7 @@ jobs:
         # Deploy-approval gate: this job
         # declares `environment: explorer-${environment}`, which is not
         # a gate by itself — an environment with no `required_reviewers`
-        # rule deploys unattended, exactly like deploy.yml's `r1` gate
-        # before that assertion landed. This job holds
+        # rule deploys unattended. This job holds
         # CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID and can repoint the
         # live explorer, so it gets the same fail-closed check. Scoped
         # to `production` only — `preview` is a low-stakes, non-public

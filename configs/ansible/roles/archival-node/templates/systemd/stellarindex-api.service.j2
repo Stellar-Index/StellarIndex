@@ -1,11 +1,9 @@
 # Rendered by Ansible (archival-node role).
 #
-# CS-118 (audit-2026-06-30): the INTERNET-FACING API no longer runs
-# as root — it runs de-privileged as the stellarindex service user
-# with the hardening block from the in-repo unit at
-# deploy/systemd/stellarindex-api.service (which was drifting unused
-# while this template ran the daemon as root). The stellarindex user
-# is created by 04-users.yml (CS-119). EnvironmentFile is read by
+# The INTERNET-FACING API does not run as root — it runs de-privileged
+# as the stellarindex service user with the hardening block from the
+# in-repo unit at deploy/systemd/stellarindex-api.service. The
+# stellarindex user is created by 04-users.yml. EnvironmentFile is read by
 # systemd (PID 1), not the service user; it stays 0640
 # root:stellarindex. Caddy terminates TLS and proxies to :3000, so
 # no privileged port bind is needed.

@@ -104,8 +104,8 @@ if [ "$read_rc" -eq 0 ]; then
   if [ -z "$ranges" ]; then
     # A SUCCESSFUL read that yielded no partitions — the bucket is empty,
     # or mc answered in a shape the parser no longer matches. Both are DR
-    # events and both keep the shape that FIRES, exactly as shipped;
-    # what changed is only that a FAILED read no longer lands here.
+    # events and both keep the shape that FIRES; a FAILED read never
+    # lands here.
     count=0; first=0; last=0; unexpected=1
   else
     read -r trim_start trim_end <<< "$(printf '%s' "$EXPECTED_TRIM" | tr '-' ' ')"
