@@ -58,10 +58,10 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 EnvironmentFile=-/run/archive-completeness.env
 
 # Sensible defaults. Operators override via /etc/default/archive-completeness.
-# NOTE: there is no ARCHIVE_TO default on purpose. It used to be
-# `Environment=ARCHIVE_TO=0`, which the binary rejects outright ("-to is
-# required") — so a self-hoster who followed the wiring above got a unit
-# that failed on every single timer tick.
+# NOTE: there is no ARCHIVE_TO default on purpose. A default of
+# `Environment=ARCHIVE_TO=0` is rejected outright by the binary ("-to is
+# required"), so a self-hoster who followed the wiring above would get a
+# unit that failed on every single timer tick.
 Environment=ARCHIVE_FROM=2
 Environment=STELLAR_NETWORK=pubnet
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom

@@ -646,9 +646,9 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 // `?code=XRP` returned 645 rows with not one flagged (cold audit
 // 2026-08-04).
 //
-// The census originally ran over cat.All() with no carve-out, which put
-// the twenty sovereign-currency entries inside it too. That was the
-// wrong half of the rule, not a stricter version of it: the reasoning
+// The census must not run over cat.All() without a carve-out, which
+// would put the twenty sovereign-currency entries inside it too. That is
+// the wrong half of the rule, not a stricter version of it: the reasoning
 // above is "no legitimate classic asset can bear the code of an asset
 // issued elsewhere", and a sovereign currency is issued nowhere — SEP-1
 // codes a fiat anchor's deposit token with exactly the ISO code, so the

@@ -410,13 +410,13 @@ func TestCoinGecko_NameStable(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_BatchedAcrossPairs — F-0030 follow-up. Multiple
+// TestCoinGecko_BatchedAcrossPairs: multiple
 // per-pair LookupQuote calls within the batch TTL window MUST
 // coalesce into a single HTTP request covering every configured
-// (id, quote) pair. Before this fix, the orchestrator's per-tick
-// loop issued one HTTP call per pair (9 pairs × 2 ticks/min × 1440
-// min/day = 25,920 calls/day, well past CoinGecko's demo-tier
-// 10K/day limit). After: 1 call per tick (~2,880/day).
+// (id, quote) pair. One call per pair from the orchestrator's per-tick
+// loop would be 9 pairs × 2 ticks/min × 1440 min/day = 25,920
+// calls/day, well past CoinGecko's demo-tier 10K/day limit; batching
+// gives 1 call per tick (~2,880/day).
 func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
 	var hits int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

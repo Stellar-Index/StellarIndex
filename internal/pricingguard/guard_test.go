@@ -87,7 +87,7 @@ func TestSelectGuardedVWAP1m_CandidateBucketExcludedFromOwnBaseline(t *testing.T
 }
 
 func TestSelectGuardedVWAP1m_ThinBaselineWiderFiniteBand(t *testing.T) {
-	// Post-M11(b): a thin (but non-empty) baseline no longer fails fully
+	// A thin (but non-empty) baseline does not fail fully
 	// open — it falls back to a WIDER but finite order-of-magnitude band.
 	// A gross (>10x) manipulation is still caught and served as LKG...
 	gross := mkRow(0, "999.0")

@@ -297,8 +297,8 @@ func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
 
 // TestAsyncSink_LegacySEP41DedupKeyUnchanged — a Hit built the old
 // way (only ContractID + EventType, no Kind/Symbol — e.g. from a
-// caller compiled before this change) must still dedup exactly as
-// before: two Hits with the SAME EventType collapse to one record,
+// caller that never sets them) must still dedup on EventType alone:
+// two Hits with the SAME EventType collapse to one record,
 // two Hits with DIFFERENT EventTypes on the same contract stay
 // distinct.
 func TestAsyncSink_LegacySEP41DedupKeyUnchanged(t *testing.T) {

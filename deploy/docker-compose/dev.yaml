@@ -85,8 +85,8 @@ services:
       retries:  10
 
   # ─── MinIO ────────────────────────────────────────────────────────
-  # minio/minio and minio/mc are gone from Docker Hub and quay.io (MinIO
-  # Inc went source-only distribution in 2025-10).
+  # minio/minio and minio/mc are not pullable from Docker Hub or quay.io
+  # (MinIO Inc distributes source only).
   # cgr.dev/chainguard/minio is the one still-pullable, anonymously
   # accessible source, and it bundles the `mc` CLI in the same image
   # (used below by minio-init), so one pinned image covers both

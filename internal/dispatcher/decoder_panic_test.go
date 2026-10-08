@@ -329,8 +329,8 @@ func TestDispatchOne_RawEventSinkPanicIsNotSwallowed(t *testing.T) {
 	_, _ = disp.dispatchOne(events.Event{ContractID: "CX"})
 }
 
-// TestRecognize_PanicResolvesToUnrecognised covers the seam the #371 F1
-// fix originally missed: Recognize walks every decoder's Matches, and it
+// TestRecognize_PanicResolvesToUnrecognised covers the Recognize seam:
+// Recognize walks every decoder's Matches, and it
 // is called from the completeness recogniser and two ops subcommands,
 // none of which recovered — so one malformed row took the whole
 // verification run down with it.
