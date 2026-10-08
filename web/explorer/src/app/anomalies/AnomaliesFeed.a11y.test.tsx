@@ -44,7 +44,7 @@ function mountFeed() {
   );
 }
 
-// REGRESSION (RLT-215): the freeze-timeline table's column headers were bare
+// REGRESSION: the freeze-timeline table's column headers were bare
 // <th> with no scope, so a screen reader announcing a data cell never names
 // which column it belongs to.
 describe('AnomaliesFeed table header cells declare their scope', () => {

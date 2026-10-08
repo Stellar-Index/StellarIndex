@@ -4,7 +4,7 @@
 // through here instead of a hand-built template literal: an operator
 // name containing `/`, `?`, `#` or `%` (an oracle registered as
 // `band/v2`, a protocol slug with a space) breaks the link silently
-// otherwise — see GH-846.
+// otherwise.
 export const hrefFor = {
   source: (name: string): string => `/sources/${encodeURIComponent(name)}`,
   exchange: (name: string): string => `/exchanges/${encodeURIComponent(name)}`,

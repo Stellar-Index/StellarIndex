@@ -122,7 +122,7 @@ async function fetchFxSeries(
 async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
   // Migrated from /v1/currencies/{ticker} → /v1/external/assets/{ticker}
-  // (LC-001 Phase 3, CA2-A35-correct-0): fiat entries carry no Stellar
+  //: fiat entries carry no Stellar
   // issuance, so /v1/assets/{ticker} 404s asset-is-external for every one
   // of them. /v1/external/assets/{slug} resolves the same ticker fallback
   // (Server.lookupCatalogue) through the identical handleGlobalAsset view,

@@ -41,7 +41,7 @@ export function fiatSlugFor(ticker: string): string {
 // assetHrefFor wraps fiatSlugFor + the /external/assets/ prefix so
 // caller sites read declaratively: `<Link href={assetHrefFor('USD')}>`.
 //
-// UXP-12/AM-16/LC-001: a fiat currency has two detail pages —
+// A fiat currency has two detail pages —
 // /assets/{slug} (VerifiedCurrencyView, framed as an on-platform asset)
 // and /external/assets/{slug} (framed as a non-Stellar reference asset).
 // The external page is the DECLARED canonical for class==='fiat' (see
@@ -55,7 +55,7 @@ export function assetHrefFor(ticker: string): string {
 
 // assetHref is the routing chokepoint for an already-resolved ON-CHAIN
 // asset page slug (classic asset id, `native`, a Soroban contract's
-// wrapped code, an RWA/embed slug, …). GH-894/K064: every call site used
+// wrapped code, an RWA/embed slug, …). Every call site used
 // to hand-build `/assets/${slug}` itself, and one of them (the market-pair
 // badge's `fiat:` branch) drifted straight past assetHrefFor above and
 // linked a fiat leg to the non-canonical /assets/ page. Route every such

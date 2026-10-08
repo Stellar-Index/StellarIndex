@@ -51,7 +51,7 @@ type PriceType = components['schemas']['Price']['price_type'];
  */
 interface PricedAt {
   price: number;
-  /** Decimal string exactly as the API served it — RLT-069: the float
+  /** Decimal string exactly as the API served it. The float
    * `price` above is display-only; the multiply against a holding's
    * balance must run on this, never on the floated copy. */
   priceRaw: string;
@@ -61,8 +61,8 @@ interface PricedAt {
 
 /**
  * Exact `baseUnits (integer, `decimals` places) × priceRaw (decimal
- * string)`, in USD cents, computed entirely in BigInt. RLT-069: the
- * previous `Number(amount) * Number(price)` float multiply, summed
+ * string)`, in USD cents, computed entirely in BigInt. The
+ * naive `Number(amount) * Number(price)` float multiply, summed
  * again as a float across holdings, doesn't preserve Σ parts == whole
  * for a portfolio total (AGENTS.md invariant 1 — never accumulate
  * money in float64). Returns null on unparseable input.
@@ -98,7 +98,7 @@ interface PriceBatch {
   failedCount: number;
   /**
    * Asset ids the pricing API's serving gate refused (thin market,
-   * flagged issuer) — GH-786: the API SAW these and declined to price
+   * flagged issuer). The API SAW these and declined to price
    * them, which is a different fact from a holding it never observed at
    * all, and a portfolio must not report the two alike as "unpriced".
    */
@@ -112,11 +112,11 @@ interface Holding {
   priceType: PriceType | null;
   valueUSD: number | null;
   /** Exact cents behind valueUSD — the portfolio total sums THIS, never
-   * the re-floated `valueUSD` (RLT-069: float re-sum reintroduces the
+   * the re-floated `valueUSD` (a float re-sum reintroduces the
    * per-cent rounding error the BigInt multiply just removed). */
   valueCents: bigint | null;
   /** True when the pricing API withheld this asset's price rather than
-   * never having observed it (GH-786). */
+   * never having observed it. */
   withheld: boolean;
 }
 
@@ -171,7 +171,7 @@ export function AccountPositions({ id }: { id: string }) {
     enabled: priceableIds.length > 0 && CURRENT_NETWORK.pricing,
     retry: false,
     staleTime: 30_000,
-    // RLT-387: a `staleTime` alone only re-fetches on the visitor's next
+    // A `staleTime` alone only re-fetches on the visitor's next
     // interaction — an open tab's valuation goes stale and stays stale.
     // Same live-refresh interval as the converter's identical
     // `/v1/price/batch` read (ConvertLive.tsx's useConvertRate).
@@ -242,7 +242,7 @@ export function AccountPositions({ id }: { id: string }) {
     const priced = priceMap[asset] ?? null;
     const priceUSD = priced?.price ?? null;
     // Exact BigInt multiply on the raw stroop integer and the API's
-    // decimal price string — RLT-069, see valueUsdCents.
+    // decimal price string; see valueUsdCents.
     const cents = priced ? valueUsdCents(raw, 7, priced.priceRaw) : null;
     const valueUSD = cents != null ? Number(cents) / 100 : null;
     return {
@@ -274,7 +274,7 @@ export function AccountPositions({ id }: { id: string }) {
     pricesQ.isError && !pricesQ.data
       ? priceableIds.length
       : (pricesQ.data?.failedCount ?? 0);
-  // GH-786: a holding the pricing API SAW and refused (thin market,
+  // A holding the pricing API SAW and refused (thin market,
   // flagged issuer) is a different fact from one it never observed —
   // carve it out of the generic "unpriced" bucket rather than reporting
   // both alike.
@@ -354,7 +354,7 @@ export function AccountPositions({ id }: { id: string }) {
 
       {/* The valuation is only as fresh as the prices behind it, and the
           API says how fresh that is — the panel used to claim a "live
-          VWAP" and show nothing at all (RLT-384). */}
+          VWAP" and show nothing at all. */}
       {pricesQ.data?.observedAt != null && (
         <p className="text-ink-muted text-xs">
           Prices observed {formatRelative(pricesQ.data.observedAt)}

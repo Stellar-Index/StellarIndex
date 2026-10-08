@@ -44,7 +44,7 @@ describe('parseIncidentFile', () => {
     // The bullet list under affected_components must still be picked
     // up even though its key line carries a trailing comment.
     expect(inc!.affected_components).toEqual(['api', 'indexer']);
-    // Same dangling-comment shape as resolved_at (GH-837): a template
+    // Same dangling-comment shape as resolved_at: a template
     // copy with `postmortem:` left blank must parse to null, not the
     // comment text — a truthy postmortem gates a "Read full postmortem"
     // link that would otherwise point nowhere real.

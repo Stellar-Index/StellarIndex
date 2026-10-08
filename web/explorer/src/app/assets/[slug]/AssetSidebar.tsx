@@ -194,7 +194,7 @@ export function AssetSidebar({
 
       {/* Links / issuer / activity */}
       <div className="rounded-card border-line bg-surface border">
-        {/* CS-102: home_domain is attacker-controlled on-chain data; only
+        {/* home_domain is attacker-controlled on-chain data; only
             render it as a clickable link when it passes isSafeHomeDomain
             (the guard the issuer pages already use). Otherwise show plain
             text so a smuggled userinfo/path can't produce a phishing link. */}

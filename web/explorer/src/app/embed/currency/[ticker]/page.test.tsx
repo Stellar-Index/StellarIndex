@@ -96,7 +96,7 @@ describe('EmbedCurrencyPage — resolves fiat identity via /v1/external/assets (
       'fetch',
       vi.fn(async (input: string | URL) => {
         const url = String(input);
-        // LC-001 Phase 3: fiat has no Stellar issuance, so the non-external
+        // Fiat has no Stellar issuance, so the non-external
         // route 404s. The corrected fetcher must not call it for its data.
         if (url.includes('/v1/assets/EUR')) {
           return jsonResponse(

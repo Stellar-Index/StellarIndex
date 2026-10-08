@@ -9,7 +9,7 @@ import { IssuerPanel } from './IssuerPanel';
 // (bidirectional). Unverified it is self-declared metadata a scam issuer can
 // spoof (set home_domain to a reputable org's domain to borrow its ORG_NAME),
 // so it must not headline the panel or appear as the "Organisation" field
-// (CS-100 / trust-spoofing audit). The real on-chain home_domain still shows.
+//. The real on-chain home_domain still shows.
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');

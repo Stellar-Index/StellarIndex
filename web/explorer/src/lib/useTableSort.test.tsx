@@ -69,7 +69,7 @@ describe('compareValues (via useTableSort)', () => {
   });
 });
 
-// CA2-A35-correct-2: nulls/NaN must sort last regardless of direction. The
+// Nulls/NaN must sort last regardless of direction. The
 // default direction is 'desc' (useTableSort's own `initialDir` default and
 // every column's toggle fallback), so a regression here surfaces as blank
 // rows rising to the top of a descending sort — e.g. unpriced assets above

@@ -40,7 +40,7 @@ function firstSep(s: string): number {
 }
 
 // renderCodeIssuer is the shared (code, issuer) render used for both the
-// classic-asset branch and SAC-resolved contracts (CA2-A36): a code alone
+// classic-asset branch and SAC-resolved contracts: a code alone
 // is not an asset identity (AGENTS.md — key on (code, issuer), never code
 // alone), so any path that has an issuer available must show it. `badge`
 // appends the small uppercase marker (e.g. "SAC") the SAC branch uses.
@@ -52,7 +52,7 @@ function renderCodeIssuer(
   badge?: string,
 ) {
   const known = issuerMap?.[issuer];
-  // CS-100: only present "by {org_name}" when SEP-1 verified — see the
+  // Only present "by {org_name}" when SEP-1 verified — see the
   // classic-branch comment below for why org_name alone is spoofable.
   const subtitle =
     known?.org_verified && known.org_name ? (
@@ -169,7 +169,7 @@ export function AssetLabel({
       const sepIx = firstSep(resolved);
       if (sepIx === -1) {
         // No issuer in the resolved string — nothing to disambiguate on,
-        // fall back to the bare code (unchanged from before CA2-A36).
+        // fall back to the bare code.
         return (
           <div>
             <div className="font-medium">{resolved}</div>
@@ -216,7 +216,7 @@ export function AssetLabel({
   const issuer = canonical.slice(dashIx + 1);
   // When we know the issuer's organisation, render the org name as the
   // subtitle (e.g. "USDC / Circle") instead of the raw truncated G-strkey,
-  // gated on SEP-1 verification (CS-100 — org_name alone is spoofable).
+  // gated on SEP-1 verification (org_name alone is spoofable).
   // Shared with the SAC-resolved branch above via renderCodeIssuer.
   return renderCodeIssuer(code, issuer, issuerMap);
 }

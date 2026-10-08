@@ -193,7 +193,7 @@ describe('LiveAssetPrice', () => {
       />,
     );
     // The caption comes from the server's own problem-body wording
-    // (GH-772) — never a hardcoded liquidity-only string, which would
+    // — never a hardcoded liquidity-only string, which would
     // be false for a scam-issuer withhold like this one.
     expect(
       await screen.findByText(/directory-flagged issuer/i),

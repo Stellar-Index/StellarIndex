@@ -13,7 +13,7 @@
 // stripping the validators meant the fallback could never honor one once
 // the origin started sending them.
 //
-// GH-916: `public/_headers` is applied by the Pages static-asset server
+// `public/_headers` is applied by the Pages static-asset server
 // only. Every route below is caught by this Function's `[[path]].js`
 // wildcard, so NONE of its responses — real pre-rendered asset or shell
 // fallback — ever reach that asset server, and none carried CSP/HSTS/

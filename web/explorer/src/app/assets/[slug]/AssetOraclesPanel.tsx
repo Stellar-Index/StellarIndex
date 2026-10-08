@@ -222,7 +222,7 @@ export function AssetOraclesPanel({
     );
   }
 
-  // RLT-387: the oracle-class registry (Reflector/Band/RedStone/Chainlink)
+  // The oracle-class registry (Reflector/Band/RedStone/Chainlink)
   // never legitimately answers empty — it is this panel's own coverage
   // list, not a fact about one asset. A 200 with zero rows is the
   // registry unable to answer, same as registry.isError above; without it

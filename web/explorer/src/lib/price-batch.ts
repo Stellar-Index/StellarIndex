@@ -27,7 +27,7 @@ export interface ChunkedPriceBatch {
    * Ids a serving gate refused (thin market, flagged issuer, withheld
    * upstream leg) — the API SAW the pair and declined to price it,
    * distinct from an id absent from both `rows` and here, which the API
-   * never observed at all (GH-786: a portfolio must not report the two
+   * never observed at all (a portfolio must not report the two
    * alike as "unpriced").
    */
   withheld: string[];
