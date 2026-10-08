@@ -2143,9 +2143,8 @@ var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 // respect, and simply cannot open the lake. The datastore open + schema
 // load happen once, before the SDK's fetch worker (and therefore before
 // the Config.LiveRetryBudget the worker spends) exists, so a MinIO that
-// is down at process start used to end the process in microseconds. It
-// now stalls and retries instead, and this counter is what stops that
-// stall being silent.
+// is down at process start ends the process in microseconds unless it
+// stalls and retries; this counter stops that stall being silent.
 //
 // When to look at it: the first branch of the ledger-ingest.md
 // runbook. A cursor that has stopped advancing while this counter climbs
@@ -3114,9 +3113,9 @@ var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
 // LatestOracleStreams because their stored asset or quote text would not
 // parse as a canonical asset.
 //
-// The read used to `continue` on a parse failure with no log, metric or
-// error, so such a row simply vanished from /v1/oracle/streams and the
-// explorer's /oracles page with zero signal (wave-D SI-OC-04).
+// A silent `continue` on a parse failure would make such a row vanish
+// from /v1/oracle/streams and the explorer's /oracles page with zero
+// signal.
 //
 // That matters most exactly when it is most likely: the documented
 // remediation for a mislabelled oracle row is an operator-run raw SQL
@@ -3911,8 +3910,8 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 // refreshes where `aggregate.min_usd_volume` is configured (> 0) but
 // the target pair's on-chain quote asset (classic or Soroban) has no
 // operator-recognised USD peg, so the manipulation-floor check could
-// not be evaluated and the window was DROPPED fail-closed (these windows used to publish
-// unguarded, which was the exposure of the earlier valuation incident).
+// not be evaluated and the window was DROPPED fail-closed (publishing them
+// unguarded is the valuation-incident exposure).
 // Labelled
 // by `pair` (bounded — operators configure a small, curated
 // aggregate.pairs allow-list; see PriceStalenessSeconds for the same
@@ -4262,9 +4261,8 @@ var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 // anomaly checker emitted, labelled by asset class, mirroring
 // [AnomalyFreezeEngagedTotal].
 //
-// This exists because ActionWarn was previously computed and then thrown
-// away: the orchestrator discarded the returned
-// Action on the non-freeze path, so a bucket deviating past `warn_pct` —
+// This exists because ActionWarn is otherwise computed and thrown
+// away: on the non-freeze path a bucket deviating past `warn_pct` —
 // enough to be called out, not enough to freeze — left NO trace anywhere.
 // The operator's `warn_pct` knob was tunable and completely inert.
 //
@@ -4411,9 +4409,9 @@ var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 // marker was gone but `freeze_events` still held an open, unlapsed row.
 //
 // Each increment is one freeze — extension count, escalation flag and all —
-// that would have silently RELEASED before 0119: the orchestrator reads a
+// that would silently RELEASE: the orchestrator reads a
 // missing marker under a live freeze as the ADR-0019 operator override, so
-// a Redis flush used to unfreeze every held pair, including ones that had
+// a Redis flush would unfreeze every held pair, including ones that had
 // climbed the whole 2-hour ladder to escalated ("stays active until manual
 // unfreeze") and had already paged a human.
 //
@@ -5257,7 +5255,7 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 // and NonstandardDecimalsLockstepMismatchTotal — both offender counters —
 // so "the guard swept and found nothing" and "the guard never armed" were
 // indistinguishable: a ClickHouse that is still loading metadata for the
-// 150B-row lake at aggregator boot used to disable the guard for the whole
+// 150B-row lake at aggregator boot would disable the guard for the whole
 // process lifetime with both counters sitting at a healthy-looking zero.
 // `time() - this` powers the staleness alert
 // (stellarindex_decimals_guard_sweep_stale), the same shape as
@@ -5810,7 +5808,7 @@ var ExplorerRefreshGateSaturatedTotal = prometheus.NewCounterVec(
 // ExplorerSWRRefreshDurationSeconds — latency histogram for one
 // detached SWR refresh, labelled like the counter. Buckets span
 // 50 ms → 300 s (the widest per-cache refresh timeout). These
-// refreshes are exactly the reads that used to time out inline at
+// refreshes are exactly the reads that would otherwise time out inline at
 // the request deadline — their `ok` p95 per cache is the direct
 // measure of how much headroom the detach bought, and a p95 climbing
 // toward its cache's refresh timeout predicts the stale-age growing

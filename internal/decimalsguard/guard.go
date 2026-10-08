@@ -334,7 +334,7 @@ func (g *Guard) tick(ctx context.Context, phase string) {
 // offender — it stamps obs.DecimalsGuardSweepLastSuccessUnix. Without that,
 // "the guard swept and found nothing" and "the guard never armed" both read
 // as the offender counters sitting at zero, and a ClickHouse that fails to
-// answer at aggregator boot used to disable the guard for the whole process
+// answer at aggregator boot would disable the guard for the whole process
 // lifetime with no metric surfacing it.
 func (g *Guard) Sweep(ctx context.Context) error {
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, time.Now().Add(-g.window))

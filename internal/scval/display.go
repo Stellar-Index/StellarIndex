@@ -144,7 +144,7 @@ func int256String(p xdr.Int256Parts) string {
 
 // truncateDisplay bounds one rendered fragment.
 //
-// Cuts on a RUNE boundary. It used to slice bytes, so a >120-byte string
+// Cuts on a RUNE boundary: slicing bytes would, for a >120-byte string
 // whose multi-byte rune straddled byte 120 produced invalid UTF-8 —
 // encoding/json substitutes U+FFFD so the API doesn't error, but a
 // consumer writing the field to a strict-UTF-8 sink rejects the row. The

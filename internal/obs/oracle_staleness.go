@@ -9,9 +9,8 @@ import (
 //
 // `stellarindex_oracle_stale` asks one question per (source, asset):
 // has this pair gone longer without a publication than it is allowed
-// to? The allowance used to be computed inside the alert expression as
-// `10 * stellarindex_oracle_resolution_seconds` — a per-SOURCE number,
-// because resolution is declared per source.
+// to? A per-SOURCE allowance (`10 * stellarindex_oracle_resolution_seconds`)
+// is wrong because resolution is declared per source.
 //
 // Staleness, though, is a per-ASSET property. `reflector-cex` declares
 // a 300 s resolution, so every asset on it got a 3000 s (50 min)
@@ -27,7 +26,7 @@ import (
 //
 //   - [DeclareOracleResolution] publishes a source's resolution and
 //     derives its DEFAULT budget (multiplier × resolution) — the exact
-//     number the alert used to compute inline, so nothing moves for an
+//     number a per-source alert would compute, so nothing moves for an
 //     asset nobody overrode.
 //   - [DeclareOracleHeartbeat] does the same for heartbeat sources,
 //     whose default budget is heartbeat + [OracleHeartbeatGrace].
