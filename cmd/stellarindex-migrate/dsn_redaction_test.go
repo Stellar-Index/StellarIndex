@@ -208,7 +208,7 @@ func assertWithheld(t *testing.T, out, arg string) {
 // The first redaction was proven on a password with an unescaped `%` and
 // declared closed. It was a pattern over the URL's TEXT, and the pattern
 // ended the password at the FIRST `@` and refused to cross a space or a
-// quote. Reproduced against the built binary before this fix:
+// quote. Against the built binary that pattern produced:
 //
 //	…:HEAD%ZZ@TAIL@host…   printed  `<redacted>@TAIL@host`   (tail leaked)
 //	…:HEAD TAIL@host…      printed the DSN untouched          (all of it)
@@ -418,8 +418,8 @@ func TestMigrate_FlagParseErrorsDoNotEchoTheArgument(t *testing.T) {
 // keyword form were left to a pattern written for free text, which ends
 // a value at the first space, quote or `;` — and, for a query, at the
 // first `&`. A DSN with no `@` at all was covered by nothing: it has no
-// `:password@` span and no userinfo for a pattern to key on. Reproduced
-// against the built binary before this fix:
+// `:password@` span and no userinfo for a pattern to key on. Against
+// the built binary that produced:
 //
 //	down "…?password=HEAD TAIL"    printed  `password=<redacted> TAIL`
 //	down "…?password=HEAD&TAIL&…"  printed  `password=<redacted>&TAIL&…`

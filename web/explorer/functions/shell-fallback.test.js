@@ -17,9 +17,9 @@ import { describe, it, expect } from 'vitest';
 // a missing/broken shell asset into a soft-200 "error page" that caches,
 // uptime monitors, and search engines can't distinguish from a real page.
 
-// K022: `cases` used to be a hand-maintained [name, handler, path] array —
-// a new long-tail shell route (the `assets/[[path]].js` handler drifted in
-// untested this way) shipped with no matching entry and no failure. Walk
+// `cases` is not a hand-maintained [name, handler, path] array: a new
+// long-tail shell route (the `assets/[[path]].js` handler drifted in
+// untested this way) would ship with no matching entry and no failure. Walk
 // the directory instead: every `[[path]].js` whose source references a
 // `/shell/` sub-fetch is a shell-fallback handler and is picked up
 // automatically. `og/[[path]].js` is a different contract (dynamic image

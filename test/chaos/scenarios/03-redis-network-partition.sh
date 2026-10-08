@@ -5,7 +5,7 @@
 #
 # This differs from 01 (full stop) by exercising the timeout path
 # rather than the connection-refused path. They hit different go-redis
-# code branches and historically a regression in one didn't surface in
+# code branches, and a regression in one may not surface in
 # the other.
 #
 # Pass criteria:

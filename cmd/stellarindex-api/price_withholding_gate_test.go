@@ -216,20 +216,11 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // it as soon as ONE arm calls wiring.PriceWithheld().
 //
 // That is exactly the MSP-07 shape. wiring.StorePriceReader.LatestPrice has a
-// closed-VWAP arm and a last-trade arm; the last-trade arm originally
-// spelled out `!r.substance.Allowed(...)` and consulted the SCAM gate
-// not at all. An operator setting disable_substance_gate=true to
-// diagnose a coverage complaint would then silently publish a
-// directory-flagged issuer's last trade as its price — reversing an
-// owner-level trust decision they never touched.
-//
-// This guard existed, and I DELETED it in the review sweep that
-// rewrote its sibling — while that same commit's message said "the
-// MSP-07 half (drift WITHIN a seam) was always real". The coverage
-// half was genuinely weak and was rightly replaced; removing this half
-// alongside it was a regression, and the planted MSP-07 mutation
-// passed CI until this was restored. main.go still cited this test by
-// name the whole time.
+// closed-VWAP arm and a last-trade arm; a last-trade arm that spells out
+// `!r.substance.Allowed(...)` and never consults the SCAM gate lets an
+// operator setting disable_substance_gate=true to diagnose a coverage
+// complaint silently publish a directory-flagged issuer's last trade as
+// its price — reversing an owner-level trust decision they never touched.
 //
 // The rule: a gate HALF's decision method may be named only inside a
 // chokepoint — wiring.PriceWithheld() here, and in the handler package
@@ -237,8 +228,8 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // asks). Every other call site is a second spelling that can drift out
 // of step. The scan covers main.go, the wiring package AND every non-test
 // file under internal/api: a guard bound to main.go could not see the handler
-// package, so /v1/price/stream's hand-written gate was invisible to the
-// very test its comment cited as its drift guard.
+// package, so a hand-written gate in /v1/price/stream would be invisible
+// to the very test its comment cites as its drift guard.
 func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
 	files := readerSeamFiles(t)

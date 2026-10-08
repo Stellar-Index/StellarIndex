@@ -4,8 +4,7 @@ import "testing"
 
 // TestFormatDivergencePrice pins our_price/median to the decimal-as-string
 // shape DivergenceFiringWebhookPayload documents (openapi/stellar-index.v1.yaml).
-// Marshaling the raw float64 fields directly emits a JSON number, which is
-// what every live delivery sent before this fix (RLT-081).
+// Marshaling the raw float64 fields directly would emit a JSON number.
 func TestFormatDivergencePrice(t *testing.T) {
 	got := formatDivergencePrice(0.1234567)
 	want := "0.1234567"
@@ -16,8 +15,7 @@ func TestFormatDivergencePrice(t *testing.T) {
 
 // TestDivergenceSourceNames pins `sources` to an array of source NAMES,
 // per the spec's `type: array, items: {type: string}`. Marshaling the raw
-// map[string]float64 directly emits a JSON object (name -> price), which
-// is what every live delivery sent before this fix (RLT-081).
+// map[string]float64 directly would emit a JSON object (name -> price).
 func TestDivergenceSourceNames(t *testing.T) {
 	got := divergenceSourceNames(map[string]float64{
 		"coingecko": 1.05,

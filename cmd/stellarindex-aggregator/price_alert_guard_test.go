@@ -116,7 +116,7 @@ func TestPriceAlertReader_FatFingerServesLKGNoSpuriousAlert(t *testing.T) {
 }
 
 func TestPriceAlertReader_ThinHistoryWiderFiniteBand(t *testing.T) {
-	// Post-M11(b): a thin baseline no longer fails fully open. A gross
+	// A thin baseline does not fail fully open. A gross
 	// (>10x) print is caught and served as last-known-good (no spurious
 	// alert); a within-order-of-magnitude value still passes through.
 	base, quote := alertUSDAssets(t)

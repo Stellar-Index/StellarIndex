@@ -18,10 +18,10 @@ import (
 // TestStorage_LatestOracleUpdatesForAssets_KeepsBothLiveQuotes (Q095).
 //
 // Redstone publishes EUROC as two independent live feeds from the same
-// source: EUROC/EUR and EUROC/USD. Before this fix,
-// LatestOracleUpdatesForAssets's `DISTINCT ON (source)` collapsed both
+// source: EUROC/EUR and EUROC/USD. A
+// `DISTINCT ON (source)` in LatestOracleUpdatesForAssets would collapse both
 // into one row — whichever quote had the higher (ts, ledger) silently
-// won, discarding the other. This proves both survive, and that
+// winning. This proves both survive, and that
 // `?quote=`-shaped filtering (done by the caller) can recover exactly
 // one.
 func TestStorage_LatestOracleUpdatesForAssets_KeepsBothLiveQuotes(t *testing.T) {
