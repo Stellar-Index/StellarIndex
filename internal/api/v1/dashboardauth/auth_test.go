@@ -105,7 +105,7 @@ func TestCodeDerivationIsKeyed(t *testing.T) {
 
 // TestValidateNeverLeavesCodeDerivationUnkeyed — Config.validate()
 // must refuse to run the code path without SOME secret: an empty
-// secret is exactly the offline-derivable state the audit flagged.
+// secret is exactly the offline-derivable state.
 func TestValidateNeverLeavesCodeDerivationUnkeyed(t *testing.T) {
 	rig := newTestRig(t) // no explicit secret configured
 	if len(rig.h.cfg.Generator.Secret) == 0 {

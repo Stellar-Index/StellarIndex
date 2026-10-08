@@ -48,8 +48,7 @@ func doWithReason(t *testing.T, method, url, reason, body string) *http.Response
 
 // TestAccountKeysCreate_OperatorRequiresReason — an operator-tier
 // self-mint without X-Reason is refused BEFORE the store is touched,
-// mirroring /v1/admin/keys. Proven red on origin/main: the handler
-// returned 201 and Create was called once.
+// mirroring /v1/admin/keys. The store's Create is never called.
 func TestAccountKeysCreate_OperatorRequiresReason(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
 	sink := &recordingAuditSink{}
@@ -70,8 +69,7 @@ func TestAccountKeysCreate_OperatorRequiresReason(t *testing.T) {
 // TestAccountKeysCreate_OperatorSelfMintIsAudited — with X-Reason the
 // operator keeps tier inheritance (the documented rotation contract) and
 // the mint lands one key.mint audit row naming the actor key, the minted
-// key and the reason. Proven red on origin/main: 201 with zero audit
-// entries.
+// key and the reason.
 func TestAccountKeysCreate_OperatorSelfMintIsAudited(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_child", Label: "rotate", Tier: auth.TierOperator},

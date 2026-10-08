@@ -12,8 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// r1's actual system recognition snapshot, 2026-09-02 — the row that
-// made the public headline read "20 of 21 complete" with the 1 being an
+// A live-shaped system recognition snapshot — the row that would
+// make the public headline read "20 of 21 complete" with the 1 being an
 // audit axis rather than a source.
 func liveRecognitionSnapshot(now time.Time) timescale.CompletenessSnapshot {
 	return timescale.CompletenessSnapshot{

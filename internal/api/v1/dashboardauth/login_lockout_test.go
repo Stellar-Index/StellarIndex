@@ -273,8 +273,8 @@ func lockoutErrors(t *testing.T, op string) float64 {
 // fail-open rationale names (migration 0122 lagging a node) would
 // silently disable the lockout fleet-wide for as long as it lasted.
 //
-// So the counter is the fix's own accountability, exactly as
-// AdminAuditWriteFailuresTotal is for the audit path in this wave.
+// So the counter is the control's own accountability, exactly as
+// AdminAuditWriteFailuresTotal is for the audit path.
 func TestLockout_StatusCheckFailureIsCounted(t *testing.T) {
 	const email = "status-blip@example.com"
 	lr := newLockoutRig(t)

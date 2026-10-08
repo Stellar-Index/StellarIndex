@@ -185,8 +185,8 @@ func TestAdminKeysCreate_RateLimitDefaultsToCaller(t *testing.T) {
 // TestAdminKeysCreate_RequiresReason pins the reason requirement.
 // Minting a privileged credential is at least as consequential as
 // setting a per-account override or killing a key, both of which hard-400
-// without an X-Reason header. The mint was the one admin write that
-// captured no reason: the audit row recorded WHO minted WHAT, never WHY.
+// without an X-Reason header. Without the header the audit row would
+// record WHO minted WHAT, never WHY.
 func TestAdminKeysCreate_RequiresReason(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_x"}, plain: "p"}
 	sink := &recordingAuditSink{}
