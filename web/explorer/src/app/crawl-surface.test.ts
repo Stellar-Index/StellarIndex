@@ -37,7 +37,7 @@ import { metadata as txMeta } from './tx/page';
 
 // Every API-derived sitemap section now goes through buildFetch
 // (src/lib/buildFetch.ts) — an unreachable or empty listing fails the
-// BUILD (T250/T293: the old bare-fetch/catch/[] fallback silently and
+// BUILD (the old bare-fetch/catch/[] fallback silently and
 // permanently dropped a whole URL family on a single transient
 // failure). Stub one benign row per listing so these tests, which only
 // assert on the STATICALLY enumerated pages, don't take a dependency on
@@ -282,7 +282,7 @@ describe('long-tail shell metadata', () => {
   });
 
   /**
-   * T278: functions/lending/[[path]].js now serves /lending/shell/ for
+   * functions/lending/[[path]].js now serves /lending/shell/ for
    * any pool id outside the build-time pre-render (same S1b pattern as
    * /assets and /markets) — its baked metadata must stay generic and out
    * of the index, and declare its own empty `alternates` (F095) rather

@@ -10,7 +10,7 @@ import { LivePrice } from '../../LivePrice';
  * EmbedCurrencyPathView — the runtime fallback for /embed/currency/[ticker]
  * outside the build-time pre-render (a currency added since, or a
  * lowercase ticker the build never emits), served by
- * functions/embed/currency/[[path]].js (T291). The USD rate loads live.
+ * functions/embed/currency/[[path]].js. The USD rate loads live.
  */
 export function EmbedCurrencyPathView() {
   const upper = useLastPathSegment().toUpperCase();

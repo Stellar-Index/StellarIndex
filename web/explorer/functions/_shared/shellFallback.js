@@ -1,12 +1,12 @@
 // Shared implementation for the CF Pages shell-fallback Functions
 // (accounts, assets, contracts, issuers, ledgers, lending, markets,
 // transactions, insights/sponsors, insights/creators — S-022/S1b; sources,
-// external/assets, embed/{asset,currency,pair} — T291). Each
+// external/assets, embed/{asset,currency,pair}). Each
 // route serves a real pre-rendered asset first, else the route's static
 // shell. A leading underscore excludes this directory from CF Pages
 // routing, so it is never itself served as a route.
 //
-// T309: forward the client's conditional-request headers to the shell
+// Forward the client's conditional-request headers to the shell
 // sub-fetch and pass through a real 304 (body-less) instead of stripping
 // if-none-match/if-modified-since. Production emits no ETag/Last-Modified
 // on these routes today (verified 2026-08-04), so this was latent — but

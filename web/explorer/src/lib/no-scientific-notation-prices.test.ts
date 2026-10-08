@@ -47,7 +47,7 @@ describe.each(priceRenderFiles)('price render site %s', (rel) => {
   });
 });
 
-// T270: the Pages Function OG card renderer is not in the `../app/**`
+// The Pages Function OG card renderer is not in the `../app/**`
 // tree above and bundles standalone from it, so it can't import
 // `@/lib/format` — but it renders the same sub-1 asset prices and must
 // stay off both `toExponential` AND `toPrecision` (which itself drops

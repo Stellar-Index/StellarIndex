@@ -16,7 +16,7 @@ import { EmbedAssetPathView } from './asset/[slug]/EmbedAssetPathView';
 import { EmbedCurrencyPathView } from './currency/[ticker]/EmbedCurrencyPathView';
 import { EmbedPairPathView } from './pair/[pair]/EmbedPairPathView';
 
-// T291: functions/embed/{asset,currency,pair}/[[path]].js serve
+// functions/embed/{asset,currency,pair}/[[path]].js serve
 // /embed/<kind>/shell/ for any id outside the build's pre-render. That
 // document must be baked on every generateStaticParams path, must not
 // read the API at build time, and must render the widget the URL names.

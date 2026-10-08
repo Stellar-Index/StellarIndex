@@ -14,7 +14,7 @@ import { LivePrice, formatLivePrice } from '../../LivePrice';
 /**
  * EmbedAssetPathView — the runtime fallback for /embed/asset/[slug]
  * outside the build-time pre-render, served by
- * functions/embed/asset/[[path]].js (T291). Resolves the slug through
+ * functions/embed/asset/[[path]].js. Resolves the slug through
  * /v1/assets/{slug} (XLM → native, as the baked page does) for the
  * canonical asset id the live price and change chip key on.
  */

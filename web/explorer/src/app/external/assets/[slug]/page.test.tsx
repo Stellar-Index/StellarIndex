@@ -80,7 +80,7 @@ describe('ExternalAssetDetailPage', () => {
   });
 });
 
-// T291: functions/external/assets/[[path]].js serves /external/assets/shell/
+// functions/external/assets/[[path]].js serves /external/assets/shell/
 // for every slug added after the build, so the build must bake it on every
 // path (listing, API failure, CI stub) and it must never hit the API.
 describe('ExternalAssetDetailPage runtime shell', () => {

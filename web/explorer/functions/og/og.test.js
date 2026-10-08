@@ -7,11 +7,11 @@
 // kill-switch), not satori/resvg rendering.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// T301: capture the html the function rendered so a test can assert on the
+// Capture the html the function rendered so a test can assert on the
 // card's footer byline without needing the real satori/resvg pipeline.
 const capturedHtml = { last: null, opts: null };
 
-// T246: the real ImageResponse renders lazily inside its body stream, so a
+// The real ImageResponse renders lazily inside its body stream, so a
 // font-fetch or satori/resvg failure surfaces AFTER the 200 + public
 // Cache-Control headers exist. `renderFails` reproduces that shape.
 const renderMode = { renderFails: false };

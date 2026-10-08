@@ -44,7 +44,7 @@ describe('timeoutSignal', () => {
   });
 });
 
-// REGRESSION (T268): asExample('/v1/assets/{id}', { id: slug }) rendered
+// REGRESSION: asExample('/v1/assets/{id}', { id: slug }) rendered
 // `/v1/assets/%7Bid%7D?id=<slug>` — the placeholder was never substituted
 // and the param it named was dumped onto the query string instead — while
 // the panel's real request hit `/v1/assets/<slug>`. The `<>` reveal must

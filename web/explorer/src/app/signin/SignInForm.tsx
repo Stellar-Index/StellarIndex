@@ -111,7 +111,7 @@ export function SignInForm({
         // api.stellarindex.io) and fetch defaults to credentials:
         // 'same-origin', so without this the browser DISCARDS the
         // response's Set-Cookie. The cookie in question is the
-        // login-intent witness the callback demands (C3-030), so every
+        // login-intent witness the callback demands, so every
         // emailed sign-in link 403'd with "this sign-in link must be
         // opened in the browser that requested it" — verified live
         // The Go tests replay the cookie a real browser "would have

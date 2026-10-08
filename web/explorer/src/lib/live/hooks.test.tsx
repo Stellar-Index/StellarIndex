@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { usePricePoll } from './hooks';
 
-// T275: the /v1/price poll fetch had no signal, so a hung connection left
+// The /v1/price poll fetch had no signal, so a hung connection left
 // the poll (and anything reading `polled`) waiting forever with no way to
 // recover before the next interval. Every fetch call must now carry a
 // bounded AbortSignal.
@@ -36,7 +36,7 @@ describe('usePricePoll', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  // T312: a background tab kept polling /v1/price on the full interval,
+  // A background tab kept polling /v1/price on the full interval,
   // burning API quota and battery for data nobody was looking at.
   it('skips the poll tick while the tab is hidden', async () => {
     vi.useFakeTimers();
@@ -71,7 +71,7 @@ describe('usePricePoll', () => {
     vi.useRealTimers();
   });
 
-  // T294: the interval fired on a fixed cadence with no in-flight guard, so
+  // The interval fired on a fixed cadence with no in-flight guard, so
   // a tick still awaiting a slow response overlapped with the next one —
   // two concurrent fetches racing to set state out of order.
   it('does not start a new tick while the previous one is still in flight', async () => {
@@ -122,7 +122,7 @@ describe('usePricePoll', () => {
     vi.useRealTimers();
   });
 
-  // T323: switching `asset` mid-flight must not keep serving the OLD
+  // Switching `asset` mid-flight must not keep serving the OLD
   // asset's price while the new asset's poll is still pending — the hook
   // has to reset synchronously on the asset change, not only once the
   // fetch resolves.

@@ -10,7 +10,7 @@ import { SourceHealthPanel } from './SourceHealthPanel';
 
 /**
  * SourcePathView — the runtime fallback for /sources/[name] outside the
- * build-time pre-render, served by functions/sources/[[path]].js (T291).
+ * build-time pre-render, served by functions/sources/[[path]].js.
  * The name is read from the URL; every panel below already fetches its
  * own data client-side, so the page renders live without a rebuild.
  */

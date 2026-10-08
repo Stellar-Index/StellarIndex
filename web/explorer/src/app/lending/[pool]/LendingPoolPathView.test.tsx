@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LendingPoolPathView } from './LendingPoolPathView';
 
 // The runtime-fallback shell for /lending/[pool] outside the build-time
-// pre-render (T278 — a pool the Blend factory spawns between builds
+// pre-render (a pool the Blend factory spawns between builds
 // hard-404'd on the static host with no functions/lending directory).
 const POOL = 'CNEWPOOLDEPLOYEDAFTERLASTBUILDXXXXXXXXXXXXXXXXXXXXXXXX';
 

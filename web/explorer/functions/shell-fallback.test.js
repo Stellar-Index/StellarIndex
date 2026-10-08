@@ -194,7 +194,7 @@ describe.each(cases)(
   },
 );
 
-// T309: the shell sub-fetch must forward the client's conditional-request
+// The shell sub-fetch must forward the client's conditional-request
 // headers, and a real 304 from the shell asset server must pass through to
 // the client unchanged rather than being coerced into a 503.
 //
@@ -305,7 +305,7 @@ describe('each handler fetches its own shell path', () => {
   });
 });
 
-// T291: the walk above only proves the handlers that EXIST behave; it
+// The walk above only proves the handlers that EXIST behave; it
 // cannot notice a dynamic route that has none. /sources/[name],
 // /external/assets/[slug] and /embed/{asset,currency,pair}/[*] pre-render
 // only the ids their API listing held at build time, and explorer deploys

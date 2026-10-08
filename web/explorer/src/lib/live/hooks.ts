@@ -274,7 +274,7 @@ export function resetLedgerFollowThrottleForTest(): void {
 
 /** Test hook: current size of the throttle map, to prove it doesn't grow
  * unboundedly as followers with distinct (e.g. id-bearing) keys mount and
- * unmount (T306). */
+ * unmount. */
 export function followThrottleSizeForTest(): number {
   return lastFollowRefetchByKey.size;
 }
@@ -450,7 +450,7 @@ export function usePricePoll({
   // Reset during render when the asset/quote pair changes (mirrors
   // useStreamJSON's prevUrl pattern above) — a stale price from the OLD
   // pair must never be served against the new one while the next poll
-  // (fired from the effect below) is still in flight (T323).
+  // (fired from the effect below) is still in flight.
   const pollKey = `${asset}|${quote}`;
   const [prevPollKey, setPrevPollKey] = useState(pollKey);
   if (pollKey !== prevPollKey) {

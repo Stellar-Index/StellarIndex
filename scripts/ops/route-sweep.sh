@@ -17,7 +17,7 @@
 # Read-only. Exit code = number of unreachable + 5xx responses (capped 255):
 # a route curl could not even connect to (DNS/TLS/connection/timeout →
 # http_code 000) is a FAILURE, not a pass — "couldn't connect" must never
-# score the same as "connected and returned 2xx" (W5-ci-3).
+# score the same as "connected and returned 2xx".
 set -o pipefail  # NOT -u: fixture_for returns empty for unmapped params
 
 # NOTE: spec paths are relative to servers[].url, which already carries
@@ -133,8 +133,8 @@ while read -r route; do
   # A route curl could not reach — DNS/TLS/connection error or timeout —
   # reports http_code 000 (and an empty/non-numeric status if the -w write
   # itself produced nothing). That is a reachability FAILURE, not a pass:
-  # scoring "couldn't connect" as ok is exactly how a dark subsystem hides
-  # (W5-ci-3). Only an actually-reachable response falls through to the
+  # scoring "couldn't connect" as ok is exactly how a dark subsystem hides.
+  # Only an actually-reachable response falls through to the
   # 2xx/3xx=ok, 4xx=client, 5xx=fail verdicts below.
   if ! [[ "$code" =~ ^[0-9]{3}$ ]] || [ "$code" = "000" ]; then
     printf '%-6s %-8s %s\n' "${code:-000}" "UNREACH" "$filled (curl could not connect)"

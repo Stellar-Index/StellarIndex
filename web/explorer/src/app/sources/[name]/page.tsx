@@ -64,7 +64,7 @@ export async function generateStaticParams() {
   );
   const names = rows.map((s) => s.name).filter(Boolean);
   // `shell` backs functions/sources/[[path]].js for a source registered
-  // after this build (T291) — see SourcePathView.
+  // after this build — see SourcePathView.
   const listed = names.length > 0 ? names.map((name) => ({ name })) : fallback;
   return [...listed, { name: 'shell' }];
 }

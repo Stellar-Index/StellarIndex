@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # config-assertions_test.sh — fixture tests for the Postgres
-# max_worker_processes headroom pair (T615), the continuous-aggregate
+# max_worker_processes headroom pair, the continuous-aggregate
 # refresh-policy check, the trades compression-policy scheduled check and
-# the ClickHouse destructive-DDL size guard's effective value (T616).
+# the ClickHouse destructive-DDL size guard's effective value.
 #
-# Pins the property T615 was about: max_worker_processes is
+# Pins the headroom property: max_worker_processes is
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
 # apply that rewrites the file does nothing to the RUNNING server until
 # it restarts. A file-only grep cannot see that gap; the live SHOW must
@@ -139,7 +139,7 @@ run 32 32
 expect_metric 'both applied -> codified ok' pg_max_worker_processes_codified 1
 expect_metric 'both applied -> live ok' pg_max_worker_processes_live 1
 
-# The T615 shape: ansible rendered the file but nobody restarted
+# The failure shape: ansible rendered the file but nobody restarted
 # Postgres yet, so the running server is still at the old default.
 run 32 8
 expect_metric 'restart pending -> codified still ok (file is right)' pg_max_worker_processes_codified 1
@@ -224,7 +224,7 @@ expect_metric 'pubnet populated reserve list -> ok' supply_reserve_accounts_none
 run 32 32
 expect_metric 'unreadable config -> treated as pubnet, enforced' supply_reserve_accounts_nonempty 0
 
-# ── ClickHouse drop guard (T616) ────────────────────────────────────
+# ── ClickHouse drop guard ────────────────────────────────────
 # The ansible verify task asserts the EFFECTIVE limits once, at apply
 # time. These pin the hourly re-assertion that catches the r1 shape — a
 # later-sorting hand-written config.d file (or a hand edit) raising a

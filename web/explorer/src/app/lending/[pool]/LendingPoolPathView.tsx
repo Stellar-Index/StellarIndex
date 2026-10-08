@@ -9,7 +9,7 @@ import { PoolReserves } from './PoolReserves';
 
 /**
  * LendingPoolPathView — the runtime fallback for /lending/[pool] outside
- * the build-time pre-render (T278, same S1b shell pattern already used by
+ * the build-time pre-render (same S1b shell pattern already used by
  * /assets and /markets — see AssetPathView / PairPathView).
  *
  * generateStaticParams enumerates every pool /v1/lending/pools currently

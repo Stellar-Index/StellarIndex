@@ -131,7 +131,7 @@ type IngestionSnapshot = Omit<
       // `completeness_lake_complete` is the ARCHIVE axis (substrate ∧
       // recognition, genesis-to-tip). A source is routinely
       // lake_complete=true with complete=false. Rendering only the
-      // served axis (C6-046) made that state look like a data
+      // served axis made that state look like a data
       // shortfall — see the "reconciling" branch below.
       completeness_complete?: boolean;
       completeness_lake_complete?: boolean;
@@ -874,7 +874,7 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
 //     healthy day, and the empty backlog is the default the reader assumes.
 //   - `incidents_status` not "ok"/"degraded" → no caption. "unknown" means
 //     the Alertmanager query FAILED, so the zeroed counts are
-//     absence-of-signal rather than an all-clear (W1.1); a count read
+//     absence-of-signal rather than an all-clear; a count read
 //     through a `?? 0` chain there would be fabricated.
 //   - A `page` firing → no caption. A page is not a ticket, so counting it
 //     as one would mislabel it; it has already moved `overall` off "ok",
@@ -1336,7 +1336,7 @@ function ActiveIncidents({
   // internal/api/v1/status.go). "unknown" means the Alertmanager query
   // FAILED, so an empty `incidents` array is absence-of-signal, not an
   // all-clear — rendering "No active incidents" for it would be the same
-  // silent collapse W1.1 guards against elsewhere on this page.
+  // silent collapse the tri-state guards against elsewhere on this page.
   incidentsStatus?: string;
 }) {
   const trusted = incidentsStatus === 'ok' || incidentsStatus === 'degraded';

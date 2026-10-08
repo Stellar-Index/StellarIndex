@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 import EmbedCurrencyPage from './page';
 
-// W8.10: the currency embed baked a BUILD-time FX rate into a static <span>
+// The currency embed baked a BUILD-time FX rate into a static <span>
 // and served it as live. The fix wires the shared <LivePrice> client
 // component: baked value as initial paint, then a 60s /v1/price poll. Here
 // /v1/price is hit ONLY by the poll (build reads /v1/assets/{ticker} +

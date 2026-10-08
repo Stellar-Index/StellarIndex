@@ -36,7 +36,7 @@ function decodePairSlug(slug: string): { base: string; quote: string } | null {
 }
 
 // `shell` backs functions/embed/pair/[[path]].js for an id outside this
-// build's pre-render (T291) — see EmbedPairPathView. Every return path carries it.
+// build's pre-render — see EmbedPairPathView. Every return path carries it.
 const SHELL = { pair: 'shell' };
 const isShell = (pair: string) => pair.toLowerCase() === 'shell';
 

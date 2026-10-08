@@ -1,4 +1,4 @@
-// Regression suite for T298: RouteError caught a segment throw and did
+// Regression suite: RouteError caught a segment throw and did
 // `console.error` only — nothing left the browser, so a production error
 // was invisible to anyone but the one user whose tab happened to hit it.
 import { afterEach, describe, expect, it, vi } from 'vitest';

@@ -409,7 +409,7 @@ fi
 assert_cmd ch_ops_batch_not_in_service_env bash -c \
   '! grep -qE "^STELLARINDEX_CLICKHOUSE_OPS_(USER|PASSWORD)=" /etc/default/stellarindex 2>/dev/null'
 
-# ── ClickHouse destructive-DDL size guard, EFFECTIVE value (T616) ────
+# ── ClickHouse destructive-DDL size guard, EFFECTIVE value ────
 # 21-clickhouse-drop-guard.yml pins max_{table,partition}_size_to_drop
 # and verifies the live value once, at apply time. r1 ran both at 1 TiB
 # for weeks from a hand-written config.d file nothing re-read; the
