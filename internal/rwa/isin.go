@@ -5,27 +5,9 @@ package rwa
 
 import "strings"
 
-// IsISIN reports whether s is a well-formed ISO 6166 ISIN, check digit
-// included.
-//
-// Form is the whole of what this validates, and the distinction is the
-// point: a well-formed ISIN is not a claim that the security exists,
-// that it is the one named, or that the declaring issuer is entitled to
-// it. What it rules out is a free-text string wearing the shape of an
-// identifier — which is exactly what `anchor_asset` is when an issuer
-// fills it in with a product name.
-//
-// Two properties make it worth checking at all:
-//
-//   - The country prefix and the check digit are assigned by a national
-//     numbering agency, not chosen by the declarer. A typo fails; an
-//     invented one fails with probability 9 in 10.
-//   - It is externally resolvable. A reader handed LU2900381208 can look
-//     it up; a reader handed "Franklin OnChain Euro Government Money
-//     Fund" cannot check anything.
-//
-// The check digit is Luhn over the digit expansion of the alphanumeric
-// body (A=10 … Z=35), per ISO 6166.
+// IsISIN reports whether s is a well-formed ISO 6166 ISIN (Luhn check digit over the
+// A=10…Z=35 expansion). Form only, not existence: it rules out a product name posing as an
+// identifier, and a real ISIN is agency-assigned and externally resolvable.
 func IsISIN(s string) bool {
 	s, ok := upperASCII12(s)
 	if !ok {
