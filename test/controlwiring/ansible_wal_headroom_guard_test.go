@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── RWC-529 / GH #529: the WAL-headroom guard must measure pg_wal ──
+// ─── the WAL-headroom guard must measure pg_wal ──
 //
 // The archival-node role refuses a max_wal_size that does not fit the
 // filesystem pg_wal is ACTUALLY on. A free-space figure read from the DATA

@@ -53,7 +53,7 @@ func TestSubstanceOK_Floors(t *testing.T) {
 	if ok(1000, 20, 6*3600-1) {
 		t.Error("below span floor must fail")
 	}
-	// The 2026-08-04 incident shape: one $8.57 seed bucket + one dump
+	// The incident shape: one $8.57 seed bucket + one dump
 	// bucket. Massively below every floor.
 	if ok(9, 2, 21*60) {
 		t.Error("incident-shaped market must fail")
@@ -212,7 +212,7 @@ func TestSubstanceGate_FailsOpenOnStoreError(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_VerdictReportsUnmeasured pins GH-578's gate half: a
+// TestSubstanceGate_VerdictReportsUnmeasured pins the gate half: a
 // store error is reported as NO verdict (allowed=false, measured=false)
 // to callers that must not publish an unverified price, and is counted,
 // while Allowed keeps its single-lookup fail-open.
@@ -313,7 +313,7 @@ func (h countingHandler) WithGroup(string) slog.Handler      { return h }
 
 // TestSubstanceGate_LogsOnTransitionsOnly — the steady state
 // (hundreds of thin pairs re-measured every TTL expiry) produced
-// 6,000 WARNs/hour on r1 (2026-08-05). The metric carries the volume;
+// 6,000 WARNs/hour on r1. The metric carries the volume;
 // the log carries only verdict CHANGES.
 func TestSubstanceGate_LogsOnTransitionsOnly(t *testing.T) {
 	classic := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")

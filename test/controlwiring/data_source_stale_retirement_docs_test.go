@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// GH-1347: the only documentation of how to retire a data source
-// without the watchdog alarming on it forever was a comment inside
+// How to retire a data source without the watchdog alarming on it
+// forever must not live only in a comment inside
 // data-freshness.sh — unreachable from the ticket the alert raises. This
 // pins the runbook's "Retiring a source" section (both exit mechanisms)
 // and the alert annotation that links to it, so either regressing away.

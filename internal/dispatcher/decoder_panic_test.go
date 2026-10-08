@@ -16,7 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ─── #371 F1: a poison ledger must not crash-loop the indexer ────────
+// ─── a poison ledger must not crash-loop the indexer ────────
 //
 // Before the guard, a panic anywhere in a decoder's Matches or Decode
 // unwound through ProcessLedger and was caught only at LEDGER

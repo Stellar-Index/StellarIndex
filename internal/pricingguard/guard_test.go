@@ -298,7 +298,7 @@ func TestGuardServedVWAP1m_ThinHistoryWiderFiniteBand(t *testing.T) {
 }
 
 func TestGuardServedVWAP1mConfidence_EmptyBaselineFirstBucketIsLowConfidence(t *testing.T) {
-	// W6-fresh-1: a thin/new pair's FIRST-EVER served minute has no
+	// A thin/new pair's FIRST-EVER served minute has no
 	// trailing baseline (the store returns only the candidate's own bucket,
 	// or nothing). The guard fails OPEN, so a lone manipulated print is
 	// served — but it must come back flagged low-confidence so /v1/price
@@ -340,11 +340,9 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	// Thin (but non-empty, < guardMinSamples) history is still a
 	// validated centre → confident, AND the candidate must actually be
 	// served unchanged (accepted within the wider thin band), not
-	// silently swapped for last-known-good. GH-1210: the previous
-	// fixture reused the 12-row POPULATED store here (not thin at all —
-	// guardMinSamples is 5) and discarded both `served` and
-	// `substituted`, so neither the accept/reject decision nor the
-	// served value was ever checked; only a genuinely thin store
+	// silently swapped for last-known-good. The fixture must be genuinely
+	// thin (a 12-row populated store is not: guardMinSamples is 5) and
+	// must check both `served` and `substituted`, since only a thin store
 	// exercises [aggregate]'s wider thin-history band.
 	thinStore := fakeTrailing{rows: steadyRows(3)}
 	served, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), thinStore, nil, testPair(t), mkRow(0, "5.0"))

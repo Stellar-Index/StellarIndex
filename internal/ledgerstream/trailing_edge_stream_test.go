@@ -184,7 +184,7 @@ func TestStream_TieredHoleBelowTipIsErrBothTiersMissing(t *testing.T) {
 }
 
 // TestStream_TolerateTrailingMissing_DisabledStrictMode asserts
-// the default (TolerateTrailingMissing=false) preserves pre-fix
+// the default (TolerateTrailingMissing=false) preserves strict
 // behaviour: any missing file in a bounded range is an error.
 func TestStream_TolerateTrailingMissing_DisabledStrictMode(t *testing.T) {
 	tmp := t.TempDir()

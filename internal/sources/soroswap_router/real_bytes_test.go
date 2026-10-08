@@ -28,7 +28,7 @@ import (
 //     The headline shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
 //     wraps an adapter (`swap_exact_tokens_for_tokens` on
 //     CAYP3UWL…TXTO) which wraps the ROUTER two levels deep. The
-//     pre-1b1e46a09 top-level-only walk never saw this call — the 8,729×
+//     top-level-only walk never sees this call — the 8,729×
 //     undercount class.
 //
 // The tests drive the exact production path: dispatcher call-tree
@@ -145,7 +145,7 @@ func TestRealBytes_TopLevelRouterCall(t *testing.T) {
 }
 
 // TestRealBytes_SubInvocationRouterCall — aggregator-wrapped router
-// invocation two levels deep. THE shape the pre-1b1e46a09 walk missed.
+// invocation two levels deep. THE shape a top-level-only walk misses.
 func TestRealBytes_SubInvocationRouterCall(t *testing.T) {
 	t.Parallel()
 	op := loadRealOp(t, "router_subinvocation_op_ledger62029020.b64")

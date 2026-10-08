@@ -17,9 +17,9 @@ import (
 // — value moved within token1 only, no cross-token exchange. pair.swap()
 // is directly invokable (Uniswap-v2-style) and accepts any argument
 // combination keeping K non-decreasing, so this is a real, successful,
-// recognized on-chain event that is NOT a trade. Pre-fix, decodeSwap
-// errored ("no directional swap") and the ADR-0033 re-derive recorded
-// the ledger blind (undecodable-but-matched). Post-fix it is a
+// recognized on-chain event that is NOT a trade. A decodeSwap that
+// errors ("no directional swap") leaves the ADR-0033 re-derive recording
+// the ledger blind (undecodable-but-matched). It is a
 // recognized no-op: Decode returns zero events and nil error, so the
 // re-derive counts expected-zero and the ledger verifies.
 //

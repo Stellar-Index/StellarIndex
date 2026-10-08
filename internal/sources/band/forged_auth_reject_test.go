@@ -19,9 +19,9 @@ import (
 // the host does NOT require every declared authorization to be
 // exercised: an attacker can append a source-account auth entry naming
 // the Band StandardReference contract with FORGED relay() rates to a
-// transaction that succeeds doing something else entirely. Pre-fix, the
-// dispatcher walked that entry, matched the Band decoder, and decoded
-// the forged rate into a recognised oracle price — the whole update
+// transaction that succeeds doing something else entirely. Without
+// corroboration, the dispatcher walks that entry, matches the Band decoder,
+// and decodes the forged rate into a recognised oracle price — the whole update
 // never executed on chain.
 //
 // These tests drive the REAL Band decoder through the REAL

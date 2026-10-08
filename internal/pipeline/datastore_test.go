@@ -103,7 +103,7 @@ func TestLedgerstreamConfig_ColdTierSkippedForLiveBucket(t *testing.T) {
 }
 
 // TestLedgerstreamConfig_LiveTailRetryPolicy pins BOTH halves of the
-// live-tail retry policy on the bucket that actually gets it (#371 F3).
+// live-tail retry policy on the bucket that actually gets it.
 //
 // The two are one decision, not two independent knobs: the NotFound
 // fast path (LiveRetryWait — "the tip isn't written yet", retried

@@ -15,10 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// #371 F3 (residual). Config.LiveRetryBudget must cover the datastore
+// Config.LiveRetryBudget must cover the datastore
 // STARTUP, not only the SDK fetch worker's in-walk retries.
 //
-// The budget landed in 8992df8c is spent inside the SDK's ledger buffer,
+// The budget is spent inside the SDK's ledger buffer,
 // which only exists after datastore.NewDataStore + datastore.LoadSchema
 // have both succeeded — and those run once, up front, with no retry
 // (go-stellar-sdk ingest/producer.go:96-105; LoadSchema is a live LIST

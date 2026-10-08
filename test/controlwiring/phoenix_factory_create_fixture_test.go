@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 )
 
-// Real lake captures of the phoenix factory's events (F048). These are
+// Real lake captures of the phoenix factory's events. These are
 // rows of r1's stellar.contract_events, byte-for-byte; the queries that
 // produced them sit beside them. See the directory's README.md.
 const (

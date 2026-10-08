@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestStats_concurrentWithDispatch is the F-1317 regression guard.
+// TestStats_concurrentWithDispatch is a regression guard.
 // Before the statsMu fix, the dispatch goroutine's `++` mutations of
 // eventsSeen / decodeErrors / unmatchedHits raced the statsflush
 // goroutine's Stats() snapshot, producing a fatal `concurrent map

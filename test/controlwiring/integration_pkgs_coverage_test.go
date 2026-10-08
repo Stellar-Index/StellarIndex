@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// ─── T424 / T449: every integration-tagged test must be in INT_TEST_PKGS ──
+// ─── every integration-tagged test must be in INT_TEST_PKGS ──
 //
 // A `//go:build integration` test is invisible to the unit job (`go test
 // ./...` carries no tag), so the ONLY things that compile or run it are the
@@ -26,8 +26,8 @@ import (
 // proven-red regression for a money invariant (operator fx_quotes
 // corrections must be stamped with a positive derive generation, or the next
 // gen-0 worker refresh silently reverts them) — can sit wired into zero build,
-// test, or CI paths. F-1334 (cmd/stellarindex-ops) and W6-tst-1
-// (internal/ops/archive) were the same defect found one package at a time;
+// test, or CI paths. cmd/stellarindex-ops and internal/ops/archive
+// hit the same defect, one package at a time;
 // this test closes the class: it walks the tree for integration-gated test
 // files and fails on any whose package INT_TEST_PKGS does not match.
 //

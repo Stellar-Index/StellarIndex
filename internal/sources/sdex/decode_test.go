@@ -249,8 +249,8 @@ func TestDecoder_failedOp_emitsNothing(t *testing.T) {
 // TestDecoder_v0ClaimAtom_decodedAsOrderBook pins that V0
 // claim atoms (pre-CAP-27 legacy shape) are
 // decoded into a regular trade by deriving the seller G-strkey
-// from the raw ed25519 bytes. Pre-fix the V0 branch returned
-// ErrUnknownClaimAtomType and per-claim skip dropped the row,
+// from the raw ed25519 bytes. Without the V0 branch it returns
+// ErrUnknownClaimAtomType and per-claim skip drops the row,
 // leaving since-inception SDEX history with a coverage hole on
 // pre-P18 ledgers.
 func TestDecoder_v0ClaimAtom_decodedAsOrderBook(t *testing.T) {

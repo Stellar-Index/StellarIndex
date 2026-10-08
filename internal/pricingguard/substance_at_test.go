@@ -10,11 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Finding T038: the thin-market gate measured a window ending NOW and
-// was applied to reads that serve the price AS OF a past instant. These
-// tests pin the corrected property — the verdict for an instant is made
-// from the market that existed at that instant — in both directions the
-// old behaviour got wrong.
+// The thin-market gate must not measure a window ending NOW for reads
+// that serve the price AS OF a past instant. These
+// tests pin the property — the verdict for an instant is made
+// from the market that existed at that instant — in both directions a
+// NOW-anchored window gets wrong.
 
 var (
 	thickSubstance = timescale.MarketSubstance{VolumeUSD: "250000.5", Buckets: 900, SpanSeconds: 23 * 3600}

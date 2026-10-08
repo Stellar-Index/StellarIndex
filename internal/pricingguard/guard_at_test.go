@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Finding F031: /v1/price/at and every /v1/price/changes horizon resolve
+// /v1/price/at and every /v1/price/changes horizon resolve
 // an instant through a ladder whose finest rung is the SAME raw
 // prices_1m closed bucket /v1/price serves, but they carried only the
 // withholding gates — no trailing-baseline guard. One extra path

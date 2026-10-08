@@ -18,8 +18,8 @@ func (panickingWriter) InsertSorobanEventsBatch(context.Context, []Row) error {
 	panic("batch writer blew up")
 }
 
-// CA2-A30-harden-2 supersedes K012's "contain and keep running" contract for
-// this one sink. K012 treated the drain worker as an ordinary detached
+// This sink deliberately breaks the "contain and keep running" contract for
+// worker.Recover. That contract treats the drain worker as an ordinary detached
 // background worker whose halt only stops its own work — right for most
 // callers of worker.Recover, wrong here: the dispatcher calls PushEvent
 // SYNCHRONOUSLY on its hot path (internal/dispatcher/dispatcher.go), so a

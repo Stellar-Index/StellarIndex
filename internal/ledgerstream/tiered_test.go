@@ -132,17 +132,15 @@ func readAllString(rc io.ReadCloser) string {
 	return string(b)
 }
 
-// TestTiered_GetFile_BothMissing_EmitsMetric is the W5-mon-3 regression
+// TestTiered_GetFile_BothMissing_EmitsMetric is the regression
 // guard: a read that misses BOTH tiers must increment
 // obs.LedgerstreamTierReadTotal{outcome="both_missing"} — the metric the
-// ledgerstream-tier `both_missing` page reads. Before the fix this counter
-// was a per-TieredDataStore CounterVec that only registered when a registry
-// was passed to NewTieredDataStore, and the production builder passed nil,
-// so the increment was a nil-guarded no-op and the page could never fire.
-// Now the metric is obs package-level (always registered), so the emit is
-// live regardless of any per-instance wiring. This test asserts the
-// CORRECTED behaviour (counter goes up by exactly 1) against the live obs
-// metric — it fails against the pre-fix nil-gated emit.
+// ledgerstream-tier `both_missing` page reads. The metric is obs
+// package-level (always registered), so the emit is live regardless of any
+// per-instance wiring; a per-instance CounterVec registered only when a
+// registry is passed would make the increment a nil-guarded no-op and the
+// page could never fire. This test asserts the counter goes up by exactly 1
+// against the live obs metric.
 //
 // Not t.Parallel(): it asserts a delta on the process-global obs counter,
 // so it must not race other tests that also increment it.

@@ -9,11 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── T641: archival-node redis-server must require auth, and must
+// ─── archival-node redis-server must require auth, and must
 // finish restarting under that auth BEFORE the stellarindex app
 // units are (re)started with STELLARINDEX_REDIS_PASSWORD ──────────
 //
-// Pre-fix, 08-redis.yml only installed and started the packaged
+// Without this, 08-redis.yml only installs and starts the packaged
 // redis-server — no requirepass, no ACL, no bind hardening — while
 // this instance holds the SEP-10 replay guard, the rate-limit
 // counters and the VWAP cache. Handlers flush in definition order

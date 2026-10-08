@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 )
 
-// ─── F048: phoenix's factory anchor must be able to admit a pool ───
+// ─── phoenix's factory anchor must be able to admit a pool ───
 //
 // GRADUATED out of the k023evidence build tag (it lived in
 // deployed_controls_test.go) when the phoenix decoder learned to admit a
@@ -73,7 +73,7 @@ func TestK023_PhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
 }
 
 // TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted is the
-// property any F048 fix must keep: topic shape is forgeable, so the same
+// property any fix must keep: topic shape is forgeable, so the same
 // real event republished by a contract that is NOT the factory must
 // neither match nor seed. It is the security half of the pair: the fix
 // that turns the test above green must not do it by trusting the topic

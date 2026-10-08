@@ -12,8 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// TestDecoder_DecodeCounted_ReportsPerClaimFailures is the T214
-// regression: Decode silently drops a claim atom it cannot decode
+// TestDecoder_DecodeCounted_ReportsPerClaimFailures is a
+// regression test: Decode silently drops a claim atom it cannot decode
 // (obs.SourceDecodeErrorsTotal is the only signal), so the
 // completeness census had no way to know a ledger's expected count
 // was produced from an incomplete claim set. DecodeCounted must

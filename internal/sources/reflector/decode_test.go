@@ -195,7 +195,7 @@ func TestRealDecoder_stellarAndSymbolAssetsMix(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
+// Oracle capture-totality: an unmapped symbol is RECORDED as a
 // raw:<symbol> row, not skipped. An event whose
 // ONLY entry is unknown must not surface as ErrEmptyPrices, which would
 // lose the slot until a code change plus a lake replay.

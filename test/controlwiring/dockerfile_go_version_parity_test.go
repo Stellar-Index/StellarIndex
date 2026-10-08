@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ─── T521: the Dockerfiles' golang base image must match go.mod's `go` ───
+// ─── the Dockerfiles' golang base image must match go.mod's `go` ───
 // directive, exactly one minor apart: the Dockerfiles float ahead of go.mod
 // because
 // Dependabot's docker ecosystem bumps `docker/*.Dockerfile` independently

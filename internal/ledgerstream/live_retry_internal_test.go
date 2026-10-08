@@ -17,7 +17,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ─── #371 F3: a MinIO blip must not tear the live tail down ──────────
+// ─── a MinIO blip must not tear the live tail down ──────────
 //
 // The SDK's fetch worker consumes a retry ATTEMPT for every non-
 // NotExist datastore error and gives up after RetryLimit of them, but
@@ -41,7 +41,7 @@ func TestLiveRetryLimit_DerivesAttemptsFromBudget(t *testing.T) {
 	}{
 		{
 			// The production pairing: 500ms re-check for tip latency,
-			// 5 minutes of fault tolerance. Pre-fix this was 5.
+			// 5 minutes of fault tolerance.
 			name: "production_live_tail", wait: 500 * time.Millisecond,
 			budget: 5 * time.Minute, want: 600,
 		},
@@ -133,7 +133,7 @@ func (f *faultingStore) faults() int {
 // TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage drives the
 // SDK's real fetch-worker retry loop over a scripted datastore that
 // fails 8 times and then succeeds. 8 exceeds the SDK's RetryLimit of 5,
-// so with the pre-fix policy (RetryWait overridden, RetryLimit left at
+// so with a policy that only overrides RetryWait (RetryWait overridden, RetryLimit left at
 // the default) the backend cancels with "maximum retries exceeded" and
 // the walk errors — which in the indexer is a process exit.
 //

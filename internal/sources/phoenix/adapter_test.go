@@ -434,8 +434,8 @@ func makeFieldEventIdx(t *testing.T, fieldTopic, body string, eventIndex int) ev
 	return ev
 }
 
-// TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps is the
-// W1-protocol-tables-3 regression: a router multi-hop (or cyclic
+// TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps is a
+// regression test: a router multi-hop (or cyclic
 // arbitrage) that routes through the SAME phoenix pool twice in one op
 // emits two swaps whose field-events share ONE groupKey (ledger, tx,
 // op, contract). In the pre-upgrade 7-field era a group never

@@ -198,9 +198,9 @@ func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
 			t.Errorf("%s: Decode = (%v, %v), want ErrUnknownValShape", name, outs, err)
 		}
 	}
-	// Q120: every one of the above is a Matches-accepted, undecodable-value
+	// Every one of the above is a Matches-accepted, undecodable-value
 	// shape — the exact class UnknownValShapeDrops exists to surface, since
-	// before this counter a persistently-misconfigured pure-SEP-41 wrapper
+	// without this counter a persistently-misconfigured pure-SEP-41 wrapper
 	// (matches every change, decodes none) was indistinguishable from
 	// occasional decode noise on any existing signal.
 	if got := o.UnknownValShapeDrops(); got != len(shapes) {

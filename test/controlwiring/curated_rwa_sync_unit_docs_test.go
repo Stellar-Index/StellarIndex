@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// GH-518: the curated-rwa-sync units twice kept a retired design's
-// Description=/Documentation= after their header prose was rewritten,
-// and the timer twin was never edited at all. An operator sent here by
+// The curated-rwa-sync units could keep a retired design's
+// Description=/Documentation= after their header prose is rewritten,
+// and the timer twin could be left unedited. An operator sent here by
 // the alert runs `systemctl cat` and follows Documentation= to the
 // migration for a table this sync does not write.
 

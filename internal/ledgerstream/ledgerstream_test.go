@@ -24,8 +24,7 @@ import (
 // three LedgerCloseMeta values in order.
 //
 // Filesystem datastore (no Docker) — unit-test-grade. A separate
-// MinIO integration test lands in PR 165d when the indexer wires
-// to live MinIO.
+// MinIO integration test belongs with the indexer wiring to live MinIO.
 func TestStream_boundedRange_filesystemDatastore(t *testing.T) {
 	tmp := t.TempDir()
 
