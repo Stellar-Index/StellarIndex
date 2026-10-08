@@ -68,14 +68,9 @@ Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # P1-page export path (issue #282). The mismatch counter
-# `stellarindex_verify_archive_mismatches_total` — the metric the
-# `stellarindex_stellar_archive_divergence` page (severity: page)
-# selects — used to leave the process ONLY through the opt-in
-# `-metrics-listen` HTTP endpoint, which this unit never passed and
-# which nothing scrapes (prometheus.r1.yml has no verify-archive job,
-# and a one-shot job is gone between scrapes anyway). The P1 therefore
-# had no producer and a real chain break surfaced only as the
-# severity-TICKET `stellarindex_verify_archive_unit_failed`.
+# `stellarindex_verify_archive_mismatches_total` feeds the
+# `stellarindex_stellar_archive_divergence` page. Nothing scrapes
+# `-metrics-listen` (a one-shot job is gone between scrapes), so
 # `-textfile-output` writes the counter into node_exporter's
 # textfile_collector dir (cumulative across runs, zero-seeded, and
 # `tier`-labelled so tier-a and tier-b never expose the same series

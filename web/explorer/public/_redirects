@@ -95,8 +95,8 @@
 
 # T247: bare-form fallback for the whole /currencies/* alias set above.
 # There is no live Next.js server (static export) to 308 a request like
-# `/currencies/xlm` onto `/currencies/xlm/` the way the removed comments
-# here used to claim, so without this it 404s on Cloudflare Pages. This
+# `/currencies/xlm` onto `/currencies/xlm/`, so without this it 404s on
+# Cloudflare Pages. This
 # one rule normalizes any bare-form, single-segment request onto the
 # trailing-slash form, which then re-matches its specific slug rule above
 # (two redirect hops, same destination) — covering every current and
@@ -106,11 +106,10 @@
 # loop, growing an extra slash each hop instead of 404ing cleanly.
 /currencies/:slug  /currencies/:slug/  301
 
-# Fiat de-duplication (2026-08-24 operator ruling): a fiat currency is an
-# external (non-Stellar) asset, so its ONE detail page is
-# /external/assets/{slug}. /assets/{slug} used to render a duplicate
-# (AM-16 split identity, canonicalized but still served); the route no
-# longer exports fiat slugs and these 301s catch old links + indexes.
+# Fiat de-duplication: a fiat currency is an external (non-Stellar)
+# asset, so its ONE detail page is /external/assets/{slug}. The
+# /assets/{slug} route does not export fiat slugs; these 301s catch old
+# links + indexes.
 # Trailing-slash form only; the bare form is redirected by
 # functions/assets/[[path]].js (static export has no server to normalise it).
 /assets/us-dollar/  /external/assets/us-dollar/  301

@@ -11,11 +11,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, it, expect } from 'vitest';
 
-// REL-02 (+ the sibling absence finding on contracts/issuers/ledgers): every
-// one of these functions used to hardcode `status: 200` on the shell
-// response regardless of whether the shell fetch itself succeeded, turning
-// a missing/broken shell asset into a soft-200 "error page" that caches,
-// uptime monitors, and search engines can't distinguish from a real page.
+// None of these functions may hardcode `status: 200` on the shell response:
+// a missing/broken shell asset would become a soft-200 "error page" that
+// caches, uptime monitors, and search engines can't tell from a real page.
 
 // `cases` is not a hand-maintained [name, handler, path] array: a new
 // long-tail shell route (the `assets/[[path]].js` handler drifted in
@@ -167,11 +165,10 @@ describe.each(cases)('%s/[[path]].js shell fallback', (_name, onRequest) => {
   });
 });
 
-// T313: `env.ASSETS.fetch` can reject (a worker-runtime fault — binding
-// unavailable, network fault) instead of resolving to a Response. Every
-// handler here used to have zero `try`/`catch` around it, so that rejection
-// propagated out of `onRequest` as an unhandled exception instead of the
-// same 503 already returned for a failed-but-resolved shell fetch.
+// `env.ASSETS.fetch` can reject (a worker-runtime fault — binding
+// unavailable, network fault) instead of resolving to a Response. That
+// rejection must surface as the same 503 a failed-but-resolved shell fetch
+// returns, not as an unhandled exception out of `onRequest`.
 function makeThrowingContext() {
   const request = new Request('https://stellarindex.io/whatever/long-tail-id');
   return {
