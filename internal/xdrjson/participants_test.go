@@ -137,7 +137,7 @@ func TestParticipantAccounts_NoneForSelfContained(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_ManageDataNameLooksLikeAccount is the W8.3 regression:
+// TestParticipantAccounts_ManageDataNameLooksLikeAccount is a regression guard:
 // a manage_data DataName / value that happens to spell a valid G-strkey must
 // NOT inject that (attacker-chosen) address into another account's history. A
 // generic "any IsAccountID string field" scan added it as a participant;

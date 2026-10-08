@@ -14,7 +14,7 @@ import (
 )
 
 // rosterCacheStubReader counts ListProtocolContracts calls per source and
-// can be made to fail for a chosen source — the two behaviours the W1.3
+// can be made to fail for a chosen source — the two behaviours the
 // roster-cache tests need (served-from-cache, and fail-omits-not-zeros).
 type rosterCacheStubReader struct {
 	mu        sync.Mutex
@@ -55,7 +55,7 @@ func (r *rosterCacheStubReader) callCount(source string) int {
 	return r.listCalls[source]
 }
 
-// TestProtocolsList_RosterServedFromCache proves the W1.3 perf fix: a
+// TestProtocolsList_RosterServedFromCache proves the perf fix: a
 // second /v1/protocols request does NOT re-scan the served tier for a
 // source's contract roster — the count is served from the per-server SWR
 // cache. Were handleProtocolsList to call protocolRoster inline per
@@ -107,7 +107,7 @@ func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 	}
 }
 
-// TestProtocolsList_RosterFailureOmitsNotZeros proves the W1.3 honesty fix:
+// TestProtocolsList_RosterFailureOmitsNotZeros proves the honesty fix:
 // when a source's roster read FAILS and no last-good count is cached, the
 // source is OMITTED from the directory and named in coverage_note — never
 // serialised with a fabricated contract_count: 0. A failing read swallowed

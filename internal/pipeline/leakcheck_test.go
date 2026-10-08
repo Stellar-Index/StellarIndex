@@ -6,7 +6,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-// TestMain wires goleak around the whole pipeline test suite (W8.15).
+// TestMain wires goleak around the whole pipeline test suite.
 //
 // The sink fans out a pool of long-lived worker goroutines (sink.go
 // persistWorker / the retry loops) plus the AWS-SDK download goroutine.

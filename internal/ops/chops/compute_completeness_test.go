@@ -1102,7 +1102,7 @@ func TestFloorsToRecord_IncrementalScopeCannotBankAFloorAboveTheServedMin(t *tes
 }
 
 // TestSubstrateClaim_IncrementalRunCannotUpgradeAFailingLakeVerdict is the
-// C4-057 regression, and the exact twin of
+// incremental-upgrade regression, and the exact twin of
 // TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict one axis over.
 //
 // The substrate scan is bounded by the incremental `-from`
@@ -1237,8 +1237,8 @@ func TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven(t *testing.T)
 	}
 }
 
-// TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark pins FINDING 1
-// (the C4-057 NUMERIC-field gap). substrateClaim's BOOLEAN correctly went false
+// TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark pins the
+// NUMERIC-field gap. substrateClaim's BOOLEAN correctly went false
 // for an unproven lake, but only `lake_complete` was gated by it — the numeric
 // coverage_pct / watermark_ledger flowed UNGATED through
 // completeness.ComputeWatermark. On a clean suffix scan whose prefix nobody
@@ -1400,7 +1400,7 @@ func TestDirtyWindowSatisfied_OnlyACleanCoveringRunClears(t *testing.T) {
 	}
 }
 
-// ─── C4-059: the ContractCall census is per-row blind too ────────
+// ─── The ContractCall census is per-row blind too ────────────────
 
 // stubContractCallDecoder owns every call and fails Decode on one named
 // function — the shape of a real decoder bug (a call variant it claims by
@@ -1421,7 +1421,7 @@ type stubCallEvent struct{}
 func (stubCallEvent) Source() string    { return "stub" }
 func (stubCallEvent) EventKind() string { return "stub.call" }
 
-// TestDecodeContractCallTree_MalformedCallNetsToZero is the C4-059
+// TestDecodeContractCallTree_MalformedCallNetsToZero is the
 // regression for the ContractCall census (band, soroswap-router).
 //
 // These sources have NO soroban_events landing zone, so
@@ -1759,7 +1759,7 @@ func TestComputeCompleteness_RequiresStatedMode(t *testing.T) {
 	}
 }
 
-// TestSubstrateFloorLoss pins W1-flowcompleteness-2: the substrate twin of
+// TestSubstrateFloorLoss pins the substrate twin of
 // detectFloorLoss. An incremental run that scanned only [subScanFrom,tip] and
 // carried the [genesis,subScanFrom] prefix must FAIL substrate when the lake no
 // longer holds the source's genesis ledger (a capacity-archive DROP PARTITION

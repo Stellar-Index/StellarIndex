@@ -11,7 +11,7 @@ import (
 // TestWindowedCHBackfills_RefuseImplicitFullRun pins that every windowed
 // ClickHouse backfill must refuse a bare invocation (no -from/-to/-full)
 // rather than silently starting the whole ledger-2..tip history outside
-// run-heavy-job.sh. ch-txindex-backfill already enforced this (W8.15); its
+// run-heavy-job.sh. ch-txindex-backfill already enforced this; its
 // two siblings did not, despite doc comments claiming parity. The refusal
 // must fire before any ClickHouse connection is attempted, so these run
 // without a live lake.

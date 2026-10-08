@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// TestSSRFGuardedDialContext_LiteralBlockedIPsRefused pins W6-tst-4: the
-// F-1245 delivery-time guard composes net.ParseIP + nettools.IsBlockedIP
+// TestSSRFGuardedDialContext_LiteralBlockedIPsRefused pins that the
+// delivery-time guard composes net.ParseIP + nettools.IsBlockedIP
 // and must refuse every non-public literal before it ever dials. These
 // are the ranges an attacker steers a webhook URL at — RFC1918, loopback,
 // and the 169.254.169.254 cloud-metadata endpoint. All hermetic: a blocked
@@ -97,7 +97,7 @@ func TestSSRFGuardedDialContext_NamedHostResolvingToLoopbackRefused(t *testing.T
 	}
 }
 
-// NOTE (coverage gap, W6-tst-4): the anti-rebind DIAL-TARGET property —
+// NOTE (coverage gap): the anti-rebind DIAL-TARGET property —
 // that a public-resolving host is dialed at the RESOLVED IP rather than
 // re-resolved by the kernel (ssrf.go dials net.JoinHostPort(ips[0], port))
 // — is not asserted here because ssrfGuardedDialContext hard-codes its

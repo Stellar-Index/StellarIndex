@@ -352,7 +352,7 @@ func TestIsNotFound(t *testing.T) {
 		{"sdk ErrNoValidLedgerFiles", datastore.ErrNoValidLedgerFiles, true},
 		// The SDK's S3DataStore converts AWS typed not-found errors
 		// (types.NoSuchKey / types.NotFound) to os.ErrNotExist via
-		// errors.As before returning (C2-064). It never surfaces a
+		// errors.As before returning. It never surfaces a
 		// bare "NoSuchKey" string — the previous fixtures here
 		// encoded errors no backend actually produces, which is why
 		// the dead string-matching arm looked load-bearing.

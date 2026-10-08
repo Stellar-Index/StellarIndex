@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestParseTxIndexBackfillFlags_RefusesBareFullHistory pins the W8.15 safe
+// TestParseTxIndexBackfillFlags_RefusesBareFullHistory pins the safe
 // default: a BARE `ch-txindex-backfill` (no bounds, no -full) must NOT resolve
 // into the implicit ledger-2..tip (~10.2B row) backfill. Before the guard the
 // defaults (-from 2, -to 0=tip) meant an argument-less invocation silently

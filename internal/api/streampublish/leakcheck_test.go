@@ -6,7 +6,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-// TestMain wires goleak around the SSE publisher test suite (W8.15).
+// TestMain wires goleak around the SSE publisher test suite.
 //
 // The publisher runs a long-lived fan-out goroutine per stream plus the
 // per-subscriber pump goroutines. A subscriber whose goroutine is not

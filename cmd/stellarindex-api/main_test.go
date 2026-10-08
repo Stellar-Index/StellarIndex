@@ -333,7 +333,7 @@ func TestLakeAccountSignersUnboundFailsClosed(t *testing.T) {
 	}
 }
 
-// TestWarnUnsafeBind covers the C3-18 IPv6 parse fix: a public
+// TestWarnUnsafeBind covers the IPv6 parse fix: a public
 // all-interfaces bind must trigger the unsafe-bind warning whether it's
 // written as IPv4 (0.0.0.0), IPv6 ([::]), or port-only (:3000). strings.Cut(":") would split "[::]:3000" into host "[" and silently
 // ship a public IPv6 bind with no warning.

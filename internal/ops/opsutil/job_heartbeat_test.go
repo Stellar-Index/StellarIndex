@@ -19,7 +19,7 @@ import (
 // gaugeValue pulls one metric's sample value out of a textfile body,
 // erroring the test if the series is absent — absence and zero are
 // DIFFERENT states for these gauges and the tests must not conflate them
-// (that conflation is the C4-038 defect one directory over).
+// (that conflation was a real defect one directory over).
 func gaugeValue(t *testing.T, body, metric string) string {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
@@ -249,7 +249,7 @@ func readGauge(t *testing.T, path, metric string) string {
 	return gaugeValue(t, readAll(t, path), metric)
 }
 
-// TestJobHeartbeatUsesNonReservedLabel is the C6-020 verification fix.
+// TestJobHeartbeatUsesNonReservedLabel pins the non-reserved label.
 //
 // `job` is a Prometheus RESERVED label. Both configs that collect this
 // textfile scrape it through node_exporter with honor_labels unset

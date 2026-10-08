@@ -1096,7 +1096,7 @@ func TestDecoder_strategyHarvestEmitsFlow(t *testing.T) {
 	}
 }
 
-// ─── dfees — modelled (W5.2, 2026-08) ─────────────────────────────
+// ─── dfees — modelled ─────────────────────────────────────────────
 //
 // Real lake bytes: each dfeesBody* constant below is one full
 // ("DeFindexVault","dfees") event body (data XDR ScVal, base64 as the

@@ -365,7 +365,7 @@ func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 }
 
 // TestReport_RetriesWriteAfterTransientFailure is the latch-before-fallible-
-// write regression (W3-guards-1, the 100×-price class). The persistence latch
+// write regression (the 100×-price class). The persistence latch
 // must be set ONLY after a SUCCESSFUL write, so a transient DB failure leaves
 // the asset eligible for a retry on the next sweep — never marked "handled"
 // while the corrective row was never written, which would strand a

@@ -209,7 +209,7 @@ var projRoutes = []projRoute{
 
 	// ── defindex (both flow layers land in defindex_flows; dfees
 	// fans out per distributed_fees entry into defindex_fees — 1:1
-	// because the DECODER emits one event per entry, W5.2) ──
+	// because the DECODER emits one event per entry) ──
 	{typeName: "defindex.Event", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.VaultEvent", table: "defindex_flows", disp: reconciledByKind},
 	{typeName: "defindex.DFeesEvent", table: "defindex_fees", kind: "defindex.vault.dfees", disp: reconciledByKind},
@@ -544,7 +544,7 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		{defindex.Event{Flow: defindex.StrategyFlow{Direction: defindex.DirectionHarvest}}, "defindex.strategy.harvest", "defindex_flows"},
 		{defindex.VaultEvent{Flow: defindex.VaultFlow{Direction: defindex.DirectionDeposit}}, "defindex.vault.deposit", "defindex_flows"},
 		{defindex.VaultEvent{Flow: defindex.VaultFlow{Direction: defindex.DirectionWithdraw}}, "defindex.vault.withdraw", "defindex_flows"},
-		// dfees (W5.2): per-asset fee distributions into their own
+		// dfees: per-asset fee distributions into their own
 		// table — pinned so the catalogue kind string stays welded to
 		// DFeesEvent.EventKind().
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
