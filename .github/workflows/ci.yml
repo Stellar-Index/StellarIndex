@@ -862,17 +862,17 @@ jobs:
         # deliberately scoped to the money/i128/anti-bypass trio.)
         run: ./scripts/ci/lint-replay-plan-test.sh
       - name: CI meta-gate coverage (Tier D gating + ci-health workflow list)
-        # GH-778: pins the two fixes below directly against the shipped
+        # Pins the two fixes below directly against the shipped
         # workflow files, so a later edit that re-narrows either back
         # fails here instead of going unnoticed.
         run: ./scripts/ci/ci-meta-gate-coverage-test.sh
       - name: deploy checkout ref (config-apply provenance)
-        # GH-885: the deploy job's checkout must track inputs.version,
+        # The deploy job's checkout must track inputs.version,
         # not the dispatching ref, or the config-apply gate verifies a
         # different commit's bytes than the ones actually applied.
         run: ./scripts/ci/deploy-checkout-ref-test.sh
       - name: deploy migration gate runs all four migration lints
-        # GH-1165: deploy.yml is the last gate before DDL runs on
+        # deploy.yml is the last gate before DDL runs on
         # production and `main` is unprotected, so it must run numbering,
         # compat, immutability and commands — not compat alone.
         run: ./scripts/ci/deploy-migration-gate-coverage-test.sh
@@ -882,12 +882,12 @@ jobs:
         # until those are acknowledged.
         run: ./scripts/ci/migration-followup-gate-test.sh
       - name: deploy served-path smoke asserts readiness on every region
-        # GH-910: runs the real step against stub curl/ssh — /v1/readyz
+        # Runs the real step against stub curl/ssh — /v1/readyz
         # (not the constant-body /v1/healthz) must gate, and testnet and
         # futurenet must get a real /v1/assets read, not only the probe.
         run: ./scripts/ci/deploy-served-path-smoke-test.sh
       - name: Pages deploy branch label (built ref vs --branch)
-        # GH-844: a Cloudflare Pages deploy labelled `main` is production, so
+        # A Cloudflare Pages deploy labelled `main` is production, so
         # every `pages deploy` job must resolve its label through
         # resolve-pages-branch.sh, which refuses a non-main production ref.
         run: ./scripts/ci/pages-deploy-branch-test.sh
@@ -907,7 +907,7 @@ jobs:
           ./scripts/ci/check-selftest-runners-test.sh
           ./scripts/ci/check-selftest-runners.sh
       - name: verifier image pins (+ self-test)
-        # GH-1257: check-verify-image-pins.sh only ran via scripts/dev/
+        # check-verify-image-pins.sh only ran via scripts/dev/
         # verify.sh, so the Dockerfile ARG and docs-postman.sh's
         # CONVERTER_VERSION could drift apart with nothing in CI to
         # notice. Same placement rationale as the parity gate above:
@@ -959,7 +959,7 @@ jobs:
         # error, a truncated list and an old protocol.
         run: bash scripts/ops/protocol-upgrade-drill-test.sh
       - name: lint-migrations back-numbering self-test
-        # GH-1164: a new migration numbered into a gap below the head is
+        # A new migration numbered into a gap below the head is
         # invisible to `migrate up` on every deployment already past it.
         # Runs pre-restore: lint-migrations.sh IS in the restore list, so
         # after it this would only re-test the base ref's copy.
@@ -1113,7 +1113,7 @@ jobs:
         # empty subject set.
         run: ./scripts/ci/lint-source-enablement-test.sh
       - name: lint-served-value-cadence
-        # The served-value truth harness (CS-010's only monitored check on
+        # The served-value truth harness (the only monitored check on
         # the NUMBER rather than the pipe) shipped with three alerts, a
         # runbook saying "daily timer" and nothing anywhere that ran it, so
         # the textfile was never written and all three selected a series
@@ -1613,13 +1613,13 @@ jobs:
         # No network, no gh.
         run: ./scripts/ci/deploy-inputs-test.sh
       - name: migrate lock-timeout self-test
-        # GH-1166: both ansible call sites of `stellarindex-migrate up` must
+        # Both ansible call sites of `stellarindex-migrate up` must
         # bound DDL lock waits (PGOPTIONS lock_timeout/statement_timeout)
         # and wall time, or an ACCESS EXCLUSIVE request convoys every
         # later reader of a hot table. No network, no ansible.
         run: ./scripts/ci/lint-migrate-lock-timeout-test.sh
       - name: deploy-probe parity self-test
-        # GH-1167: the deploy gate must probe /v1/readyz, the probe HAProxy
+        # The deploy gate must probe /v1/readyz, the probe HAProxy
         # routes on, not the constant-200 /v1/healthz.
         run: ./scripts/ci/lint-deploy-probe-parity-test.sh
       - name: check-no-wrangler-cache-tracked
@@ -1646,7 +1646,7 @@ jobs:
       - name: check-deprecations self-test
         run: bash scripts/ci/check-deprecations-test.sh
       - name: lint-baseline-growth
-        # CS-098: lint baselines/allowlists are shrink-only. Growing
+        # Lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
         # same change that introduces the violation it hides would
         # silently defeat the gate — growth must be declared with a
@@ -1705,7 +1705,7 @@ jobs:
             exit 1
           fi
       - name: Generated config reference is in sync
-        # GH-1132: docs/reference/config/README.md is generated from
+        # docs/reference/config/README.md is generated from
         # internal/config/config.go struct tags but, unlike the API
         # reference and Postman collection above, had no CI regen-diff —
         # only lint-docs.sh's forward check (a tag missing from the doc

@@ -539,7 +539,7 @@ trusted_proxy_cidrs      = []
 # rejects before it). Only active when auth_mode != none. 0 disables.
 # failed_auth_rate_limit_per_min = 20
 
-# rate_limit_dwell / monthly_quota_dwell (GH-1131): how long the
+# rate_limit_dwell / monthly_quota_dwell: how long the
 # anon/key/failed-auth buckets and the monthly-quota gate may keep
 # failing OPEN on backend errors before flipping to fail-CLOSED
 # (503 / 429). Widen to match a looser Redis-availability SLO;
@@ -622,7 +622,7 @@ pairs = []
 #   ["native", "fiat:USD"],
 #   ["credit:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "fiat:USD"],
 # ]
-# max_streams_per_ip           = 20     # per-client-IP concurrent SSE cap (C3-8/CS-013); 0 disables
+# max_streams_per_ip           = 20     # per-client-IP concurrent SSE cap; 0 disables
 # max_concurrent_streams        = 8192   # global concurrent SSE cap; <= 0 disables
 # max_tip_producers             = 512    # global cap on distinct shared tip-stream producers; negative disables
 # max_tip_producers_per_caller  = 24     # per-caller share of max_tip_producers; negative disables
@@ -681,7 +681,7 @@ per_reference_timeout_seconds  = 5
 
 [divergence.coingecko]
 enabled  = true
-# max_age_minutes is the CS-089 staleness ceiling for the /simple/price
+# max_age_minutes is the staleness ceiling for the /simple/price
 # quote's upstream last_updated_at: a quote older than this is rejected
 # as reference-unavailable so a frozen upstream can't drive divergence.
 # 0 = the 30-minute default.

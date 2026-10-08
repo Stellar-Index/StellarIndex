@@ -5,7 +5,7 @@ namespace: /service/
 name: {{ inventory_hostname }}
 
 restapi:
-  # CS-122: listen is the private/cluster interface (never 0.0.0.0)
+  # Listen is the private/cluster interface (never 0.0.0.0)
   # and the authentication block is UNCONDITIONAL — 06-patroni-configure
   # asserts both credentials are non-empty before this template renders,
   # so the old "omit auth when vars are empty" silent-unauth path is gone.

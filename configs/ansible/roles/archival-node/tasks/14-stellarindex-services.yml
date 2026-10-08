@@ -1233,7 +1233,7 @@
       failed_when: false
 
 # ── verify-served-values — the served-value truth harness ────────────
-# The one check on the served NUMBER rather than the pipe (CS-010: XLM
+# The one check on the served NUMBER rather than the pipe (XLM
 # market cap read +58% behind a green board). Its three alerts —
 # stellarindex_served_value_{drift,check_stale,persistently_skipped} —
 # shipped with the tool and the runbook said "daily timer", but nothing in

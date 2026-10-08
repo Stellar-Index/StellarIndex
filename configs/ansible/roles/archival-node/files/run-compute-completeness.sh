@@ -25,9 +25,9 @@
 #      source is computed — a never-seeded one reconciles from genesis on its
 #      first pass.
 #   4. -pass proves substrate at FULL tip, so its write advances the tip and is
-#      never blocked by the CS-083 write guard (the low-tip substrate flap a
+#      never blocked by the monotonic-tip write guard (the low-tip substrate flap a
 #      chunked run could never clear). The tool still refuses to REGRESS an
-#      advanced verdict (CS-083 monotonic-tip guard) and never upgrades a failing
+#      advanced verdict (monotonic-tip guard) and never upgrades a failing
 #      verdict without a full re-verify.
 #
 # Same DSN sourcing as compute-archive-to.sh (peer-auth fails under systemd's
