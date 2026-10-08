@@ -45,8 +45,7 @@ func evictedTTLKey(seed byte) xdr.LedgerKey {
 	}
 }
 
-// TestProcessLedger_EvictedKeysReachTheEntryDecoders pins Q119
-// (audit-2026-09-02). Soroban state archival is the one way a ledger entry
+// TestProcessLedger_EvictedKeysReachTheEntryDecoders pins that Soroban state archival is the one way a ledger entry
 // leaves the live state WITHOUT a transaction touching it: when its TTL
 // lapses, core evicts it at ledger close and reports it only in the
 // LedgerCloseMeta's evicted-keys list. The three-phase walk reads

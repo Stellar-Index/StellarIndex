@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// TestRunbooksDirHasExplorerCloudflarePagesOutageRunbook pins T299
-// (audit-2026-09-02): docs/operations/runbooks/ had no runbook for an
+// TestRunbooksDirHasExplorerCloudflarePagesOutageRunbook pins that
+// docs/operations/runbooks/ has a runbook for an
 // explorer, Cloudflare Pages, edge-function, or CDN failure — a
 // filename grep for explorer|cloudflare|cf-pages|cdn across the
-// directory returned nothing, and a content grep for the same terms
-// only hit infra runbooks mentioning Cloudflare incidentally (as a
+// directory must find one, since a content grep for the same terms
+// only hits infra runbooks mentioning Cloudflare incidentally (as a
 // dependency), never as the subject of the runbook.
 func TestRunbooksDirHasExplorerCloudflarePagesOutageRunbook(t *testing.T) {
 	root := repoRootForOpsTest(t)

@@ -268,7 +268,7 @@ func TestObservations_EmptyArrayWhenNoData(t *testing.T) {
 }
 
 // TestObservations_EmptyHintsTriangulationWhenAvailable exercises
-// R-011. /v1/observations is the raw per-source surface (ADR-0018
+// the empty-result hint. /v1/observations is the raw per-source surface (ADR-0018
 // Surface 3), so a triangulated pair has no rows to return — but
 // the empty result is genuinely confusing when /v1/price WOULD
 // have served a value via the same Redis VWAP fallback.

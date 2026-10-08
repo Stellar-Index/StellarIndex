@@ -95,10 +95,10 @@ func work() {}
 	}
 }
 
-// TestScan_NamedSameFileCallee is the #368 M1 defect in miniature: the
-// pre-fix walk returned early on any callee that was not a *ast.FuncLit,
-// so `go loop(ctx)` was not merely unchecked — it was INVISIBLE, and the
-// site count used to certify the guard "covers everything" did not
+// TestScan_NamedSameFileCallee is a named same-file callee in miniature: a walk that
+// returns early on any callee that is not a *ast.FuncLit would leave
+// `go loop(ctx)` not merely unchecked but INVISIBLE, and the
+// site count certifying the guard "covers everything" would not
 // include it. Both spellings must now be seen, and told apart.
 func TestScan_NamedSameFileCallee(t *testing.T) {
 	path := fixture(t, "named", `package main

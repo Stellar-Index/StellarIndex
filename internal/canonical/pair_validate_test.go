@@ -67,11 +67,10 @@ func TestAsset_Value_zeroValueRejected(t *testing.T) {
 }
 
 // Asset.Scan against a NULL source must ERROR and leave the receiver
-// untouched (C4-068, audit-2026-07-23).
+// untouched.
 //
-// The pre-C4-068 contract — and this test's original assertion — was the
-// opposite: Scan(nil) returned nil and zeroed the receiver, so a NULL
-// asset column produced an Asset with Type=="" that reads as valid
+// Returning nil and zeroing the receiver is the wrong contract: a NULL
+// asset column would produce an Asset with Type=="" that reads as valid
 // everywhere except Validate. Value() will not write such an Asset, so a
 // NULL can only come from a schema/query defect (a LEFT JOIN that
 // missed, a column that should be NOT NULL); failing closed surfaces it

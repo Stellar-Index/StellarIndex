@@ -1,9 +1,9 @@
 package main
 
 // The decimals-assumption guard must be DELAYED by a cold lake, never
-// disabled by one (audit-2026-09-02 F040).
+// disabled by one.
 //
-// The resolver used to be dialled inline at startup: one failed ping
+// A resolver dialled inline at startup fails like this: one failed ping
 // emitted a single WARN and the guard — Backfill and periodic Sweep both
 // — never existed for that process. That is the expected outcome of a
 // reboot, not an edge case: clickhouse-server spends minutes loading

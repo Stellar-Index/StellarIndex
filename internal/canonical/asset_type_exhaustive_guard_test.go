@@ -8,7 +8,7 @@ package canonical
 //
 // We DID already enable golangci-lint's `exhaustive` linter repo-wide
 // (.golangci.yml) — but scoped to `default-signifies-exhaustive:
-// true`, the low-noise setting. The 2026-07-05 BACKLOG #48 probe
+// true`, the low-noise setting. The probe
 // documented right there in .golangci.yml found that flipping to the
 // strict form (`default-signifies-exhaustive: false`) to actually
 // verify AssetType switches floods 12 findings repo-wide, only 3 of
@@ -45,7 +45,7 @@ package canonical
 // inventing a second one — a switch already justified to golangci's
 // linter doesn't need a redundant justification to this one.
 //
-// PROBE (2026-07-09, per repo review-rule "gates that can't fail are
+// PROBE (per repo review-rule "gates that can't fail are
 // decorative"): two scenarios, each applied then reverted before
 // commit, `go test -run TestAssetTypeExhaustiveGuard
 // ./internal/canonical/` run against each:

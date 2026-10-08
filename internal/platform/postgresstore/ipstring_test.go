@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// TestIPString_NilFailsClosed — Q188 (audit-2026-09-18). ipString used
-// to silently return the "0.0.0.0" sentinel for a nil IP, commented
+// TestIPString_NilFailsClosed. ipString must not silently return the "0.0.0.0" sentinel for a nil IP, commented
 // "but this only happens for tests" — false: clientIP returns nil on
 // every real request whose RemoteAddr fails to parse, and that value
 // reaches CreateSession / CreateMagicLinkToken in production. A nil IP

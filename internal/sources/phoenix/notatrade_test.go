@@ -83,7 +83,7 @@ func decodeAll(t *testing.T, d *Decoder, evs []events.Event) (delivered []consum
 // 53,626,410) is not a trade, and not undecodable either. It must
 // return (nil, nil) so the dispatcher does not bump decode_errors and
 // the ADR-0033 re-derive counts expected=0 instead of failing the
-// source's verdict closed (the INV-3 trap comet documents).
+// source's verdict closed (as comet documents).
 func TestDecode_zeroAmountSwapIsRecognisedNoOp(t *testing.T) {
 	sell, buy := makeC(t, 0x20), makeC(t, 0x30)
 	d := newTestDecoder()

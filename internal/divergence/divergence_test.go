@@ -755,9 +755,9 @@ func (b *blockingReference) LookupQuote(_ context.Context, _ canonical.Pair, obs
 	return divergence.Quote{Price: 1.00, AsOf: freshAt(observedAt)}, nil
 }
 
-// TestCompare_OverallDeadlineReturnsPartial is the REL-01 regression.
-// Compare used to wait on a WaitGroup, so a single reference that
-// ignores cancellation blocked the comparison — and the aggregator's
+// TestCompare_OverallDeadlineReturnsPartial guards the overall deadline.
+// If Compare only waits on a WaitGroup, a single reference that
+// ignores cancellation blocks the comparison — and the aggregator's
 // whole divergence refresh loop behind it — forever. It must instead
 // return the partial result within the overall budget, recording the
 // stuck reference as a failure.

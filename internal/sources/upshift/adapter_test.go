@@ -170,8 +170,8 @@ func TestMatches_RejectsUnknownSymbolFromACuratedVault(t *testing.T) {
 // contract for the ten events that are gated and classified but
 // deliberately unserved: ZERO consumer.Events and NO error, so the
 // re-derive counts their ledgers as expected-zero instead of marking
-// them blind. Returning an error here is the INV-3 trap that held
-// comet's completeness verdict open indefinitely.
+// them blind. Returning an error here would hold
+// the completeness verdict open indefinitely, as it did for comet.
 func TestDecode_RecognizedCustodyEventsProjectZeroRows(t *testing.T) {
 	t.Parallel()
 

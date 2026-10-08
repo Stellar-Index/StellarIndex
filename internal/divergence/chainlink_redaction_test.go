@@ -129,11 +129,10 @@ func slowRPC(t *testing.T, delay time.Duration) *httptest.Server {
 	return srv
 }
 
-// TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError — issue
-// #1148. RedactURLError used to be wrapped with "%s" (chainlink.go's
-// ethCall), which stringifies the error and discards the chain: the
-// resulting error satisfied nothing via errors.Is, so a genuine RPC
-// timeout fell into errorOutcome's default case (OutcomeError) instead
+// TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError — wrapping
+// RedactURLError with "%s" (chainlink.go's ethCall) stringifies the
+// error and discards the chain, so errors.Is matches nothing and a
+// genuine RPC timeout would fall into errorOutcome's default case (OutcomeError) instead
 // of OutcomeTimeout. The redacted error must still unwrap to
 // context.DeadlineExceeded while never rendering the keyed endpoint.
 func TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError(t *testing.T) {

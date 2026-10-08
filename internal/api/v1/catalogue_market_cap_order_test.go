@@ -109,10 +109,10 @@ func rankedPage(t *testing.T, ts *testServer, path string) []rankedRow {
 }
 
 // TestCatalogueListingRanksOnTheFilledMarketCap pins the asset_class
-// listing's market-cap order to the caps it publishes. The ranking used to
+// listing's market-cap order to the caps it publishes. The ranking must not
 // run on caps that are nil for every Stellar-issued row (only fiat rows get a
-// catalogue-level cap) and before the page was sliced and filled, so rows
-// came back in seed order and a large asset seeded late was unreachable on a
+// catalogue-level cap) or before the page is sliced and filled, or rows
+// come back in seed order and a large asset seeded late is unreachable on a
 // short page.
 func TestCatalogueListingRanksOnTheFilledMarketCap(t *testing.T) {
 	cat, err := currency.LoadEmbedded()

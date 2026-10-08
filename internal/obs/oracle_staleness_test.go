@@ -39,7 +39,7 @@ func gaugeChildren(t *testing.T, vec *prometheus.GaugeVec) map[string]float64 {
 }
 
 // TestOracleStaleBudgetMultiplier_IsTheHistoricalThreshold pins the
-// number that used to live in the alert expression as a literal
+// number the alert expression carried as a literal
 // (`> 10 * stellarindex_oracle_resolution_seconds`).
 //
 // The whole safety claim of the per-asset budget is "nothing moves for

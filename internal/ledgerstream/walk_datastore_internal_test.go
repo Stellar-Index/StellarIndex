@@ -24,9 +24,8 @@ func (c *closeTrackingStore) Close() error {
 	return c.DataStore.Close()
 }
 
-// TestWalkDataStore_ClosesStoreOnEveryReturnPath is the regression
-// test for AGT-08 (audit-2026-07-23, low): walkDataStore's docstring
-// claimed backend.Close() closed the underlying store "thereby" — it
+// TestWalkDataStore_ClosesStoreOnEveryReturnPath guards the close path: walkDataStore's docstring
+// must not claim backend.Close() closed the underlying store "thereby" — it
 // does not (the SDK's BufferedStorageBackend.Close only closes its
 // own internal ledger buffer, never the datastore.DataStore it was
 // built over). Every return path past the two early

@@ -420,7 +420,7 @@ func TestAssetMetadata_ReturnsOnlyOverlayFields(t *testing.T) {
 	}
 }
 
-// TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap exercises R-016.
+// TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap exercises the home_domain backfill.
 // Prod live snapshot:
 //
 //	GET /v1/assets/USDC-G… → home_domain=null, sep1_status=not_applicable

@@ -68,7 +68,7 @@ func histogramSampleSum(t *testing.T, vec *prometheus.HistogramVec, labelKey, la
 }
 
 // TestRecordHashdb_DurationExcludesMarshal is the regression guard for
-// T138: HashdbAppendDurationSeconds documents itself (internal/obs/
+// HashdbAppendDurationSeconds documents itself (internal/obs/
 // metrics.go) as the latency of hashdb.Append's single O(1) WriteAt —
 // no seek, no fsync, no network I/O — not of marshaling the ledger.
 //
@@ -76,8 +76,8 @@ func histogramSampleSum(t *testing.T, vec *prometheus.HistogramVec, labelKey, la
 // implausibly large LCM and compared the OBSERVED metric against
 // time.Since(wallStart)/2 for the whole call. Under load a single
 // scheduler/fsync stall inside the (cheap) WriteAt was enough to push
-// that ratio past 50% with the marshal untouched — flaked twice on
-// 2026-09-28 in CI (#1539) despite passing 5/5 in isolation. Comparing
+// that ratio past 50% with the marshal untouched — flaked in CI
+// despite passing 5/5 in isolation. Comparing
 // two real wall-clock measurements of a fast operation is inherently
 // noisy on a loaded machine.
 //

@@ -160,11 +160,11 @@ func (s ctxStore) AdvanceCursorFrom(ctx context.Context, source, sub string, exp
 	return s.fakeStore.AdvanceCursorFrom(ctx, source, sub, expected, newLast)
 }
 
-// TestCycle_SpentBudgetStillCommitsDurableProgress is finding T066: a cycle
+// TestCycle_SpentBudgetStillCommitsDurableProgress pins that a cycle
 // whose sink writes commit ledger 101 and then exhaust PerSourceTimeout (102
 // fails with DeadlineExceeded) must still advance the cursor to 101. The
-// write used to run on the expired cycle context, so it failed and the
-// committed work was re-projected, identically, on every later cycle.
+// write must not run on the expired cycle context, or it fails and the
+// committed work is re-projected, identically, on every later cycle.
 func TestCycle_SpentBudgetStillCommitsDurableProgress(t *testing.T) {
 	const source = "t066-spent-budget-commit"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}

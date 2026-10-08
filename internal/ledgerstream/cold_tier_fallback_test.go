@@ -98,8 +98,7 @@ func TestStream_ColdTierInitFailure_FallsBackToHotOnly(t *testing.T) {
 	}
 }
 
-// TestStream_ColdSchemaMismatch_ReturnsError is the regression test
-// for INT-01 (audit-2026-07-23): when hot and cold both construct
+// TestStream_ColdSchemaMismatch_ReturnsError guards the schema check: when hot and cold both construct
 // successfully but their Galexie export shapes disagree (here,
 // LedgersPerFile), object keys computed from hot's schema are simply
 // wrong for cold's layout — cold fallback would silently 404 forever

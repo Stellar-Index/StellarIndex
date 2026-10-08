@@ -61,8 +61,8 @@ func (c *capturingSupplyInserter) InsertSupply(_ context.Context, snap supply.Su
 	return nil
 }
 
-// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip is the 2026-09-04 r1
-// regression. ingestion_cursors (Postgres, realtime) leads ClickHouse
+// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip guards against a
+// r1 failure. ingestion_cursors (Postgres, realtime) leads ClickHouse
 // stellar.ledgers (CH sink) by design: measured on r1, the ledgerstream
 // cursor sat at 64274510 while max(stellar.ledgers) was 64274509. The
 // aggregator resolved the snapshot ledger as the cursor's own value and
@@ -205,7 +205,7 @@ func TestSupplyAggregatorLedgers_FailsClosedOnStalledLake(t *testing.T) {
 	}
 }
 
-// TestSupplyAggregatorLedgers_BoundsByTheChainCursor is C4-033 applied to
+// TestSupplyAggregatorLedgers_BoundsByTheChainCursor applies the chain-cursor bound to
 // the aggregator path. ingestion_cursors is a table of JOB positions, not
 // chain positions: with the indexer behind (restart, re-derive,
 // maintenance) and an operator backfilling near the tip, MAX(last_ledger)

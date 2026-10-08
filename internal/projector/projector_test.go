@@ -48,7 +48,7 @@ func (fakeEvent) Source() string    { return "fake" }
 
 func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// TestProcessEventSafely_RecoversDecoderPanic pins X9 (audit-2026-06-14):
+// TestProcessEventSafely_RecoversDecoderPanic pins X9:
 // a decoder panic on one poison lake row must be recovered + counted as a
 // soft-fail, NOT crash the live indexer.
 func TestProcessEventSafely_RecoversDecoderPanic(t *testing.T) {
@@ -180,7 +180,7 @@ func TestBuildRegistry_UnknownSourceIsSilent(t *testing.T) {
 	}
 }
 
-// TestBuildRegistry_SEP41NeedsWatchedSet pins F-1316: the sep41 projector
+// TestBuildRegistry_SEP41NeedsWatchedSet pins the sep41 projector
 // sources reproduce the dispatcher's WATCHED set, not a firehose. With no
 // watched contracts they're skipped (the dispatcher writes nothing
 // either); with a watched set they're registered.
@@ -205,10 +205,10 @@ func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
 }
 
 // TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry pins the
-// 2026-07-27 zero-writer regression: the sep41 names are NOT in
+// zero-writer case: the sep41 names are NOT in
 // config.KnownSources, so production's enabled_sources can never carry
 // them — yet the dispatcher unconditionally cedes the sep41 domain to
-// the projector (F-1316 SKIP-SOLE-WRITER). BuildRegistry must therefore
+// the projector. BuildRegistry must therefore
 // register the sep41 sources from the watched-contract set alone, with
 // no enabled-sources entry. r1 ran ~14 days (ledgers 63,419,139+) with
 // zero sep41 writers because only the explicit-name path was tested.

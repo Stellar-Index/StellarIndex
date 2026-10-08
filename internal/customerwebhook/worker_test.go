@@ -35,11 +35,11 @@ type fakeStore struct {
 	delivered map[uuid.UUID]int    // delivery id → response status
 	failures  map[uuid.UUID][]fail // delivery id → ordered fail records
 	// getErr, when set, is returned by GetWebhook instead of consulting
-	// the map — used to simulate a transient store failure (NTF-13).
+	// the map — used to simulate a transient store failure.
 	getErr error
 	// markErr, when set, is returned by MarkAttemptFailed instead of
 	// recording — used to simulate a store WRITE failure on a terminal
-	// mark (NTF-WH-01).
+	// mark.
 	markErr error
 }
 
@@ -202,7 +202,7 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 	if gotEventHdr != string(platform.WebhookEventIncidentSEV1) {
 		t.Errorf("event header = %q", gotEventHdr)
 	}
-	// RLT-450: deliveries must identify themselves so an endpoint
+	// deliveries must identify themselves so an endpoint
 	// operator can trace an unexpected POST back to us.
 	if gotUserAgent == "" || gotUserAgent == "Go-http-client/1.1" {
 		t.Errorf("User-Agent = %q, want an identifying stellar-index UA, not the Go default", gotUserAgent)
@@ -703,7 +703,7 @@ func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) 
 // TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning: Run's doc
 // comment promises a second call — concurrent OR after the first has
 // already returned — gets ErrAlreadyRunning rather than starting a
-// second poll loop. Q143: this pins the sequential case specifically,
+// second poll loop. this pins the sequential case specifically,
 // since a naive "reset the running flag on return" guard passes the
 // concurrent race test but re-arms Run for a second call once the first
 // has exited, silently breaking the one-shot-for-the-worker's-lifetime

@@ -69,9 +69,9 @@ func (p specParameter) examples() []string {
 //
 // change_summary_5m has exactly one writer, this worker, and it can
 // only key an entity on a canonical pair's VWAP series. The spec
-// previously advertised four families (`coin`, `protocol`, `pair`,
-// `source`) and used `source`/`binance` as its own example, so the
-// documented example — and the SDK call built from it — 404'd on
+// must not advertise four families (`coin`, `protocol`, `pair`,
+// `source`) or use `source`/`binance` as its own example: the
+// documented example — and the SDK call built from it — would 404 on
 // every deployment, with the 404 blaming worker lag for rows no
 // worker computes. Anything the spec names must be a family this
 // producer emits, and the documented example must name a row it

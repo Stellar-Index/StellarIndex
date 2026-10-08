@@ -429,8 +429,7 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped is the T175
-// regression proof: the User-Agent header alone is client-controlled,
+// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped proves: the User-Agent header alone is client-controlled,
 // so an external caller spoofing `User-Agent: stellarindex-smoke/1`
 // must NOT be able to erase its own traffic from the customer-facing
 // SLO metrics. In the deployed topology every request that reaches
@@ -520,9 +519,8 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 // TestZeroSeed_F0033 verifies that the bounded counters whose alert
 // rules reference rate()/increase() have all their label combos
 // pre-registered at zero, so PromQL queries return 0 rather than
-// "no data" before the first event fires. This was F-0033 in the
-// 2026-05-26 audit: operators saw the alert reference but no series
-// in /metrics output and couldn't tell whether the metric was
+// "no data" before the first event fires. Without it, operators see the alert reference but no series
+// in /metrics output and cannot tell whether the metric was
 // "intentionally zero" or "alert references a dead metric."
 func TestZeroSeed_F0033(t *testing.T) {
 	ts := httptest.NewServer(obs.Handler())
@@ -571,11 +569,11 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_anomaly_freeze_active 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="auto"} 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="operator"} 0`,
-		// C3-082 / C3-067 (audit-2026-07-23). Both are fail-open /
+		// Both are fail-open /
 		// best-effort paths whose whole point is that they are silent when
 		// healthy, so "absent" and "zero" have to be distinguishable or the
 		// alert is indistinguishable from a dead metric — which is exactly
-		// how both of these went unobserved until the audit found them.
+		// how both of these would go unobserved.
 		`stellarindex_monthly_quota_fail_open_total 0`,
 		// W1-flow-register-4: the dwell-guarded fail-CLOSED twin. Its whole
 		// point is to be silent until a SUSTAINED counter outage forces a
@@ -586,7 +584,7 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_revoke"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="status_notice"} 0`,
-		// C3-056: the staff PII look-up joined the set. It is a read, not
+		// the staff PII look-up joined the set. It is a read, not
 		// a mutation, which is exactly why its audit row is the ONLY
 		// evidence it happened — an absent series here would make "no
 		// staff look-up has ever lost its row" indistinguishable from
@@ -611,7 +609,7 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"} 0`,
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="clear"} 0`,
 		`stellarindex_anomaly_freeze_ladder_rehydrated_total 0`,
-		// C3-032: all three login-code-lockout failure paths are silent
+		// all three login-code-lockout failure paths are silent
 		// at the HTTP layer by design (the control is defence-in-depth
 		// over the per-token cap, so it fails soft). `status_check` in
 		// particular means the lockout is not being enforced AT ALL while

@@ -160,7 +160,7 @@ func TestBucket_Charge_ClampsCost(t *testing.T) {
 }
 
 // TestBucket_Charge_FirstWriteArmsExpiry guards the script's
-// expire-on-create branch. It used to key on `current == 1`; a key
+// expire-on-create branch. It must not key on `current == 1`; a key
 // first written by a cost-N charge lands on N, so an unported check
 // would leave it with no TTL and the counter would never drain.
 func TestBucket_Charge_FirstWriteArmsExpiry(t *testing.T) {

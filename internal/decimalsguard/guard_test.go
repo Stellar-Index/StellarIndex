@@ -217,8 +217,7 @@ func TestSweep_PropagatesEnumerationError(t *testing.T) {
 
 // TestSweep_StampsHeartbeatOnSuccess proves a completed Sweep pass — even
 // one that finds zero offenders — stamps
-// obs.DecimalsGuardSweepLastSuccessUnix. Without this stamp (audit-2026-09-02
-// F040), a healthy "found nothing" sweep and a guard that never armed at all
+// obs.DecimalsGuardSweepLastSuccessUnix. Without this stamp, a healthy "found nothing" sweep and a guard that never armed at all
 // (e.g. a ClickHouse that failed to answer at aggregator boot) are both
 // silent: the offender counters sit at zero either way.
 func TestSweep_StampsHeartbeatOnSuccess(t *testing.T) {
@@ -260,7 +259,7 @@ func TestSweep_DoesNotStampHeartbeatOnEnumerationFailure(t *testing.T) {
 // TestMarkEnabled_SeedsHeartbeatUntilFirstSweep pins the never-armed arm of
 // stellarindex_decimals_guard_sweep_stale: an enabled guard whose lake dial
 // or Backfill is still running must read "enabled at T", not the Unix epoch
-// (which the alert used to read as 56 years stale from the first scrape), and
+// (which the alert would read as 56 years stale from the first scrape), and
 // a failed pass must leave that seed in place rather than refresh it.
 func TestMarkEnabled_SeedsHeartbeatUntilFirstSweep(t *testing.T) {
 	obs.DecimalsGuardSweepLastSuccessUnix.Set(0)

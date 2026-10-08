@@ -14,9 +14,9 @@ import (
 // TestPriceDivergenceRunbookStatesTheRealFlagRule pins the runbook's
 // flag-rule section to the rule CachedResult.WarningFired implements: a
 // source quorum, median-or-nobody-agrees, and a persistence debounce.
-// It used to say a `status = 'firing'` row drives the flag, which
-// flushObservations writes with neither gate, so a responder could find
-// firing rows with the flag off, or the flag on with no firing rows.
+// A `status = 'firing'` row does not drive the flag: flushObservations
+// writes it with neither gate, so a responder could find firing rows
+// with the flag off, or the flag on with no firing rows.
 func TestPriceDivergenceRunbookStatesTheRealFlagRule(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "operations", "runbooks", "divergence.md"))
 	if err != nil {

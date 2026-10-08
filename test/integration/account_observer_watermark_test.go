@@ -108,7 +108,7 @@ func newWatermarkRefresher(store *timescale.Store, snapshotLedger uint32, insert
 }
 
 // TestAccountObserverWatermark_QuietObserverStaysFresh is the money-adjacent
-// regression proof (F-1320 / R-002 / CS-102 tail). A HEALTHY account observer
+// regression proof. A HEALTHY account observer
 // that has PROCESSED up to a fresh ledger but whose watched reserve accounts
 // have not CHANGED for far longer than the dormancy horizon must NOT trip the
 // XLM supply freshness gate.

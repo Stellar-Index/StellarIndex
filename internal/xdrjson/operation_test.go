@@ -275,7 +275,7 @@ func invokeSwapHF(t *testing.T) xdr.HostFunction {
 // TestDecodeOperationBody_InvokeHostFunction_AuthTree pins the 5.1 enhancement:
 // the nested AUTHORIZATION tree (op.Auth → RootInvocation → SubInvocations) is
 // surfaced under Fields["authorizations"] so the /tx view can render the
-// contract-call structure it previously omitted.
+// contract-call structure.
 func TestDecodeOperationBody_InvokeHostFunction_AuthTree(t *testing.T) {
 	root := authNode(0xB0, "transfer", authNode(0xC0, "approve"))
 	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{

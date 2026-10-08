@@ -26,8 +26,7 @@ func newRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 // TestIncrementAndRead_RoundTrip — Increment + Read recover the
 // counts they wrote. The happy path.
 // TestMonthToDate_SumsCurrentMonthOnly — only counters dated
-// within the current UTC calendar month are summed. F-1226
-// (codex audit-2026-05-12).
+// within the current UTC calendar month are summed.
 func TestMonthToDate_SumsCurrentMonthOnly(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) // 1st of month

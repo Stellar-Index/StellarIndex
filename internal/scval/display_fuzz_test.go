@@ -24,8 +24,7 @@ import (
 // were found by reading rather than by a test:
 //
 //   - the zero-value ScVal reports Type==Bool with a nil B pointer, so
-//     MustB dereferenced nil and panicked the goroutine (display.go:74;
-//     cold audit 2026-08-04) — reachable because MapField returns
+//     MustB dereferenced nil and panicked the goroutine (display.go:74) — reachable because MapField returns
 //     xdr.ScVal{} on a miss and the miss path logged the value;
 //   - truncateDisplay sliced BYTES, so a multi-byte rune straddling byte
 //     120 produced invalid UTF-8 (display.go:159).
@@ -43,8 +42,8 @@ func FuzzDisplayB64(f *testing.F) {
 		"", // the early-return
 		// Real mainnet SEP-41 bodies (internal/sources/sep41_supply
 		// golden_dropped_mint_test.go): a bare i128 burn amount and the
-		// CAP-67 map { amount, to_muxed_id } that the i128-only decode
-		// used to drop.
+		// CAP-67 map { amount, to_muxed_id } that an i128-only decode
+		// would drop.
 		"AAAACgAAAAAAAAAAAAAAABOrZoA=",
 		"AAAAEQAAAAEAAAACAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAABZ+LFaAAAADwAAAAt0b19tdXhlZF9pZAAAAAAOAAAAGUF1dG8gcmVjaGFyZ2UgdHJhbnNhY3Rpb24AAAA=",
 		"AAAADwAAAARtaW50", // Symbol "mint"

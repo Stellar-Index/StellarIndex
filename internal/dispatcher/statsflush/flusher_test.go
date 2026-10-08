@@ -56,10 +56,9 @@ func newTestFlusher(source StatsSource, store statsWriter) *Flusher {
 	return New(source, store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Interval: 5 * time.Minute})
 }
 
-// TestFlushAt_WriteFailure_RetainsLastSnapshot is the regression test
-// for INT-05 (audit-2026-07-23): flushAt used to advance f.last
-// unconditionally, even when InsertDecoderStats failed — permanently
-// discarding that window's counter deltas the moment the next tick
+// TestFlushAt_WriteFailure_RetainsLastSnapshot pins that flushAt does not advance f.last
+// when InsertDecoderStats fails — that would permanently
+// discard that window's counter deltas the moment the next tick
 // computed its own delta against the now-advanced (but never durably
 // written) snapshot.
 //
@@ -147,12 +146,11 @@ func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
 	}
 }
 
-// TestRun_ShutdownDrain_UsesLiveContext is the regression test for the
-// cold audit of 2026-08-04: Run's ctx.Done() arm called f.flush(ctx)
-// with the very context that had just fired. database/sql checks
+// TestRun_ShutdownDrain_UsesLiveContext guards the shutdown drain: Run's ctx.Done() arm
+// must not call f.flush(ctx) with the very context that just fired. database/sql checks
 // ctx.Err() before acquiring a connection, so the "one last flush
 // before exiting so a clean shutdown captures the final partial
-// bucket" could never write anything — every indexer restart dropped
+// bucket" would never write anything — every indexer restart would drop
 // up to a full interval of events_seen / decode_errors / orphan_events
 // while logging the retain-snapshot warning, a promise the exiting
 // process cannot keep.
@@ -189,10 +187,10 @@ func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 	}
 }
 
-// TestFlushAt_PromotesDispatcherCountersToPrometheus is the regression
-// test for RLT-135: TxReadErrors, TxEventReadErrors and
-// EntryMetaUnsupported used to be WARN-log-only, with no Prometheus
-// series an alert rule or dashboard could key off. A single flush
+// TestFlushAt_PromotesDispatcherCountersToPrometheus pins that
+// TxReadErrors, TxEventReadErrors and EntryMetaUnsupported are not
+// WARN-log-only: each needs a Prometheus series an alert rule or
+// dashboard can key off. A single flush
 // window with all three nonzero must both log the WARN (unchanged
 // behaviour) and add the exact delta to the matching counter.
 func TestFlushAt_PromotesDispatcherCountersToPrometheus(t *testing.T) {
@@ -266,10 +264,9 @@ func TestFlushAt_PromotesLedgerUpgradeEntries(t *testing.T) {
 	}
 }
 
-// TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch is the
-// regression test for T110/RLT-135: the end-of-flush snapshot used to
-// omit EntryMetaUnsupported, so f.last.EntryMetaUnsupported stayed 0
-// forever and the delta at every subsequent tick equalled the full
+// TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch pins that the
+// end-of-flush snapshot includes EntryMetaUnsupported; otherwise
+// f.last.EntryMetaUnsupported stays 0 forever and the delta at every subsequent tick equalled the full
 // cumulative total — the WARN fired on every flush window for the
 // life of the process instead of only when NEW occurrences appeared
 // in that window.
@@ -301,11 +298,10 @@ func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 	}
 }
 
-// TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch is the
-// regression test for CA2-A25-harden-3: flushAt used to derive the
+// TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch pins that flushAt does not derive the
 // dispatcher-level obs-counter deltas (TxReadErrors,
 // TxEventReadErrors, EntryMetaUnsupported) from the SAME baseline
-// (f.last) that INT-05 deliberately holds back on an
+// (f.last) that is deliberately held back on an
 // InsertDecoderStats failure. A failed-insert tick followed by a
 // stable-count tick (no new occurrences) then recomputed the
 // identical positive delta a second time, re-emitting the same

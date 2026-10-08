@@ -508,7 +508,7 @@ func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 	// The remaining two routes an unusable DSN reaches the output by: the
 	// unparseable-DSN path, which the tool renders itself, by BOTH ways
 	// the value arrives; and the flag-name slot, which the flag package
-	// used to echo. Both carry the query-password-with-@ shape.
+	// echoes. Both carry the query-password-with-@ shape.
 	for name, dsn := range map[string]string{
 		"query password with a raw ampersand": "postgres://" + redactionHost + "/stellarindex%ZZ?password=" + stemHead + "&" + stemTail + "&sslmode=disable",
 		"query password with an @":            "postgres://" + redactionHost + ":5432/db%ZZ?password=" + stemHead + "@" + stemTail,

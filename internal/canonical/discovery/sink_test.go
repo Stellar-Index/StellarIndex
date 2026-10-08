@@ -84,8 +84,8 @@ func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 // production-rate-protection path: r1 evidence (PR #620) showed 99%
 // of Pushes were duplicates of already-discovered contracts), but the
 // skipped observations are NOT discarded: Stop flushes them as one
-// extra Record call per key carrying the true accumulated count
-// (CA2-A10-correct-4) — so every push is still accounted for in
+// extra Record call per key carrying the true accumulated count,
+// so every push is still accounted for in
 // totalCount even though most never touch the channel.
 func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 	rec := &fakeRecorder{}
@@ -470,7 +470,7 @@ func (r *stallRecorder) Record(ctx context.Context, _ discovery.Hit) error {
 func (r *stallRecorder) IsKnown(_ context.Context, _ string) (bool, error) { return false, nil }
 
 // TestAsyncSink_StopFlushesTrueEventCountAndLastLedger is the
-// CA2-A10-correct-4 regression: before this fix, a contract's
+// A contract's
 // event_count and last_seen_ledger only ever reflected the FIRST
 // observation per process lifetime — every repeat Push for the same
 // key was silently skipped by in-process dedup and never reached the
@@ -512,10 +512,10 @@ func TestAsyncSink_StopFlushesTrueEventCountAndLastLedger(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_StopBoundedByDrainTimeout — #1018. Stop used to drain
+// TestAsyncSink_StopBoundedByDrainTimeout — Stop must not drain
 // every buffered hit at RecordTimeout each (1024 × 2s ≈ 34 min in
-// production) with no overall deadline, so under a Postgres stall it
-// outlived the indexer's systemd stop timeout and was SIGKILLed.
+// production) without an overall deadline, or under a Postgres stall it
+// outlives the indexer's systemd stop timeout and was SIGKILLed.
 func TestAsyncSink_StopBoundedByDrainTimeout(t *testing.T) {
 	const hits = 40
 	rec := &stallRecorder{}

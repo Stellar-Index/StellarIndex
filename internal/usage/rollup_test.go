@@ -307,8 +307,8 @@ func TestNewRollup_NilDeps(t *testing.T) {
 // dupScanRedis wraps a real client and makes SCAN return every key
 // TWICE — the documented Redis behaviour when the keyspace rehashes
 // mid-cursor ("an element may be returned multiple times"). miniredis
-// never does this, which is why the cold-audit 2026-08-03 defect
-// survived: a duplicate re-read the same hash, groupDetails SUMMED
+// never does this, which is why this defect
+// can hide: a duplicate re-read the same hash, groupDetails SUMMED
 // both, and usage_daily's GREATEST() merge froze the inflated count
 // into a CLOSED day permanently — a customer's usage history doubled
 // by a Redis implementation detail.

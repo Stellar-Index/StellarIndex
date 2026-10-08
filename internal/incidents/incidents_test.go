@@ -15,7 +15,7 @@ import (
 // pass — Load is content-shape agnostic; this asserts the loader
 // round-trips the embedded fixtures.
 //
-// T177 (audit-2026-09-18): Load() silently drops a post that fails
+// Load() silently drops a post that fails
 // to parse (deliberate, per the package doc — one bad post shouldn't
 // break the feed) and only logs a warning. A `len(got) != 0` check
 // can't tell "every post parsed" from "all but one silently didn't":
@@ -64,7 +64,7 @@ func TestLoad_RealCorpus(t *testing.T) {
 // TestLoad_NoSilentDrops guards the failure mode Load's own doc comment
 // accepts by design: a post that fails frontmatter validation is logged
 // and skipped rather than panicking the binary. That's correct for one
-// bad post among many, but nothing previously caught the count going
+// bad post among many, but nothing else catches the count going
 // quietly wrong — a malformed post vanishes from /v1/incidents and the
 // status page with only a log line, which CI never inspects. This
 // compares Load's output count against every non-template *.md file
@@ -189,9 +189,9 @@ func TestParseTimestamp_NoneParseable(t *testing.T) {
 // than shipping through. The OpenAPI contract declares both as required
 // enums, and every downstream severity mapping is a ternary chain whose
 // final branch renders "maintenance" — GREEN on the public status page.
-// So a one-keystroke slip (`sev-1`) used to publish an ongoing SEV-1
+// So a one-keystroke slip (`sev-1`) would publish an ongoing SEV-1
 // looking like routine maintenance, while also breaking the typed
-// clients (cold audit 2026-08-03).
+// clients.
 func TestParseFile_RejectsOutOfEnumSeverityAndStatus(t *testing.T) {
 	t.Parallel()
 
@@ -251,7 +251,7 @@ body
 }
 
 // TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs — the 2026-05-10
-// post used to cite "PR #1228" and "PR #1229" for its two follow-up
+// post must not cite "PR #1228" or "PR #1229" for its two follow-up
 // items. Neither PR exists in this repo (max issue/PR is far below
 // 1228); the loader publishes BodyMarkdown verbatim to
 // status.stellarindex.io, so a reader following either link gets a

@@ -15,7 +15,7 @@ import (
 
 // These tests pin the behaviour: a lake read that blows
 // explorerReadTimeout must be served as a 503 `…-timeout` problem+json, NOT the
-// `errors/internal` 500 every explorer handler used to emit. The live symptom
+// `errors/internal` 500 every explorer handler would otherwise emit. The live symptom
 // was GET /v1/contracts/{id}/code-history returning
 // `500 {"type":".../errors/internal","title":"Internal error"}` at exactly 8.0s
 // for every contract (API log: `explorer ContractCodeHistory failed

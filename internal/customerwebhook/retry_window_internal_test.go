@@ -12,8 +12,8 @@ import (
 
 // TestRetryWindowMatchesOperatorDocs derives the default retry window from
 // backoffCeiling and requires every doc that states it to quote the same
-// figure. The budget used to be stated in several places and derived in
-// one, and the incident runbook carried a 72 h figure the code never had.
+// figure. The budget is stated in several places but derived in
+// one, so a doc can drift to a figure the code never had.
 func TestRetryWindowMatchesOperatorDocs(t *testing.T) {
 	var lo, hi time.Duration
 	// Attempt n's failure schedules retry n; the defaultMaxAttempts-th

@@ -392,10 +392,10 @@ func TestKnownCutsAQueryPasswordThatHoldsAnAtSign(t *testing.T) {
 	}
 }
 
-// A password that opens with the marker itself. cutHeld used to skip any
-// position already reading `<redacted>`, for idempotence, and that skip
-// read the start of this secret as a cut that had already happened and
-// printed the rest of it.
+// A password that opens with the marker itself. cutHeld skips any
+// position already reading `<redacted>`, for idempotence; that skip must
+// not read the start of this secret as a cut that had already happened
+// and print the rest of it.
 func TestKnownCutsAPasswordThatStartsWithTheMarker(t *testing.T) {
 	pw := "<redacted>" + sentinel + tailStem
 	for name, dsn := range map[string]string{

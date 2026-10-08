@@ -116,10 +116,9 @@ func TestSafeUnixSeconds_bounds(t *testing.T) {
 	}
 }
 
-// TestSafeUnix_preEpochCloseTimeKeepsTheCeiling is the regression test
-// for the cold audit of 2026-08-04.
+// TestSafeUnix_preEpochCloseTimeKeepsTheCeiling guards the pre-epoch ceiling.
 //
-// The ceiling was computed as uint64(closedAt.Add(window).Unix()). For a
+// The ceiling is computed as uint64(closedAt.Add(window).Unix()). For a
 // pre-1970 closedAt that Unix() is negative, and the unchecked cast
 // wrapped it to ~1.8e19 — disabling the guard entirely. Every raw value
 // including 2^63 then passed the bound and int64(raw) stamped a far-PAST
@@ -167,8 +166,8 @@ func TestUnboundedUnixSeconds_farFutureHonoured(t *testing.T) {
 	}
 }
 
-// TestUnboundedUnixSeconds_overflowWrapNearEpochRejected is the
-// regression test for RLT-115: a raw value near math.MaxUint64 (a common
+// TestUnboundedUnixSeconds_overflowWrapNearEpochRejected pins that
+// a raw value near math.MaxUint64 (a common
 // "no deadline" / "unlimited" sentinel) wraps to a SMALL negative int64,
 // landing near the 1970 epoch — a plausible, postgres-representable time
 // that a downstream pgTimestamptzRepresentable-style range check would

@@ -396,20 +396,18 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 }
 
 // TestMarketsListFamily golden-pins the four `markets:list:*` shapes.
-// These previously did NOT exist as canonical builders — call sites
-// in cmd/stellarindex-api/main.go hand-appended
+// These are canonical builders so call sites in
+// cmd/stellarindex-api/main.go need not hand-append
 // `":order=" + marketsOrderKey(order)` (and further ad-hoc suffixes
 // for source/asset/pools) onto [cachekeys.MarketsList]'s bare
-// `string` result. That compiled cleanly against the old
-// `string`-returning MarketsList because a canonical builder's
-// output and a hand-rolled suffix were the SAME Go type — exactly
-// the ad-hoc-key-construction bug class this package exists to
-// close. Against the typed [cachekeys.MarketsListKey] that
-// concatenation is a compile error (mismatched types
-// MarketsListKey and string), which is what forced the migration to
-// these dedicated builders. The golden strings below assert the
-// wire bytes are UNCHANGED from what the concatenation used to
-// produce.
+// `string` result. Against a `string`-returning MarketsList that
+// compiles cleanly, because a canonical builder's output and a
+// hand-rolled suffix are the SAME Go type — exactly the
+// ad-hoc-key-construction bug class this package exists to close.
+// Against the typed [cachekeys.MarketsListKey] that concatenation is
+// a compile error (mismatched types MarketsListKey and string), which
+// is why these dedicated builders exist. The golden strings below
+// assert the wire bytes equal what the concatenation would produce.
 func TestMarketsListFamily(t *testing.T) {
 	base := cachekeys.MarketsList("cur1", 25)
 	if base.String() != "markets:list:cur1:25" {

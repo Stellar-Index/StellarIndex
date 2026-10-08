@@ -361,10 +361,8 @@ const (
 	//
 	// Both are permanent controls by construction. Neither the native
 	// asset nor a fiat-backed stablecoin can ever acquire a curated
-	// RWA binding, so unlike the tokenized-gold contract that used to
-	// stand here, no later admission can quietly retire this test —
-	// which is what happened when XAUm's own primary source was found
-	// and it became a bound instrument.
+	// RWA binding, so unlike a tokenized-gold contract, no later admission can
+	// quietly retire this test.
 	listedNotBoundXLM  = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 	listedNotBoundUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
@@ -698,7 +696,8 @@ func TestSpikoBindings_ClassifyByInstrumentNotByIssuer(t *testing.T) {
 }
 
 // TestCuratedBindings_DeclareAClassFromTheClosedVocabulary is the guard
-// the funnel's arm-2 comment used to claim existed and did not.
+// for the funnel's arm-2 claim that a curated class is in the closed
+// vocabulary.
 //
 // QualifyContract returns a curated binding's Class VERBATIM — it never
 // checks it against a vocabulary. So an entry added with a class outside

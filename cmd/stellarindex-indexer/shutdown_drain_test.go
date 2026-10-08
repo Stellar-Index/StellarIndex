@@ -168,10 +168,10 @@ func TestShutdownCancelsRootBeforeDraining(t *testing.T) {
 		"the external connectors are bound to rootCtx, so the WaitGroup can never drain and the process hangs")
 }
 
-// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt pins Q106: the metrics
-// server used to be shut down immediately after cancel(), before the
+// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt pins that the metrics
+// server is not shut down immediately after cancel(), before the
 // producer-wait / external-connector-wait / sink-drain sequence that
-// follows. That made /metrics unscrapable for the entire drain window —
+// follows, which would make /metrics unscrapable for the entire drain window —
 // exactly when an operator most needs to see in-flight drain progress.
 //
 // Asserted positionally, like the guards above: metricsSrv.Shutdown must

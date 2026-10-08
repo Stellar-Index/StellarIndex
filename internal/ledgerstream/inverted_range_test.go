@@ -12,8 +12,8 @@ import (
 )
 
 // An inverted bounded range is rejected before any datastore is opened —
-// on the tiered path the cold tier used to be opened (a live bucket
-// round-trip in production) before walkDataStore got to validateRange.
+// on the tiered path the cold tier must not be opened (a live bucket
+// round-trip in production) before walkDataStore reaches validateRange.
 func TestStream_InvertedRangeRejectedBeforeAnyDatastoreOpens(t *testing.T) {
 	hotCfg := datastore.DataStoreConfig{
 		Type:   "Filesystem",

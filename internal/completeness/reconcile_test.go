@@ -115,7 +115,7 @@ func TestReconcileCounts(t *testing.T) {
 	}
 }
 
-// ─── C4-059: the symmetric-soft-fail blind spot ─────────────────
+// ─── the symmetric-soft-fail blind spot ─────────────────
 
 // brokenDecoder MATCHES every "MATCH" row and then fails Decode on rows in
 // one specific ledger — the shape of a real decoder bug (a payload variant
@@ -133,8 +133,8 @@ func (d brokenDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	return []consumer.Event{fakeOutput{}}, nil
 }
 
-// TestReDeriveOutputCountsByKindFromEvents_UndecodableMatchedNetsToZero is the C4-059
-// regression (audit-2026-07-23).
+// TestReDeriveOutputCountsByKindFromEvents_UndecodableMatchedNetsToZero guards the
+// symmetric-soft-fail blind spot.
 //
 // Scenario: ledger 101 holds two events the decoder CLAIMS (Matches == true)
 // and then fails to Decode. The projector failed on the identical rows when

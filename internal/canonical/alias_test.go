@@ -103,9 +103,8 @@ func TestAssetAliases_EURCEUROC(t *testing.T) {
 }
 
 // TestAssetAliases is the contract test for the primitive that
-// internal/api/v1 and internal/aggregate BOTH delegate to. It replaces
-// the two hand-kept-in-lock-step copies those packages used to carry
-// (C4-012/C4-013, audit-2026-07-23).
+// internal/api/v1 and internal/aggregate BOTH delegate to, so the
+// two packages cannot drift apart.
 func TestAssetAliases(t *testing.T) {
 	cases := map[string][]string{
 		// Literal first, then the rest of the family in canonical
@@ -153,7 +152,7 @@ func TestAssetAliases(t *testing.T) {
 
 // TestAssetAliasStrings pins the SQL-membership projection: same forms,
 // same order. The per-source breakdown queries value a SAC leg as XLM,
-// so a form set missing the SAC undercounts Soroban XLM volume (C4-012).
+// so a form set missing the SAC undercounts Soroban XLM volume.
 func TestAssetAliasStrings(t *testing.T) {
 	got := AssetAliasStrings(NativeAsset())
 	want := []string{"native", "crypto:XLM", XLMSacContractID}

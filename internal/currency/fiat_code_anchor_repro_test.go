@@ -5,7 +5,7 @@ import "testing"
 // K033 — a SEP anchor's fiat-coded token must not be reported as an
 // impersonation.
 //
-// # What used to happen
+// # The failure this guards
 //
 // The catalogue's nineteen sovereign-currency entries carry `networks: []`
 // and an M2 circulating supply: they are units of account, not issued

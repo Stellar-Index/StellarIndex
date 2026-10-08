@@ -232,8 +232,7 @@ func TestExtractCallTrees_nonInvokeContractOpNilSlot(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot pins C2-060
-// (audit-2026-07-23).
+// TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot pins the root of an auth-free top-level call.
 //
 // A SorobanAuthorizationEntry's RootInvocation is the root of the subtree
 // that requires authorization — NOT necessarily the op's top-level call.
@@ -289,7 +288,7 @@ func TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot(t *testing.T) {
 }
 
 // TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated is the other half
-// of the C2-060 decision: when the auth root IS the top-level call (the
+// of the root decision: when the auth root IS the top-level call (the
 // common single-entry shape), it must be emitted exactly ONCE. A
 // duplicate here becomes a duplicate decode and therefore a duplicate
 // trade row.
@@ -317,8 +316,8 @@ func TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated(t *testing.T) {
 	}
 }
 
-// TestExtractCallTrees_mixedAuthEntries_nonTopIsNested is the
-// regression test for the cold audit of 2026-08-04.
+// TestExtractCallTrees_mixedAuthEntries_nonTopIsNested pins nested
+// handling of non-top auth entries.
 //
 // The mixed shape: a co-signed tx whose op invokes a_fn (authorized by
 // entry 0, which IS the op's top-level call) while a second, deeper

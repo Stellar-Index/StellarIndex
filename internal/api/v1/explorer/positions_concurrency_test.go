@@ -67,10 +67,9 @@ func (r *slowPositionsReader) AquariusGaugeByUser(context.Context, string) ([]ti
 	return nil, errors.New("aquarius down")
 }
 
-// TestAccountPositions_FoldsRunConcurrently pins the 2026-08-13
+// TestAccountPositions_FoldsRunConcurrently pins the
 // sub-second fix: the six protocol folds are independent reads and
-// must run CONCURRENTLY (endpoint latency = max, not sum — it was the
-// last warm breach at 1.99s). Serial execution would show max
+// must run CONCURRENTLY (endpoint latency = max, not sum). Serial execution would show max
 // in-flight of 1 and take 6x the delay.
 func TestAccountPositions_FoldsRunConcurrently(t *testing.T) {
 	const delay = 60 * time.Millisecond

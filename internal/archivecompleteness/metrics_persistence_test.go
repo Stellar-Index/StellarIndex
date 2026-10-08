@@ -15,12 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// C4-038 / C4-039 / C4-054 (audit-2026-07-23).
-//
 // `verify` rewrites the whole textfile atomically on every run and
 // only sets LastSuccessTimestamp on a clean, non-vacuous run. The
-// writer used to omit the last_success line whenever the timestamp
-// was zero, with a comment claiming node_exporter would "surface the
+// writer must not omit the last_success line whenever the timestamp
+// was zero on the theory that node_exporter would "surface the
 // previous-scrape value". node_exporter's textfile collector re-reads
 // the file on every scrape, so the SERIES DISAPPEARS instead — and
 // `(time() - archive_completeness_last_success_timestamp) > 26h`
@@ -71,7 +69,7 @@ func readTextfile(t *testing.T, path string) string {
 }
 
 // TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun is the core
-// C4-038 regression: a clean run stamps the timestamp, a subsequent
+// a clean run stamps the timestamp, a subsequent
 // RESIDUAL run rewrites the file, and the last_success series must
 // still be present AND still carry the clean run's value.
 func TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun(t *testing.T) {
@@ -194,7 +192,7 @@ func TestWriteTextfileAtomic_RepairCountersAccumulate(t *testing.T) {
 	}
 }
 
-// C4-037 at the Fill layer: a source that fails EVERY try must still
+// At the Fill layer: a source that fails EVERY try must still
 // appear in the attempt denominator, otherwise its failure ratio has
 // nothing to divide by. Two sources, the first always 500, the second
 // always healthy — the failing one must show attempts == failures.

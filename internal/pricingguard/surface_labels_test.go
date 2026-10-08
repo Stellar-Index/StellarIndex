@@ -62,8 +62,8 @@ const apiLayerHeading = "## API layer (api binary)"
 // "API layer (api binary)" section to the three surfaces
 // (price_alert, divergence_webhook, freeze_webhook) that the shared
 // price-serve gate counters emit from the aggregator binary instead —
-// GH-1240: the doc previously read as if every surface in the table
-// came from the api binary, hiding that summing the counter without a
+// the doc must not read as if every surface in the table
+// came from the api binary, which hides that summing the counter without a
 // `job` selector mixes two processes.
 func TestAggregatorOnlySurfacesAreCalledOutAsExceptions(t *testing.T) {
 	raw, err := os.ReadFile(metricsReadme)

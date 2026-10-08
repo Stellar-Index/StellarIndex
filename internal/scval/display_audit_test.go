@@ -8,7 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Cold audit 2026-08-04. Three Display defects, each reachable from
+// Three Display defects, each reachable from
 // contract-controlled or default-constructed input.
 func TestDisplay_auditRegressions(t *testing.T) {
 	t.Run("zero ScVal does not panic", func(t *testing.T) {

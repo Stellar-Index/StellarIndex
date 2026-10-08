@@ -103,7 +103,7 @@ func TestAnomalyFreezeHook_UnflaggedPairStillDelivers(t *testing.T) {
 
 // TestAnomalyFreezeHook_FirstTickFreezeOmitsFrozenValue: a pair that
 // freezes on its first bucket has no price to pin, so the payload must not
-// assert one (the sink's NUMERIC NOT NULL filler used to arrive as "0").
+// assert one (the sink's NUMERIC NOT NULL filler would otherwise arrive as "0").
 func TestAnomalyFreezeHook_FirstTickFreezeOmitsFrozenValue(t *testing.T) {
 	_, native := webhookGatePairs(t)
 	usd, err := canonical.NewFiatAsset("USD")

@@ -25,7 +25,7 @@ import (
 
 // ---------------------------------------------------------------------------
 // Harness: an in-memory eventStore so the cursor-durability state machine can
-// be driven cycle-by-cycle without Postgres. COR-11 / COR-01 are entirely
+// be driven cycle-by-cycle without Postgres. These tests are entirely
 // about WHEN the cursor is allowed to move, so the cursor is the assertion
 // surface here — not a mock's call log.
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ type fakeStore struct {
 	// EITHER the channel is closed or the caller's ctx is done —
 	// standing in for a query stuck behind a lock wait. dirtyDeadline
 	// records whether the ctx it was handed carried one, and when
-	// (wave-D RD-08: this read used to run on the un-timeout'd root ctx).
+	// (the read must not run on the un-timeout'd root ctx).
 	dirtyBlock    chan struct{}
 	dirtyDeadline time.Time
 	dirtyHadDL    bool
@@ -377,15 +377,15 @@ func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
 }
 
 // ---------------------------------------------------------------------------
-// COR-11: a DETERMINISTIC store validation error must not wedge the source.
+// a DETERMINISTIC store validation error must not wedge the source.
 // ---------------------------------------------------------------------------
 
-// TestCycle_ValidationErrorDoesNotWedge pins COR-11 (audit-2026-07-23): a
+// TestCycle_ValidationErrorDoesNotWedge pins that a
 // Validate-failing row — here an OracleUpdate rejected by canonical
 // validation, exactly what Store.InsertOracleUpdate returns verbatim — is a
 // DETERMINISTIC data fault. It carries no *pgconn.PgError, so the old
 // permanent/transient boolean classified it transient and held the cursor
-// below its ledger FOREVER; under INV-4 there is no second writer, so the
+// below its ledger FOREVER; there is no second writer, so the
 // whole per-source projection stopped advancing from one bad row.
 //
 // The corrected behaviour: skip the row on the FIRST cycle, count it, and
@@ -419,8 +419,7 @@ func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 // half: a second cycle over a still-poisoned range keeps making progress
 // rather than re-stalling.
 //
-// RLT-131 moved what this case has to supply, not what it asserts. The skip
-// arm now takes the same sink-health proof the quarantine arm does, so the
+// The skip arm takes the same sink-health proof the quarantine arm does, so the
 // poison row is accompanied by one that COMMITS — which is the shape a
 // scattered poison row actually has in production, and the shape this case
 // always meant ("a still-poisoned RANGE keeps making progress"). A lone poison
@@ -456,12 +455,12 @@ func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// COR-01: a negative SEP-41 amount rejected by the store's own pre-SQL
+// a negative SEP-41 amount rejected by the store's own pre-SQL
 // validation (a plain fmt.Errorf, no sentinel, no *pgconn.PgError) must not wedge
 // the transfers projection forever.
 // ---------------------------------------------------------------------------
 
-// TestCycle_NegativeSEP41AmountQuarantinesAfterBudget pins COR-01: the store
+// TestCycle_NegativeSEP41AmountQuarantinesAfterBudget pins that the store
 // rejects a hostile/malformed negative transfer amount BEFORE the statement
 // runs, so the error is un-classifiable from the projector's side. It is
 // retried under a budget (transient faults get their chance) and then
@@ -666,11 +665,11 @@ func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 	}
 }
 
-// TestCycle_DecoderRegressionMarksRunDegradedNotOK pins DATA-6 / NS-2
-// (audit-2026-08-14): when a decoder regression makes a whole class of valid
+// TestCycle_DecoderRegressionMarksRunDegradedNotOK pins that
+// when a decoder regression makes a whole class of valid
 // events fail to decode, the projector still (correctly) advances the cursor
 // past them — holding would re-wedge the sole-writer source on a deterministic
-// failure (COR-11). What must NOT happen is the cycle reporting a clean "ok"
+// failure. What must NOT happen is the cycle reporting a clean "ok"
 // run over those dropped rows. The cycle is marked runs_total{outcome=
 // "decode_degraded"} instead, so runs_total no longer counts it clean and the
 // per-source decode_error rate alert can distinguish a regression from
@@ -693,8 +692,8 @@ func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 
 	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, lake)
 
-	// The cursor still advances past the broken class (poison-row escape /
-	// COR-11 — do NOT re-wedge a sole-writer source on a deterministic fault).
+	// The cursor still advances past the broken class (poison-row escape —
+	// do NOT re-wedge a sole-writer source on a deterministic fault).
 	if got := store.cursor(); got != 105 {
 		t.Fatalf("cursor = %d, want 105 (a deterministic decode failure is skipped, not held)", got)
 	}
@@ -890,7 +889,7 @@ func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RLT-131, alerting half: ADR-0003's SEV-1 promise on ErrI128Overflow.
+// Alerting half: ADR-0003's SEV-1 promise on ErrI128Overflow.
 // ---------------------------------------------------------------------------
 
 // TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent pins the counter the
