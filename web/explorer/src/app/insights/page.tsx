@@ -55,7 +55,7 @@ const SURFACES = [
 ] as const;
 
 export default function InsightsPage() {
-  // #328: the whole signals layer is aggregator-derived. The rail already
+  // The whole signals layer is aggregator-derived. The rail already
   // dropped this hub on the lean test nets; a direct URL still reached it
   // and offered three cards to three empty pages.
   // The title stays on this branch: the document carries its <h1> on

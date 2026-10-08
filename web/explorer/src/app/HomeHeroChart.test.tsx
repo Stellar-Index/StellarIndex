@@ -110,7 +110,7 @@ describe('HomeHeroChart', () => {
     expect(screen.queryByText(/live USD price/i)).not.toBeInTheDocument();
   });
 
-  // #1028: /v1/price is the only route that sets `frozen`, and the hook
+  // /v1/price is the only route that sets `frozen`, and the hook
   // dropped every flag but `stale`.
   it('marks a frozen price even while the tip stream is live', async () => {
     mockPriceFetch('0.17', false, { frozen: true, frozen_checked: true });

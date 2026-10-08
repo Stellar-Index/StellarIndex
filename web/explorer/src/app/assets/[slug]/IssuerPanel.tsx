@@ -128,7 +128,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           />
         </div>
         {data.auth_flags_source === 'last_known_before_removal' && (
-          // #374: recovered from the account's state at its REMOVAL ledger.
+          // Recovered from the account's state at its REMOVAL ledger.
           // Unlabelled pills would read as this issuer's current policy for
           // an account that no longer exists.
           <p className="text-ink-muted mt-2 text-xs">

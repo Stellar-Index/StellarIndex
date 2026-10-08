@@ -44,7 +44,7 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
 ];
 
 export default function AnomaliesPage() {
-  // #328: aggregator-derived feed — empty by construction on a network
+  // Aggregator-derived feed — empty by construction on a network
   // with no aggregator. Nav/search/sitemap no longer offer it there, but
   // a direct URL or an old bookmark still lands here, and an empty table
   // with no explanation reads as an outage.

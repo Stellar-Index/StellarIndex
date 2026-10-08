@@ -219,7 +219,7 @@ describe('BackupsPanel', () => {
   });
 
   it('names a future-dated stamp instead of showing it as "no data" or a fresh zero', async () => {
-    // #311: the API refuses to judge a stamp from the future (clock
+    // The API refuses to judge a stamp from the future (clock
     // skew / corrupt pgBackRest label) — "unknown" carrying the RAW
     // negative age. The panel must name that cause: a grey row reading
     // "no data · — ago" would send an operator hunting a missing

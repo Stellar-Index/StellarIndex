@@ -159,7 +159,7 @@ paths:
 
 // TestLint_ServerHostNotServed — the spec shipped a Staging server for
 // a hostname with no DNS record at all, so every OpenAPI import offered
-// a dead target in its server picker. Issue #316 ("no staging exists")
+// a dead target in its server picker. The "no staging exists" issue
 // was closed without removing the entry, which is what this rule stops
 // from recurring.
 func TestLint_ServerHostNotServed(t *testing.T) {

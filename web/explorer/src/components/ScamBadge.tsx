@@ -6,7 +6,7 @@ import { scamFlagTags } from '@/lib/directory-tags';
 // (malicious/unsafe/fraud/scam/hack/phishing). Third-party attribution,
 // never a verification signal — but the same flag DOES withhold the row's
 // price/market cap (the scam gate) and sinks the row to the bottom of the
-// ranking (demoteFlaggedLast, #356). Badged, demoted, never hidden.
+// ranking (demoteFlaggedLast). Badged, demoted, never hidden.
 export function ScamBadge({
   tags,
   className,

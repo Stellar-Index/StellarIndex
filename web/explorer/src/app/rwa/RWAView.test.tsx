@@ -1315,7 +1315,7 @@ describe('RWAView — contract arm', () => {
       ).toBeInTheDocument();
     });
 
-    // ─── #1047: the headline over-claimed a single provenance ────
+    // ─── The headline over-claimed a single provenance ────
     //
     // The total can mix oracle NAVs, listing-platform prices and
     // prospectus constant-NAV declarations (RWAReferenceSummary.

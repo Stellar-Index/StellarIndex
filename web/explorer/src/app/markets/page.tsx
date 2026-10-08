@@ -26,7 +26,7 @@ export const metadata: Metadata = {
  * surfaces stabilise.
  */
 export default function MarketsPage() {
-  // #328: /v1/markets is built from the aggregator's prices_1d CAGG and is
+  // /v1/markets is built from the aggregator's prices_1d CAGG and is
   // empty on every net without an aggregator. The page had no gate at all —
   // reachable by direct URL AND from the home network strip's "24h volume"
   // and "Active markets" tiles, and it rendered a permanently empty table.

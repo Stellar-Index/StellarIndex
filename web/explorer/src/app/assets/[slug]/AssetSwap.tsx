@@ -480,7 +480,7 @@ function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
   // arbitrary (including private/internal) host. This was the third of
   // three <img> sites and the only one without the predicate; the guard
   // in lib/trust-surface-guards.test.ts now derives that set from source
-  // so a fourth site cannot repeat it (wave-D EXR-05, issue #335).
+  // so a fourth site cannot repeat it (wave-D EXR-05).
   if (token.image && isSafePublicImageUrl(token.image) && !broken) {
     return (
       // eslint-disable-next-line @next/next/no-img-element

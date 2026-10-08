@@ -35,7 +35,7 @@ const assets: Coin[] = [
   coin('BBB', { class: 'fiat' }),
   coin('CCC', { class: 'stablecoin' }),
   coin('AAA', { class: 'crypto' }),
-  // #1069 item 3: a decimals-mismatch refusal must not render like an
+  // A decimals-mismatch refusal must not render like an
   // ordinary "no data yet" dash.
   coin('MISMATCH', {
     class: 'crypto',
@@ -82,7 +82,7 @@ function firstColumnCodes(): string[] {
     .map((tr) => tr.querySelectorAll('td')[1]?.textContent ?? '');
 }
 
-// #1069 item 2: clicking "Class" sorted by the constant `kind` field
+// Clicking "Class" sorted by the constant `kind` field
 // (always "stellar_asset"), so the visible order never changed.
 describe('AssetsTable "Class" column sort', () => {
   it('orders rows by the verified-currency class the badge renders', () => {
@@ -99,7 +99,7 @@ describe('AssetsTable "Class" column sort', () => {
   });
 });
 
-// #1069 item 3: market_cap_decimals_mismatch (the server's REFUSAL because
+// market_cap_decimals_mismatch (the server's REFUSAL because
 // its two decimals resolvers disagree) rendered identically to "no data" —
 // a self-clearing scale disagreement was indistinguishable from an asset
 // that simply has no supply/price yet.

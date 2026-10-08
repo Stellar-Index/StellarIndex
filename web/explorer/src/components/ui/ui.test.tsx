@@ -84,7 +84,7 @@ describe('ui primitives — render + semantics', () => {
     }
   });
 
-  // #335 F5 (WCAG 1.3.1 / axe heading-order): CardHeader hardcoded <h3>
+  // WCAG 1.3.1 / axe heading-order: CardHeader hardcoded <h3>
   // while ui/Page's SectionHeader is <h2>, so a card used as a page's
   // top-level section produced h1 → h3 and skipped a level. The rank is
   // now caller-selectable; the visual style is unchanged either way.
@@ -110,7 +110,7 @@ describe('ui primitives — render + semantics', () => {
     render(<Mono value="GABCDEFGHIJKLMNOP" truncate copy={false} />);
     const elided = screen.getByText('GABCDE…MNOP');
     expect(elided).toBeInTheDocument();
-    // #356: a truncated identifier must never be the only copy of itself
+    // A truncated identifier must never be the only copy of itself
     // on the page — the full value round-trips through the title.
     expect(elided).toHaveAttribute('title', 'GABCDEFGHIJKLMNOP');
   });

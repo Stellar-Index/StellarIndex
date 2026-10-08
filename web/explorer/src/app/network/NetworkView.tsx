@@ -956,7 +956,7 @@ const DEEPER: { href: string; title: string; blurb: string }[] = [
 ];
 
 function DigDeeper() {
-  // #328: half these cards (MEV / Anomalies / Divergences / Lending /
+  // Half these cards (MEV / Anomalies / Divergences / Lending /
   // Oracles) are aggregator outputs with no data on a lean test net. The
   // rail already hid their /insights hub there — this grid still offered
   // them, which is exactly the "gating lives in the component" failure

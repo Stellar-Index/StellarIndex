@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { changePct, ratioPct, sumDecimalStrings } from './format';
 
-// #569: row-sum money headlines were float reductions over served decimal
+// Row-sum money headlines were float reductions over served decimal
 // strings; the helper sums them exactly (ADR-0003).
 describe('sumDecimalStrings', () => {
   it('sums without float drift', () => {

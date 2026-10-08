@@ -42,7 +42,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// #1028: the hook coerced the canonical XLM/USD price through Number() and
+// The hook coerced the canonical XLM/USD price through Number() and
 // kept only `flags.stale`, dropping `frozen` — which /v1/price alone sets.
 describe('useNativeUsdPrice keeps the envelope and the decimal string', () => {
   it('returns the served price string, every flag and as_of', async () => {
@@ -65,7 +65,7 @@ describe('useNativeUsdPrice keeps the envelope and the decimal string', () => {
   });
 });
 
-// #1028: useChangeSummary typed the raw envelope as the row it holds.
+// useChangeSummary typed the raw envelope as the row it holds.
 describe('useChangeSummary unwraps the envelope', () => {
   it('returns the row, not { data: row }', async () => {
     stubFetch(() => ({
@@ -82,7 +82,7 @@ describe('useChangeSummary unwraps the envelope', () => {
   });
 });
 
-// #660: the hook layer returned only `.data`, so no client-fetched page
+// The hook layer returned only `.data`, so no client-fetched page
 // could see the envelope's stale/degraded markers.
 describe('list and detail hooks carry the envelope flags', () => {
   const flags = { stale: true, filters_ignored: ['q'] };
@@ -127,7 +127,7 @@ describe('list and detail hooks carry the envelope flags', () => {
     expect(result.current.data?.flags?.unverified_ticker_collision).toBe(true);
   });
 
-  // #660: useChangeSummary flattened the row but dropped `flags` entirely,
+  // useChangeSummary flattened the row but dropped `flags` entirely,
   // so ChangeSummaryStrip could never show `stale`/`triangulated`.
   it('useChangeSummary', async () => {
     stubFetch(() => ({

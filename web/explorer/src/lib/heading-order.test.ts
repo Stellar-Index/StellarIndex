@@ -68,7 +68,7 @@ describe('headingOrderViolations', () => {
   });
 
   it('does not require the first heading to be an h1', () => {
-    // "no h1" is page-has-heading-one, a different rule; #486 is only
+    // "no h1" is page-has-heading-one, a different rule; this guard is only
     // about skipped levels, and flagging this would mis-scope the guard.
     expect(headingOrderViolations('<h2>A</h2><h3>B</h3>')).toEqual([]);
   });
