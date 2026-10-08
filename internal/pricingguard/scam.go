@@ -1,27 +1,18 @@
 // Scam-pricing gate — the serving-side "issuer is flagged" floor.
 //
-// The substance gate (substance.go) answers "is this a REAL market?".
-// It is structurally blind to a different question: "is this a SCAM?".
-// An issuer can run a genuinely liquid market and still be a
-// curated-directory-flagged fraud — RIO-GBNLJIYH… cleared the substance
-// floor ~40× on real trading (volume_character = market) yet is tagged
-// `unsafe`/deprecated-scam, so we published a $0.0072 price and a $540k
-// market cap on a scam token's asset page.
-//
-// This gate closes that class: for an asset whose ISSUER carries a
-// scam-class tag in the curated account directory (migration 0136), it
-// withholds the AGGREGATED price claim — the same posture and the same
-// `errors/price-withheld` problem type as the substance gate — while the
+// The substance gate (substance.go) answers "is this a REAL market?" and
+// is blind to "is this a SCAM?": an issuer can run a genuinely liquid
+// market and still be a curated-directory-flagged fraud (RIO-GBNLJIYH…
+// cleared the substance floor on real trading yet is tagged
+// `unsafe`/deprecated-scam). For an asset whose ISSUER carries a
+// scam-class tag in the curated account directory (migration 0136), this
+// gate withholds the AGGREGATED price claim with the same
+// `errors/price-withheld` problem type as the substance gate, while the
 // raw trade surfaces (/v1/ohlc, /v1/observations, /v1/history) stay
 // visible.
 //
-// WHERE IT IS CONSUMED, precisely. There is no single seam: /v1/twap and
-// /v1/vwap do not go through the price reader at all — they compute from raw
-// trades via their own fetch — so a gate at the price-reader seam alone would
-// leave them serving a flagged issuer's aggregated price at 200.
-//
-// The gate is consumed per-surface, and the honest way to state the
-// invariant is per-surface rather than "one seam":
+// There is no single seam: /v1/twap and /v1/vwap compute from raw trades
+// and never touch the price reader. The gate is consumed per-surface:
 //
 //   - the price-reader seam — /v1/price, /v1/price/batch, and the
 //     asset headline, via [Gate] (cmd/stellarindex-api's
@@ -39,53 +30,38 @@
 //   - /v1/vwap, /v1/twap, /v1/chart and /v1/history/since-inception, in
 //     their handlers (the last two share seriesWithheldForScam).
 //
-// Every one of those sites asks the PAIR question. Inside
-// internal/api/v1 they all route through its scamWithheld helper. Its
-// AST guard (TestScamGateIsAskedThePairQuestion) fails on any `Withheld`
-// selector under internal/api/v1, subpackages included, other than
-// scamWithheld's own fallback, and on a pair question that names one leg
-// twice. It cannot see a surface that consults no gate at all.
+// Inside internal/api/v1 every site routes through scamWithheld; its AST
+// guard (TestScamGateIsAskedThePairQuestion) fails on any other
+// `Withheld` selector there and on a pair question naming one leg twice.
+// The last group gates in its handlers, NOT in the shared
+// tradesInRangeWithStablecoinFallback, because that also feeds the
+// single-bar /v1/ohlc, which stays visible. A new price-claim surface
+// must add its own call: gate_guard_test.go catches a cmd/* function
+// reading a closed VWAP bucket without a [Gate], but not a handler that
+// computes its own price.
 //
-// The handlers are the correct site for the last group, NOT their
-// shared tradesInRangeWithStablecoinFallback: that helper is also the
-// fetch behind the single-bar /v1/ohlc, which this very paragraph
-// promises stays visible.
+// BOTH LEGS, always. Withholding is a property of the MARKET: keying on
+// the base alone would let `?base=native&quote=<FLAGGED>` republish the
+// exact reciprocal of the price `?base=<FLAGGED>&quote=native` refused.
+// [ScamGate.WithheldPair] folds both legs INSIDE this package so no call
+// site can consult one and forget the other; a hand-written
+// `Withheld(base) || Withheld(quote)` is the drift it exists to prevent.
 //
-// A new price-claim surface must add its own call. There is no seam
-// that covers them all, and asserting one in a comment is how this gap
-// survived — gate_guard_test.go fails on any function in any cmd/*
-// binary that reads a closed VWAP bucket without asking a [Gate], but it
-// cannot see a handler that computes its own price.
-//
-// BOTH LEGS, always. The withholding decision is a property of the MARKET,
-// not of whichever leg the client happened to name first: a price of X in a
-// flagged issuer's asset is the flagged market's own price, inverted. Keying
-// the gate on the base alone would let `?base=native&quote=<FLAGGED>`
-// republish, at 200 and unauthenticated, the exact reciprocal of the number
-// `?base=<FLAGGED>&quote=native` had just refused — together with its volumes
-// and trade counts. [ScamGate.WithheldPair] folds both legs INSIDE this
-// package so no call site can consult one leg and forget the other; that fold
-// is the thing new surfaces inherit, and a hand-written `Withheld(base) ||
-// Withheld(quote)` at a call site is the per-site drift it exists to prevent.
-//
-// It DELIBERATELY overturns the directory's historical "display-only,
-// tags never gate pricing" invariant (asset_directory_tags.go).
+// It DELIBERATELY overturns the directory's "display-only, tags never
+// gate pricing" invariant (asset_directory_tags.go).
 //
 // Fail posture — fail-OPEN, matching substance.go and the directory
 // overlay: a directory-reader error (the directory is a LOCAL synced
 // table, so an error means the local DB is unreachable) does NOT
 // withhold — failing closed would blank EVERY asset's price on a DB
-// blip and take the whole money surface dark. Every fail-open serve
-// increments obs.ScamGateLookupFailuresTotal, which the
+// blip. Every fail-open serve increments
+// obs.ScamGateLookupFailuresTotal, which the
 // stellarindex_scam_gate_fail_open alert watches, and logs a Warn.
 //
-// OPERATOR OVERRIDE of a false positive. The tags are a third party's
-// judgement, and a wrong one withholds a legitimate issuer's price
-// across every gated surface. There is deliberately no allow-list in
-// THIS package: a second opinion stored here would disagree with the
-// /v1/assets rank tier and the explorer's flag pill, which read the
-// directory row directly. The correction is made where all three read
-// from — an operator-owned row in account_directory carrying
+// OPERATOR OVERRIDE of a false positive. There is deliberately no
+// allow-list here: it would disagree with the /v1/assets rank tier and
+// the explorer's flag pill, which read the directory row directly. The
+// correction is an operator-owned account_directory row carrying
 // timescale.DirectoryOperatorOverrideSource, which `directory-sync`
 // neither updates nor prunes, written by `stellarindex-ops
 // directory-override -clear-scam-flag` (timescale.Store.ClearDirectoryScamFlag),
