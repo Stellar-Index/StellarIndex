@@ -267,7 +267,7 @@ func tryAggregatorTier(
 	if len(opts.AggregatorSources) == 0 {
 		return GlobalPriceResult{}, false, nil
 	}
-	// C4-014 (W2-tail): loop the base's canonical aliases exactly as
+	// Loop the base's canonical aliases exactly as
 	// tryVWAPTier does. Aggregators publish under whichever form the
 	// configured pair set names (`native` vs `crypto:XLM` vs the SAC
 	// C-address); querying only the literal base degrades the headline
@@ -316,7 +316,7 @@ func tryTriangulatedTier(
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
 ) (GlobalPriceResult, bool, error) {
-	// C4-014 (W2-tail): same alias loop as tryVWAPTier / tryAggregatorTier.
+	// Same alias loop as tryVWAPTier / tryAggregatorTier.
 	// The triangulation worker publishes each implied VWAP under a single
 	// canonical form, so a base whose bridge path was computed under
 	// `crypto:XLM` (or the SAC) is invisible to a `native`-keyed read

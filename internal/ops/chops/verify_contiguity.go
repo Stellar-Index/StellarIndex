@@ -571,7 +571,7 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 // "DEFICIENCY (at/above -ec-floor)", "BACKFILL-PENDING (...)"). Pure — no
 // ClickHouse dependency — so it's unit-testable without a live lake.
 //
-// missing is a SATURATING expected-present. Since C4-085 Check 2's present
+// missing is a SATURATING expected-present. Since Check 2's present
 // side is a SUBSET of its expected side (tx-bearing ledgers WITH
 // entry-change coverage, not a standalone entry_changes cardinality), so
 // present > expected is unreachable there and the saturation is pure

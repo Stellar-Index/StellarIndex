@@ -289,7 +289,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 		logger.Info("redis configured", "mode", mode)
 	}
-	// W1-auth-passkey-3 / auth-lt-1: with Redis absent, the auth throttles and
+	// With Redis absent, the auth throttles and
 	// the passkey ceremony replay guard fall back to PER-PROCESS state. That is
 	// correct on one instance but unsafe across several — a finish-login replayed
 	// to a different instance bypasses the spent-ceremony set (session mint →
@@ -1124,7 +1124,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			logger.Warn("explorer reader unavailable; /v1/ledgers etc. will 503", "addr", addr, "err", err)
 		} else {
 			defer func() { _ = er.Close() }()
-			// Surface background wealth-refresh failures (site-audit S3):
+			// Surface background wealth-refresh failures:
 			// a persistently-failing refresh keeps /v1/accounts on its 503
 			// warming state, and the first time round the failure was
 			// silent because the query was dying at the CH execution cap.
@@ -1690,7 +1690,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		for {
 			// Warm the directory's roster counts (cheap, ~15 quick reads)
 			// before the far heavier detail sweep, so /v1/protocols is warm
-			// early (W1.3) and no first request pays for a cold roster scan.
+			// early and no first request pays for a cold roster scan.
 			apiSrv.PrewarmProtocolRosters(rootCtx)
 			apiSrv.PrewarmProtocolDetails(rootCtx)
 			select {
@@ -2294,7 +2294,7 @@ func buildPriceAlertHandlers(pg *postgresstore.Store, logger *slog.Logger) (*das
 }
 
 // assertRedisOrSingleInstance refuses to start a Redis-less deployment that
-// has not asserted single-instance (W1-auth-passkey-3 / auth-lt-1). With Redis
+// has not asserted single-instance. With Redis
 // absent the auth throttles + the passkey ceremony replay guard use per-process
 // state, which is safe on ONE instance but unsafe across several; a process
 // cannot detect its own fleet size, so the operator must either provide Redis

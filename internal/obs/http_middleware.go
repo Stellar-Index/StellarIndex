@@ -263,7 +263,7 @@ func RouteFromContext(ctx context.Context) string {
 // unknown verbs through verbatim would let an unauthenticated
 // client mint unbounded metric label children — `curl -X <random>` in a
 // loop grows HTTPRequestsTotal without limit and OOMs the API + Prometheus
-// (metric-cardinality DoS, audit W4-obs-1). The label is telemetry only:
+// (metric-cardinality DoS). The label is telemetry only:
 // routing and handlers read the real r.Method, which is unaffected — so a
 // genuine custom verb (WebDAV PROPFIND, etc.) still WORKS, it just shares
 // the "other" bucket in the metric.

@@ -365,7 +365,7 @@ func (r StorePriceReader) guardedSnapshot(
 	// bucket we actually serve (candidate, or the older last-known-good
 	// on a guard rejection).
 	//
-	// W6-fresh-1: a pair's first-ever served minute has NO trailing
+	// A pair's first-ever served minute has NO trailing
 	// baseline, so the guard fails OPEN (accepts any value, even a lone
 	// manipulated/fat-finger print). lowConfidence marks that unvalidated
 	// case; serve the value but as stale, never as a confident price.

@@ -9,9 +9,8 @@ import (
 )
 
 // This file puts a prewarmed, stale-while-revalidate layer under the
-// contract_count served on GET /v1/protocols — the SAME shape a8284d64
-// established for the bespoke and network-throughput blocks, applied to
-// the roster read (W1.3).
+// contract_count served on GET /v1/protocols — the same shape the bespoke
+// and network-throughput blocks use, applied to the roster read.
 //
 // Why: handleProtocolsList must not call protocolRoster PER protocol on
 // every origin miss, with no server-side cache — only Cache-Control:

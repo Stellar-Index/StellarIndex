@@ -714,7 +714,7 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 // the entries and the `ready` marker in one key they share one fate:
 // eviction takes the marker too, readers see "not ready" and fall
 // back to the walk, which is always correct. (Same reasoning as the
-// eviction-safe passkey ceremony protocol, W1-auth-passkey-1.)
+// eviction-safe passkey ceremony protocol.)
 //
 // The family is deliberately NOT under `apikey:` — a HASH there would
 // be matched by the `apikey:*` walk, whose GET would fail WRONGTYPE.

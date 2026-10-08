@@ -56,7 +56,7 @@ type Invite struct {
 }
 
 // LoginCodeLockout is the durable per-EMAIL failed-verify state for the
-// 6-digit email-code sign-in (migration 0122, C3-032). It is what
+// 6-digit email-code sign-in (migration 0122). It is what
 // [MagicLinkToken.Attempts] is not: independent of any single token, so
 // re-minting a link does not hand an attacker a fresh guess budget.
 //
@@ -113,7 +113,7 @@ type TokenStore interface {
 
 	// RegisterFailedLoginCode records ONE failed code attempt against
 	// the email itself — the durable dimension a token re-mint cannot
-	// reset (C3-032). `attempts` on magic_link_tokens is per-mint, and
+	// reset. `attempts` on magic_link_tokens is per-mint, and
 	// the send throttle that bounds re-mints is Redis-only, so without
 	// this an attacker re-mints for a fresh 5-guess budget indefinitely.
 	//

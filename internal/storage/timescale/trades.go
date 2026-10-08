@@ -288,7 +288,7 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 // attacker must now pump BOTH legs' markets with real value to inflate a
 // print.
 //
-// SINGLE-LEG CEILING (W1-flow-price-serve-1): when the other leg is
+// SINGLE-LEG CEILING: when the other leg is
 // UNRESOLVABLE the cross-check cannot fire and the whole value rests on
 // one leg an attacker can author for the cost of bridgeLegMinUSDVolume.
 // USDPriceAt exposes only (rate, ok, err) — it cannot tell a poisoned

@@ -71,7 +71,7 @@ type Bucket struct {
 	// was nil at construction. When set, Take/Charge bypass Redis
 	// entirely and enforce the limit from an in-memory map — the
 	// fail-CLOSED fallback that keeps the anon/key tiers throttled when
-	// Redis is absent at boot (C3-13 / C3-22). See [localStore].
+	// Redis is absent at boot. See [localStore].
 	local *localStore
 
 	mu              sync.Mutex
@@ -147,7 +147,7 @@ type Result struct {
 // deliberate degraded mode for a single-instance deployment with no
 // Redis — the limits are still ENFORCED (fail-closed), just accounted
 // per-process rather than fleet-wide. Every other caller passes a real
-// client and gets the Redis path unchanged. C3-13 / C3-22.
+// client and gets the Redis path unchanged.
 //
 // Panics on invalid arguments (zero or negative limit / sub-second
 // window).
@@ -336,7 +336,7 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 
 	// In-process fallback (rdb was nil at construction). No Redis
 	// round-trip, no error path, no fail-open — the limit is enforced
-	// from an in-memory fixed-window map. C3-13 / C3-22.
+	// from an in-memory fixed-window map.
 	if b.local != nil {
 		return b.localCharge(key, cost, effectiveMax, minute), nil
 	}

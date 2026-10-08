@@ -266,7 +266,7 @@ type EventStreamer interface {
 //
 // contractIDs / topic0Syms are the same prefilters the projector passes for
 // this source (empty = match-by-topic across all contracts). An event that
-// fails Decode is skipped, not fatal, and returned as a C4-059 [BlindSpots]
+// fails Decode is skipped, not fatal, and returned as a [BlindSpots]
 // entry so a clean reconcile over a range the decoder could not read does not
 // certify as complete. BlindSpots.Unreconstructable is always 0 here.
 func ReDeriveOutputCountsByKindFromEvents(

@@ -719,7 +719,7 @@ func (o *Orchestrator) releaseFreeze(
 		return
 	}
 
-	// W3-freeze-1: the freeze marker AND the durable ladder are keyed by
+	// The freeze marker AND the durable ladder are keyed by
 	// (asset, quote), but a pair's lifecycle runs independently per
 	// window ([DefaultWindows] is 5m/1h/24h). That shared marker's
 	// presence is the single flag the API serves as `flags.frozen` for
@@ -816,7 +816,7 @@ func (o *Orchestrator) clearReleasedMarker(ctx context.Context, pair canonical.P
 // siblingWindowFrozen reports whether any window OTHER than `window`
 // still holds a live freeze for `pair`. It is what keeps the shared
 // (asset, quote) freeze marker + durable ladder alive until the last
-// window releases (W3-freeze-1).
+// window releases.
 //
 // Reads o.freezeStates on the single-Tick goroutine — the same
 // no-lock invariant loadFreezeState relies on. Reconstructs each
