@@ -98,10 +98,8 @@ printf -- '---\nadr: 0098\ntitle: Fixture ADR for lint-docs self-test\nstatus: A
 printf '| [0098](0098-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint-docs self-test | 2026-09-21 |\n' >> docs/adr/README.md
 
 # §4 stale references. Each number now resolves to a real but unrelated
-# issue/PR (RSWP-068 #1042, RSWP-135 #1254, RSWP-086 #1108, RSWP-144 #1271,
-# RSWP-141 R-013→#1265, RSWP-146 #1347, RSWP-147 #1353, RSWP-149 #1369,
-# RSWP-128 #1231, RSWP-151 dependabot #1371/#1372, RSWP-139 #1263) or never
-# existed (RSWP-127 #1230). #1263 and #1270 are bare patterns so the
+# issue/PR (#1042, #1254, #1108, #1271, R-013→#1265, #1347, #1353, #1369,
+# #1231, dependabot #1371/#1372, #1263) or never existed (#1230). #1263 and #1270 are bare patterns so the
 # 2026-05-11 PR-list header alone, without its R-row, is caught. docs/design/ is scanned too.
 printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n(PR #1231)\nsupersedes dependabot #1371/#1372\n' >> CHANGELOG.md
 printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\nDeferred #1347 — go-stellar-sdk v0.5->v0.6\n#1353\n#1369\n' >> docs/architecture/coverage-matrix.md
