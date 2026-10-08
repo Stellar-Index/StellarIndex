@@ -12,30 +12,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// opIndexFanoutStride spaces synthetic op_index values derived from
-// a single batch update, same concept as the Reflector decoder.
-// A batch carries at most one entry per feed, a few dozen today (see
-// feedRegistry); 1024 holds the full feed set with headroom for growth
-// and stays inside uint32.
+// opIndexFanoutStride spaces the synthetic op_index values of one batch (at most one entry per
+// feed, a few dozen today); 1024 holds the feed set with headroom.
 const opIndexFanoutStride = 1024
 
-// eventFanoutStride bounds how many contract events ONE operation can
-// emit before their per-event op_index blocks would collide. A fanout
-// base of OperationIndex ALONE would collide two REDSTONE events within
-// the SAME operation on their whole 1024-wide OpIndex block. EventIndex
-// ALONE isn't a safe replacement either: per events.Event's own doc it
-// is scoped PER-OPERATION (resets to 0 for each new op), so it would
-// instead collide two DIFFERENT operations that each emit a single
-// event. Combining both dimensions — OperationIndex and EventIndex —
-// keeps every event's OpIndex block disjoint regardless of whether the
-// collision risk is same-op or cross-op. See the identical rationale +
-// bound arithmetic in internal/sources/reflector/decode.go.
+// eventFanoutStride bounds the contract events ONE operation can emit before their OpIndex blocks
+// collide: OperationIndex alone collides two events in one op, EventIndex alone (per-operation) collides
+// two ops. Same rationale and bound arithmetic as internal/sources/reflector/decode.go.
 const eventFanoutStride = 64
 
-// opIndexFanoutMax bounds e.OperationIndex so the packed op_index
-// (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
-// stays within uint32: 2^32 / (eventFanoutStride * opIndexFanoutStride)
-// = 2^32 / (64*1024) = 65536.
+// opIndexFanoutMax bounds e.OperationIndex so the packed op_index stays within uint32:
+// 2^32 / (64*1024) = 65536.
 const opIndexFanoutMax = (1 << 32) / (eventFanoutStride * opIndexFanoutStride)
 
 // classify reports whether this is a Redstone "REDSTONE" event.
@@ -47,45 +34,24 @@ func classify(e *events.Event) bool {
 	return e.Topic[0] == TopicSymbolRedstone
 }
 
-// decodeWritePrices converts one REDSTONE event into a slice of
-// canonical.OracleUpdate — one per (feed_id, price) pair.
-//
-// Topic arity: 1 (REDSTONE only). Body: Map{updater, updated_feeds:
-// Vec<PriceData>}. feed_ids are NOT in the body; they come from the
-// tx envelope's write_prices(feed_ids, …) call and are passed in via
-// events.Event.OpArgs, populated by internal/dispatcher.
-//
-// Each OracleUpdate shares (ledger, tx_hash, source) but gets a
-// distinct OpIndex derived from the vector position so identity
-// stays unique in oracle_updates.
+// decodeWritePrices converts one REDSTONE event into one canonical.OracleUpdate per (feed_id, price),
+// each with an OpIndex from its vector position. The body is Map{updater, updated_feeds: Vec<PriceData>};
+// feed_ids are not in it but come from write_prices' args via events.Event.OpArgs.
 func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleUpdate, error) {
 	if !classify(e) {
 		return nil, ErrNotRedstoneEvent
 	}
 
-	// Decode the BODY before requiring op args. An empty on-wire batch
-	// (`{updated_feeds: [], updater}`) carries nothing to attribute, so
-	// it must classify as a no-op REGARDLESS of whether the producing
-	// op's args were captured — and in practice those pushes often lack
-	// usable args: with an empty-batch check placed BELOW the OpArgs
-	// gate, a full replay left 1,624 ledgers "undecodable-but-matched".
-	// Order matters: body → empty short-circuit → args for the non-empty
-	// path only.
+	// Body before op args: an empty batch is a no-op whether or not args were captured (often they
+	// are not); checking it below the OpArgs gate left 1,624 ledgers "undecodable-but-matched".
 	prices, bodyUpdater, err := sdkDecodeBody(e.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	if len(prices) == 0 {
-		// Empty ON-WIRE batch: a write_prices push whose freshness
-		// verifier dropped every candidate feed still emits
-		// `{updated_feeds: [], updater}`. The lake disproves the
-		// assumption that "the adapter only emits when at least one feed
-		// passes": ~1.5% of ALL REDSTONE events (small ~156-byte bodies,
-		// every ledger band since source genesis) were this shape when
-		// measured, and treating them as errors held redstone at
-		// `projection_ok=false` under honest-blind completeness
-		// accounting (866 "undecodable" ledgers). A recognized no-op
-		// projects zero rows and reconciles; it is not an error.
+		// A push whose freshness verifier dropped every feed still emits `{updated_feeds: [], updater}`
+		// (~1.5% of all REDSTONE events). As errors they held redstone at projection_ok=false; a recognised
+		// no-op projects zero rows and reconciles.
 		return nil, nil
 	}
 
@@ -98,34 +64,21 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
-	// Bind the args to THIS event: write_prices publishes its own
-	// updater argument in the event body, so body.updater must equal
-	// args[0]. A body without the field (unknown historical WASM
-	// shape) is tolerated — the check can't be attacker-suppressed,
-	// because the current adapter always emits it.
+	// Bind the args to THIS event: write_prices publishes its updater argument in the body. A body
+	// without it (unknown historical WASM) is tolerated; the current adapter always emits it, so an
+	// attacker cannot suppress the check.
 	if bodyUpdater != "" && bodyUpdater != updater {
 		return nil, fmt.Errorf("%w: body %s, args[0] %s", ErrUpdaterMismatch, bodyUpdater, updater)
 	}
-	// A genuine write_prices carries no duplicate feeds (the
-	// redstone-core SDK refuses them before the adapter can emit —
-	// see ErrDuplicateFeedIDs). Refusing here also removes the
-	// duplicate-inflation lever over the subset arity math below.
+	// redstone-core refuses duplicate feeds before the adapter emits (ErrDuplicateFeedIDs); refusing
+	// here also removes the duplicate-inflation lever over the subset arity math.
 	if dup, has := firstDuplicate(feedIDs); has {
 		return nil, fmt.Errorf("%w: %q", ErrDuplicateFeedIDs, dup)
 	}
 
-	// Positional zip requires matching arity. When the adapter's
-	// freshness verifier dropped ≥1 feed (updated_feeds SHORTER than
-	// feed_ids — a real, ongoing class: a full verify found 1,626 events
-	// blind, with more arriving at tip), the accepted subset is
-	// recovered EXACTLY from the op's value-changing contract-data writes
-	// when available (only accepted feeds' stored PriceData changes —
-	// events.Event.StateWriteKeys), falling back to the signed payload
-	// in args[2]: the adapter stores each accepted feed's signer-value
-	// MEDIAN, so a surviving price must equal exactly one candidate
-	// feed's payload median at its package_timestamp (verified
-	// byte-exact on the ledger-59258375 event). Anything non-unique
-	// refuses the whole event — better honest-blind than misattributed.
+	// Positional zip needs matching arity. A freshness-filtered subset (updated_feeds shorter; 1,626
+	// events blind at last verify) is recovered from the op's state writes or the signed payload's
+	// medians; anything non-unique refuses the event — better honest-blind than misattributed.
 	attributed, err := resolveFeedAttribution(prices, feedIDs, e)
 	if err != nil {
 		return nil, err
@@ -140,26 +93,14 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	for i, pd := range prices {
 		entry, err := resolveFeedEntry(attributed[i])
 		if err != nil {
-			// The feed_id is off the registry AND the record layer
-			// cannot hold it verbatim. Drop THIS SLOT, not the event:
-			// RedStone feed_ids are ScString — arbitrary bytes,
-			// unbounded length — unlike the ScSymbol sources this
-			// branch was copied from, so the refusal is genuinely
-			// reachable; and write_prices batches EVERY updated feed
-			// into one event, so an event-level refusal would take
-			// every feed dark until a code change. That is strictly
-			// worse than skipping the one feed and the inverse of
-			// capture-totality. Same granularity rule the rest of this
-			// file follows: refuse the smallest unit that is actually
-			// unusable (cf. ErrAmbiguousSubset, which refuses one event
-			// and not the source).
+			// Off-registry AND unrepresentable as raw: drop THIS SLOT, not the event. feed_ids are arbitrary
+			// ScString, so this is reachable, and one event batches every updated feed, so refusing it would take
+			// every feed dark until a code change. Refuse the smallest unusable unit.
 			noteUnrepresentableFeed(e, i, attributed[i], err)
 			continue
 		}
 		if pd.Price.Sign() <= 0 {
-			// Redstone publishes non-zero prices by construction —
-			// defensive skip in case a contract upgrade relaxes that.
-			// Also guarantees a positive divisor for the Invert path.
+			// Non-zero by construction; defensive, and guarantees a positive divisor for Invert.
 			continue
 		}
 		price, published, ok := orientedPrice(entry, pd.Price)
@@ -179,21 +120,13 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			ContractID: e.ContractID,
 			Ledger:     e.Ledger,
 			TxHash:     e.TxHash,
-			// OpIndex packs (OperationIndex, EventIndex, vector
-			// position) so two Redstone events anywhere in the tx —
-			// same operation or different — can't collide on the
-			// oracle_updates PK. See eventFanoutStride's godoc.
+			// Packs (OperationIndex, EventIndex, position); see eventFanoutStride.
 			OpIndex: (uint32(e.OperationIndex)*eventFanoutStride+uint32(e.EventIndex))*opIndexFanoutStride + uint32(i),
-			// canonical.SafeUnixMillis prefers the contract-supplied
-			// PackageTimestamp but clamps 0 / sentinel / far-future
-			// garbage (incl. the >MaxInt64 wrap class of the router
-			// deadline_ts overflow) to the ledger close time.
+			// SafeUnixMillis prefers PackageTimestamp but clamps 0 / sentinel / far-future values to the ledger close.
 			Timestamp: canonical.SafeUnixMillis(pd.PackageTimestamp, closedAt),
 			Asset:     entry.Base,
-			// Per-feed quote (ADR-0028): USD for most, EUR for
-			// EUROC/EUR, and the reserve ASSET for the bare
-			// `_FUNDAMENTAL` NAV-ratio feeds. A hardcoded USD quote
-			// would mislabel EUROC and the SolvBTC NAV ratios.
+			// Per-feed quote (ADR-0028): USD, EUR for EUROC/EUR, the reserve ASSET for `_FUNDAMENTAL` NAV
+			// ratios. A hardcoded USD quote would mislabel those.
 			Quote:          entry.Quote,
 			Price:          price,
 			PublishedPrice: published,
@@ -203,25 +136,16 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Only reachable when EVERY attributed entry was non-positive
-		// (before or after inversion) or unrepresentable: under oracle
-		// capture-totality an unregistered feed_id is a raw row, not a
-		// skip, so an all-unknown batch never lands here. Surfaces to
-		// the dispatcher as a decode error counter bump — correct,
-		// because a batch that produced no row IS undecoded, and the
-		// honest-blind completeness accounting must see it.
+		// Only when EVERY entry was non-positive or unrepresentable (unregistered feeds are raw rows). A
+		// batch with no row IS undecoded, so honest-blind completeness must count it.
 		return nil, ErrEmptyUpdates
 	}
 	return out, nil
 }
 
-// orientedPrice returns the raw (positive) price in the row's "<Base> in
-// <Quote>" orientation. An Invert feed, published in market-FX
-// orientation (units-per-USD), is reciprocated at DefaultDecimals — see
-// feedEntry.Invert. ok is false when that reciprocal rounds to zero: a
-// price-0 row would read as "worth nothing" and shadow the last real
-// observation on every latest-read. published is the on-chain integer
-// for an Invert feed (the reciprocal is lossy, ADR-0003) and nil otherwise.
+// orientedPrice returns the positive price in "<Base> in <Quote>" orientation, reciprocating an
+// Invert feed at DefaultDecimals. ok is false when the reciprocal rounds to zero (a price-0 row would
+// shadow the last real one). published is the on-chain integer for Invert feeds (lossy, ADR-0003).
 func orientedPrice(entry feedEntry, raw canonical.Amount) (price canonical.Amount, published *canonical.Amount, ok bool) {
 	if !entry.Invert {
 		return raw, nil, true
@@ -231,19 +155,9 @@ func orientedPrice(entry feedEntry, raw canonical.Amount) (price canonical.Amoun
 	return inv, &onchain, inv.Sign() > 0
 }
 
-// resolveFeedEntry returns the registry entry for feedID, or — when
-// the feed_id is outside the ADR-0028 registry — its record-layer raw
-// entry. Oracle capture-totality: an unregistered feed_id is RECORDED
-// verbatim as a raw:<feed_id> row at its own vector position, not
-// skipped. A miss means RedStone deployed a feed beyond the registered
-// set, as the relayer expansion at ledger 63624934 did (11 new
-// feed_ids); a per-feed skip (plus ErrEmptyUpdates for all-new
-// batches) lost ~5,600 of those events until feeds.go caught up AND
-// history was replayed. A recorded row lands immediately; a
-// later registry entry re-derives the same PK and promotes it in
-// place. The miss is also counted: a raw row is a mapping gap the
-// registry owner has to close, and the alert on that counter is how
-// they learn of it.
+// resolveFeedEntry returns feedID's registry entry, else its raw:<feed_id> entry. Capture-totality:
+// skipping unregistered feeds lost ~5,600 events after the ledger-63624934 relayer expansion until a
+// replay; a raw row lands now and is promoted in place by a later registry entry. Misses are counted.
 func resolveFeedEntry(feedID string) (feedEntry, error) {
 	if entry, ok := lookupFeed(feedID); ok {
 		return entry, nil
@@ -256,21 +170,10 @@ func resolveFeedEntry(feedID string) (feedEntry, error) {
 	return entry, nil
 }
 
-// noteUnrepresentableFeed records the one case resolveFeedEntry can
-// fail: a feed_id off the registry that the raw validator also
-// refuses (empty / >64 bytes / a byte outside printable ASCII
-// 0x21-0x7E). The slot is a HOLE — nothing is written for it — so it
-// gets its OWN counter rather than SourceUnknownSymbolsTotal, whose
-// contract is "recorded verbatim as raw:<symbol>". Conflating them
-// would point the operator at raw rows that do not exist; the fix for
-// this slot is a feeds.go registry entry (a registry hit never reaches
-// the raw validator) AND a replay of the affected ledgers.
-//
-// The WARN log carries the identity the counter cannot. feed_id is
-// unvalidated relayer-supplied bytes — a log-injection vector per the
-// oracle-capture-totality design's Risks — but it is passed as a slog
-// ATTRIBUTE, and both handlers obs.NewLogger installs (Text, JSON)
-// escape a value that needs it, so the line stays structured.
+// noteUnrepresentableFeed records a feed_id that is off-registry AND refused by the raw validator.
+// The slot is a HOLE, so it has its own counter (SourceUnknownSymbolsTotal means "recorded as raw");
+// the fix is a feeds.go entry plus a replay. feed_id is untrusted bytes, logged as a slog ATTRIBUTE so
+// both obs.NewLogger handlers escape it (no log injection).
 func noteUnrepresentableFeed(e *events.Event, slot int, feedID string, err error) {
 	obs.SourceUnrepresentableSymbolsTotal.WithLabelValues(SourceName).Inc()
 	slog.Warn("redstone: dropping slot with unrepresentable feed_id",
@@ -284,23 +187,9 @@ func noteUnrepresentableFeed(e *events.Event, slot int, feedID string, err error
 	)
 }
 
-// rawFeedEntry builds the record-layer entry for a feed_id that is
-// NOT in feedRegistry: the full on-wire feed_id verbatim as a
-// canonical.AssetOracleRaw base, quoted in the fiat the id's
-// `/<QUOTE>` suffix names when that fiat is on the ADR-0010
-// allow-list (RedStone's `EUROC/EUR` convention — the only signal
-// the id carries), else USD (RedStone's default denomination). The
-// suffix is NOT stripped from the raw code: the row must hold what
-// the oracle published, and the quote is a best-effort hint the
-// interpretation layer never relies on. Invert is never set — the
-// orientation of an unmapped feed is unknown, which is exactly why a
-// raw row is never compared (see canonical.Asset.IsMapped).
-//
-// The only error is a feed_id the raw validator cannot represent
-// (empty / >64 bytes / non printable ASCII) — reachable here, unlike
-// on the ScSymbol sources, because RedStone feed_ids are ScString.
-// The caller drops that ONE SLOT rather than persisting something
-// unrepresentable; see noteUnrepresentableFeed.
+// rawFeedEntry builds the record-layer entry for an unregistered feed_id: the verbatim id as an
+// AssetOracleRaw base, quoted in its `/<QUOTE>` suffix's fiat if ADR-0010-allowed, else USD (a hint only).
+// Invert is never set; a raw row is never compared. Errors only on an unrepresentable id (ScString).
 func rawFeedEntry(feedID string) (feedEntry, error) {
 	base, err := canonical.NewOracleRawAsset(feedID)
 	if err != nil {
@@ -323,13 +212,8 @@ func rawFeedEntry(feedID string) (feedEntry, error) {
 // sdkDecodeBody / sdkDecodeFeedIDsFromArg / sdkDecodeAddress are
 // called directly below.
 
-// priceDataDecoded mirrors the adapter's PriceData struct
-// (common/src/lib.rs:12-18) at the canonical-types boundary. The
-// timestamps are `u64` ms on the wire — package_timestamp is when
-// RedStone signed the payload off-chain, write_timestamp is when it
-// landed on-chain. We stamp package_timestamp on OracleUpdate
-// (the oracle's published time, not the block close time) — matches
-// the OracleUpdate contract in canonical/oracle.go.
+// priceDataDecoded mirrors the adapter's PriceData (common/src/lib.rs:12-18). Timestamps are u64 ms;
+// OracleUpdate is stamped with package_timestamp (signed off-chain), not write_timestamp.
 type priceDataDecoded struct {
 	Price            canonical.Amount
 	PackageTimestamp uint64
@@ -340,31 +224,14 @@ type priceDataDecoded struct {
 //
 //	Map { "updater": Address, "updated_feeds": Vec<PriceData> }
 //
-// On the wire the Rust adapter contract (redstone-adapter's
-// event.rs) emits the body as `ScVal::Bytes` wrapping the XDR-
-// encoded struct: `self.to_xdr(env).to_val()`. We unwrap that Bytes
-// layer once, then re-parse as ScVal::Map below. If we ever see a
-// body that's already a Map (e.g. a future contract upgrade that
-// drops the custom to_xdr), the fallback path still works.
-//
-// The op args stay authoritative for OBSERVER attribution (they carry
-// the full strkey regardless of muxed variants), but the body's own
-// `updater` field is ALSO returned so decodeWritePrices can enforce
-// the body↔args agreement the contract guarantees (write_prices
-// publishes its own updater argument) — the cross-check that binds a
-// set of attached args to the event they claim to describe. updater is
-// "" when the body carries no decodable field (tolerated: an unknown
-// historical WASM shape; the current adapter always emits it, so an
-// attacker cannot suppress the check).
+// The adapter emits it as ScVal::Bytes wrapping the XDR (`to_xdr().to_val()`), unwrapped once; a bare
+// Map also decodes. updater is returned for the body↔args cross-check, "" when absent.
 func sdkDecodeBody(valueB64 string) ([]priceDataDecoded, string, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse body: %w", err)
 	}
-	// Unwrap the Bytes-wrapped XDR payload if present. The adapter
-	// uses `to_xdr().to_val()` which produces ScVal::Bytes holding
-	// the XDR-encoded Map; re-parsing those bytes yields the Map
-	// shape our existing downstream logic already handles.
+	// Unwrap the Bytes-wrapped XDR Map if present.
 	if raw, bytesErr := scval.AsBytes(body); bytesErr == nil {
 		inner, parseErr := scval.ParseBytes(raw)
 		if parseErr != nil {
@@ -440,33 +307,14 @@ func decodePriceData(sv scval.ScVal) (priceDataDecoded, error) {
 	}, nil
 }
 
-// feedIDsFromOpArgs parses the dispatcher-supplied InvokeContract
-// args and returns the feed_ids + updater strkey. Argument layout
-// per adapter/lib.rs:78:
-//
-//	write_prices(updater: Address, feed_ids: Vec<String>, payload: Bytes)
-//
-// We enforce arity ≥ 3 (extra args from a contract upgrade would
-// surface here). We do NOT verify the function name was write_prices
-// — the dispatcher only plumbs the Args slice, not the function name.
-// What substitutes for it is the four-layer binding documented at
-// [WriteFnName]: the dispatcher/lake OpArgs PROVENANCE gate (args are
-// attached ONLY when the op's invoked contract IS the event's own
-// contract — a wrapper-invoked adapter event arrives with no args and
-// refuses via ErrMissingOpArgs), this function's structural signature
-// check, the body↔args updater cross-check, and the state-write feed
-// corroboration.
+// feedIDsFromOpArgs parses write_prices(updater: Address, feed_ids: Vec<String>, payload: Bytes)
+// args (adapter/lib.rs:78), requiring arity >= 3. The function name is not plumbed; the [WriteFnName]
+// four-layer binding substitutes: the OpArgs provenance gate, this signature check, the updater
+// cross-check and state-write corroboration.
 func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err error) {
-	// The InvokeContract wire layout stores the function name OUTSIDE
-	// the Args slice (it lives alongside them in InvokeContractArgs).
-	// The dispatcher plumbs only Args, but ONLY for a direct top-level
-	// call into this event's own contract (the provenance gate,
-	// internal/dispatcher/dispatcher.go + the lake twin in
-	// internal/storage/clickhouse/extract.go). The adapter only emits
-	// REDSTONE from write_prices; a future WASM that emits it from
-	// another entry point is covered by
-	// docs/architecture/ingest-pipeline.md#contract-schema-evolution's per-WASM-hash
-	// audit gate.
+	// Args are plumbed only for a direct top-level call into this event's own contract (provenance
+	// gate: internal/dispatcher/dispatcher.go and internal/storage/clickhouse/extract.go). A WASM emitting
+	// REDSTONE elsewhere is caught by the per-WASM-hash audit gate.
 	if len(opArgs) < 3 {
 		return nil, "", fmt.Errorf("op args arity %d, want ≥3 (updater, feed_ids, payload)", len(opArgs))
 	}
@@ -486,8 +334,7 @@ func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err e
 	if err != nil {
 		return nil, "", fmt.Errorf("args[1] feed_ids: %w", err)
 	}
-	// args[2] is the signed payload bytes — needed only on the
-	// subset-filtered path; see payloadFromOpArgs.
+	// args[2] (the signed payload) is read only on the subset path; see payloadFromOpArgs.
 	return feedIDs, updater, nil
 }
 
@@ -527,57 +374,23 @@ func sdkDecodeFeedIDsFromArg(sv scval.ScVal) ([]string, error) {
 	return out, nil
 }
 
-// sdkDecodeAddress decodes an Address SCVal to its G-strkey form.
-// Delegates to scval.AsAddressStrkey which owns the strkey
-// formatting for all address types.
+// sdkDecodeAddress decodes an Address SCVal to its strkey via scval.AsAddressStrkey.
 func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 	return scval.AsAddressStrkey(sv)
 }
 
-// resolveFeedAttribution maps updated_feeds entries to feed ids. Equal
-// arity zips positionally (the common case). A SHORTER updated_feeds is
-// the freshness-filtered subset class, resolved in preference order:
+// resolveFeedAttribution maps updated_feeds entries to feed ids. Equal arity zips positionally;
+// a LONGER updated_feeds is malformed. A SHORTER (freshness-filtered) one resolves in order:
 //
-//  1. EXACT — the operation's VALUE-CHANGING contract-data write keys
-//     (events.Event.StateWriteKeys): write_prices stores each feed's
-//     PriceData under ScString(feed_id) and rewrites REJECTED feeds
-//     byte-identical, so only ACCEPTED feeds' entries change (r1 ground
-//     truth, ledger 62056824) — the changed keys ∩ feed_ids (in
-//     feed_ids order — updated_feeds is built in a single pass over
-//     feed_ids) IS the accepted subset. Zero heuristics; used whenever
-//     the plumbed keys yield a subset of matching arity. This is what
-//     resolves the value-collision residue the median rule provably
-//     cannot (ledger 62056824: one surviving price 1.00000000 matching
-//     both BENJI_ETHEREUM_FUNDAMENTAL twins).
-//  2. FALLBACK — payload-median alignment (see payload.go), for events
-//     whose reader did not plumb state-write keys (stellar-rpc fixture
-//     captures, pre-plumb stored events) or where the changed-key
-//     subset's arity disagrees with updated_feeds (e.g. a restored
-//     entry with no visible pre-image, or a storage-shape change —
-//     fall back rather than trust it). Anything non-unique refuses the
-//     whole event, as does an alignment naming a feed whose entry the
-//     plumbed writes show unchanged (corroborateFallback).
+//  1. EXACT — the op's value-changing contract-data writes (events.Event.StateWriteKeys): rejected
+//     feeds are rewritten byte-identical, so changed keys ∩ feed_ids, in feed_ids order, IS the
+//     accepted subset. This resolves value collisions the median rule cannot (ledger 62056824).
+//  2. FALLBACK — payload-median alignment (payload.go) when keys are absent or their arity disagrees;
+//     anything non-unique, or naming a feed the writes show unchanged, refuses the event.
 //
-// A LONGER updated_feeds cannot come from freshness filtering and is
-// refused as genuinely malformed.
-//
-// EQUAL arity is additionally CORROBORATED against the state writes
-// when they are plumbed: equal arity means the adapter accepted every
-// requested feed, and an accepted feed's stored PriceData always
-// changes — so the op's value-changed feed-keyed writes must equal the
-// feed_ids set exactly (order-insensitive; feed_ids are duplicate-free
-// by the decodeWritePrices gate). A mismatch does not trust the
-// positional zip (that would be exactly the misattribution this file
-// exists to prevent) but, like the unequal-arity class below, falls
-// back to payload-median alignment (attributeSubset) before refusing:
-// the payload's own bijection check is independent of the state-write
-// claim, so a mismatch there merely forces the fallback the rest of
-// this file already relies on, never a guess. Only when the fallback
-// ALSO fails to produce a unique alignment is the event refused
-// (ErrStateWriteFeedMismatch) — the claimed names are uncorroborated
-// by both what the contract stored and what it signed. When no keys
-// were plumbed (stellar-rpc fixtures, non-opted readers) the
-// positional zip stands alone — absence is "unknown", not "no writes".
+// Equal arity is CORROBORATED when keys are plumbed: every accepted feed's entry changes, so the
+// written set must equal feed_ids. A mismatch falls back to payload alignment and, failing that, is
+// ErrStateWriteFeedMismatch, never a guess. Without keys the zip stands: absence is "unknown".
 func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
 		if len(e.StateWriteKeys) > 0 {
@@ -617,13 +430,9 @@ func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *even
 	return attributed, nil
 }
 
-// corroborateFallback refuses a payload-median subset alignment that
-// names a feed whose stored PriceData the op did NOT change: a dropped
-// feed is rewritten byte-identical, so it cannot be one of the accepted
-// prices. This closes the F1 compound (payload.go) whenever the writes
-// name feeds at all. It can only turn an attribution into a refusal. An
-// empty feed-keyed written set (no keys plumbed, or a storage-shape
-// change) proves nothing and leaves the alignment standing.
+// corroborateFallback refuses a payload-median alignment naming a feed the op did NOT change (a
+// dropped feed is rewritten byte-identical), closing payload.go's F1 compound when the writes name feeds.
+// It only turns attributions into refusals; an empty written set proves nothing.
 func corroborateFallback(attributed []string, e *events.Event) error {
 	written := writtenFeedSet(e.StateWriteKeys, e.ContractID)
 	if len(written) == 0 {
@@ -638,19 +447,9 @@ func corroborateFallback(attributed []string, e *events.Event) error {
 	return nil
 }
 
-// subsetFromStateWrites derives the accepted-feed subset from the
-// operation's value-changing contract-data write keys: parse each
-// plumbed LedgerKey,
-// keep ScString keys owned by the event's own contract (the plumbing
-// already filters by contract; re-checking here is defence-in-depth
-// against a future reader that forgets), collect the written feed-id
-// set, and project feedIDs onto it PRESERVING feed_ids order — the
-// same order updated_feeds is built in. Non-string keys (any other
-// adapter storage) and unparseable keys are skipped, not fatal: the
-// caller compares the subset's arity against updated_feeds and falls
-// back to payload alignment on any disagreement, so a partial read
-// degrades to that fallback (whose residual is payload.go's F1 CAVEAT),
-// never to a trusted wrong subset. Nil when no keys were plumbed.
+// subsetFromStateWrites projects feedIDs, in order, onto the feed ids written by contractID (ScString
+// keys, re-checked as defence in depth). Unparseable or non-string keys are skipped: the caller falls back
+// to payload alignment on any arity disagreement, never a trusted wrong subset. Nil without keys.
 func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) []string {
 	if len(stateWriteKeys) == 0 {
 		return nil
@@ -660,23 +459,15 @@ func subsetFromStateWrites(feedIDs, stateWriteKeys []string, contractID string) 
 	for _, f := range feedIDs {
 		if written[f] {
 			sub = append(sub, f)
-			// Count each WRITTEN feed once: feed_ids are duplicate-free
-			// by the decodeWritePrices gate, but this projection must
-			// never let a repeated candidate inflate the subset's arity
-			// into a spurious match — belt to that gate's braces.
+			// Count each written feed once so a repeated candidate cannot inflate the arity into a match.
 			delete(written, f)
 		}
 	}
 	return sub
 }
 
-// writtenFeedSet parses the plumbed value-changed contract-data keys
-// and returns the SET of feed ids written by the event's own contract:
-// ScString keys owned by contractID. Non-string keys (any other
-// adapter storage) and unparseable keys are skipped, not fatal — the
-// callers compare arity/set membership and refuse or fall back on any
-// disagreement, so a partial read causes a refusal or the payload
-// fallback, never a trusted wrong set.
+// writtenFeedSet returns the feed ids contractID wrote (ScString keys); other or unparseable keys
+// are skipped, since callers refuse or fall back on any disagreement.
 func writtenFeedSet(stateWriteKeys []string, contractID string) map[string]bool {
 	written := make(map[string]bool, len(stateWriteKeys))
 	for _, kb64 := range stateWriteKeys {
@@ -719,11 +510,8 @@ func firstDuplicate(feedIDs []string) (string, bool) {
 	return "", false
 }
 
-// checkFanoutBounds validates the three inputs to the synthetic OpIndex
-// packing (OperationIndex*eventFanoutStride+EventIndex)*opIndexFanoutStride+i
-// so the packed value stays within uint32 — a bad input would wrap and
-// overlap another event's op_index block on the oracle_updates PK.
-// Extracted from decodeWritePrices to keep it under the gocognit ceiling.
+// checkFanoutBounds validates the three inputs to the synthetic OpIndex packing so it cannot wrap
+// uint32 into another event's block on the oracle_updates PK.
 func checkFanoutBounds(e *events.Event, priceCount int) error {
 	if priceCount > opIndexFanoutStride {
 		return fmt.Errorf("redstone: feed count %d exceeds fanout stride %d",
@@ -733,8 +521,6 @@ func checkFanoutBounds(e *events.Event, priceCount int) error {
 		// See ErrEventIndexOverflow for rationale.
 		return fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
 	}
-	// OperationIndex is the third input to the packing and was the one left
-	// unguarded next to its bounded siblings (EventIndex, vector position).
 	// See ErrOperationIndexOverflow.
 	if e.OperationIndex < 0 || e.OperationIndex >= opIndexFanoutMax {
 		return fmt.Errorf("%w: got %d", ErrOperationIndexOverflow, e.OperationIndex)
