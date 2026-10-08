@@ -18,7 +18,7 @@
     that:
       - ansible_facts.architecture == "x86_64"
 
-# audit-2026-07-23 CFG-02: region_id has no role default (see
+# region_id has no role default (see
 # defaults/main.yml) — every inventory must set it explicitly so a
 # new-region provisioning that forgets the override fails loudly here
 # instead of silently mislabelling the host with a stale default.
@@ -33,11 +33,11 @@
       {{ region_id | default('(unset)') }}. A new value should extend this
       list deliberately, not fall through to a default.
 
-# audit-2026-07-23 SEC-network / INF-20: allowed_ssh_cidrs has no role
+# allowed_ssh_cidrs has no role
 # default either (see defaults/main.yml). SSH is the port that grants
-# root on this box, and the previous "0.0.0.0/0" default handed it to
+# root on this box, and a "0.0.0.0/0" default would hand it to
 # the internet by inheritance — an inventory that never mentioned the
-# var got the widest possible rule with nothing recording the decision.
+# var would get the widest possible rule with nothing recording the decision.
 # Two separate failures below, deliberately: "you said nothing" and
 # "you said 0.0.0.0/0 without acknowledging it" are different mistakes.
 - name: Verify allowed_ssh_cidrs is declared in inventory
@@ -145,11 +145,10 @@
 # deploy-ansible-secrets-5: /etc/default/stellarindex and
 # /etc/default/stellarindex-ops are systemd EnvironmentFiles — values are
 # rendered UNQUOTED (systemd takes the line literally) — yet operators are
-# told to `set -a; source` them interactively, and until 2026-08-28 the
-# deploy migrate step, a root cron and eleven host scripts did the same.
+# told to `set -a; source` them interactively, and shell readers do the same.
 # A secret containing a shell metacharacter (`$`, `;`, quotes, space, …)
 # then works under systemd and is silently mangled — or partly EXECUTED
-# as root — under the shell. The programmatic readers now read the file
+# as root — under the shell. The programmatic readers read the file
 # verbatim; this assert closes the interactive path by refusing to render
 # such a value at all (rotate it: `openssl rand -hex 32`, per
 # credential-rotation.md). Names only in the failure — never values.

@@ -17,7 +17,7 @@ patroni_postgres_port: 5432
 patroni_postgres_max_connections: 200
 
 # ── Patroni REST API ───────────────────────────────────────────
-# CS-122 (audit-2026-06-30): the REST API exposes mutating endpoints
+# The REST API exposes mutating endpoints
 # (/switchover, /failover, /restart, /reinitialize = datadir wipe).
 # It must NEVER bind 0.0.0.0 unauthenticated. Listen on the host's
 # private/cluster interface (ansible_host — the same address the
@@ -85,7 +85,7 @@ patroni_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
-# F-1278 (codex audit-2026-05-13): the role now renders the COMPLETE
+# The role renders the COMPLETE
 # /etc/nftables.conf on its dedicated Patroni hosts. Override the
 # SSH allow-list CIDRs below for your bastion/operator network.
 patroni_allowed_ssh_cidrs:
@@ -97,7 +97,7 @@ patroni_allowed_ssh_cidrs:
 patroni_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
 
 # ── etcd pinned-version install ────────────────────────────────
-# F-1280 (codex audit-2026-05-13): `etcd_release_sha256` is the
+# `etcd_release_sha256` is the
 # per-architecture SHA-256 of the etcd 3.5.21 tarball. We pin
 # the version but the SHA is intentionally NOT defaulted here
 # because:
@@ -108,7 +108,7 @@ patroni_node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
 # https://github.com/etcd-io/etcd/releases/tag/v3.5.21 (the
 # SHA256SUMS file). The 02-etcd-install task asserts at
 # role-start that the variable is set + 64 chars + not the
-# pre-wave-112 'REPLACE_WITH_RELEASE_SHA' placeholder.
+# 'REPLACE_WITH_RELEASE_SHA' placeholder.
 etcd_arch: amd64
 # etcd_release_sha256: <required; set in inventory per the
 #                       assert at 02-etcd-install.yml>

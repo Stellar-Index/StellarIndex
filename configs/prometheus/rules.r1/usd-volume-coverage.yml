@@ -19,9 +19,9 @@ groups:
       # usd_volume_populated}, incremented in InsertTrade/BatchInsertTrades —
       # the choke point EVERY trade funnels through exactly once (dispatcher
       # batch, per-event projector, external connectors, ops backfill and
-      # re-derive alike). It previously lived in the pipeline sink, which the
-      # batch path and every external connector bypass, so it reported on
-      # aquarius alone; do not move it back.
+      # re-derive alike). It must not live in the pipeline sink: the
+      # batch path and every external connector bypass it, so it would
+      # report on aquarius alone.
 
       # External exchanges have no excuse for an unpriced trade: their quote
       # asset is either USD, a USD-pegged stablecoin, or a fiat currency we

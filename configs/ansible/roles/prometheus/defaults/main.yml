@@ -13,7 +13,7 @@ prometheus_retention_days: 30
 prometheus_retention_size: "0"   # 0 = no size limit; time-based eviction only
 
 # ── Listening addresses ────────────────────────────────────────
-# F-1287 (codex audit-2026-05-13): bound to 0.0.0.0 so peer
+# Bound to 0.0.0.0 so peer
 # Prometheuses on the cluster can reach each other (the
 # `prometheus.yml.j2` scrape config targets
 # `{{ hostvars[h].ansible_host }}:9090` per host across the
@@ -21,8 +21,8 @@ prometheus_retention_size: "0"   # 0 = no size limit; time-based eviction only
 # multi-host topology). The role's nftables drop-in at
 # 06-firewall.yml restricts 9090/9093 inbound to
 # `prometheus_internal_cidrs` only, so the public-exposure
-# concern the previous loopback default protected against is
-# preserved by the firewall layer instead of the bind.
+# concern a loopback bind would address is handled by the
+# firewall layer instead of the bind.
 #
 # Operators still SSH-tunnel for the web UI — the firewall
 # blocks public; SSH bypasses the firewall.
@@ -129,9 +129,9 @@ alertmanager_healthchecks_deadmansswitch_url: ""
 # Healthchecks.io endpoint for delivery FAILURES — a SECOND check, not
 # the deadmansswitch one. stellarindex_alertmanager_notifications_failing
 # is routed here as well as to chat, because routed to chat alone it is
-# delivered through the integration whose failure it reports: on
-# 2026-09-07 a Discord receiver returned 400 for 11 h and that alert
-# fired into the same dead channel for the whole window.
+# delivered through the integration whose failure it reports: a
+# Discord receiver that returns 400 (it once did, for 11 h) swallows
+# that alert in the same dead channel for the whole window.
 #
 # Deliberately a separate check: pinging the deadmansswitch check's
 # /fail endpoint would make one signal mean both "Prometheus or
@@ -149,7 +149,7 @@ prometheus_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
-# F-1278 (codex audit-2026-05-13): the role now renders the COMPLETE
+# The role renders the COMPLETE
 # /etc/nftables.conf on its dedicated Prometheus hosts. Override
 # the SSH allow-list CIDRs below for your bastion/operator network.
 prometheus_allowed_ssh_cidrs:

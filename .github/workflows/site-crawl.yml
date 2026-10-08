@@ -9,7 +9,7 @@
 #
 # Read-only: ~80 GETs against the public site + API, no secrets.
 #
-# T332: a regression here used to just turn the Actions tab red with no
+# A regression here would otherwise just turn the Actions tab red with no
 # escalation — indistinguishable from every other quiet failure until
 # someone went looking. Same idempotent open/update/close tracking-issue
 # shape as public-dataset-check.yml and dns-perimeter-check.yml: this

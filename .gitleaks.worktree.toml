@@ -12,8 +12,8 @@
 #              sees the operator's real inventory secrets — which are
 #              SUPPOSED to exist on a deploy box and hold live credentials.
 #              Every machine that can actually deploy has them, so this scan
-#              fails there 100% of the time. That blocked the v0.45.0 release
-#              cut (2026-08-27), because scripts/dev/cut-release.sh runs
+#              fails there 100% of the time. That blocks a release
+#              cut, because scripts/dev/cut-release.sh runs
 #              verify.sh at step 6.
 #
 #   (default)  scans COMMITTED HISTORY — the scan that decides whether a

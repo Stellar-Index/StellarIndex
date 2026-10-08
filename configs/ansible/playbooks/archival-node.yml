@@ -19,27 +19,25 @@
   gather_facts: true
 
   # Vault-encrypted region secrets (postgres passwords, MinIO keys,
-  # healthcheck ping URLs). Wired 2026-07-03 — previously the README
-  # implied it but nothing loaded the file, so every secret-using task
-  # died on undefined vars. Override secrets_file for other regions.
+  # healthcheck ping URLs). Override secrets_file for other regions.
   #
   # THE DEFAULT IS PRODUCTION. Forgetting `-e secrets_file=` while
   # targeting another region does not fail — it silently loads r1's
-  # secrets and applies them to that host. On 2026-09-08 that reset a
+  # secrets and applies them to that host. That resets a
   # test net's postgres role password to r1's value, leaving the env file
   # (correctly testnet's) and the database disagreeing: every service
-  # there died on `failed SASL auth` and the API crash-looped until the
-  # role password was put back. Nothing reached disk, because postgres
+  # there dies on `failed SASL auth` and the API crash-loops until the
+  # role password is put back. Nothing reaches disk, because postgres
   # stores only a SCRAM hash — but a missing flag should not be able to
   # cross regions at all, so the assert below refuses the mismatch.
   vars_files:
     - "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"
 
   # ONE `pre_tasks:` key only. YAML keeps the LAST duplicate mapping key
-  # and silently drops the rest, so when the region-secrets assert below
-  # arrived as a second `pre_tasks:` block it deleted the OS assert that
-  # used to sit above `vars_files:` — the guard was gone from every run
-  # while still reading as present in the file. `ansible-playbook
+  # and silently drops the rest, so a region-secrets assert added as a
+  # second `pre_tasks:` block would delete the OS assert below it — the
+  # guard would be gone from every run while still reading as present in
+  # the file. `ansible-playbook
   # --syntax-check` warns ("Found duplicate mapping key 'pre_tasks'",
   # "Using last defined value only"); a new pre-task belongs in this
   # list, never in a new block.
@@ -86,14 +84,13 @@
     - name: Refuse a secrets file that does not exist
       # The assert above reads the PATH STRING. A path can name the right
       # region and name nothing at all, and `vars_files` does not stop the
-      # play over a missing entry: on 2026-09-15 a run against si-testnet
-      # whose secrets file had not been copied into a fresh worktree got
-      # FORTY tasks in before dying inside a no_log Postgres task, where
-      # the real cause — an undefined password variable — was censored
-      # out of the output.
+      # play over a missing entry: a run against a region whose secrets file
+      # was not copied into a fresh worktree gets dozens of tasks in before
+      # dying inside a no_log Postgres task, where the real cause — an
+      # undefined password variable — is censored out of the output.
       #
-      # Nothing was changed by that run, but the failure was expensive to
-      # read and the next one need not be as harmless. A guard on the
+      # The failure is expensive to read and a later one need not be as
+      # harmless. A guard on the
       # string and a guard on the file are different guards, and this
       # play needs both.
       ansible.builtin.assert:

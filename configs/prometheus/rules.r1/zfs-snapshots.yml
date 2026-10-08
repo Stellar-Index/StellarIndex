@@ -1,6 +1,6 @@
 ---
 # Rolling ZFS snapshots of the ClickHouse lake + Postgres datasets
-# (decision 2026-08-29). Producer: scripts/ops/zfs-snapshot.sh (installed
+# Producer: scripts/ops/zfs-snapshot.sh (installed
 # by the archival-node role, tag zfs-snapshots) writing
 # /var/lib/node_exporter/textfile_collector/zfs_snapshot.prom once a day.
 # Runbook: docs/operations/runbooks/zfs-snapshots.md.

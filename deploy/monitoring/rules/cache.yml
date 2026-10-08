@@ -65,7 +65,7 @@ groups:
       # once only those remain, or on a can't-evict-fast-enough burst,
       # and this catches both plus a noeviction override.
       #
-      # 14d-review (2026-09-27): widened past OOM alone to also catch
+      # Widened past OOM alone to also catch
       # READONLY (a replica that stopped accepting writes — commonly
       # min-replicas-to-write or a stale primary handoff during
       # failover) and NOREPLICAS (min-replicas-to-write itself refusing

@@ -10,9 +10,8 @@
 # a unit THIS ROLE installs fails outright ("Could not find the requested
 # service X") whenever that unit is new in the repo and not yet on the
 # host. The module error is fatal, so one such task ABORTS THE PREVIEW
-# for every task after it — which is how the weekly ansible-drift run
-# lost its verdict on 2026-08-10 (census-rollup.timer, 42 tasks early)
-# and 2026-08-24 (sla-probe.timer). The abort hides the very drift the
+# for every task after it — which is how a weekly ansible-drift run
+# can lose its verdict many tasks early (a new timer unit is enough). The abort hides the very drift the
 # run exists to report.
 #
 # THE RULE, and it is narrow:
@@ -158,8 +157,8 @@
   when: run_postgres | bool
   tags: [postgres, pgbackrest, backup]
 
-# Rolling ZFS snapshots of data/clickhouse + data/postgres (decision
-# 2026-08-29): the minutes-scale answer to a logical fault, alongside
+# Rolling ZFS snapshots of data/clickhouse + data/postgres: the
+# minutes-scale answer to a logical fault, alongside
 # pgBackRest's hours-scale PITR. ZFS-owning hosts only (same gate as
 # 03-zfs). Its own tag so it can be applied alone:
 #   ansible-playbook ... --tags zfs-snapshots --check --diff
@@ -191,9 +190,8 @@
   tags: [observability, monitoring]
 
 - name: "Prometheus exporters (redis + postgres + pgbackrest)"
-  # F-0152 (audit-2026-05-26): installs the three exporters whose
-  # scrape jobs are configured in configs/prometheus/prometheus.r1.yml
-  # but which had never been installed on r1. Ordered AFTER
+  # Installs the three exporters whose scrape jobs are configured in
+  # configs/prometheus/prometheus.r1.yml. Ordered AFTER
   # 10-observability.yml so node_exporter's textfile-collector dir is
   # already present and the `prometheus` group (created by the
   # Debian exporter packages) is available for env-file ACLs.
@@ -219,8 +217,7 @@
   tags: [stellarindex, indexer]
 
 - name: "Stellar Index Healthchecks.io stack (heartbeat + smoke + sla-probe)"
-  # F-0137 (audit-2026-05-26): replaces the manual
-  # configs/healthchecks/install.sh re-run. Ordered AFTER
+  # Replaces the manual configs/healthchecks/install.sh re-run. Ordered AFTER
   # 14-stellarindex-services.yml because the sla-probe wrapper
   # invokes /usr/local/bin/stellarindex-sla-probe (built + installed
   # by 14) and the smoke wrapper hits the API surface that 14 brings

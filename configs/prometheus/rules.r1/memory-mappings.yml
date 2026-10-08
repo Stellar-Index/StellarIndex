@@ -5,7 +5,7 @@
 # /var/lib/node_exporter/textfile_collector/memory_mappings.prom every
 # 5 minutes. Runbook: docs/operations/runbooks/infra.md#process-mappings.
 #
-# WHY THESE EXIST. On 2026-09-10 13:53 CEST ClickHouse on r1 hit the
+# WHY THESE EXIST. ClickHouse on r1 once hit the
 # kernel's per-process mapping limit and said so itself:
 #
 #   Allocator: Cannot malloc 63.33 MiB: , errno: 12 ...
@@ -93,7 +93,7 @@ groups:
       - alert: stellarindex_process_mappings_critical
         expr: stellarindex_process_memory_mappings_ratio > 0.50
         # 2m, deliberately less than one producer interval: at half the
-        # limit a single reading is enough, and the 2026-09-10 excursion
+        # limit a single reading is enough, and that excursion
         # is the reason not to wait for a second one.
         for: 2m
         labels:

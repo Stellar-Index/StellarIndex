@@ -4,10 +4,10 @@
 # fixed here once users exist.
 
 - name: Service user — stellarindex
-  # CS-119 (audit-2026-06-30): this user was referenced by unit files
-  # and chowns (10-observability textfile dir, the hardened units in
-  # deploy/systemd/) but never created, so a clean apply / DR rebuild
-  # failed. Created FIRST, before anything installs or chowns.
+  # This user is referenced by unit files and chowns (10-observability
+  # textfile dir, the hardened units in deploy/systemd/), so a clean
+  # apply / DR rebuild fails without it. Created FIRST, before anything
+  # installs or chowns.
   # /var/lib/stellarindex is the "os" ZFS dataset mountpoint (03-zfs).
   ansible.builtin.user:
     name: stellarindex
@@ -95,10 +95,9 @@
 # is created by stellar-archivist / manual gap-fills, and a fill run under
 # umask 027 leaves nested dirs at 0750 root:root — world-traverse cleared —
 # which fails the anchor run with "permission denied" on a nested LCM file.
-# That is exactly the 2026-08-27 incident: the failing run was worked around
-# by flipping Tier B to User=root, which then wrote the SHARED verify-archive
-# state file root-owned and broke Tier A (which reads it as `stellarindex`),
-# so BOTH tiers alerted. Files under the mirror are already 0644 (public
+# Working around that by flipping Tier B to User=root is wrong: it writes the
+# SHARED verify-archive state file root-owned and breaks Tier A (which reads
+# it as `stellarindex`), so BOTH tiers alert. Files under the mirror are already 0644 (public
 # ledger data, no secrets); only the dirs need world-traverse. This idempotent
 # sweep restores o+rx on any dir missing it — a no-op once the tree is clean.
 - name: History-archive mirror stays world-traversable (de-privileged Tier B reads it)
@@ -113,8 +112,7 @@
     # `set -o pipefail` is a bashism; ansible.builtin.shell defaults to
     # /bin/sh, which is dash on every target (Ubuntu noble) and errors
     # "set: Illegal option -o pipefail" (rc=2) BEFORE the sweep runs —
-    # aborting every full role apply at this step (2026-08-28 audit; same
-    # class as deploy-binary.yml 2026-07-18). The `find | grep -q .` pipe
+    # aborting every full role apply at this step. The `find | grep -q .` pipe
     # makes pipefail load-bearing, so run under bash. Guarded by
     # scripts/ci/lint-ansible-tasks.sh (pipefail-needs-bash).
     executable: /bin/bash

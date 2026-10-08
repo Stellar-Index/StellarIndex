@@ -59,7 +59,7 @@ linters:
       # "forgot to add the new variant" bug without forcing a case-per-
       # variant on switches that intentionally default.
       default-signifies-exhaustive: true
-      # BACKLOG #48 probe (2026-07-05): the strict form below floods 12
+      # The strict form below floods 12
       # findings repo-wide — of which only 3 are AssetType switches
       # (canonical/sac.go, supply/key.go, xdrjson/sac.go — all
       # intentional error-defaults for unsupported classes), plus 2
@@ -69,7 +69,7 @@ linters:
       # variants.
       # default-signifies-exhaustive: false
       #
-      # ROADMAP #48 resolution (2026-07-09): rather than fight this
+      # Rather than fight this
       # linter's repo-wide scope, internal/canonical/
       # asset_type_exhaustive_guard_test.go (TestAssetTypeExhaustiveGuard)
       # adds a second, narrow guard — a go/types AST walk restricted to

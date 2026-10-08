@@ -1,5 +1,5 @@
 ---
-# Served-value freshness tripwire (audit-2026-07-16 C4-6).
+# Served-value freshness tripwire.
 #
 # The operator's core pain: wrong / stale served values go UNNOTICED.
 # There are already good per-surface freshness alerts —

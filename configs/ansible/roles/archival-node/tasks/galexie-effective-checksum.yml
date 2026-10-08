@@ -16,16 +16,15 @@
 #                                             (daemon-reload updates the
 #                                             definition, not the process)
 #
-# Deliberately NOT in the list (2026-08-29 r1 incident): the
+# Deliberately NOT in the list: the
 # galexie-append.sh wrapper is exec'd once per service start and then
 # replaced by the galexie binary; a wrapper edit takes effect at the next
 # (re)start and never requires restarting a healthy, in-sync process. The
 # galexie-archive-tip-lag / -fill / -contiguity scripts + timers are
 # oneshot units the daemon never reads. The SDF apt key/repo feed apt.
-# On 2026-08-29 06:04Z an apply with `--tags users,minio,galexie` carried
-# the #267 wrapper shebang fix (+ the tip-lag updater); the wrapper sat in
-# this list, so a healthy galexie was restarted for a file it would only
-# read at its next start — a ~9-minute mainnet captive-core cold catchup
+# Were the wrapper in this list, an apply with `--tags users,minio,galexie`
+# that touched it would restart a healthy galexie for a file it only
+# reads at its next start — a ~9-minute mainnet captive-core cold catchup
 # (docs/operations/postmortems/2026-08-27-r1-p28-captive-core-outage.md).
 #
 # For each input it compares the EFFECTIVE checksum of the file on disk
@@ -35,11 +34,10 @@
 # comment re-wrap does not restart, a real value change does. Both hashes
 # come from one read-only shell task with `check_mode: false`, so
 # `--check --diff` reaches the same verdict as a real apply and shows
-# `RUNNING HANDLER [Restart galexie]` when one would fire. (The previous
-# before/after-render design could not: in check mode nothing is written,
-# so the pair was always identical and the restart was invisible in the
-# dry-run the operator relies on — the 2026-08-29 apply was previewed
-# with `--check --diff`, which showed NO handler.)
+# `RUNNING HANDLER [Restart galexie]` when one would fire. (A
+# before/after-render design cannot: in check mode nothing is written,
+# so the pair is always identical and the restart is invisible in the
+# dry-run the operator relies on.)
 #
 # Fail-closed: when galexie is ACTIVE and an effective change is pending,
 # a real apply stops here — before anything is written — unless

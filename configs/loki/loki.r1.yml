@@ -17,9 +17,8 @@ server:
 
 # Storage lives on the ZFS pool (data/loki → /var/lib/loki), NOT the
 # 49 GB root filesystem. The quickstart-scaffold default (/tmp/loki)
-# put chunk storage on root — the same failure class as the
-# 2026-06-11 ClickHouse-logs-on-root fill (commit 5dd6fcda) and the
-# 2026-05-10 root-full SEV-2 — and /tmp is cleared on reboot, so all
+# put chunk storage on root — the same failure class as a
+# ClickHouse-logs-on-root fill — and /tmp is cleared on reboot, so all
 # log history died with every host restart.
 common:
   instance_addr: 127.0.0.1

@@ -64,7 +64,7 @@ groups:
       # prometheus-redis-exporter counter fed by Redis's Errorstats
       # section (INFO ERRORSTATS).
       #
-      # 14d-review (2026-09-27): widened past OOM alone to also catch
+      # Widened past OOM alone to also catch
       # READONLY (a replica that stopped accepting writes — commonly
       # min-replicas-to-write or a stale primary handoff) and NOREPLICAS
       # (min-replicas-to-write itself refusing because too few replicas

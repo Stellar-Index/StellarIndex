@@ -12,7 +12,7 @@
 # `name` must be the MAINNET Pages project. CI always passes an
 # explicit --project-name (explorer-deploy.yml), so it only binds a
 # bare local `wrangler pages deploy` — which is exactly the case that
-# used to publish into the pre-rename `stellarindex-showcase` project.
+# would otherwise publish into a stale project.
 # The per-network projects are stellarindex-explorer{,-testnet,
 # -futurenet}.
 

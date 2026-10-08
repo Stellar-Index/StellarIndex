@@ -35,8 +35,8 @@ deployment  = "production"        # production | testnet | futurenet | staging
 # The localhost defaults assume a Phase-3 archival/validator host
 # running both stellar-core and stellar-rpc locally
 # (run_stellar_core / run_stellar_rpc = true in the ansible role).
-# r1 today does NOT run those daemons (removed 2026-04-23 — see
-# docs/operations/r1-deployment-state.md): the archival-node ansible
+# r1 today does NOT run those daemons — see
+# docs/operations/r1-deployment-state.md. The archival-node ansible
 # role renders rpc_endpoints from stellar_rpc_endpoints, the network's
 # public stellar-rpc (https://mainnet.sorobanrpc.com on pubnet).
 # ──────────────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
 # (loopback — never traverses a network). If you point this at any
 # non-loopback host, also change sslmode to require/verify-full —
 # otherwise credentials and query data go over the wire in cleartext.
-# (audit-2026-07-23 CFG-02: there is currently no config-load-time
+# (There is currently no config-load-time
 # check for this combination — internal/config/validate.go's
 # StorageConfig.validate() only checks the DSN scheme, not sslmode
 # vs host. Don't rely on this comment alone for a remote Postgres.)
@@ -71,7 +71,7 @@ redis_addr         = "127.0.0.1:6379"
 # redis_password_env still loads, with a deprecation warning.
 # redis_password = ""
 #
-# redis_username (F-1213, codex audit-2026-05-12). Empty (default)
+# redis_username. Empty (default)
 # AUTHs as Redis's legacy 'default' user. Set to 'stellarindex' (or
 # the operator's per-component user) when `redis_acl_lockdown` is
 # enabled in the ansible role — without a username the broker-side
@@ -404,7 +404,7 @@ windows = [
 # legs   = ["crypto:XLM/fiat:USD", "fiat:GBP/fiat:USD"]
 
 # Composite-reference corroboration of the phase-2 freeze for
-# structurally single-venue targets (2026-08-29, design doc §10.1).
+# structurally single-venue targets (design doc §10.1).
 # On a single-venue bucket of a listed target the aggregator rebuilds
 # the target's [[aggregate.triangulations]] chain on the CURRENT bucket
 # (this tick's crypto/USD publish with >= min_leg_sources venues × an FX
@@ -465,7 +465,7 @@ unfreeze_buckets                    = 2
 # fronts it; see stellarindex.toml.j2). Running the bare binary
 # directly on a host without an equivalent firewall/proxy in front
 # exposes :3000 (no auth if auth_mode=none) to the network — set this
-# to 127.0.0.1:3000 in that case (audit-2026-07-23 INF-19).
+# to 127.0.0.1:3000 in that case.
 listen_addr              = "0.0.0.0:3000"
 # SELF-HOSTERS: set this to YOUR public /v1 root. Emailed /v1/signup
 # verification links are built from it (never from the request's Host
@@ -475,8 +475,7 @@ external_base_url        = "https://api.stellarindex.io/v1"
 # auth_mode=none matches this product's default posture: a public,
 # no-auth read API for market data. It is NOT a safe default
 # if you're standing this API up as an internal/private service —
-# switch to apikey / apikey_optional / sep10 in that case (audit-
-# 2026-07-23 CFG-01; see docs/operations/pre-launch-hardening.md).
+# switch to apikey / apikey_optional / sep10 in that case (see docs/operations/pre-launch-hardening.md).
 auth_mode                = "none"            # none | apikey | apikey_optional | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
@@ -557,7 +556,7 @@ trusted_proxy_cidrs      = []
 # single_instance = false
 
 # request_timeout / serving_statement_timeout — the two layers of the
-# unauth-DoS chokepoint (C3-1/C3-2/P1, audit-2026-07-16). Keep
+# unauth-DoS chokepoint. Keep
 # serving_statement_timeout LONGER than request_timeout so the
 # app-layer deadline fires first. request_timeout must EXCEED 12s
 # (config.APIMaxHandlerBudget) or the API refuses to boot.
@@ -596,8 +595,8 @@ trusted_proxy_cidrs      = []
 # leaves /v1/status serving an in-process surface (uptime + region).
 # prometheus_url = "http://localhost:9090"
 
-# signup_require_email_verification (F-1218, codex audit-2026-05-13).
-# Default true (post-2026-05-13): /v1/signup-minted API keys cannot
+# signup_require_email_verification.
+# Default true: /v1/signup-minted API keys cannot
 # authenticate until the verification link emailed at signup is
 # clicked. Pre-launch we have no consumer traffic, so the safe
 # default is to require ownership proof — operators who want to
@@ -800,7 +799,7 @@ enabled  = true
 # base_url = "https://dashboard.stellar.org/api/v3"
 
 # CoinGecko /coins/{id} market_data.circulating_supply reference. Off by
-# default — the free tier has been 429-throttled since 2026-06-19; set a
+# default — the free tier has been 429-throttled; set a
 # Pro key (prefer the COINGECKO_API_KEY env var) and enable it.
 [divergence.supply.coingecko]
 enabled = false
@@ -844,19 +843,18 @@ enabled = false
 # aggregator_refresh_enabled = false
 # aggregator_refresh_cadence = "5m"
 #
-# fully_wrapped_sacs (BACKLOG #59, 2026-07-08 decision). Cross-check
+# fully_wrapped_sacs. Cross-check
 # pairs default to a subset-bound compare (supply.WrapClassPartial):
 # the SAC's total_supply can never legitimately exceed the classic
 # asset's total_supply, but the reverse (classic > SAC) is EXPECTED
 # for a partially-wrapped asset and must not page. List a SAC id here
 # ONLY if you've confirmed its classic issuer never mints/holds supply
 # outside the SAC — that flips it to the strict ADR-0011 total-vs-total
-# equality compare (supply.WrapClassFull). Empty by default; none
-# known as of 2026-07-08. Every entry MUST also be a key of
+# equality compare (supply.WrapClassFull). Empty by default. Every entry MUST also be a key of
 # [supply.sac_wrappers] below (config-load rejects otherwise).
 # fully_wrapped_sacs = []
 #
-# strict_freshness_required (F-1236, codex audit-2026-05-13).
+# strict_freshness_required.
 # Default false — preserves the legacy permissive interpretation
 # of `MinComponentLedger == 0` ("no freshness signal — let it
 # through"). Snapshots arriving without a freshness anchor
@@ -882,11 +880,11 @@ enabled = false
 # reserve_balances_as_of   = "2026-07-02"
 # reserve_balances_max_age = "168h"
 #
-# stale_component_ledgers (F-1236) — global stale-component threshold
+# stale_component_ledgers — global stale-component threshold
 # in ledgers; 0 disables the gate.
 # stale_component_ledgers = 1000
 #
-# max_dormant_component_ledgers (R-002) — how long an unchanged
+# max_dormant_component_ledgers — how long an unchanged
 # component ledger counts as a dormant asset before the gate treats it
 # as a stalled observer; 0 makes dormancy unbounded.
 # max_dormant_component_ledgers = 17280
@@ -969,9 +967,8 @@ enabled = false
 # trailing window, so a non-7-decimal Soroban token that traded and
 # then went dormant is invisible to it forever; this pass scans a
 # much longer historical window ONCE at process start to self-seed
-# nonstandard_decimals_assets for such tokens (closes the gap behind
-# the 2026-07-09 CC2RB… incident, where an operator had to hand-seed
-# the row). A token dormant for longer than this window still needs
+# nonstandard_decimals_assets for such tokens (closes the gap that
+# left an operator hand-seeding the row). A token dormant for longer than this window still needs
 # the runbook's manual hand-seed fallback.
 # ──────────────────────────────────────────────────────────────────
 [decimals_guard]
@@ -1004,8 +1001,7 @@ min_age_minutes      = 1440   # 0 = library default (24h)
 # window from the same bucket and compares, catching upstream
 # rewrites of a previously-fetched ledger that a chain-link check
 # alone can't see (both the rewritten AND original bytes can be
-# internally consistent). Off by default — first production exposure
-# 2026-07-08; opt in per region once proven.
+# internally consistent). Off by default; opt in per region once proven.
 # ──────────────────────────────────────────────────────────────────
 [hashdb]
 enabled                   = false

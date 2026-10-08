@@ -45,7 +45,7 @@ BINARIES := \
 #                              archive-verify test (hash-chain integrity,
 #                              ADR-0033/0016) had zero executing coverage
 #                              until this package was listed.
-#   - scripts/ops            — T424/T449: fx-history-backfill's INV-3 test
+#   - scripts/ops            — fx-history-backfill's INV-3 test
 #                              (operator fx_quotes corrections must carry a
 #                              positive derive generation) was compiled and
 #                              run by nothing until this was listed.
@@ -54,9 +54,9 @@ BINARIES := \
 # fails the default suite when one appears.
 # This variable is the SINGLE source of truth for the integration-suite
 # package set: scripts/ci/integration-shard.sh derives its shard-0-only
-# package list from `make print-int-test-pkgs` at run time (it used to
-# carry a hand-copied duplicate, so a package added here ran locally and
-# compiled in CI but was executed by no shard — #333 F1). Add a package
+# package list from `make print-int-test-pkgs` at run time (a hand-copied
+# duplicate would let a package added here run locally and
+# compile in CI but be executed by no shard). Add a package
 # here and every CI path picks it up.
 INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/...
 SHARD ?= 0
@@ -179,9 +179,9 @@ test: ## Run unit tests with race detector
 	# close to the real runtime turns a slow-but-correct run into a false
 	# failure that trains people to re-run the gate.
 	#
-	# It was 2m, which was 54% headroom over the slowest package rather
+	# A 2m cap would be 54% headroom over the slowest package rather
 	# than a safety margin: internal/api/v1 measures 78s under -race on a
-	# fast host (2026-09-09), and that package is legitimately slow — it
+	# fast host, and that package is legitimately slow — it
 	# holds deliberate stall and timing tests (a sustained-stall log check
 	# at 4.3s, three divergence/emission-delay tests at 2-3s each). The
 	# containerised lane is slower again, and this repo routinely runs
@@ -201,25 +201,19 @@ test-cover: ## Unit tests + coverage report + floor check (report-only)
 
 .PHONY: test-integration
 test-integration: ## Integration tests (requires Docker; spins its own containers via testcontainers-go)
-	# 35m: the same suite-growth story as the 10m→20m raise below, one
-	# campaign later. 2026-08-11/12: CI hit the 20m deadline on three
+	# 35m: suite growth, not a hang. CI hit a 20m deadline on three
 	# consecutive pushes with the running test 1s in, while the same
 	# suite completes in ~787s (13m) on a developer box — CI runners are
 	# roughly 1.5x slower, so 20m left almost no headroom and a red run
 	# meant "the clock ran out", not "something broke". A gate that
-	# fails on wall-clock stops being a signal. If this needs raising a
-	# third time, split the suite by package instead (the ops/archive
+	# fails on wall-clock stops being a signal. If this needs raising
+	# again, split the suite by package instead (the ops/archive
 	# packages are already separate targets and finish in seconds).
-	# 2026-08-29: CI did split it — 4-way by test name across runners
+	# CI splits it — 4-way by test name across runners
 	# (scripts/ci/integration-shard.sh, `integration-test-shard` matrix
 	# in ci.yml, ~20.5 min serial -> ~5 min per shard). This target stays
 	# the single-process developer entry point; SHARD/SHARDS below runs
 	# one CI slice locally.
-	#
-	# 20m: the suite's CUMULATIVE runtime crossed 10m on 2026-07-29 (the
-	# July campaign added container-backed tests, e.g. the CS-102
-	# watermark pair) — CI died at the go-test deadline with the running
-	# test only 4s in. This is suite growth, not a hang.
 	$(GO) test -tags=integration -timeout 35m $(INT_TEST_PKGS)
 
 .PHONY: test-integration-shard
@@ -246,8 +240,7 @@ PROM_OUT ?= experimental-prometheus-rw
 # `k6 run`, which includes them by default), so the scenarios' init-time
 # guard in scenarios/lib/env.js throws "K6_TARGET is required" and the
 # check fails even when the operator HAS exported the real values —
-# k6-weekly run 30542038490 (2026-07-30), the only time this target has
-# ever run in CI, died exactly there (#316). Seeding them explicitly is
+# CI runs die exactly there. Seeding them explicitly is
 # what makes the target's "no target needed" promise true.
 # Unreachable by construction: .invalid is RFC-2606 reserved and never
 # resolves, `k6 archive` issues no requests, and neither value is a

@@ -1,5 +1,5 @@
 ---
-# Off-site (repo2) pgBackRest backup staleness (the maintainer, 2026-08-29 — the
+# Off-site (repo2) pgBackRest backup staleness (the
 # public status page's Backups panel judges the same signal at the same
 # 8-day SLO; this is the paging half of it).
 #
@@ -21,7 +21,7 @@
 # which also covers repo2 never configured / never written (the ask:
 # "> 8d OR absent"), and stays quiet on a DOWN exporter (owned by
 # meta.yml's exporter_down) or one with no stanza at all (owned by
-# storage.yml's pgbackrest_backup_metrics_absent, PR #270).
+# storage.yml's pgbackrest_backup_metrics_absent).
 #
 # Threshold: 8d = the weekly full's cadence (Sunday 02:00) + one day of
 # slack; diffs land in repo2 daily too, so a healthy host always has a

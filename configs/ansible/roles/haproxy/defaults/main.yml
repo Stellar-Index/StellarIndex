@@ -17,7 +17,7 @@ keepalived_priority: 99            # 100 on lb-01, 99 on lb-02 (per-host overrid
 # Vault-supplied. Note: keepalived truncates auth_pass beyond 8
 # bytes silently — keep this <=8 chars to avoid surprises.
 keepalived_vrrp_password: ""
-# VRRP unicast (audit-2026-07-23 REL-HA): default keepalived VRRP uses
+# VRRP unicast: default keepalived VRRP uses
 # multicast (224.0.0.18), which some cloud/VPC networks silently drop —
 # each node then believes it's the sole MASTER, a dual-MASTER split
 # brain on the shared VIP. Set BOTH of these (per-host override — this
@@ -64,7 +64,7 @@ haproxy_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
-# F-1278 (codex audit-2026-05-13): role renders the COMPLETE
+# Role renders the COMPLETE
 # /etc/nftables.conf on its dedicated LB hosts. Override these
 # SSH allow-list CIDRs in inventory if your bastion / operator
 # network differs.

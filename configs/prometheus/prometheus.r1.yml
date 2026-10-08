@@ -23,11 +23,10 @@ alerting:
 # /etc/prometheus/rules.r1/ (one ansible task — rsync or ansible.builtin.copy
 # with the whole directory). Every file in this directory has a runbook
 # at docs/operations/runbooks/ and is referenced from
-# docs/operations/alerts-catalog.md; F-1219 (audit-2026-05-12) wants
-# the full set loaded on R1 so we don't have silent-rule families.
+# docs/operations/alerts-catalog.md; load the
+# full set on R1 so there are no silent-rule families.
 #
-# F-1222 (audit-2026-05-12) explains the R1 (hyphenated) vs multi-host
-# (underscored) job-label divergence; this glob picks up the R1
+# R1 uses hyphenated job labels, multi-host underscored; this glob picks up the R1
 # overlay copies in configs/prometheus/rules.r1/ which use the
 # hyphenated names matching the scrape jobs above.
 rule_files:
@@ -83,7 +82,7 @@ scrape_configs:
           host: r1
     scrape_timeout: 5s
 
-  # ─── F-1220 (audit-2026-05-12) scrape-job coverage ─────────────
+  # ─── scrape-job coverage ─────────────
   # Multi-host parity for R1's single-host shape. The corresponding
   # rule files in configs/prometheus/rules.r1/ reference the metrics
   # these exporters emit (cache.yml, infra.yml, storage.yml). Each
@@ -96,7 +95,7 @@ scrape_configs:
   # package; the redis-sentinel role's own 07-monitoring.yml ships a
   # tarball-based exporter on the Sentinel-cluster boxes). Feeds
   # cache.yml + the redis-writes-blocked + cache-miss-rate-high alert
-  # families. Closed F-0152 on 2026-05-27.
+  # families.
   - job_name: redis_exporter
     static_configs:
       - targets: [localhost:9121]
@@ -119,7 +118,6 @@ scrape_configs:
   # archival-node/tasks/16-prometheus-exporters.yml (Debian package
   # `prometheus-postgres-exporter`, peer-auth on the local Unix socket
   # as the `postgres` superuser). Feeds storage.yml's pg_* alerts.
-  # Closed F-0152 on 2026-05-27.
   - job_name: postgres_exporter
     static_configs:
       - targets: [localhost:9187]
@@ -133,7 +131,6 @@ scrape_configs:
   # (no Debian package; pinned upstream release from
   # https://github.com/woblerr/pgbackrest_exporter/releases — version
   # in `pgbackrest_exporter_version` default, SHA in inventory).
-  # Closed F-0152 on 2026-05-27.
   - job_name: pgbackrest_exporter
     static_configs:
       - targets: [localhost:9854]
@@ -169,7 +166,7 @@ scrape_configs:
           host: r1
           service: minio
     # /etc/prometheus/minio.token is an OPERATOR-MINTED file: no ansible
-    # task owns it (verified 2026-08-29 — 09-minio.yml never mentions it;
+    # task owns it (09-minio.yml never mentions it;
     # the gap is tracked in docs/operations/credential-rotation.md and the
     # minio-metrics-403 runbook). Until the file exists this job 401s; the
     # absence-of-series surfaces via meta.yml

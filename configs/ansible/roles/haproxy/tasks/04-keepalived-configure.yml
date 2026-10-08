@@ -1,5 +1,5 @@
 ---
-# SL16: chk_haproxy used to be a bare `pgrep haproxy`, which stays
+# chk_haproxy must not be a bare `pgrep haproxy`: that stays
 # green for a wedged/hung process that is still resident but not
 # actually routing — this host would then keep MASTER (and the VIP)
 # while traffic blackholes. Query the stats CSV instead and require

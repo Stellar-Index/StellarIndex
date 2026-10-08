@@ -1,9 +1,7 @@
 ---
-# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
-# /etc/nftables.conf for this host. Previously the role wrote a
-# drop-in inside a separate `inet haproxy_filter` table with
-# `policy accept`, which composed unpredictably with the repo's
-# default-drop base chain. On HA-dedicated LB hosts the haproxy
+# Render the COMPLETE /etc/nftables.conf for this host. A drop-in in
+# a separate `inet haproxy_filter` table with `policy accept` composes
+# unpredictably with the repo's default-drop base chain. On HA-dedicated LB hosts the haproxy
 # role now owns the whole-host firewall.
 #
 # Public ingress on 80/443; SSH narrowed to allow-list CIDRs; VRRP
@@ -29,7 +27,7 @@
     content: |
       #!/usr/sbin/nft -f
       # Managed by ansible (haproxy role) — DO NOT EDIT BY HAND.
-      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      # Complete ruleset.
       flush ruleset
 
       table inet filter {

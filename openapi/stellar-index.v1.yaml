@@ -11236,7 +11236,7 @@ paths:
       operationId: listLedgers
       # x-stability: experimental marks the explorer/operator-only read
       # surface added under ADR-0038 and formalized as an OpenAPI
-      # extension per ADR-0042 decision #4 (2026-07-08) — no wire-shape
+      # extension per ADR-0042 decision #4 — no wire-shape
       # promise across releases yet. This set is deliberately kept 1:1
       # with pkg/client/spec_contract_test.go's uncoveredOperations
       # "explorer surface — SDK is pricing-first" entries; if you add or
@@ -19978,7 +19978,7 @@ components:
         # ─── Coin-overlay listing fields (assets.go applyCoinExtensionFields
         # + projectCatalogueRow) — populated on listing/detail surfaces when
         # the CoinsReader is wired; null/absent otherwise. Documented
-        # 2026-07-02 (board #33): these were served but unspecced.
+        # because they are served.
         slug:               { type: string, description: "Catalogue slug when the asset has a verified-currency identity (e.g. \"usdc\")." }
         class:              { type: string, enum: [crypto, stablecoin, fiat], description: "Verified-currency taxonomy when catalogued." }
         change_1h_pct:      { type: [string, "null"], description: "Trailing-1h price change, signed decimal percentage." }
@@ -20130,11 +20130,11 @@ components:
       # generated type declare `code: string` — non-optional — so a
       # consumer doing `coin.code.toUpperCase()` type-checked cleanly and
       # threw at runtime the moment a Soroban asset appeared in a list.
-      # That is exactly what happened on the explorer home page once
-      # /v1/assets started honouring `order_by=volume_24h_usd_desc`
-      # (2026-08-31): four Soroban contracts entered the top ten and the
-      # whole app shell fell over. The spec and the generated types agreed
-      # with each other and both disagreed with the server.
+      # That is exactly what happens on the explorer home page once
+      # /v1/assets honours `order_by=volume_24h_usd_desc` and
+      # Soroban contracts enter the top ten: the
+      # whole app shell falls over. Spec and generated types must agree
+      # with the server, not only with each other.
       required: [kind, asset_id, type, decimals, sep1_status]
 
     UnverifiedWarning:
@@ -20422,8 +20422,8 @@ components:
       # PriceSnapshot serves (internal/api/v1/price.go). Asset-level
       # enrichment (market cap, supply, change_%, sparklines, ATH,
       # top_markets, scam flags) lives on the Asset schema served by
-      # /v1/assets — it was previously (wrongly) documented here too;
-      # the price surface never carried those fields. Contract-tested
+      # /v1/assets; the price surface never carries those fields.
+      # Contract-tested
       # against the SDK in pkg/client/spec_contract_test.go.
       type: object
       properties:
@@ -21497,11 +21497,10 @@ components:
     # volume_usd (nullable when the pair has no USD-equivalent
     # trades).
     #
-    # `last_trade_at` vs `bucket_close_at`: prior to 2026-05-27 the
-    # `last_trade_at` field was sourced from MAX(prices_1d.bucket)
-    # (daily bucket-start), so most rows returned exactly-midnight
-    # UTC values and clients computing staleness against now() saw
-    # spuriously-large values (F-0065). Post-fix, `last_trade_at`
+    # `last_trade_at` vs `bucket_close_at`: sourcing `last_trade_at`
+    # from MAX(prices_1d.bucket) (daily bucket-start) would return
+    # exactly-midnight UTC values and clients computing staleness
+    # against now() would see spuriously-large values. So `last_trade_at`
     # carries the minute-precise prices_1m bucket-start for in-24h-
     # active pairs (falling back to the daily bucket-start when no
     # minute-precise signal exists), and `bucket_close_at` exposes

@@ -1,9 +1,9 @@
 ---
-# ClickHouse Prometheus endpoint (2026-09-03 r1 observability gap).
+# ClickHouse Prometheus endpoint.
 #
 # ClickHouse serves its own /metrics — no exporter package exists or is
 # needed — but the stock config.xml ships the entire <prometheus> block
-# COMMENTED OUT. r1 measured 2026-09-03: config.xml lines 1151-1158 sit
+# COMMENTED OUT. On r1, config.xml lines 1151-1158 sit
 # inside `<!-- ... -->`, nothing listens on 9363, and Prometheus knows
 # zero `ClickHouse*` series. That is not one missing dashboard: the
 # ClickHouse lake is the substrate for the API's whole explorer read

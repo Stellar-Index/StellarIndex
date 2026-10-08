@@ -25,7 +25,7 @@
     - { path: /etc/promtail,                  owner: root, group: "{{ promtail_user }}", mode: "0750" }
     - { path: "{{ promtail_data_dir }}",       owner: "{{ promtail_user }}", group: "{{ promtail_user }}", mode: "0750" }
 
-# F-1285 (codex audit-2026-05-13): fail fast if the operator
+# Fail fast if the operator
 # hasn't supplied the promtail release SHA256.
 - name: assert promtail_release_sha256 is set
   assert:

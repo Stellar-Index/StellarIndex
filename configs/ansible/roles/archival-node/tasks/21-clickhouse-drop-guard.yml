@@ -1,5 +1,5 @@
 ---
-# ClickHouse destructive-DDL size guard (2026-08-29 r1 audit).
+# ClickHouse destructive-DDL size guard.
 #
 # ClickHouse's max_table_size_to_drop / max_partition_size_to_drop make a
 # DROP TABLE / TRUNCATE / DROP PARTITION / REPLACE PARTITION on anything
@@ -55,9 +55,9 @@
       (docs/operations/clickhouse-destructive-ddl.md), never a raised limit.
   tags: [clickhouse, clickhouse-drop-guard]
 
-# 2026-08-29 (r1 measured): the 1 TiB limits came from a HAND-WRITTEN
+# On r1 the 1 TiB limits came from a HAND-WRITTEN
 # /etc/clickhouse-server/config.d/zz-partition-drop-limit.xml (D2 REPLACE
-# PARTITION, 2026-07-23) that was never in this role. It sorts AFTER
+# PARTITION) that was never in this role. It sorts AFTER
 # si-drop-guard.xml and would silently win, so the guard removes it.
 # The role's own guard file is the only carrier of these two settings.
 - name: Remove the hand-written drop-size override that would shadow the guard

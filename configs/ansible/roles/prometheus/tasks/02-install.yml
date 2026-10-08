@@ -17,10 +17,9 @@
     - { path: /etc/alertmanager,         owner: root, group: "{{ alertmanager_user }}", mode: "0750" }
     - { path: /var/lib/alertmanager,     owner: "{{ alertmanager_user }}", group: "{{ alertmanager_group }}", mode: "0750" }
 
-# F-1285 (codex audit-2026-05-13): fail fast if the operator
-# hasn't supplied the prometheus release SHA256 in inventory.
-# Pre-fix used `prometheus_sha256 | default(omit)` which silently
-# DROPPED the checksum entirely when the variable wasn't set —
+# Fail fast if the operator hasn't supplied the prometheus release
+# SHA256 in inventory. `prometheus_sha256 | default(omit)` would
+# silently DROP the checksum when the variable isn't set —
 # installing unauthenticated upstream binaries.
 - name: assert prometheus_sha256 is set
   assert:
@@ -58,7 +57,7 @@
     - prometheus
     - promtool
 
-# F-1285 (codex audit-2026-05-13): same fail-fast pattern as the
+# Same fail-fast pattern as the
 # prometheus checksum assert above.
 - name: assert alertmanager_sha256 is set
   assert:

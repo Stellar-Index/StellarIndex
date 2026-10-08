@@ -90,15 +90,14 @@ groups:
 
       # Minimum-signal guard — absolute COUNT of non-fast (slow or
       # error) requests over the trailing hour, not a floor on total
-      # traffic. (RLT-329, #739): the original guard compared TOTAL
-      # request rate against a 5 req/s floor sized off a ~2.4 req/s
-      # synthetic-monitoring baseline (80e377982, 2026-07-02). Once
-      # fb70b8408 (2026-09-16) excluded synthetic UAs from
-      # http_request_duration_seconds entirely (see
+      # traffic. A floor on TOTAL
+      # request rate (e.g. 5 req/s, sized off a ~2.4 req/s
+      # synthetic-monitoring baseline) fails once synthetic UAs are
+      # excluded from http_request_duration_seconds entirely (see
       # internal/obs/http_middleware.go's IsSyntheticUA check, which
-      # returns before any Observe/Inc call), that denominator held
+      # returns before any Observe/Inc call), that denominator holds
       # real traffic only — and pre-launch real traffic never clears
-      # 5 req/s, so the guard silently suppressed every latency burn
+      # 5 req/s, so such a guard silently suppresses every latency burn
       # alert regardless of how badly the SLO was burning.
       #
       # An absolute count of BAD (slow-or-error) requests is the

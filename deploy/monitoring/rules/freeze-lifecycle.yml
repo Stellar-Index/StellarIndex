@@ -18,8 +18,8 @@
 #   auto-unfreeze: confidence > 0.30 AND z < 3.0 AND a corroborating
 #   lens agreeing (<=5%) with the bucket's own fresh price, for two
 #   consecutive buckets, once the initial hold has been served
-#   (2026-08-24 amendment: calm alone is gameable — a held level reads
-#   calm per-tick; no lens => no auto-unfreeze, ladder escalates)
+#   (calm alone is gameable — a held level reads calm per-tick; no lens
+#   => no auto-unfreeze, ladder escalates)
 #
 # Producers: internal/aggregate/orchestrator (freeze lifecycle step),
 # metrics declared in internal/obs/metrics.go. Every series here is
@@ -37,8 +37,8 @@
 # (internal/aggregate/orchestrator/phase2_freeze.go, labelled `pair`,
 # `window`) counts a phase-2 3-signal-AND fire that was DISARMED
 # because the current-bucket composite reference corroborated the
-# move (composite_reference.go, 2026-08-29) — a freeze that, before
-# that mechanism shipped, would have entered the ladder this file
+# move (composite_reference.go) — a freeze that, without
+# that mechanism, would have entered the ladder this file
 # alerts on. It is a lifecycle input, not a lifecycle stage: read it
 # next to `stellarindex_anomaly_freeze_engaged_total` below.
 

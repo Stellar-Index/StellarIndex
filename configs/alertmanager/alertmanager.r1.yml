@@ -5,8 +5,7 @@
 # vocabulary (page / ticket / informational) — the same
 # vocabulary used by the multi-host Ansible template at
 # configs/ansible/roles/prometheus/templates/alertmanager.yml.j2
-# (the template converged on this severity ladder post-R1
-# standup; F-1265, 2026-05-13). The remaining difference between
+# (the template shares this severity ladder). The remaining difference between
 # the two is config shape, not severity vocabulary.
 #
 # Apply via configs/alertmanager/apply.sh — it env-substitutes the
@@ -74,9 +73,9 @@ route:
     # says "a receiver is being refused by the far end". Routed by
     # severity alone it is a ticket, so it lands in chat-default — i.e.
     # it is delivered through the very integration whose failure it is
-    # reporting. During the 2026-09-07 Discord outage it fired for 11
-    # hours into the dead channel and nobody saw it: the only signal of
-    # a delivery failure travelled the failing path.
+    # reporting. In a Discord outage it fires into the dead channel and
+    # nobody sees it: the only signal of
+    # a delivery failure travels the failing path.
     #
     # `continue: true` — this route ADDS a transport, it does not take
     # one away. The alert still falls through to the severity routes
@@ -219,8 +218,8 @@ receivers:
   # receiver with no *_configs block accepts the alert and delivers it
   # to NOBODY.
   #
-  # Nothing routes here as of 2026-09-08 — `severity: informational`
-  # moved to chat-informational above. It is kept because that is
+  # Nothing routes here: `severity: informational` goes to
+  # chat-informational above. It is kept because that is
   # exactly the shape chat-informational degrades to when
   # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset, so the stub stays a
   # named, documented state rather than an accident. Removing it would

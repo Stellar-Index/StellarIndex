@@ -5,7 +5,7 @@
 # 22-clickhouse-exporter.yml drop-in, scraped by the `clickhouse` job.
 # Runbook: docs/operations/runbooks/clickhouse.md.
 #
-# Why this file exists (2026-09-03): the stock config.xml ships the
+# Why this file exists: the stock config.xml ships the
 # entire <prometheus> block inside an XML comment, so on r1 nothing
 # listened on 9363 and Prometheus held ZERO `ClickHouse*` series. The
 # lake is the substrate for the API's explorer read path and for the
