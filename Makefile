@@ -112,6 +112,10 @@ check: ## Fast read-only development checks; portable across supported contribut
 lint-changed: ## The lints that apply to the files you changed (staged, else origin/main...HEAD), cheapest first, in seconds — a dispatcher over the existing scripts/ci gates (LINT_CHANGED_ARGS='--plan' prints the plan)
 	@./scripts/dev/lint-changed.sh $(LINT_CHANGED_ARGS)
 
+.PHONY: verify-changed
+verify-changed: ## vet + race tests for the Go packages your change can reach (as CI selects them) and typecheck/vitest for touched web apps; one screen of output, full logs under $$TMPDIR/verify-changed (VERIFY_CHANGED_ARGS='<ref>' for another base)
+	@./scripts/dev/verify-changed.sh $(VERIFY_CHANGED_ARGS)
+
 .PHONY: branch-status
 branch-status: ## Per branch: does it still carry unlanded work, and would applying it DELETE files main has? (BRANCH_STATUS_ARGS='--stale-only')
 	@./scripts/dev/branch-status.sh $(BRANCH_STATUS_ARGS)
