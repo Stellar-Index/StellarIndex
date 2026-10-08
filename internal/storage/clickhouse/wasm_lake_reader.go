@@ -13,54 +13,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ErrContractWasmUnresolved is returned by ContractWasm when the contract's
-// wasm could not be assembled from the lake — either the contract's
-// contract_data INSTANCE entry isn't captured (so we can't learn its wasm
-// hash) or the referenced contract_code entry isn't captured (so we have the
-// hash but not the bytes). It's a clean "not found" (404), NOT an error.
-//
-// A "live-only capture window" explanation is
-// STALE for contract_code, and following it wastes an operator's time
-// waiting for a backfill that has already run. Measured on r1:
-// ledger_entries_current holds all 4,534 distinct contract_code keys, from
-// Soroban activation to tip, with zero
-// removals — and every contract_code key present in ledger_entry_changes
-// across all 14 Soroban partitions is present there too (7,777 rows, 0
-// missing). A miss on the CODE hop therefore means the hash genuinely is
-// not in the lake, not that it predates capture.
-//
-// The INSTANCE hop is the one that still misses in practice: of the 40
-// busiest contracts by event count in a recent window, only 18 had an
-// instance entry at all. Callers map this to 404.
+// ErrContractWasmUnresolved: the contract's INSTANCE entry or its contract_code entry is not in the
+// lake. A clean 404, not an error. contract_code is fully captured, so a code-hop miss means the
+// hash is genuinely absent; the instance hop is the one that still misses.
 var ErrContractWasmUnresolved = errors.New("clickhouse: contract wasm not resolvable from lake")
 
-// ErrContractIsSAC is returned by ContractWasm when the contract's instance
-// IS captured but its executable is a Stellar Asset Contract (the built-in
-// SAC host logic), not a user-uploaded WASM module. SACs — the asset
-// contracts behind `native`, USDC, and every classic asset, which are among
-// the busiest contracts on the network — have no WASM to show, ever; a
-// backfill will never produce one. Distinct from ErrContractWasmUnresolved
-// so the API/UI can say "this is a SAC, no WASM" instead of "not captured
-// yet". Callers map this to a 404 with a SAC note.
+// ErrContractIsSAC: the instance is captured but its executable is a Stellar Asset Contract, which
+// has no WASM, ever. Distinct from ErrContractWasmUnresolved so callers can say "SAC" rather than
+// "not captured".
 var ErrContractIsSAC = errors.New("clickhouse: contract is a stellar asset contract (no wasm)")
 
-// WasmExport is one exported function of a Soroban contract — its name and
-// the i32/i64/f32/f64 param + result value types parsed from the wasm type
-// section. For a Soroban contract the exported function names are the
-// contract's public entry points (e.g. "register", "swap", "deposit"); the
-// param/result types are the low-level wasm ABI (i64-tagged host values), not
-// the Rust-level signature, but the NAMES are the contract's real API surface.
+// WasmExport is one exported function of a Soroban contract. Types are the low-level wasm ABI; the
+// NAMES are the contract's real API surface.
 type WasmExport struct {
 	Name    string   // exported symbol
 	Params  []string // wasm value types: "i32"|"i64"|"f32"|"f64"
 	Results []string // wasm value types
 }
 
-// ContractWasmInfo is the assembled per-contract wasm view: the resolved hash,
-// the byte size, the natively-parsed export table, and (best-effort) the WAT
-// disassembly + wasm-decompile pseudocode. Wat/Decompiled are empty when the
-// wabt tooling (wasm2wat / wasm-decompile) isn't on PATH — the metadata +
-// exports are always populated (pure-Go, no tool dependency).
+// ContractWasmInfo is the assembled per-contract wasm view. Wat/Decompiled are empty when wabt is
+// not on PATH; hash, size and exports are always populated.
 type ContractWasmInfo struct {
 	ContractID string
 	WasmHash   string // hex sha256 of the wasm module
@@ -71,22 +43,10 @@ type ContractWasmInfo struct {
 	ToolNote   string // human note on which optional stages ran / why they didn't
 }
 
-// ContractWasm resolves a contract id to its on-chain wasm and returns the
-// assembled metadata view. Resolution is a two-hop walk over the certified
-// lake's ledger_entry_changes (ADR-0034 substrate):
-//
-//  1. contract id → wasm hash: find the contract's contract_data INSTANCE
-//     entry (ScvLedgerKeyContractInstance) and read its
-//     executable.wasm_hash.
-//  2. wasm hash → bytes: find the contract_code entry with that hash and read
-//     ContractCodeEntry.code (the raw wasm module).
-//
-// The export table is parsed natively (pure Go, no tooling). WAT + decompile
-// are filled best-effort by buildWasmDisassembly (wabt binaries if present).
-//
-// Returns ErrContractWasmUnresolved (a clean 404) when either hop misses in
-// the captured window — historical deploy-time entries are largely outside the
-// live ledger_entry_changes capture (see extract.go).
+// ContractWasm resolves a contract id to its wasm over ledger_entry_changes (ADR-0034): contract id
+// -> wasm hash (INSTANCE entry), then hash -> bytes (contract_code entry). Exports are parsed
+// natively; WAT and decompile are best-effort. Returns ErrContractWasmUnresolved when either hop
+// misses.
 func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (ContractWasmInfo, error) {
 	wasmHash, err := r.resolveContractWasmHash(ctx, contractID)
 	if err != nil {
@@ -136,11 +96,9 @@ const wasmModuleFlightTimeout = 30 * time.Second
 
 var errWasmModuleFillPanicked = errors.New("clickhouse: wasm module fill panicked")
 
-// wasmModuleView assembles everything keyed by the wasm hash alone. The
-// contract→hash hop above stays per request because upgrades move it; the
-// hash→bytes→disassembly stage is immutable, so it is memoised and run as one
-// detached flight per hash — waiters keep their own deadline, and a caller
-// that gives up does not cancel the fill for the others.
+// wasmModuleView assembles everything keyed by the wasm hash. The contract->hash hop stays per
+// request (upgrades move it); hash->bytes->disassembly is immutable, so it is memoised and run as
+// one detached flight per hash that no single waiter can cancel.
 func (r *ExplorerReader) wasmModuleView(ctx context.Context, wasmHash xdr.Hash) (ContractWasmInfo, error) {
 	key := hex.EncodeToString(wasmHash[:])
 	//nolint:contextcheck // the fill is shared by every waiter, so no single caller's cancellation may abort it
@@ -196,60 +154,35 @@ func (r *ExplorerReader) fillWasmModule(ctx context.Context, wasmHash xdr.Hash, 
 	return info, nil
 }
 
-// contractWasmHash finds the contract's contract_data INSTANCE entry and reads
-// its executable wasm hash. ok=false when no instance entry for this contract
-// is in the captured window.
-//
-// The query is pinned to the contract's INSTANCE ledger key, computed
-// deterministically (instanceKeyXDR): the key for the
-// ScvLedgerKeyContractInstance entry of a given contract is a single, fixed
-// base64 LedgerKey, so matching on key_xdr turns what would be a full decode of
-// every contract_data row (millions — and slow to exhaust on a miss) into a
-// precise equality predicate. Rows are ordered newest-first so the current
-// executable wins under in-place contract upgrades; the per-contract result is
-// cached hard (the wasm for a hash is immutable).
+// contractWasmHash reads the contract's executable wasm hash; ok=false when no instance entry is
+// captured. It matches the fixed instance key_xdr (instanceKeyXDR) rather than decoding every
+// contract_data row, newest-first so in-place upgrades win.
 func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
-	// Index-first: the
-	// genesis-complete contract_instance_changes timeline resolves the
-	// CURRENT executable for contracts whose instance entry predates
-	// live entry capture — the "not in the captured window yet" class
-	// the ledger_entries_current path below cannot see. Newest row
-	// wins under in-place upgrades; a SAC verdict surfaces as
-	// ErrContractIsSAC exactly like the legacy path.
+	// Index-first: the genesis-complete contract_instance_changes timeline resolves contracts whose
+	// instance entry predates live capture.
 	if r.instanceChangesIndexAvailable(ctx) {
 		h, ok, err := r.contractWasmHashIndexed(ctx, cid)
 		if (err == nil && ok) || errors.Is(err, ErrContractIsSAC) {
 			// A RESOLVED hash or a SAC verdict is authoritative. An index
-			// MISS (ok=false, err=nil) is NOT (audit REC-04):
-			// instanceChangesIndexAvailable is a table-global LIMIT-1
-			// emptiness probe that cannot see PARTIAL backfill coverage, so
-			// an applied-but-still-backfilling instance timeline holds zero
-			// rows for a contract whose instance write the backfill has not
-			// reached yet. Trusting that miss returned a confidently-wrong
-			// ErrContractWasmUnresolved ("no wasm") for a contract whose
-			// executable the legacy current-state read can still resolve.
-			// So only a positive verdict short-circuits here.
+			// Only a positive verdict is authoritative: the availability probe is a table-global
+			// LIMIT-1 check and cannot see partial backfill, so an index miss may only mean "not
+			// reached yet".
 			return h, ok, err
 		}
-		// Index MISS (unproven by a partial index) or a genuine index
-		// error — fall through to the legacy read rather than trusting an
-		// incomplete index or failing the whole resolution.
+		// Index miss or error: fall back to the legacy read rather than trust an incomplete index.
 	}
 	return r.contractWasmHashLegacy(ctx, cid)
 }
 
-// contractWasmHashLegacy is the pre-index resolution over
-// ledger_entries_current — the capture-window-bound read kept as the
-// fallback for deployments without contract_instance_changes.
+// contractWasmHashLegacy resolves via ledger_entries_current: the fallback for deployments without
+// contract_instance_changes.
 func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
 	keys, err := instanceKeyXDR(cid)
 	if err != nil {
 		return xdr.Hash{}, false, err
 	}
-	// ledger_entries_current, not the changes log: the current-state MV
-	// folds every insert (immune to the snapshot-row merge-loss defect)
-	// and (entry_type, key_xdr) is a PK-prefix
-	// lookup instead of a bloom-filtered scan.
+	// ledger_entries_current, not the changes log: the current-state MV folds every insert (immune
+	// to snapshot-row merge loss) and (entry_type, key_xdr) is a PK-prefix lookup.
 	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 		ORDER BY ledger_seq DESC`
@@ -281,10 +214,8 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 				return *inst.Executable.WasmHash, true, rows.Err()
 			}
 		case xdr.ContractExecutableTypeContractExecutableStellarAsset:
-			// Instance IS captured, but it's a SAC — no WASM to resolve,
-			// ever. Newest-first ordering means this is the current
-			// executable, so report it distinctly rather than falling
-			// through to the generic "unresolved" 404.
+			// Newest-first, so this is the current executable: report SAC distinctly, not as
+			// unresolved.
 			return xdr.Hash{}, false, ErrContractIsSAC
 		}
 	}
@@ -294,10 +225,8 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 // ContractInstanceState is the lake's evidence about a contract's instance
 // ledger entry.
 type ContractInstanceState struct {
-	// Known is true when the lake holds positive evidence the instance entry
-	// exists or existed: a TTL row for its key, or a resolvable executable
-	// (wasm hash or SAC). False is "not in the captured window", not proof
-	// the contract was never deployed.
+	// Known: positive lake evidence the instance entry exists or existed (a TTL row or a resolvable
+	// executable). False means "not in the captured window", not "never deployed".
 	Known bool
 	// LiveUntil is the newest liveUntilLedgerSeq recorded for the instance
 	// key; 0 when no TTL row is held. Judge it with [TTLVerdictAt].
@@ -348,33 +277,15 @@ type ContractCodeVersion struct {
 	WasmHash  string
 }
 
-// contractCodeHistoryMaxRows caps the instance-change rows ContractCodeHistory
-// pulls back. Without the cap the query has no LIMIT at all: a
-// contract that rewrites its instance entry often — instance-STORAGE writes
-// rewrite the same ledger key, not just `update_contract` upgrades — can match
-// millions of rows, every one of which is transferred and XDR-decoded below.
-// 10k is ~3 orders of magnitude above anything real (the r1 probe of this exact
-// query shape returned FOUR rows for a live contract) while bounding the
-// pathological case, and the response collapses to distinct executables anyway.
+// contractCodeHistoryMaxRows caps instance-change rows read: a contract rewriting its instance
+// storage can match millions of rows, all transferred and XDR-decoded. 10k is orders above real
+// timelines.
 const contractCodeHistoryMaxRows = 10_000
 
-// contractCodeHistoryQuery is ContractCodeHistory's SQL.
-//
-// The cap is applied NEWEST-first in the inner select and the surviving
-// window is re-sorted ascending for the collapse loop below, so truncation
-// drops the OLDEST changes and never the newest: the most valuable entry in
-// an upgrade timeline is the CURRENT executable, and this reader's coverage
-// is already "the captured window" rather than "since deploy" (see
-// ContractCodeHistory's doc comment), so an older-tail gap is the same class
-// of gap callers already render. `ORDER BY … DESC LIMIT n` also bounds the
-// sort to n rows instead of materialising every match.
-//
-// explorerScanSettings: key_xdr is NOT a sort-key prefix on the append-log
-// ledger_entry_changes (ORDER BY leads with ledger_seq), so this predicate
-// is scan-shaped over the changes history — the pin bounds its thread
-// fan-out (/v1/contracts/{id}/code-history was in
-// the 8s 503 class). Same-ledger order is intra_ledger_seq first, as in
-// contractCodeHistoryIndexedQuery: change_index restarts per transaction.
+// contractCodeHistoryQuery is ContractCodeHistory's SQL. The cap applies newest-first, then
+// re-sorts ascending, so truncation drops the OLDEST changes, never the current executable.
+// key_xdr is not a sort-key prefix on ledger_entry_changes, so the scan is pinned by
+// explorerScanSettings. Order by intra_ledger_seq first: change_index restarts per transaction.
 const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM (
 			SELECT ledger_seq, close_time, entry_xdr, intra_ledger_seq, change_index, ingested_at
 			FROM stellar.ledger_entry_changes
@@ -383,13 +294,9 @@ const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM 
 			LIMIT ?
 		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC, ingested_at ASC` + explorerScanSettings
 
-// ContractCodeHistory returns a contract's WASM-hash timeline — the contract's
-// "change over time" (ADR-0038 Phase C): every distinct executable the
-// contract instance has pointed at, in chronological order, so an in-place
-// `update_contract` upgrade surfaces as a new version. Reads the instance
-// contract_data entry's executable across the captured changes and collapses
-// consecutive identical hashes. Empty (not an error) when the contract has no
-// wasm instance write: never deployed, a SAC, or not a contract at all.
+// ContractCodeHistory returns the contract's WASM-hash timeline (ADR-0038 Phase C): each distinct
+// executable in order, so an `update_contract` upgrade shows as a new version. Empty (not an error)
+// when there is no wasm instance write: never deployed, a SAC, or not a contract.
 func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -398,17 +305,10 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	var cidHash xdr.Hash
 	copy(cidHash[:], dec)
 
-	// Index-first, same posture as contractWasmHash (audit REC-04):
-	// instanceChangesIndexAvailable is a table-global LIMIT-1 emptiness
-	// probe, so it flips true within minutes of the DDL — long before a
-	// multi-hour/day genesis backfill has reached any given contract. An
-	// EMPTY per-contract result from the index is therefore NOT
-	// distinguishable from "backfill hasn't gotten here yet" and must NOT
-	// be served as an authoritative "never upgraded"; only a NON-EMPTY
-	// result is trusted, exactly like contractWasmHashIndexed's ok=false
-	// miss falling through to the legacy read.
-	// A contract that does have index rows (a SAC: no wasm rows) is covered,
-	// so its empty timeline is authoritative and skips the legacy scan.
+	// Index-first as in contractWasmHash: the availability probe is table-global, so an EMPTY
+	// indexed result cannot be told from "backfill not here yet" and is not trusted; only non-empty
+	// is. A contract with index rows but no wasm (a SAC) is covered, so its empty timeline is
+	// authoritative.
 	if r.instanceChangesIndexAvailable(ctx) {
 		out, _, err := r.contractCodeHistoryIndexed(ctx, cidHash)
 		if err != nil || len(out) > 0 {
@@ -436,11 +336,10 @@ var ErrInstanceHistoryIncomplete = errors.New("clickhouse: contract_instance_cha
 // which drops the OLDEST versions.
 var ErrCodeHistoryTruncated = errors.New("clickhouse: contract code history truncated at the row cap (oldest versions dropped)")
 
-// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads
-// only the genesis-complete instance index and never answers an unproven
-// timeline. ErrInstanceHistoryIncomplete without the watermark, ErrContractIsSAC
-// for a SAC, ErrContractWasmUnresolved for a contract with no instance rows,
-// ErrCodeHistoryTruncated at the row cap.
+// ReplayCodeHistory is ContractCodeHistory for the replay WASM gate: it reads only the
+// genesis-complete instance index and never answers an unproven timeline. Errors:
+// ErrInstanceHistoryIncomplete (no watermark), ErrContractIsSAC, ErrContractWasmUnresolved (no
+// rows), ErrCodeHistoryTruncated.
 func (r *ExplorerReader) ReplayCodeHistory(ctx context.Context, contractID string) ([]ContractCodeVersion, error) {
 	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -510,10 +409,8 @@ func (r *ExplorerReader) contractInInstanceIndex(ctx context.Context, cid xdr.Ha
 	return false, rows.Err()
 }
 
-// contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes
-// log: for a deployment whose contract_instance_changes is absent or
-// globally empty, or whose per-contract backfill hasn't reached this
-// contract yet (an unproven index miss).
+// contractCodeHistoryLegacy scans the changes log when contract_instance_changes is absent, empty,
+// or has not reached this contract yet.
 func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash xdr.Hash) ([]ContractCodeVersion, error) {
 	keys, err := instanceKeyXDR(cidHash)
 	if err != nil {
@@ -560,24 +457,12 @@ func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash 
 	return out, rows.Err()
 }
 
-// contractCodeHistoryIndexedQuery reads the keyed instance-executable
-// timeline (deploy/clickhouse/contract_instance_changes.sql). The
-// contract_hash predicate is the table's primary-key prefix.
-//
-// Consecutive identical executables are collapsed SERVER-side (lagInFrame
-// over the full ordered timeline) BEFORE the cap, so the cap bounds the
-// number of executable CHANGES returned rather than raw instance writes:
-// a contract that rewrites its instance storage tens of thousands of times
-// keeps every executable it ever pointed at, including A->B->A. The cap
-// stays as a newest-preserving backstop on pathological upgrade churn: the
-// middle select keeps the NEWEST changes, the outer re-sorts ascending.
-// The window ORDER BY deliberately omits ASC so the shape stays distinct
-// from the outer re-sort.
-//
-// change_index restarts per TRANSACTION, so it cannot order two
-// transactions' writes in one ledger; intra_ledger_seq (the per-LEDGER walk
-// position) does, and change_index then only breaks ties inside one tx and
-// on legacy rows whose intra_ledger_seq is still 0.
+// contractCodeHistoryIndexedQuery reads the keyed instance-executable timeline
+// (contract_instance_changes.sql); contract_hash is its primary-key prefix. Consecutive identical
+// executables collapse SERVER-side before the cap, so the cap bounds executable changes (A->B->A
+// kept) and preserves the newest.
+// Order by intra_ledger_seq first; change_index restarts per transaction and only breaks ties (and
+// legacy rows with intra_ledger_seq 0).
 const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
 			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index FROM (
 				SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index,
@@ -621,11 +506,8 @@ const contractWasmHashIndexedQueryOldKey = `SELECT is_sac, wasm_hash FROM stella
 		  ORDER BY ledger_seq DESC, change_index DESC
 		  LIMIT 1`
 
-// contractCodeHistoryIndexed is ContractCodeHistory's fast path over the
-// keyed index: no XDR decode (the MV/backfill already extracted the
-// executable verdict). The SQL collapses consecutive identical hashes; the
-// Go loop re-checks the boundary so RMT pre-merge duplicate keys, which
-// carry the same hash as their neighbour, can never surface twice.
+// contractCodeHistoryIndexed is the fast path over the keyed index (no XDR decode). The Go loop
+// re-checks the hash boundary so pre-merge RMT duplicates cannot surface twice.
 func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, bool, error) {
 	q := contractCodeHistoryIndexedQuery
 	if !r.instanceChangesTxKeyed(ctx) {
@@ -659,14 +541,9 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 	return out, n >= contractCodeHistoryMaxRows, rows.Err()
 }
 
-// contractWasmHashIndexed resolves the current executable from the
-// keyed instance timeline: the newest captured instance write for the
-// contract. ok=false with nil error = no instance row for this contract
-// in the index; the CALLER must NOT treat that as an authoritative
-// not-found (audit REC-04) — the availability probe cannot prove the
-// backfill has reached this contract, so contractWasmHash falls through
-// to the legacy current-state read on a miss. ErrContractIsSAC mirrors
-// the legacy path's verdict.
+// contractWasmHashIndexed resolves the current executable from the newest instance write. ok=false
+// with nil error is NOT an authoritative not-found (the index may not have reached this contract);
+// callers fall back to the legacy read. ErrContractIsSAC mirrors the legacy verdict.
 func (r *ExplorerReader) contractWasmHashIndexed(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
 	q := contractWasmHashIndexedQuery
 	if !r.instanceChangesTxKeyed(ctx) {
@@ -699,11 +576,8 @@ func (r *ExplorerReader) contractWasmHashIndexed(ctx context.Context, cid xdr.Ha
 	return h, true, nil
 }
 
-// instanceKeyXDR returns the base64 LedgerKey(s) for a contract's
-// ScvLedgerKeyContractInstance contract_data entry — one per durability
-// (persistent + temporary), since the lake stores the key XDR verbatim and the
-// durability is part of it. An instance entry is always persistent in practice,
-// but querying both keeps the match exact without that assumption.
+// instanceKeyXDR returns the base64 LedgerKey for a contract's instance entry, one per durability
+// (persistent + temporary): key_xdr is stored verbatim, so querying both keeps the match exact.
 func instanceKeyXDR(cid xdr.Hash) ([]string, error) {
 	contractID := xdr.ContractId(cid)
 	durabilities := []xdr.ContractDataDurability{
@@ -729,13 +603,8 @@ func instanceKeyXDR(cid xdr.Hash) ([]string, error) {
 	return out, nil
 }
 
-// codeKeyXDR returns the base64 LedgerKey the lake stores in key_xdr for a
-// contract_code entry.
-//
-// A CONTRACT_CODE key carries ONLY the wasm hash
-// (xdr.LedgerKeyContractCode is a bare Hash), so — unlike instanceKeyXDR's
-// contract_data keys — there is no durability variant to enumerate: one
-// hash, one key. Verified byte-identical against stored key_xdr on r1.
+// codeKeyXDR returns the key_xdr for a contract_code entry. The key is a bare wasm hash, so unlike
+// instanceKeyXDR there is no durability variant.
 func codeKeyXDR(hash xdr.Hash) (string, error) {
 	var k xdr.LedgerKey
 	if err := k.SetContractCode(hash); err != nil {
@@ -748,48 +617,15 @@ func codeKeyXDR(hash xdr.Hash) (string, error) {
 	return b64, nil
 }
 
-// wasmCodeByHashQuery pins the lookup to the code entry's LedgerKey.
-//
-// ledger_entries_current, NOT the changes log: (entry_type, key_xdr) is this
-// table's FULL primary key, so this is a mark-range lookup — measured on r1
-// at 121,584 rows / 53.93 MiB / 34 ms, and the MISS costs the
-// same as the hit.
-//
-// A query scanning stellar.ledger_entry_changes (159.4B rows /
-// 6.52 TiB) with no key predicate, filtering the hash in Go, is unworkable. 59% of that
-// table sits in partitions holding ZERO contract_code rows, and a full pass
-// is ~45-50s — six times the 8s explorerReadTimeout. It never completes:
-// query_log showed 12/12 executions aborted at the deadline having read
-// 3.31 GiB each, i.e. this endpoint had NEVER returned a 200 for a WASM
-// contract. The key_xdr bloom on the changes log is not the answer either —
-// same lookup measured 641M rows / 47.08 GiB / 31.6s.
-//
-// Equivalence, not just speed: every contract_code key in the change log
-// exists in current-state (7,777 change rows across all 14 Soroban
-// partitions, 0 missing), so the hit set is a proven superset. Duplicate
-// rows per key differ only in ContractCodeEntryExt v0/v1 and
-// lastModifiedLedgerSeq; the Code payload is content-addressed and
-// sha256(cc.Code) == the hash in this very key (verified 34/34 on r1), so
-// any row yields identical bytes.
-//
-// NO FINAL — deliberately. entry_type/key_xdr is the whole PK so FINAL buys
-// no selectivity, and the pairing
-//
-//	FINAL ... AND entry_xdr != ''
-//
-// applies the filter AFTER dedup: a 'removed' row would win the dedup and
-// then be filtered out, turning code still held into a 404. Probed on r1
-// against a key carrying both a live and a removal row: FINAL -> 0 rows,
-// no-FINAL -> 1.
-//
-// LIMIT 4, not 1: current-state holds up to 3 rows per key pre-merge. The
-// small cap keeps the caller's cc.Hash guard able to skip an undecodable
-// row, at measurably identical cost.
-//
-// No explorerScanSettings pin: that constant's own doc carves out keyed
-// point reads on (entry_type, key_xdr), and the sibling contractWasmHash
-// query on this table carries none. Measured unpinned at 97,789 rows /
-// 50.45 MiB / 38 ms — there is no fan-out to bound.
+// wasmCodeByHashQuery pins the lookup to the code entry's LedgerKey on ledger_entries_current, not
+// the changes log: (entry_type, key_xdr) is its full PK, so hit and miss are cheap mark-range
+// reads, whereas scanning ledger_entry_changes cannot finish inside explorerReadTimeout.
+// Every contract_code key in the change log exists in current-state and the Code payload is
+// content-addressed (sha256 == key hash), so any row yields the same bytes.
+// NO FINAL: a non-empty-entry_xdr filter applied after FINAL dedup lets a 'removed' row win and then vanish,
+// turning held code into a 404.
+// LIMIT 4, not 1: up to 3 pre-merge rows per key, so the cc.Hash guard can skip an undecodable one.
+// No explorerScanSettings: this is a keyed point read.
 const wasmCodeByHashQuery = `SELECT entry_xdr FROM stellar.ledger_entries_current
 	WHERE entry_type = 'contract_code' AND key_xdr = ? AND entry_xdr != ''
 	LIMIT 4`
@@ -824,16 +660,10 @@ func (r *ExplorerReader) wasmCodeByHash(ctx context.Context, hash xdr.Hash) ([]b
 	return nil, false, rows.Err()
 }
 
-// SACClassicAssetName resolves a contract to the classic asset its
-// Stellar Asset Contract wraps: "native" or "CODE:GISSUER". found is
-// false when the contract has no instance in the lake OR its
-// executable is NOT StellarAsset (a WASM contract claiming an
-// asset-shaped METADATA name must not be trusted — only stellar-core
-// mints the StellarAsset executable, which is the trust anchor here).
-//
-// Wallets look holdings up by contract
-// address; a SAC lookup must land on the classic identity so it
-// carries the classic asset's price.
+// SACClassicAssetName resolves a contract to the classic asset its SAC wraps ("native" or
+// "CODE:GISSUER"). found=false when no instance is in the lake or the executable is not
+// StellarAsset: only core mints that executable, so it is the trust anchor, unlike a WASM
+// contract's METADATA name.
 func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -845,8 +675,7 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 	if err != nil {
 		return "", false, err
 	}
-	// Same table choice rationale as contractWasmHash (merge-loss immune,
-	// PK-prefix lookup).
+	// Same table as contractWasmHashLegacy.
 	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 		ORDER BY ledger_seq DESC LIMIT 1`
@@ -855,9 +684,7 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 		return "", false, fmt.Errorf("clickhouse: SAC instance scan: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	// LIMIT 1 newest-first: a single row decides — if the newest
-	// instance is not a SAC (or carries no metadata), no older row
-	// can change that verdict.
+	// LIMIT 1 newest-first: the newest instance decides; no older row can change a non-SAC verdict.
 	if !rows.Next() {
 		return "", false, rows.Err()
 	}
@@ -869,10 +696,8 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 	return name, ok, rows.Err()
 }
 
-// sacNameFromInstanceEntry decodes one contract-instance LedgerEntry
-// and returns the SAC metadata name iff the executable is the
-// core-minted StellarAsset type (the trust anchor — a WASM contract
-// cannot claim it).
+// sacNameFromInstanceEntry returns the SAC metadata name iff the executable is the core-minted
+// StellarAsset type (a WASM contract cannot claim it).
 func sacNameFromInstanceEntry(b64 string) (string, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -903,32 +728,17 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 	return "", false
 }
 
-// SACAssetFromEvents infers which classic asset a contract's SAC
-// events belong to, from the trailing sep0011_asset String topic that
-// CAP-67 unified events carry ("CODE:GISSUER" or "native"). Used as
-// the LAST fallback for SAC identification when the contract instance
-// was never captured (deployed pre-lake + TTL-evicted before any
-// checkpoint — structurally invisible to snapshots; ~55k such
-// contracts measured in the site audit). The caller MUST
-// cross-check by re-deriving the SAC address from the returned asset
-// — the topic is attacker-influenceable on non-SAC contracts, the
-// derivation is not.
+// SACAssetFromEvents infers the classic asset from the trailing sep0011_asset String topic of
+// CAP-67 events; the last-resort path for SACs whose instance was never captured. The caller MUST
+// re-derive the SAC address from the returned asset: the topic is attacker-influenceable on non-SAC
+// contracts.
 func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
-	// Bound the scan by the contract's own active ledgers.
-	// Unbounded, this is the quiet-contract reverse
-	// read-in-order trap that contract_active_ledgers exists to fix:
-	// `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the whole
-	// key range backwards for a contract with few events, and this
-	// query sits on the /wasm 404 path — so a contract with NO wasm
-	// spent ~3s (8s under concurrency, i.e. the request deadline)
-	// producing a nicer error message. 23 of 25 cold random contract
-	// pages breached the 1s budget on this one call.
+	// Bound the scan by the contract's active ledgers: `contract_id = ? ORDER BY ledger_seq DESC
+	// LIMIT 1` on a quiet contract walks the whole key range backwards, and this sits on the /wasm
+	// 404 path.
 	if r.contractLedgersIndexAvailable(ctx) {
-		// Probe the most recent few active ledgers rather than just the
-		// latest: a SAC emits CAP-67 transfer/mint/burn (3-4 topics) on
-		// essentially every ledger it appears in, but its newest ledger
-		// could carry only a shorter-topic event, and answering "not a
-		// SAC" off that single sample would be wrong.
+		// Probe the newest few active ledgers, not just the latest: that one could carry only a
+		// shorter-topic event.
 		const probeLedgers = 8
 		ledgers, lerr := r.contractActiveLedgers(ctx, contractID, 0, probeLedgers)
 		if lerr == nil {
@@ -940,26 +750,12 @@ func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID stri
 			const boundedQ = `SELECT topics_xdr[length(topics_xdr)] FROM stellar.contract_events
 		WHERE contract_id = ? AND ledger_seq IN (?) AND length(topics_xdr) >= 3
 		ORDER BY ledger_seq DESC LIMIT 1`
-			// A miss here is an ANSWER, not a reason to fall back: the
-			// unbounded scan is the very cost this path exists to avoid,
-			// and non-SACs (the common case) would pay it every time.
-			//
-			// Accepted residual (W1-explorer-perf-3, deliberate): a genuine
-			// SAC whose 8 newest ACTIVE ledgers all happen to carry only
-			// shorter-topic (<3) events is reported here as non-SAC. This is
-			// bounded to error-message/label quality on the /wasm 404 branch —
-			// it never injects a wrong POSITIVE (the caller re-derives the SAC
-			// address from the returned asset and rejects a mismatch), and no
-			// served money value depends on it. It is rare by construction (a
-			// SAC emits 3-4-topic transfer/mint/burn on essentially every
-			// active ledger, so 8 consecutive misses is pathological) AND only
-			// reachable for the ~55k instance-never-captured contracts this
-			// last-resort fallback exists for. Falling through to the unbounded
-			// scan on a miss was evaluated and REJECTED: it regresses every
-			// non-SAC (which also misses) back onto the 3-8s whole-key-range
-			// walk this path was rewritten to avoid. The lever, if the residual
-			// ever matters, is a wider bounded probe window — never the
-			// unbounded fallback.
+			// A miss is an ANSWER, not a reason to fall back: the unbounded scan is the cost this
+			// path avoids and non-SACs would pay it every time.
+			// Accepted residual: a real SAC whose 8 newest active ledgers carry only <3-topic
+			// events reads as non-SAC. It affects only 404-branch labels, never a wrong positive
+			// (the caller re-derives and rejects mismatches). Widen the probe window rather than
+			// falling back to the unbounded scan.
 			if name, ok, qerr := r.sacAssetFromEventsQuery(ctx, boundedQ, contractID, ledgers); qerr == nil {
 				return name, ok, nil
 			}
@@ -973,10 +769,7 @@ func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID stri
 	return r.sacAssetFromEventsQuery(ctx, q, contractID)
 }
 
-// sacAssetFromEventsQuery runs one SAC-name probe and decodes its
-// result. Shared by the ledger-bounded fast path and the unbounded
-// fallback so both decode identically; extra args (e.g. the bounding
-// ledger) bind after contractID in the order the query declares them.
+// sacAssetFromEventsQuery runs one SAC-name probe and decodes it; extra args bind after contractID.
 func (r *ExplorerReader) sacAssetFromEventsQuery(ctx context.Context, q, contractID string, extra ...any) (string, bool, error) {
 	args := append([]any{contractID}, extra...)
 	rows, err := r.conn.Query(ctx, q, args...)
