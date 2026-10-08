@@ -16,62 +16,32 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultHealthyConnectionThreshold — if a connection survived at least
-// this long before disconnecting, treat the next reconnect as a fresh
-// start and reset backoff to InitialBackoff. Without this, an indefinite
-// stream of healthy multi-minute venue cycles (e.g. Binance's 24h policy
-// plus PING-driven recycles) eventually pins backoff at MaxBackoff
-// forever — losing ~MaxBackoff of data per cycle instead of the expected
-// InitialBackoff.
+// DefaultHealthyConnectionThreshold: a connection that lived this long resets
+// backoff to InitialBackoff, or routine venue recycles pin it at MaxBackoff and
+// lose that much data per cycle.
 const DefaultHealthyConnectionThreshold = 5 * time.Minute
 
-// DefaultPingInterval / DefaultPingTimeout bound how long a HALF-OPEN venue
-// socket can go unnoticed. A bare conn.Read on the long-lived connection
-// context blocks forever on a half-open socket: no data arrives, no error
-// is raised, and detection is left to OS TCP keepalive (minutes to hours
-// on Linux defaults) — during which the streamer silently ingests nothing
-// while every liveness signal says "connected".
-//
-// The watchdog is an ACTIVE ping rather than a read deadline on purpose. A
-// read deadline cannot distinguish a wedged socket from a genuinely quiet
-// pair (XLM/BTC can go minutes between prints), and WebSocket control
-// frames — including the server pings Binance sends every 3 min — never
-// unblock conn.Read, so an idle-but-healthy stream would be torn down on
-// every cycle. A ping we send ourselves is answered by any live peer
-// regardless of trade flow, so worst-case detection is
-// PingInterval + PingTimeout ≈ 40 s.
+// DefaultPingInterval / DefaultPingTimeout bound how long a half-open socket
+// goes unnoticed; conn.Read on one blocks forever. An active ping, not a read
+// deadline, because a quiet pair is indistinguishable from a wedged socket by
+// reads alone and control frames never unblock conn.Read. Worst case ≈ 40 s.
 const (
 	DefaultPingInterval = 30 * time.Second
 	DefaultPingTimeout  = 10 * time.Second
 )
 
-// DefaultDialTimeout bounds one whole dial attempt: TCP connect, TLS and the
-// HTTP upgrade round trip. The transport's own timeouts stop at TLS and the
-// ping watchdog only starts once Dial returns, so without this a venue that
-// accepts the connection but never answers the upgrade wedges the loop.
+// DefaultDialTimeout bounds one whole dial including the HTTP upgrade, which
+// the transport timeouts and the ping watchdog do not cover.
 const DefaultDialTimeout = 30 * time.Second
 
-// DefaultReadLimit overrides coder/websocket's 32 KiB default message size.
-// Kraken's v2 trade channel batches every fill of one match into a single
-// `update` frame array; a liquidity sweep of ~175+ ~185-byte fills alone
-// exceeds 32 KiB, so the default limit would drop the connection
-// mid-frame and lose every fill in it. 4 MiB comfortably covers any
-// plausible single-match batch across venues.
+// DefaultReadLimit raises coder/websocket's 32 KiB message limit: one Kraken
+// v2 sweep batches ~175+ fills into a frame past it, dropping the connection.
 const DefaultReadLimit = 4 * 1024 * 1024
 
-// Loop is the shared connect → subscribe → read → reconnect lifecycle
-// used by every external WS streamer (binance / kraken / coinbase /
-// bitstamp). It owns the dial (via [KeepAliveHTTPClient]), the read
-// loop, ctx cancellation, the capped exponential backoff with [Jitter],
-// the healthy-lifetime backoff reset, and the per-source disconnect /
-// decode-error metrics. Venues supply only their subscribe frame(s) and
-// frame parser.
-//
-// Backoff defaults: InitialBackoff 5 s, MaxBackoff 60 s. Combined with
-// the healthy-connection reset (a connection that stays alive
-// ≥ HealthyThreshold rewinds backoff to InitialBackoff on its next
-// failure), the effect is bounded 5-60 s reconnect windows instead of a
-// 60 s blanket.
+// Loop is the connect → subscribe → read → reconnect lifecycle shared by the
+// CEX streamers: capped exponential backoff with [Jitter] (5-60 s), the
+// healthy-lifetime reset, and disconnect/decode metrics. Venues supply only
+// subscribe frames and a frame parser.
 type Loop struct {
 	// Source is the venue name stamped on metric labels + log fields
 	// (e.g. "binance").
@@ -119,19 +89,13 @@ type Loop struct {
 	// venue that batches many fills into one frame.
 	ReadLimit int64
 
-	// Subscribe, if non-nil, is called once per connection immediately
-	// after a successful dial to register channels (venues whose
-	// subscription rides the URL — Binance — leave it nil). A returned
-	// error drops the connection and flows to the disconnect
-	// classifier.
+	// Subscribe, if non-nil, registers channels once per connection; an
+	// error drops the connection. Binance subscribes via the URL.
 	Subscribe func(ctx context.Context, conn *websocket.Conn) error
 
-	// HandleFrame parses one wire frame into zero or more trades.
-	// A returned error counts a decode error (SourceDecodeErrorsTotal)
-	// and skips the frame — UNLESS FatalFrameErr reports it
-	// fatal, in which case the connection is dropped and the error
-	// reaches the disconnect classifier (e.g. coinbase's
-	// ErrSubscriptionRejected, bitstamp's ErrRequestedReconnect).
+	// HandleFrame parses one frame into trades. An error counts a decode
+	// error and skips the frame, unless FatalFrameErr says to drop the
+	// connection (coinbase's ErrSubscriptionRejected, for example).
 	HandleFrame func(data []byte) ([]canonical.Trade, error)
 
 	// FatalFrameErr, if non-nil, reports whether a HandleFrame error
@@ -144,25 +108,14 @@ type Loop struct {
 	// labels wrap it (coinbase / bitstamp).
 	Classify func(err error) string
 
-	// OnDisconnect, if non-nil, lets a venue intercept specific
-	// disconnect errors before the default warn log (e.g. bitstamp's
-	// benign server-requested reconnect, coinbase's loud
-	// config-rejection log). Return handled=true to suppress the
-	// default warn log; resetBackoff=true to rewind backoff to
-	// InitialBackoff for the next cycle.
+	// OnDisconnect, if non-nil, intercepts a disconnect before the default
+	// warn log: handled suppresses the log, resetBackoff rewinds backoff.
 	OnDisconnect func(logger *slog.Logger, err error, reason string) (handled, resetBackoff bool)
 }
 
-// Run is the reconnect-forever loop. It blocks until ctx cancellation
-// and closes `out` on return; transient errors cause exponential-backoff
-// reconnect without closing the channel (downstream consumers see a gap
-// in timestamps but no stream termination).
-//
-// Backoff resets to InitialBackoff on any connection that lived
-// ≥ HealthyThreshold. Without that reset, production r1 logs showed
-// backoff pinned at 60 s because every Binance recycle (every 6-12 min)
-// doubled an already-large window; the indexer dropped ~60 s of CEX
-// trades per cycle.
+// Run reconnects until ctx is cancelled, then closes `out`; transient errors
+// leave a timestamp gap, not a closed stream. The healthy-lifetime reset is
+// what stops Binance's 6-12 min recycles pinning backoff at 60 s.
 //
 //nolint:gocognit // the reconnect lifecycle (backoff, jitter, healthy-reset, ctx) was extracted VERBATIM from four streamer copies — splitting it re-fragments the exact logic the extraction unified
 func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
@@ -236,10 +189,8 @@ func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 	}
 }
 
-// runOnce handles one connect-and-read cycle. Returns on EOF, ctx
-// cancel (the caller checks ctx), or read/parse error. Successful
-// close returns nil; disconnect scenarios return an error so Run can
-// decide whether to backoff.
+// runOnce runs one connect-and-read cycle: nil on clean close, an error on
+// disconnect so Run backs off.
 //
 //nolint:gocognit // dial + subscribe + read-loop with per-venue hooks; linear despite the branch count
 func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
@@ -283,11 +234,8 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 			if l.FatalFrameErr != nil && l.FatalFrameErr(err) {
 				return err
 			}
-			// Single-frame parse errors are non-fatal (e.g. a new
-			// symbol subscribed that isn't in PairMap yet). Count +
-			// continue; dropping the whole stream would be a gross
-			// overreaction to one bad line. Operators need this signal
-			// on schema drift — the decode-error runbook depends on it.
+			// A single bad frame (often an unmapped new symbol) is counted,
+			// not fatal; the decode-error runbook depends on the counter.
 			obs.SourceDecodeErrorsTotal.WithLabelValues(l.Source).Inc()
 			continue
 		}
@@ -329,15 +277,9 @@ func (l *Loop) dial(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// pingWatchdog actively probes the connection every PingInterval and
-// cancels connCtx with [ErrStreamStalled] the first time a ping goes
-// unanswered within PingTimeout — turning an invisible half-open socket
-// into an ordinary reconnect with a "stall" disconnect reason.
-//
-// conn.Ping blocks until the pong arrives, so it MUST run concurrently
-// with the read loop (the reader is what dispatches the pong). Returns as
-// soon as connCtx is done, which the caller guarantees on every runOnce
-// exit path.
+// pingWatchdog pings every PingInterval and cancels connCtx with
+// [ErrStreamStalled] when a pong misses PingTimeout. It must run beside the read
+// loop, which dispatches pongs; it returns once connCtx is done.
 func (l *Loop) pingWatchdog(connCtx context.Context, conn *websocket.Conn, fail context.CancelCauseFunc) {
 	interval := l.PingInterval
 	if interval <= 0 {
