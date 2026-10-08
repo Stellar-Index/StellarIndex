@@ -90,7 +90,7 @@ env:
   ISSUE_TITLE: "CI health: main has been red"
   FAIL_RUNS: '3'
   FAIL_HOURS: '6'
-  # GH-778: every workflow that runs on push to main, not just `ci.yml`.
+  # Every workflow that runs on push to main, not just `ci.yml`.
   # api-audit.yml and commit-identity.yml also gate main and had no
   # tripwire of their own (api-audit failed twice in its last 60 runs
   # with no issue opened).

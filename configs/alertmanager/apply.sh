@@ -268,7 +268,7 @@ if [ "${ALERTMANAGER_SKIP_PROBE:-0}" != "1" ]; then
   fi
 fi
 
-# CS-121: 0640 (not 0644) so the rendered config — which embeds the Discord
+# 0640 (not 0644) so the rendered config — which embeds the Discord
 # webhook URLs + the Healthchecks deadman URL (bearer capabilities) — is not
 # world-readable. Group is the alertmanager service user's group (prometheus on
 # r1) so the service can still read it; override via AM_GROUP if it differs.

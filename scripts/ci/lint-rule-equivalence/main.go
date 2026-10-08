@@ -19,7 +19,7 @@
 // YAML comments are still not compared — they carry no operator-facing
 // content — but `summary`/`description`/`runbook_url` are, because an
 // operator reading one tree's alert acts on that tree's prose: a
-// correction or diagnostic query that lands on one side only (GH-686)
+// correction or diagnostic query that lands on one side only
 // is exactly the class of divergence firing-behavior equivalence
 // cannot catch.
 //
@@ -138,8 +138,8 @@ func loadBaseline(path string) (map[string]bool, error) {
 var alertnameRe = regexp.MustCompile(`(?m)^\s*alertname:\s*(\S+)`)
 
 // ruleTestedAlerts returns every alertname asserted by a promtool
-// unit test under testsDir (deploy/monitoring/rule-tests). GH-1174:
-// the equivalence baseline can waive a rule's expr as an intentional
+// unit test under testsDir (deploy/monitoring/rule-tests). The
+// equivalence baseline can waive a rule's expr as an intentional
 // per-deployment divergence, but a waived rule still needs SOME
 // promtool test proving its own tree's version actually fires —
 // otherwise "divergence is intentional" and "nobody tests either

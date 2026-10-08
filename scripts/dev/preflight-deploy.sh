@@ -27,7 +27,7 @@
 #      There is no per-region manifest anywhere else — deploy.yml carries
 #      one default list for three regions.
 #   3. Per-binary skew: the version live on the target against the release.
-#   4. Migrations in the range, with the CS-099 caveat.
+#   4. Migrations in the range, with the forward-only-schema caveat.
 #
 # The last line of output is the exact `gh workflow run deploy.yml` command
 # for that region. It never carries `-f config_acknowledged=true`: both
@@ -46,7 +46,7 @@
 #   --refresh-manifest  re-derive this region's binary set from the host and
 #                       rewrite its manifest row (commit the result).
 #   --migrations-ack    record that the range's migrations have been read for
-#                       old-binary compatibility (CS-099).
+#                       old-binary compatibility.
 #   --followups-ack     record that you will run the range's
 #                       `-- REQUIRED-FOLLOWUP:` commands straight after the
 #                       deploy; the dispatch then carries followups_acknowledged.
@@ -613,7 +613,7 @@ fi
 
 # ── 5. Migrations in the range ───────────────────────────────────────────
 #
-# CS-099 is deliberate policy: deploy-binary.yml runs `migrate up` in
+# This is deliberate policy: deploy-binary.yml runs `migrate up` in
 # pre_tasks, BEFORE any binary swap, and a failed health probe rolls back
 # the BINARY ONLY. The schema stays forward. So a release carrying
 # migrations has to be read for old-binary compatibility before it is

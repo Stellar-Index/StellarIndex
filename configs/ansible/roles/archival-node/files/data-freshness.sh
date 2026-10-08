@@ -397,7 +397,7 @@ then
   echo "data-freshness: emptied-continuous-aggregate detector query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# CS-090: a verdict can read complete=true while its watermark lags the live
+# A verdict can read complete=true while its watermark lags the live
 # network head (a mid-walk stall or a manual small -to). complete/computed_at
 # alone can't see that, so emit the per-source lag (live ingest cursor tip −
 # verdict watermark) — a source verified only to an old ledger becomes
