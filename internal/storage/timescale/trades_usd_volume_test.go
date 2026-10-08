@@ -975,6 +975,45 @@ func TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate(t *testing.T) {
 	}
 }
 
+// TestTradeUSDVolume_Tier2bZeroBaseStaysExact: a zero USD-pegged base leg is
+// worth exactly $0. Falling through to the XLM-quote anchor stored a few
+// hundred-millionths per trade and broke the exact-tier identity
+// usd_volume = base_amount / 10^decimals that verify-usd-volume checks.
+func TestTradeUSDVolume_Tier2bZeroBaseStaysExact(t *testing.T) {
+	t.Parallel()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset USDC: %v", err)
+	}
+	xlm := canonical.NativeAsset()
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	tr := canonical.Trade{
+		Source:      "sdex",
+		Ledger:      64698369,
+		TxHash:      "zero",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: usdc, Quote: xlm},
+		BaseAmount:  canonical.NewAmount(big.NewInt(0)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(1)),
+	}
+	fx := stubFXResolver{prices: map[string]string{xlm.String(): "0.16"}}
+
+	got := tradeUSDVolume(context.Background(), tr, spec, fx)
+	if got == nil {
+		t.Fatal("expected an exact zero usd_volume, got nil")
+	}
+	if *got != "0.00000000" {
+		t.Errorf("usd_volume = %q, want 0.00000000 (exact zero base), not an XLM-anchored estimate", *got)
+	}
+}
+
 // TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg — when the
 // QUOTE leg is pegged, tier 1/2 still owns the answer. Guards the
 // ordering: tier 2b must not intercept trades the quote side handles.

@@ -169,7 +169,7 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
    AND t.source = g.source AND t.base_asset = g.base_asset AND t.quote_asset = g.quote_asset
    AND t.derive_generation <= $3
    AND t.quote_amount > 0
-   AND ` + legExpr + ` > 0
+   AND ` + legExpr + ` >= 0
    AND t.usd_volume IS DISTINCT FROM ` + identity + nullClause
 	return groupRel, where, identity, args, nil
 }

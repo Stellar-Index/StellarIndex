@@ -345,7 +345,7 @@ func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate
 	quoteAmt, qok := new(big.Int).SetString(row.QuoteAmount, 10)
 	if !bok || !qok || baseAmt.Sign() <= 0 || quoteAmt.Sign() <= 0 {
 		// [tradeUSDVolume] bails on a non-positive quote before any tier,
-		// and every value function below bails on a non-positive leg.
+		// and every estimated tier below bails on a non-positive leg.
 		return canonical.Trade{}, xlmBaseUnparseable, false
 	}
 	trade := canonical.Trade{
