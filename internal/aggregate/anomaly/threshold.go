@@ -7,17 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Thresholds is the per-class threshold pair for Phase-1 anomaly
-// detection.
-//
-//   - WarnPct: deviation above this triggers [ActionWarn] (publish,
-//     and count it in obs.AnomalyWarnTotal — NOT a wire flag; see
-//     [ActionWarn]).
-//   - FreezePct: deviation above this AND `source_count <= 1`
-//     triggers [ActionFreeze] (do not publish; serve LKG).
-//
-// Both are absolute percentages (e.g. `1.0` means 1 %). Must be > 0
-// and FreezePct > WarnPct.
+// Thresholds holds a class's absolute percentages: above WarnPct warns; above
+// FreezePct with at most one source freezes. Both > 0 and FreezePct > WarnPct.
 type Thresholds struct {
 	WarnPct   float64
 	FreezePct float64
@@ -38,15 +29,7 @@ func (t Thresholds) Validate() error {
 	return nil
 }
 
-// DefaultThresholds is the recommended Phase-1 threshold table. Used
-// when an operator config omits explicit thresholds for a class.
-//
-// Numbers reflect the per-class baselines from [ADR-0019]:
-//
-//   - Stablecoin / Treasury: 1 % warn / 3 % freeze
-//   - Crypto: 20 % warn / 50 % freeze
-//   - Governance: 50 % warn / 100 % freeze
-//   - Default: 30 % warn / 75 % freeze
+// DefaultThresholds is the ADR-0019 per-class baseline, used where config omits a class.
 func DefaultThresholds() map[AssetClass]Thresholds {
 	return map[AssetClass]Thresholds{
 		ClassStablecoin: {WarnPct: 1.0, FreezePct: 3.0},
@@ -57,21 +40,13 @@ func DefaultThresholds() map[AssetClass]Thresholds {
 	}
 }
 
-// Checker evaluates whether a new bucket's VWAP is anomalous given
-// the prior bucket's VWAP and the source count for the new bucket.
-//
-// Checker is safe for concurrent use after construction. Internal
-// maps are not mutated.
+// Checker decides whether a bucket's VWAP is anomalous; safe for concurrent use.
 type Checker struct {
 	thresholds map[AssetClass]Thresholds
 	classifier *Classifier
 }
 
-// NewChecker constructs a Checker. thresholds is the per-class
-// threshold table; missing entries fall through to [ClassDefault]'s
-// row. classifier maps assets to classes.
-//
-// Returns an error if any threshold entry fails [Thresholds.Validate].
+// NewChecker validates thresholds, which must include the [ClassDefault] fallback.
 func NewChecker(thresholds map[AssetClass]Thresholds, classifier *Classifier) (*Checker, error) {
 	if classifier == nil {
 		return nil, fmt.Errorf("anomaly: classifier is required")
@@ -91,10 +66,7 @@ func NewChecker(thresholds map[AssetClass]Thresholds, classifier *Classifier) (*
 	return &Checker{thresholds: cp, classifier: classifier}, nil
 }
 
-// ClassOf returns the asset's class. Pass-through to the wrapped
-// [Classifier] — exposed so the orchestrator's Phase 2 freeze
-// path can label its metrics with the same per-class breakdown
-// that Phase 1 emits.
+// ClassOf returns the asset's class, so freeze-path metrics share Evaluate's labels.
 func (c *Checker) ClassOf(asset canonical.Asset) AssetClass {
 	return c.classifier.ClassOf(asset)
 }
@@ -106,12 +78,8 @@ type Observation struct {
 	// Pair.Base.String() to look up the asset's class.
 	Pair canonical.Pair
 
-	// PrevVWAP is the previous closed bucket's VWAP — a 1-minute
-	// bucket, the basis the thresholds are set on, never an
-	// overlapping rolling window's previous value (that damps the
-	// move by bucket/window). Nil means "no prior bucket" — first
-	// observation for this pair, or after a long gap. Treated as
-	// ActionAllow (we have nothing to compare against).
+	// PrevVWAP is the previous closed 1-minute bucket's VWAP, never a rolling
+	// window's previous value (that damps the move). Nil means no prior bucket: allow.
 	PrevVWAP *big.Rat
 
 	// CurrVWAP is the new closed bucket's VWAP. Nil is invalid —
@@ -134,23 +102,9 @@ func (c *Checker) thresholdsFor(class AssetClass) Thresholds {
 	return c.thresholds[ClassDefault]
 }
 
-// Evaluate returns a [Decision] for the supplied observation.
-//
-// Algorithm (Phase-1, ADR-0019):
-//
-//  1. If obs.PrevVWAP is nil → ActionAllow (nothing to compare).
-//  2. Compute deviation_pct = |curr - prev| / prev * 100.
-//  3. Look up thresholds for the asset's class.
-//  4. Decision rules:
-//     - deviation < WarnPct                           → ActionAllow
-//     - WarnPct <= deviation < FreezePct              → ActionWarn
-//     - deviation >= FreezePct AND source_count <= 1  → ActionFreeze
-//     - deviation >= FreezePct AND source_count >  1  → ActionWarn
-//
-// The asymmetry in the last two rules is deliberate: a large
-// deviation with multi-source corroboration is a real market move
-// (not a freeze candidate); the same deviation with a single source
-// is the manipulation signature.
+// Evaluate returns a [Decision] for obs (ADR-0019). A deviation at or above
+// FreezePct freezes only on a single source; with corroborating sources it is a
+// real market move and only warns.
 func (c *Checker) Evaluate(obs Observation) Decision {
 	class := c.classifier.ClassOf(obs.Pair.Base)
 	thresholds := c.thresholdsFor(class)
@@ -223,11 +177,7 @@ func (c *Checker) Evaluate(obs Observation) Decision {
 // responsibility — Evaluate guards this).
 func computeDeviationPct(prev, curr *big.Rat) float64 {
 	if prev.Sign() == 0 {
-		// A zero prev VWAP shouldn't happen in practice (CAGGs
-		// don't materialise empty buckets), but guard anyway:
-		// any non-zero curr is "infinite" deviation. Caller will
-		// see an actionable Reason in the returned Decision via
-		// Evaluate's wrapper.
+		// CAGGs don't materialise empty buckets, but treat any move off zero as huge.
 		if curr.Sign() == 0 {
 			return 0
 		}
@@ -236,14 +186,8 @@ func computeDeviationPct(prev, curr *big.Rat) float64 {
 	delta := new(big.Rat).Sub(curr, prev)
 	delta.Abs(delta)
 	delta.Quo(delta, prev)
-	// Abs AGAIN, after the division. The numerator was already made
-	// positive, but dividing by a negative prev flips the sign back —
-	// and a negative deviation is < WarnPct for every threshold, so the
-	// anomaly check silently returns ActionAllow no matter how large the
-	// move was. Unreachable today (a VWAP is a ratio of priceable,
-	// positive legs), but it arms the moment any signed
-	// series — a spread, a funding rate, a delta — is routed through
-	// Evaluate.
+	// Abs again: dividing by a negative prev flips the sign, and a negative deviation
+	// passes every threshold. Unreachable for VWAPs; guards any signed series.
 	delta.Abs(delta)
 	delta.Mul(delta, big.NewRat(100, 1))
 	f, _ := delta.Float64() // i128:ok percentage move for the anomaly threshold compare, not an amount

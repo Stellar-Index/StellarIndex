@@ -7,25 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AssetClass classifies an asset for anomaly threshold lookup. Stable
-// string values appear in operator config + Prometheus labels;
-// renaming a class is a wire break.
-//
-// Classes from least-to-most-volatile under normal market conditions:
-//
-//   - [ClassStablecoin] — fiat-pegged tokens (USDC, USDT, PYUSD,
-//     EUROC, EUROB, MXNe). Normal deviation < 0.1 %; anything > 1 %
-//     is a depeg signal.
-//   - [ClassTreasury] — tokenised treasuries (USTRY, T-bill tokens).
-//     Track US-Treasury yields; expected deviation similar to
-//     stablecoins.
-//   - [ClassCrypto] — major crypto (XLM, BTC, ETH). Normal 1m
-//     deviation 0.5–2 %; flash moves up to 5–10 %.
-//   - [ClassGovernance] — DAO/protocol governance tokens (AQUA, ULTRA,
-//     etc.). News-driven moves up to 30–50 % per day are routine.
-//   - [ClassDefault] — everything not explicitly classified.
-//     Conservative thresholds protect against worst-case unknown
-//     behaviour.
+// AssetClass classifies an asset for threshold lookup. Its values appear in
+// operator config and Prometheus labels, so renaming one is a wire break.
 type AssetClass string
 
 const (
@@ -65,12 +48,7 @@ func AllClasses() []AssetClass {
 	}
 }
 
-// Classifier maps a canonical asset to its [AssetClass]. Phase-1
-// classification is operator-curated via TOML config; Phase-2 will
-// auto-classify based on observed volatility profile.
-//
-// Classifier is safe for concurrent use after construction. The
-// underlying map is not mutated post-[NewClassifier].
+// Classifier maps a canonical asset to its operator-configured [AssetClass]; safe for concurrent use.
 type Classifier struct {
 	// overrides keys on the canonical alias form's String(), so every
 	// spelling of one asset (native, crypto:XLM, the XLM SAC) shares a
@@ -78,18 +56,9 @@ type Classifier struct {
 	overrides map[string]AssetClass
 }
 
-// NewClassifier builds a Classifier from a `(asset_id_string →
-// class)` map. The map keys are canonical.Asset string forms (e.g.
-// "native", "USDC-GA5Z…", "fiat:USD"). Anything not present in the
-// map falls through to [ClassDefault].
-//
-// Empty / nil overrides yields a Classifier that returns
-// [ClassDefault] for every asset.
-//
-// Keys fold through [canonical.CanonicalAsset] against the alias registry
-// installed at construction. Two keys naming one asset with different
-// classes resolve to the lexicographically first key; production rejects
-// that input first via [ValidateOverrides].
+// NewClassifier builds a Classifier from canonical asset strings to classes; unlisted
+// assets get [ClassDefault]. Keys fold through the alias registry, and conflicting aliases
+// resolve to the first key (production rejects them first via [ValidateOverrides]).
 func NewClassifier(overrides map[string]AssetClass) *Classifier {
 	folded, _ := foldOverrides(overrides)
 	return &Classifier{overrides: folded}
