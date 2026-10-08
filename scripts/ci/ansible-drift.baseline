@@ -14,72 +14,18 @@
 #
 #   - "repo-ahead-of-r1" tasks (the repo declares config the live host
 #     does not have). That IS drift — the fix is to apply the playbook.
-#     Seven of the eleven tasks the old numeric allowance of 13 was
-#     sized around were this kind (docs/operations/r1-ansible-drift-2026-07-03.md
-#     §"2026-07-06 reconcile": Install r1-smoke.sh + its smoke-timer
-#     handler, Install config-assertions script, heavy-job wrapper, and
-#     three `Ownership — … data dir` 0755→0750 hardenings), and the old
-#     gate passed them week after week without ever naming them.
 #   - a task you have not confirmed is non-idempotent. Fail the gate and
 #     look; a guessed entry is a permanent blind spot on that task.
 #   - a task that could instead be FIXED. Prefer retiring the entry over
-#     keeping it (see the follow-ups below).
+#     keeping it.
 #
-# SHRINK-ONLY (CS-098): scripts/ci/lint-baseline-growth.sh requires an
-# explicit `Baseline-Growth: <why>` commit trailer for any addition, so
-# widening the allowance is an auditable act with a name attached —
-# unlike the `13` it replaces.
+# SHRINK-ONLY: scripts/ci/lint-baseline-growth.sh requires an explicit
+# `Baseline-Growth: <why>` commit trailer for any addition, so widening the
+# allowance is an auditable act with a name attached.
 #
-# VALIDATED 2026-09-07 (#496). The note that stood here — "this list has
-# never been validated against a live run; the workflow has produced no
-# verdict since the vault-secret rotation (CID-24)" — was stale in both
-# halves. Verdicts have been produced since 2026-07-27, and the single
-# entry below has now been observed on BOTH sides:
-#
-#   - FIRING. Scheduled run 34123154859 (2026-09-07, changed=8) and an
-#     operator dry-run the same day (changed=7) both list "Apt update
-#     (cache max 1 h)" among the changed tasks.
-#   - CORRECTLY SILENT. Dispatch run 33638920075 (2026-09-02) reported
-#     changed=0 — the entry did NOT fire. Something had refreshed the
-#     host's apt cache inside cache_valid_time within the hour; WHAT is
-#     not recoverable from Actions history. None of the five dispatches
-#     that day carried apply=true, so the earlier guess that an apply
-#     twenty minutes prior did it is WRONG — an out-of-band run from a
-#     workstation, or the host's own unattended-upgrades, are both
-#     consistent and neither is visible here. The OBSERVATION stands and
-#     is what matters: the entry is a TIME-based condition, not a config
-#     difference, and it has now been seen both firing and silent. An
-#     allowance that never varies is indistinguishable from one that is
-#     wrong. Do not restate the cause without evidence: a confidently
-#     wrong causal note in this file is what sent an earlier
-#     investigation to the Actions secret settings for a week.
-#
-# The list did NOT grow. The same measurement found SEVEN changed tasks
-# with no entry here — "Install ClickHouse schema-snapshot script",
-# "Ship the repo's Tier-1 lake DDL as the drift check's intent side",
-# "Install galexie-archive-contiguity scan", "Template /etc/default/
-# node-healthcheck with ping URL", "Template /etc/default/stellarindex-ops
-# (env vars for stellarindex-ops batch jobs)", "Install the Caddyfile"
-# and its "Reload caddy" handler. (The count read six here until
-# 2026-09-09, when run 34123154859's output was re-read against the gate:
-# the stellarindex-ops env file was left out. Both it and the
-# node-healthcheck one are `no_log: true`, so they print no diff and are
-# the two easiest to skip while eyeballing a log — which is the argument
-# for the gate rendering the list rather than a person transcribing it.)
-# Every one whose diff was readable is
-# repo-ahead-of-r1 (the Caddyfile differs by a CLAUDE.md → AGENTS.md
-# comment; the Tier-1 DDL by the account_creators / account_sponsors
-# tables from #351; the contiguity scan by the 2026-09-05 read-failure
-# fix). That is drift, applying the playbook is the fix, and per the
-# rule three paragraphs up they do not belong in this file.
-
-# 2026-07-27: the three entries that stood here — "Ensure migrations dir
-# exists on r1", "Sync migrations from repo to r1", "Enable + start
-# disable-thp service" — were RETIRED by implementing the fixes their own
-# "Retire by…" notes prescribed (checksum+times/owner off on the
-# synchronize; RemainAfterExit=yes on the disable-thp unit). Each was
-# verified against a live apply, then against a live drift run. That is
-# the intended lifecycle of an entry here: a named, fixable defect, not a
-# permanent allowance.
+# A time-based entry fires on some runs and is silent on others; an
+# allowance that never varies is indistinguishable from one that is wrong.
+# Do not write a cause here without evidence: a wrong causal note misleads
+# the next investigation.
 
 Apt update (cache max 1 h)  # `ansible.builtin.apt: update_cache` with cache_valid_time=3600 reports changed whenever the host's apt cache is older than an hour — a TIME-based condition, not a config difference, so it is changed on essentially every scheduled run and cannot be made idempotent without dropping the cache refresh entirely (which the role legitimately needs before installing packages). Unfixable by construction; no retirement path.

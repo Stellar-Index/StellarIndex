@@ -48,16 +48,13 @@
 # risks are accepted on the localhost-only trust-boundary rationale above and
 # re-reviewed whenever this list changes.
 #
-# NOTE ON SCOPE (2026-08-18): this unblock was scoped around GO-2026-6172 and
-# GO-2026-6173 (the two pre-auth unbounded-memory parser bugs). The live vuln.go.dev
-# DB actually surfaces SEVEN *called* lib/pq vulns from the same disclosure batch,
-# all sharing the identical localhost-only mitigation; all seven are listed so CI
-# is genuinely green. See the run report / commit message for the reconciliation.
+# All seven *called* lib/pq vulns from the same disclosure batch share the
+# identical localhost-only mitigation, so all seven are listed.
 
 GO-2026-6166  # CVE-2026-56868 — GSS auth completes without mutual proof. N/A: stellarindex uses password/trust auth to its own localhost Postgres, never GSSAPI; needs a hostile server requesting GSS + MITM.
 GO-2026-6168  # CVE-2026-56869 — lib/pq/scram unbounded PBKDF2 iteration count → CPU DoS. Pre-auth; needs a malicious server / MITM. Own localhost DB only.
 GO-2026-6169  # CVE-2026-56870 — wrong .pgpass credential disclosed via hostaddr-without-host. N/A: DSN sets host=127.0.0.1 (no separate hostaddr), creds come from the DSN/env, not a .pgpass.
 GO-2026-6170  # CVE-2026-56871 — malformed backend frame length → negative slice bound → panic (DoS). Needs a malicious server / MITM sending hostile frames. Own localhost DB only.
 GO-2026-6171  # CVE-2026-56872 — malformed RowDescription/DataRow frames → panic (DoS). Needs a malicious server / MITM on the unauthenticated transport. Own localhost DB only.
-GO-2026-6172  # CVE-2026-56873 — pre-validation frame allocation → memory exhaustion / OOM (DoS). Needs a malicious server / MITM declaring multi-GB frames. Own localhost DB only. [originally-scoped]
-GO-2026-6173  # CVE-2026-56874 — pre-protocol plain-text error reader (bufio.Reader.ReadString(0), no byte limit) → unbounded buffering / OOM (DoS). Needs a malicious server / MITM. Own localhost DB only. [originally-scoped]
+GO-2026-6172  # CVE-2026-56873 — pre-validation frame allocation → memory exhaustion / OOM (DoS). Needs a malicious server / MITM declaring multi-GB frames. Own localhost DB only.
+GO-2026-6173  # CVE-2026-56874 — pre-protocol plain-text error reader (bufio.Reader.ReadString(0), no byte limit) → unbounded buffering / OOM (DoS). Needs a malicious server / MITM. Own localhost DB only.

@@ -1,11 +1,9 @@
 # Commit identities permitted in this repository's history.
 #
-# WHY THIS FILE EXISTS. On 2026-09-09 a test fixture wrote a throwaway
-# identity into the real repository's .git/config — git honours an
-# inherited GIT_DIR over its own `-C`, so a fixture running from inside a
-# hook writes to the repo it was launched from. 151 commits were authored
-# by it before anyone noticed, 96 of them pushed, where they surfaced as
-# anonymous entries in the public contributor list.
+# WHY THIS FILE EXISTS. A test fixture can write a throwaway identity into
+# the real repository's .git/config — git honours an inherited GIT_DIR over
+# its own `-C`, so a fixture running from inside a hook writes to the repo
+# it was launched from, and every later commit carries that identity.
 #
 # A pre-commit hook cannot prevent that recurring: hooks are client-side,
 # opt-in here (`make hooks`), skippable with --no-verify, and never run on
