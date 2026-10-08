@@ -1,8 +1,8 @@
 import { Panel } from '@/components/reveal';
 
 // CURATED_FAQ — generic answers parameterised by the asset's own code so the
-// same five-question set renders sensibly for every asset. Extracted from
-// page.tsx (2026-07-20) so the section is independently reorderable/testable;
+// same five-question set renders sensibly for every asset. Kept out of
+// page.tsx so the section is independently reorderable/testable;
 // it's pure (no page data — just the asset code + whether it has an issuer).
 //
 // Exported because page.tsx also feeds it into the FAQPage JSON-LD schema —

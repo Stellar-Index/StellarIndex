@@ -37,10 +37,8 @@ const REASON: Record<NetworkCapability, string> = {
  * the top of a page body is safe with or without an outer
  * `routeAvailable` guard.
  *
- * That self-suppression is the docstring's long-standing promise; the
- * code did not keep it until 2026-08-31 (wave-D RD-06). It always
- * rendered the EmptyState, and pointed at an `available` helper "below"
- * that was never written. Every current caller happens to guard with
+ * Self-suppression is the contract: the component must not always
+ * render the EmptyState. Every current caller happens to guard with
  * `if (!routeAvailable(…))` first, so nothing was visibly broken — but
  * the next network-gated surface written by following this comment
  * (/exchanges and /bridges are both in ROUTE_CAPABILITY with no

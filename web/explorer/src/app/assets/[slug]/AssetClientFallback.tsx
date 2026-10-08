@@ -10,7 +10,7 @@ import { API_BASE_URL } from '@/api/client';
 // browser when the build-time fetch failed. Cloudflare Pages
 // builds occasionally can't reach api.stellarindex.io (cold
 // connection pool, transient API restart, build host blip),
-// which previously baked "Asset not found" into the static HTML
+// which would bake "Asset not found" into the static HTML
 // for every slug rendered during that bad window. The user's
 // browser CAN almost always reach the API, so we recover by
 // retrying on hydrate.

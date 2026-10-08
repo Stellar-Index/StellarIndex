@@ -50,8 +50,8 @@ async function accountFetch<T>(
     body,
     credentials: 'include',
     // [absence: timeouts] preserves caller cancellation (opts.signal) while
-    // still bounding every account request — a caller that doesn't pass a
-    // signal used to get no timeout at all.
+    // still bounding every account request, even for a caller that passes no
+    // signal.
     signal: timeoutSignal(undefined, opts.signal),
   });
 

@@ -35,9 +35,8 @@ import {
 // status pages and well inside the 60-s indexer/aggregator
 // heartbeat budget so a real degradation lands within one poll.
 // The /v1/status doc itself now arrives via the SHARED useStatus
-// query (STATUS_POLL_MS, same 30 s — FEC A6-6/D2: the banner and
-// this page used to poll the same endpoint on separate clocks and
-// could disagree in one viewport); this constant drives the
+// query (STATUS_POLL_MS, same 30 s — one clock, so the banner and
+// this page cannot disagree in one viewport); this constant drives the
 // page-local ingestion + endpoint-probe loops, which stay bespoke
 // (per-region independence, latency measurement — A6-6 rationale).
 const POLL_INTERVAL_MS = 30_000;
@@ -862,8 +861,7 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
 // metrics-backend error, a breached latency SLO, or a `page` alert, and a
 // ticket is none of those — `page` means customers are affected, `ticket`
 // means someone should look during working hours. So the SAME response can
-// carry `overall: "ok"` beside `incidents.active_count: 8` (measured on r1
-// 2026-09-08: overall ok, 30 tickets + 1 informational, 0 pages). The rule
+// carry `overall: "ok"` beside `incidents.active_count: 8` (e.g. overall ok, 30 tickets + 1 informational, 0 pages). The rule
 // is right and stays exactly as it is; what the reader was missing is the
 // sentence that makes both halves legible at once. Naming the backlog is a
 // caption, never a verdict — it must not tint the banner or change a word
@@ -1483,7 +1481,7 @@ export type EndpointProbeResult =
 // status alone isn't proof the API answered healthily: a WAF
 // challenge page, a maintenance interstitial or a misrouted edge
 // response can all return 200 with an unrelated body (probeEndpoint
-// used to report those as 'fast'); and a genuine envelope's
+// must not report those as 'fast'); and a genuine envelope's
 // `data.status` can itself be "degraded" on a 200 (readyz, F-1275).
 async function readEnvelope(
   res: Response,
@@ -1829,11 +1827,11 @@ function RegionPanel({
   // result is null until the first SSE event lands, and LedgerCard
   // falls back to the snapshot while it is.
   //
-  // FEC audit A6-1: this used to be a private useLedgerStream fork with a
-  // raw EventSource (a second, unshared connection to the SAME URL the
-  // sidebar badge already holds via the multiplexer) and a 60s stale
-  // window checked every 30s (~90s worst-case "live" lie on the one page
-  // whose job is truthful liveness). Canonical hook + 30s window + 10s
+  // A private useLedgerStream fork with a raw EventSource (a second,
+  // unshared connection to the SAME URL the sidebar badge already holds
+  // via the multiplexer) and a 60s stale window checked every 30s would
+  // allow a ~90s worst-case "live" lie on the one page whose job is
+  // truthful liveness. Canonical hook + 30s window + 10s
   // clock now — identical to the sidebar badge, connection shared.
   const liveLedger = useLedgerStream(region.apiBaseUrl);
   const clock = useLiveClock();
@@ -2220,7 +2218,7 @@ function BackfillCoverageTable({
               // false, the data PROVABLY EXISTS genesis-to-tip and only
               // the served projection is behind — a materially different
               // statement from "we may be missing history", and the one
-              // the status page previously could not make (C6-046).
+              // the status page needs to be able to make.
               const lakeComplete = r.completeness_lake_complete === true;
               // The age of the figure this row DISPLAYS. An aged verdict
               // (web-status-4) must not keep the green verified tone: a

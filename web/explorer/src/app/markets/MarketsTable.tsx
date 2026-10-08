@@ -381,5 +381,5 @@ function SortHeader({
   );
 }
 
-// LastPriceCell moved to @/components/LastPriceCell (2026-08-21): four
-// hand-copied locals had already drifted once (COR-14/AGT-05).
+// LastPriceCell lives in @/components/LastPriceCell so the tables share one
+// copy instead of drifting hand-copied locals.

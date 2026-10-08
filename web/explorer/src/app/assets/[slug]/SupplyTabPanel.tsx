@@ -215,7 +215,7 @@ function MarketCapChart({ assetID }: { assetID: string }) {
         Market-cap timeline
       </h3>
       {q.isLoading && <div className="h-[260px]" />}
-      {/* A failed /v1/chart used to fall straight into the empty state
+      {/* A failed /v1/chart must not fall into the empty state
           and assert "no market-cap history for this asset". Absent is
           not empty. */}
       {!q.isLoading && q.isError && (

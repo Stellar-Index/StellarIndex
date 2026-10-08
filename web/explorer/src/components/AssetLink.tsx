@@ -36,10 +36,8 @@ export { shortAssetText };
  * precisely. Anything outside the pre-rendered set falls to the client
  * shell under BOTH spellings.
  *
- * The docstring here used to assert the opposite — that long-form ids
- * "hard-404" because generateStaticParams indexes only by short slug.
- * That stopped being true when asset_id routes were added (audit
- * 2026-06-19); the comment outlived the constraint.
+ * Long-form ids do not "hard-404": generateStaticParams also emits
+ * asset_id routes.
  *
  * Returns null when there's no safe linkable slug (the caller renders a
  * plain label). Display labels are unaffected: callers keep using

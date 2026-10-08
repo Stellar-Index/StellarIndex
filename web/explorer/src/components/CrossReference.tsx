@@ -1,6 +1,6 @@
 // CrossReference — one short line pointing at the other Stellar explorers.
 //
-// Replaces the scatter of inline "view on stellar.expert" links that used to
+// Replaces the scatter of inline "view on stellar.expert" links that would
 // sit mid-content on asset, account, contract and issuer pages. Those read as
 // though StellarIndex were deferring to a third party for the data it was
 // itself displaying; a single, quiet line at the foot of the page is the

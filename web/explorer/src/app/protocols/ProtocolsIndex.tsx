@@ -90,7 +90,7 @@ export function ProtocolsIndex({
   const [filter, setFilter] = useState<string>(lockedCategory ?? '');
 
   // The envelope carries the headline `tvl_total` ALONGSIDE `protocols[]`;
-  // returning only the array here (as this query used to) discarded it.
+  // returning only the array here would discard it.
   // `tvl_total` is `omitempty` server-side — undefined is a real state
   // (nothing could be admitted into the sum), not a fetch failure, and is
   // rendered as absence rather than as a zero. See DexTvlHeadline.
@@ -120,7 +120,7 @@ export function ProtocolsIndex({
   const live = !!(data && data.length > 0);
   const cards: ProtocolCard[] = useMemo(() => {
     // Lean test nets: show only protocols that ACTUALLY exist on the network.
-    // Measured 2026-08-27 on testnet + futurenet: blend has 3 contracts / 2
+    // Measured on testnet + futurenet: blend has 3 contracts / 2
     // factories, every other protocol has 0. Those zeros are real absences —
     // contract_count comes from on-chain discovery, not from
     // stellarindex_enabled_sources — so rendering seven empty rows to surface
@@ -156,11 +156,9 @@ export function ProtocolsIndex({
   }, [cards, filter, lockedCategory]);
 
   // The headline describes the set the page actually shows — `visible`,
-  // not the whole directory. Summing `cards` made the category landings
-  // publish the directory's totals over their own handful of rows: on
-  // 2026-09-03 /bridges and /yield both read "16 protocols · 1.15M
-  // events" for the 2 bridges (2,732 events) and the 1 yield protocol
-  // (2,468) they list.
+  // not the whole directory. Summing `cards` would make the category
+  // landings publish the directory's totals over their own handful of
+  // rows (e.g. "16 protocols · 1.15M events" for 2 bridges).
   const totalEvents24h = visible.reduce((s, c) => s + (c.events_24h ?? 0), 0);
   const verifiedCount = visible.filter((c) => c.completeness?.complete).length;
   // The static-registry fallback carries no category, so under a locked
@@ -268,7 +266,7 @@ function ProtocolCardView({
   const label = protocolMeta(card.name)?.label ?? card.name;
   return (
     <Link
-      // sdex's canonical surface is /sdex (nav revision 2026-08-24).
+      // sdex's canonical surface is /sdex.
       href={
         card.name === 'sdex'
           ? '/sdex'

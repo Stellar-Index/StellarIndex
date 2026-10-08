@@ -227,8 +227,8 @@ const LEDGER_FOLLOW_REFRESH_MS = 15_000;
  * Throttle state, keyed by the serialised query key and shared across
  * every hook instance — NOT per-component.
  *
- * It used to be a `useRef`, which meant the throttle only ever throttled
- * a component against itself. Two components following the same key
+ * A per-component `useRef` would only ever throttle a component against
+ * itself. Two components following the same key
  * (`HomeTopMovers` and `HomeTopAssets` both follow `['/v1/assets']`)
  * observe the same SSE frame in one React commit, so both effects ran
  * back-to-back with both refs at 0, and neither could see the other.

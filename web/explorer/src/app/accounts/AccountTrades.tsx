@@ -261,7 +261,7 @@ function TradeRow({ t }: { t: AccountTrade }) {
   return (
     <TR>
       <Td>
-        {/* The exact instant used to be hover-only (`title=`), i.e.
+        {/* The exact instant must not be hover-only (`title=`), i.e.
             mouse-only. <time dateTime> makes it machine-readable and the
             sr-only copy reachable by touch + screen reader. */}
         <time

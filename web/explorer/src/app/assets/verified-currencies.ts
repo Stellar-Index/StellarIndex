@@ -10,8 +10,8 @@ export interface VerifiedItem {
   name: string;
   class?: 'crypto' | 'stablecoin' | 'fiat';
   verified_issuer?: string;
-  // market_cap_usd is populated for fiat rows by /v1/assets/verified
-  // (R-018 assets-unification step 5). Decimal string with 2
+  // market_cap_usd is populated for fiat rows by /v1/assets/verified.
+  // Decimal string with 2
   // fractional digits. Empty for crypto/stablecoin rows.
   market_cap_usd?: string;
 }

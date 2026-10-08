@@ -121,8 +121,7 @@ function decodePairSlug(slug: string): { base: string; quote: string } | null {
 }
 
 export async function generateStaticParams() {
-  // Top 500 pairs by 24h volume — bumped from 100 in the
-  // 2026-05-08 audit, where /markets/native~AQUA-G… (a natural
+  // Top 500 pairs by 24h volume — 100 was too few: /markets/native~AQUA-G… (a natural
   // click-through from /assets/AQUA) 404'd because AQUA pairs
   // didn't crack the top 100 by USD volume. AQUA is the
   // 4th-largest asset on Stellar by trade count but its dominant
@@ -162,8 +161,8 @@ export async function generateStaticParams() {
   //
   // Note this is NOT a cutoff problem: the 404ing pairs ranked 27, 51 and
   // 100 in live data, well inside the 500 limit. The snapshot was stale,
-  // not small, which is why the 2026-05-08 fix (raising 100 -> 500)
-  // recurred. See site-audit S1b.
+  // not small, which is why raising the limit from 100 to 500
+  // did not hold.
   return [{ pair: 'shell' }, ...(out.length > 0 ? out : fallback)];
 }
 

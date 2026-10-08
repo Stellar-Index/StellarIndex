@@ -49,9 +49,8 @@ interface CurrencyDetail {
   inverse_usd: number; // 1 {from} = N USD
   cross_rates: Record<string, number>; // {to: 1 {from} = N {to}}
   // NOTE: no `source`/`published_at` here — neither endpoint this page
-  // reads serves per-rate provenance, and the old declared-but-never-
-  // populated fields left a permanently blank "Source: …" line (survey
-  // 2026-07-31 defect #5). Re-add only when a real provenance field
+  // reads serves per-rate provenance, and declared-but-never-populated
+  // fields would leave a permanently blank "Source: …" line. Re-add only when a real provenance field
   // exists on the wire.
 }
 
@@ -63,8 +62,7 @@ interface VerifiedCurrencyEntry {
 
 async function fetchTickers(): Promise<string[]> {
   if (isCIStub) return FALLBACK_TICKERS;
-  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
-  // F-1201 audit-2026-05-12). Filter to class=fiat client-side.
+  // Read from /v1/assets/verified; filter to class=fiat client-side.
   //
   // Routed through buildFetchData (not a raw fetch) so a transient
   // 429/5xx during static export is retried and, if it persists,
@@ -146,8 +144,7 @@ async function fetchDetail(
   // price/batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the
   // value of 1 {to} in {from} units (e.g. 1 EUR = 1.15 USD). The
   // converter displays "1 {from} = ? {to}", which is the INVERSE.
-  // Pre-fix (audit 2026-06-19) this was shown un-inverted, so
-  // /convert/USD/EUR read "1 USD = 1.15 EUR" — actually the EUR→USD
+  // Shown un-inverted, /convert/USD/EUR would read "1 USD = 1.15 EUR" — actually the EUR→USD
   // rate mislabeled. Invert here.
   const toInFromUnits = toRateRow?.price ? Number(toRateRow.price) : 0;
   const fromToRate = toInFromUnits > 0 ? 1 / toInFromUnits : 0;

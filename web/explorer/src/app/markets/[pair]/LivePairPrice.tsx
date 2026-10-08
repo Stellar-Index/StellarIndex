@@ -1,9 +1,9 @@
 'use client';
 
 // LivePairPrice — the market-pair headline price, hydrated live
-// (RT-2). The pair page is a static export, so pre-fix the Price panel
-// showed the build-time VWAP with an "as of <build>" caption — the
-// same build-frozen-price class the asset pages had (2026-08-05). The
+// (RT-2). The pair page is a static export, so without this the Price
+// panel would show the build-time VWAP with an "as of <build>" caption —
+// the same build-frozen-price class the asset pages have. The
 // baked value still paints first; the browser then re-fetches
 // /v1/price on mount + every 60s, and while /v1/price/tip/stream is
 // fresh the headline ticks in real time with a direction flash.

@@ -44,8 +44,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * /assets directory table — the CMC/CoinGecko-style global asset
  * listing, redesigned per the assets-redesign spec.
  *
- * Sourced from `/v1/assets?asset_class=…` (R-018 assets-unification
- * endgame). Each row:
+ * Sourced from `/v1/assets?asset_class=…` . Each row:
  *
  *   - For catalogue assets (USDC the currency, GBP, BTC, …):
  *     `asset_id` is the slug; clicking lands on
@@ -83,7 +82,7 @@ function parseAssetClass(raw: string | null): AssetClassFilter {
  * per-pair at request time that no ORDER BY can see. So a row ranks as
  * priced and serves as a dash.
  *
- * Measured against api.stellarindex.io 2026-09-03 21:31 UTC on the page this
+ * Measured against api.stellarindex.io on the page this
  * table opens on (`?asset_class=all&limit=100&include=sparkline7d`): 78
  * rows, 33 carrying price_usd, the FIRST unpriced row at position 16 — above
  * the eighteen priced rows that trail it, under a header promising a live
@@ -140,8 +139,8 @@ export function AssetsTable({
    */
   basePath?: string;
   /**
-   * Class-filter chips. Omitted on /assets (operator request
-   * 2026-08-24: no type filter on the main directory); the external
+   * Class-filter chips. Omitted on /assets (no type filter on
+   * the main directory); the external
    * page passes its own fiat/reference set and keeps the row.
    */
   classOptions?: { value: AssetClassFilter; label: string }[];

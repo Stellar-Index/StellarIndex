@@ -427,10 +427,8 @@ function depthAt(
 }
 
 /** Adaptive price formatter shared by the chart, axis, and stat strip.
- * FEC audit F-A4-03: the sub-1e-4 tail previously used toExponential(3),
- * violating the recorded 2026-08-06 operator decision (no scientific
- * notation anywhere a price renders); it now shares the canonical
- * plain-decimal subunit path. */
+ * The sub-1e-4 tail shares the canonical plain-decimal subunit path:
+ * no scientific notation anywhere a price renders. */
 export function formatDepthPrice(n: number): string {
   if (!Number.isFinite(n)) return '—';
   const abs = Math.abs(n);

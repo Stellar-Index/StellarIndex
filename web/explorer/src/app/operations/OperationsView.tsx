@@ -95,8 +95,7 @@ export function OperationsView() {
   // in. Deep-paged readers are never shifted. THROTTLED: the newest
   // served operation structurally trails the ingest-tip stream by a
   // beat, so the newer-than guard alone can never settle — unthrottled
-  // this refetched every close (~12 req/min per viewer, observed live
-  // 2026-08-09).
+  // this refetched every close (~12 req/min per viewer).
   const frame = useLedgerStream();
   const clock = useLiveClock();
   const queryClient = useQueryClient();

@@ -27,9 +27,8 @@ import { shortAssetText } from '@/lib/asset-label';
  * Pulls /v1/markets?limit=25&order_by=volume_24h_usd_desc — the
  * first page is enough to surface the top 10 with headroom, and
  * limit=25 hits the API's prewarmed cache key (the prewarm covers
- * limits 5/25/100/200, not 500). Pre-2026-05-09 this used
- * limit=500 and slugged the home page with a 5–8s cold-cache SQL
- * scan to throw away 490 rows. Each row deep-links to the per-pair
+ * limits 5/25/100/200, not 500); limit=500 would slug the home page
+ * with a 5–8s cold-cache SQL scan to throw away 490 rows. Each row deep-links to the per-pair
  * detail page at /markets/{base~quote} (commit 9eff6abd8).
  */
 export function HomeTopMarkets() {

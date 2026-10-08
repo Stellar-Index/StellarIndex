@@ -523,6 +523,5 @@ function ChartMessage({
   );
 }
 
-// FEC A3-F6.2 (2026-08-24): the private ToggleGroup (brand-600 + `subtle`
-// active variants) folded onto ui/Segmented — the quiet bg-surface active
+// ToggleGroup is ui/Segmented — the quiet bg-surface active
 // style + WindowPills' a11y semantics won for in-card switches.

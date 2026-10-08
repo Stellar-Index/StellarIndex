@@ -44,8 +44,8 @@ interface PairPrice {
  *
  * This is deliberately NOT a bigger pre-render limit: the 404ing pairs
  * ranked 27, 51 and 100 in live data, well inside the existing 500. The
- * snapshot was stale, not small — which is why raising 100 -> 500 in the
- * 2026-05-08 audit did not hold.
+ * snapshot was stale, not small — which is why raising the pre-render limit
+ * from 100 to 500 did not hold.
  *
  * Served by functions/markets/[[path]].js; noindex, like the other
  * long-tail shells.

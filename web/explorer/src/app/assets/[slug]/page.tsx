@@ -87,10 +87,9 @@ export async function generateStaticParams() {
   // but they ARE valid /assets/[slug] routes that render the
   // cross-chain identity view. Pull them from /v1/assets/verified so
   // they get pre-rendered too — EXCEPT class==='fiat': a fiat
-  // currency's one detail page is /external/assets/{slug} (operator
-  // ruling 2026-08-24, closing AM-16's split identity for good — the
-  // old /assets/{fiat} duplicates now 301 there via _redirects, so
-  // this route must stop exporting them).
+  // currency's one detail page is /external/assets/{slug} (the
+  // old /assets/{fiat} duplicates 301 there via _redirects, so
+  // this route must not export them).
   const verifiedSlugs = await fetchVerifiedSlugsForStaticParams();
   if (!cache || cache.bySlug.size === 0 || verifiedSlugs.length === 0) {
     // Real build: an empty listing or catalogue means the API is
@@ -104,8 +103,8 @@ export async function generateStaticParams() {
   // Emit BOTH cases for EVERY slug so user-typed URLs resolve
   // regardless of casing. The /v1/assets listing keys slugs uppercase
   // (XLM, USDC, BTC, sBNB); the verified catalogue keys them lowercase
-  // (usdc, us-dollar). Users naturally type lowercase, and the audit
-  // (2026-06-19) found /assets/btc, /assets/usdc etc. 404'd or rendered
+  // (usdc, us-dollar). Users naturally type lowercase, and without
+  // these variants /assets/btc, /assets/usdc etc. 404 or render
   // half-empty. Lowercase pages are cheap — fetchCoin's case-insensitive
   // cache lookup serves them from the same in-memory listing (no extra
   // API call per page).
@@ -124,10 +123,9 @@ export async function generateStaticParams() {
     }
   }
   // Also emit canonical asset_id routes (USDC-GA5Z…, native) so a paste
-  // of an asset_id resolves instead of 404ing (audit 2026-06-19). These
+  // of an asset_id resolves instead of 404ing. These
   // render from the asset_id side index + memoised detail/price fetches,
-  // so they add no per-page API load (the reason emitting asset_ids
-  // previously hung the build is now removed). Single case — asset_ids
+  // so they add no per-page API load. Single case — asset_ids
   // aren't case-variant.
   for (const assetId of cache.byAssetId.keys()) {
     if (assetId && !seen.has(assetId)) {
@@ -230,7 +228,7 @@ type PriceResp = Partial<
  * when `{slug}` is a verified-currency catalogue slug (USDC, EURC,
  * AQUA, …). Distinct from the AssetDetail shape above which the
  * SAME endpoint returns for canonical asset_ids like `USDC-G5Z…`
- * or `native`. See R-018 Phase 1.4a for the dispatch rationale.
+ * or `native`.
  *
  * The page fetches both: AssetDetail is the per-Stellar-asset
  * surface (always; keyed off coin.asset_id), and GlobalAssetView
@@ -245,8 +243,8 @@ type PriceResp = Partial<
 // by the ~3 casing variants + canonical asset_id route of one asset),
 // and the FAIL-HARD contract — persistent API failure throws so the
 // build fails instead of baking "Asset not found" HTML for real
-// entities. The per-page timeout/retry/memo scaffolding that used to
-// live here (and the incidents that grew it) is documented there.
+// entities. The timeout/retry/memo scaffolding
+// (and the incidents that grew it) is documented there.
 
 interface BuildCoinsCache {
   // Keyed by the listing's canonical slug casing (USDC, AQUA, BTC).
@@ -255,8 +253,8 @@ interface BuildCoinsCache {
   // highest volume on the volume-sorted listing). generateStaticParams
   // emits lower/UPPER variants of EVERY slug, and mixed-case slugs
   // (SolarCity, sBNB) resolve to none of exact/upper/lower — the
-  // variant pages used to silently bake the "couldn't be prerendered"
-  // fallback HTML until the fail-hard build caught it (2026-07-02).
+  // variant pages would silently bake the "couldn't be prerendered"
+  // fallback HTML if the lookup missed; the fail-hard build catches it.
   bySlugCI: Map<string, CoinSummary>;
   // Side index for canonical-id routes (/assets/USDC-GA5Z…) — kept
   // OUT of the slug map so route generation still derives short slugs
@@ -275,11 +273,9 @@ let coinsCachePromise: Promise<BuildCoinsCache | null> | null = null;
 // unlucky slugs (XLM hit this in production).
 // assetSymbol is the display identity for an asset that may have NO
 // `code`. A Soroban contract asset has none — the API omits the field
-// (`json:"code,omitempty"`) — and the OpenAPI spec wrongly marked it
-// required until 2026-08-31, so every generated type declared
-// `code: string` and every consumer here dereferenced it unchecked.
-// With the spec corrected these became compile errors instead of the
-// runtime crash that took the explorer's shell down.
+// (`json:"code,omitempty"`) — and the OpenAPI spec marks it optional,
+// so unchecked dereferences are compile errors rather than a
+// runtime crash that takes the explorer's shell down.
 function assetSymbol(coin: { code?: string; asset_id?: string }): string {
   if (coin.code) return coin.code;
   const id = coin.asset_id ?? '';
@@ -306,11 +302,10 @@ function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
       if (c.slug) {
         // FIRST row wins on both maps (rows arrive volume-DESC, so a
         // residual duplicate slug resolves to the highest-volume row).
-        // Since migration 0134 listing slugs are unique per issuer
-        // (code-issuer8), so duplicates only exist against a
-        // pre-migration API — pre-0134 this map was LAST-write-wins,
-        // which crowned the LOWEST-volume impersonator (2026-08-04
-        // identity incident) and disagreed with bySlugCI's tie-break
+        // Listing slugs are unique per issuer (code-issuer8), so
+        // duplicates only exist against a pre-migration API — where
+        // last-write-wins would crown the LOWEST-volume impersonator
+        // and disagree with bySlugCI's tie-break
         // depending on URL casing.
         if (!bySlug.has(c.slug)) bySlug.set(c.slug, c);
         const ci = c.slug.toLowerCase();
@@ -350,8 +345,7 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 //     "native"): keys are asset_id/code/issuer/..., kind="stellar_asset".
 // When the response is a GlobalAssetView shape, return null so the
 // page routes to VerifiedCurrencyView via the !coin branch. The
-// discriminator is `kind` (ADR-0042 LC-040) — replaces the former
-// `asset_id`-truthiness heuristic this comment used to document.
+// discriminator is `kind` (ADR-0042 LC-040), not `asset_id` truthiness.
 // `data.kind` is widened to `string` before the comparison: the
 // generated type narrows it to the literal "stellar_asset" (this is
 // the Asset schema), but at runtime this endpoint can hand back a
@@ -365,7 +359,7 @@ async function fetchCoinDirect(idOrSlug: string): Promise<CoinSummary | null> {
   if (!data) {
     return null;
   }
-  // EDGE-CACHE TRANSITION TOLERANCE (2026-07-10, remove after ~2026-07-17):
+  // EDGE-CACHE TRANSITION TOLERANCE (temporary):
   // long-tail /v1/assets/{asset_id} responses can still be served from
   // Cloudflare cache entries baked BEFORE v0.11 added the `kind`
   // discriminator. A missing `kind` alongside a present `asset_id` is
@@ -524,7 +518,7 @@ async function resolveVerifiedListingCoin(
 // buildFetch's per-URL memo makes the detail + price fetches one-shot
 // per build even though the casing variants + canonical-id route of
 // one asset all render off the same asset_id (unmemoised duplicates
-// spiked r1 on the 2026-06-19 deploy).
+// would spike API load).
 function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {
   return buildFetchData<AssetDetail>(
     `/v1/assets/${encodeURIComponent(assetId)}`,
@@ -552,7 +546,7 @@ export async function fetchPriceDirect(
   // (the edge has been seen hanging ~25s on a cold-cache asset). A
   // persistent failure degrades this page to no build-time price rather
   // than throwing; short timeout + few attempts keep a hung endpoint from
-  // stalling the build. NOTE (2026-08-04): this page has NO client-side
+  // stalling the build. NOTE: this page has NO client-side
   // price refresh — <LivePrice> exists only on the /embed surfaces — so
   // whatever this fetch bakes is what the reader sees until the next
   // deploy. That is why the sidebar/panel carry an explicit provenance
@@ -588,7 +582,7 @@ export async function fetchPriceDirect(
 // a real USD price anyway (asset/XLM × XLM/USD), tagged as
 // triangulated so the user can see the provenance.
 //
-// Substance-gate interaction (2026-08-04): this compose is NOT a
+// Substance-gate interaction: this compose is NOT a
 // bypass of the server's thin-market gate, because the gate is
 // applied to the LEGS — a dust-authored asset/XLM pair is itself
 // withheld by /v1/price, so `vsXlm` comes back null and the compose
@@ -743,10 +737,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // this HTML for any unmatched /assets/* path, and the client view
   // reads the real slug from the URL. 194k classic assets carry unique
   // migration-0134 slugs the API resolves; only ~500 are pre-rendered,
-  // and the rest hard-404'd on the static host (live report:
-  // /assets/usdt-gasu4kif, 2026-08-05).
+  // and the rest would hard-404 on the static host (e.g.
+  // /assets/usdt-gasu4kif).
   // Case-insensitive: generateStaticParams emits case variants of every
-  // slug (audit 2026-06-19), so the sentinel arrives as shell/SHELL too.
+  // slug, so the sentinel arrives as shell/SHELL too.
   if (slug.toLowerCase() === 'shell') {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
@@ -763,11 +757,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     // No Stellar asset row for this slug. For a verified-currency
     // catalogue slug (usdc, aqua, …), resolve the VERIFIED Stellar
     // issuance from the listing and render the FULL asset page —
-    // 2026-08-05 regression: after migration 0135 made listing slugs
-    // the full asset_id, the catalogue slug no longer matched a
-    // listing row, so /assets/usdc fell through to the thin
-    // VerifiedCurrencyView (identity + markets only) instead of the
-    // rich page it always had. The verified issuance is the listing
+    // Listing slugs are the full asset_id, so the catalogue slug never
+    // matches a listing row; without this, /assets/usdc would fall through
+    // to the thin VerifiedCurrencyView (identity + markets only) instead
+    // of the rich page. The verified issuance is the listing
     // row carrying the catalogue TICKER as its code WITHOUT the
     // unverified_ticker_collision stamp — the same server-computed
     // signal every badge uses, so an impersonator can never be
@@ -863,18 +856,16 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   });
   // §3 scam-label surfacing — curated third-party directory flags on the
   // issuer (account_directory / stellar-expert public directory). Their
-  // consolidation into ONE banner (2026-08-25: issuer_scam_reason and the
-  // directory scam-tags are the same finding from the same source, and
-  // were rendering as two near-duplicate banners plus a third note in
-  // IssuerPanel) now lives in AssetScamCallout, shared with the client
+  // consolidation into ONE banner (issuer_scam_reason and the
+  // directory scam-tags are the same finding from the same source, so
+  // separate banners would near-duplicate each other) lives in AssetScamCallout, shared with the client
   // shell — see that component for why it must not be inlined again. The
   // distinct ticker-collision notice (a different fact) stays separate
   // below.
   //
-  // These tags are no longer display-only, and this comment used to say
-  // they were: since 2026-08-25 the server also withholds price + market
-  // cap for a flagged issuer (pricingguard.ScamGate) and ranks the asset
-  // last (#356). lib/directory-tags.ts documents both exceptions.
+  // These tags are not display-only: the server also withholds price +
+  // market cap for a flagged issuer (pricingguard.ScamGate) and ranks the
+  // asset last. lib/directory-tags.ts documents both exceptions.
   const assetIDParts = coin.asset_id.split('-');
   const issuerStrkey =
     assetIDParts.length === 2 && assetIDParts[1].startsWith('G')

@@ -59,7 +59,7 @@ function getAssetIndex(): Promise<AssetIndex> {
           byKey.set(id.toLowerCase(), id);
         }
       }
-      // Catalogue slugs (#332 F7, 2026-09-02). The listing above is the
+      // Catalogue slugs. The listing above is the
       // per-Stellar-asset view; the verified-currency CATALOGUE (usdc, xlm,
       // eurc, …) is a second, hand-vetted slug set served by
       // /v1/assets/verified — and it is the one the widgets gallery links
@@ -126,8 +126,7 @@ function resolveChartAsset(
   coin: Coin,
   index: AssetIndex,
 ): string | null {
-  // Same edge-cache transition tolerance as fetchCoinDirect (2026-07-10,
-  // remove after ~2026-07-17): a stale pre-v0.11 cache entry lacks
+  // Same (temporary) edge-cache transition tolerance as fetchCoinDirect: a stale pre-v0.11 cache entry lacks
   // `kind`; asset_id present is unambiguously the stellar_asset shape.
   if (
     (coin.kind === undefined || (coin.kind as string) === 'stellar_asset') &&
@@ -151,7 +150,7 @@ const chartSparklineMemo = new Map<
 // price_history_24h) still get a real sparkline. The widget's price is
 // the asset's USD price, so the pairing is <asset> vs fiat:USD. Memoised
 // per asset so the ~3 casing variants of one slug share a single
-// build-time call (the /v1/assets rate-limit lesson, audit 2026-06-19).
+// build-time call (the /v1/assets rate limit).
 // Degrades to [] on any error → the card just omits the sparkline.
 function fetchChartSparkline(
   asset: string,
@@ -194,8 +193,8 @@ export async function generateStaticParams() {
     if (slugs.length === 0) return fallback;
     // Always include XLM + native explicitly, and emit BOTH cases for
     // every slug — embeds are hand-typed into 3rd-party iframe src=
-    // attributes where lowercase is the natural instinct, and the audit
-    // (2026-06-19) found /embed/asset/xlm etc. 404'd.
+    // attributes where lowercase is the natural instinct, so
+    // /embed/asset/xlm etc. must not 404.
     const seen = new Set<string>();
     const out: { slug: string }[] = [];
     for (const slug of ['XLM', 'native', ...slugs]) {
@@ -233,7 +232,7 @@ export async function generateMetadata({
 
 async function fetchCoin(slug: string): Promise<Coin | null> {
   // Per-asset detail fetched from /v1/assets/{slug}, the
-  // CoinSummary-superset surface (rc.46 R-018 final). The `Coin`
+  // CoinSummary-superset surface. The `Coin`
   // type alias here is kept for stability; field shape is identical
   // for the read columns this embed renders (price_usd /
   // change_*_pct / volume_24h_usd / price_history_24h / code).
@@ -242,7 +241,7 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
   // (price only — no change chips, sparkline, or 24h volume) and can
   // collide with the wrapped-XLM classic asset; native returns the full
   // AssetDetail. Resolve XLM→native so the flagship widget isn't
-  // degraded (audit 2026-06-19).
+  // degraded.
   const norm = slug.toLowerCase();
   const id = norm === 'xlm' || norm === 'native' ? 'native' : slug;
   try {

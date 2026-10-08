@@ -38,15 +38,14 @@ const TIP_LIVE_STALE_MS = 30_000;
 
 // LiveAssetPrice — the sidebar headline price, hydrated LIVE.
 //
-// 2026-08-05: the asset pages are a static export with NO client price
-// refresh, so the baked number drifts until the next deploy — the
-// operator caught XLM showing a 12-day-old $0.186 against a live $0.17
-// chart. The static build still bakes an initial value (so the page
+// The asset pages are a static export with NO client price
+// refresh, so the baked number drifts until the next deploy (an XLM
+// page showed a 12-day-old price against a live chart). The static build still bakes an initial value (so the page
 // paints instantly and search engines see a number), but the browser
 // re-fetches /v1/price on mount and every 60s, replacing the baked
 // figure and re-stamping the provenance caption.
 //
-// 2026-08-08 (live-tick program RT-2): on top of the poll, the browser
+// Live-tick program (RT-2): on top of the poll, the browser
 // subscribes to /v1/price/tip/stream via the shared SSE multiplexer.
 // While tip frames are fresh they take over the headline — every tick
 // re-renders the number with a direction flash, and the caption
@@ -78,9 +77,8 @@ export function LiveAssetPrice({
    * change-summary worker (GET /v1/changes/coin/{id} — the same feed
    * ChangeSummaryStrip renders below) reports a fresher figure.
    *
-   * 2026-09-18 audit F090: this pill used to be handed in as a static
-   * React node built once from the build-time percentage and never
-   * touched again, while the price beside it kept refreshing live — a
+   * A static React node built once from the build-time percentage and
+   * never touched again would go stale while the price beside it kept refreshing live — a
    * large intraday move could leave the arrow pointing the wrong way
    * for as long as the page stayed open. Taking the raw number instead
    * lets this component re-derive the pill from the same live worker

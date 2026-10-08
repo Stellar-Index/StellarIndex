@@ -1,7 +1,7 @@
 // StellarExpertLink — an outbound stellar.expert link for THIS network.
 //
-// Every stellar.expert link in the explorer used to be hardcoded to
-// `/explorer/public`, i.e. MAINNET. On the test nets that sent the reader to
+// A stellar.expert link hardcoded to
+// `/explorer/public` is MAINNET. On the test nets that sent the reader to
 // the wrong chain: at best a "not found", at worst an unrelated mainnet
 // account/contract that happens to share the id, presented as if it were the
 // entity they were looking at. Same class as the /network page reporting

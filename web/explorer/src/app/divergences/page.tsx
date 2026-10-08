@@ -50,7 +50,7 @@ const REFERENCES: Reference[] = [
       'Independent price index via mainnet AggregatorV3 contracts on Ethereum. Queried over public RPC (eth.llamarpc.com). Drives the divergence worker\'s "are we wildly off" alerting threshold.',
     feeds: [
       // Operator-config from configs/ansible/.../stellarindex.toml.j2
-      // [divergence.chainlink.feeds]. Verified 2026-05-08.
+      // [divergence.chainlink.feeds].
       {
         pair: 'EUR/USD',
         address: '0xb49f677943BC038e9857d61E7d053CaA2C1734C1',

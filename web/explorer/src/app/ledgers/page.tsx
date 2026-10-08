@@ -36,7 +36,7 @@ export default function LedgersPage() {
           the row list — same shared series /network renders. */}
       <ThroughputPanel headingLevel={2} defaultMetric="ledgers" />
 
-      {/* NO Suspense wrapper (2026-08-09): LedgersTable takes no
+      {/* NO Suspense wrapper: LedgersTable takes no
           useSearchParams, so a <Suspense fallback={null}> around it was
           vestigial — and actively harmful: the static exporter emitted
           the boundary as a NEVER-COMPLETING pending template

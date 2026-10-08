@@ -105,8 +105,8 @@ function categoryLabel(category: string): string {
 
 // ─── Section-level analytics window ──────────────────────────────────────
 //
-// The 24h/7d/30d/90d pills live at BespokeSection level (lifted out of the
-// bridge showcase, 2026-07-30) so EVERY category's whole bespoke block —
+// The 24h/7d/30d/90d pills live at BespokeSection level (not in the
+// bridge showcase) so EVERY category's whole bespoke block —
 // KPIs, series, donuts, tables — is window-reactive. Switching a pill
 // refetches `/v1/protocols/{name}?days=N`; the server keys its detail
 // cache on (name, days) and buckets the 24h window hourly.
@@ -250,7 +250,7 @@ function GroupedSeriesPanel({
  * default window reuses the block the page already fetched — no duplicate
  * request on first render. Bridge blocks delegate their chart suite to
  * BridgeShowcase, which consumes this section-level window instead of
- * owning pills (lifted 2026-07-30); its all-time cumulative headline stays
+ * owning pills; its all-time cumulative headline stays
  * pinned to the initial fetch across pill switches.
  */
 export function BespokeSection({

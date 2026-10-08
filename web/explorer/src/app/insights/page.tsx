@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     'The signals layer over the raw data: price-anomaly freezes, cross-venue divergence, and MEV activity observed on the Stellar network.',
 };
 
-// The Insights hub (nav revision 2026-08-24): the rail carries ONE entry
+// The Insights hub : the rail carries ONE entry
 // for the signals layer; the three surfaces keep their own routes and
 // deep-links. Static hub — each card names the question its surface
 // answers, mirroring the /lending hub's shape.

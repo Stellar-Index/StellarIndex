@@ -50,25 +50,17 @@ const FEATURED: Array<{ ticker: string; name: string }> = [
 /**
  * HomeCurrencies — strip of major-currency cards on the home page.
  *
- * Migration history (F-1201 audit-2026-05-12): pre-rc.48 this
- * called /v1/currencies (the single bulk endpoint that returned
- * every catalogue currency's ticker + name + rate_usd +
- * change_24h_pct). rc.48 removed that route as part of the
- * /v1/coins + /v1/currencies → /v1/assets consolidation. The
- * home strip now uses /v1/price/batch to get the 6 featured rates
+ * The home strip uses /v1/price/batch to get the 6 featured rates
  * in one round-trip against fiat:USD; names are hardcoded above.
  *
- * RLT-384 (audit-2026-09-18): this read used to type the response as
- * `{data: Array<{asset_id, price}>}`, discarding `price_type`,
- * `observed_at` and `flags` — so the strip called itself "Live" over
- * rates the API had flagged stale (measured 2026-09-19: the FX rows
- * carried `observed_at` ~36h old with `flags.stale: true`) and would
- * have shown a declared peg as an observed rate. The envelope is now
- * carried through: the strip stamps itself with the oldest `observed_at`
+ * The read keeps the whole price envelope (`price_type`, `observed_at`,
+ * `flags`): dropping it would let the strip call itself "Live" over
+ * rates the API flagged stale (FX rows can carry an old `observed_at`
+ * with `flags.stale: true`) and show a declared peg as an observed
+ * rate. The strip stamps itself with the oldest `observed_at`
  * it is showing, repeats the API's stale flag, and names a non-market
  * basis on the tile that has one. `change_24h_pct` rides the same rows
- * and now feeds the tile's change chip, which previously had no
- * producer at all; the batch only emits it for a fiat:USD quote and not
+ * and feeds the tile's change chip; the batch only emits it for a fiat:USD quote and not
  * for every asset, so a tile without one simply shows no chip.
  */
 export function HomeCurrencies() {

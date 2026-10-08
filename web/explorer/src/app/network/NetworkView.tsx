@@ -69,7 +69,7 @@ const WINDOWS = [30, 90, 365];
 // inflation pool, frozen by the October 2019 vote, with the SDF
 // mandate/upgrade-reserve accounts excluded from circulating
 // (docs/methodology/xlm-circulating-supply.md). The API's XLM supply
-// computer is NOT network-aware — measured 2026-08-28, testnet serves the
+// computer is NOT network-aware — testnet serves the
 // mainnet 50.0B constant (`supply_basis: xlm_total_only`) even though its
 // genesis is 100 B with no burn — so the served figures are only fetched
 // and shown on mainnet; test nets show the ledger header alone.
@@ -156,7 +156,7 @@ export function NetworkView() {
           throughput over time, what the network is doing right now, and the
           markets and sources feeding the lake.
         </p>
-        {/* Nav revision 2026-08-24: the rail carries one Network entry;
+        {/* The rail carries one Network entry;
             the chain sub-surfaces are reached from this hub. */}
         <nav
           aria-label="Network sub-surfaces"
@@ -434,8 +434,8 @@ function ChainEconomics({
 // /v1/network/stats snapshot with the chain-state fields off the
 // freshest ledger header (total XLM, fee pool, protocol version).
 function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
-  // XLM supply as SERVED on /v1/assets/native. Audit 2026-08-28 ("XLM
-  // supply 2.11× route divergence"): this strip showed the ledger header's
+  // XLM supply as SERVED on /v1/assets/native. An "XLM
+  // supply 2.11× route divergence" arises if this strip shows the ledger header's
   // total_coins (~105B, which still counts the ~55B burned in 2019) as
   // "Total XLM" while /assets/native serves total_supply 50.0B — two
   // unlabeled figures 2.11× apart read as a bug. Lead with the served

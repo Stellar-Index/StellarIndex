@@ -67,7 +67,7 @@ export function SourcesTable() {
   // is the cursor TYPE (backfill / projector / ledgerstream), NOT the
   // venue; the venue lives in `sub_source` (projector rows:
   // "soroswap"; backfill rows: "<range>:sdex"). Keying by `source`
-  // (the prior bug, audit 2026-06-19) meant every venue's "Last
+  // would mean every venue's "Last
   // ingest" rendered "—". Surface the most-recent row's tip per venue.
   //
   // ONE-SHOT CURSORS ARE EXCLUDED (site-audit S24). Picking the highest
@@ -80,7 +80,7 @@ export function SourcesTable() {
   //
   // /v1/diagnostics/cursors is dominated by finished one-shot jobs (1,483
   // rows, of which exactly one is live; 1,202 projected-rebuild, 194
-  // backfill last touched 2026-05-03). Those describe historical work,
+  // backfill). Those describe historical work,
   // never live freshness, so they must not feed a freshness column.
   const latestBySource = useMemo(() => {
     const m = new Map<

@@ -402,7 +402,5 @@ function SourceChip({
   );
 }
 
-// LastPriceCell moved to @/components/LastPriceCell (2026-08-21): this
-// file's fork had ALSO silently dropped the flash-on-change every sibling
-// table has — the exact drift COR-14/AGT-05 warned about. The shared cell
-// restores it, and the useLedgerFollow above makes this board tick.
+// LastPriceCell lives in @/components/LastPriceCell so every table shares
+// the flash-on-change; the useLedgerFollow above makes this board tick.

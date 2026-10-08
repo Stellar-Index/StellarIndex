@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   },
 };
 
-// Nav revision follow-up (2026-08-24): /sdex is the ONE canonical SDEX
+// /sdex is the ONE canonical SDEX
 // surface. It renders the protocol data view (the same component the
 // /protocols/[name] route uses — verification, TVL/activity, freshness)
 // plus the SDEX-only live sections (order-book depth + daily volume).

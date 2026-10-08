@@ -1,7 +1,7 @@
 // xlm-supply — the one place the explorer says what the ledger header's
 // `total_coins` IS, so every surface that prints it captions it the same way.
 //
-// Audit 2026-08-28 ("XLM supply 2.11× route divergence"): on mainnet the
+// ("XLM supply 2.11× route divergence"): on mainnet the
 // header's total_coins is ~105B XLM because that on-chain field was never
 // lowered by the October 2019 burn — it still counts the ~55B lumens SDF
 // destroyed — while /v1/assets/native serves the market's 50.0B total

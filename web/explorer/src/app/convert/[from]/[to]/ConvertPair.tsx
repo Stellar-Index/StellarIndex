@@ -35,10 +35,10 @@ export function ConvertPair({
   // Live-refresh the rate so the converter doesn't go stale. Shared
   // with the header + ladder so all three read ONE deduped query.
   //
-  // RLT-384: the freshness stamp below is the ROW's `observed_at`, never
+  // The freshness stamp below is the ROW's `observed_at`, never
   // the instant the fetch resolved. A query that resolves to "this pair
   // is not priced" is a SUCCESS as far as the client is concerned, so
-  // `dataUpdatedAt` used to stamp a build-baked rate "Updated 3s ago".
+  // `dataUpdatedAt` would stamp a build-baked rate "Updated 3s ago".
   const read = useConvertRate({ from, to, initialRate, initialInverse });
   const { rate, inverse } = read;
   const basis = rateBasis(read);

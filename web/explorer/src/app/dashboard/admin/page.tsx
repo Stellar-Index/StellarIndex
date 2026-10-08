@@ -135,7 +135,7 @@ function CustomerLookup() {
       const result = await adminLookup(query);
       setState({ kind: 'ok', result });
     } catch (err) {
-      // GH-1074: every non-404 error (rate-limited, 5xx, network) used to
+      // Every non-404 error (rate-limited, 5xx, network) must not
       // render under a "Not found" title, which reads as "this customer
       // doesn't exist" when the actual failure is unrelated to the query.
       if (err instanceof ApiError && err.status === 404) {

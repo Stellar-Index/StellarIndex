@@ -43,8 +43,8 @@ interface AccountStateResp {
 type PriceType = components['schemas']['Price']['price_type'];
 
 /**
- * What the batch actually said about one holding's price. RLT-384: this
- * used to be a bare `number`, which threw away the declared basis and
+ * What the batch actually said about one holding's price. A bare
+ * `number` would throw away the declared basis and
  * the observation time — so a `peg` (the operator's standing 1:1
  * declaration) valued a portfolio under a panel captioned "valued at the
  * live VWAP", and a rate the API stamped hours ago read as current.

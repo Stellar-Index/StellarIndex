@@ -52,8 +52,7 @@ export async function generateStaticParams() {
 
 async function listedTickers(): Promise<{ ticker: string }[]> {
   if (isCIStub) return FALLBACK.map((ticker) => ({ ticker }));
-  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
-  // F-1201 audit-2026-05-12). Filter to class=fiat to keep the
+  // Read from /v1/assets/verified; filter to class=fiat to keep the
   // pre-rendered set focused on FX-rate widget consumers.
   try {
     const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {

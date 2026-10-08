@@ -72,7 +72,7 @@ export function OraclesView() {
   // useMemo dep array stays referentially stable across renders. Without
   // this, `streamRows` is a fresh `[]` literal on every render when
   // streams.data is undefined, making the downstream useMemo recompute
-  // every tick. F-1258 (audit-2026-05-12).
+  // every tick.
   const allStreamRows = useMemo(() => streams.data ?? [], [streams.data]);
   // Mapped rows drive the "Price streams" table and the per-oracle
   // activity counts; unmapped rows are listed separately, below.

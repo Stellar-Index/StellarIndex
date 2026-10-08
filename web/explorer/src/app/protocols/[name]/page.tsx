@@ -31,8 +31,8 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { name } = await params;
   const meta = protocolMeta(name);
-  // /protocols/sdex redirects to /sdex (the one canonical SDEX surface,
-  // nav revision follow-up 2026-08-24) — point its metadata there too.
+  // /protocols/sdex redirects to /sdex (the one canonical SDEX surface)
+  // — point its metadata there too.
   const canonical =
     name === 'sdex'
       ? `${CURRENT_NETWORK.explorerUrl}/sdex`
@@ -76,9 +76,9 @@ export default async function ProtocolDetailPage({
   }
   const meta = protocolMeta(name);
 
-  // FEC A1-6: the BreadcrumbList JSON-LD now derives from the visible
-  // trail ProtocolView renders (ui Breadcrumbs emits both from one
-  // Crumb[]) — this page used to hand-roll LD with no visible crumbs.
+  // The BreadcrumbList JSON-LD derives from the visible trail
+  // ProtocolView renders (ui Breadcrumbs emits both from one Crumb[]),
+  // so the page never carries LD without visible crumbs.
   return (
     <>
       <Suspense

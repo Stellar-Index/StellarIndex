@@ -5,7 +5,7 @@ import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 import { Inline } from '@/lib/markdown';
 
 // Cap the rendered changelog to the most recent N releases. The full
-// history (242+ sections) inlined to a ~4.4 MB page (audit 2026-06-19);
+// history (242+ sections) inlined to a ~4.4 MB page;
 // older entries remain in CHANGELOG.md / GitHub releases.
 const RECENT_RELEASES = 40;
 

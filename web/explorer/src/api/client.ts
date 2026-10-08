@@ -5,7 +5,7 @@
 // URLs by hand so the `<>` reveal can introspect every request.
 //
 // The FALLBACK is this network's own API origin, not mainnet's — an
-// unset NEXT_PUBLIC_API_BASE_URL on a test-net build used to silently
+// unset NEXT_PUBLIC_API_BASE_URL on a test-net build must not silently
 // point the whole explorer at mainnet data.
 
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -14,8 +14,8 @@ import type { components } from './types';
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? CURRENT_NETWORK.apiBaseUrl;
 
-// [absence: timeouts] Every runtime (client-side) fetch used to have no
-// upper bound at all — a hung connection left a query (and anything
+// [absence: timeouts] Every runtime (client-side) fetch has an upper
+// bound — without one a hung connection leaves a query (and anything
 // gating on it, e.g. AccountGate) in "loading" forever with no escape
 // hatch. 15s is generous for a live-data round trip but still bounded.
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
@@ -73,12 +73,12 @@ export type RequestExample = {
 };
 
 // [absence: path templating] asExample() callers pass OpenAPI-style
-// placeholders (`/v1/assets/{id}`) meaning "substitute into the path", but
-// buildUrl used to treat the whole string as a literal path and dump every
-// param — including the one the placeholder names — onto the query string.
-// The rendered example (`/v1/assets/%7Bid%7D?id=...`) never matched the
-// panel's real request (`/v1/assets/<id>`). Substitute `{name}` from params
-// first; anything left over still becomes a query param, as before.
+// placeholders (`/v1/assets/{id}`) meaning "substitute into the path".
+// Treating the whole string as a literal path would dump every param —
+// including the one the placeholder names — onto the query string, and the
+// rendered example (`/v1/assets/%7Bid%7D?id=...`) would not match the
+// panel's real request (`/v1/assets/<id>`). So `{name}` is substituted from
+// params first; anything left over becomes a query param.
 function buildUrl(
   path: string,
   params?: Record<string, string | number | undefined>,

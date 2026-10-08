@@ -67,7 +67,7 @@ interface IssuerDetail {
 export async function generateStaticParams() {
   // 'shell' is the runtime-fallback sentinel: functions/issuers/[[path]].js
   // serves its HTML for any issuer beyond the pre-rendered top-100
-  // (S-022 — those used to hard-404 while search + asset pages linked
+  // (they would otherwise hard-404 while search + asset pages link
   // to them). Same pattern as accounts/contracts/ledgers/transactions.
   const fallback = [
     { g_strkey: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' },
@@ -88,8 +88,7 @@ export async function generateStaticParams() {
 function fetchIssuer(gStrkey: string): Promise<IssuerDetail | null> {
   // 20s budget: issuer detail is the slowest per-entity endpoint of
   // the export (~4s steady-state; >8s under the build's 9-worker
-  // concurrency — measured when the first fail-hard build tripped
-  // here, 2026-07-02). The old 2s timeout baked "Issuer not found".
+  // concurrency). A short timeout would bake "Issuer not found".
   return buildFetchData<IssuerDetail>(
     `/v1/issuers/${encodeURIComponent(gStrkey)}`,
     { timeoutMs: 20_000 },
@@ -101,8 +100,7 @@ interface CoinPriceRow {
   price_usd?: string | null;
   volume_24h_usd?: string | null;
   change_24h_pct?: string | null;
-  // ISS-1: served by the same fetch all along, previously dropped —
-  // supply and market cap are the canonical issuer questions.
+  // Supply and market cap are the canonical issuer questions.
   circulating_supply?: string | null;
   market_cap_usd?: string | null;
   // Per-asset display scale for circulating_supply (classic assets are
@@ -114,7 +112,7 @@ async function fetchIssuerCoins(
   gStrkey: string,
 ): Promise<Map<string, CoinPriceRow>> {
   const out = new Map<string, CoinPriceRow>();
-  // /v1/assets?issuer= (rc.47 R-018 finish). Wire shape is
+  // /v1/assets?issuer=. Wire shape is
   // `{data: [AssetDetail]}` — fields match CoinPriceRow for the read
   // columns this page renders. An empty list is legitimate (issuer
   // with no priced assets); transport failure throws via buildFetch.
@@ -385,7 +383,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           detail.auth_clawback == null ? (
             // The account-flag reader hasn't populated this issuer yet —
             // show that honestly rather than four "unknown" dots that
-            // read as a broken panel (audit 2026-06-19).
+            // read as a broken panel.
             <p className="text-ink-muted text-xs">
               Not yet resolved. Auth flags are read from the issuer&apos;s
               on-chain account entry; this one is not in the captured

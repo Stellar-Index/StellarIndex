@@ -55,7 +55,7 @@ type NavItem = {
 };
 type NavGroup = { title?: string; items: NavItem[] };
 
-// The console IA (nav revision 2026-08-24): three sections — Stellar
+// The console IA : three sections — Stellar
 // (on-chain entities + protocol surfaces), External (off-chain reference
 // data), Developers. One entry per entity class; sub-surfaces live on
 // their hub pages (Network hosts operations/ledgers, Insights hosts
@@ -116,7 +116,7 @@ const NAV: NavGroup[] = [
 // /divergences and /mev were gated in some and not others. The whole
 // External group drops once every item in it is filtered out.
 //
-// /protocols is deliberately NOT gated. Measured 2026-08-27 on both test nets:
+// /protocols is deliberately NOT gated. Measured on both test nets:
 // blend has 3 contracts and 2 factories there, while soroswap / aquarius /
 // phoenix / comet / defindex / sorocredit are all 0. Those zeros come from
 // on-chain contract DISCOVERY (independent of stellarindex_enabled_sources), so
@@ -135,9 +135,9 @@ function navForNetwork(groups: NavGroup[]): NavGroup[] {
 const ACCOUNT_GROUP: NavGroup = {
   title: 'Account',
   items: [
-    // LC-020: link the ACTUAL served routes (/dashboard/*). These used to
-    // point at /account/* and relied on a Cloudflare 301 — so the active
-    // state never matched the served URL and the links 404'd under `next dev`.
+    // Link the ACTUAL served routes (/dashboard/*): an /account/* href
+    // relying on a Cloudflare 301 never matches the active state and
+    // 404s under `next dev`.
     {
       href: '/dashboard',
       label: 'Dashboard',
@@ -279,7 +279,7 @@ export function SidebarNav({
           className="text-ink flex min-w-0 items-center gap-2 font-sans text-base font-semibold tracking-tight"
         >
           <StellarMark className="text-ink h-5 w-5 shrink-0" />
-          {/* Wordmark weight contrast (2026-08-24): "Stellar" carries the
+          {/* Wordmark weight contrast: "Stellar" carries the
               brand weight, "Index" sits lighter — same ink, thinner cut. */}
           <span className="truncate">
             Stellar

@@ -34,7 +34,7 @@ type Result = {
   label: string;
   hint?: string;
   href: string;
-  // Verified-currency flag (R-018 Phase 1.5). When true, the row
+  // Verified-currency flag. When true, the row
   // renders a small green-check badge next to the label.
   verified?: boolean;
 };
@@ -330,8 +330,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
   // straight to /currencies/<ticker> instead of falling through
   // to the seeded protocol list.
   //
-  // F-1201 migration (audit-2026-05-12): pre-rc.48 this called
-  // /v1/currencies; rc.48 removed that route. /v1/assets/verified
+  // /v1/assets/verified
   // returns the verified catalogue with class ∈ {crypto, stablecoin,
   // fiat}; filter to fiat client-side so the search index keeps
   // its "ISO ticker → currencies/<t>" affordance.
@@ -622,8 +621,8 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
 }
 
 // Exported for the badge-rule regression test — the ⌘K result builder is
-// the fourth copy of the verified-badge predicate and was the one that
-// disagreed with the other three (cold audit 2026-08-04).
+// the fourth copy of the verified-badge predicate and must agree with
+// the other three.
 export function search(
   q: string,
   coins: Coin[],
@@ -640,10 +639,9 @@ export function search(
       // COALESCE(slug, code) AS slug, so a NULL-slug impersonator emits
       // the verified asset's CODE as its slug and matches the verified
       // set; the API's per-row unverified_ticker_collision flag is what
-      // distinguishes it. This site used to drop that flag — the one
-      // copy of the rule that disagreed with the other three, so an
-      // impersonator the backend had correctly identified rendered with
-      // the badge in ⌘K search (cold audit 2026-08-04).
+      // distinguishes it. Dropping that flag would let an
+      // impersonator the backend correctly identified render with
+      // the badge in ⌘K search.
       (verifiedSlugs?.has(coinSlug(c).toLowerCase()) ?? false) &&
         !c.unverified_ticker_collision,
     ),

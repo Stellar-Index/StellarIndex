@@ -42,8 +42,8 @@ function wealthBucketLabel(bucket: number): string {
 }
 
 /**
- * AccountsAnalytics — the /accounts hub's insight strip (operator
- * request 2026-08-08): network totals, XLM balance statistics, wealth
+ * AccountsAnalytics — the /accounts hub's insight strip:
+ * network totals, XLM balance statistics, wealth
  * distribution, trustlines-per-account bands, and the most-held assets.
  * All from one precomputed rollup snapshot (30-min cycle) — the panel's
  * data cost is a handful of keyed reads.
