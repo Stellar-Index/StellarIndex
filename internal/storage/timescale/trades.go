@@ -2027,63 +2027,42 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 	}
 }
 
-// TradesInRange returns the market's trades whose close-time falls in
-// [from, to) — in EITHER stored direction, each re-expressed in the
-// requested orientation. Ordered by (ts ASC, ledger ASC) —
-// chronological, which is what OHLC / VWAP callers want.
-//
-// Both directions, because a market has no stored direction of its own (see
-// the block above [Store.LatestTradesForPair]) and this read feeds aggregates:
-// /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the aggregator
-// orchestrator. Measured, one hour of native/USDC-GA5Z…: 2957 rows stored one
-// way round and 2794 the other, so the served window held 51.4% of the
-// market's prints — and a biased 51.4%, since the decoder sets base =
-// soldAsset and the visible half is therefore the sell side. Over that hour
-// the folded high is 0.1818181818 against the 0.1806435916 served (+0.65%) and
-// the folded low 0.1794054551 against 0.1796178598: the extremes were both
-// wrong on the flagship market, in a randomly chosen hour, on a bar that never
-// looked empty.
-//
-// The fold is a per-ROW leg swap ([orientTradeTo]) and nothing else.
-// That is enough for every aggregate downstream because each is
-// defined on the two integer amounts, not on a price: Σquote/Σbase is
-// the VWAP, quote/base is the per-row price a high and a low compare,
-// and the time weights a TWAP uses come from `ts`, which a swap does
-// not touch. The swap therefore re-weights the mean at the same time
-// as it inverts the price, exactly and without dividing — a flipped
-// row's weight in the requested base IS its stored quote leg. See
-// docs/architecture/aggregation-plan.md §"The direction fold".
-//
-// TWO LIMITED ARMS, as in [Store.LatestTradesForPair]. The union of
-// each direction's newest `limit`, re-sorted and cut to `limit`, is
-// exactly the market's newest `limit`: any row in the market's newest
-// `limit` has at most limit-1 rows above it in the whole market, hence
-// at most limit-1 above it within its own direction, so it survives
-// its own arm's cut. Truncation therefore still keeps the NEWEST rows,
-// and `len(rows) == limit` still means the window overflowed — the
-// signal the orchestrator's truncation detector reads.
-//
-// A degenerate pair cannot double-count: [canonical.Pair.Validate]
-// refuses base == quote, so the two arms are always disjoint.
-//
-// limit clamps the returned count to avoid runaway queries; pass 0
-// or negative for the default of 1000. The hard ceiling is 10000.
-//
-// An empty slice + nil error means the pair has no trades in the
-// window — not an error. Callers distinguish "empty" from "error"
-// by testing len(rows).
-//
-// limit is clamped to [MaxTradesInRangeLimit]. That ceiling is enforced in
-// config validation too, because a silent clamp here does double damage: the
-// scan does not widen AND the orchestrator's truncation detector (len(t) >=
-// cfg.MaxTradesPerWindow) can never fire again, so the ~48%-of-windows
-// truncation rate would read as 0% while nothing had actually changed.
 // MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps its
-// limit to. Exported so config validation can refuse a max_trades_per_window
-// above it rather than let an operator raise a number that silently does
-// nothing.
+// limit to. Config validation refuses a max_trades_per_window above it,
+// because a silent clamp does double damage: the scan does not widen AND the
+// orchestrator's truncation detector (len(t) >= cfg.MaxTradesPerWindow) can
+// never fire, so a ~48%-of-windows truncation rate would read as 0%.
 const MaxTradesInRangeLimit = 10000
 
+// TradesInRange returns the market's trades whose close-time falls in
+// [from, to) — in EITHER stored direction, each re-expressed in the
+// requested orientation. Ordered by (ts ASC, ledger ASC) — chronological,
+// which is what OHLC / VWAP callers want.
+//
+// Both directions, because a market has no stored direction of its own (see
+// [Store.LatestTradesForPair]) and this read feeds /v1/vwap, /v1/twap,
+// single-bar /v1/ohlc, /v1/price/tip and the aggregator orchestrator.
+// Measured, one hour of native/USDC-GA5Z…: 2957 rows one way round and 2794
+// the other, so one direction held a biased 51.4% (the sell side, since the
+// decoder sets base = soldAsset); the folded high was 0.1818181818 against
+// 0.1806435916 served (+0.65%) and the low 0.1794054551 against 0.1796178598.
+//
+// The fold is a per-ROW leg swap ([orientTradeTo]) and nothing else. That
+// suffices because every aggregate downstream is defined on the two integer
+// amounts (Σquote/Σbase, quote/base) and `ts`, so the swap re-weights the
+// mean as it inverts the price, exactly and without dividing. See
+// docs/architecture/aggregation-plan.md §"The direction fold".
+//
+// TWO LIMITED ARMS, as in [Store.LatestTradesForPair]: any row in the
+// market's newest `limit` has at most limit-1 rows above it within its own
+// direction, so it survives its arm's cut. Truncation still keeps the NEWEST
+// rows, and `len(rows) == limit` still signals overflow to the
+// orchestrator's truncation detector. [canonical.Pair.Validate] refuses
+// base == quote, so the arms are disjoint.
+//
+// limit <= 0 means the default of 1000; it is clamped to
+// [MaxTradesInRangeLimit]. An empty slice + nil error means no trades in the
+// window.
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000

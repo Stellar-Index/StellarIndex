@@ -198,49 +198,27 @@ func checkLedgerAlignment(classic, sac Supply) error {
 
 // CrossCheck compares a classic-asset Algorithm 2 reading with its
 // SAC-wrapped Algorithm 3 reading under the STRICT total-vs-total
-// equality invariant — i.e. [WrapClassFull] semantics. Equivalent to
-// `CrossCheckForClass(classic, sac, WrapClassFull)`; kept as a
-// standalone function (rather than folded into CrossCheckForClass)
-// because it is the correct, unqualified
+// equality invariant — [WrapClassFull] semantics, the correct unqualified
 // comparison for a genuinely-fully-SAC-represented asset.
 //
-// CAVEAT: the equality
-// classic.TotalSupply == sac.TotalSupply only holds for an asset whose
-// ENTIRE economic supply is represented through the SAC's SEP-41
-// mint/burn events (a genuinely SAC-issued token). It does NOT hold for
-// a classic asset that merely HAS a SAC wrapper but is mostly held
-// classically: Algorithm 2 sums the TOTAL classic supply (trustlines +
-// claimables + LP + contract balances) while Algorithm 3 sums only the
-// SEP-41-MINTED amount — which is ~0 for a classic asset that the
-// classic issuer mints (not the SAC). For such assets the two legitimately
-// diverge by ~the whole supply (e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0), so a
-// 1-stroop tolerance on THIS function fires a FALSE
-// supply_cross_check_divergence alert.
+// CAVEAT: classic.TotalSupply == sac.TotalSupply holds only when the
+// ENTIRE supply moves through the SAC's SEP-41 mint/burn events. A classic
+// asset that merely HAS a SAC wrapper diverges by ~the whole supply:
+// Algorithm 2 sums trustlines + claimables + LP + contract balances, while
+// Algorithm 3 sums only SEP-41 mints (e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0),
+// so a 1-stroop tolerance here would fire a FALSE
+// supply_cross_check_divergence alert. Config-driven callers
+// ([CrossCheckRefresher]) therefore go through [CrossCheckForClass], which
+// routes partial-wrap pairs to [CrossCheckSubsetBound].
 //
-// Callers driven by operator config
-// (the aggregator's [CrossCheckRefresher]) do NOT call CrossCheck
-// directly for a partially-wrapped pair — they call
-// [CrossCheckForClass] with the pair's [WrapClass], which routes
-// partial-wrap pairs to [CrossCheckSubsetBound] instead. CrossCheck
-// itself is unchanged and remains correct for its documented
-// pre-condition (a fully-SAC-represented asset); it is exported
-// directly for tests and for any future WrapClassFull caller.
+// The leg-2 fields ([CrossCheckResult.SACWrapped], SubsetBoundChecked,
+// EscrowExcessStroops) and OverMintStroops stay zero on purpose: the
+// equality already SUBSUMES the escrow bound, since SACWrapped ≤
+// classic.TotalSupply ≤ sac.TotalSupply + [CrossCheckTolerance].
 //
-// CrossCheck leaves the leg-2 fields ([CrossCheckResult.SACWrapped],
-// SubsetBoundChecked, EscrowExcessStroops) and OverMintStroops at their
-// zero values on purpose: under WrapClassFull the equality compare
-// already SUBSUMES the escrow bound. SACWrapped ≤ classic.TotalSupply
-// holds by construction (it is one of four non-negative addends), and
-// this function only passes when classic.TotalSupply ≤
-// sac.TotalSupply + [CrossCheckTolerance], so SACWrapped ≤
-// sac.TotalSupply + tolerance follows for free. Evaluating leg 2
-// separately here would add a second reading of a bound the equality
-// has already proven.
-//
-// The function is pure: no I/O, no metric emission. The caller emits
-// metrics via [obs.SupplyCrossCheckDivergence] using the returned
-// result. Keeping CrossCheck pure lets unit tests cover the
-// comparison without a Prometheus dependency.
+// Pure: no I/O, no metric emission; the caller emits
+// [obs.SupplyCrossCheckDivergence] from the result, so tests need no
+// Prometheus dependency.
 //
 // Pre-conditions:
 //   - Both Supply values must have non-nil TotalSupply.

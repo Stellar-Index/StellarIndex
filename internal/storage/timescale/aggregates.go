@@ -927,63 +927,31 @@ type Vwap1mRow struct {
 	Sources    []string
 }
 
-// RecentClosedVWAP1mForPair returns up to `limit` most-recent CLOSED
-// 1-minute buckets from the prices_1m CAGG for the given pair,
-// newest first, each COMBINED across both stored market directions
-// so every row expresses the price of Base in Quote. Same
-// closed-bucket guard as [LatestClosedVWAP1mForPair] (ADR-0015), and
-// the same [combineDirVWAP] math that reader serves.
-//
-// Returns an empty slice + nil error when the pair has no closed
-// buckets in scope. The caller (typically the SEP-40 prices
-// endpoint) distinguishes "no observations" from "asset unknown"
-// by combining this with an asset-existence check.
-//
 // recentClosedVWAP1mForPairQuery is the newest-first closed-bucket
 // read behind the SEP-40 prices() passthrough.
 //
-// It reads BOTH stored orientations. The decoder keeps each trade in
-// the venue's observed ordering (see [dirVWAP]), so the same market
-// lands in the CAGG as both (A,B) and (B,A) rows. Filtering
-// `base_asset = $1 AND quote_asset = $2` alone would silently drop
-// every minute the market traded only in the flipped orientation — so
-// /v1/oracle/prices would return a sparse series with unexplained
-// gaps, and for a predominantly-flipped pair `200 []` for an asset
-// /v1/oracle/lastprice prices without difficulty: two endpoints on the
-// same declared SEP-40 surface disagreeing about whether the asset has
-// any history at all.
+// It reads BOTH stored orientations: the decoder keeps each trade in the
+// venue's observed ordering ([dirVWAP]), so filtering one orientation
+// drops every minute that traded only the flipped way — a sparse
+// /v1/oracle/prices series, or `200 []` for an asset /v1/oracle/lastprice
+// prices fine. Both directions are a UNION ALL of two index-drivable
+// branches rather than an OR — see [closedVWAP1mAtOrBeforeQuery].
 //
-// `LIMIT $3` is a ROW cap ([bucketRowCap]) — a bucket holds at most
-// two rows, so it still bounds the walk to the requested number of
-// buckets; [scanCombinedVwap1mRows] trims any partial tail.
-//
-// Deliberately NOT given the literal `bucket >=` lower bound or
-// the 14-day existence gate its [RecentClosedVWAP1mCombined] sibling
-// carries. Those would change what this documented public endpoint
-// SERVES (a dormant asset's last N closed buckets becoming an empty
-// array) — an owner decision, not a query-shape choice.
-// Folding the two directions is not that: it makes the endpoint
-// report the buckets it always claimed to.
+// `LIMIT $3` is a ROW cap ([bucketRowCap]): a bucket holds at most two
+// rows, so it still bounds the walk; [scanCombinedVwap1mRows] trims any
+// partial tail.
 //
 // `bucket <= now() - INTERVAL '1 minute'`, NOT `bucket + INTERVAL
-// '1 minute' <= now()`. The two are semantically identical, but the
-// second applies a function to the indexed column, so the planner cannot
-// use the bucket index or prune chunks at plan time and the read
-// degrades on a large prices_1m. Its sargable sibling
-// [recentClosedVWAP1mCombinedTemplate] uses the same form.
+// '1 minute' <= now()`: a function on the indexed column blocks the
+// bucket index and plan-time chunk pruning. It is a package-level const so
+// the sargability tests in closed_vwap_at_test.go, which scan the
+// package's query templates, can see it.
 //
-// Hoisted to a package-level const for the same reason: the sargability
-// regression tests in closed_vwap_at_test.go assert over the package's
-// query templates, and an inline `const q` inside the function body is
-// invisible to them — which is exactly how this one drifted.
-//
-// Deliberately NOT given a literal lower bound or the 14-day existence
-// gate its neighbours use: both would change what a documented public
-// endpoint SERVES (a dormant asset's last N closed buckets becoming an
-// empty array), which is an owner decision, not a query-shape fix.
-// Both directions are a UNION ALL of two index-drivable branches rather
-// than an OR disjunction — see [closedVWAP1mAtOrBeforeQuery] for the
-// measurement and the reason.
+// Deliberately NOT given the literal `bucket >=` lower bound or the 14-day
+// existence gate [RecentClosedVWAP1mCombined] carries: both would change
+// what this documented public endpoint SERVES (a dormant asset's last N
+// closed buckets becoming an empty array) — an owner decision, not a
+// query-shape fix.
 const recentClosedVWAP1mForPairQuery = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -1006,6 +974,16 @@ const recentClosedVWAP1mForPairQuery = `
          LIMIT $3
     `
 
+// RecentClosedVWAP1mForPair returns up to `limit` most-recent CLOSED
+// 1-minute buckets from the prices_1m CAGG for the given pair, newest
+// first, each COMBINED across both stored market directions so every row
+// expresses the price of Base in Quote. Same closed-bucket guard as
+// [LatestClosedVWAP1mForPair] (ADR-0015) and the same [combineDirVWAP] math.
+//
+// Returns an empty slice + nil error when the pair has no closed buckets
+// in scope; the SEP-40 prices endpoint tells "no observations" from
+// "asset unknown" with an asset-existence check.
+//
 // limit is the caller's responsibility to clamp; this method
 // assumes a sane bound and doesn't second-guess.
 func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
