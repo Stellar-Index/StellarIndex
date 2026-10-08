@@ -17,12 +17,17 @@ make test              # unit tests, ~2 min
 make test-integration  # spins its own containers via testcontainers-go; needs Docker
 make check             # fast read-only edit-loop feedback; not push clearance
 make lint-changed      # the lints for the files you changed
+make verify-changed    # vet + tests for the Go packages your change reaches, typecheck/vitest for touched web apps; one screen
 ```
 
 - **CI on the pull request is the landing gate.** Every change lands as a PR that merges only when
   CI is green. Locally, run `make lint-changed` and `make check` before pushing; that is the whole
   local requirement.
 - ALWAYS run `make lint-changed` before committing; `make hooks` installs it as the pre-commit hook.
+- Verify with `make verify-changed`, not `go test ./...` or `make test`: it runs only what the change can
+  reach and prints counts plus failing lines, with the full log's path. Don't `cat` the log; grep it.
+- Wait for CI with `~/.claude/bin/wait-for pr <n>` run in the background (it ends with a `ci-status`
+  summary), never with a sleep-and-check loop or `gh pr checks --watch` in the foreground.
 - Run `make prepush` only when CI cannot answer the question (CI down or billing-capped, or a local
   repro of a CI failure). It needs its literal `ALL REQUIRED CHECKS PASSED` and runs in the
   BACKGROUND. Profiles: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).

@@ -3,7 +3,11 @@
 // every package the diff touches plus every package that depends on them, or
 // "./..." when the diff can reach every package.
 //
-// Usage: go run ./scripts/ci/affected-go-pkgs [-files] BASE_SHA
+// Usage: go run ./scripts/ci/affected-go-pkgs [-files] [-worktree] BASE_SHA
+//
+// -worktree diffs BASE_SHA against the working tree (staged, unstaged and
+// untracked files) instead of HEAD, for local verification of edits not yet
+// committed.
 package main
 
 import (
@@ -37,19 +41,20 @@ const wiringPkg = "test/controlwiring"
 
 func main() {
 	files := flag.Bool("files", false, "print substantive changed files instead of packages")
+	worktree := flag.Bool("worktree", false, "diff BASE_SHA against the working tree, untracked files included, instead of HEAD")
 	flag.Parse()
 	if flag.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: affected-go-pkgs [-files] BASE_SHA")
+		fmt.Fprintln(os.Stderr, "usage: affected-go-pkgs [-files] [-worktree] BASE_SHA")
 		os.Exit(2)
 	}
-	if err := run(flag.Arg(0), *files); err != nil {
+	if err := run(flag.Arg(0), *files, *worktree); err != nil {
 		fmt.Fprintln(os.Stderr, "affected-go-pkgs:", err)
 		os.Exit(1)
 	}
 }
 
-func run(base string, filesMode bool) error {
-	substantive, err := substantiveFiles(base)
+func run(base string, filesMode, worktree bool) error {
+	substantive, err := substantiveFiles(base, worktree)
 	if err != nil {
 		return err
 	}
@@ -82,8 +87,8 @@ func run(base string, filesMode bool) error {
 
 // substantiveFiles lists the files changed since base, minus comment-only
 // Go edits.
-func substantiveFiles(base string) ([]string, error) {
-	changed, err := gitLines("diff", "--name-only", "--no-renames", base, "HEAD")
+func substantiveFiles(base string, worktree bool) ([]string, error) {
+	changed, err := changedFiles(base, worktree)
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +106,25 @@ func substantiveFiles(base string) ([]string, error) {
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// changedFiles lists base..HEAD, or with worktree the files that differ
+// between base and the working tree plus untracked files, sorted.
+func changedFiles(base string, worktree bool) ([]string, error) {
+	if !worktree {
+		return gitLines("diff", "--name-only", "--no-renames", base, "HEAD")
+	}
+	changed, err := gitLines("diff", "--name-only", "--no-renames", base)
+	if err != nil {
+		return nil, err
+	}
+	untracked, err := gitLines("ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	changed = append(changed, untracked...)
+	sort.Strings(changed)
+	return changed, nil
 }
 
 // touchedDirs maps changed files to the package directories whose tests
