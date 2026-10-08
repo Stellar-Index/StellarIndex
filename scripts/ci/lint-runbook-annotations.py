@@ -113,7 +113,7 @@ for d in DIRS:
                 if "runbook" in labels:
                     err(path, name, "legacy `runbook` key is in `labels` — "
                         "use `annotations.runbook_url`")
-                # Inconsistent bare key in annotations (C4-15).
+                # Inconsistent bare key in annotations.
                 if "runbook" in ann and "runbook_url" not in ann:
                     err(path, name, "uses inconsistent `annotations.runbook` "
                         "key — rename to `annotations.runbook_url`")

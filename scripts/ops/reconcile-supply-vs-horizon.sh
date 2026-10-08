@@ -21,7 +21,7 @@
 # if the UPSTREAM oracle (Horizon) is unreachable or returns no usable record
 # for a tracked asset, the run is INCONCLUSIVE, not a pass: it exits with the
 # distinct code EXIT_INCONCLUSIVE (below) so an upstream outage can never read
-# as "supply reconciles" (W5-ci-4).
+# as "supply reconciles".
 #
 # Usage:
 #   scripts/ops/reconcile-supply-vs-horizon.sh [-t TOLERANCE_PCT] [-a API_BASE]

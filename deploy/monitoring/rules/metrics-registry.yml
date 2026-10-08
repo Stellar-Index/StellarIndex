@@ -11,11 +11,11 @@
 # archive→live→catch-up Stream calls. Result: those SDK buffer metrics
 # (buffer_fetch_latency_seconds etc.) are not exported in production.
 #
-# NOTE (W5-mon-3): the TieredDataStore's OWN tier_read_total /
-# cold_read_duration_seconds metrics are NO LONGER gated on this — they
-# moved to obs package-level (always registered), so the ledgerstream-
-# tier `both_missing` page is live regardless of this gauge. This alert
-# now flags only the SDK buffer-metric coverage gap.
+# NOTE: the TieredDataStore's OWN tier_read_total /
+# cold_read_duration_seconds metrics are NOT gated on this — they are
+# obs package-level (always registered), so the ledgerstream-tier
+# `both_missing` page is live regardless of this gauge. This alert
+# flags only the SDK buffer-metric coverage gap.
 #
 # internal/obs/metrics.go exports stellarindex_metrics_registry_present
 # {component} — set to 1 at boot when the component got a Registry, 0

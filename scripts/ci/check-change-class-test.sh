@@ -81,8 +81,8 @@ expect "go.mod triggers integration" 0
 # whose directory no classifier names has its `//go:build integration` tests
 # compiled by the unconditional compile gate and executed by nothing for a
 # diff confined to it — scripts/ops/fx-history-backfill (the money
-# invariant), cmd/stellarindex-ops and W6-tst-1
-# (internal/ops/archive) were that same hole, found one package at a time.
+# invariant), cmd/stellarindex-ops and
+# internal/ops/archive were that same hole, found one package at a time.
 
 run integration "scripts/ops/fx-history-backfill/main.go"
 expect "scripts/ops/** triggers integration (INT_TEST_PKGS member)" 0

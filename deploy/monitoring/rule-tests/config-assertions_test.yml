@@ -1,6 +1,6 @@
 ---
-# promtool unit tests for stellarindex_config_assertions_stale
-# (W5-mon dead-alert fix), which lives in storage.yml.
+# promtool unit tests for stellarindex_config_assertions_stale, which
+# lives in storage.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/config-assertions_test.yml
 #

@@ -1084,7 +1084,7 @@ jobs:
         # inline `-- lint-money:ok <reason>`.
         run: ./scripts/ci/lint-migrations.sh
       - name: lint-completeness-staleness
-        # W6-fresh-4: the served coverage-verdict staleness constants
+        # The served coverage-verdict staleness constants
         # (coverageVerdictStaleAge / coverageVerdictStaleLedgers in
         # internal/api/v1/coverage_verdicts.go) are HAND-CALIBRATED to the
         # daily completeness-audit timer but nothing cross-checked them.
@@ -1145,7 +1145,7 @@ jobs:
         # worse than none.
         run: ./scripts/ci/lint-migration-compat-test.sh
       - name: lint-migration-immutability
-        # W1-migrations-5: cmd/stellarindex-migrate is a thin golang-migrate
+        # cmd/stellarindex-migrate is a thin golang-migrate
         # wrapper — migrations are keyed on the version integer ONLY. It never
         # re-runs an applied number and never content-hashes, so an in-place
         # edit of an already-shipped migration is silently undetectable (envs

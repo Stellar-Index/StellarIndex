@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-verify-parity.sh — verify.sh ↔ CI repo-gates lint parity (W5-ci-6).
+# check-verify-parity.sh — verify.sh ↔ CI repo-gates lint parity.
 #
 # scripts/dev/verify.sh is the canonical pre-push gate ("run this before
 # every push"). But CI's `repo-gates` job (.github/workflows/ci.yml) runs

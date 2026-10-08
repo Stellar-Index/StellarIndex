@@ -3,7 +3,7 @@
 #   ansible-playbook -i inventory/<region>.yml playbooks/<play>.yml \
 #     -e secrets_file=inventory/<region>.secrets.yml
 #
-# Available: futurenet.yml, testnet.yml, r1.yml (untracked — C6-041), or one
+# Available: futurenet.yml, testnet.yml, r1.yml (untracked), or one
 # of the r*.example.yml templates.
 #
 # ansible.cfg's `inventory` points at THIS file on purpose, so that a run

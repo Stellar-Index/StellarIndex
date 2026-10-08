@@ -143,7 +143,7 @@ golangci_exclusions_added_lines() {
 # basename's recorded hash rewritten to match an edited shipped
 # migration in the same commit, which defeats lint-migration-
 # immutability.sh's own check the same way a grown .gitleaksignore
-# defeats gitleaks (W1-migrations-5). So this emits only entries whose
+# defeats gitleaks. So this emits only entries whose
 # basename existed at <base> with a DIFFERENT hash at <head>.
 mutated_migration_hash_entries() {
   local base="$1" head="$2" file="scripts/ci/migration-immutability.sha256" b h
@@ -196,7 +196,7 @@ detect_growth() {
 
   # 3) .gitleaksignore: every non-comment line is a per-finding fingerprint
   #    (commit:path:rule:line) that exempts a secret-scan hit — the same
-  #    shrink-only allowlist shape as a *.baseline (W5-ci-2). Adding one in
+  #    shrink-only allowlist shape as a *.baseline. Adding one in
   #    the same change that introduces the leak it hides silently defeats the
   #    gitleaks gate.
   added="$(added_entries "$base" "$head" .gitleaksignore '.')"
