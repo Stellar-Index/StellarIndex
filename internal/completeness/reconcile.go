@@ -52,7 +52,7 @@ func countLedger(out consumer.Event, streamLedger uint32) uint32 {
 // (or a pre-event_index-fix duplicate). Either is a real discrepancy
 // localized to one ledger (ADR-0033 Claim 2b).
 //
-// SCOPE (DAT-15): this is a ROW-COUNT check only. A ledger with zero
+// SCOPE: this is a ROW-COUNT check only. A ledger with zero
 // gaps proves the RIGHT NUMBER of rows exist for that ledger — it does
 // NOT prove those rows' derived columns (amounts, prices, decoded
 // fields, …) are correct. A decoder bug that writes the right row
@@ -342,8 +342,8 @@ func SumKinds(byKind map[string]map[uint32]int, kinds ...string) map[uint32]int 
 // decoder would have produced rows for has exactly those rows — Claim
 // 2b's ROW-COUNT invariant holds for the range.
 //
-// This is COUNT-ONLY (see the ProjectionGap doc comment for the DAT-15
-// caveat): an empty result does not certify that the rows' derived
+// This is COUNT-ONLY (see the ProjectionGap doc comment for the
+// scope caveat): an empty result does not certify that the rows' derived
 // column VALUES are correct, only that the right number of rows exist
 // per ledger. Do not label a range "complete" for value correctness on
 // the strength of ReconcileCounts alone.

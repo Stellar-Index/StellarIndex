@@ -375,7 +375,7 @@ func (r *errorOnceRecorder) recorded() []string {
 	return append([]string(nil), r.success...)
 }
 
-// TestAsyncSink_RecordFailureRollsBackSeen is the DAT-09 / DAT-11
+// TestAsyncSink_RecordFailureRollsBackSeen is the
 // regression. The seen-set is marked at Push time, so a Record that
 // FAILS left the key marked forever — and every later event for that
 // contract was silently skipped as a duplicate. A contract first

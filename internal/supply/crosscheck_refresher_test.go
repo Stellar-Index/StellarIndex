@@ -275,7 +275,7 @@ func TestCrossCheckRefresher_PartialWrapWithoutEscrowIsUnchecked(t *testing.T) {
 }
 
 // TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages is
-// the MNY-04 guard. Each side's snapshot is read as "the LATEST for
+// the misaligned-ledger guard. Each side's snapshot is read as "the LATEST for
 // this asset_key" from its own per-asset refresher, so nothing makes
 // them contemporaneous. A SAC snapshot 50k ledgers (~3 days) ahead of
 // a stalled classic snapshot made the subset bound report an

@@ -16,7 +16,7 @@ import (
 // tree with checkpoint files at the supplied sequences. Each file
 // contains a valid, non-empty gzip stream — Check() runs a cheap
 // structural probe (non-empty on disk + valid gzip + non-empty
-// decompressed content, DAT-09/DAT-11) on every present file, so a
+// decompressed content) on every present file, so a
 // "present" fixture must pass that probe to be counted as Found.
 func makeTestArchive(t *testing.T, present []uint32) string {
 	t.Helper()
@@ -165,7 +165,7 @@ func TestCheck_RangeBelowFirstCheckpoint(t *testing.T) {
 	}
 }
 
-// TestCheck_ZeroByteFileIsMissing is the DAT-09/DAT-11 regression: a
+// TestCheck_ZeroByteFileIsMissing is the regression: a
 // present-but-zero-length checkpoint file must be counted as
 // Missing, not Found — a zero-byte file proves nothing was ever
 // actually written there.
@@ -217,8 +217,8 @@ func TestCheck_CorruptGzipIsMissing(t *testing.T) {
 
 // TestCheck_ZeroDecompressedContentIsMissing: a technically-valid
 // gzip stream that decompresses to ZERO bytes (an empty payload
-// gzip'd) must also be treated as missing — DAT-09's "require
-// decompressed size > 0".
+// gzip'd) must also be treated as missing: the probe requires
+// decompressed size > 0.
 func TestCheck_ZeroDecompressedContentIsMissing(t *testing.T) {
 	root := makeTestArchive(t, []uint32{63})
 	writeCheckpointFile(t, root, 127, gzipBytes(t, "")) // valid gzip, empty payload
@@ -343,7 +343,7 @@ func TestReport_AnyMissing(t *testing.T) {
 	}
 }
 
-// TestReport_Vacuous is the DAT-11 regression: a report whose only
+// TestReport_Vacuous is the regression: a report whose only
 // populated section scanned ZERO expected checkpoint positions
 // (Expected=0) must be flagged Vacuous — "clean" per AnyMissing() but
 // NOTHING was actually verified. A section that scanned something
