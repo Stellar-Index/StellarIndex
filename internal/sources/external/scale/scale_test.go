@@ -193,7 +193,7 @@ func TestInvertScaled(t *testing.T) {
 	}
 }
 
-// TestInvertScaledRoundsHalfUp pins the MNY-06 fix: the inverse is rounded
+// TestInvertScaledRoundsHalfUp pins the fix: the inverse is rounded
 // half-up, not truncated toward zero.
 //
 // Why this matters enough to test at all, given the error is ≤1 ulp: a
@@ -239,7 +239,7 @@ func TestInvertScaledRoundsHalfUp(t *testing.T) {
 // TestInvertScaledMatchesRedstoneReciprocal guards against the two
 // implementations of "reciprocal at the same fixed-point scale" drifting
 // apart again. redstone.reciprocalAtScale already rounded half-up; this one
-// truncated, and nothing compared them — which is how MNY-06 survived. The
+// truncated, and nothing compared them — which is how the bug survived. The
 // formula is re-derived here rather than imported so this stays a real
 // cross-check and not a tautology (importing redstone from scale would also
 // invert the dependency direction).

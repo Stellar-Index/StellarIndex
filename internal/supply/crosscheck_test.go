@@ -550,7 +550,7 @@ func TestCrossCheckForClass_PartialRoutesEscrowLeg(t *testing.T) {
 	}
 }
 
-// TestCrossCheckForClass_RefusesMisalignedLedgers pins the MNY-04 guard
+// TestCrossCheckForClass_RefusesMisalignedLedgers pins the misaligned-ledger guard
 // at the shared entry point, so no caller (refresher or CLI) can compare
 // two snapshots computed more than CrossCheckLedgerTolerance apart.
 func TestCrossCheckForClass_RefusesMisalignedLedgers(t *testing.T) {

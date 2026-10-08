@@ -137,8 +137,8 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 
 // probeCheckpointFile reports whether a PRESENT checkpoint file at
 // path passes a cheap structural probe: non-empty on disk, and a
-// valid gzip stream that decompresses to non-empty content
-// (DAT-09 / DAT-11). Existence alone would let a
+// valid gzip stream that decompresses to non-empty content.
+// Existence alone would let a
 // truncated, corrupt, or zero-byte file be certified "Found" and
 // never repaired — the fill path only re-fetches entries in
 // Missing, so a present-but-broken file was invisible to it.

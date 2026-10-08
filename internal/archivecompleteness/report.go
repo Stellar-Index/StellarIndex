@@ -125,7 +125,7 @@ func (r *Report) AnyMissing() bool {
 }
 
 // Vacuous reports whether every POPULATED section scanned ZERO
-// expected checkpoint positions (DAT-11). A requested [from, to]
+// expected checkpoint positions. A requested [from, to]
 // range that contains no checkpoint position at all produces
 // Expected=0, Found=0, MissingCount=0 — AnyMissing() reads that as
 // "clean", but nothing was actually verified. Callers must treat a

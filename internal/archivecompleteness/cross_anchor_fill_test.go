@@ -24,7 +24,7 @@ import (
 // stream — used only by tests that exercise the gzip-integrity guard
 // specifically (TestFill_RejectsInvalidGzip's contrast case, and
 // anywhere content correctness genuinely doesn't matter). Most tests
-// use checkpointGzipBody below, which also passes the DAT-11 XDR
+// use checkpointGzipBody below, which also passes the XDR
 // content check.
 func goodGzipBody() []byte {
 	var buf bytes.Buffer
@@ -37,7 +37,7 @@ func goodGzipBody() []byte {
 // checkpointGzipBody builds a REAL gzip'd, framed-XDR checkpoint
 // file body for ledger `seq` — a single LedgerHeaderHistoryEntry
 // record with Header.LedgerSeq = seq, matching what
-// validateCheckpointContent (DAT-11) requires before a fetched file
+// validateCheckpointContent requires before a fetched file
 // is placed. Real archive files hold 64 such records (one per ledger
 // in the checkpoint window); one record naming the target seq is
 // sufficient for these tests since validateCheckpointContent stops
@@ -64,7 +64,7 @@ func checkpointGzipBody(seq uint32) []byte {
 // "/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz" — the inverse of the
 // production checkpointPath layout. Used by fakeSource behaviour
 // callbacks that need to serve content matching the REQUESTED seq
-// (DAT-11: content must match, not just be valid gzip).
+// (content must match, not just be valid gzip).
 func seqFromRelPath(t *testing.T, relPath string) uint32 {
 	t.Helper()
 	base := relPath[strings.LastIndex(relPath, "-")+1:]
@@ -203,7 +203,7 @@ func TestFill_AllSourcesFail(t *testing.T) {
 	}
 }
 
-// TestFill_RejectsWrongCheckpointContent is the DAT-11 regression: a
+// TestFill_RejectsWrongCheckpointContent is the regression: a
 // source returns 200 + perfectly valid gzip content, but it's the
 // WRONG checkpoint (a misconfigured/stale mirror serving a different
 // ledger range). The filler must reject it via
