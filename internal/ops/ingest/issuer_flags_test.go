@@ -159,8 +159,8 @@ func runOpts() issuerFlagsOpts {
 // TestRunIssuerFlags_RecoversMergedIssuersWithProvenance is the central
 // case: the drain must fall through to the last-known reader for the misses,
 // persist what it finds WITH its provenance, and count the three outcomes
-// apart. Before this change a merged issuer was counted `absent` and never
-// read a second time, so all 10,239 stayed unresolved for good.
+// apart. A merged issuer is not counted `absent`: it gets a second read
+// from the last-known reader, so it does not stay unresolved for good.
 func TestRunIssuerFlags_RecoversMergedIssuersWithProvenance(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{mergedIssuerA, liveIssuer, mergedIssuerB, absentIssuer}}
 	reader := &stubIssuerFlagsReader{

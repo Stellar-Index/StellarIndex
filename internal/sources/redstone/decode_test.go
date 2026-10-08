@@ -376,9 +376,9 @@ func TestDecode_MissingOpArgs(t *testing.T) {
 
 // Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
 // registry is RECORDED verbatim as raw:<feed_id> at its own vector
-// position, not skipped. Before this change the middle entry was
-// dropped (2 updates) while BTC/ETH kept OpIndex 0/2; they STILL keep
-// 0/2 — the raw row fills slot 1 (no existing row moves).
+// position, not skipped. Skipping the middle entry would
+// yield 2 updates; instead BTC/ETH keep OpIndex 0/2 and the raw row
+// fills slot 1 (no existing row moves).
 func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
 	// Three feeds: BTC (known), NOTAFEED (outside the ADR-0028
 	// registry — e.g. a 20th feed RedStone deployed), ETH (known).

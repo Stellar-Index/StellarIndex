@@ -74,10 +74,10 @@ func TestAuditLedgerClaims_TxReadFailureDistinctFromFailedTx(t *testing.T) {
 // TestClaimAuditVerdict_SilentDropsFailTheRun pins the fix itself: a full,
 // requested-range-covered walk (coverageErr == nil, as walkCoverage returns
 // when delivered == requested) that nonetheless silently excluded a ledger
-// or a transaction must not exit clean. Before this fix, sdexClaimAudit's
-// return statement never looked at these counts at all, so this exact
-// combination returned nil — headline total certified complete for a range
-// where the reader or SDK read had silently failed.
+// or a transaction must not exit clean. A verdict that ignored
+// these counts would return nil for this exact combination, certifying the
+// headline total complete for a range where the reader or SDK read had
+// silently failed.
 func TestClaimAuditVerdict_SilentDropsFailTheRun(t *testing.T) {
 	t.Run("no failures, full coverage: passes", func(t *testing.T) {
 		if err := claimAuditVerdict(nil, 0, 0, 1000); err != nil {

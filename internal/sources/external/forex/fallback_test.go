@@ -255,7 +255,7 @@ func TestWithFallbacks_RegistersInOrder(t *testing.T) {
 }
 
 // The default source must remain the primary so a worker with no
-// fallbacks stamps exactly what it did before this change.
+// fallbacks stamps exactly the primary's source.
 func TestWorker_DefaultActiveSourceIsPrimary(t *testing.T) {
 	if got := newTestWorker(t).activeSource; got != fxSource {
 		t.Fatalf("activeSource = %q, want %q", got, fxSource)

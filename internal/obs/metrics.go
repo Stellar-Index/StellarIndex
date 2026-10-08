@@ -1567,7 +1567,7 @@ var ExternalPollerRefusedEntriesTotal = prometheus.NewCounterVec(
 // SELF-PAIR swap (token_in == token_out) and dropped to zero rows. A self-pair
 // swap has NO honest purpose: it moves no value between distinct assets, and
 // it is the primitive the Blend/Comet exploit ran 390 times to
-// walk a pool's spot price. Historically comet emitted ZERO self-pair swaps
+// walk a pool's spot price. Comet emitted ZERO self-pair swaps
 // before the exploit, so any sustained count is an exploit-shaped signal, not
 // noise — the tripwire the freeze/divergence guards were blind to because the
 // self-pair rows never reach the served `trades` table (they decode to
@@ -4934,7 +4934,7 @@ var PostgresPingFailureStreak = prometheus.NewGauge(
 //
 // Caddy auto-renews Let's Encrypt 30 d
 // before expiry, but if renewal fails (DNS, rate limit, ACME
-// quota) we historically discovered only at cert expiry. This
+// quota) we would discover it only at cert expiry. This
 // gauge gives the alert rule a producer: fire on
 // `(TLSCertNotAfterUnix - time()) < 14*24*3600` to catch a stuck
 // renewal cycle with 2-week head room.

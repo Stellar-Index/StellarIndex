@@ -196,9 +196,9 @@ func TestRealDecoder_stellarAndSymbolAssetsMix(t *testing.T) {
 }
 
 // Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
-// raw:<symbol> row, not skipped. Before this change an event whose
-// ONLY entry was unknown surfaced as ErrEmptyPrices and the slot was
-// lost until a code change plus a lake replay.
+// raw:<symbol> row, not skipped. An event whose
+// ONLY entry is unknown must not surface as ErrEmptyPrices, which would
+// lose the slot until a code change plus a lake replay.
 func TestRealDecoder_unknownSymbolAllUnknownRecordedAsRaw(t *testing.T) {
 	madeUp := xdr.ScSymbol("NOTACURRENCY")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &madeUp}

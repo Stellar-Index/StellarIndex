@@ -27,7 +27,7 @@ const (
 //   - [MultiBaseline.MaxDriftZScore] scores each window's own
 //     persistent drift. This catches frog-boiling.
 //
-// The second half is not optional. ADR-0019 originally reasoned that
+// The second half is not optional. ADR-0019 reasons that
 // a slow drift "defeats the 1d window, but the 30d window still
 // includes pre-attack data, so it still flags the drifted price".
 // That holds for price LEVELS — but these baselines are built from
