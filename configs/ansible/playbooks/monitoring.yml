@@ -71,11 +71,9 @@
 #
 # "Both arrangements produce the same routing" is a GATE now, not a
 # claim: scripts/ci/check-alertmanager-parity.sh renders the two with
-# identical inputs and fails on any structural difference. It was added
-# after the sentence above was false for a month (#501) — the fix for
-# #485 gave informational alerts a Discord receiver in the standalone
-# file only, so running THIS playbook would have silently routed them
-# back to a receiver that delivers to nobody.
+# identical inputs and fails on any structural difference: a receiver
+# added to the standalone file only would make THIS playbook silently
+# route those alerts back to a receiver that delivers to nobody.
 
 - name: Monitoring (Prometheus + Alertmanager)
   hosts: prometheus_pair
