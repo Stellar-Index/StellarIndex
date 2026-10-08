@@ -39,27 +39,9 @@ type Recoverer interface {
 // recovery worker stamps when it closes a row after an auto or lapsed release.
 const ReleasedBySystemRecovery = "system:recovery"
 
-// Recovery is the freeze-recovery worker. It periodically lists
-// every still-open `freeze_events` row, checks whether the Redis
-// marker for (asset, quote) is still alive, and stamps
-// recovered_at on the durable row when the marker is gone.
-//
-// This is the inverse half of the freeze pipeline: the orchestrator
-// writes a Redis marker + INSERTs an open `freeze_events` row when
-// a freeze fires; the marker has a TTL (typically a few minutes);
-// when the underlying anomaly clears, the orchestrator stops
-// refreshing the marker and the TTL elapses; the recovery worker
-// notices and closes the durable row so the explorer /anomalies
-// timeline shows a finished freeze rather than a forever-firing one.
-//
-// Why poll Redis instead of subscribing to keyspace expiry events?
-// Redis keyspace notifications are off by default and operators
-// typically don't enable them in production (significant CPU
-// overhead). A 60-second poll loop is cheap (one Redis MGET per
-// minute against the small set of currently-firing pairs) and
-// matches the fact that the API's freshness SLO is also minute-
-// scale — sub-minute recovery latency on the explorer timeline
-// would be wasted precision.
+// Recovery closes durable `freeze_events` rows whose Redis marker has gone, so /anomalies shows
+// finished freezes. It polls each minute rather than subscribing to keyspace expiry, which is off
+// by default and CPU-costly; the API freshness SLO is minute-scale anyway.
 type Recovery struct {
 	cache    RedisCache
 	lister   OpenFreezeLister
@@ -81,23 +63,9 @@ type RecoveryOptions struct {
 	// WARN (Redis or postgres failures). Default = slog.Default().
 	Logger *slog.Logger
 
-	// Ladder is the durable ADR-0019 ladder (migration 0119). Wiring it is
-	// what stops this worker from DESTROYING the ladder it is supposed to
-	// coexist with.
-	//
-	// This worker's whole trigger is "the Redis marker is gone", which since
-	// 0119 is ambiguous: it means either the freeze ended (the case this
-	// worker exists for) or Redis lost the marker (the case the durable
-	// ladder exists for). Closing the row is not a neutral act in the second
-	// case — `recovered_at IS NULL` is the exact predicate
-	// [LadderStore.LoadLadder] tests, so stamping it deletes the rehydrate's
-	// evidence AND records on /v1/anomalies that the freeze recovered
-	// normally. On an aggregator restart after a flush this worker's
-	// immediate first tick (see [Recovery.Run]) beats the orchestrator's
-	// first tick essentially always, because the orchestrator computes VWAPs
-	// before it evaluates any freeze.
-	//
-	// Nil = pre-0119 behaviour: every marker-miss closes its row.
+	// Ladder is the durable ADR-0019 ladder. A missing marker means the freeze ended OR Redis lost
+	// it; closing the row in the second case deletes the rehydrate's evidence, and after a restart
+	// this worker's first tick beats the orchestrator's. Nil = every marker-miss closes its row.
 	Ladder LadderStore
 
 	// LadderGrace is how far past a durable hold's expiry the ladder is
@@ -245,25 +213,9 @@ func (r *Recovery) tick(ctx context.Context) {
 	obs.AnomalyFreezeRecoverySweepDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 }
 
-// ladderStillHolds reports whether the pair's DURABLE ladder says this
-// freeze is still running, i.e. whether the missing marker is Redis's fault
-// rather than the freeze's end.
-//
-// Fail-safe direction is deliberately "close it" (the pre-0119 answer):
-//
-//   - no ladder store wired → pre-0119 behaviour exactly;
-//   - store read failed → do not strand an open row forever on a Postgres
-//     blip. The cost of closing wrongly is bounded (the orchestrator
-//     re-freezes on the pair's own signal if the anomaly is live), whereas
-//     never closing leaves /v1/anomalies showing a finished freeze as
-//     permanently firing, which is this worker's entire reason to exist;
-//   - ladder present but its hold has lapsed beyond the grace → the
-//     aggregator has been down longer than the freeze's own hold, so nobody
-//     is coming to rehydrate it. Close it.
-//
-// Uses the SAME [LadderStillLive] predicate [Writer.LoadState] uses, because
-// the two are reading one fact from opposite directions and a divergence
-// re-opens the finding this guard exists to close.
+// ladderStillHolds reports whether the durable ladder says the freeze is still running. Fails
+// toward closing (no store, read error, hold lapsed past grace): a wrong close re-freezes on the
+// next signal, a missed one shows a finished freeze firing forever. Shares [LadderStillLive] with [Writer.LoadState].
 func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool {
 	if r.ladder == nil {
 		return false
