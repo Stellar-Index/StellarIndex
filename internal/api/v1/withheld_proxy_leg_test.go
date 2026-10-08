@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite for wave-D MSP-06: a WITHHELD verdict reached on the
+// Regression suite: a WITHHELD verdict reached on the
 // stablecoin-proxy leg was swallowed, so the response said
 // errors/price-not-found.
 //

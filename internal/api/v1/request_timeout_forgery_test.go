@@ -18,8 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestRequestTimeout_StreamExemptionCannotBeForged is the wave-D
-// UNAUTH-DOS-4 regression, and it derives its own subject set from the
+// TestRequestTimeout_StreamExemptionCannotBeForged is a
+// regression test, and it derives its own subject set from the
 // router so future routes are covered without a second edit.
 //
 // RequestTimeout exempts SSE endpoints by path, and a path test can be

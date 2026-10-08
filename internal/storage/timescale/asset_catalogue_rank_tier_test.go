@@ -170,7 +170,7 @@ func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 }
 
 // TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut is the class
-// guard for wave-D KP-1 / RD-01.
+// guard for mixed-direction keyset cursors.
 //
 // Every /v1/assets ordering is MIXED-direction: the sort key descends,
 // asset_id ascends to break ties deterministically. SQL's row-constructor

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestClearProjectionDirtyWindowGuardsOnUpdatedAt pins the wave-D CV-6
-// fix at the level a unit test can reach: the DELETE's own predicate.
+// TestClearProjectionDirtyWindowGuardsOnUpdatedAt pins the
+// dirty-window clear guard at the level a unit test can reach: the DELETE's own predicate.
 //
 // The clear's bounds (`from_ledger >= $2 AND to_ledger <= $3`) catch a
 // WIDENED window — a concurrent replay that grew the range leaves a row

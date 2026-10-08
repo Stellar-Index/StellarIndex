@@ -13,7 +13,7 @@ import (
 )
 
 // Behavioural companions to TestCAGGPairReadsFoldBothDirections, for
-// the three readers fixed in wave-D UNAUTH-DOS-9.
+// the three readers that must fold both pair directions.
 //
 // The class guard pins the QUERY SHAPE — necessary, because the canned
 // driver replays rows regardless of the SQL, so no driver-level test
