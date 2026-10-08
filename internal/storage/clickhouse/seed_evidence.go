@@ -18,9 +18,8 @@ type SeedWalk struct {
 	// write path sets it; only fixtures over a synthetic lake leave it off.
 	VerifyLake bool
 
-	// Progress, when set, hears of each completed window [from, to]. The walk
-	// emits nothing until its last window, so this is the only sign of life a
-	// heartbeat gets for hours.
+	// Progress, when set, hears of each completed window [from, to]; the walk
+	// emits nothing until its last window, so this is the only heartbeat.
 	Progress func(from, to uint32)
 }
 

@@ -5,11 +5,8 @@ import (
 	"time"
 )
 
-// wasmDisasmCacheMax bounds resident entries. Disassembly text is the
-// biggest per-entry payload this reader caches (up to maxDisasmOutputBytes
-// each for wat + decompiled), so the cap is far smaller than the account
-// caches' — a few hundred hot contracts covers the explorer's realistic
-// working set while keeping worst-case memory bounded. On overflow the
+// wasmDisasmCacheMax bounds resident entries. Disassembly text is the biggest
+// per-entry payload this reader caches, so the cap is small; on overflow the
 // oldest entry is evicted.
 const wasmDisasmCacheMax = 256
 
@@ -17,24 +14,18 @@ const wasmDisasmCacheMax = 256
 type wasmDisasmEntry struct {
 	wat        string
 	decompiled string
-	// toolNote carries only the wat/decompile note fragment (the join
-	// buildWasmDisassembly would otherwise append inline) — NOT the export-parse
-	// note the caller may have already set on info.ToolNote before this
-	// stage runs.
+	// toolNote carries only the wat/decompile note fragment, NOT the
+	// export-parse note the caller may already have set on info.ToolNote.
 	toolNote string
 	cachedAt time.Time
 }
 
-// wasmDisasmCache is a bounded, permanent (no-TTL) cache of wabt output
-// keyed by wasm hash. Unlike accountStateCache, staleness is not a concept
-// here: the wasm bytes for a content-addressed hash never change, so a
-// cached entry is valid for the life of the process — the cap exists only
-// to bound memory, not to force re-computation.
+// wasmDisasmCache is a bounded, no-TTL cache of wabt output keyed by wasm
+// hash: bytes behind a content-addressed hash never change, so the cap only
+// bounds memory.
 //
-// Only SUCCESSFUL tool runs are cached (see buildWasmDisassembly). A
-// missing-tool or timed-out run is not cached, so a transient failure (load
-// spike, tool not yet installed) is retried on the next request rather than
-// pinned as a permanent false negative for that hash.
+// Only SUCCESSFUL tool runs are cached (see buildWasmDisassembly), so a
+// transient failure is retried rather than pinned as a false negative.
 type wasmDisasmCache struct {
 	mu      sync.Mutex
 	entries map[string]wasmDisasmEntry

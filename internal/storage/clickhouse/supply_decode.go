@@ -25,13 +25,10 @@ func IsSupplyFlowSym(sym string) bool {
 }
 
 // DecodeSupplyAmount extracts the (positive) magnitude from a mint/burn/clawback
-// event's data body: either a bare i128 (the common shape) or the SEP-41/CAP-67
-// map variant {amount, to_muxed_id, …} that carries the amount in an `amount`
-// field when a muxed destination is present (AGENTS.md SEP-41 note). Returns
-// ok=false with a short reason for an undecodable body so callers skip-and-
-// continue. The amount is a *big.Int (ADR-0003: i128 never truncated). Shared
-// by the ingest extractor (decode-at-ingest → supply_flows) and the ch-supply*
-// CH-reading tools so both decode identically.
+// event's data body: a bare i128 or the SEP-41/CAP-67 map {amount, to_muxed_id, ...}
+// (AGENTS.md SEP-41 note). ok=false with a short reason for an undecodable
+// body. The amount is a *big.Int (ADR-0003: i128 never truncated). Shared by
+// ingest and the ch-supply* tools so both decode identically.
 func DecodeSupplyAmount(sv xdr.ScVal) (*big.Int, string, bool) {
 	if amt, err := scval.AsAmountFromI128(sv); err == nil {
 		return amt.BigInt(), "", true

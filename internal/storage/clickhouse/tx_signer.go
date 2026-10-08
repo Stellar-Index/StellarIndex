@@ -6,13 +6,10 @@ import (
 	"time"
 )
 
-// TxSigner is one (ledger, tx_hash) → transaction source account, read from
-// the lake's stellar.transactions for the signer back-tagger. The projector
-// replays trades from lake EVENTS, which carry no source account, so this is
-// the authoritative place the tx signer lives — see migration 0150 +
-// timescale.TagTradesSigner. CloseTime lets the tagger bound its UPDATE by the
-// trades hypertable's time partition (ts) so it chunk-prunes instead of
-// scanning + decompressing every chunk.
+// TxSigner is one (ledger, tx_hash) -> transaction source account, read from
+// stellar.transactions for the signer back-tagger (lake events carry no source
+// account; see timescale.TagTradesSigner). CloseTime lets the tagger bound its
+// UPDATE by the trades time partition so it chunk-prunes.
 type TxSigner struct {
 	Ledger    uint32
 	TxHash    string
@@ -21,13 +18,9 @@ type TxSigner struct {
 }
 
 // TxSignersForLedgerRange returns (ledger, tx_hash, source_account) for every
-// transaction in the INCLUSIVE ledger range [minLedger, maxLedger] with a
-// non-empty source account. The range is keyed on the stellar.transactions
-// primary key (ledger_seq), so the read is bounded + index-efficient — NOT a
-// full-table scan. The caller (the signer sweeper) derives the range from the
-// small set of AMM trades that still need a signer, so at steady state the
-// span is only a few minutes of recent ledgers; the timescale-side
-// TagTradesSigner then filters to the AMM rows that actually need tagging.
+// transaction in the INCLUSIVE range [minLedger, maxLedger] with a non-empty
+// source account. Keyed on the primary key (ledger_seq), so not a full scan;
+// the caller derives the range from the AMM trades still needing a signer.
 func (r *ExplorerReader) TxSignersForLedgerRange(ctx context.Context, minLedger, maxLedger uint32) ([]TxSigner, error) {
 	if maxLedger < minLedger {
 		return nil, nil

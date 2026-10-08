@@ -10,44 +10,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// TTLVerdictCacheTTL bounds how old a served archived-pair verdict set may
-// be before a background re-classification is kicked. The verdict answers
-// "has this pool's instance entry's TTL lapsed" — state that moves on
-// day/week scales (an archival or a restore, not per-ledger churn) — so
-// tens of minutes of staleness is materially indistinguishable from live,
-// while each recompute is a scan of the ~586M-row ttl prefix computing
-// base64Decode per row (running it INLINE per
-// request is what held GET /v1/pools/reserves in the 8s-budget 503 class;
-// the durable schema fix is the planned slim ttl_live_until projection
-// table, v0.21.4 — this cache is the serving-layer fix that works today).
+// TTLVerdictCacheTTL bounds how stale a served archived-pair verdict set may
+// be before a background re-classification starts. TTL lapse moves on
+// day/week scales, while each recompute scans the ~586M-row ttl prefix;
+// running it inline per request held /v1/pools/reserves in the 503 class.
 const TTLVerdictCacheTTL = 30 * time.Minute
 
-// ttlVerdictRefreshTimeout bounds one detached re-classification. The scan
-// measured minutes-class under load; generous so a refresh that would have
-// succeeded isn't abandoned, bounded so a wedged one can't pin the
-// single-flight forever.
+// ttlVerdictRefreshTimeout bounds one detached re-classification (minutes
+// under load): generous so it isn't abandoned, bounded so it can't pin the flight.
 const ttlVerdictRefreshTimeout = 5 * time.Minute
 
 // ttlLivenessCache is a stale-while-revalidate snapshot of per-key TTL
-// liveness verdicts, fronting [ClassifyTTLLiveness] for the request-path
-// reader (SoroswapPairReserves).
+// liveness verdicts, fronting [ClassifyTTLLiveness] for SoroswapPairReserves.
 //
-// States:
+// Fresh: served from memory. Stale or new keys: served anyway (missing keys
+// read as TTLUnknown, which callers KEEP: fail-open) while ONE detached
+// recompute runs. Never filled: the caller waits on that detached compute,
+// bounded by its OWN deadline; the compute outlives a caller that gives up,
+// so the retry serves warm.
 //
-//   - fresh snapshot: verdicts served from memory.
-//   - stale snapshot (or new keys appeared): served anyway — missing keys
-//     read as TTLUnknown, which callers KEEP per the ClassifyTTLLiveness
-//     contract (fail-open: a brand-new pair is almost certainly live) —
-//     while ONE detached recompute runs.
-//   - never filled: the same DETACHED compute is kicked and the caller
-//     waits for it bounded by its OWN deadline only — the compute runs on
-//     the cache's ttlVerdictRefreshTimeout budget and outlives any caller
-//     that gives up, so the fill lands regardless and the retry (or the
-//     DEXTVLCache background refresher, which calls the same reader at
-//     startup and every 10 min) serves warm.
-//
-// compute is injected so the cache logic is unit-testable without a
-// ClickHouse server; the production wiring closes over the reader's conn.
+// compute is injected so the cache is unit-testable without ClickHouse.
 type ttlLivenessCache struct {
 	mu        sync.Mutex
 	verdicts  map[string]TTLLiveness
@@ -55,9 +37,8 @@ type ttlLivenessCache struct {
 	flight    *ttlFlight
 
 	compute func(ctx context.Context, keys []string) (map[string]TTLLiveness, error)
-	// onErr, when set, observes detached-refresh failures (a persistently
-	// failing refresh pins the snapshot stale — same visibility rationale
-	// as wealthRefreshErr). Optional.
+	// onErr, when set, observes detached-refresh failures (a failing refresh
+	// pins the snapshot stale). Optional.
 	onErr func(error)
 }
 
@@ -69,21 +50,15 @@ type ttlFlight struct {
 	err  error
 }
 
-// errTTLRefreshPanicked is the outcome every waiter on a flight whose
-// detached recompute panicked receives. It is a real error rather than nil
-// so a panicked refresh reads as a failed one (the snapshot is left
-// untouched, the caller retries) instead of as a silent success that served
-// an empty verdict set. Mirrors the explorer handlers' errRefreshPanicked.
+// errTTLRefreshPanicked is what waiters on a flight whose recompute panicked
+// receive: a real error, so a panic reads as a failed refresh rather than a
+// silent success serving an empty verdict set.
 var errTTLRefreshPanicked = errors.New(
 	"clickhouse: ttl-liveness detached refresh panicked; verdict snapshot unchanged")
 
 // endFlight clears the in-flight marker and publishes `err` to every waiter.
-//
-// This runs from a DEFER in the refresh goroutine, never as a trailing
-// statement: containing a panic without releasing here is strictly worse
-// than the crash it replaces — coldFill's waiters would block forever on a
-// done channel nobody closes, and kickRefresh would keep handing out the
-// same dead flight for the life of the process.
+// It must run from a DEFER in the refresh goroutine: containing a panic
+// without releasing here would block coldFill's waiters forever.
 func (c *ttlLivenessCache) endFlight(fl *ttlFlight, err error) {
 	c.mu.Lock()
 	c.flight = nil
@@ -96,9 +71,8 @@ func newTTLLivenessCache(compute func(ctx context.Context, keys []string) (map[s
 	return &ttlLivenessCache{compute: compute}
 }
 
-// resolve returns the liveness verdict for every requested key. Nil-safe
-// (a zero-value reader in tests degrades to computing inline... which a
-// nil compute skips by reporting everything unknown).
+// resolve returns the liveness verdict for every requested key. Nil-safe: a
+// nil compute reports everything unknown.
 func (c *ttlLivenessCache) resolve(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 	if c == nil || c.compute == nil {
 		out := make(map[string]TTLLiveness, len(keys))
@@ -117,11 +91,9 @@ func (c *ttlLivenessCache) resolve(ctx context.Context, keys []string) (map[stri
 	return c.coldFill(ctx, keys)
 }
 
-// fromSnapshot serves the requested keys from a filled snapshot.
-// filled=false when nothing was ever stored; needsRefresh=true when the
-// snapshot is past its TTL or lacks some requested key (the CALLER kicks
-// the detached recompute — kept out of this read-only helper so the
-// intentional-detach point stays a single annotated call site).
+// fromSnapshot serves the requested keys from a filled snapshot. filled=false
+// when nothing was ever stored; needsRefresh=true when stale or a key is
+// missing (the CALLER kicks the recompute, keeping the detach a single call site).
 func (c *ttlLivenessCache) fromSnapshot(keys []string) (out map[string]TTLLiveness, filled, needsRefresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -143,9 +115,7 @@ func (c *ttlLivenessCache) fromSnapshot(keys []string) (out map[string]TTLLivene
 }
 
 // coldFill kicks the detached compute and waits for it, bounded by the
-// CALLER's deadline only — the compute itself runs on the cache's own
-// budget and outlives a caller that gives up, so the fill still lands and
-// a retry serves warm.
+// CALLER's deadline only; the fill still lands if the caller gives up.
 func (c *ttlLivenessCache) coldFill(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 	fl := c.kickRefresh(keys) //nolint:contextcheck // intentional detach — a caller that times out must not kill the fill (see the type doc)
 	select {
@@ -167,20 +137,11 @@ func (c *ttlLivenessCache) store(verdicts map[string]TTLLiveness) {
 	c.mu.Unlock()
 }
 
-// kickRefresh starts ONE detached recompute (returning the existing
-// flight while one is up). The computed key set is the UNION of the
-// caller's keys and every key already in the snapshot: callers pass
-// subset key sets (?pool= resolves a single pair, the TVL refresher
-// passes the full registry), and because store() whole-map-replaces,
-// a subset snapshot would evict every other pair's verdict — silently
-// re-opening the fail-open TTLUnknown→keep path for the whole registry
-// (archived pairs served as live liquidity) until the next full-set
-// refresh happened to land. The union keeps
-// store()'s replace semantics and an honest fetchedAt while never
-// shrinking coverage. Keys that leave the registry linger until
-// process restart — acceptable: the registry is grow-only in practice,
-// and the compute cost is dominated by the ttl-prefix scan, not the
-// key-set size.
+// kickRefresh starts ONE detached recompute (returning the existing flight
+// while one is up). It computes the UNION of the caller's keys and the
+// snapshot's: store() replaces the whole map, so a subset (?pool=) would evict
+// other pairs' verdicts and re-open the fail-open TTLUnknown->keep path.
+// Keys that leave the registry linger until restart; the registry is grow-only.
 func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	c.mu.Lock()
 	if c.flight != nil {
@@ -209,16 +170,11 @@ func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	c.mu.Unlock()
 	go func() {
 		var err error
-		// End the flight from a defer so neither a panic in compute nor one
-		// in onErr can wedge this cache forever — see endFlight. An
-		// unrecovered panic in ANY goroutine also kills the whole API
-		// process, so the recovery and the release land together: either
-		// without the other is a worse failure than the one it replaces.
+		// End the flight from a defer so a panic in compute or onErr cannot wedge
+		// the cache (see endFlight); recovery and release must land together.
 		defer func() {
 			if rec := recover(); rec != nil {
-				// nil logger → worker.Report falls back to slog.Default();
-				// this cache carries no logger of its own, and the metric
-				// (which is the page signal) does not depend on one.
+				// nil logger: worker.Report falls back to slog.Default().
 				worker.Report(nil, "explorer-ttl-liveness-refresh", rec)
 				err = errTTLRefreshPanicked
 			}

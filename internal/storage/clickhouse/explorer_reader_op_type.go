@@ -22,8 +22,7 @@ type OpTypePage struct {
 // skip index, so the filter cannot prune. Each page instead scans at most
 // recentLedgersTailWindow ledgers below its anchor (the tip on the first page)
 // and never falls back to an unbounded read: a rare type yields a short or
-// empty page whose continuation is OpTypePage.ScannedFrom. Measured on r1 with
-// limit 200: at most 3.19M rows / 349 MiB / 238 ms per page.
+// empty page whose continuation is OpTypePage.ScannedFrom.
 func (r *ExplorerReader) RecentOperationsOfType(ctx context.Context, limit int, cur ExplorerCursor, opTypes []string) (OpTypePage, error) {
 	if len(opTypes) == 0 {
 		return OpTypePage{}, errors.New("clickhouse: recent operations of type: no op types")
