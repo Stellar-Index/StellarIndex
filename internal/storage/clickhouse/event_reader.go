@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -122,8 +124,12 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 		emit = enricher.add
 	}
 
+	qctx, err := withContractIDsTable(ctx, contractIDs)
+	if err != nil {
+		return err
+	}
 	q := contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms, useFinal, withOpArgs)
-	rows, err := conn.Query(ctx, q, from, to)
+	rows, err := conn.Query(qctx, q, from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
@@ -195,8 +201,12 @@ func FirstContractEventLedgerFiltered(ctx context.Context, addr string, from, to
 		return 0, false, err
 	}
 	defer func() { _ = conn.Close() }()
+	qctx, err := withContractIDsTable(ctx, contractIDs)
+	if err != nil {
+		return 0, false, err
+	}
 	var ledger uint32
-	err = conn.QueryRow(ctx, firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms), from, to).Scan(&ledger)
+	err = conn.QueryRow(qctx, firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms), from, to).Scan(&ledger)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -217,12 +227,40 @@ func firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms []
 		%s`, contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms), boundedScanSettings)
 }
 
+// maxInlineContractIDs caps how many contract ids are inlined as SQL
+// literals (~60 bytes each). A factory's gated set can hold 100k+ children,
+// which as literals overflows ClickHouse's 256 KiB max_query_size, so a
+// larger set is sent as the external table contractIDsTable instead.
+const maxInlineContractIDs = 1000
+
+const contractIDsTable = "gated_contract_ids"
+
+// withContractIDsTable attaches contractIDs as the contractIDsTable external
+// table when contractEventsFilterWhere will reference it.
+func withContractIDsTable(ctx context.Context, contractIDs []string) (context.Context, error) {
+	if len(contractIDs) <= maxInlineContractIDs {
+		return ctx, nil
+	}
+	tbl, err := ext.NewTable(contractIDsTable, ext.Column("contract_id", "String"))
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: build %s external table: %w", contractIDsTable, err)
+	}
+	for _, id := range contractIDs {
+		if err := tbl.Append(id); err != nil {
+			return nil, fmt.Errorf("clickhouse: append %s row: %w", contractIDsTable, err)
+		}
+	}
+	return clickhouse.Context(ctx, clickhouse.WithExternalTable(tbl)), nil
+}
+
 // contractEventsFilterWhere renders the `WHERE ledger_seq BETWEEN ? AND ?`
 // clause plus the contract / topic[0] prefilters, shared by the stream and
 // the first-ledger seek so they cannot disagree about which rows match.
 func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ?"
-	if len(contractIDs) > 0 {
+	if len(contractIDs) > maxInlineContractIDs {
+		where += " AND contract_id IN " + contractIDsTable
+	} else if len(contractIDs) > 0 {
 		// contractIDs is caller-supplied (a live-grown gated set), so escape it.
 		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
 	}

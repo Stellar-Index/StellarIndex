@@ -4,6 +4,7 @@
 package clickhouse
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -184,5 +185,29 @@ func TestSQLQuoteEscaped(t *testing.T) {
 		if got := sqlQuoteEscaped(tt.in); got != tt.want {
 			t.Errorf("sqlQuoteEscaped(%q) = %s, want %s", tt.in, got, tt.want)
 		}
+	}
+}
+
+// sorocredit's gated set reached 117k factory children, ~7 MB of inlined
+// literals, past ClickHouse's 256 KiB max_query_size; a large set must ride
+// an external table so the query text stays small.
+func TestContractEventsFilteredQuery_LargeGatedSetStaysUnderMaxQuerySize(t *testing.T) {
+	ids := make([]string, 120_000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("C%055d", i)
+	}
+	for name, q := range map[string]string{
+		"stream": contractEventsFilteredQuery(ids, []string{"swap"}, nil, false, false),
+		"seek":   firstContractEventLedgerQuery(ids, []string{"swap"}, nil),
+	} {
+		if len(q) >= 256*1024 {
+			t.Errorf("%s query is %d bytes, at or over max_query_size", name, len(q))
+		}
+		if !strings.Contains(q, "contract_id IN "+contractIDsTable) {
+			t.Errorf("%s query does not match against the external table:\n%.300s", name, q)
+		}
+	}
+	if q := contractEventsFilteredQuery([]string{"CAAA"}, nil, nil, false, false); !strings.Contains(q, "contract_id IN ('CAAA')") {
+		t.Errorf("a small set must stay inlined:\n%s", q)
 	}
 }
