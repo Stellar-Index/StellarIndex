@@ -15,40 +15,25 @@ import (
 // ─── `-tier exact -chunks` — the peg identity's half of the walk ────────
 //
 // The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
-// compression policy, the run lock and the free-space guard. This file is
-// the other half for the EXACT tier: the same classification and the same
-// `round(pegged_leg / 10^decimals, 8)` UPDATE the day walk runs
-// (usd_volume_restamp.go), restricted to one chunk's slice of the window
-// and routed through the guarded in-chunk apply.
+// compression policy, the run lock and the free-space guard. This file runs
+// the exact tier's `round(pegged_leg / 10^decimals, 8)` UPDATE (the day
+// walk's, usd_volume_restamp.go) on one chunk's slice through the guarded
+// in-chunk apply. Any DML into a compressed chunk decompresses it inside the
+// transaction, so an in-place exact repair over millions of rows takes days;
+// the per-chunk bracket does not.
 //
-// # Why the exact tier needs it too
+// Not shared with the xlm-base tier:
 //
-// The mode was built for the XLM-base anchor re-derive, whose write set is a
-// row list. The exact tier writes a set-based UPDATE per `-slice` window
-// instead — which is a different statement, not a different price: a DML
-// into a COMPRESSED chunk is serviced by decompressing that chunk inside
-// the transaction whatever shape the statement has. The measured rate is
-// the same ~1,574 rows/min, and the exact-tier repair population is ~10M
-// rows across five months of trades (2,306,054 in March alone) — 100+ hours in
-// place, against the decompress → restamp → re-compress bracket's
-// per-chunk cost.
-//
-// # What is NOT shared with the xlm-base tier
-//
-//   - `-chunk-batch`: there is no row batch here. One `-slice` window is
-//     one UPDATE is one transaction, so `-slice` IS the per-transaction
-//     bound, and the flag is refused rather than silently ignored.
+//   - `-chunk-batch`: one `-slice` window is one UPDATE in one transaction,
+//     so `-slice` is the bound and the flag is refused rather than ignored.
 //   - `-max-generation` / `-min-rel-delta` / `-report` / `-sample`: an
-//     identity has no relative-move distribution to threshold or report,
-//     and the walk's generation guard is the run's own generation.
+//     identity has no relative-move distribution, and the generation guard
+//     is the run's own generation.
 //
-// # What IS preserved, unchanged, from the in-place walk
-//
-// The classification (ClassifyUSDVolumeTier, per UTC day — the tier is a
-// property of the day's groups, so the targets are resolved per day and
-// cached rather than per chunk), the identity, the `derive_generation <=
-// gen` guard, `-fill-null` as an opt-in, and the fail-closed dry
-// run: without `-write` this walk counts through
+// Kept from the in-place walk: per-UTC-day classification
+// (ClassifyUSDVolumeTier, cached per day), the identity, the
+// `derive_generation <= gen` guard, opt-in `-fill-null`, and the fail-closed
+// dry run: without `-write` it counts through
 // CountUSDVolumeRestampCandidates and decompresses nothing.
 
 // exactChunkStore is the exact tier's seam: the driver's chunk and policy
