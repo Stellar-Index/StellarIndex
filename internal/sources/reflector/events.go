@@ -1,9 +1,7 @@
-// Package reflector ingests oracle updates from the three Reflector
-// contracts (DEX / CEX / FX) — a SEP-40 oracle network native to
-// Stellar / Soroban.
+// Package reflector ingests oracle updates from the three Reflector contracts (DEX / CEX / FX),
+// a SEP-40 oracle network native to Stellar / Soroban.
 //
-// Design reference: internal/sources/reflector/README.md and
-// docs/protocols/reflector.md. Read the README's Q1–Q5 quirks
+// Read internal/sources/reflector/README.md's Q1–Q5 quirks (and docs/protocols/reflector.md)
 // before changing the decoder.
 package reflector
 
@@ -13,17 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Source name constants — one per Reflector contract variant.
-// Appear in metrics labels + canonical.OracleUpdate.Source.
+// Source names, one per variant; used as metric labels and canonical.OracleUpdate.Source.
 const (
 	SourceDEX = "reflector-dex"
 	SourceCEX = "reflector-cex"
 	SourceFX  = "reflector-fx"
 )
 
-// Variant identifies which of the three Reflector contracts a
-// Source instance targets. Controls the SourceName it stamps on
-// emitted updates.
+// Variant identifies which Reflector contract a Source targets, and so the SourceName it stamps.
 type Variant uint8
 
 const (
@@ -45,69 +40,29 @@ func (v Variant) SourceName() string {
 	}
 }
 
-// DefaultDecimals is the canonical Reflector price scale (verified
-// from `reflector-contract/pulse-contract/src/lib.rs` during
-// Phase-1 audit). Individual contracts technically publish their
-// own `decimals()` SEP-40 method; a Decoder uses this value unless
-// [WithDecoderDecimals] overrides it.
-//
-// CAVEAT — 14 is contract-confirmed for DEX only; ASSUMED for CEX/FX.
-// The DEX oracle's SEP-40 decimals() was checked on-chain (=14,
-// documented in decode.go's quoteForVariant). For the CEX and FX
-// oracles 14 is an assumed default — never read from the contract and
-// NOT validated at runtime (the pure-decoder architecture deliberately
-// forbids a startup RPC call — docs/architecture/ingest-pipeline.md).
-// A contract re-pointed via `[oracle.reflector]` that publishes at a
-// different scale would mis-scale prices silently: confirm the target's
+// DefaultDecimals is the Reflector price scale unless [WithDecoderDecimals] overrides it. 14 is
+// confirmed on-chain for DEX only and ASSUMED for CEX/FX: the pure decoder makes no startup RPC call,
+// so a re-pointed `[oracle.reflector]` contract at another scale mis-scales prices silently; confirm its
 // decimals() and set `dex_decimals` / `cex_decimals` / `fx_decimals`.
 const DefaultDecimals uint8 = 14
 
-// DefaultResolutionSeconds is the uniform 5-min cadence every
-// Reflector contract updates on (Q3). Emitted as the
-// `stellarindex_oracle_resolution_seconds` gauge by
-// [pipeline.BuildDispatcher] at registration time, so the
-// oracle-stale alert has a per-source threshold.
+// DefaultResolutionSeconds is every Reflector contract's 5-min cadence (Q3), exported as the
+// `stellarindex_oracle_resolution_seconds` gauge so the oracle-stale alert has a per-source threshold.
 const DefaultResolutionSeconds = 300
 
-// Event-topic constants. Verified against
-// `reflector-contract/oracle/src/events.rs:4-10` — soroban-sdk 25.3.0.
-//
-// The contract definition is:
-//
-//	#[contractevent(topics = ["REFLECTOR", "update"])]
-//	pub struct UpdateEvent {
-//	    #[topic] timestamp: u64,           // <-- topic[2], NOT in body
-//	    update_data: Vec<(Val, i128)>,     // Val is Address | Symbol
-//	}
-//
-// So the on-wire shape is:
+// Event topics, from reflector-contract/oracle/src/events.rs:4-10 (soroban-sdk 25.3.0):
 //
 //	topic[0] = Symbol("REFLECTOR")
 //	topic[1] = Symbol("update")
 //	topic[2] = U64(timestamp)
 //	body     = Map { "update_data": Vec<(ScVal, I128)> }
-//
-// The #[contractevent] macro wraps the non-topic field in a Map keyed by
-// field name, so the body is not a bare Vec; sdkDecodeUpdateBody pins
-// this against real mainnet fixtures. See
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution for why
-// fields are looked up by name.
 const (
 	EventTopic0 = "REFLECTOR"
 	EventTopic1 = "update"
 )
 
-// Pre-encoded base64 SCVal::Symbol blobs — produced at init via
-// scval.MustEncodeSymbol and used for byte-equality matching against
-// Event.Topic entries (and passed directly to stellar-rpc's
-// getEvents topic filter). Regenerated from [EventTopic0]/
-// [EventTopic1] at init to keep the source of truth in one place.
-//
-// Golden regression in internal/scval/scval_test.go
-// (TestGolden_symbolBytes) pins the exact base64 output of
-// EncodeSymbol("REFLECTOR") and EncodeSymbol("update") — if an SDK
-// upgrade shifts the wire encoding, that test fires before this
-// package ships.
+// Base64 SCVal::Symbol topic blobs for byte-equality matching, derived from [EventTopic0] /
+// [EventTopic1]; TestGolden_symbolBytes in internal/scval pins the encoding across SDK upgrades.
 var (
 	TopicSymbolReflector = scval.MustEncodeSymbol(EventTopic0) // topic[0]
 	TopicSymbolUpdate    = scval.MustEncodeSymbol(EventTopic1) // topic[1]
@@ -115,47 +70,25 @@ var (
 
 // Errors returned by the decode path.
 var (
-	// ErrNotReflectorEvent — topic[0..1] doesn't match REFLECTOR +
-	// update. Non-Reflector contract event; skip.
+	// ErrNotReflectorEvent — topic[0..1] is not REFLECTOR + update; skip.
 	ErrNotReflectorEvent = errors.New("reflector: not a REFLECTOR.update event")
 
-	// ErrMalformedPayload — event body doesn't decode to the
-	// expected Map{"update_data": Vec<(Val, i128)>} shape (the
-	// timestamp lives in topic[2], not the body).
+	// ErrMalformedPayload — the body is not Map{"update_data": Vec<(Val, i128)>}.
 	ErrMalformedPayload = errors.New("reflector: malformed event payload")
 
-	// ErrEmptyPrices — every slot of a non-empty prices vector was
-	// non-positive (an empty on-wire vector is a no-op, not this
-	// error). Reflector filters zero prices before publish, so this
-	// should never fire; guard against it defensively. An unmapped
-	// symbol is NOT a reason: it is recorded verbatim as a
-	// `raw:<symbol>` row (canonical.AssetOracleRaw), so an all-unknown
-	// vector decodes to rows, not to this error.
+	// ErrEmptyPrices — every slot of a non-empty vector was non-positive (the contract filters
+	// zeros, so defensive). An empty vector is a no-op and unmapped symbols are raw rows, not this error.
 	ErrEmptyPrices = errors.New("reflector: empty prices vector")
 
-	// ErrPriceVectorOverflow — prices vector size exceeded the
-	// op-index fanout stride (opIndexFanoutStride = 1024). If this
-	// ever happens the fanned-out OpIndex values would spill into
-	// the next operation's synthetic range and collide on the
-	// oracle_updates hypertable's (source, ledger, tx_hash,
-	// op_index, ts) primary key. Refusing the event loudly is
-	// safer than silently writing colliding rows — observed max in
-	// the wild is ~50 assets/update, so hitting 1024 means either
-	// a feed explosion or a decoder bug.
+	// ErrPriceVectorOverflow — the vector exceeds opIndexFanoutStride, so OpIndex would collide with
+	// the next block on the oracle_updates primary key. Refused loudly; observed max is ~50 assets.
 	ErrPriceVectorOverflow = errors.New("reflector: price vector exceeds OpIndex fanout stride")
 
-	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride.
-	// The synthetic OpIndex packs (OperationIndex, EventIndex, vector
-	// position) into one uint32; an EventIndex this large would spill
-	// into the next operation's synthetic range. Real Reflector-adjacent
-	// ops emit at most a handful of contract events, so hitting the
-	// stride means either a decoder bug or a contract emitting far more
-	// events per op than anything observed.
+	// ErrEventIndexOverflow — e.EventIndex >= eventFanoutStride would spill into the next operation's
+	// OpIndex range: a decoder bug or a contract emitting far more events per op than observed.
 	ErrEventIndexOverflow = errors.New("reflector: EventIndex exceeds OpIndex fanout stride")
 
-	// ErrOperationIndexOverflow — e.OperationIndex is negative or at least
-	// opIndexFanoutMax, so the synthetic OpIndex packing would wrap uint32
-	// onto another operation's block. Unreachable on-chain (Soroban caps
-	// ops-per-tx far below the bound); a hit means a producer bug.
+	// ErrOperationIndexOverflow — e.OperationIndex is negative or >= opIndexFanoutMax, so OpIndex
+	// would wrap uint32. Unreachable on-chain; a hit means a producer bug.
 	ErrOperationIndexOverflow = errors.New("reflector: OperationIndex exceeds OpIndex fanout bound")
 )
