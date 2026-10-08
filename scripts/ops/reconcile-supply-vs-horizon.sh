@@ -103,8 +103,7 @@ for a in "${ASSETS[@]}"; do
   # Same failure discipline as the Horizon fetch above: `curl -f` turns an
   # HTTP >=400 from our own API into a non-zero exit instead of a non-JSON
   # body that would otherwise make jq fail and, under `set -eo pipefail`,
-  # abort the whole run before it ever reaches the SKIP(no-data) branch below
-  # (F083).
+  # abort the whole run before it ever reaches the SKIP(no-data) branch below.
   ar=""
   if ! ar=$(curl -sf --max-time 30 "${API_BASE}/v1/assets/${code}-${issuer}"); then
     ar=""

@@ -3,11 +3,10 @@
 # version inline; every install must route through
 # scripts/ci/install-ansible.sh, which reads configs/ansible/toolchain.txt.
 #
-# GH-896: before install-ansible.sh existed, deploy.yml, ansible-drift.yml
-# and ci.yml each spelled out their own `ansible==...` / `ansible-core==...`
-# pin, and nothing stopped a bump landing in one workflow and not the
-# others. This gate keeps that regression from coming back one workflow
-# edit at a time: it fails if `ansible==`/`ansible-core==` (the pip/pipx
+# Workflows (deploy.yml, ansible-drift.yml, ci.yml) must not each spell out their
+# own `ansible==...` / `ansible-core==...` pin, or a bump can land in one
+# workflow and not the others. This gate fails if
+# `ansible==`/`ansible-core==` (the pip/pipx
 # install syntax) appears anywhere under .github/workflows.
 set -euo pipefail
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-apikey-scan-test.sh — fixture tests for the credential-keyspace
-# walk ban (scripts/ci/lint-apikey-scan.sh, class finding K051).
+# walk ban (scripts/ci/lint-apikey-scan.sh).
 #
 # The gate's value is that the defect is invisible where it is written:
 # a `SCAN apikey:*` lookup is correct, passes its tests, and only costs

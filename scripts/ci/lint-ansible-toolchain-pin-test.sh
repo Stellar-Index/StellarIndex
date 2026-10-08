@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-ansible-toolchain-pin-test.sh — fixture tests for
-# scripts/ci/lint-ansible-toolchain-pin.sh (GH-896).
+# scripts/ci/lint-ansible-toolchain-pin.sh.
 #
 # Run: bash scripts/ci/lint-ansible-toolchain-pin-test.sh
 set -uo pipefail

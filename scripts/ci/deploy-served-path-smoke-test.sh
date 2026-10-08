@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # deploy-served-path-smoke-test.sh — deploy.yml's served-path smoke must
-# assert readiness on /v1/readyz and run a real read on every region
-# (GH-910).
+# assert readiness on /v1/readyz and run a real read on every region.
 #
 # /v1/healthz's body is a constant "ok", so a smoke that probes it cannot
 # fail while the process is up; /v1/readyz carries the Postgres and

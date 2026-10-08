@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # explorer-openapi-check-test.sh — fixture tests for
-# scripts/ci/explorer-openapi-check.sh (GH-1300).
+# scripts/ci/explorer-openapi-check.sh.
 #
 # The defect: the docs page links /openapi/stellar-index.v1.yaml, that file
 # only reaches the static export via a `prebuild` lifecycle script, and

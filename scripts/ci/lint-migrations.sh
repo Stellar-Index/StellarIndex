@@ -12,7 +12,7 @@
 #      non-fatal WARNING (this repo legitimately skips numbers when a
 #      migration is squashed/removed) — but a NEW migration numbered
 #      below the comparison base's head (i.e. filed INTO a gap) is
-#      FATAL (GH-1164): such a file is invisible to `migrate up` on any
+#      FATAL: such a file is invisible to `migrate up` on any
 #      deployment already past that number and silently divergent on a
 #      fresh one.
 #   3. register completeness — every NNNN_*.up.sql has a row in
@@ -142,7 +142,7 @@ fi
 # the tree legitimately skips numbers (e.g. 0075, 0077-0079, 0084 today)
 # when a migration is squashed out, so a hard no-gap rule on the whole
 # tree would false-positive. A NEW migration filed INTO a gap is a
-# different, fatal shape (GH-1164, below): the warning names why gaps
+# different, fatal shape (below): the warning names why gaps
 # already in the tree are fine, never why it would be fine to add one.
 
 # Non-empty: every migration file must have content.

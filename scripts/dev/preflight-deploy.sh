@@ -162,7 +162,7 @@ else
     # A note here left this whole script exit 0 with the release
     # unverified: nothing else checks that a release exists before
     # dispatch, so "unverified" must read as a decision outstanding, not
-    # a soft warning (GH-556b).
+    # a soft warning.
     block "gh is not installed"
 fi
 
@@ -526,8 +526,8 @@ else
         # AND polls this surface on every r1 dispatch regardless of what
         # changed. Everywhere else that step never runs, so the surface
         # must stay SUBSTANTIVE there — treating it as applied on a
-        # region where nothing applies it is the false green GH-556(d)
-        # reported. This is a scheduling fact about deploy.yml, not a
+        # region where nothing applies it is a false green.
+        # This is a scheduling fact about deploy.yml, not a
         # host-verified object check, so it does not count toward
         # applied_verified (that counter's message names ClickHouse
         # objects proven present in system.tables).
@@ -654,7 +654,7 @@ else
     fi
     rm -rf "$compat_dir"
 
-    # GH-1165: deploy.yml's migration gate now also runs numbering,
+    # deploy.yml's migration gate now also runs numbering,
     # immutability and commands (not just compat). Mirror that here so
     # this preflight can't report clean while the real gate would fail.
     # Those three scripts cd to their OWN script directory's repo root

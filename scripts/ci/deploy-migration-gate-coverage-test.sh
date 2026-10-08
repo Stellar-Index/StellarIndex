@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-migration-gate-coverage-test.sh — deploy.yml's migration gate
-# must run all four migration lints, not just compat (GH-1165).
+# must run all four migration lints, not just compat.
 #
 # ci.yml runs four migration lints: lint-migrations.sh (numbering,
 # money-column, register), lint-migration-compat.sh (rule-9

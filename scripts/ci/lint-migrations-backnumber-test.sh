@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-migrations-backnumber-test.sh — regression test for the GH-1164
+# lint-migrations-backnumber-test.sh — regression test for the
 # back-numbering guard in scripts/ci/lint-migrations.sh.
 #
 # The guard needs real git HISTORY (a comparison base vs HEAD) to tell a

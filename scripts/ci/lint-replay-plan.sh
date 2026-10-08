@@ -105,7 +105,7 @@ changed_watched() {
 # value: non-empty, and not a bare `none` (a "none" must give its reason).
 # Both greps read from here-strings, not a pipeline, so `grep -q`
 # closing its input early can never surface as a SIGPIPE'd writer under
-# `set -o pipefail` — the trap lint-baseline-growth.sh (PR #39) documents.
+# `set -o pipefail` — the trap lint-baseline-growth.sh documents.
 has_replay_plan() {
   local body="$1" trailers
   trailers="$(grep -iE '^Replay-Plan:[[:space:]]*\S' <<<"$body" || true)"

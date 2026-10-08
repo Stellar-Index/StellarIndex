@@ -432,7 +432,7 @@ rm -f "$root/configs/ansible/roles/fixture/files/freshness.sh.bak"
 run_gate "$root" "$root/manifest"
 expect "an SQL-composed line with no space before its value is RED" red
 
-# ─── 7b. alert coverage (GH-899) ─────────────────────────────────────
+# ─── 7b. alert coverage ─────────────────────────────────────
 #
 # A manifest producer whose .prom output no Prometheus rule selects (by
 # name or by a file-unscoped catch-all) must be RED: a dead producer would

@@ -105,12 +105,12 @@
 # and fails until the line is deleted. The debt shrinks monotonically
 # and a NEW migration cannot join it quietly.
 #
-# ── DOCS FENCED SQL (GH-795) ──────────────────────────────────────────
+# ── DOCS FENCED SQL ──────────────────────────────────────────
 #
 # The same failure mode lives outside migrations/: a runbook's fenced
 # ```sql block is copy-pasted straight into psql, and a DELETE/UPDATE
 # against a hypertable with no time-bound predicate is a full-table
-# scan of `trades` waiting to happen (GH-795). This gate additionally
+# scan of `trades` waiting to happen. This gate additionally
 # walks every fenced ```sql block under docs/, and for every DELETE or
 # UPDATE statement in one, requires a time-bound predicate: a
 # comparison against a `*_at`/`*_time`/`ts`/`ledger*` column, a
@@ -620,7 +620,7 @@ echo "lint-migration-commands: OK — ${#migs[@]} migration file(s), ${paragraph
      "${#dml_files[@]} ops SQL file(s) checked for unbounded DML on $(printf '%s\n' "$compressed" | grep -c .)" \
      "compressed hypertable(s)."
 
-# ── docs fenced ```sql DELETE/UPDATE time-bound check (GH-795) ────────
+# ── docs fenced ```sql DELETE/UPDATE time-bound check ────────
 DOCS="docs"
 docmds=()
 if [ -d "$DOCS" ]; then

@@ -331,7 +331,7 @@ echo "=== systemd unit hardening ===" && ./scripts/ci/lint-systemd-hardening.sh
 echo "=== systemd unit hardening self-test ===" && ./scripts/ci/lint-systemd-hardening-test.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
-# GH-545: registered in scripts/ci/textfile-producers.manifest but nothing
+# Registered in scripts/ci/textfile-producers.manifest but nothing
 # ran either self-test — the manifest's third column proved only that the
 # file existed, not that it executed.
 echo "=== ch-schema-snapshot self-test ===" && ./scripts/ops/ch-schema-snapshot-test.sh
@@ -436,7 +436,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
 echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
-# GH-775: pins commit-identity-range.sh's new-branch/tag fallback (a
+# Pins commit-identity-range.sh's new-branch/tag fallback (a
 # detached-HEAD checkout with the branch's own commit also present as a
 # remote-tracking ref) against the exact regression that made the range
 # come back empty and the job report "checking 0 commit(s)" as a pass.
