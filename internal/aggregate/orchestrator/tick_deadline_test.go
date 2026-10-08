@@ -41,7 +41,7 @@ func (s *wedgedStore) TradesInRange(ctx context.Context, p canonical.Pair, from,
 	return s.mockStore.TradesInRange(ctx, p, from, to, limit)
 }
 
-// TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers is K025's
+// TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers covers the
 // aggregator leg. Tick ran on the process-lifetime context with no
 // deadline of its own, so one store call that stopped answering held
 // the tick — and with it every price the aggregator publishes — until
@@ -150,7 +150,7 @@ func (f *deadlineRecordingFX) FXQuoteAtOrBefore(ctx context.Context, _ canonical
 }
 
 // TestTick_EveryFXQueryInheritsTheTickDeadline pins the two FX query
-// sites K025 names — the triangulation leg (triangulate.go legPrice) and
+// sites — the triangulation leg (triangulate.go legPrice) and
 // the composite-reference evaluator (composite_reference.go) — to the
 // tick's deadline. Neither sets one of its own; both are bounded only
 // because Tick hands them a bounded context, so this is the test that

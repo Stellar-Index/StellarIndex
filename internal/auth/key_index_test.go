@@ -19,7 +19,7 @@ import (
 )
 
 // These tests cover what the cost test cannot: the states in which the
-// API-key lookup index (F057 / K051) is NOT simply present and right.
+// API-key lookup index is NOT simply present and right.
 // Each one is a way a lookup index turns a cost defect into a security
 // one — a live credential that list / revoke / the tier clamp cannot
 // see — so each asserts that the credential is still found and still

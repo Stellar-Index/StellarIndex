@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestValidate_HashDBVerifyBoundsRejected — T130: HashDBConfig.validate
+// TestValidate_HashDBVerifyBoundsRejected: HashDBConfig.validate
 // checked VerifyIntervalMinutes >= 0 but never bounded it above, and
 // never looked at VerifyWindowLedgers at all. Unbounded,
 // verify_window_ledgers can exceed the chain height, turning every
@@ -830,7 +830,7 @@ func TestMaxMarketCapVolumeRatioRejectsANegativeCeiling(t *testing.T) {
 	}
 }
 
-// TestLoadReader_GH1129DeadFieldsRetired — GH-1129: eight TOML fields
+// TestLoadReader_GH1129DeadFieldsRetired: eight TOML fields
 // were parsed, defaulted and in several cases validated with hard
 // requirements while nothing outside internal/config read them. A
 // self-hosted deployment's config that set (or omitted, for

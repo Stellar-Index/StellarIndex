@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Finding K036: the aggregator assembles a window by appending one
+// The aggregator assembles a window by appending one
 // batch per expanded source pair, and that expansion came out of Go map
 // iteration ([FiatBackers]); the local outlier index then sorted only on
 // Timestamp, so same-timestamp prints — the common case, since every

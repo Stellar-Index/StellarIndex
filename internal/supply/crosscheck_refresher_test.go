@@ -94,7 +94,7 @@ func newSilentLogger() *slog.Logger {
 
 // TestCrossCheckRefresher_NoPairsIsNoOp — empty pairs slice returns
 // nil and emits no metrics. No-op-when-unconfigured is the same
-// pattern as the watched-set decoders (commits 94077b327..db913eb28).
+// pattern as the watched-set decoders.
 func TestCrossCheckRefresher_NoPairsIsNoOp(t *testing.T) {
 	t.Parallel()
 	emitter := &captureEmitter{}

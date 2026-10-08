@@ -12,11 +12,11 @@ import (
 
 // TestNoNewAPIKeyKeyspaceWalk runs scripts/ci/lint-apikey-scan.sh — the
 // ban on walking the `apikey:*` keyspace outside the one sanctioned
-// index build (class finding K051) — and its fixture self-test.
+// index build — and its fixture self-test.
 //
 // Why a Go test wraps a shell gate: a script under scripts/ci runs only
 // where something names it, and a control that exists but is never
-// invoked is its own finding class (K023). `go test ./...` runs in
+// invoked is its own finding class. `go test ./...` runs in
 // every gate this repo has, so the ban holds even where verify.sh and
 // ci.yml's repo-gates job are not run.
 //

@@ -43,7 +43,7 @@ postgres_dsn = "postgres://u:p@h/db"
 	}
 }
 
-// TestLoadReader_MetricsListenSet — GH-1130: MetricsListenSet must
+// TestLoadReader_MetricsListenSet: MetricsListenSet must
 // distinguish "operator wrote obs.metrics_listen in the file" from
 // "left at Default()'s value", so a consumer (e.g. the aggregator's
 // single-host port shift) can tell an explicit choice from a default.
