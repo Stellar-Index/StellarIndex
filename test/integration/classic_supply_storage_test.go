@@ -12,15 +12,15 @@ import (
 )
 
 // TestClassicSupplyObservationsRoundTrip exercises the four
-// classic-supply hypertables shipped in 3e215c2e2 through real
+// classic-supply hypertables through real
 // TimescaleDB. Each Sum*AtOrBefore method uses the same
 // DISTINCT ON pattern + WHERE NOT is_removal filter; a SQL
 // regression in the DISTINCT ON ordering or the is_removal
 // handling silently mis-reports Algorithm 2 components.
 //
-// Companion to 3856f3278's SEP-41 coverage. The Insert + DISTINCT-ON
+// Companion to the SEP-41 coverage. The Insert + DISTINCT-ON
 // + last-writer-wins semantics ship untested at the SQL level
-// without this; Go-layer defensive guards in 3e215c2e2 catch
+// without this; Go-layer defensive guards catch
 // invalid inputs but can't detect a SQL regression.
 func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

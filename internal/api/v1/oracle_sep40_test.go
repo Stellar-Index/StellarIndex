@@ -99,8 +99,8 @@ func TestOracleLastPrice_RedisVWAPFallback(t *testing.T) {
 // TestOracleLastPrice_StablecoinFiatProxyFallback — when the
 // Redis VWAP cache also misses but the operator declared classic
 // USD pegs, the SEP-40 lastprice handler walks the pegs and returns
-// the rewritten X/<peg> snapshot. Mirrors the /v1/price fallback
-// from 6505934b5. Without this, an on-chain integrator drop-in-replacing
+// the rewritten X/<peg> snapshot. Mirrors the /v1/price fallback.
+// Without this, an on-chain integrator drop-in-replacing
 // SEP-40 lastprice() against XLM gets 404 even though /v1/coins
 // shows $0.16 fine.
 func TestOracleLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
@@ -646,8 +646,8 @@ func TestOraclePrices_EmptyAsArray(t *testing.T) {
 // asset/fiat:USD pair has no closed buckets but the operator
 // declared classic USD pegs, the handler walks the pegs and
 // returns the rewritten asset/<peg> snapshots. Mirrors the
-// fallback shipped on /v1/oracle/lastprice (3aaa5c2a4) and the other
-// X/fiat:USD surfaces (6505934b5 / a8be130dd). Without this,
+// fallback shipped on /v1/oracle/lastprice and the other
+// X/fiat:USD surfaces. Without this,
 // /v1/oracle/prices?asset=native silently returned an empty data
 // array on Stellar mainnet.
 func TestOraclePrices_StablecoinFiatProxyFallback(t *testing.T) {

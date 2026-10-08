@@ -214,8 +214,8 @@ func (r *pairAwareHistoryReader) TradesInRange(_ context.Context, pair canonical
 // TestVWAP_StablecoinFiatProxyFallback — when the literal X/fiat:USD
 // pair has zero trades but the operator declared a USDC peg, the
 // handler retries against X/<USDC-classic> and serves the resulting
-// VWAP with flags.triangulated=true. Mirrors 6505934b5 and a8be130dd for the
-// /v1/vwap surface.
+// VWAP with flags.triangulated=true. Mirrors the stablecoin-proxy fallback of
+// /v1/price and /v1/price/tip for the /v1/vwap surface.
 func TestVWAP_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

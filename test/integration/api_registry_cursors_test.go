@@ -13,7 +13,7 @@ import (
 )
 
 // TestAPI_RegistryAndCursors covers the HTTP surfaces of the
-// registry/diagnostics endpoints landed in 666ece728/c360bea70/9b407ec88/737d1a52e/09b692271:
+// registry/diagnostics endpoints:
 //
 //	GET /v1/coins
 //	GET /v1/coins?issuer=G…

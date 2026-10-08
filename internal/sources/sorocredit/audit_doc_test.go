@@ -10,7 +10,7 @@ import (
 // TestAuditDoc_TracksEveryClassifiedSymbol guards the Q075 class of drift:
 // docs/operations/wasm-audits/sorocredit.md backs the `BackfillSafe` flag
 // with a hardcoded tracked-symbol count and inventory in prose, and
-// classify() grew an 8th arm (TreasuryUpdated, commit 8f4569d94) without
+// classify() grew an 8th arm (TreasuryUpdated) without
 // the doc being updated. Fail loudly if the doc's stated count or symbol
 // inventory ever falls behind EventSymbols() again.
 func TestAuditDoc_TracksEveryClassifiedSymbol(t *testing.T) {

@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// TestSevPlaybookPagingWarningMatchesAlertmanagerConfig pins SL20
-// (reverification sweep, checked against 8078fdaec): sev-playbook.md's
+// TestSevPlaybookPagingWarningMatchesAlertmanagerConfig pins that sev-playbook.md's
 // §3 warning claimed Alertmanager's fanout receivers were "no-op
 // stubs" that "reach no human". That stopped being true once
 // configs/alertmanager/alertmanager.r1.yml's chat-page/chat-default/
 // chat-informational receivers gained real discord_configs (migration
-// off Slack, 38b98ecd9). The doc must say so instead of repeating the
+// off Slack). The doc must say so instead of repeating the
 // stale claim — and it must keep warning that PagerDuty escalation
 // (§4/§7's assumption) is still genuinely unbuilt, since that config
 // file has no pagerduty_configs for any severity.

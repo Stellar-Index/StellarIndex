@@ -251,7 +251,7 @@ func TestCoinGeckoSupplyReference_UnsupportedAsset(t *testing.T) {
 	}
 }
 
-// A Pro key 404s the public host (commit 3399fd536). With no explicit
+// A Pro key 404s the public host. With no explicit
 // BaseURL, an APIKey must auto-switch the host to the Pro tier — same
 // as the ingest poller's DefaultEndpoint/ProEndpoint switch — or every
 // supply lookup 404s and the cross-check the operator paid a Pro key

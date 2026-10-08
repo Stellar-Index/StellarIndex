@@ -101,7 +101,7 @@ func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 
 // stubDualVolumeReader implements BOTH v1.VolumeReader and the optional
 // v1.SorobanVolumeReader, recording which method the asset-detail path
-// invoked so tests can pin the Soroban→XLM-anchored routing (fce3e2eef).
+// invoked so tests can pin the Soroban→XLM-anchored routing.
 type stubDualVolumeReader struct {
 	plainKey   string
 	sorobanKey string

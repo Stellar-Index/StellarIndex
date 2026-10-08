@@ -106,7 +106,7 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 	// 30 s policy fires (longer than the test window). Mirrors the
 	// pattern in test/integration/api_test.go:65-74.
 	// DistinctPairs enumerates pairs from prices_1d (the right-granularity
-	// rewrite, cc4ed08ae) and reads 24h volume from prices_1m — refresh BOTH, or
+	// rewrite) and reads 24h volume from prices_1m — refresh BOTH, or
 	// the pair list comes back empty even though prices_1m has the rows.
 	for _, stmt := range []string{
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
