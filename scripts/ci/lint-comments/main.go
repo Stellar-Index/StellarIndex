@@ -1,6 +1,6 @@
 // lint-comments fails on a history citation in a product Go comment: a date,
-// a review/inventory ticket id, a #nnn or "PR n" reference. History belongs in
-// the commit message; a comment keeps only the why.
+// a review/inventory ticket id, a commit hash, a #nnn or "PR n" reference.
+// History belongs in the commit message; a comment keeps only the why.
 //
 // Scope: every .go file under the root except _test.go files, pkg/ (its godoc
 // is the public SDK reference), generated files, and vendor/testdata/
@@ -38,6 +38,13 @@ import (
 var hard = regexp.MustCompile(`(?i)\b20\d\d-\d\d-\d\d\b|\b202[4-9]-[01]\d\b|` +
 	`\b(?:RLT|CS|CO|NS|LIVE|INV|LC)-\d+\b|\b(?:F|Q|T|RSWP|CMA|CMB|HIS|DOC|YDC|DRY)-\d{3,4}\b|` +
 	`\b[FTQK]\d{3}\b|#\d{3,}\b|\bPR \d+|\bpre-20\d\d\b`)
+
+// commitHash matches an abbreviated git hash; a match needs a digit and a letter
+// and must not be a float like 1e999999999, so numbers and hex-like words pass.
+var (
+	commitHash = regexp.MustCompile(`\b[0-9a-f]{9,12}\b`)
+	floatExp   = regexp.MustCompile(`^\d+e\d+$`)
+)
 
 // goLayout is Go's reference time; a comment showing a time.Format layout is not history.
 const goLayout = "2006-01-02"
@@ -172,6 +179,11 @@ func match(text string) (string, bool) {
 	}
 	for _, m := range hard.FindAllString(t, -1) {
 		if m != goLayout {
+			return m, true
+		}
+	}
+	for _, m := range commitHash.FindAllString(t, -1) {
+		if strings.ContainsAny(m, "0123456789") && strings.ContainsAny(m, "abcdef") && !floatExp.MatchString(m) {
 			return m, true
 		}
 	}

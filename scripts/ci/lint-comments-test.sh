@@ -29,6 +29,9 @@ reset; put internal/a/b.go '// Fixed in INV-0001.';             check "ticket id
 reset; put internal/a/b.go '// Seen on 2026-01-02 in prod.';    check "date in a product comment is rejected" red
 reset; put internal/a/b.go '/* see PR 12 */';                    check "PR n in a block comment is rejected" red
 reset; put internal/a/b.go '// Landed in #1234.';               check "#nnn in a product comment is rejected" red
+reset; put internal/a/b.go '// Landed in 1b1e46a09.';           check "commit hash in a product comment is rejected" red
+reset; put internal/a/b.go '// Rate is 012087500 per unit.';    check "all-digit run is not a commit hash" ok
+reset; put internal/a/b.go '// Rejects "1e999999999".';         check "float exponent is not a commit hash" ok
 reset; put internal/a/b.go '// Fixed in INV-0001.'; bl "internal/a/b.go${tab}INV-0001"; check "baselined citation passes" ok
 reset; put internal/a/b.go $'// INV-0001 here\n// and INV-0001 again'; bl "internal/a/b.go${tab}INV-0001"; check "second copy of a baselined citation is rejected" red
 reset; bl "internal/a/b.go${tab}INV-0001";                      check "stale baseline entry is rejected" red
