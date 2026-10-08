@@ -13,44 +13,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// verifyHashChain is the stellarindex-ops `verify-hashchain` subcommand —
-// the second half of ADR-0034's provable-100% claim, alongside
-// verify-contiguity: "ledgers contiguous AND hash-chained to genesis". For
-// every ledger n in [-from,-to], its prev_hash must equal ledger n-1's
-// ledger_hash.
+// verifyHashChain is the stellarindex-ops `verify-hashchain` subcommand, the
+// second half of ADR-0034's provable-100% claim beside verify-contiguity: for
+// every ledger n in [-from,-to], prev_hash must equal ledger n-1's ledger_hash.
 //
-// Two checks, because windowing (1M-ledger buckets — reuses
-// contiguityBucketStride, matching verify-contiguity and the lake's own
-// PARTITION BY intDiv(ledger_seq,1000000)) splits the chain at bucket
-// boundaries:
+// Windowing (contiguityBucketStride, the lake's 1M-ledger partitions) splits the
+// chain at bucket seams, so there are two checks:
 //
-//  1. In-window links: within each window, lagInFrame(ledger_hash) ordered
-//     by ledger_seq gives every present ledger's immediate PRESENT
-//     predecessor's hash; a mismatch against its own prev_hash is a broken
-//     link. The window's first present ledger is excluded — its
-//     predecessor lives in the PREVIOUS window and is checked by (2).
-//  2. Boundary links: a 2-row point lookup at every window seam, comparing
-//     the seam ledger's prev_hash against the previous ledger's
-//     ledger_hash — whether or not that predecessor is actually present
-//     (an absent predecessor is reported as a break too, distinguished
-//     from a present-but-mismatched one; see boundaryTag).
+//  1. In-window links: lagInFrame(ledger_hash) ordered by ledger_seq gives each
+//     ledger's nearest PRESENT predecessor's hash. A window's first ledger is
+//     left to (2).
+//  2. Boundary links: a 2-row lookup at every seam; an absent predecessor is a
+//     break too, tagged apart from a mismatch (boundaryTag).
 //
-// A missing ledger (a gap) is reported as a break by BOTH checks, by
-// design: lagInFrame (in-window) and the boundary lookup (at a seam) both
-// compare against whatever the nearest PRESENT predecessor's hash is,
-// which is never the true immediate predecessor's hash when one is
-// missing. Run verify-contiguity FIRST to know whether a break reported
-// here is "missing ledger" or "present but wrong hash" — this tool does
-// not try to auto-correlate the two; it just reports ledger_seq +
-// presence, with enough context for an operator to tell them apart.
+// A gap is reported as a break by both checks, since both compare against the
+// nearest present predecessor. Run verify-contiguity first to tell "missing
+// ledger" from "present but wrong hash"; this tool does not correlate them.
 //
-// Exit code = in-window broken links + boundary broken links, capped at
-// 255, mirroring verify-contiguity's / reconcile-balances' "exit code =
-// number of failed checks" convention so cron/Healthchecks.io can consume
-// it directly.
+// Exit code = in-window + boundary broken links, capped at 255, so
+// cron/Healthchecks.io can consume it directly.
 //
 // Usage: verify-hashchain [-config PATH] [-ch-addr H:P] [-from N] [-to N].
-// Read-only; touches ClickHouse only (no Postgres).
+// Read-only; ClickHouse only.
 func verifyHashChain(args []string) error {
 	fs := flag.NewFlagSet("verify-hashchain", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
