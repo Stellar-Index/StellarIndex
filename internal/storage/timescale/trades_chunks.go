@@ -30,7 +30,7 @@ import (
 // hypertable and every one of its 258 compressed chunks is a result
 // relation whatever this file decompressed — see
 // [Store.applyXLMBaseRestampBatch] and the "Chunk mode" section of
-// docs/operations/usd-volume-rederive-2026-08.md.
+// the usd-volume-rederive runbook in docs/operations/.
 //
 // The remedy is to invert the order: decompress the chunk ONCE, run the
 // same restamp inside it (a plain heap UPDATE), and compress it again.

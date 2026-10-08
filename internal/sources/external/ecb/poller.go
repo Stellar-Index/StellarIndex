@@ -18,7 +18,7 @@
 //	    <gesmes:name>European Central Bank</gesmes:name>
 //	  </gesmes:Sender>
 //	  <Cube>
-//	    <Cube time="2026-04-23">
+//	    <Cube time="YYYY-MM-DD">
 //	      <Cube currency="USD" rate="1.0825"/>
 //	      <Cube currency="JPY" rate="162.45"/>
 //	      <Cube currency="GBP" rate="0.8450"/>

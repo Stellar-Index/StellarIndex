@@ -2267,8 +2267,8 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 // `outInterval` MUST be an integer multiple of the source CAGG's
 // native bucket size; that it holds for every declared pairing is
 // what TestOHLCRoutesFoldIsAMultipleOfItsSource pins. Timescale's
-// time_bucket snaps to its default origin, Monday 2000-01-03 00:00
-// UTC: 5m buckets land at 12:00/12:05/12:10..., 4h at 00:00/04:00/...,
+// time_bucket snaps to its default origin, the first Monday
+// of 2000 at 00:00 UTC: 5m buckets land at 12:00/12:05/12:10..., 4h at 00:00/04:00/...,
 // and 2w on the same Mondays prices_1w's own buckets start on.
 //
 // `outInterval` composes directly into the SQL after the

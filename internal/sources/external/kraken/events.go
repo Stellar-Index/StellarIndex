@@ -29,7 +29,7 @@
 //	→ {"method":"subscribe","params":{"channel":"trade","symbol":["XLM/USD","XLM/EUR"]}}
 //	← {"method":"subscribe","success":true,...}
 //	← {"channel":"trade","type":"snapshot","data":[...]}
-//	← {"channel":"trade","type":"update","data":[{"symbol":"XLM/USD","side":"buy","qty":100.0,"price":0.17582,"ord_type":"market","trade_id":1234567,"timestamp":"2026-04-24T..."}]}
+//	← {"channel":"trade","type":"update","data":[{"symbol":"XLM/USD","side":"buy","qty":100.0,"price":0.17582,"ord_type":"market","trade_id":1234567,"timestamp":"YYYY-MM-DDT..."}]}
 //	← {"channel":"heartbeat"}       # ignored
 //
 // The snapshot (last ~50 trades) carries real historical timestamps

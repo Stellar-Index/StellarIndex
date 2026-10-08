@@ -81,7 +81,7 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	}
 	// CoinGecko picks granularity from the window WIDTH and gives the
 	// caller no say: <=90 days returns hourly, wider returns daily. Hourly
-	// history only exists from 2018, so a pre-2018 window walked in
+	// history only exists from 2018 onward, so an earlier window walked in
 	// <=90-day chunks asks for a series the API does not have and comes
 	// back EMPTY — no error, no warning, just zero rows. Refuse it here
 	// with the remedy rather than let the run look like a coverage gap in
@@ -110,12 +110,12 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 // (currently CoinGecko) as oracle updates.
 //
 // This is the cascade's last resort, and it exists because the preferred
-// venues cannot reach certain windows even in principle. For 2017-11-15,
-// kraken, binance, coinbase and bitstamp each return zero trades,
-// because Binance listed XLM in 2018 and Coinbase in 2019. Two
-// windows are unreachable from venues for that reason — 2017-08-23..
-// 2018-02-15 (177 days) and everything before Kraken's floor of 2017-01-17
-// (475 days back to chain genesis).
+// venues cannot reach certain windows even in principle. For a day in
+// November 2017, kraken, binance, coinbase and bitstamp each return zero
+// trades, because Binance listed XLM in 2018 and Coinbase in 2019. Two
+// windows are unreachable from venues for that reason — a 177-day gap
+// from August 2017 to February 2018, and the 475 days from chain genesis
+// to Kraken's floor in January 2017 (docs/operations/history-completeness-plan.md).
 //
 // It writes ORACLE UPDATES, never trades. `trades` rows are venue fills
 // carrying source + ledger + tx_hash + op_index, and ADR-0033's completeness
