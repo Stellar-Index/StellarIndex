@@ -326,8 +326,8 @@ func TestDecode_GatedPoolWithNoTokenMappingFailsClosed(t *testing.T) {
 		t.Errorf("SkippedUnknownPool = %d, want 1", d.SkippedUnknownPool())
 	}
 	// The drop must also be reachable through the dispatcher's
-	// duck-typed reporter interface — before the fix, Decoder exposed
-	// no such method and the dispatcher's Stats() never saw it.
+	// duck-typed reporter interface — without it, the dispatcher's
+	// Stats() never sees the drop.
 	if got := d.UnknownContractDrops(); got != 1 {
 		t.Errorf("UnknownContractDrops() = %d, want 1", got)
 	}

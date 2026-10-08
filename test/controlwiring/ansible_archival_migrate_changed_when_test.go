@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── GH-1171: archival-node migrate step must report changed on a real
+// ─── archival-node migrate step must report changed on a real
 // schema change, not on every run ───────────────────────────────────
 //
 // cmd/stellarindex-migrate's cmdUp prints exactly one of two strings:

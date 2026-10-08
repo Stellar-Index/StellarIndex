@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ─── T424: docs/contributing/local-verification.md must name every
+// ─── docs/contributing/local-verification.md must name every
 // directory that trips the `integration` change class ───
 //
 // The doc's "diff touches / jobs that do real work" table is a
@@ -15,7 +15,7 @@ import (
 // class_integration() (itself the offline mirror of ci.yml preflight's
 // `integration` path filter — see TestT424TriggerCoversEveryIntTestPkg).
 // Nothing lints this table's prose against the shell script, so when
-// check-change-class.sh grew four directories for T424/F-1334/W6-tst-1
+// check-change-class.sh grew four directories
 // (internal/ops/archive, cmd/stellarindex-ops, scripts/ops, test/harness)
 // the doc table was not updated with it: a contributor reading the doc
 // alone would believe a scripts/ops-only or cmd/stellarindex-ops-only diff

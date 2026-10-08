@@ -64,8 +64,8 @@ func TestStream_ColdTierInitFailure_FallsBackToHotOnly(t *testing.T) {
 		DataStore: hotCfg,
 		// An unsupported Type makes datastore.NewDataStore fail
 		// immediately with no network access — the cheapest faithful
-		// simulation of "cold endpoint misconfigured" (the 2026-05-20
-		// r1 incident: wrong region/endpoint for aws-public-blockchain).
+		// simulation of "cold endpoint misconfigured" (wrong
+		// region/endpoint for aws-public-blockchain).
 		ColdDataStore: datastore.DataStoreConfig{
 			Type: "Bogus-Unsupported-Type",
 		},
@@ -248,7 +248,7 @@ func TestStream_ColdTierInitFailure_SingleLedgerRange(t *testing.T) {
 // Config.ColdDataStoreFactory is set, streamTiered must open the cold
 // tier through it and NOT through datastore.NewDataStore.
 //
-// Why that matters (2026-07-25 incident): datastore.NewDataStore builds
+// Why that matters: datastore.NewDataStore builds
 // every S3 client from the ambient AWS credential chain, which on r1
 // carries local MinIO's credentials because the HOT tier authenticates
 // through it. Those keys were then presented to real AWS and every cold

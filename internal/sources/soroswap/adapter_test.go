@@ -76,7 +76,7 @@ func TestDecoder_Matches_pairAndFactoryTopics(t *testing.T) {
 		// Pair events from an UNREGISTERED contract (topic collision) do NOT.
 		// deposit/withdraw fail CLOSED on an unseeded pair too — an unseeded
 		// pair is a recognition gap (no row), NOT a NULL-token row (migration
-		// 0127 header + emitLiquidity doc; audit W1-protocol-tables-2).
+		// 0127 header + emitLiquidity doc).
 		{"foreign pair swap", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolSwap}, ContractID: foreign}, false},
 		{"unseeded pair deposit", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolDeposit}, ContractID: foreign}, false},
 		{"unseeded pair withdraw", events.Event{Topic: []string{TopicPrefixPair, TopicSymbolWithdraw}, ContractID: foreign}, false},
@@ -239,8 +239,8 @@ func TestDecoder_Decode_swapSyncWithRegistryEmitsTradeEvent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_twoPoolsOneOp_interleaved is the COR-08
-// regression: a router multi-hop swaps through two pools inside ONE
+// TestDecoder_Decode_twoPoolsOneOp_interleaved is a
+// regression test: a router multi-hop swaps through two pools inside ONE
 // operation. With the correlation buffer keyed on (ledger, tx, op)
 // alone, both pools shared a slot — pool B's swap overwrote pool A's
 // while Pair stayed pinned to A, so A's sync completed a trade
@@ -327,7 +327,7 @@ func TestDecoder_Decode_unrelatedTopicReturnsNilNil(t *testing.T) {
 }
 
 // makeSkimEvent builds a pair-contract skim event with the canonical
-// `skimmed_0` / `skimmed_1` i128 body shape (Phase-1 audit).
+// `skimmed_0` / `skimmed_1` i128 body shape.
 func makeSkimEvent(t *testing.T, pair string, amt0, amt1 *big.Int) events.Event {
 	t.Helper()
 	body := b64(t, scMap(
@@ -467,9 +467,9 @@ func mustParseRFC3339(t *testing.T, s string) time.Time {
 	return ts
 }
 
-// Deposit is no longer a silent no-op (it emits a LiquidityEvent — see
+// Deposit is not a silent no-op (it emits a LiquidityEvent — see
 // TestDecoder_Decode_depositEmitsLiquidityEvent). A deposit topic with a
-// MALFORMED body must now surface as a decode ERROR — a recognition gap
+// MALFORMED body must surface as a decode ERROR — a recognition gap
 // the ADR-0033 re-derive can see — never a silently-swallowed event.
 func TestDecoder_Decode_depositMalformedBodyErrors(t *testing.T) {
 	d := NewDecoder()

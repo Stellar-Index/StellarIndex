@@ -283,7 +283,7 @@ func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 // tests, end-to-end by TestPersistEvents_DataFaultEventIsCountedAsDropped,
 // and — for the shutdown-race half — by
 // TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost,
-// which the eventPersister seam (#368 M3) made possible.
+// which the eventPersister seam made possible.
 func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
 	resilient := map[string]int{}
 	for _, decl := range packageFuncDecls(t) {

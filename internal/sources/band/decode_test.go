@@ -370,10 +370,9 @@ func TestDecodeRelay_USDSymbolSkipped(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality (PR-2): an unmapped symbol is RECORDED as a
-// raw:<symbol> row at its own vector slot, not skipped. Before this
-// change NOTACOIN was dropped (1 update) and BTC kept OpIndex 1; BTC
-// STILL has OpIndex 1 — the raw row fills slot 0 (no existing
+// Oracle capture-totality: an unmapped symbol is RECORDED as a
+// raw:<symbol> row at its own vector slot, not skipped. NOTACOIN yields
+// a raw row and BTC keeps OpIndex 1: the raw row fills slot 0 (no existing
 // row moves).
 func TestDecodeRelay_UnknownSymbolRecordedAsRaw(t *testing.T) {
 	args := []string{

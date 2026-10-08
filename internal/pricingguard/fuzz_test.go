@@ -176,7 +176,7 @@ func FuzzSelectGuardedVWAP1mAt(f *testing.F) {
 		if !rejected {
 			if lowConfidence {
 				// An accept against an empty trailing baseline is an
-				// unvalidated fail-open (W6-fresh-1): the series path
+				// unvalidated fail-open: the series path
 				// still serves it, but a point-in-time read must not.
 				if ok {
 					t.Fatalf("a low-confidence unvalidated accept must not be served point-in-time (ok=%v)", ok)

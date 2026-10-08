@@ -206,10 +206,10 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 	}
 
 	// The critical assertion: after flush returns, every byte
-	// must have arrived. Pre-fix this race-checked: the goroutine
+	// must have arrived. Without the wait this race-checked: the goroutine
 	// was killed by the runtime mid-Read and the captured buffer
-	// held only the first ~64 bytes (or nothing at all). Post-fix
-	// the wg.Wait inside flush guarantees the goroutine ran the
+	// held only the first ~64 bytes (or nothing at all). The
+	// wg.Wait inside flush guarantees the goroutine ran the
 	// full forwarder loop.
 	flush()
 

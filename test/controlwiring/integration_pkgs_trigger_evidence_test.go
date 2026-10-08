@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── T424 / T449: an INT_TEST_PKGS package must also TRIGGER the suite ───
+// ─── an INT_TEST_PKGS package must also TRIGGER the suite ───
 //
 // Listing a package in INT_TEST_PKGS makes every path that runs the
 // integration suite run it (integration_pkgs_coverage_test.go guards that).
@@ -204,7 +204,7 @@ func TestT424TriggerCoversEveryIntTestPkg(t *testing.T) {
 // integration suite actually imports: `go list -deps -test -tags
 // integration` over the INT_TEST_PKGS entry points that carry the suite's
 // own tests (test/integration, test/harness). This is the single source of
-// truth CA2-A38 asks for — the enumerated internal/(storage|pipeline|...)
+// truth — the enumerated internal/(storage|pipeline|...)
 // subset in all three classifiers drifted from it and from each other
 // (internal/projector and internal/dispatcher were in prepush's list and
 // absent from ci.yml's and check-change-class.sh's).

@@ -374,7 +374,7 @@ func TestDecode_MissingOpArgs(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality (PR-2): a feed_id outside the ADR-0028
+// Oracle capture-totality: a feed_id outside the ADR-0028
 // registry is RECORDED verbatim as raw:<feed_id> at its own vector
 // position, not skipped. Skipping the middle entry would
 // yield 2 updates; instead BTC/ETH keep OpIndex 0/2 and the raw row
@@ -525,8 +525,8 @@ func TestDecode_UnknownFeedQuoteSuffix(t *testing.T) {
 
 func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	// Exercises the ADR-0028 feed registry: an RWA feed whose
-	// feed_id ≠ display name, the EUR-quoted EUROC feed (the pre-ecc289c6
-	// USD-hardcode bug), a plain RWA feed, and a tokenized-BTC crypto
+	// feed_id ≠ display name, the EUR-quoted EUROC feed (which must not be
+	// hardcoded to USD), a plain RWA feed, and a tokenized-BTC crypto
 	// feed.
 	feedIDs := []string{
 		"BENJI_ETHEREUM_FUNDAMENTAL", // → rwa:BENJI, USD

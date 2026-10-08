@@ -29,7 +29,7 @@ func TestSymbolToAsset_fiat(t *testing.T) {
 	}
 }
 
-// Oracle capture-totality (PR-2): an unknown symbol is no longer an
+// Oracle capture-totality: an unknown symbol is not an
 // error — it resolves to a verbatim raw:<symbol> asset so the slot is
 // recorded. Only an unrepresentable symbol (which an ScSymbol can
 // never be) is refused, as canonical.ErrInvalidAsset.

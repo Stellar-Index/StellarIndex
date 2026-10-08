@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestNewSubstanceGate_LogsTheEffectivePolicy (GH-1053): r1 sets no
+// TestNewSubstanceGate_LogsTheEffectivePolicy: r1 sets no
 // substance keys, so it runs at library defaults no config file shows.
 // The gate states the floors it resolved at construction, so a boot log
 // answers "what floor is this deployment enforcing" without a code read.

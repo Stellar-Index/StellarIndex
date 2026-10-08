@@ -282,11 +282,10 @@ func TestGolden_GulpEmissions_V2(t *testing.T) {
 	}
 }
 
-// TestGolden_RwZone_V1 pins bug #2 against real lake bytes (ledger
-// 51499926): the V1 backstop's reward-zone-update topic is literally
-// `rw_zone`, not `rw_zone_add` — before the fix, Classify() never
-// matched it and this real event (one of 5 total) was silently
-// dropped end-to-end.
+// TestGolden_RwZone_V1 pins the V1 reward-zone topic against real lake bytes (ledger
+// 51499926): it is literally `rw_zone`, not `rw_zone_add`; a Classify()
+// that missed it would silently drop this real event (one of 5 total)
+// end-to-end.
 func TestGolden_RwZone_V1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

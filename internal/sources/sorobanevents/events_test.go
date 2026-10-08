@@ -157,8 +157,8 @@ func TestCapture_SymbolTopic(t *testing.T) {
 }
 
 // TestCapture_EventIndexDistinguishesSameOpEvents is the regression
-// guard for the ADR-0033 silent-loss bug: before event_index was
-// threaded, every contract event in one operation captured with
+// guard for the ADR-0033 silent-loss bug: without event_index
+// threading, every contract event in one operation captures with
 // event_index=0, so a multi-event op (Phoenix emits 8 per swap)
 // collided on the (ledger, tx_hash, op_index, event_index) PK and
 // the writer's ON CONFLICT DO NOTHING dropped all but the first.
@@ -241,7 +241,7 @@ func TestCapture_StringTopic(t *testing.T) {
 // TestCapture_NULStringTopic — a contract-supplied String topic
 // carrying a NUL byte must not be stored raw: Postgres text rejects
 // a NUL with SQLSTATE 22021, which would poison the whole ingest
-// batch (CA2-A30-correct-5). Topic0Sym must be the scval.ToText
+// batch. Topic0Sym must be the scval.ToText
 // hex-escaped form, not the raw bytes.
 func TestCapture_NULStringTopic(t *testing.T) {
 	t.Parallel()

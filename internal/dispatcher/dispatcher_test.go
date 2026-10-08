@@ -180,7 +180,7 @@ func TestStats_snapshotsAreImmutable(t *testing.T) {
 
 // fakeUnknownContractReporter is a Decoder that also implements the
 // UnknownContractDrops() int duck-typed interface, mirroring
-// soroswap.Decoder / sushiswap_v3.Decoder (GH-1307).
+// soroswap.Decoder / sushiswap_v3.Decoder.
 type fakeUnknownContractReporter struct {
 	fakeDecoder
 	drops int
@@ -189,7 +189,7 @@ type fakeUnknownContractReporter struct {
 func (f *fakeUnknownContractReporter) UnknownContractDrops() int { return f.drops }
 
 // TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins
-// GH-1307: a decoder that drops a fully decoded event for want of a
+// that a decoder that drops a fully decoded event for want of a
 // contract-identity mapping (returning (nil, nil), so the dispatcher's
 // own DecodeErrors counter never sees it) must still surface through
 // Stats() so internal/pipeline can wire it to a metric. Before the
@@ -217,7 +217,7 @@ type fakeNonDirectionalReporter struct {
 
 func (f *fakeNonDirectionalReporter) SkippedNonDirectional() int { return f.skips }
 
-// TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface pins T070: the
+// TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface pins that the
 // soroswap/sushiswap_v3 SkippedNonDirectional() getter had zero production
 // callers repo-wide — Stats() never collected it. Before the fix this field
 // did not exist at all.
@@ -311,7 +311,7 @@ func TestRouteOp_decodeErrorCountedPerSource(t *testing.T) {
 	}
 }
 
-// TestRouteOp_everyMatchingDecoderRuns pins GH-1312: op decoders are
+// TestRouteOp_everyMatchingDecoderRuns pins that op decoders are
 // per-domain observers of one op, so two that claim the same op type
 // must both decode it and both be counted. First-match routing handed
 // the op to the earlier registration only and recorded the loss nowhere.

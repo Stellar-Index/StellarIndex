@@ -107,21 +107,21 @@ func runOneFixture(t *testing.T, path string) {
 		t.Fatalf("zero updates from a real Reflector event; fixture: %s", path)
 	}
 
-	// PR 164e verification: CEX-oracle updates must decode to
+	// CEX-oracle updates must decode to
 	// AssetCrypto (Asset::Other(Symbol) → ADR-0014). FX oracle
 	// stays on AssetFiat. DEX stays on AssetSoroban.
 	//
-	// Oracle capture-totality (PR-2): a Symbol slot outside the
-	// allow-lists is no longer dropped — it lands as a raw:<symbol>
+	// Oracle capture-totality: a Symbol slot outside the
+	// allow-lists is not dropped — it lands as a raw:<symbol>
 	// row (canonical.AssetOracleRaw). The CEX variant accepts EITHER
 	// the mapped type or raw; a raw row must be exactly that
 	// (IsMapped()==false) and must hold its vector slot. DEX
 	// publishes Addresses only, so raw is never expected.
 	//
-	// The two raw slots every real FX event carried
-	// (2026-04-23 mainnet) were VES and XAU — the pair that paged
+	// The two slots every real FX event carries beyond plain fiat are
+	// VES and XAU — unmapped, they page
 	// stellarindex_ingestion_oracle_unknown_symbols on r1.
-	// Both are allow-listed now (fiat:VES per ADR-0010; XAU is the
+	// Both are allow-listed (fiat:VES per ADR-0010; XAU is the
 	// spot-gold commodity and lands as rwa:XAU per ADR-0028), so the
 	// FX variant tolerates NO raw row on these fixtures, and its only
 	// non-fiat mapped slot is exactly rwa:XAU.

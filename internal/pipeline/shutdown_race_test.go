@@ -15,7 +15,7 @@ import (
 
 // shutdownRacedTradeStore models a steady-state batch write that is IN
 // FLIGHT when the parent ctx is cancelled — the pipeline sibling of the
-// sorobanevents race fixed in #240. The first BatchInsertTrades parks
+// sorobanevents race. The first BatchInsertTrades parks
 // until its ctx is cancelled and returns ctx.Err(), exactly as a real
 // pgx INSERT does when its context dies mid-statement; every call
 // (batch or row) honours an already-dead ctx the same way pgx does.
@@ -84,10 +84,10 @@ func (s *shutdownRacedTradeStore) calls() (batch, row int) {
 
 // TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost pins
 // the pipeline instance of the shutdown data-loss class fixed for the
-// sorobanevents AsyncSink in #240: a steady-state trade batch whose
+// sorobanevents AsyncSink: a steady-state trade batch whose
 // BatchInsertTrades is in flight when the parent ctx is cancelled.
 //
-// Mechanism (pre-fix): persistWorker's ticker flush runs under the
+// Mechanism (without the fix): persistWorker's ticker flush runs under the
 // parent ctx (shutdownSafeCtx passes a live ctx straight through). The
 // cancel makes the in-flight write return context.Canceled, which
 // timescale.IsInfraError deliberately does NOT classify as infra, so
@@ -99,7 +99,7 @@ func (s *shutdownRacedTradeStore) calls() (batch, row int) {
 // by drainTimeout) ran a moment later with an empty tradeBuf.
 //
 // The interrupted batch must instead be carried into flushShutdown and
-// land there. Proven red on the pre-fix code: landed 0, want 3.
+// land there. Red without the fix: landed 0, want 3.
 func TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
 
@@ -231,12 +231,12 @@ func (p *shutdownRacedEventPersister) landedEvents() []consumer.Event {
 }
 
 // TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost is
-// the NON-TRADE half of the shutdown data-loss class (#368 M3). Its trade
+// the NON-TRADE half of the shutdown data-loss class. Its trade
 // twin is TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost
 // above; the same race on the same select arm was still open for
 // everything that is not trade-shaped.
 //
-// Mechanism (pre-fix): persistWorker's `<-in` arm dequeued a non-trade
+// Mechanism (without the fix): persistWorker's `<-in` arm dequeued a non-trade
 // event and wrote it under the parent ctx (shutdownSafeCtx passes a LIVE
 // ctx straight through — it only swaps in a fresh one when ctx is
 // ALREADY dead). A SIGTERM landing while that write was in flight made
@@ -252,7 +252,7 @@ func (p *shutdownRacedEventPersister) landedEvents() []consumer.Event {
 //
 // The interrupted event must instead be CARRIED into the shutdown pass
 // and land there, exactly as the interrupted trade batch is. Proven red
-// on the pre-fix code: landed 0 events, want 1, and dropped +1.
+// without the fix: landed 0 events, want 1, and dropped +1.
 func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, band.SourceName, "dropped")
 
@@ -320,7 +320,7 @@ func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *tes
 // under the SAME absolute deadline. If each started its own drainTimeout,
 // one extra blocking arm pushed the Done arm's deadline past main's
 // ShutdownDeadline hard exit, so carried rows died unreported. The select
-// picks `<-in` first with p=1/2 per run, so 50 runs make a pre-fix pass
+// picks `<-in` first with p=1/2 per run, so 50 runs make a pass without the fix
 // vanishingly unlikely.
 func TestPersistWorker_PostCancelPhasesShareOneDeadline(t *testing.T) {
 	for run := 0; run < 50; run++ {

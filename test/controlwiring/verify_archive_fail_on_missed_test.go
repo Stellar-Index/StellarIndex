@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ─── F144: -fail-on-missed on the units where it can fire ──────────
+// ─── -fail-on-missed on the units where it can fire ──────────
 //
 // verify-archive consumes -fail-on-missed ONLY inside the checkpoint
 // tier (internal/ops/archive/verify_archive.go: the flag is read by

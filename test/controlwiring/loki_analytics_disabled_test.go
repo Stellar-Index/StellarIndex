@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── T479: Loki ships with Grafana Labs usage analytics armed ──
+// ─── Loki ships with Grafana Labs usage analytics armed ──
 //
 // Loki's upstream default phones home to https://stats.grafana.org/ unless
 // `analytics.reporting_enabled: false` is set. loki.r1.yml — the config r1

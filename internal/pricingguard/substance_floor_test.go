@@ -72,7 +72,7 @@ func TestSubstanceGate_WithheldCountCarriesTheFloor(t *testing.T) {
 	}
 }
 
-// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed (GH-1052): a market
+// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed: a market
 // with real persistence but no USD valuation — the SEP-41/SEP-41 shape,
 // 800 buckets over 22h — stays withheld (an unvaluable volume cannot be
 // verified, and waiving the floor would admit the self-minted pair the

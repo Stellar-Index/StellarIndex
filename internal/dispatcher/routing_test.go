@@ -38,7 +38,7 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 
 	// Per-source expectations:
 	//   reflector/DEX  → AssetSoroban in the update asset slot.
-	//   reflector/CEX  → AssetCrypto (per PR 164e).
+	//   reflector/CEX  → AssetCrypto.
 	//   reflector/FX   → AssetFiat.
 	//   soroswap       → stubbed SAC tokens → one Trade per swap+sync.
 	//   aquarius       → one Trade per event.

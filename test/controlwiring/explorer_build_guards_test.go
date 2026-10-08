@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ─── F085 / T325: the build every deploy path shares runs the guards ──
+// ─── the build every deploy path shares runs the guards ──
 //
 // Production publishes through Cloudflare Pages' git integration, whose
 // build command is `cd web/explorer && pnpm install --frozen-lockfile &&

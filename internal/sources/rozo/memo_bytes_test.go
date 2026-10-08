@@ -35,7 +35,7 @@ func textColumnSafe(s string) bool {
 	return utf8.ValidString(s) && !strings.Contains(s, "\x00")
 }
 
-// TestDecoder_Decode_MemoIsBytesNotText is the F052 regression guard.
+// TestDecoder_Decode_MemoIsBytesNotText is a regression guard.
 //
 // The memo is an ScString: the payer chooses its BYTES, for one stroop.
 // Handing those bytes straight to the rozo_events.memo

@@ -68,7 +68,7 @@ func TestRecognize_ValidateFailureIsRecognitionGap(t *testing.T) {
 	}
 }
 
-// TestRecognize_OverlappingMatchDoesNotFallThrough proves CA2-A25-correct-3:
+// TestRecognize_OverlappingMatchDoesNotFallThrough proves that
 // when two decoders both match the same event shape and the first's
 // Validate() fails, Recognize must report a recognition gap (ok == false),
 // not fall through and report the second decoder as the match. dispatchOne

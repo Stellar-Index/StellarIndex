@@ -68,7 +68,7 @@ func oracleSourceFixtures() map[string]oracleSourceFixture {
 // obs.RecordOracleUpdate always emits a budget series, but a source
 // that never declared its resolution gets +Inf — a series that exists
 // and can never ticket. That is the correct fallback (it reproduces
-// the pre-#478 behaviour of a rule with no right-hand side) and
+// the behaviour of a rule with no right-hand side) and
 // exactly the wrong thing to ship for an enabled source. So
 // every oracle source the dispatcher can enable must come out of
 // BuildDispatcher with a FINITE budget, equal to the same

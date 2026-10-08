@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── F133: no gate job may be continue-on-error ────────────────────
+// ─── no gate job may be continue-on-error ────────────────────
 //
 // A job-level `continue-on-error: true` makes the job's conclusion
 // irrelevant to the run. branch-protection-status was the one such job

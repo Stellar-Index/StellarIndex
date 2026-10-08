@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ─── F050: every re-derive path must consult BackfillSafe ──────────
+// ─── every re-derive path must consult BackfillSafe ──────────
 //
 // external.BackfillSafe is the per-source "this decoder is safe against
 // every historical WASM generation" gate. For a long time its only

@@ -36,7 +36,7 @@ func withheldFor(t *testing.T, surface string) float64 {
 	return sum
 }
 
-// TestAssetSubstanceVerdict_CountsTheAssetOnce (GH-1054): the listing
+// TestAssetSubstanceVerdict_CountsTheAssetOnce: the listing
 // asks one question per asset — may its USD price be served — by
 // probing XLM, fiat:USD and each declared peg. The withheld counter
 // counted every refused probe, so one withheld row read as three, and

@@ -16,7 +16,7 @@ import (
 	"github.com/moby/patternmatcher/ignorefile"
 )
 
-// ─── T524: the Docker build context must carry build inputs and nothing else ──
+// ─── the Docker build context must carry build inputs and nothing else ──
 //
 // Every docker/stellarindex-*.Dockerfile builds with the repo root as context
 // and runs `COPY . .` in its builder stage, so without a .dockerignore the
