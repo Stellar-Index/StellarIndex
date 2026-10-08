@@ -14,7 +14,7 @@ import (
 //
 // A plain read failure is the non-fatal class: serve the transaction
 // without per-op result codes or contract events, and say so in
-// coverage_note (W1.2). A blown DEADLINE is not that class. The budget
+// coverage_note. A blown DEADLINE is not that class. The budget
 // belongs to the whole request, so every remaining sub-read is already
 // doomed, and the "partial" 200 assembled out of nothing but failures
 // tells the caller the transaction emitted no events — a wrong answer

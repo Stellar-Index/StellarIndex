@@ -30,8 +30,8 @@ func readDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair) diverg
 	return cached
 }
 
-// TestRefreshPair_FastMoveDoesNotFalseWarn is the W3-guards-2 red
-// proof. OurPrice is a shortest-window (5m) VWAP; the references are
+// TestRefreshPair_FastMoveDoesNotFalseWarn is the red
+// proof for debouncing. OurPrice is a shortest-window (5m) VWAP; the references are
 // instantaneous spot quotes. On a fast upward move the spot has jumped
 // but our VWAP still averages in the pre-move trades, so our value
 // legitimately lags the references by more than the threshold. Before

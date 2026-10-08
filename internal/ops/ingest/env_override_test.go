@@ -26,7 +26,7 @@ postgres_dsn = "postgres://good:good@localhost/stellarindex?sslmode=disable"
 
 // TestBackfillIndex_HonorsEnvOverride proves backfill-index loads config
 // via LoadWithEnv (Load + ApplyEnvOverrides + re-Validate) rather than
-// bare config.Load — the C3-14 class the archive commands already pin.
+// bare config.Load — the class the archive commands already pin.
 //
 // It reproduces a real production failure: on r1 the postgres credentials
 // live in STELLARINDEX_POSTGRES_DSN, so a bare Load fell back to the

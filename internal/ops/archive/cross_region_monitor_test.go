@@ -204,7 +204,7 @@ func TestCrossRegionHealth_EveryRegionFailing(t *testing.T) {
 	}
 }
 
-// TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart is the C4-007
+// TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart is the regions-vanish
 // scenario in its most literal form: the first sweep succeeded (so the
 // old latch was set for good), then every region went away and stayed
 // away. The loop keeps ticking, so lastRunUnix stays fresh; only

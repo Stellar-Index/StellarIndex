@@ -359,7 +359,7 @@ func TestStatus_BackendErrorDegradesOverall(t *testing.T) {
 	}
 }
 
-// W1.1: a FAILED Alertmanager query must NOT serialise as an
+// A FAILED Alertmanager query must NOT serialise as an
 // all-clear. Before the tri-state, `if incErr == nil { out.Incidents
 // = incidents }` left the counts at their zero value with no signal
 // that the query failed, so the incidents block was byte-identical to

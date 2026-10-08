@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// ─── C6-015: the api_serving profile's `readonly` value ────────────
+// ─── The api_serving profile's `readonly` value ────────────────────
 //
 // ADR-0048 D4 provisions a dedicated ClickHouse user + settings profile
 // for the API's public serving reads

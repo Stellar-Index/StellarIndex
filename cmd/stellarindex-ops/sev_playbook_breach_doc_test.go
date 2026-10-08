@@ -9,7 +9,7 @@ import (
 
 const breachSectionHeading = "### 6.6 Personal-data breach notification assessment"
 
-// TestSevPlaybookCarriesBreachNotificationAssessment pins T681: we hold
+// TestSevPlaybookCarriesBreachNotificationAssessment pins that, as we hold
 // customer emails and IPs (migration 0027), so the incident procedure must
 // carry a jurisdiction-aware breach-notification assessment whose 72-hour
 // regulator clock starts at awareness, and the paths that handle a PII

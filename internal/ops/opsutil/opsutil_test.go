@@ -50,7 +50,7 @@ func TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault(t *testing.
 }
 
 // TestWriteGate_FailsClosed pins the shared write-gate contract (ops
-// write-gate unification, W8.15c): every mutating subcommand previews by
+// write-gate unification): every mutating subcommand previews by
 // DEFAULT and writes only on an explicit -write. A regression here — a
 // default that reports Enabled()==true, or -dry-run overriding -write —
 // silently re-arms the default-WRITE convention the fix removed.

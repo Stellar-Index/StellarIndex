@@ -41,7 +41,7 @@ func TestIsBlockedIP(t *testing.T) {
 		{"198.18.0.1", true},      // RFC 2544 benchmarking
 		{"0.1.2.3", true},         // 0.0.0.0/8
 
-		// NAT64-translated v4 (C3-110). The prefix EMBEDS the v4 address
+		// NAT64-translated v4. The prefix EMBEDS the v4 address
 		// in the low 32 bits, and Go's IsLinkLocalUnicast/IsPrivate do not
 		// unwrap it — so every v4 range above would be
 		// bypassable by translating it through a NAT64 gateway.

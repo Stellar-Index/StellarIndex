@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TestUSDVolumeRestamp_IsDispatchable pins that the W5.3 tool exists under
+// TestUSDVolumeRestamp_IsDispatchable pins that the restamp tool exists under
 // its runbook name and lives in the WRITING half of the dispatcher: the
 // v1-launch-plan carried "no usd-volume-restamp tool exists yet" as an open
 // item, and the verifier half must never resolve a verb that mutates rows.

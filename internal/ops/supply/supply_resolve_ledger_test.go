@@ -97,7 +97,7 @@ func (f *fakeCursorReader) ListCursors(context.Context) ([]timescale.Cursor, err
 	return f.cursors, f.err
 }
 
-// TestAutoSnapshotLedger_PrefersTheChainCursor is the C4-033 regression.
+// TestAutoSnapshotLedger_PrefersTheChainCursor is a regression guard.
 //
 // ingestion_cursors is a table of JOB positions, not chain positions.
 // Taking MAX(last_ledger) over all of them let any ops job decide what

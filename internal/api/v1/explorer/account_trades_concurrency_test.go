@@ -16,7 +16,7 @@ import (
 // blockingTradesReader blocks every ListAccountTrades call on `release`,
 // recording the peak number of concurrently in-flight scans and signalling
 // each entry on `entered`. It is the instrument for proving the handler
-// actually ACQUIRES accountTradesGate (W8.13): a bounded handler can never
+// actually ACQUIRES accountTradesGate: a bounded handler can never
 // have more than cap(accountTradesGate) scans in flight at once.
 type blockingTradesReader struct {
 	entered   chan struct{}
@@ -39,7 +39,7 @@ func (r *blockingTradesReader) ListAccountTrades(_ context.Context, _ string, _ 
 	return nil, time.Time{}, nil
 }
 
-// TestAccountTrades_GateBoundsConcurrentScans pins W8.13: the handler must
+// TestAccountTrades_GateBoundsConcurrentScans pins that the handler must
 // acquire accountTradesGate before the expensive per-account scan, so that no
 // more than cap(accountTradesGate) scans ever run at once.
 //

@@ -466,7 +466,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	refreshQuiet(t, svc, rdb, xlmUSD(t), 1.04, base)
 
 	// 6% deviation → warning fires, but only once the divergence has
-	// PERSISTED past the default debounce window (W3-guards-2). The
+	// PERSISTED past the default debounce window. The
 	// first refresh must NOT fire — that is the fast-move false-warning
 	// class the debounce removes; a sustained 6% gap must clear it.
 	t0 := base.Add(time.Hour)

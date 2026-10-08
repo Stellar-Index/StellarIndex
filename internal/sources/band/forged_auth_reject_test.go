@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// W8.4a — oracle auth-tree price forgery.
+// Oracle auth-tree price forgery.
 //
 // The Band decoder reads the price straight from the InvokeContract
 // call args, and the dispatcher routes ContractCall decoders from the
@@ -180,7 +180,7 @@ func countBandUpdates(outs []interface{ Source() string }) int {
 }
 
 // TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice is the
-// headline W8.4a proof. A benign top-level call to a NON-Band contract
+// headline forgery proof. A benign top-level call to a NON-Band contract
 // carries an attacker-forged source-account auth entry naming the Band
 // StandardReference contract with fabricated relay() rates. That entry
 // never executed; the dispatcher must not decode it into a price.

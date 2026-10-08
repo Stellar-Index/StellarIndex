@@ -49,7 +49,7 @@ func (r *txCoverageReader) EventsByTx(context.Context, uint32, string) ([]clickh
 
 // txDetailBody drives TxDetail against a txCoverageReader and returns the
 // marshalled wire body. It captures the JSON bytes (not the Go struct) so the
-// assertion is on the WIRE CONTRACT — the exact surface W1.2 is about — and
+// assertion is on the WIRE CONTRACT — the exact surface coverage_note is about — and
 // stays valid whether or not the response type carries a coverage_note field.
 func txDetailBody(t *testing.T, resultsErr, eventsErr error) map[string]any {
 	t.Helper()
@@ -134,7 +134,7 @@ func TestTxDetail_FailedSubReadDropsCacheBand(t *testing.T) {
 	}
 }
 
-// TestTxDetail_FailedSubReadSurfacesCoverageNote is the W1.2 regression guard: a
+// TestTxDetail_FailedSubReadSurfacesCoverageNote is the regression guard: a
 // FAILED per-op-result-code read and a FAILED contract-event read must each
 // surface a non-empty coverage_note distinct from a transaction that genuinely
 // had none. Both `events` and each op's `result_code` are omitempty, so without a

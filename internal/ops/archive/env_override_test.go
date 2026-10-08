@@ -29,7 +29,7 @@ postgres_dsn = "postgres://good:good@localhost/stellarindex?sslmode=disable"
 
 // TestTrimGalexieArchive_HonorsEnvOverride proves the trim command loads
 // config via LoadWithEnv (Load + ApplyEnvOverrides + re-Validate), not
-// bare config.Load (C3-14). We inject a DELIBERATELY INVALID
+// bare config.Load. We inject a DELIBERATELY INVALID
 // STELLARINDEX_POSTGRES_DSN override: only a code path that APPLIES the
 // override and re-validates surfaces the postgres_dsn error. A bare
 // config.Load ignores the override entirely — the file DSN is valid, so
@@ -57,7 +57,7 @@ func TestTrimGalexieArchive_HonorsEnvOverride(t *testing.T) {
 }
 
 // TestRehydrateGalexieArchive_HonorsEnvOverride is the rehydrate-command
-// twin of the trim test above (C3-14) — same red→green logic on the same
+// twin of the trim test above — same red→green logic on the same
 // invalid-DSN-override signal.
 func TestRehydrateGalexieArchive_HonorsEnvOverride(t *testing.T) {
 	cfgPath := writeArchiveConfig(t)
