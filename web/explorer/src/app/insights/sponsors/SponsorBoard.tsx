@@ -33,7 +33,7 @@ function repeatRate(row: SponsorRow): string {
 }
 
 /**
- * SponsorBoard — the sponsor league table (#351): which accounts have
+ * SponsorBoard — the sponsor league table: which accounts have
  * paid the base reserves for other accounts' ledger entries.
  *
  * Everything on this board is HISTORY. It comes from replaying

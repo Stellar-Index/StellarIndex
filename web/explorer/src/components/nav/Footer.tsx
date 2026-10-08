@@ -173,7 +173,7 @@ function FooterColumn({
   links: { label: string; href: string; external?: boolean }[];
 }) {
   // Drop the routes this network has no data for. The per-route rule is
-  // declared once in lib/network-routes (#328) — the footer's own copy
+  // declared once in lib/network-routes — the footer's own copy
   // had already drifted from the rail's.
   const visible = availableRoutes(links);
   return (

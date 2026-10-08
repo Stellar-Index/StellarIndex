@@ -92,7 +92,7 @@ export function stellarExpertDirectoryUrl(
  * ORDER BY key), but a table whose headers re-sort the fetched page
  * client-side would float a flagged row straight back to the top the
  * moment the user clicks "Volume 24h" — the demotion has to survive
- * "whatever the active sort key" (#356). Applying it AFTER the column sort
+ * "whatever the active sort key". Applying it AFTER the column sort
  * is exactly equivalent to making flagged-ness the primary sort key, and
  * leaves the shared useTableSort hook untouched for every other table.
  *
@@ -104,7 +104,7 @@ export function stellarExpertDirectoryUrl(
  * free-text string (Go: known_scams.go's `Reason` field). This is a
  * distinct vocabulary from DIRECTORY_SCAM_FLAG_TAGS (a hand-curated
  * legacy list, not the account_directory tags), but still lives here so
- * a badge classifier is never re-derived per caller (#879).
+ * a badge classifier is never re-derived per caller.
  */
 export type ScamReasonLabel = 'DEPRECATED' | 'SCAM' | 'UNSAFE';
 

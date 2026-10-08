@@ -19,7 +19,7 @@ import (
 // change" — the sibling task in deploy-binary.yml hit this same defect
 // and fixed its copy; this file's copy still tested for "no change",
 // so changed_when was true on EVERY run and the weekly ansible-drift
-// report could never tell a real schema change from noise (#496).
+// report could never tell a real schema change from noise.
 //
 // This test extracts the REAL changed_when expression from the shipped
 // task and evaluates it, through ansible-playbook, against the two

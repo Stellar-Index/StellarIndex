@@ -111,7 +111,7 @@ const NAV: NavGroup[] = [
 ];
 
 // Which rail surfaces a network actually has is declared ONCE, in
-// lib/network-routes (#328): the rail's own hidden-href set had drifted
+// lib/network-routes: the rail's own hidden-href set had drifted
 // from the footer's, from search's and from the sitemap's, so /anomalies,
 // /divergences and /mev were gated in some and not others. The whole
 // External group drops once every item in it is filtered out.

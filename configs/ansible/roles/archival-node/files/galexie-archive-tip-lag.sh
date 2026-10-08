@@ -82,7 +82,7 @@ newest_ledger() {
   parts_raw=$(mc ls "$bucket/") || return 1
   # Read from the variable, not through a pipe: `awk ... exit` stops
   # reading and `printf` would take EPIPE on a bucket whose partition
-  # listing outsizes the 64 KiB pipe buffer (#475).
+  # listing outsizes the 64 KiB pipe buffer.
   part=$(awk '/\/$/{print $NF; exit}' <<<"$parts_raw" | sed 's:/$::') || return 1
   [ -n "$part" ] || return 1
   objs_raw=$(mc ls "$bucket/$part/") || return 1

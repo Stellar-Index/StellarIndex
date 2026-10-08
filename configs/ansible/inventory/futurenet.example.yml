@@ -22,7 +22,7 @@ all:
     region_id:           "futurenet"
     region_name:         "FSN-futurenet"
     home_domain:         "stellarindex.io"
-    # /v1/status region.deployment — this is NOT production (#328).
+    # /v1/status region.deployment — this is NOT production.
     region_deployment:   "futurenet"
     # api.external_base_url — origin of emailed signup-verification links.
     stellarindex_api_external_base_url: "https://api.futurenet.stellarindex.io/v1"

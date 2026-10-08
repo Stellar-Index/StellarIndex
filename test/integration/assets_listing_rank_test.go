@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/assets ranking + keyset pagination against a real Timescale (#356).
+// /v1/assets ranking + keyset pagination against a real Timescale.
 //
 // The defect: the scam gate withheld a directory-flagged issuer's price
 // and market cap but the ORDERING never followed, so JFKBANK2 —

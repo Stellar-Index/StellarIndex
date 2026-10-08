@@ -257,7 +257,7 @@ function parseDec(s: string | null | undefined): number | null {
 // its raw volume and its adjusted volume agree and the comparison is
 // sound for this one row.
 //
-// Directory-flagged rows are then demoted below every unflagged one (#356),
+// Directory-flagged rows are then demoted below every unflagged one,
 // AFTER the splice: native is never flagged, so a flagged row the server
 // placed last must not end up above native merely by out-volume-ing it.
 function rankTopAssets(

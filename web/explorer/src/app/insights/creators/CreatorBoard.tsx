@@ -39,7 +39,7 @@ function survivalPct(row: CreatorRow): string {
 }
 
 /**
- * CreatorBoard — the account-creator league table (#351): which accounts
+ * CreatorBoard — the account-creator league table: which accounts
  * brought the most other accounts onto the network, and what that
  * created set holds today.
  *

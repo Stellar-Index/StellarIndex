@@ -728,7 +728,7 @@ export function search(
     .filter((r) => !direct.some((d) => d.href === r.href));
   // On the lean test nets, drop the pricing/off-chain seed rows (they lead to
   // empty/inert pages there) and all bespoke-protocol rows (not indexed).
-  // Per-route availability comes from the shared table (#328) — search
+  // Per-route availability comes from the shared table — search
   // kept its own copy of the hidden set, which is how a page could be
   // gated here and still carded on the /network hub.
   const seeds = CURRENT_NETWORK.pricing

@@ -617,7 +617,7 @@ func composeDevPolicy(t *testing.T) string {
 
 // The VWAPMaxAge doc comment tells an operator what notices a dead
 // publisher and when. It once said a ticket "pages" minutes before expiry
-// when the real page lands 5–10 minutes after the 404s start (#1293).
+// when the real page lands 5–10 minutes after the 404s start.
 // These tests derive the timings from both Prometheus rule trees and
 // require the comment to state them, so tuning either side fails here
 // until the prose follows.

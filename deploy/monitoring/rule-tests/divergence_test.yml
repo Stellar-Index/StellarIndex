@@ -105,7 +105,7 @@ tests:
   # `stellarindex_oracle_staleness_budget_seconds` series on the SAME
   # label set as `stellarindex_oracle_last_update_unix`, because that is
   # what production carries: obs.RecordOracleUpdate emits the two
-  # together (#478). Before that, the budget was computed inside the
+  # together. Before that, the budget was computed inside the
   # expression from the {source}-only resolution gauge, and the rule
   # needed `ignoring(asset) group_left()` to bridge the label mismatch.
   #
@@ -338,7 +338,7 @@ tests:
   # (9 h) against the 3000 s (50 min) source default, because DAI is a
   # peg asset Reflector publishes only on movement — observed gaps to
   # 7 h, breaching the default on 11.6% of evaluations with nothing
-  # broken (#478).
+  # broken.
   #
   # 8 h of silence is well past the default and well inside the
   # override. Under the old per-source threshold this pair would have

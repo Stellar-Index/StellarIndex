@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 export default function CreatorsPage() {
-  // Route gating (#328): this page inherits the /insights hub's `pricing`
+  // Route gating: this page inherits the /insights hub's `pricing`
   // capability through network-routes' longest-prefix match. That is the
   // deliberate choice, not an oversight — the board is served by a rollup
   // cycle the lean test nets do not run, so offering the page there would

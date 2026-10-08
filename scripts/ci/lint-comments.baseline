@@ -5,8 +5,6 @@ internal/ops/ingest/backfill_index.go	2017-11-15
 internal/ops/ingest/backfill_index.go	2018-02-15
 internal/ops/ingest/backfill_index.go	pre-2018
 internal/sources/classicmovements/events.go	2025-09-03
-internal/sources/external/coingecko/backfill.go	#600
-internal/sources/external/coinmarketcap/poller.go	#600
 internal/sources/external/ecb/poller.go	2026-04-23
 internal/sources/external/exchangeratesapi/events.go	2026-04-24
 internal/sources/external/kraken/events.go	2026-04

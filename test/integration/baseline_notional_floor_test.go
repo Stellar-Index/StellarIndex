@@ -15,7 +15,7 @@ import (
 // TestTimedVWAPsForPair1m_NotionalFloor pins that the anomaly baseline's
 // series carries each minute's USD notional across both stored directions,
 // and that the refresher's USD-volume bars over it on real Postgres keep
-// penny-authored minutes from buying baseline points (#1108). All amounts 1e7.
+// penny-authored minutes from buying baseline points. All amounts 1e7.
 //
 //	m0  one $20 fill                                   → $20
 //	m1  one $0.001 dust fill                           → $0.001
