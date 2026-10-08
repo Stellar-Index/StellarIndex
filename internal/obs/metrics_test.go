@@ -651,9 +651,8 @@ func TestZeroSeed_F0033(t *testing.T) {
 // TestCEXStreamDisconnectReasons_MatchesEmittedSet guards: obs.CEXStreamDisconnectReasons (and therefore
 // CEXStreamDisconnectTotal's Help text / the README enum, both
 // generated from it) must list exactly the reason strings the
-// classifiers actually produce — no more, no less. Before the fix the
-// documented set (reset|broken_pipe|timeout|dial|server_requested|
-// other) silently omitted "stall" (wsclient's half-open-socket
+// classifiers actually produce — no more, no less. A documented set of
+// reset|broken_pipe|timeout|dial|server_requested|other would silently omit "stall" (wsclient's half-open-socket
 // detector) and "subscription_rejected" (coinbase), even though both
 // were live in production.
 func TestCEXStreamDisconnectReasons_MatchesEmittedSet(t *testing.T) {

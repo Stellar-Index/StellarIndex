@@ -405,8 +405,8 @@ func TestProjectionFoundProblem(t *testing.T) {
 	}
 }
 
-// oldRetentionStart reproduces the PRE-FIX projection floor exactly as
-// compute-completeness computed it (`retentionStart = tip - 1_500_000`, applied
+// oldRetentionStart reproduces the tip-derived projection floor as
+// compute-completeness once computed it (`retentionStart = tip - 1_500_000`, applied
 // to any source with a trades target). It exists only so the tests below can
 // prove the blind band that floor created — production must never derive a
 // floor from tip.

@@ -12,9 +12,8 @@ import (
 // vocabulary (OpTypeNameFromEnumString, used by the /v1/operations directory
 // and op_type_stats) must produce the identical snake_case name OpTypeName
 // gives the typed enum (used by the ledger arm, /v1/tx and account ops) for
-// every known xdr.OperationType — one schema, one vocabulary. Before the fix,
-// the directory/stats path instead ran a naive lowercase-and-strip-prefix
-// fallback that diverged for multi-word types
+// every known xdr.OperationType — one schema, one vocabulary. A naive
+// lowercase-and-strip-prefix fallback on the directory/stats path would diverge for multi-word types
 // (invokehostfunction vs invoke_host_function, manageselloffer vs
 // manage_sell_offer).
 func TestOpTypeNameFromEnumString_MatchesOpTypeName(t *testing.T) {

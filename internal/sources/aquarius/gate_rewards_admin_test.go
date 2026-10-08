@@ -94,8 +94,8 @@ func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 // enable_emergency_mode, disable_emergency_mode — are legitimately
 // emitted by the REGISTERED Aquarius pools (a protocol-wide staged WASM
 // upgrade + pool-level ownership/emergency actions, ~1,679 real events).
-// Before the fix the gate was reg.IsFactory ONLY, so every pool-emitted
-// occurrence returned Matches()==false — an ADR-0033 recognition gap
+// A gate of reg.IsFactory ONLY would make every pool-emitted
+// occurrence return Matches()==false — an ADR-0033 recognition gap
 // that also dropped the event from Decode. This pins that a REGISTERED
 // pool AND the router now match, while a foreign contract and the
 // flagged parallel router still fail-closed. Matches() reads

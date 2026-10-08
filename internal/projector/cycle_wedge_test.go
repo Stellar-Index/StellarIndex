@@ -673,8 +673,7 @@ func TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor(t *testing.T) {
 // run over those dropped rows. The cycle is marked runs_total{outcome=
 // "decode_degraded"} instead, so runs_total no longer counts it clean and the
 // per-source decode_error rate alert can distinguish a regression from
-// scattered poison rows. Pre-fix the outcome was "ok" and the loss was
-// invisible at the run level.
+// scattered poison rows. An "ok" outcome would hide the loss at the run level.
 func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	const source = "data6-decode-regression"
 	evs := &fakeEvents{evs: []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}}

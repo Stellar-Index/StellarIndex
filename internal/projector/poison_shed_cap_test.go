@@ -33,8 +33,8 @@ func notNullViolation() error {
 // the sink is otherwise healthy, then bleeds at most one row per cycle, and
 // still drains rather than wedging (COR-11).
 //
-// Before the fix the skip arm ran inline per row with no cap: the first cycle
-// counted all five, forgot them and let the cursor advance to the window's end
+// Without a cap the skip arm runs inline per row: the first cycle
+// would count all five, forget them and let the cursor advance to the window's end
 // (110), so an operator's next look showed a caught-up source with five rows
 // missing from the served tier and nothing but an ERROR log to say so.
 //

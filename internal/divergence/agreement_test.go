@@ -194,8 +194,8 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 // reference structurally doesn't cover (ErrAssetUnsupported —
 // reference.go's own doc: "no reference for this pair on this source,
 // not a degradation") must not be reported as ErrNoReferenceResponded.
-// Before the fix, FailureCount folded asset_unsupported in with genuine
-// transport failures, so a deployment with an uncovered pair paged
+// Guards against FailureCount folding asset_unsupported in with genuine
+// transport failures, which would page a deployment with an uncovered pair as
 // "checker running blind" forever with both references healthy.
 func TestRefreshPair_AllUnsupportedIsNotAnOutage(t *testing.T) {
 	refs := []divergence.Reference{

@@ -394,8 +394,8 @@ func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 	}
 
 	// The transient failure clears; the next observation MUST retry the write.
-	// Pre-fix (latch set before the write) this asset was already marked
-	// fired, so report() returned early and this retry never happened.
+	// A latch set before the write would mark this asset already
+	// fired, so report() would return early and skip this retry.
 	writer.err = nil
 	if err := g.Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep 2: %v", err)

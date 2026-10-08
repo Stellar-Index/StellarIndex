@@ -288,8 +288,8 @@ func depeggedRefs() []divergence.Reference {
 // TestRefreshPair_RestartKeepsPublishedWarning: a divergence that has been
 // published for a while must stay published across an aggregator restart,
 // and the restarted process must not re-send divergence.firing for it.
-// Before the fix both maps started empty, so the first post-restart refresh
-// wrote WarningFired=false — /v1/price said "cross-checked and agrees" for
+// Maps that start empty would make the first post-restart refresh
+// write WarningFired=false — /v1/price said "cross-checked and agrees" for
 // a 7% depeg — and the next matured refresh re-fired the webhook.
 func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 	refs := depeggedRefs()

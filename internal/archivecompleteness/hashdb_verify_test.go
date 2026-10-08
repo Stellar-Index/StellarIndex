@@ -47,7 +47,7 @@ func TestHashDBWindowVerifier_OK(t *testing.T) {
 // TestHashDBWindowVerifier_DriftDetected is the alert path this
 // package exists to serve: the caller observes a DIFFERENT hash for a
 // ledger hashdb already has a record for — e.g. ledger 63332650's
-// class of incident (upstream rewrote a previously-fetched ledger, or
+// class of incident (upstream rewrote an already-fetched ledger, or
 // our local copy is corrupted). Must tally as Drifted, record the
 // sequence, and AnyDrift() must report true.
 func TestHashDBWindowVerifier_DriftDetected(t *testing.T) {

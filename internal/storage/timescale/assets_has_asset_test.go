@@ -27,7 +27,7 @@ import (
 // exceeded"`) while the classic arm answered in 2.5 ms.
 //
 // A test that seeds a row and asserts HasAsset(native) == true cannot
-// see any of that — the old query returns true for a seeded row too. The
+// see any of that — a defective query returns true for a seeded row too. The
 // defect lives in the STATEMENT SHAPE, so that is what these tests pin,
 // with the scripted driver that records the SQL and the bound args.
 

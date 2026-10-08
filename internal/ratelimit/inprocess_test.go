@@ -104,10 +104,10 @@ func TestInProcess_WindowRollover(t *testing.T) {
 //
 // The attack: a distinct-key flood (>100k unique keys inside one window
 // on one process — well past any real client population) against the
-// Redis-less fallback limiter. Pre-fix every one of those keys was
-// inserted into the map, so the flood chose the limiter's memory
-// footprint and, worse, each insert past 100k dragged a full O(n) scan
-// under the shared mutex. Post-fix the map stops growing at
+// Redis-less fallback limiter. Inserting every one of those keys
+// into the map would let the flood choose the limiter's memory
+// footprint and, worse, drag a full O(n) scan under the shared mutex
+// on each insert past 100k. Instead the map must stop growing at
 // `localStoreMaxKeys` and everything beyond it is folded into ONE shared,
 // fail-CLOSED bucket: the first overflow key consumes the shared budget,
 // the next is denied.

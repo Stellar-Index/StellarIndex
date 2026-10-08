@@ -171,7 +171,7 @@ func TestPersistSnapshot_GenuineDevaluationConfirms_HistoryFollowed(t *testing.T
 // new-level bars), there is no heal-grade mutually-agreeing majority at
 // all ([historyMajority] fails the agreement test by construction), so
 // the veto stands down and the two-fetch confirmation behaves exactly
-// as before the fix: a real devaluation costs one refresh interval of
+// as without the veto: a real devaluation costs one refresh interval of
 // lag, never a wedge. Red-proof: a naive veto that compares against the
 // plain median of the full series (skipping the heal-grade agreement
 // test) computes median ≈ 49.9 here — but a naive veto against, say,

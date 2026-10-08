@@ -190,9 +190,9 @@ func TestAcceptHistoryRate_StuckUpstreamReclassifies(t *testing.T) {
 // incident in miniature: a persistently-broken dated bar (44), refused
 // sweep after sweep, INTERLEAVED with the accepted good sibling bars (160)
 // of the same trailing window. It must still accumulate to the _stuck
-// threshold. Before the fix, each sweep's good bars reset the streak the
-// broken bar had just incremented, so it oscillated 0↔1 and the alert
-// never de-noised — the bar paged for days.
+// threshold. Guards against each sweep's good bars resetting the streak the
+// broken bar just incremented, which oscillates 0↔1 so the alert
+// never de-noises and pages for days.
 func TestAcceptHistoryRate_BrokenBarWithGoodSiblingsReachesStuck(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	w.guards["ETB"] = &rateGuard{lastAccepted: 160}

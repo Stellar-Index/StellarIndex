@@ -509,7 +509,7 @@ func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
 // its own. The price we just declined to serve on XLM/USDT reached
 // consumers on XLM/EUR one multiplication later, looking fresh.
 //
-// Post-fix the chain refuses (outcome "frozen_leg"), keeps the
+// The chain must refuse (outcome "frozen_leg"), keeps the
 // target's own prior value alive, and marks the target frozen so the
 // derived pair tells the same truth as the leg it descends from.
 //

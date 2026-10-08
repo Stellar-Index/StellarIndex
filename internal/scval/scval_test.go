@@ -452,8 +452,8 @@ func TestAsBool_roundtrip(t *testing.T) {
 
 // TestAsBool_zeroValueDoesNotPanic pins the W1-sub-1 fix: ScValTypeScvBool
 // is 0, so a zero-value xdr.ScVal reports Type==ScvBool while carrying a nil
-// B pointer. Pre-fix AsBool dereferenced that nil and panicked the decode
-// goroutine on a malformed/zero contract value; it must now return
+// B pointer. Dereferencing that nil would panic the decode
+// goroutine on a malformed/zero contract value; AsBool must return
 // ErrScValType instead.
 func TestAsBool_zeroValueDoesNotPanic(t *testing.T) {
 	_, err := AsBool(xdr.ScVal{})

@@ -9,9 +9,8 @@ import (
 // extractInvokeContractCallTrees walks the full
 // Soroban auth tree per op, capturing every (contract_id,
 // function_name, args) tuple reachable from each op's HostFunction.
-// Pre-fix, the dispatcher only saw the top-level call; ~99.99% of
-// soroswap-router invocations come through an aggregator and were
-// invisible.
+// Seeing only the top-level call would miss ~99.99% of
+// soroswap-router invocations, which come through an aggregator.
 
 // helper — build a no-auth, top-level-only InvokeContract op.
 func opInvokeNoAuth(t *testing.T, contractByte byte, fnName string) xdr.Operation {
