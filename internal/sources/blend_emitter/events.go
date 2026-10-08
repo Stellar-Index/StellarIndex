@@ -55,11 +55,7 @@
 // SHA256-verifies against bytes extracted from the lake, and ALL 469
 // lifetime events (465/465 `distribute` exhaustively, not sampled,
 // plus both `drop`s and the one `q_swap`/`swap`) decode to the exact
-// shapes below. The audit did NOT corroborate this comment's earlier
-// claim of "3 WASM uploads at ledgers 51,351,843 / 51,498,920 /
-// 52,314,704" — the lake shows zero Soroban activity anywhere on the
-// network at the first two ledgers, and the third resolves to the
-// same single hash already established. BackfillSafe is now true.
+// shapes below. BackfillSafe is true.
 package blend_emitter
 
 import (

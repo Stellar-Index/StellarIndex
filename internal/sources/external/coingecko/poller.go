@@ -157,7 +157,7 @@ type Poller struct {
 
 	// TickerToID overrides the package-default map. When non-empty,
 	// only tickers present here will be queried — set this from
-	// `currency.Catalogue.CoinGeckoIDs()` (R-018 Phase 1.2) to
+	// `currency.Catalogue.CoinGeckoIDs()` to
 	// drive the poll set from the verified-currency seed instead of
 	// the hardcoded list. Empty → fall back to the package default.
 	TickerToID map[string]string
@@ -419,8 +419,7 @@ func (p *Poller) cooldownRemaining() time.Duration {
 // free tier returns Retry-After values consistently below MinBackoff
 // (commonly 30 s), so clamping lands us at exactly MinBackoff = 60 s
 // forever — which matches the runner's PollInterval = 60 s, producing
-// one 429 per minute indefinitely (observed live on r1 for
-// a full day). The right behaviour for sustained throttling is to
+// one 429 per minute indefinitely. The right behaviour for sustained throttling is to
 // back off even when the venue claims you can retry sooner — they
 // can't be trusted to slow YOU down enough when many clients share
 // the same IP cap.

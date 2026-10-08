@@ -73,7 +73,7 @@ const SourceName = "sorocredit"
 const MainnetContract = "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR"
 
 // GenesisLedger is the first ledger at which the main contract emitted
-// any event (2026-03-12, verified against the r1 lake). Lower bound for
+// any event. Lower bound for
 // the per-source gap detector + the ADR-0033 reconcile re-derive.
 const GenesisLedger uint32 = 61_620_822
 
