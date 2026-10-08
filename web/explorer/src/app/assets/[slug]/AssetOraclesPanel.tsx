@@ -76,14 +76,14 @@ export type AssetOraclesPanelProps = {
   /**
    * Heading rank for the panel titles. Defaults to 2 — this component is
    * a top-level section of /assets/[slug], directly under the page's
-   * <h1>, and Panel's own default (3) would skip a level (#486).
+   * <h1>, and Panel's own default (3) would skip a level.
    */
   headingLevel?: 2 | 3 | 4;
 };
 
 /**
  * AssetOraclesPanel — "which oracles publish a price for this asset",
- * the per-token half of /oracles (#336).
+ * the per-token half of /oracles.
  *
  * Reads `/v1/oracle/latest?asset=<asset_id>`: one row per source that
  * has observed the asset, with the publishing contract, the reading,

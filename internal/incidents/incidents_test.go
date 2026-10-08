@@ -281,9 +281,8 @@ func TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs(t *testing.T) {
 	}
 }
 
-// TestLoad_CredentialPIIExposureIncidentRecord — K089/F168: the
-// 7843f129 (#480) log-store credential/PII exposure had no
-// customer-facing incident record. This asserts the record exists,
+// TestLoad_CredentialPIIExposureIncidentRecord: the log-store
+// credential/PII exposure needs a customer-facing incident record. This asserts the record exists,
 // parses, and its status is "resolved" (not silently dropped as
 // malformed, and not stuck at "investigating" forever).
 func TestLoad_CredentialPIIExposureIncidentRecord(t *testing.T) {

@@ -100,7 +100,7 @@ function parseHeadersBlock(selector) {
   return headers;
 }
 
-// Cache-Control is a separate concern (#893) and isn't part of this
+// Cache-Control is a separate concern and isn't part of this
 // handler's security-header mirror — drop it so this test only asserts
 // what shellFallback.js actually sets.
 function withoutCacheControl(headers) {

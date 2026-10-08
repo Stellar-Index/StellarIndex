@@ -17,7 +17,7 @@ import (
 )
 
 // TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange is the
-// executing proof for `trades-cagg-refresh` (#782), the step
+// executing proof for `trades-cagg-refresh`, the step
 // scripts/ops/ch-rebuild-projected.sh now runs after each window whose
 // trades it rewrote. On real TimescaleDB it pins that:
 //
@@ -184,7 +184,7 @@ func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T)
 }
 
 // TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds is the executing
-// proof for the check trades-cagg-refresh ends on (#782): on real
+// proof for the check trades-cagg-refresh ends on: on real
 // TimescaleDB, prices_1m and `trades` agree exactly once refreshed, and a
 // row rewritten, added or deleted behind the aggregate's back is reported
 // with both sides, exact, for its pair only.

@@ -22,7 +22,7 @@ func mevSupersedeState(t *testing.T, ctx context.Context, store *timescale.Store
 	return legs, accounts, detectedAt
 }
 
-// TestStorage_MEVEventEvidenceSupersedes (#1248): a re-scan whose legs
+// TestStorage_MEVEventEvidenceSupersedes: a re-scan whose legs
 // contain the stored legs replaces the stored evidence (a later scan found
 // another victim), a re-scan that saw fewer legs never overwrites, and
 // neither counts as a new event or moves the first detection's time.

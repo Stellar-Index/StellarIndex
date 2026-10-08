@@ -96,7 +96,7 @@ function attach(s: SharedStream, eventType: string): void {
   s.es.addEventListener(eventType, (ev) => {
     const msgEv = ev as MessageEvent;
     const id = msgEv.lastEventId;
-    // Out-of-order guard (#720): a transient reconnect the browser
+    // Out-of-order guard: a transient reconnect the browser
     // handled itself can still redeliver/reorder frames. Drop
     // anything that isn't strictly newer than what we've already
     // forwarded rather than let a stale frame overwrite a fresh one.

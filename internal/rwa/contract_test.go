@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The contract arm of the definition (#352).
+// The contract arm of the definition.
 //
 // These tests are driven by the population that makes the arm
 // load-bearing rather than decorative. Measured on the production lake

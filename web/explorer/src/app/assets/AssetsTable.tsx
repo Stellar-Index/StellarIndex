@@ -613,7 +613,7 @@ function AssetRow({
             <span className="text-ink-muted text-[11px]">{coin.name}</span>
           )}
         </Link>
-        {/* The raw identifier, middle-truncated (#356). Classic ids are
+        {/* The raw identifier, middle-truncated. Classic ids are
             65+ chars (JFKBANK2-GB7KFNUR…KL5BANK) and used to render in
             full, dominating the column. The TAIL is kept because issuer
             strkeys differ near the end; hover reveals the whole value and

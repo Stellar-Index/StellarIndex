@@ -19,7 +19,7 @@ export { truncateMiddle } from '@/lib/format';
  * When the value is actually shortened, the FULL value goes on the
  * rendered span's `title` so hover reveals it, and the copy button still
  * copies the full value — a truncated identifier must never be the only
- * copy of itself on the page (#356). `title` is omitted when nothing was
+ * copy of itself on the page. `title` is omitted when nothing was
  * elided, so an untruncated id doesn't grow a redundant tooltip.
  */
 export function Mono({

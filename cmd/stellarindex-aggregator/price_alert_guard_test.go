@@ -223,7 +223,7 @@ func TestPriceAlertReader_NoClosedBucketIsBenignNoOp(t *testing.T) {
 // A bucket the guard could not validate (no trailing baseline — a pair's
 // first minute, or its first after a day dormant) is the fail-open case
 // the guard serves only as low-confidence. An alert has no stale flag to
-// carry that doubt, so it must not fire off it (#677): a single
+// carry that doubt, so it must not fire off it: a single
 // manipulated first print would otherwise deliver a customer webhook.
 func TestPriceAlertReader_UnvalidatedBucketDoesNotFire(t *testing.T) {
 	base, quote := alertUSDAssets(t)

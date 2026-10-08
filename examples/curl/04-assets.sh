@@ -19,7 +19,7 @@
 # Ranking is `order_by`, NOT `order`: the handler accepts exactly
 # `observation_count_desc` (the default) or `volume_24h_usd_desc`, and
 # 400s on anything else. A bare `order=` is ignored, so asking for it
-# silently returns the observation-count ranking (#416).
+# silently returns the observation-count ranking.
 set -euo pipefail
 BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 LIMIT="${1:-10}"

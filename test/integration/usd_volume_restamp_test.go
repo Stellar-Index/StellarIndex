@@ -135,7 +135,7 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Fatalf("dry-run candidates with FillNull = %d, %v; want 2", n, err)
 	}
 
-	// ── GUC hygiene (#312): pin the pool to ONE connection, so the conn
+	// ── GUC hygiene: pin the pool to ONE connection, so the conn
 	// the restamp borrows IS the conn every later statement lands on.
 	// `Conn.Close`/`Tx.Commit` return it to the pool and pgx v5 stdlib
 	// resets nothing on reuse, so a SESSION-level cap lift would still be

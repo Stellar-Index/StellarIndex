@@ -1182,7 +1182,7 @@ tests:
         alertname: stellarindex_ingestion_duplicate_flood
         exp_alerts: []
 
-  # ── the post-restart shape (#302): a source whose ONLY inserts since
+  # ── the post-restart shape: a source whose ONLY inserts since
   # process start were duplicates never creates the outcome="new" child
   # (WithLabelValues is call-site-seeded per source, and `source` is
   # config-dependent so internal/obs does not pre-seed it). The old

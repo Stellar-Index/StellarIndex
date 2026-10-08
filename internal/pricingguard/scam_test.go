@@ -131,7 +131,7 @@ func TestScamGate_Withheld(t *testing.T) {
 // TestScamGate_FailOpenIsCounted: a failed directory lookup serves a
 // possibly-flagged issuer's price unguarded, so every one must reach the
 // metric the stellarindex_scam_gate_fail_open alert watches — a Warn
-// line alone left a directory outage visible only to a log grep (#732).
+// line alone left a directory outage visible only to a log grep.
 // A cancelled request serves nothing and is not counted.
 func TestScamGate_FailOpenIsCounted(t *testing.T) {
 	const surface = "test_fail_open"

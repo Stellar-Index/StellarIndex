@@ -470,7 +470,7 @@ func TestSelectGuardedVWAP1m_BaselineHorizonIsInclusiveAndPerBucket(t *testing.T
 }
 
 // A guard decision that does not serve the current bucket as a validated
-// price must be countable (#677): without it an operator cannot tell "the
+// price must be countable: without it an operator cannot tell "the
 // guard is holding a manipulated pair" from "the market is quiet". Each
 // path counts the candidate's reason exactly once, and a healthy bucket
 // counts nothing.

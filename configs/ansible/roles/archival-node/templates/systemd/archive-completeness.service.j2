@@ -32,7 +32,7 @@ EnvironmentFile=-/run/archive-completeness.env
 # archive is deliberately empty and completeness of that range is the
 # cold tier's concern, verified by the cold-read canary instead.
 #
-# NOTE: there is deliberately no ARCHIVE_TO default here (#1179). It used
+# NOTE: there is deliberately no ARCHIVE_TO default here. It used
 # to be `Environment=ARCHIVE_TO=0`, which the binary rejects outright
 # ("-to is required", internal/ops/archive/archive_completeness.go).
 # That default is inert as long as compute-archive-to.sh keeps running

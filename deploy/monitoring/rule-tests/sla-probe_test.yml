@@ -258,7 +258,7 @@ tests:
                 aggregator → Redis → API path; bisect by which stage's
                 `observed_at` is lagging.
 
-  # ── availability: the published 99.9 % has an alert (#741) ────────
+  # ── availability: the published 99.9 % has an alert ────────
   # One failed request in a ~150-sample run reads 99.333 %. Sustained
   # across consecutive runs it pages; a clean run never does.
   - interval: 1m
@@ -296,7 +296,7 @@ tests:
         alertname: stellarindex_sla_probe_availability_breach
         exp_alerts: []
 
-  # ── p99: the published 500 ms has an alert (#741) ─────────────────
+  # ── p99: the published 500 ms has an alert ─────────────────
   - interval: 1m
     name: probe p99 over the published 500ms pages
     input_series:

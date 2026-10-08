@@ -21,7 +21,7 @@ all:
     region_id:           "testnet"
     region_name:         "FSN-testnet"
     home_domain:         "stellarindex.io"
-    # /v1/status region.deployment — this is NOT production (#328).
+    # /v1/status region.deployment — this is NOT production.
     region_deployment:   "testnet"
     # api.external_base_url — origin of emailed signup-verification links.
     stellarindex_api_external_base_url: "https://api.testnet.stellarindex.io/v1"

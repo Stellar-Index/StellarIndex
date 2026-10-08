@@ -22,7 +22,7 @@ export default function HomePage() {
   // the chain-native panels below stay.
   const pricing = CURRENT_NETWORK.pricing;
   // "Top assets" needs the network to HAVE issued assets. That was an
-  // `id === 'futurenet'` special case living on the homepage alone (#328),
+  // `id === 'futurenet'` special case living on the homepage alone,
   // so the nav still offered the same empty /assets + /sdex surfaces; the
   // fact is now a NetworkInfo capability every surface reads.
   // (Recent trades also seeds pairs from the empty /v1/markets on testnet, so

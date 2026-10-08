@@ -97,7 +97,7 @@ if [ ! -x "$SMOKE_SCRIPT" ]; then
   # absent write would leave the PREVIOUS run's `failures 0` in place
   # for node_exporter to keep serving on behalf of a check that can no
   # longer run — the frozen-textfile trap the data-freshness watchdog
-  # hit (#319).
+  # hit.
   emit_metric 1
   hc_ping smoke "${URL:+${URL}/fail}" --data-binary "$MSG"
   exit 0

@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Auth-flag provenance round-trip against a real Postgres (#374).
+// Auth-flag provenance round-trip against a real Postgres.
 //
 // The write half of the fix (PersistIssuerAuthFlags stamping
 // auth_flags_source + auth_flags_as_of_ledger), the queue that keeps it from

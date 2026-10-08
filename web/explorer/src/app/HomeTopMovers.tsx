@@ -143,7 +143,7 @@ function MoverColumn({
 
 // pickMovers re-sorts the page by 24h change, which would undo the server's
 // flagged-last rank tier; demoteFlaggedLast restores it within each column
-// before the top five are cut (#356).
+// before the top five are cut.
 function pickMovers(coins: Coin[]): { gainers: Coin[]; losers: Coin[] } {
   const withChange = coins.filter((c) => {
     if (!c.change_24h_pct) return false;

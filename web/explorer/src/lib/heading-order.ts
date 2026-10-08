@@ -7,7 +7,7 @@
  * real one disagree. That is axe's `heading-order` rule and WCAG 1.3.1
  * (Info and Relationships), Level A.
  *
- * Why this lives in the repo rather than in a reviewer's terminal (#486):
+ * Why this lives in the repo rather than in a reviewer's terminal:
  * 694 of the 1,691 built pages that carry a heading skipped a level, and
  * the fix is spread across ~40 call sites that each look individually
  * harmless. Without a check that runs on every build, one `<Panel>` added
