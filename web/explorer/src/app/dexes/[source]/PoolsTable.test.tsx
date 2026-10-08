@@ -12,9 +12,9 @@ import { apiGet } from '@/api/client';
 import { PoolsTable } from './PoolsTable';
 
 // Frontend-honesty sweep: /v1/markets answers 503 on its documented 8s
-// trades-hypertable ceiling. Pre-fix the failed query coalesced to `[]`
-// and fell into the empty state, publishing "No pools found in the last
-// 14 days" — a false empirical claim about the venue. Absent must read
+// trades-hypertable ceiling. A failed query must not coalesce to `[]`
+// and publish "No pools found in the last 14 days" — a false empirical
+// claim about the venue. Absent must read
 // as unavailable; a present-and-empty page still reads as "no pools".
 describe('PoolsTable', () => {
   function renderTable() {

@@ -26,12 +26,10 @@ const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
  * them into ONE `/v1/price/batch` fetch and ONE shared 60s refresh
  * loop.
  *
- * W8 recon 10a: before this hook only ConvertPair re-fetched. Under
- * static export (`output: 'export'`) the header rate, inverse rate,
- * and ladder stayed frozen at the build-baked value while the copy
- * claimed "current mid-market rate … updates on each refresh tick" —
- * a static page asserting "current" over a stale number. Sharing this
- * hook makes every "current"-labelled element actually current: the
+ * Under static export (`output: 'export'`) the header rate, inverse
+ * rate and ladder would otherwise stay frozen at the build-baked value
+ * while the copy claims "current mid-market rate … updates on each
+ * refresh tick". Sharing this hook makes every "current"-labelled element actually current: the
  * baked value paints first (fast first render + a number for crawlers),
  * then the client re-fetches on mount and every 60s (the RT-2
  * live-hydration pattern used by LiveAssetPrice / LivePairPrice).

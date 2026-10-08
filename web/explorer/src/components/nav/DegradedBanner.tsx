@@ -15,8 +15,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * a consumer or developer reading prices doesn't naturally
  * navigate to a separate status domain to discover the API
  * is degraded — so a stale chart looks like normal data
- * unless we tell them otherwise. QA finding F-01 in
- * docs/review-2026-05-13-live-site-qa.md.
+ * unless we tell them otherwise.
  *
  * Data: the shared useStatus query (this banner, the sidebar Status
  * pill, and the /status page share one poll loop, so they cannot

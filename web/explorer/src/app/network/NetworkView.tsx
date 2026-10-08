@@ -107,10 +107,9 @@ export function NetworkView() {
 
   const buckets = tpQ.data?.buckets ?? [];
   // Today's bucket is still accumulating (`partial`) — the API contract
-  // (GET /network/throughput) says to exclude it. Pre-fix the chart
-  // plotted it anyway, ending every daily series on a phantom cliff;
-  // drop it from BOTH the series and the headline total (same UXP-16
-  // pattern as NetworkInsight).
+  // (GET /network/throughput) says to exclude it. Plotting it ends
+  // every daily series on a phantom cliff; drop it from BOTH the series
+  // and the headline total (same pattern as NetworkInsight).
   const completeBuckets = buckets.filter((b) => !b.partial);
   const points = completeBuckets.map((b) => ({
     time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),

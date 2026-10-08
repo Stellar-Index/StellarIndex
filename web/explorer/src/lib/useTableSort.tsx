@@ -3,13 +3,10 @@
 import { useMemo, useState } from 'react';
 
 /**
- * Shared client-side table sorting (site-audit S36).
- *
- * Before this, `/markets` was the only listing in the explorer whose
- * columns could be reordered; `/assets`, `/ledgers`, `/operations`,
- * `/contracts`, `/issuers` and `/oracles` rendered fixed-order tables with
- * no click target, no affordance and — the accessibility half (S27) — no
- * `aria-sort` and `tabIndex -1` on data columns that looked sortable.
+ * Shared client-side table sorting for the explorer listings (`/markets`,
+ * `/assets`, `/ledgers`, `/operations`, `/contracts`, `/issuers`,
+ * `/oracles`). Sortable headers carry a click target, `aria-sort` and a
+ * focusable `tabIndex`.
  *
  * A column is defined by a key and a value accessor. Clicking a header
  * sorts by that column; clicking the active header flips direction.

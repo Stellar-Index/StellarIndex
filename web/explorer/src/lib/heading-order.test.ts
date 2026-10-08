@@ -3,7 +3,7 @@
 // The scanner is what keeps the 694-page regression closed, so it needs
 // its own tests: a checker that silently stops finding anything reads
 // exactly like a fixed codebase. The fixtures below are the real emitted
-// shapes — the pre-fix /assets/[slug] and /research outlines, and the
+// shapes — the real /assets/[slug] and /research outlines, and the
 // RSC-payload trap that a naive grep falls into.
 import { describe, expect, it } from 'vitest';
 

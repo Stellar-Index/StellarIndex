@@ -281,7 +281,7 @@ describe('the contrast maths itself', () => {
   it('reproduces known WCAG ratios', () => {
     expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 5);
     expect(contrast('#808080', '#808080')).toBeCloseTo(1, 5);
-    // The two numbers this change is about, at their pre-fix values.
+    // Known ratios for the brand blue against the dark surface and white text.
     expect(contrast('#4270f0', '#101216')).toBeCloseTo(4.29, 2);
     expect(contrast('#ffffff', '#4270f0')).toBeCloseTo(4.37, 2);
   });

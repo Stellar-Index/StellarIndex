@@ -74,11 +74,11 @@ type Params = Promise<{ slug: string }>;
 /**
  * The three outcomes of the build-time read, kept apart on purpose.
  *
- * Pre-fix all three collapsed into `null` and the page rendered "We
- * don't track an external asset with the slug X" — a flat denial baked
- * into the static export for a REAL asset whenever the API 5xx'd or the
- * fetch timed out (generateStaticParams had already promised the slug
- * exists). Only an authoritative 4xx may produce that claim.
+ * Collapsing them into `null` would render "We don't track an external
+ * asset with the slug X" — a flat denial baked into the static export
+ * for a REAL asset whenever the API 5xx'd or the fetch timed out
+ * (generateStaticParams already promised the slug exists). Only an
+ * authoritative 4xx may produce that claim.
  */
 type ExternalAssetResult =
   | { status: 'ok'; view: GlobalAssetView }

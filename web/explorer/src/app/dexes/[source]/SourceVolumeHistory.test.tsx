@@ -49,8 +49,8 @@ describe('SourceVolumeHistory', () => {
           series: [
             {
               // The REAL wire name — internal/storage/timescale/bespoke_dex.go
-              // emits "USD volume". The pre-fix test mocked 'Daily USD volume'
-              // and green-lit a panel that rendered null in production.
+              // emits "USD volume"; a mock with any other name would pass
+              // while the panel renders null in production.
               name: 'USD volume',
               unit: 'USD',
               points: [
