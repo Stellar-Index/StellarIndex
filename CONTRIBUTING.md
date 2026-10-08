@@ -15,10 +15,13 @@ This document is a summary; the full policy is in the links above.
 
 ## Before you start
 
-### Sign the CLA
+### Sign off your commits (DCO)
 
-(To be added — currently Apache-2.0 contributions imply standard
-ICLA terms; formal CLA may be introduced as the project matures.)
+There is no CLA. Every commit carries a `Signed-off-by:` line certifying
+the [Developer Certificate of Origin](https://developercertificate.org/):
+that you wrote the change, or otherwise have the right to submit it under
+Apache-2.0. `git commit -s` adds the line from your configured name and
+email.
 
 ### Discuss substantive changes first
 
