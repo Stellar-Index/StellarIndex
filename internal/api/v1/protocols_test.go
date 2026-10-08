@@ -446,8 +446,7 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 
 // TestHandleProtocolDetail_LakeAnalytics verifies the per-protocol page
 // enrichment: event-type breakdown, daily activity series, and per-contract
-// event counts merged onto the roster (audit follow-up: Dune-surpassing
-// protocol pages).
+// event counts merged onto the roster.
 func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
 	srv := v1.New(v1.Options{
 		ProtocolContracts: &stubProtocolContractsReader{bySource: map[string][]timescale.ProtocolContract{
