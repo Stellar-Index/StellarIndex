@@ -10,80 +10,50 @@ import (
 
 // Time-local outlier trimming for the published-VWAP path.
 //
-// Why a second filter: the
-// whole-window [FilterOutliers] scores every print against ONE
-// centre — the window median — with ONE scale — 1.4826·MAD of the
-// whole window. MAD is the MAJORITY regime's dispersion (~0.1–0.3%
-// on XLM/USD), so the band is ~0.6–1.8% at sigma 4 and any AGREED
-// move larger than that is trimmed wholesale until it becomes the
-// majority of the slice, then the OLD regime is trimmed instead.
-// Live on r1: a genuine +2% Kraken step on XLM/GBP (matching the
-// XLM/USD × GBP/USD cross) was trimmed for hours, the served window
-// VWAP lagged the market by ~d·f and then jumped by d in one tick,
-// and `outlier_storm` fired on the re-counted window tail while
-// every venue agreed. A step is not an outlier; only a print that
-// disagrees with the prints AROUND it is.
+// The whole-window [FilterOutliers] scores every print against one
+// centre (the window median) and one scale (1.4826·MAD), so an AGREED
+// move larger than ~1% is trimmed wholesale until it becomes the
+// majority, then the old regime is trimmed instead: on r1 a genuine +2%
+// XLM/GBP step was trimmed for hours and the served VWAP then jumped in
+// one tick. A step is not an outlier; only a print that disagrees with
+// the prints AROUND it is.
 //
-// The fix scores each print against several robust references and
-// keeps it if it sits inside the band of ANY of them:
+// So each print is kept if it sits inside the band of ANY of:
 //
 //   - the whole-window centre/scale (the legacy band — so nothing the
 //     legacy filter accepted is newly rejected);
 //   - its own time bucket (default 1 m), when the bucket holds at
 //     least [DefaultOutlierMinBucket] prices;
-//   - the nearest non-empty bucket on either side that qualifies the
-//     same way (a step that lands MID-bucket leaves the new-regime
-//     prints a minority of their own bucket — the next bucket is
-//     their honest reference);
-//   - when its own bucket is too thin to qualify, the nearest
-//     [DefaultOutlierNeighbours] prints on each side in time order,
-//     excluding itself (a thin single-source series — 1 print/min
-//     SDEX or a quiet fiat cross — has no dense bucket to lean on,
-//     and the legacy fallback the design sketched would have kept
-//     the drift artifact alive on exactly those pairs).
+//   - the nearest qualifying bucket on either side (a step landing
+//     mid-bucket leaves new-regime prints a minority of their own);
+//   - when its own bucket is too thin, the nearest
+//     [DefaultOutlierNeighbours] prints on each side, excluding itself,
+//     so thin single-source series are covered too.
 //
-// A print is DROPPED only when it disagrees with every reference —
-// the window AND its neighbourhood. That is the shape of a
-// fat-finger, a wash print, or a dust-sized spam fill; an agreed
-// regime shift agrees with its neighbourhood by definition.
+// A print is DROPPED only when it disagrees with every reference: the
+// shape of a fat-finger, wash print or dust spam fill.
 //
-// The local references are ANCHORED, because a reference built from
-// a print's own neighbourhood is otherwise free to validate whatever
-// that neighbourhood contains: a wash burst that is the majority of
-// its own 1 m bucket (≥ MinBucket prints at 2–3×) would set the
-// bucket's median to the wash level and score itself z≈0, at ANY
-// density, and a token-farm wave would validate itself. Two rules
-// close that:
+// The local references are ANCHORED, because otherwise a wash burst that
+// is the majority of its own bucket would validate itself:
 //
 //   - the local scale is CLAMPED to [localScaleRelFloor,
-//     localScaleRelCeiling]·centre (0.25 %–1 %): a tight neighbourhood
-//     still admits honest dispersion, and a wildly dispersed one
-//     cannot widen its own band past ±sigma·1 %;
+//     localScaleRelCeiling]·centre (0.25 %–1 %);
 //   - a local reference is TRUSTED only when its centre lies within
-//     the anchor tolerance — sigma·max(window scale, ceiling·centre),
-//     ±4 % at the default sigma — of the window median OR of the
-//     previous trusted reference in time order (chain continuity). An
+//     sigma·max(window scale, ceiling·centre) (±4 % at the default sigma)
+//     of the window median OR of the previous trusted reference. An
 //     agreed step chains bucket-to-bucket; a 2.5× wash bucket is
-//     within tolerance of neither and is scored against the window
-//     band alone, where it fails. Untrusted references are simply
-//     absent from the print's reference set.
+//     scored against the window band alone, where it fails.
 //
-// A burst that is the COUNT majority of the whole window moves the
-// window median to the burst level and can trim the honest prints.
-// Unless it also carries the window's base-volume majority, that trim
-// removes more volume than it keeps and the window is withheld
-// ([keepIfVolumeMajority]) rather than published at the burst level.
+// A burst holding the COUNT majority of the window moves the median and
+// can trim honest prints; unless it also holds the base-volume majority,
+// the window is withheld ([keepIfVolumeMajority]) rather than published
+// at the burst level.
 //
-// Residual gap (documented, accepted): a burst is still self-validated
-// when it holds both the count AND the base-volume majority of the
-// whole window (outlier_trim_fraction cannot see it either), when it
-// sits within the ~4 % anchor tolerance of the honest level (indistinguishable from
-// a step by construction), or when it random-walks in ≤ 4 % steps
-// bucket-to-bucket (indistinguishable from a trending market). The
-// unregistered-venue class filter still removes token-farm spam from
-// unknown sources ahead of this filter; outlier_trim_fraction covers a
-// registered single venue's wave; outlier_storm covers venue
-// disagreement.
+// Accepted residual gap: a burst still self-validates when it holds both
+// the count and base-volume majority, sits within the ~4 % anchor
+// tolerance, or random-walks in ≤ 4 % steps — each indistinguishable from
+// real market moves. The unregistered-venue filter, outlier_trim_fraction
+// and outlier_storm cover the neighbouring cases.
 //
 // The whole value path is exact *big.Rat (ADR-0003); `Sigma` is a
 // config knob converted once to an exact rational.

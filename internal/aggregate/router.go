@@ -465,62 +465,41 @@ type scoredRoute struct {
 //
 // Returns:
 //
-//   - composite: the combined base→quote price (exact *big.Rat) — the
-//     MEMBER median of the highest-confidence tier of the GATED routes,
-//     selected BEFORE any price-median outlier omission (see
-//     [highestConfidencePrice]). A lower-confidence route corroborates and
-//     can trip diverged, but it can never evict the top-confidence route as
-//     a price "outlier" nor move the served price. nil only with err.
-//   - combinedConfidence: the confidence of the combined price — the
-//     MAXIMUM weakest-link confidence among the surviving routes (the
-//     best independent path sets the trust floor). Conservative: it
-//     never claims more than the single strongest surviving route, even
-//     though agreement across routes is itself corroborating.
-//   - servedRouteCount: the number of routes that actually produced the
-//     served composite — the size of the highest-confidence tier, AFTER
-//     its own outlier omission (see [highestConfidencePrice]). This is the
-//     count that answers "how many routes back this value". 1 for a
-//     single-route target (the whole production config today).
-//   - pathCount: the number of surviving routes in the full gated set
-//     (survivors after outlier omission over ALL gated routes, not just the
-//     top tier). This is the serving multiplicity carried on
-//     the composite meta — NOT the number that produced the served value
-//     (the two sets can be disjoint, e.g. a thin divergent
-//     majority survives median-relative omission while the served price
-//     came from a single top-confidence outlier route) — and NOT the
-//     corroboration count. It stays 1 for a single-route target (the
-//     whole production config today), byte-identical to the
-//     pre-corroboration behaviour.
-//   - corroborationCount: the number of INDEPENDENT, TIGHTLY-AGREEING,
-//     NON-DIVERGED routes that back the composite — an audit signal only;
-//     it never feeds a source count (ADR-0019 amendment §2). This is
-//     STRICTLY tighter than pathCount: it is 0 when the result diverged;
-//     0 when no two survivors agree within routerCorroborationAgreePct
-//     (loosely-agreeing routes inside the 40% band do NOT corroborate);
-//     and, among the tightly-agreeing survivors, the size of the maximum
-//     set of PAIRWISE EDGE-DISJOINT routes (two routes that share ANY
-//     undirected edge {From,To} are one manipulable market, not two
-//     independent confirmations — so an all-through-one-bottleneck set
-//     counts as 1). 1 for a single route. See corroboratingRouteCount.
+//   - composite: the combined base→quote price (exact *big.Rat), the
+//     MEMBER median of the highest-confidence tier of the gated routes,
+//     chosen BEFORE price-median outlier omission (see
+//     [highestConfidencePrice]): a lower-confidence route can trip
+//     diverged but never evict or move the top-confidence price. nil
+//     only with err.
+//   - combinedConfidence: the MAXIMUM weakest-link confidence among the
+//     surviving routes; it never claims more than the strongest single
+//     route.
+//   - servedRouteCount: the size of the highest-confidence tier after its
+//     own outlier omission — how many routes back the served value.
+//   - pathCount: the survivors of outlier omission over ALL gated routes,
+//     carried on the composite meta. Not the routes that produced the
+//     value (the sets can be disjoint) and not the corroboration count.
+//     1 for a single-route target.
+//   - corroborationCount: an audit signal only, never a source count
+//     (ADR-0019 amendment §2). 0 when diverged or when no two survivors
+//     agree within routerCorroborationAgreePct; otherwise the largest set
+//     of tightly-agreeing, PAIRWISE EDGE-DISJOINT routes, since routes
+//     sharing an edge are one manipulable market. See
+//     corroboratingRouteCount.
 //   - diverged: true if any route was rejected as an outlier, the
-//     surviving routes still spread more than routerDivergenceSpreadPct
-//     of their median, OR the composite disagrees by that much with the
-//     next-longer route tier the shortest-only selection discarded (see
-//     nextTierDisagrees). A caller should treat a diverged composite as a
-//     soft signal, not a clean price.
-//   - lowConfidence: true when NO route cleared minConfidence. In that
-//     case a best-effort composite is still returned (computed from all
-//     routes) so the caller can serve it FLAGGED/stale — it must never
-//     be treated as a confident price that feeds market-cap. false when
-//     at least one route cleared the floor.
+//     survivors spread more than routerDivergenceSpreadPct of their
+//     median, or the composite disagrees by that much with the
+//     next-longer route tier (nextTierDisagrees). Treat it as a soft
+//     signal, not a clean price.
+//   - lowConfidence: true when NO route cleared minConfidence; the
+//     best-effort composite from all routes may be served flagged/stale
+//     but must never feed market-cap.
 //   - err: [ErrNoRoute] when no path connects base to quote within
 //     maxHops; a chaining/positivity error only if an edge is malformed.
 //
-// minConfidence is the confidence floor: routes at or above it are the
-// "confident" set and alone back the combine when any exist; routes
-// below it are excluded so a low-confidence path cannot drag a
-// high-confidence one. Pass 0 to disable the floor (all routes are
-// "confident").
+// minConfidence is the confidence floor: routes at or above it alone
+// back the combine when any exist, so a low-confidence path cannot drag
+// a high-confidence one. Pass 0 to disable the floor.
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
 ) (composite *big.Rat, combinedConfidence float64, servedRouteCount, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
