@@ -2,86 +2,32 @@ package confidence
 
 import "math"
 
-// BootstrapDays is ADR-0019's CALENDAR warmup threshold, kept here as
-// the documented policy input. Per ADR-0019 §"Bootstrap (warmup)
-// policy for new assets":
-//
-//	"For an asset with < 30 days of history: ... cap confidence at
-//	 0.5 regardless of other factors."
-//
-// The cap exists because a freshly-listed asset's per-asset
-// baseline isn't trustworthy yet — even with multi-source
-// agreement and tight liquidity, we lack the historical signal
-// to know what's normal for THIS asset. 0.5 says "we can serve
-// the price, but consumers should treat it as provisional".
-//
-// It is NOT the number [applyBootstrapCap] compares against: no
-// calendar age reaches this package. [Inputs.BaselineAgeDays] carries
-// bucket DENSITY expressed in days-equivalent, so the
-// cap gates on [BootstrapDensityDays].
+// BootstrapDays and BootstrapConfidenceCap are ADR-0019's warmup policy: under 30 days of
+// history confidence caps at 0.5, since a new asset's baseline cannot say what is normal yet.
+// No calendar age reaches this package, so the cap gates on [BootstrapDensityDays].
 const (
 	BootstrapDays          = 30.0
 	BootstrapConfidenceCap = 0.5
 )
 
-// BootstrapDensityDays is the days-equivalent of 1-minute bucket
-// density at or above which the bootstrap cap releases — the
-// translation of [BootstrapDays] into the only unit this package is
-// ever handed.
-//
-// Why it is not simply [BootstrapDays]: the 30-day window
-// behind [Inputs.BaselineAgeDays] holds at most 43,200 one-minute
-// buckets, so the density reading is bounded ABOVE by 30.0 and
-// reaches it only for a window in which the pair traded in every
-// single minute. Gating at 30.0 demanded literal perfection, so the
-// cap never released for any asset: every served confidence was
-// pinned at exactly 0.5 and the multi-factor score underneath it was
-// unobservable — including to the Phase 2 freeze leg that reads it.
-//
-// 0.95 of the window is the relaxation, and it stays on the safe side
-// of the ADR in the way that matters. Buckets accrue at no more than
-// 1,440 a day, so a reading of X days-equivalent PROVES at least X
-// calendar days of observed history; clearing 28.5 therefore implies
-// a pair observed across at least 28.5 of ADR-0019's 30 calendar
-// days. It cannot un-cap a genuinely new asset, and it does not un-cap
-// a mature-but-sparse pair either, which stays capped deliberately:
-// a pair trading 200 minutes a day reads 4.17 days-equivalent, an
-// order of magnitude below the gate. The headroom the other way is
-// measured, not guessed: r1's densest pairs run ≈99.2% coverage
-// (served baseline_quality 0.996 → 29.76 days-equivalent), a shortfall
-// roughly four times smaller than the 5% allowed here.
+// BootstrapDensityDays is [BootstrapDays] in the bucket-density unit this package is handed.
+// Density tops out at 30.0 only for a pair trading every minute, so gating at 30.0 never
+// released the cap; buckets accrue at most 1,440/day, so 28.5 still proves 28.5 calendar days.
 const BootstrapDensityDays = BootstrapDays * bootstrapDensityFraction
 
-// bootstrapDensityFraction is the share of a perfectly-observed
-// 30-day window that counts as a mature baseline. See
-// [BootstrapDensityDays] for why it is below 1.0, and why it is not
-// much below.
+// bootstrapDensityFraction is the share of a perfectly observed 30-day window that counts
+// as mature; r1's densest pairs run ~99.2%, well inside it.
 const bootstrapDensityFraction = 0.95
 
-// BootstrapReengageDensityDays is the lower edge of the gate's
-// hysteresis band: a pair released at [BootstrapDensityDays] is
-// capped again only once its density falls below this. The band
-// absorbs a shared ingestion gap of about three days for a
-// fully-dense pair instead of the ~30 hours a single step allows, and
-// it cannot release anything: only a pair that already cleared the
-// upper gate — and so proved 28.5 calendar days of history — is held
-// inside it.
+// BootstrapReengageDensityDays is the gate's lower hysteresis edge: a released pair is
+// capped again only below it, absorbing a ~3-day ingestion gap. It cannot release anything.
 const BootstrapReengageDensityDays = BootstrapDays * bootstrapReengageFraction
 
 const bootstrapReengageFraction = 0.90
 
-// Inputs are the raw observations a single bucket carries. The
-// orchestrator populates this from the bucket's stats + the per-
-// asset baseline; this package converts to a [Score] without any
-// further IO.
-//
-// Field shapes deliberately match the data the orchestrator
-// already has at confidence-compute time — no new accessors needed
-// at the call site.
+// Inputs are one bucket's raw observations, converted to a [Score] without further IO.
 type Inputs struct {
-	// ZScore — the largest z-score across the multi-window
-	// baselines (`baseline.MultiBaseline.MaxZScore`). Pass 0 when
-	// the asset is in full bootstrap (no baseline at any window).
+	// ZScore is the largest multi-window baseline z-score; 0 in full bootstrap.
 	ZScore float64
 
 	// SourceCount — distinct contributing sources in the bucket.
@@ -91,107 +37,42 @@ type Inputs struct {
 	// oracle / aggregator). 0 when no sources contributed.
 	SourceClassCount int
 
-	// LiquidityUSD — bucket volume in USD, or [LiquidityUnmeasured]
-	// (negative) when the caller cannot value the pair in USD at all.
-	//
-	// Zero is NOT the unmeasured state: it means "measured, and this
-	// bucket carried no USD volume", which zeroes [LiquidityFactor]
-	// and — the geometric mean being dominated by any zero factor —
-	// the whole score. Pass the sentinel rather than 0 for an
-	// unpriceable pair.
+	// LiquidityUSD is bucket USD volume, or [LiquidityUnmeasured] when the pair cannot be
+	// valued. Zero means measured-and-empty and zeroes the whole score, so never pass 0
+	// for an unpriceable pair.
 	LiquidityUSD float64
 
-	// CrossOracleDivergencePct — % absolute deviation between our
-	// price and the cross-oracle median. Pass a negative value to
-	// signal "no cross-oracle data" (returns the neutral factor
-	// per ADR-0019 worked example).
+	// CrossOracleDivergencePct is % deviation from the cross-oracle median; negative means
+	// no data and yields the ADR-0019 neutral factor.
 	CrossOracleDivergencePct float64
 
-	// CrossOracleAgreementCount — how many independent external
-	// references corroborated our VWAP within the divergence
-	// threshold at refresh time (ADR-0019 Phase 3;
-	// divergence.CachedResult.AgreementCount). Transparency-only:
-	// it does NOT enter the combined score (the ADR's
-	// cross_oracle_factor input is divergence-from-median), but it
-	// ships in the served [Factors] decomposition so consumers can
-	// gate on corroboration strength directly. Pass a negative
-	// value when cross-oracle data is unavailable — served as 0
-	// alongside CrossOracleChecked=false. Ignored (forced to 0 on
-	// the wire) when CrossOracleDivergencePct carries the no-data
-	// sentinel.
+	// CrossOracleAgreementCount is how many external references corroborated our VWAP.
+	// Transparency only: it is served in [Factors] but not scored. Negative, or a no-data
+	// divergence, serves 0.
 	CrossOracleAgreementCount int
 
-	// TriangulationChecked gates [TriangulationDivergencePct]. False —
-	// the ZERO VALUE — means "no composite was compared", and [Compute]
-	// then drops the factor's weight entirely, so an un-triangulated
-	// pair scores as if this input were absent.
-	//
-	// This is the one place this package does NOT mirror
-	// [CrossOracleDivergencePct]'s negative-sentinel-only shape, and the
-	// deviation is deliberate: a float's zero value is 0.0, which on the
-	// sentinel shape reads as "checked, and the composite agrees
-	// perfectly" — full credit, awarded to every caller that never heard
-	// of this field. Fail-open is the wrong default for a corroboration
-	// signal, and it is the same category of defect as unmeasured liquidity (a
-	// measured 0 that was really "not measured"). An explicit flag makes
-	// omission read as ignorance instead of as evidence.
+	// TriangulationChecked gates [TriangulationDivergencePct]; false drops the factor's weight.
+	// Unlike the negative sentinel, a float's zero value would read as perfect agreement, and
+	// fail-open is the wrong default for a corroboration signal.
 	TriangulationChecked bool
 
-	// TriangulationDivergencePct — % absolute deviation between the
-	// pair's DIRECT price (this bucket's VWAP) and the COMPOSITE price
-	// implied by a configured triangulation chain for the same pair
-	// (e.g. XLM/EUR direct vs XLM/USD × USD/EUR). Read only when
-	// [TriangulationChecked] is true; a negative value is treated as
-	// unchecked as well, so the sentinel convention still holds for
-	// callers that use it.
-	//
-	// Why this is a confidence input and not a source: a composite is
-	// CORROBORATION, not a second venue. It re-uses our own leg VWAPs,
-	// our own pipeline and (usually) our own upstream sources, so it
-	// cannot carry the independence that [Inputs.SourceCount] asserts.
-	// It therefore feeds this factor only — the freeze's
-	// `source_count <= 1` leg (ADR-0019's 3-signal AND) must NOT count
-	// a triangulated price as a corroborating source, or the AND
-	// silently degrades to two signals on exactly the thin pairs
-	// triangulation is deployed for. See
-	// orchestrator.triangulationDivergencePct for the producer side.
-	//
-	// Direction: agreement gives full credit (1.0) and, being an extra
-	// factor in a normalised geometric mean, lifts the score; a large
-	// divergence is a manipulation signal on one side or the other and
-	// decays the factor toward 0, dragging the score down.
+	// TriangulationDivergencePct is % deviation between the direct VWAP and a configured
+	// triangulation composite (e.g. XLM/USD × USD/EUR). It is corroboration, not a source: it
+	// reuses our own legs, so it must never count toward the freeze's source_count leg.
 	TriangulationDivergencePct float64
 
-	// BaselineAgeDays — days-equivalent of baseline DENSITY, not
-	// calendar age. The only production caller
-	// (orchestrator.baselineAgeDays) passes (Day30.N + 1) / 1440 — the
-	// count of 1-minute buckets behind the 30d window's returns,
-	// expressed in days-worth-of-buckets; a pair that trades in 200
-	// buckets a day reads as 0.14 "days" no matter how many calendar
-	// months it has existed. A completely-observed window reads exactly
-	// [BootstrapDays]; nothing reads higher.
-	//
-	// That is deliberate — a baseline is trustworthy in proportion to
-	// the samples that fed its median/MAD, not to how long ago it was
-	// first written — but the NAME says age, so read the factor's
-	// output as "how well-supported is this baseline", never as
-	// "how old is this asset". 0 = no support (bootstrap penalty);
-	// negative means "no baseline at all" and the factor returns 0.5.
+	// BaselineAgeDays is baseline DENSITY in days of 1-minute buckets, not calendar age: a
+	// baseline is as trustworthy as the samples behind it. At most [BootstrapDays]; negative
+	// means no baseline and the factor returns 0.5.
 	BaselineAgeDays float64
 
-	// BootstrapReleased is the pair's previous gate state: true when its
-	// last score cleared the bootstrap cap. It selects the hysteresis
-	// edge the density is compared against (see
-	// [BootstrapReengageDensityDays]); false, the zero value, is the
-	// conservative upper gate.
+	// BootstrapReleased is the previous gate state, selecting the hysteresis edge; false is
+	// the conservative upper gate.
 	BootstrapReleased bool
 }
 
-// Factors holds the per-factor decomposition that ships on the
-// wire alongside the combined confidence score. Customers and
-// operators look at this to understand WHY confidence dropped:
-// "z=1.0 (ok), src=0.3 (single-source), div=0.5 (one class)" tells
-// you the issue is source coverage, not staleness.
+// Factors is the per-factor decomposition served beside the score, so consumers can see
+// why confidence dropped.
 type Factors struct {
 	ZScore                 float64 `json:"z_score"`
 	SourceCount            float64 `json:"source_count"`
@@ -201,78 +82,32 @@ type Factors struct {
 	TriangulationAgreement float64 `json:"triangulation_agreement"`
 	BaselineQuality        float64 `json:"baseline_quality"`
 
-	// CrossOracleChecked disambiguates the CrossOracle factor value
-	// per the DivergenceChecked discipline: true means real
-	// cross-oracle data fed the factor; false means the neutral
-	// no-data value was used. Without it a consumer cannot tell
-	// CrossOracle=0.7 "unverified" from CrossOracle=0.7 "verified,
-	// mildly diverging" — and MUST NOT read false as "references
-	// agree".
+	// CrossOracleChecked is true when real cross-oracle data fed CrossOracle; false means
+	// the neutral value was used and MUST NOT be read as "references agree".
 	CrossOracleChecked bool `json:"cross_oracle_checked"`
 
-	// LiquidityMeasured disambiguates the Liquidity factor value on
-	// exactly the same discipline as CrossOracleChecked above:
-	// true means a real USD volume fed the factor, false means the
-	// neutral [LiquidityUnmeasuredFactor] was substituted because the
-	// pair could not be valued in USD.
-	//
-	// This is load-bearing, not symmetry for its own sake. The neutral
-	// is 0.5, and SOME measured bucket always maps to 0.5 too — the
-	// log-midpoint of the factor's own band (≈ $31,623), while the
-	// publish floor (dropForMinUSDVolume rejects anything below it before
-	// confidence is computed) reads 0.333. The two states are far apart in
-	// practice but NOT distinguishable from the number alone, and a
-	// consumer that cannot tell them apart still MUST NOT read 0.5 as
-	// evidence of real liquidity.
+	// LiquidityMeasured is true when real USD volume fed Liquidity. Load-bearing: the
+	// unmeasured neutral is 0.5, and a measured ~$31.6K bucket also scores 0.5, so 0.5 alone
+	// is not evidence of liquidity.
 	LiquidityMeasured bool `json:"liquidity_measured"`
 
-	// CrossOracleAgreement is the count of independent external
-	// references that corroborated our price within the divergence
-	// threshold (ADR-0019 Phase 3 cross-oracle agreement). Always 0
-	// when CrossOracleChecked is false — read it only when checked.
+	// CrossOracleAgreement is the corroborating-reference count; 0 when unchecked.
 	CrossOracleAgreement int `json:"cross_oracle_agreement"`
 
-	// TriangulationChecked disambiguates the TriangulationAgreement
-	// factor on the same discipline as CrossOracleChecked: true
-	// means a real composite price (a configured triangulation chain's
-	// fresh output for this pair) was compared against the direct price;
-	// false means no composite was available and the neutral placeholder
-	// was served. false MUST NOT be read as "the composite agrees".
-	//
-	// One difference from CrossOracleChecked, and it is deliberate: when
-	// this is false the factor is EXCLUDED from the combined score
-	// entirely (its weight is zeroed in [Compute]), so the served value
-	// is inert rather than merely neutral. A normalised geometric mean
-	// has no truly neutral constant — adding any factor value changes
-	// every score through the 1/sum(weights) exponent — and a
-	// corroboration signal that silently re-scored every pair without a
-	// chain would be a worse defect than the gap it fills.
+	// TriangulationChecked is true when a fresh composite was compared. When false the factor
+	// is excluded from the score, not just neutral: a normalised geometric mean has no neutral
+	// constant, and re-scoring every pair without a chain would be worse than the gap.
 	TriangulationChecked bool `json:"triangulation_checked"`
 
-	// BaselineAgeDays is [Inputs.BaselineAgeDays] as scored: baseline
-	// DENSITY in days-equivalent of 1-minute buckets (at most
-	// [BootstrapDays]), not calendar age. Negative means no usable 30d
-	// baseline density was available.
+	// BaselineAgeDays is the scored density (see [Inputs.BaselineAgeDays]); negative means none.
 	BaselineAgeDays float64 `json:"baseline_age_days"`
 
-	// BootstrapCapped disambiguates a served confidence at or below
-	// [BootstrapConfidenceCap] on the same discipline: true means the
-	// bootstrap ceiling bounded this score because BaselineAgeDays is
-	// under [BootstrapDensityDays] (or, for a previously released pair,
-	// under [BootstrapReengageDensityDays]), so the value may be the cap rather
-	// than the evidence. false means the multi-factor score was served
-	// unbounded.
+	// BootstrapCapped is true when the bootstrap ceiling bounded this score, so the value may
+	// be the cap rather than the evidence.
 	BootstrapCapped bool `json:"bootstrap_capped"`
 }
 
-// Weights are the per-factor exponents in the weighted geometric
-// mean. ADR-0019 specifies these as operator-tunable but defaults
-// them all to 1.0 (unweighted geometric mean). A weight of 0
-// effectively removes that factor from the product.
-//
-// Operators tune these via [anomaly.weights] in TOML — that wiring
-// lands with the orchestrator slice. This struct is just the math
-// surface.
+// Weights are the per-factor exponents of the weighted geometric mean; 0 removes a factor.
 type Weights struct {
 	ZScore                 float64
 	SourceCount            float64
@@ -283,19 +118,9 @@ type Weights struct {
 	BaselineQuality        float64
 }
 
-// DefaultWeights returns the ADR-0019 default — all ones except the
-// triangulation-agreement factor, which defaults to 0.5.
-//
-// The half weight IS the "a derived path is not an independent venue"
-// discount, and it lives here rather than in the factor's ceiling on
-// purpose: [TriangulationAgreementFactor] keeps the same shape as
-// [CrossOracleFactor] so the two decomposition values are directly
-// comparable on the wire ("0.8 divergence-decayed" means the same thing
-// in both columns), and the evidence class is expressed where this
-// package already expresses relative influence. A composite re-uses our
-// own leg VWAPs and pipeline, so it corroborates at roughly half the
-// weight of an independent external reference; it never contributes to
-// [Inputs.SourceCount] at all.
+// DefaultWeights is all ones except triangulation at 0.5: a composite reuses our own legs,
+// so it corroborates at about half an independent reference. The discount lives here so the
+// triangulation and cross-oracle factors stay directly comparable on the wire.
 func DefaultWeights() Weights {
 	return Weights{
 		ZScore:                 1.0,
@@ -308,34 +133,18 @@ func DefaultWeights() Weights {
 	}
 }
 
-// Score is the combined confidence score plus its decomposition.
-// The wire response carries this whole struct — Confidence on the
-// envelope, Factors on a sibling field for transparency.
+// Score is the combined confidence plus its served decomposition.
 type Score struct {
 	Confidence float64 `json:"confidence"`
 	Factors    Factors `json:"factors"`
 }
 
-// Compute returns the [Score] for a bucket given its raw inputs and
-// per-factor weights. Pass [DefaultWeights] to compute with the
-// ADR-0019 default unweighted shape.
-//
-// The combined score is the weighted geometric mean:
+// Compute returns the weighted geometric mean of the factors:
 //
 //	confidence = prod(factor_i ^ weight_i) ^ (1 / sum(weights))
 //
-// The 1/sum(weights) normalisation keeps the final value in [0, 1]
-// regardless of weight magnitude. Without it, doubling every weight
-// would square the result.
-//
-// Edge cases:
-//
-//   - All weights = 0: returns a neutral 0.5 with the per-factor
-//     decomposition still populated. (Useful for diagnostics:
-//     "compute the factors but ignore the combiner".)
-//   - Any factor returns exactly 0 with non-zero weight: the
-//     geometric mean is 0 (the dominating-factor behaviour the
-//     ADR explicitly wants).
+// All-zero weights return 0.5 with factors populated; a zero factor with non-zero weight
+// zeroes the score, as ADR-0019 wants.
 func Compute(in Inputs, w Weights) Score {
 	f := Factors{
 		ZScore:                 ZScoreFactor(in.ZScore),
@@ -348,27 +157,17 @@ func Compute(in Inputs, w Weights) Score {
 		BaselineAgeDays:        servedBaselineAgeDays(in.BaselineAgeDays),
 		BootstrapCapped:        bootstrapCapInForce(in.BaselineAgeDays, in.BootstrapReleased),
 	}
-	// Mirrors the CrossOracleChecked branch below: a negative
-	// LiquidityUSD is the "could not value this pair in USD" sentinel,
-	// so the served decomposition marks it unmeasured.
+	// A negative LiquidityUSD is the unvalued sentinel.
 	f.LiquidityMeasured = in.LiquidityUSD >= 0
-	// Checked mirrors CrossOracleFactor's sentinel branch exactly:
-	// a negative divergence means "no cross-oracle data" (neutral
-	// factor), so the served decomposition marks unchecked and the
-	// agreement count is forced to 0 (unchecked ≠ zero agreement —
-	// consumers read the pair together). NaN divergence
-	// (defensive-zero factor) also reads as unchecked.
+	// Unchecked (negative or NaN divergence) forces the agreement count to 0, since
+	// unchecked is not zero agreement.
 	if in.CrossOracleDivergencePct >= 0 && !math.IsNaN(in.CrossOracleDivergencePct) {
 		f.CrossOracleChecked = true
 		if in.CrossOracleAgreementCount > 0 {
 			f.CrossOracleAgreement = in.CrossOracleAgreementCount
 		}
 	}
-	// Same sentinel branch for the composite comparison — but the
-	// unchecked case also drops the factor's WEIGHT to zero, which is
-	// what makes "no chain configured for this pair" a genuine no-op
-	// rather than a re-scoring of every pair in the index. See
-	// [Factors.TriangulationChecked].
+	// Unchecked also zeroes the weight, so a pair with no chain is not re-scored.
 	triWeight := 0.0
 	if in.TriangulationChecked && in.TriangulationDivergencePct >= 0 && !math.IsNaN(in.TriangulationDivergencePct) {
 		f.TriangulationChecked = true
@@ -380,10 +179,7 @@ func Compute(in Inputs, w Weights) Score {
 		return Score{Confidence: 0.5, Factors: f}
 	}
 
-	// Sum log-factors instead of multiplying directly — keeps the
-	// arithmetic numerically stable when any factor is very small
-	// (log(small) is large negative; the exp at the end recovers
-	// the result without underflow).
+	// Sum logs so a tiny factor cannot underflow the product.
 	logSum := weightedLog(f.ZScore, w.ZScore) +
 		weightedLog(f.SourceCount, w.SourceCount) +
 		weightedLog(f.Diversity, w.Diversity) +
@@ -397,12 +193,8 @@ func Compute(in Inputs, w Weights) Score {
 	return Score{Confidence: clamp01(conf), Factors: f}
 }
 
-// triangulationInput collapses the (Checked, DivergencePct) pair into
-// the single value [TriangulationAgreementFactor] takes: the raw
-// divergence when a composite really was compared, the negative
-// no-data sentinel otherwise. Keeps the unchecked→neutral mapping in
-// ONE place so the served factor value and the weight-zeroing branch
-// in [Compute] can never disagree about what "unchecked" means.
+// triangulationInput keeps the unchecked→sentinel mapping in one place so the served
+// factor and Compute's weight-zeroing cannot disagree.
 func triangulationInput(in Inputs) float64 {
 	if !in.TriangulationChecked {
 		return -1
@@ -410,18 +202,8 @@ func triangulationInput(in Inputs) float64 {
 	return in.TriangulationDivergencePct
 }
 
-// applyBootstrapCap caps the final confidence at
-// [BootstrapConfidenceCap] when the baseline behind the bucket is
-// still thin (BaselineAgeDays known and below
-// [BootstrapDensityDays], or below [BootstrapReengageDensityDays] for a
-// pair released at its previous score — density thresholds, not
-// calendar ones; see those constants).
-//
-// A negative BaselineAgeDays is the "no baseline yet" sentinel —
-// stricter than bootstrap, so we apply the cap there too. Callers
-// who pass an unknown age via NaN get no cap (the BaselineQuality
-// factor already returns 0.5 for NaN, dragging the combiner down
-// without a hard ceiling).
+// applyBootstrapCap caps confidence while the baseline is thin. A negative age (no
+// baseline) is capped too; NaN is not, as BaselineQuality already drags it down.
 func applyBootstrapCap(c, ageDays float64, released bool) float64 {
 	if !bootstrapCapInForce(ageDays, released) {
 		return c
@@ -455,11 +237,7 @@ func servedBaselineAgeDays(ageDays float64) float64 {
 	return ageDays
 }
 
-// safeLog returns log(x) with log(0) → -Inf clamped through Exp;
-// log(NaN) and log(<0) return -Inf so the geometric mean dominates
-// to zero. Defensive: factor outputs are already clamped to [0, 1]
-// but the math would produce NaN on log(0) so we route through
-// math.Inf(-1) explicitly.
+// safeLog maps log of zero, negative or NaN to -Inf so the geometric mean goes to zero.
 func safeLog(x float64) float64 {
 	if x <= 0 || math.IsNaN(x) {
 		return math.Inf(-1)
@@ -467,21 +245,8 @@ func safeLog(x float64) float64 {
 	return math.Log(x)
 }
 
-// weightedLog is safeLog(factor) * weight with the one product IEEE-754
-// gets wrong made explicit: -Inf * 0 is NaN, not 0.
-//
-// safeLog returns -Inf for a zero factor, so a factor of exactly 0 that
-// happens to carry a weight of 0 produced NaN — which propagates through
-// the sum, survives math.Exp, passes both branches of applyBootstrapCap
-// untouched, and lands in clamp01(NaN) = 0. A fully healthy pair would
-// publish confidence 0 beside a confidence_factors decomposition showing
-// every factor near 1.
-//
-// That contradicts three documented promises in this package: that "a
-// weight of 0 effectively removes that factor from the product", that a
-// zero factor zeroes the mean only "with non-zero weight", and doc.go's
-// flat guarantee that "the geometric mean never produces NaN". A
-// zero-weighted factor is REMOVED, which is what the docs already say.
+// weightedLog returns 0 for a zero weight: -Inf * 0 is NaN, which reached clamp01 as
+// confidence 0 beside healthy factors. A zero-weighted factor is removed, as documented.
 func weightedLog(factor, weight float64) float64 {
 	if weight == 0 {
 		return 0
