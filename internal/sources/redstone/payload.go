@@ -9,23 +9,13 @@ import (
 	"sort"
 )
 
-// This file parses the RedStone signed-payload wire format — the third
-// argument of every write_prices call — far enough to recover, per feed,
-// the signer value set and package timestamp. It exists for one case:
-// SUBSET-FILTERED batches, where the adapter's freshness verifier dropped
-// ≥1 requested feed, so updated_feeds is SHORTER than the op-args
-// feed_ids and decodeWritePrices' positional zip cannot attribute prices.
+// This file parses the RedStone signed payload (write_prices' third argument) far enough to recover
+// per-feed signer values and timestamps, for SUBSET-FILTERED batches whose updated_feeds is shorter than
+// feed_ids. The adapter stores each accepted feed's signer MEDIAN, so a surviving price must equal a
+// unique candidate's median at its package_timestamp (byte-exact on ledger 59258375); anything ambiguous
+// refuses the event.
 //
-// The adapter stores the MEDIAN of the signer values for each feed it
-// accepts, so a surviving updated_feeds price MUST equal one candidate
-// feed's payload median at that entry's package_timestamp (verified
-// byte-exact on the ledger-59258375 event: 12,449,969,251,710 == BTC's
-// median of three; ETH was dropped). Attribution demands a UNIQUE such
-// feed and a bijection overall; anything ambiguous refuses the whole
-// event, keeping it honest-blind rather than guessed.
-//
-// Wire layout (all integers big-endian; parsed from the END, per the
-// RedStone protocol docs):
+// Wire layout (big-endian, parsed from the END):
 //
 //	[dataPackage 1]…[dataPackage N] [packagesCount 2B]
 //	[unsignedMetadataSize 3B] [unsignedMetadata] [redstoneMarker 9B]
@@ -37,30 +27,15 @@ import (
 //
 // each dataPoint: [feedID 32B zero-right-padded] [value valueByteSize B]
 //
-// Signatures are NOT verified: the adapter already accepted the payload
-// on-chain (the event is the proof).
+// Signatures are NOT verified: the event proves the adapter accepted the payload.
 //
-// ACCEPTED RESIDUAL RISK: without redstone-core's signer filtering this
-// parser aggregates EVERY package, whereas the adapter first discards
-// non-trusted signers, so the medians can disagree. Usually that refuses
-// (no surviving price matches).
+// ACCEPTED RESIDUAL RISK: without redstone-core's signer filtering every package is aggregated, so
+// medians can disagree with the adapter's; usually that refuses.
 //
-// F1 CAVEAT: it misattributes when all three hold: (1) signer-filter divergence for a surviving feed (the only
-// divergence source; the even-count rule matches the adapter), (2) a
-// dropped feed's median coincidentally equals that surviving price
-// (cross-feed collisions are real — the BENJI twins in
-// statewrite_test.go), and (3) the dropped feed sits between surviving
-// feeds in feed_ids order, so attributeSubset finds a unique
-// order-preserving bijection. This is only on the payload-FALLBACK path;
-// the state-write path is exact. When state-write keys name any of the
-// op's feeds, corroborateFallback (decode.go) requires the result to be
-// a subset of the changed feeds, which refuses the compound. It remains
-// for fallbacks with no feed-keyed writes (non-opted readers,
-// stellar-rpc fixtures, pre-plumb stored events) and for a dropped
-// feed's entry restored in the same op. Steering it also needs the
-// ADAPTER to accept the payload, where the signer filter did run. Fully
-// closing it means vendoring redstone-core's secp256k1 recovery and
-// trusted-updater roster in lockstep with contract upgrades.
+// F1 CAVEAT: it misattributes only when (1) signer-filter divergence hits a surviving feed, (2) a dropped
+// feed's median equals that price (the BENJI twins in statewrite_test.go), and (3) the dropped feed sits
+// between survivors so the bijection is unique. Fallback path only; corroborateFallback refuses it when
+// state writes name the op's feeds. Closing it fully needs redstone-core's secp256k1 recovery and roster.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (
@@ -77,23 +52,18 @@ const (
 	maxPayloadValue = 1024 // defensive ceiling on valueByteSize
 )
 
-// ErrMalformedRedstonePayload wraps every structural failure below so
-// callers can treat "payload unparseable" as one refusal class.
+// ErrMalformedRedstonePayload wraps every structural failure, one "payload unparseable" refusal class.
 var ErrMalformedRedstonePayload = errors.New("redstone: malformed payload")
 
-// payloadPackage is one signed data point recovered from the payload:
-// a single signer's value for a single feed at a batch timestamp.
+// payloadPackage is one signer's value for one feed at a batch timestamp.
 type payloadPackage struct {
 	Value       *big.Int
 	TimestampMS uint64
 }
 
-// parsePayload recovers feed → signer packages from a raw RedStone
-// payload. Every offset is bounds-checked; any inconsistency returns
-// [ErrMalformedRedstonePayload] rather than a partial result, because the
-// caller uses the output to ATTRIBUTE prices — a truncated read that
-// silently dropped one feed's packages could attribute a price to the
-// wrong asset, which is the exact failure this parser exists to prevent.
+// parsePayload recovers feed → signer packages. Any inconsistency returns
+// [ErrMalformedRedstonePayload], never a partial result: a dropped feed could attribute a price to the
+// wrong asset, the failure this parser exists to prevent.
 func parsePayload(payload []byte) (map[string][]payloadPackage, error) {
 	n := len(payload)
 	if n < markerLen+metaSizeLen+pkgCountLen {
@@ -149,19 +119,9 @@ func parsePayload(payload []byte) (map[string][]payloadPackage, error) {
 	return out, nil
 }
 
-// medianAt returns the adapter-equivalent aggregate of pkgs' values whose
-// timestamp equals tsMS: the exact middle element for an odd count, the
-// truncated mean of the two middle elements for an even count. ok=false
-// when no package matches the timestamp.
-//
-// The even-count rule (floor((a+b)/2)) was VERIFIED against the deployed
-// adapter source: redstone-rust-sdk's Avg impl is
-// (a>>1)+(b>>1)+((a&1 + b&1)>>1) == floor((a+b)/2), and its even-count
-// aggregation test expects avg(2000,3000)=2500 — byte-identical to this.
-// So the even-count aggregation is NOT a divergence source. (The one
-// remaining place our median can diverge from the adapter's is the
-// signer-filter — see the ACCEPTED RESIDUAL RISK note above, and the F1
-// caveat there: a diverged median is NOT unconditionally honest-blind.)
+// medianAt returns the adapter-equivalent aggregate of pkgs' values at tsMS: the middle element, or
+// floor((a+b)/2) for an even count (verified against redstone-rust-sdk's Avg; not a divergence source).
+// ok=false when none matches. Signer filtering can still diverge; see the F1 caveat above.
 func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 	vals := make([]*big.Int, 0, len(pkgs))
 	for _, p := range pkgs {
@@ -181,26 +141,10 @@ func medianAt(pkgs []payloadPackage, tsMS uint64) (*big.Int, bool) {
 	return sum.Rsh(sum, 1), true
 }
 
-// attributeSubset maps each surviving updated_feeds entry to exactly one
-// of the op-args feed_ids by matching the entry's price against each
-// candidate feed's payload median at the entry's package_timestamp —
-// under the ORDER-PRESERVING constraint: the adapter builds
-// updated_feeds in a single pass over feed_ids (that is also why the
-// equal-arity case zips positionally), so the surviving entries are a
-// SUBSEQUENCE of feed_ids in order. Attribution is therefore an
-// alignment of prices onto an ordered subsequence of candidates, and
-// the constraint can only DISAMBIGUATE relative to the unordered rule
-// (any true assignment is order-preserving by construction) — it can
-// never misattribute. It resolved a measured residual class where one
-// price matched two feeds' medians simultaneously (170 ledgers, first
-// 60104689: a price matching both iBENJI_ETHEREUM_FUNDAMENTAL and
-// SolvBTC.BBN_FUNDAMENTAL) that the unordered rule refused.
-//
-// The alignment count is computed by DP; refusal cases (error → the
-// event stays honest-blind):
-//   - zero complete alignments (a price matches no candidate at its
-//     slot — unknown aggregation rule or a feed outside the payload);
-//   - MORE than one complete alignment (order cannot disambiguate).
+// attributeSubset maps each surviving updated_feeds entry to one feed_id whose payload median equals
+// its price, ORDER-PRESERVING: updated_feeds is a subsequence of feed_ids, so the constraint only
+// disambiguates (it resolved 170 ledgers from 60104689 where a price matched two medians). A DP counts
+// alignments; zero or more than one refuses, leaving the event honest-blind.
 func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte) ([]string, error) {
 	byFeed, err := parsePayload(payload)
 	if err != nil {
@@ -214,10 +158,7 @@ func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte
 		return nil, fmt.Errorf("%w: no order-preserving alignment of %d prices onto %d feed_ids",
 			ErrAmbiguousSubset, n, m)
 	case 1:
-		// Unique — walk the DP to recover it. Invariant: along the walk
-		// ways[i][j] == 1, and ways[i][j] = take + skip where
-		// take = match[i][j] ? ways[i+1][j+1] : 0 and skip = ways[i][j+1],
-		// so exactly ONE of the two branches is live at every step.
+		// Unique: walk the DP. ways[i][j] == 1 = take + skip along the walk, so exactly one branch is live.
 		assigned := make([]string, n)
 		i, j := 0, 0
 		for i < n {
@@ -246,11 +187,8 @@ func attributeSubset(prices []priceDataDecoded, feedIDs []string, payload []byte
 	}
 }
 
-// ErrAmbiguousSubset is returned when a subset-filtered batch cannot be
-// attributed uniquely from its payload. Deliberately an ERROR, not a
-// skip: the completeness verifier must keep counting these ledgers as
-// blind rather than certifying a range where prices exist but could not
-// be safely assigned to assets.
+// ErrAmbiguousSubset — a subset-filtered batch could not be attributed uniquely. An ERROR, not a
+// skip, so the completeness verifier keeps counting the ledger as blind.
 var ErrAmbiguousSubset = errors.New("redstone: subset-filtered batch attribution ambiguous")
 
 // be24 / be48 read big-endian 3- and 6-byte unsigned integers.
@@ -263,9 +201,7 @@ func be48(b []byte) uint64 {
 		uint64(b[3])<<16 | uint64(b[4])<<8 | uint64(b[5])
 }
 
-// alignmentMatches builds match[i][j]: prices[i] could be feedIDs[j]
-// (median at the entry's package_timestamp equals the entry's price
-// exactly).
+// alignmentMatches builds match[i][j]: feedIDs[j]'s median at prices[i]'s package_timestamp equals its price.
 func alignmentMatches(prices []priceDataDecoded, feedIDs []string, byFeed map[string][]payloadPackage) [][]bool {
 	match := make([][]bool, len(prices))
 	for i, pd := range prices {
@@ -278,9 +214,7 @@ func alignmentMatches(prices []priceDataDecoded, feedIDs []string, byFeed map[st
 	return match
 }
 
-// alignmentWays counts, for every suffix pair, the order-preserving
-// alignments of prices[i:] onto feedIDs[j:], capped at 2 (all the caller
-// needs is 0 / 1 / many).
+// alignmentWays counts order-preserving alignments of prices[i:] onto feedIDs[j:], capped at 2.
 func alignmentWays(match [][]bool, n, m int) [][]int {
 	ways := make([][]int, n+1)
 	for i := range ways {
