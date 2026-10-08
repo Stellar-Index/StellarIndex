@@ -19,44 +19,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyUSDVolume is the stellarindex-ops `verify-usd-volume` subcommand —
-// the VALUE half of the usd_volume checks.
+// verifyUSDVolume is the stellarindex-ops `verify-usd-volume` subcommand, the
+// VALUE half of the usd_volume checks. The standing alerts
+// (configs/prometheus/rules.r1/usd-volume-coverage.yml) only check COVERAGE; a
+// trade priced with the wrong number is fully covered and wrong, and every
+// volume surface is a sum of that column. The tiers (timescale.tradeUSDVolume)
+// split in two:
 //
-// The standing usd-volume alerts (configs/prometheus/rules.r1/
-// usd-volume-coverage.yml) are a COVERAGE check: the ratio of trades
-// inserted with a non-NULL `usd_volume`. That catches "we stopped pricing
-// this venue" and nothing else. A trade priced with the WRONG number is
-// 100% covered and completely wrong, and every volume surface this system
-// publishes — DEX volume, asset volume, venue rankings, market share,
-// transfer volume — is a sum of that column.
+//	CHECKED: tiers 1/2 and 2b are pure decimal rescalings of a USD-pegged leg
+//	  already on the row, so there is no tolerance; a mismatch FAILS the run.
 //
-// This tool is deliberately split in two, because the column's five tiers
-// (see timescale.tradeUSDVolume) are not all the same kind of number:
+//	MEASURED: tiers 3/4 value the trade from an FX rate or the XLM anchor and
+//	  are legitimately inexact (two routes measured up to 134.92% apart). Their
+//	  sums are PRINTED, not judged: that threshold is what this run produces.
 //
-//	CHECKED — the exact tiers. Tiers 1/2 (quote leg USD-pegged) and 2b
-//	  (base leg USD-pegged) are pure decimal rescalings of an amount
-//	  already on the row: usd_volume = pegged_leg / 10^decimals. No price
-//	  lookup, no time alignment, therefore NO TOLERANCE TO ARGUE ABOUT. A
-//	  mismatch is a defect — wrong scale, wrong leg, stale peg list, or a
-//	  superseded backfill vintage — and it FAILS this command.
-//
-//	MEASURED — the estimated tiers. Tiers 3/4 value the trade from an FX
-//	  rate or the XLM anchor at trade time. Legitimately inexact, and this
-//	  repo has already measured two valuation routes diverging by up to
-//	  134.92% on the same trades. Their sums and row counts are PRINTED so
-//	  an operator can read the real distribution off production, but they
-//	  are not judged: the threshold that would judge them is exactly the
-//	  number this run exists to produce.
-//
-// Report-only by design in every other respect: read-only against Postgres,
-// no alert rule, no calibrated threshold. The operator follow-up is printed
-// in the report footer.
+// Otherwise report-only and read-only against Postgres.
 //
 // Usage: verify-usd-volume [-config PATH] [-day YYYY-MM-DD] [-days N]
 // [-min-rows N] [-max-list N].
 //
 // Exit: non-zero iff an EXACT-tier identity is violated. A clean run says
-// nothing about tier-3/4 accuracy and the report says so out loud.
+// nothing about tier-3/4 accuracy, and the report says so.
 func verifyUSDVolume(args []string) error {
 	fs := flag.NewFlagSet("verify-usd-volume", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -114,39 +97,23 @@ func verifyUSDVolume(args []string) error {
 	return nil
 }
 
-// xlmBaseBoundTolerance is the relative tolerance for the XLM-BASE
-// BOUND: stored Σusd_volume must land within [1−tol, 1+tol] of
-// Σbase_amount/1e7 × the day's XLM/USD VWAP. This is a SANITY BOUND,
-// not an exact identity — which is why it lives beside, not inside,
-// the exact-tier check.
+// xlmBaseBoundTolerance is the XLM-BASE BOUND's relative tolerance: stored
+// Σusd_volume must land within [1−tol, 1+tol] of Σbase_amount/1e7 × the day's
+// XLM/USD VWAP. It is a sanity bound, not an exact identity.
 //
-// # What ±30% actually catches
+// It fires at 1.30× overstatement or 1.43× understatement. The 10×–10⁶× tier-3b
+// poisoning that motivated it is NOT its sensitivity: a 1.3–1.7 ratio is still
+// an error.
 //
-// It fires at **1.30× overstatement or 1.43× understatement** (a stored
-// value below 0.70 × expected). "Catches 10×+ errors" is NOT its
-// SENSITIVITY: 10×–10⁶× was the size of the tier-3b poisoning that
-// motivated it, not the threshold. Anyone reading it as a sensitivity
-// figure concludes a 1.3–1.7 ratio must be something other than an
-// error — which is exactly the wrong hypothesis.
+// It is not immune to intraday movement: each trade is anchored at its own
+// minute's prices_1m bucket, the bound at the day's prices_1d VWAP, so an honest
+// day can reach max(intraday_hi / day_vwap, day_vwap / intraday_lo). Measured on
+// r1 over 120 days: worst 1.2206, mean 1.0370, none at 1.30. The bound holds by
+// measurement, not construction; tightening below ~1.25 without a notional
+// floor makes false fires routine.
 //
-// # It is NOT structurally immune to intraday movement
-//
-// The two sides read DIFFERENT series: each trade was anchored at its
-// own minute's prices_1m XLM/<peg> bucket, while the bound divides by
-// the day's prices_1d crypto:XLM/fiat:USD VWAP. So the largest ratio an
-// entirely honest day can produce is
-//
-//	max(intraday_hi / day_vwap, day_vwap / intraday_lo)
-//
-// Measured on r1 over 120 days with both series present: worst 1.2206
-// (day VWAP 0.21619906 against an intraday 0.19606124…0.26389110), mean
-// 1.0370, two days at or above 1.15, none at 1.30. So the bound holds —
-// by 0.08, on measurement, NOT by construction. A day whose XLM range
-// is ~7% wider than that worst day's can false-fire it, and tightening the
-// tolerance below ~1.25 without a notional floor makes that routine.
-//
-// A breach where stored AND expected both round to $0.00 is exempt (see
-// [xlmBaseBoundIsDust]); any group with a cent on either side is judged.
+// A breach where stored AND expected both round to $0.00 is exempt
+// ([xlmBaseBoundIsDust]).
 const xlmBaseBoundTolerance = 0.30
 
 // xlmBaseBoundDustCeiling is half a cent: below it a value renders as
