@@ -171,9 +171,8 @@ function fetchLendingPools(): Promise<LendingPool[] | null> {
  *   not this one (the curated factory/backstop contracts emit no
  *   auctions). That is a real, derived zero and renders as 0.
  *
- * Pre-fix both collapsed into `null` and the page baked "Auctions
- * (total): 0" — a false empirical claim frozen into the static export
- * until the next build.
+ * Collapsing both into `null` would bake "Auctions (total): 0" — a false
+ * empirical claim frozen into the static export until the next build.
  */
 async function fetchPool(
   pool: string,

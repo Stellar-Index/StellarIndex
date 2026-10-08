@@ -10,9 +10,8 @@ import {
 
 // Oracle capture-totality: a `raw:<symbol>` id is an oracle-published
 // symbol recorded verbatim because it maps to no canonical asset. It has no
-// asset page by definition, so the slug is null (before this branch the
-// classic split linked it to /assets/raw%3ANOTACOIN — a static-export 404)
-// and the label is the on-wire symbol, never truncated.
+// asset page by definition, so the slug is null (linking it would hit
+// /assets/raw%3ANOTACOIN — a static-export 404) and the label is the on-wire symbol, never truncated.
 describe('raw: oracle asset ids', () => {
   it('assetSlug refuses to link an unmapped symbol', () => {
     expect(assetSlug('raw:NOTACOIN')).toBeNull();

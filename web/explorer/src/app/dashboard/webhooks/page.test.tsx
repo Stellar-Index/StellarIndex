@@ -76,12 +76,8 @@ function renderWebhooksPage() {
   );
 }
 
-// This is the regression coverage for T262: before this page existed,
-// the ONLY way to attach a webhook to price alerts (or any other
-// account event) was to email support — even though the dashboard
-// session API already served full CRUD at /v1/dashboard/webhooks. The
-// page not existing at all is the pre-fix state this test is red
-// against (there is no `./page` module to import).
+// Self-service webhook management: the dashboard session API serves full
+// CRUD at /v1/dashboard/webhooks, and this page is the only UI over it.
 describe('/dashboard/webhooks self-service management', () => {
   it('registers a new webhook through the dashboard session API and reveals its secret once', async () => {
     listDashboardWebhooks.mockResolvedValue([]);
@@ -196,9 +192,8 @@ describe('/dashboard/webhooks self-service management', () => {
       ),
     );
 
-    // The pre-fix page has no delivery surface at all: neither the
-    // status ("Failed" — no delivered_at, no next_attempt_at) nor the
-    // failure reason is ever rendered anywhere on the page.
+    // The page must surface delivery state: the status ("Failed" — no
+    // delivered_at, no next_attempt_at) and the failure reason.
     expect(await screen.findByText('Failed')).toBeInTheDocument();
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
     expect(screen.getByText(/HTTP 502/)).toBeInTheDocument();

@@ -546,10 +546,9 @@ export default function StatusPageClient({
   const consecutiveFailures = statusQ.data?.consecutiveFailures ?? 0;
   // The feed keeps the last-known snapshot through failures so the tiles
   // below can still show it — but the HEADLINE verdict must not be derived
-  // from a snapshot we can no longer refresh (WB-04: a fetch we could not
-  // complete is absence-of-signal, not an all-clear). Pre-fix an open tab
-  // read "All systems operational" with a green pulse for the whole
-  // outage (web-status-2).
+  // from a snapshot we can no longer refresh (a fetch we could not
+  // complete is absence-of-signal, not an all-clear); otherwise an open
+  // tab would read "All systems operational" for the whole outage.
   const feedUnreachable =
     error !== null && consecutiveFailures >= STATUS_FEED_UNREACHABLE_AFTER;
   const loading = statusQ.isPending;
@@ -1957,11 +1956,11 @@ function LedgerCard({
   // caller passes null once the last event ages past the staleness
   // window).
   //
-  // Honesty (web-status-1): a fresh SSE frame is an independent, trusted
+  // Honesty: a fresh SSE frame is an independent, trusted
   // measurement. The SNAPSHOT is only a measurement when the server did
   // not flag it stale AND it carries a tip — `latest_ledger: 0` with
   // `lag_seconds: 0` is what a failed cursors/network-stats reader (or a
-  // missing ledgerstream cursor) leaves behind, and pre-fix it painted a
+  // missing ledgerstream cursor) leaves behind, and trusting it would paint a
   // best-possible "0s" in green. Unmeasured renders '—', never a tone.
   const snapshotMeasured = !stale && ledger.latest_ledger > 0;
   const latestLedger = live?.latest_ledger ?? ledger.latest_ledger;

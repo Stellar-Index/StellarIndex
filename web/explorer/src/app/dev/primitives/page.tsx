@@ -22,9 +22,8 @@ import { Container } from '@/components/ui';
 // Reviewer-facing dev sandbox — explicitly noindex / nofollow so
 // Google doesn't index it as part of the explorer (the page has
 // no descriptive title, no canonical content, and would appear as
-// a low-quality "design-system primitives" hit). Pre-fix the root
-// layout's default robots: { index: true } shipped to this page
-// because no override was set.
+// a low-quality "design-system primitives" hit). The root layout's
+// default robots: { index: true } would otherwise apply.
 export const metadata: Metadata = {
   alternates: { canonical: '/dev/primitives' },
   title: 'Design-system primitives — dev sandbox',

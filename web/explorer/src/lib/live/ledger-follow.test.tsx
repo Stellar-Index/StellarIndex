@@ -83,7 +83,7 @@ afterEach(() => {
 
 describe('useLedgerFollow', () => {
   // THE regression. Two components, one key, one ledger advance → ONE
-  // invalidation. Pre-fix this was 2.
+  // invalidation, not one per component.
   it('invalidates once when two components follow the same key', () => {
     renderFollowers([['/v1/assets'], ['/v1/assets']]);
     pushLedger(1000);
