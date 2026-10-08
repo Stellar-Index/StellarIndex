@@ -123,7 +123,7 @@ func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		WarningPersistence:   -1, // isolate the edge-latch behaviour from the W3-guards-2 debounce
+		WarningPersistence:   -1, // isolate the edge-latch behaviour from the persistence debounce
 		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) error {
 			fired++
 			return nil
@@ -166,7 +166,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0, // 5% threshold
 		MinSourcesForWarning: 2,
-		WarningPersistence:   -1, // isolate the threshold gate from the W3-guards-2 debounce
+		WarningPersistence:   -1, // isolate the threshold gate from the persistence debounce
 	})
 
 	// Our price is 10% above the consensus.
@@ -200,7 +200,7 @@ func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		WarningPersistence:   -1, // isolate the veto from the W3-guards-2 debounce
+		WarningPersistence:   -1, // isolate the veto from the persistence debounce
 	})
 
 	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 50000, time.Now())
@@ -213,7 +213,7 @@ func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 }
 
 // TestRefreshPair_ZeroAgreementLegStillFires guards the leg the fix
-// above must NOT touch: MNY-22's symmetric-disagreement case, where
+// above must NOT touch: the symmetric-disagreement case, where
 // two references straddle ourPrice (median ≈ ourPrice, DivergencePct
 // small) but neither individually agrees. AgreementCount==0 must still
 // fire regardless of the majority-veto.
@@ -393,7 +393,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 			svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 				Threshold:            5.0,
 				MinSourcesForWarning: 2,
-				WarningPersistence:   -1, // isolate the per-pair OR aggregation from the W3-guards-2 debounce
+				WarningPersistence:   -1, // isolate the per-pair OR aggregation from the persistence debounce
 			})
 			for _, s := range tc.order {
 				if err := svc.RefreshPair(ctx, s.pair, s.price, time.Now()); err != nil {
