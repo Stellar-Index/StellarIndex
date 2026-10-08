@@ -4,58 +4,43 @@
 // pool/pool-factory decoder (internal/sources/blend) and the
 // Backstop decoder (internal/sources/blend_backstop).
 //
-// Wire shape, verified directly against the certified
-// ClickHouse raw lake (ADR-0034; CH HTTP 8123, never MinIO's 9000) —
-// every event this contract has EVER emitted on mainnet (469 total,
-// 4 distinct topics, ALL single-topic):
+// Wire shape, verified against every event the contract has emitted on
+// mainnet in the certified ClickHouse lake (ADR-0034): 4 topics, all
+// single-topic.
 //
 //		topic[0] = Symbol("<event_name>")   (the only topic)
 //		body     = per-event shape below
 //
-//	  - "distribute" (465 occurrences, ledgers 51,524,666–63,380,088) —
-//	    one BLND emission distributed to a backstop.
+//	  - "distribute" — one BLND emission distributed to a backstop.
 //	    body = Vec[ Address backstop_id, i128 amount ]
 //	    → emits a DistributeEvent
-//	  - "drop"       (2 occurrences, ledgers 51,499,914 and 57,467,292) —
-//	    a one-shot BLND airdrop to a VARIABLE-LENGTH recipient list
-//	    (observed arities: 13 and 3).
+//	  - "drop" — a one-shot BLND airdrop to a VARIABLE-LENGTH recipient
+//	    list (observed arities: 13 and 3).
 //	    body = Vec[ Vec[ Address recipient, i128 amount ], ... ]
-//	    → emits ONE DropEvent per contract event, carrying the full
-//	    Recipients slice; the storage writer fans it out one row per
-//	    recipient (recipient_index discriminator — same "coarse-PK
-//	    data loss" lesson Phoenix/Aquarius already codify).
-//	  - "q_swap"     (1 occurrence, ledger 56,992,670) — QUEUES a swap
-//	    of the Emitter's target backstop + backstop token, subject to
-//	    a timelock.
+//	    → emits ONE DropEvent carrying the full Recipients slice; the
+//	    storage writer fans it out one row per recipient
+//	    (recipient_index discriminator, so a coarse PK cannot drop rows).
+//	  - "q_swap" — QUEUES a timelocked swap of the Emitter's target
+//	    backstop + backstop token.
 //	    body = Map{ new_backstop: Address, new_backstop_token: Address,
 //	    unlock_time: u64 }
 //	    → emits a SwapConfigEvent{Kind: SwapConfigQueued}
-//	  - "swap"       (1 occurrence, ledger 57,467,277) — EXECUTES a
-//	    previously queued backstop swap once its timelock has elapsed.
-//	    Same body shape as q_swap (confirmed byte-identical on the
-//	    real fixture: both events carry the same new_backstop /
-//	    new_backstop_token / unlock_time values).
+//	  - "swap" — EXECUTES a queued backstop swap after its timelock;
+//	    same body as q_swap (byte-identical on the real fixture).
 //	    → emits a SwapConfigEvent{Kind: SwapConfigExecuted}
 //
-// GATING (ADR-0035/0040): "distribute" is NOT a safe topic-only
-// match — internal/sources/blend_backstop ALSO emits a bare
-// `distribute` event (body: `i128 amount` only, no backstop_id) from
-// the Backstop V1/V2 contracts. Routing on topic bytes alone would
-// either misfire onto a backstop-emitted distribute or silently
-// disagree on body shape. Matches() therefore gates on CONTRACT
-// IDENTITY — the emitting contract must be in the curated registry —
-// exactly the comet.MainnetGatedSet() pattern (curated set, no
-// factory namespace to anchor on: the Emitter has a single canonical
-// mainnet instance spanning Blend V1→V2).
+// GATING (ADR-0035/0040): blend_backstop ALSO emits a bare `distribute`
+// (body `i128 amount`, no backstop_id), so topic bytes alone would
+// misfire or disagree on body shape. Matches() gates on CONTRACT
+// IDENTITY via the curated registry, the comet.MainnetGatedSet()
+// pattern: there is no factory to anchor on, and the Emitter has a
+// single mainnet instance spanning Blend V1→V2.
 //
-// WASM audit CLOSED (docs/operations/wasm-audits/blend_emitter.md,
-// ClickHouse-lake-only — no MinIO wasm-history walk): the contract's
-// sole confirmed WASM hash
+// WASM audit CLOSED (docs/operations/wasm-audits/blend_emitter.md): the
+// sole WASM hash
 // (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89)
-// SHA256-verifies against bytes extracted from the lake, and ALL 469
-// lifetime events (465/465 `distribute` exhaustively, not sampled,
-// plus both `drop`s and the one `q_swap`/`swap`) decode to the exact
-// shapes below. BackfillSafe is true.
+// SHA256-verifies against lake bytes, and every lifetime event decodes
+// to the shapes above, exhaustively. BackfillSafe is true.
 package blend_emitter
 
 import (

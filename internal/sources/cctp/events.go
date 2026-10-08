@@ -15,11 +15,8 @@
 //	message_received   (MessageTransmitter)   — wire envelope (inbound)
 //	mint_and_forward   (CctpForwarder)        — inbound mint relayed onward
 //
-// Governance/admin events (all three contracts unless noted; verified
-// against real mainnet events: ownership_transfer,
-// ownership_transfer_completed, admin_changed,
-// remote_token_messenger_added and token_pair_linked by a topic-match
-// pass, the other 16 by a full topic census of the lake):
+// Governance/admin events (all three contracts unless noted; every one
+// verified against real mainnet events in the lake):
 //
 //	ownership_transfer             — 2-step ownership transfer initiated
 //	ownership_transfer_completed   — 2-step ownership transfer accepted
@@ -54,8 +51,7 @@
 // Wiring: decode.go decodes; consumer.go projects each event into the
 // canonical cctp.Event row; dispatcher_adapter.go is the dispatcher
 // Decoder; the indexer's sink persists via Store.InsertCCTPEvent into
-// the cctp_events hypertable (migration 0038, a per-protocol table by
-// operator decision). See README.md §Wiring.
+// the cctp_events hypertable (migration 0038). See README.md §Wiring.
 package cctp
 
 import (
