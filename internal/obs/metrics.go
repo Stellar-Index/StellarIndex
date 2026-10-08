@@ -3439,34 +3439,12 @@ var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 // seedBoundedLabelSeries and the emitter cannot drift apart.
 const SinkPersistEvents = "persist_events"
 
-// SinkUndrainedRowsTotal — rows a sink's SHUTDOWN drain could not land
-// before its bounded budget expired, by `sink` and `kind`. The served-tier
-// (Postgres) twin of ChLiveSinkLedgersTotal{outcome="dropped"}: the
-// indexer upserts the ledger cursor per ledger BEFORE the sink writes, so
-// a row abandoned at shutdown is a served-tier gap the cursor will never
-// revisit. Until this counter existed the loss was visible only as an
-// ERROR log line ("abandoned on shutdown — re-derive this ledger range"),
-// which nothing alerted on; a deploy that caught Postgres slow or down
-// could lose rows silently.
-//
-//   - kind="trade" — canonical trades (sdex / Soroban DEX / external).
-//     Recoverable from the CH lake (ADR-0034): the ERROR line names the
-//     ledger range for `stellarindex-ops ch-rebuild -sdex-gaps`.
-//   - kind="event" — non-trade served-tier writes (oracle updates,
-//     supply observations, blend / cctp / rozo rows). consumer.Event
-//     carries no ledger, so the re-derive hint is the source's own gap
-//     detector / completeness verdict.
-//
-// Incremented ONLY where a row has nowhere left to go
-// (pipeline.reportAbandonedTrades / reportAbandonedEvent) — never where a
-// steady-state flush hands rows to the shutdown drain to retry, so a
-// carry does not read as a loss. Pre-seeded at zero for every (sink,
-// kind) so the alert can tell "armed" from "dead metric".
-//
-// The increment lands seconds before the process exits (the drain
-// budget is derived from pipeline.ShutdownDeadline), so a 15 s scrape
-// can miss it; the ERROR log line stays the authoritative record and
-// the alert is the machine-readable best-effort signal on top of it.
+// SinkUndrainedRowsTotal counts rows a sink's shutdown drain could not land within its budget, by sink and
+// kind: the Postgres twin of ChLiveSinkLedgersTotal{outcome="dropped"}. The cursor advances before the sink
+// writes, so each is a served-tier gap the cursor never revisits. trade: re-derive from the lake via
+// `stellarindex-ops ch-rebuild -sdex-gaps` (the ERROR line names the range); event: the source's gap
+// detector. Counted only where a row has nowhere left to go; pre-seeded. The increment lands just before
+// exit and a scrape can miss it, so the ERROR log line stays authoritative.
 var SinkUndrainedRowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sink_undrained_rows_total",
@@ -3475,17 +3453,9 @@ var SinkUndrainedRowsTotal = prometheus.NewCounterVec(
 	[]string{"sink", "kind"},
 )
 
-// MarketsSkippedRowsTotal — count of trades rows the /v1/markets
-// scanner skipped because their base_asset / quote_asset failed
-// to parse as canonical asset strings. The ingest pipeline only
-// emits canonical asset codes, so any non-zero reading means
-// something bypassed the normal write path (manual SQL insert,
-// integration test residue, etc.). One incident: a single
-// row with base_asset='test' tripped a page-tier api_error_rate
-// alert because the handler returned 500 on the unparseable row;
-// the handler now skips + bumps this counter instead, but a
-// rising value should still trigger a `DELETE FROM trades` clean-
-// up. Bounded label set (none) so the metric is always emitted.
+// MarketsSkippedRowsTotal counts trades rows the /v1/markets scanner skipped because an asset failed to
+// parse. Ingest emits only canonical codes, so non-zero means something bypassed the write path (manual
+// SQL, test residue); one such row once 500'd the handler and paged on api_error_rate.
 var MarketsSkippedRowsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_markets_skipped_rows_total",
@@ -3493,34 +3463,11 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 	},
 )
 
-// DEXTradeNonstandardDecimalsTotal — the decimals-assumption landmine
-// detector (adversarial-review HIGH-latent, decoder-correctness audit
-// Finding 2). Emitted by the aggregator's decimals-guard sweep
-// (internal/decimalsguard) once per (source, asset) the FIRST time a
-// DEX trade is observed for a Soroban-contract token whose ON-CHAIN
-// decimals() != 7.
-//
-// Why it matters: the served price is Σ(quote_amount)/Σ(base_amount) on
-// RAW smallest-unit integers — in the prices_* continuous aggregates
-// (migrations/0002) and in aggregate.VWAP. The per-asset decimals CANCEL
-// in that ratio ONLY when base and quote share the same scale. Every
-// DEX-traded Stellar token today is 7-decimal (SACs are always 7;
-// pure-SEP-41 tokens observed so far all declare decimals=7), so the
-// ratio is correct. The moment a non-7-decimal SEP-41 token (an
-// 18-decimal bridged asset, a 6-dp token, …) gains DEX liquidity, every
-// served price for a pair involving it silently skews by 10^(7−decimals)
-// with NO other signal. This counter turns that silent landmine into a
-// loud, per-asset signal so the operator can apply the decimals
-// normalization (deferred follow-up — see the runbook) BEFORE customers
-// consume a wrong price.
-//
-// Labels: `source` (the DEX connector that traded it — soroswap /
-// phoenix / aquarius / comet / …) and `asset` (the token's C-strkey
-// contract id). The label set is unbounded in principle but near-empty
-// in practice (offenders should be zero), so it is NOT pre-seeded and a
-// series exists ONLY once a real offender is detected — the alert is a
-// bare `> 0`. The actual decimals value is logged (ERROR) at detection,
-// not carried as a label.
+// DEXTradeNonstandardDecimalsTotal flags, once per (source, asset), a DEX trade in a Soroban token whose
+// on-chain decimals() != 7 (internal/decimalsguard). Served prices are Σquote/Σbase on raw integers, which
+// cancel decimals only when both legs share a scale, so such a token silently skews every pair price by
+// 10^(7−decimals). Not pre-seeded: offenders should be zero, so a series exists only on detection and the
+// alert is a bare `> 0`; the decimals value is in the ERROR log, not a label.
 var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dex_trade_nonstandard_decimals_total",
@@ -3529,18 +3476,9 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	[]string{"source", "asset"},
 )
 
-// DecimalsGuardSweepLastSuccessUnix — wall-clock unix seconds of the most
-// recent successful decimals-guard Sweep pass (decimalsguard.Guard.Sweep),
-// stamped whether or not that pass found an offender. Without it, the only
-// observability on the guard's health was DEXTradeNonstandardDecimalsTotal
-// and NonstandardDecimalsLockstepMismatchTotal — both offender counters —
-// so "the guard swept and found nothing" and "the guard never armed" were
-// indistinguishable: a ClickHouse that is still loading metadata for the
-// 150B-row lake at aggregator boot would disable the guard for the whole
-// process lifetime with both counters sitting at a healthy-looking zero.
-// `time() - this` powers the staleness alert
-// (stellarindex_decimals_guard_sweep_stale), the same shape as
-// PricelessCoverageCheckLastSuccessUnix above.
+// DecimalsGuardSweepLastSuccessUnix stamps the last successful decimals-guard Sweep, offender or not. The
+// offender counters read zero both when the guard found nothing and when it never armed (e.g. ClickHouse
+// still loading metadata at boot); `time() - this` drives stellarindex_decimals_guard_sweep_stale.
 var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_decimals_guard_sweep_last_success_unix",
@@ -3548,19 +3486,9 @@ var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
 	},
 )
 
-// PriceServeDeclinedNonstandardDecimalsTotal — HISTORICAL (permanently
-// zero). This was the READ-TIME enforcement half of the
-// dex-nonstandard-decimals guard: for a short while /v1/price and
-// /v1/ohlc?interval= declined (422) any pair with a confirmed
-// non-7-decimals leg, and this counter fired once per declined request.
-// The decline guard was REMOVED when decimals normalization reached the
-// last CAGG-reading paths (aggregate.AdjustPrice now corrects the served
-// value instead of declining — see the runbook's Root cause analysis), so
-// nothing increments this counter anymore. Retained (registered, zero)
-// one release so dashboards/queries referencing it don't break; remove
-// alongside the next metrics cleanup.
-//
-// Label: `asset` — the flagged leg's C-strkey contract id.
+// PriceServeDeclinedNonstandardDecimalsTotal is permanently zero: the read-time 422 decline it counted was
+// removed once aggregate.AdjustPrice corrected served values instead. Still registered so dashboards and
+// queries referencing it do not break; remove in the next metrics cleanup.
 var PriceServeDeclinedNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_declined_nonstandard_decimals_total",
@@ -3569,17 +3497,9 @@ var PriceServeDeclinedNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	[]string{"asset"},
 )
 
-// NonstandardDecimalsCacheRefreshFailuresTotal counts failed background
-// refreshes of the API's in-process NonstandardDecimalsCache
-// (internal/api/v1) — the read-time mirror of `nonstandard_decimals_assets`
-// that /v1/price, /v1/vwap, /v1/history, /v1/ohlc consult before serving.
-// The cache is fail-open on a refresh error (serves the last-good snapshot
-// rather than clearing it — availability wins over the guard for infra
-// blips), so a rising value is an infra-health signal, not a pricing-
-// correctness one: it means the cache is coasting on a stale snapshot, not
-// that a wrong price is being served. No dedicated alert — a sustained
-// climb is visible via this counter and the underlying Postgres-health
-// alerts already cover the infra failure itself.
+// NonstandardDecimalsCacheRefreshFailuresTotal counts failed refreshes of the API's NonstandardDecimalsCache.
+// The cache fails open on the last-good snapshot, so this is infra health, not a wrong price; no dedicated
+// alert, Postgres-health alerts cover the cause.
 var NonstandardDecimalsCacheRefreshFailuresTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_cache_refresh_failures_total",
@@ -3587,23 +3507,10 @@ var NonstandardDecimalsCacheRefreshFailuresTotal = prometheus.NewCounter(
 	},
 )
 
-// NonstandardDecimalsPartialAliasFamilyTotal counts flagged assets observed at
-// refresh time whose alias family is only PARTLY flagged — one canonical
-// spelling present in `nonstandard_decimals_assets`, another absent.
-//
-// Unlike the refresh-failure counter above, this IS a pricing-correctness
-// signal, and a sharp one. NonstandardDecimalsCache.Lookup is a raw map lookup
-// on the exact asset-id string and does not alias-fold, so a partly-flagged
-// family normalises one spelling and not another: the price leg is scaled per
-// source pair (whose base may be a different spelling of the same asset) while
-// the supply leg is divided by the requested base's decimals, and the two
-// diverge by a POWER OF TEN with both looking plausible.
-//
-// Expected value is 0 and has always been 0: every flagged row today is a bare
-// C-strkey whose alias family is a singleton. A nonzero value means someone
-// added a row for one spelling of an aliasing asset (XLM is the live example —
-// `native`, `crypto:XLM`, and its SAC contract id) and the served numbers for
-// that asset can no longer be trusted until every spelling is flagged.
+// NonstandardDecimalsPartialAliasFamilyTotal counts flagged assets whose alias family is only partly in
+// `nonstandard_decimals_assets`. Lookup does not alias-fold, so the price and supply legs can then diverge
+// by a power of ten while both look plausible (XLM's `native`/`crypto:XLM`/SAC is the live trap). Always 0
+// so far; non-zero means that asset's served numbers cannot be trusted until every spelling is flagged.
 var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_partial_alias_family_total",
@@ -3611,26 +3518,11 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 	},
 )
 
-// NonstandardDecimalsLockstepMismatchTotal counts every observation where the
-// lake's on-chain decimals() (clickhouse.TokenDecimals, the source of truth)
-// and the nonstandard_decimals_assets projection every price path normalises
-// through (aggregate.ResolveDecimals) DISAGREE. The invariant: a projection
-// row exists iff lake decimals != 7, and then the two are equal.
-//
-// Sites:
-//   - guard_reconcile: the aggregator's decimals guard repairs a persisted
-//     row toward the lake, once per repaired row. The only site with the
-//     asset label, because its walked set is the bounded projection table.
-//   - asset_detail, asset_listing, rwa_contract, lending_reserve: a request
-//     met the disagreement before the guard repaired it, and REFUSED the
-//     affected market cap or USD figures rather than divide a supply on one
-//     scale by a price on another. asset is "": request paths pick the
-//     contract, so labelling it would mint a series per captured contract;
-//     correlate via the paired WARN log line.
-//
-// Steady state is 0. A guard_reconcile count is a repaired drift; a
-// sustained count at a request site means the guard is not converging
-// (stellarindex_nonstandard_decimals_correction_failing).
+// NonstandardDecimalsLockstepMismatchTotal counts disagreements between lake decimals()
+// (clickhouse.TokenDecimals, the truth) and the nonstandard_decimals_assets projection; invariant: a row exists
+// iff lake decimals != 7, and then they match. guard_reconcile (asset-labelled, bounded) counts a repaired row;
+// request sites (asset "", to bound cardinality) REFUSED a market cap or USD figure rather than mix scales.
+// Sustained at a request site means the guard is not converging (stellarindex_nonstandard_decimals_correction_failing).
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
@@ -3641,21 +3533,9 @@ var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 
 // ─── hashdb drift detector ───────────────────────────────
 
-// HashdbAppendTotal — per-outcome counter for the indexer's hashdb
-// append call, made once per ledger from the live LCM read loop
-// (cmd/stellarindex-indexer/main.go). Labels:
-//
-//   - `ok`    — hashdb.Append succeeded; the ledger's sha256(LCM) is
-//     durably recorded.
-//   - `error` — hashdb.Append failed (disk full, permission error,
-//     out-of-range seq). Append is deliberately failure-tolerant —
-//     an error here logs + increments this counter and NEVER stalls
-//     or fails ingest (see the recordHashdb docstring). A sustained
-//     `error` rate means hashdb is silently not recording anything —
-//     the periodic verify sweep would then find nothing to compare
-//     against (Missing, not Drifted) rather than catching real
-//     drift, so this counter is the operator's only signal that the
-//     detector has gone blind.
+// HashdbAppendTotal counts the indexer's per-ledger hashdb.Append (sha256 of the LCM): ok or error. Append
+// never stalls ingest, so a sustained `error` rate is the only sign hashdb stopped recording and the verify
+// sweep has gone blind (it will report Missing, not Drifted).
 var HashdbAppendTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_append_total",
@@ -3664,16 +3544,8 @@ var HashdbAppendTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// HashdbAppendDurationSeconds — latency histogram for the per-ledger
-// hashdb.Append call. hashdb.Append is a single O(1) positional
-// WriteAt (fixed 32-byte record, no seek-to-end, no fsync) — this
-// runs synchronously on the ingest hot path (see recordHashdb's
-// docstring for why that's an acceptable trade), so a latency
-// regression here (a slow disk, an unexpectedly large hashdb file
-// hitting page-cache pressure) would directly show up as ingest lag.
-// Buckets span 10 µs → 10 ms — generous for a page-cache-resident
-// single-record write; anything reaching the top bucket is worth
-// investigating.
+// HashdbAppendDurationSeconds is per-ledger hashdb.Append latency: one O(1) WriteAt, no fsync, on the
+// ingest hot path, so a regression shows as ingest lag. Buckets 10µs–10ms; the top bucket is worth a look.
 var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_hashdb_append_duration_seconds",
@@ -3683,23 +3555,9 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// HashdbVerifyRunsTotal — per-outcome counter for the indexer's
-// periodic hashdb verify sweep; `window` is recent (re-reads a trailing window from the
-// same galexie bucket and compares against hashdb; see
-// internal/archivecompleteness.HashDBWindowVerifier). Labels:
-//
-//   - `ok`    — the sweep completed with zero drifted ledgers AND at
-//     least one ledger actually compared against a recorded baseline
-//     (Missing/OutOfRange ledgers don't count against this on their
-//     own — they're expected while part of the window predates
-//     hashdb's coverage — but a window where EVERY ledger came back
-//     Missing/OutOfRange never compared anything and is `error`, not
-//     `ok`).
-//   - `drift` — the sweep completed and found at least one drifted
-//     ledger (per-ledger count: HashdbDriftTotal).
-//   - `error` — the sweep itself failed (datastore read error,
-//     hashdb I/O error) before it could finish comparing the window.
-//     Distinct from `drift`: "we don't know", not "found a mismatch".
+// HashdbVerifyRunsTotal counts hashdb verify sweeps over the trailing bucket window
+// (archivecompleteness.HashDBWindowVerifier): ok (no drift and ≥1 ledger actually compared; an all-Missing
+// window is `error`), drift (per-ledger count in HashdbDriftTotal) or error ("we don't know", not a mismatch).
 var HashdbVerifyRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_verify_runs_total",
@@ -3708,14 +3566,8 @@ var HashdbVerifyRunsTotal = prometheus.NewCounterVec(
 	[]string{"outcome", "window"},
 )
 
-// HashdbVerifyRunDurationSeconds — latency histogram for one full
-// verify sweep (re-reads [VerifyWindowLedgers] ledgers from the
-// bucket, one hashdb.Verify call per ledger). Labelled by outcome so
-// operators can chart `ok` p95/p99 (bucket-fetch-bound; the same
-// shape as a bounded backfill walk over the window size) separately
-// from `error` (often a fast-fail on the first missing/unreadable
-// object). Buckets span 1 s → 30 min — a multi-thousand-ledger S3
-// re-read is not cheap, unlike the append side.
+// HashdbVerifyRunDurationSeconds is per-sweep latency by outcome; `ok` is bucket-fetch-bound, `error` often
+// fails fast. Buckets 1s–30min: a multi-thousand-ledger S3 re-read is not cheap.
 var HashdbVerifyRunDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_hashdb_verify_run_duration_seconds",
@@ -3725,17 +3577,9 @@ var HashdbVerifyRunDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// HashdbDriftTotal is the dedicated alert-driving counter: the total
-// number of DRIFTED LEDGERS (not sweeps) hashdb's periodic verify has
-// found across every sweep since process start. Deliberately a plain
-// (unlabelled) Counter, not a Vec — the natural label candidate
-// (ledger sequence) is unbounded per-region cardinality, which
-// Prometheus labels must never be. `stellarindex_hashdb_drift_total
-// > 0` is the alert condition (see
-// docs/operations/runbooks/hashdb.md); the per-run
-// breakdown lives in HashdbVerifyRunsTotal{outcome="drift"} and the
-// loudly-logged WARN/ERROR line (which does name the drifted
-// sequences) at the point of detection.
+// HashdbDriftTotal counts drifted LEDGERS found by verify since start; unlabelled because ledger sequence is
+// unbounded cardinality (the WARN/ERROR line names them). Alert: `stellarindex_hashdb_drift_total > 0`
+// (docs/operations/runbooks/hashdb.md).
 var HashdbDriftTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_drift_total",
@@ -3743,22 +3587,9 @@ var HashdbDriftTotal = prometheus.NewCounter(
 	},
 )
 
-// DEXTVLRefreshTotal — per-outcome counter for the API binary's DEX
-// TVL snapshot refresher (internal/api/v1.DEXTVLCache), which
-// recomputes per-protocol TVL (soroswap / aquarius / phoenix / comet)
-// every DEXTVLRefreshInterval. Labels:
-//
-//   - `ok`    — every wired protocol computed and swapped in.
-//   - `error` — at least one protocol's read failed. NOT all-or-
-//     nothing: protocols that computed still swapped in, and failed
-//     ones keep their previous entry — so a single `error` tick is a
-//     degraded refresh, not a blank page.
-//
-// Operators alert on a sustained `error` rate with no interleaved
-// `ok`: that means /v1/protocols TVL (and the per-protocol pages) are
-// serving an ever-older carried-forward snapshot while looking
-// healthy. An isolated `error` during a lake merge or served-tier
-// restart is expected and self-heals on the next tick.
+// DEXTVLRefreshTotal counts internal/api/v1.DEXTVLCache refreshes: ok, or error (≥1 protocol's read failed;
+// the rest still swap in and failures keep their previous entry). Sustained `error` with no `ok` means
+// /v1/protocols TVL serves an ever-older snapshot while looking healthy; an isolated one self-heals.
 var DEXTVLRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dex_tvl_refresh_total",
@@ -3767,14 +3598,9 @@ var DEXTVLRefreshTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// DEXTVLRefreshDurationSeconds — latency histogram for one full DEX
-// TVL refresh, labelled by outcome (matches the counter). A refresh
-// is one lake reserve lookup per protocol + a bounded set of
-// prices_1m point reads; buckets span 50 ms → 180 s (the worker's
-// per-refresh timeout is 3 min, so the top bucket is the hard stop,
-// not headroom). Chart `ok` p95 — a creeping ok-latency here is the
-// early signal that a reserve read lost its bound (the 40×
-// read-amplification class) before it becomes an `error`.
+// DEXTVLRefreshDurationSeconds is per-refresh latency by outcome. Buckets 50ms–180s; the top is the
+// worker's 3-min hard stop. Creeping `ok` p95 is the early sign a reserve read lost its bound (the 40×
+// read-amplification class) before it errors.
 var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_dex_tvl_refresh_duration_seconds",
@@ -3784,24 +3610,10 @@ var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// DEXTVLReconcileTotal — per-refresh outcome of the headline DEX TVL
-// total's admission check (internal/api/v1.reconcileDEXTVLTotal),
-// which admits a per-protocol figure into the published total only when
-// that figure's own claims hold. Labels:
-//
-//   - `ok`        — every protocol in the snapshot was admitted, so the
-//     published total is the exact sum of every published part.
-//   - `divergent` — at least one protocol was REFUSED and left out. The
-//     served total is correspondingly smaller and names the refusal in
-//     its `excluded` list, so this is a narrowed-scope total, never a
-//     wrong one — but it means a component is stale or internally
-//     inconsistent and the headline is understating.
-//
-// In practice `divergent` tracks stellarindex_dex_tvl_refresh_failing:
-// a protocol whose reserve read fails carries its previous entry
-// forward, and a carried-forward figure cannot be published under this
-// refresh's as_of. A sustained `divergent` rate with no `ok` means the
-// headline has silently shrunk by a whole protocol.
+// DEXTVLReconcileTotal counts the headline DEX TVL admission check (reconcileDEXTVLTotal): ok (total is the
+// exact sum of every part) or divergent (≥1 protocol refused and named in `excluded`: a narrowed total,
+// never a wrong one). Usually tracks stellarindex_dex_tvl_refresh_failing; sustained `divergent` with no
+// `ok` means the headline silently shrank by a whole protocol.
 var DEXTVLReconcileTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dex_tvl_reconcile_total",
