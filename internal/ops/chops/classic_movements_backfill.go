@@ -278,23 +278,12 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	return nil
 }
 
-// classicMovementsResumeStart is the pure -resume decision:
-// given startLedger (-from, post-clamp) and the two ClickHouse
-// lookups over [startLedger,clampedTo] — maxLedger/maxFound from
-// MaxAccountMovementLedger and minLedger/minFound from
-// MinAccountMovementLedger — decide whether it's safe to jump
-// startLedger forward to maxLedger.
-//
-// It is safe ONLY when minFound && minLedger == startLedger: that
-// proves the range's data starts exactly at startLedger, so
-// everything between startLedger and maxLedger was genuinely written
-// by a run that covered this same starting point (the ledger-ordered-
-// insert invariant then makes maxLedger a sound checkpoint — see
-// sortAccountMovementRowsForInsert's doc comment). If the data
-// instead starts ABOVE startLedger, that gap is exactly the widened
-// -from scenario: jumping to maxLedger would skip it silently.
-// Caller has already confirmed maxFound && maxLedger >= startLedger
-// before calling this.
+// classicMovementsResumeStart is the pure -resume decision: jump startLedger to
+// maxLedger only when minFound && minLedger == startLedger, which proves the data
+// starts exactly there (see sortAccountMovementRowsForInsert for why maxLedger is
+// then a sound checkpoint). Data starting ABOVE startLedger is a widened -from,
+// and jumping would skip the gap silently. The caller has already confirmed
+// maxFound && maxLedger >= startLedger.
 func classicMovementsResumeStart(startLedger, maxLedger, minLedger uint32, minFound bool) (resumeAt uint32, jumped bool) {
 	if !minFound || minLedger != startLedger {
 		return startLedger, false
@@ -325,31 +314,16 @@ type windowResult struct {
 	verifyMismatches                                                      int64
 }
 
-// classicMovementsAttemptWindow runs ONE attempt at decoding, writing,
-// and verifying the [wlo,whi] window, so classicMovementsBackfill's
-// loop can bound each attempt with a per-window deadline and a single
-// retry (see classicMovementsWindowDeadline). It is its own named
-// function, rather than a closure in the loop, to keep the caller's
-// gocognit/gocyclo/funlen complexity down while it also has to
-// juggle the retry-once control flow; the four phases below are
-// FURTHER split into their own named functions for the same reason —
-// see each one's doc comment.
+// classicMovementsAttemptWindow runs one attempt at decoding, writing and
+// verifying [wlo,whi], so the caller can bound each attempt with a per-window
+// deadline and one retry (see classicMovementsWindowDeadline).
 //
-// dec is the SAME classicmovements.Decoder instance across every
-// window and every retry, by design — its in-memory claimable-balance-
-// create index legitimately spans windows (ADR-0047 Phase 3), and
-// re-decoding the same ops on a retry re-inserts the same map keys,
-// which is idempotent. The one piece of dec's state that is NOT safe
-// to carry from a failed attempt into its retry is dec.pending — the
-// caller drains and discards it before retrying (see the loop body).
-//
-// Touches ONLY window-local state (the returned windowResult) plus
-// dec's shared, cross-window index — never the caller's run-level
-// counts map or totalXxx accumulators, so a failed attempt can be
-// discarded cleanly by the caller without unwinding any global
-// mutation. winCtx is threaded through every ClickHouse call (in every
-// phase below) so the per-window deadline actually bounds the whole
-// attempt, not just the first read.
+// dec is shared across windows and retries: its claimable-balance-create index
+// legitimately spans windows and re-decoding is idempotent, but dec.pending is
+// not, so the caller discards it before retrying. Otherwise only window-local
+// state is touched, so a failed attempt is dropped without unwinding anything.
+// winCtx reaches every ClickHouse call so the deadline bounds the whole
+// attempt.
 func classicMovementsAttemptWindow(
 	winCtx context.Context,
 	chAddr string,
@@ -453,37 +427,20 @@ func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMov
 	}
 }
 
-// classicMovementsResolvePendingClaimableBalances is the ADR-0047
-// Phase 3 second pass: resolve claim/clawback rows the main decode
-// loop couldn't correlate against a create seen earlier in this
-// window (dec.decodeOp records these instead of failing). Three
-// passes over pending, not one interleaved loop:
+// classicMovementsResolvePendingClaimableBalances is the ADR-0047 Phase 3
+// second pass over claim/clawback rows the decode loop could not correlate
+// with a create:
 //
-//  1. The free in-memory re-check (closes the same-window tx_hash-
-//     ordering gap — see Decoder.ResolveBalance's doc comment) for
-//     every ref, collecting the misses.
-//  2. A free re-check against res.batch itself: dec's in-run
-//     BalanceId index is populated only by dec.Decode, but this
-//     window's CAP-0038-revocation creates (classicMovementsHandleCAP0038Op,
-//     via classicmovements.DecodeCAP0038Revocation) bypass dec.Decode
-//     entirely and land straight in res.batch — see
-//     classicMovementsAttemptWindow's call-order comment for why this
-//     phase runs after the entry-changes surface. Without this
-//     check, a claim against a balance CAP-0038 created earlier in
-//     this SAME window would fall through to ClickHouse below and
-//     find nothing yet, since this window hasn't been written yet
-//     either.
-//  3. ONE batched clickhouse.FindClaimableBalanceCreates call for all
-//     of this window's remaining misses together, for creates outside
-//     this run's range entirely (ADR-0048 D2; see that
-//     function's doc comment for why the lookup is batched rather than
-//     serial per-ref).
+//  1. an in-memory re-check, closing the same-window tx_hash ordering gap;
+//  2. a re-check against res.batch, because CAP-0038 revocation creates
+//     bypass dec.Decode and are not in ClickHouse until this window is
+//     written;
+//  3. one batched clickhouse.FindClaimableBalanceCreates call for creates
+//     outside this run's range.
 //
-// Still-unresolved entries are a genuine ADR-0047 D4 recognizable-
-// incompleteness signal: counted and logged, never guessed. Never
-// returns an error — a ClickHouse lookup failure here degrades the
-// WHOLE miss-set to "counted as unresolved" (one stderr line), not a
-// window-level failure.
+// Still-unresolved rows are counted and logged, never guessed. Never returns
+// an error: a lookup failure degrades the whole miss-set to unresolved rather
+// than failing the window.
 func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, wlo, whi uint32, res *windowResult) {
 	pending := dec.TakePendingClaimableBalances()
 	if len(pending) == 0 {
@@ -545,19 +502,11 @@ func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chA
 		wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
 }
 
-// classicMovementsBatchClaimableBalanceIndex scans res.batch (as
-// accumulated so far this window) for 'claimable_balance_create'
-// movements and returns them keyed by balance_id — the free,
-// same-window fallback classicMovementsResolvePendingClaimableBalances
-// checks between dec's in-run index and the ClickHouse lookup.
-// Needed because not every create reaches dec's index: a CAP-0038
-// revocation's create is built by
-// classicmovements.DecodeCAP0038Revocation directly, never through
-// dec.Decode (see classicMovementsHandleCAP0038Op), so dec never
-// learns its balance_id. A malformed/missing balance_id attribute is
-// silently skipped, same as Decoder.indexClaimableBalanceCreate: worst
-// case a resolvable ref falls through to the ClickHouse pass instead,
-// still correct, just slower.
+// classicMovementsBatchClaimableBalanceIndex keys this window's
+// claimable_balance_create movements by balance_id: the same-window fallback
+// between dec's index and ClickHouse. A CAP-0038 revocation's create never passes
+// through dec.Decode (see classicMovementsHandleCAP0038Op), so dec never indexes
+// it. A malformed balance_id is skipped; that ref falls through to ClickHouse.
 func classicMovementsBatchClaimableBalanceIndex(batch []clickhouse.AccountMovement) map[string]clickhouse.AccountMovement {
 	idx := make(map[string]clickhouse.AccountMovement)
 	for _, m := range batch {
