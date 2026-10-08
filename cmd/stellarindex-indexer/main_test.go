@@ -128,8 +128,8 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 }
 
 // TestRecordLedgerIngestCensusSkip_AddsErrorCountsToMetric pins the
-// second consumer: the ledger_ingest_log substrate-gap path was also
-// log-only before this fix.
+// second consumer: the ledger_ingest_log substrate-gap path must
+// feed the metric, not only the log.
 func TestRecordLedgerIngestCensusSkip_AddsErrorCountsToMetric(t *testing.T) {
 	before := map[string]float64{
 		"tx_read_errors_census":       testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors_census")),

@@ -14,8 +14,8 @@ import (
 // TestDispatchExitCode_HelpIsNotAFailure pins F070/K055: every subcommand
 // flag.FlagSet uses flag.ContinueOnError, so `-h`/`-help` on a subcommand
 // surfaces as flag.ErrHelp from fs.Parse, propagated up through the
-// handler's Run. Before this fix that fell through to the generic error
-// branch, printing "<subcommand>: flag: help requested" and returning exit
+// handler's Run. That must not fall through to the generic error
+// branch, which would print "<subcommand>: flag: help requested" and return exit
 // code 1 — indistinguishable from a real failure for a scripted caller
 // that asked for help.
 func TestDispatchExitCode_HelpIsNotAFailure(t *testing.T) {
