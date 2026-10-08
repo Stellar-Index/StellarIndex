@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// ─── W5.3: the restamp's decompression-cap GUC must not escape ─────
+// ─── The restamp's decompression-cap GUC must not escape ───────────
 
 const (
 	// decompressionCapGUC is lifted for the restamp's bulk UPDATE over

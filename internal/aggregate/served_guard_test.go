@@ -125,7 +125,7 @@ func TestGuardServedVWAP_EmptyBaselineFailsOpen(t *testing.T) {
 }
 
 func TestServedBaselineValidated_EmptyBaselineUnvalidatedButStillServed(t *testing.T) {
-	// W6-fresh-1: a pair's first-ever served minute has NO trailing
+	// A pair's first-ever served minute has NO trailing
 	// baseline. GuardServedVWAP FAILS OPEN there (accepts any value — even
 	// a wildly-off, lone manipulated/fat-finger print). That is fine ONLY
 	// if the accept is paired with an UNVALIDATED signal so the serving

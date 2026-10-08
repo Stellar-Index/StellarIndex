@@ -15,7 +15,7 @@ import (
 )
 
 // TestUSDVolumeValueReconcile_ExactTierIdentity is the DB-backed half of
-// C4-055 / C4-066, run against real TimescaleDB.
+// the value-reconcile identity, run against real TimescaleDB.
 //
 // The standing usd-volume alerts only measure COVERAGE (the share of trades
 // with a non-NULL `usd_volume`). A trade priced with the WRONG number is

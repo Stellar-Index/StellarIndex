@@ -482,7 +482,7 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 
 	// While the budget is unspent the cursor MUST hold below the failing
 	// ledger — a genuinely transient fault deserves its retries, and dropping
-	// the row immediately would be the C2-1 silent-loss bug.
+	// the row immediately would be the silent-loss bug.
 	for i := 1; i < QuarantineAfterCycles; i++ {
 		h.cycle()
 		if got := h.store.cursor(); got != 100 {
@@ -508,7 +508,7 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 // TestCycle_InfraErrorRetriesForever pins the anti-over-correction property: a
 // positively-identified infrastructure fault (Postgres unreachable) is NEVER
 // quarantined, however many cycles it lasts. Shedding live rows because the
-// database is down is the C2-1 loss this projector exists to prevent.
+// database is down is the loss this projector exists to prevent.
 func TestCycle_InfraErrorRetriesForever(t *testing.T) {
 	const source = "infra-retry-forever"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -564,7 +564,7 @@ func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 		t.Errorf("sink_quarantined delta = %v, want 0 (a recovered deadlock must not have been dropped)", got)
 	}
 	// "ok" only counts events from a cycle that committed cursor progress
-	// (C2-1), so the held cycles contribute nothing and the recovering cycle
+	// so the held cycles contribute nothing and the recovering cycle
 	// projects both rows exactly once.
 	if got := decodedCount(t, source, "ok") - beforeOK; got != 2 {
 		t.Errorf("ok delta = %v, want 2 (both rows project once the deadlock clears)", got)

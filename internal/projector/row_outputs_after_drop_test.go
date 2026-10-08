@@ -119,7 +119,7 @@ func TestCycle_PermanentDropsAreCountedPerOutput(t *testing.T) {
 }
 
 // TestCycle_RetryableFaultAfterADropStillHoldsTheRow — continuing past a
-// permanent drop must not weaken C2-1: a transient fault on a LATER output of
+// permanent drop must not weaken the no-silent-loss rule: a transient fault on a LATER output of
 // the same row still stops the row and holds the cursor below its ledger, and
 // the output after the transient fault is NOT offered (the whole row is
 // re-read next cycle; the idempotent sinks absorb the repeats).

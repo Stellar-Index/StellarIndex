@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestUSDVolumeRestamp_ExactTierRepair is the DB-backed proof for the W5.3
+// TestUSDVolumeRestamp_ExactTierRepair is the DB-backed proof for the
 // `usd-volume-restamp` write path, on real TimescaleDB, against rows the
 // REAL insert path wrote with the REAL peg configuration:
 //

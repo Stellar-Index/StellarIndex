@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── W5.3: the exact-tier restamp formula ─────────────────────────
+// ─── The exact-tier restamp formula ───────────────────────────────
 
 // TestExactTierUSDVolume_TracksTheWaterfall pins the restamp's formula to
 // the INSERT path byte-for-byte: for every exact-tier shape, the value
@@ -49,7 +49,7 @@ func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 		{"cex USD quote (tier 1/2, 8 decimals)", "binance", xlm, usd, 10_000_000_000, 1_250_000_000, "12.50000000"},
 		// SDEX classic 1e7: 1,250,000,000 stroops → $125.
 		{"dex pegged quote (tier 2, 7 decimals)", "sdex", canonical.NativeAsset(), usdcAsset, 10_000_000_000, 1_250_000_000, "125.00000000"},
-		// Tier 2b reads the BASE leg — the W5.3 class.
+		// Tier 2b reads the BASE leg — the mis-valued class.
 		{"dex pegged base (tier 2b)", "sdex", usdcAsset, canonical.NativeAsset(), 1_250_000_000, 10_000_000_000, "125.00000000"},
 		// Both legs pegged: the quote wins, and the amounts differ so
 		// reading the wrong leg yields a different number.
@@ -138,7 +138,7 @@ func TestUSDVolumeRestampDecision(t *testing.T) {
 		{"correct row, canonical render", str("125.00000000"), TierBasePegged, "1250000000", "10000000000", false, "125.00000000", false, true},
 		{"correct row, short NUMERIC render", str("125"), TierBasePegged, "1250000000", "10000000000", false, "125.00000000", false, true},
 		{"correct row, long NUMERIC render", str("125.0000000000000000"), TierQuotePegged, "10000000000", "1250000000", false, "125.00000000", false, true},
-		// The W5.3 class: a USDC-base row valued by the resolver's VWAP
+		// The mis-valued class: a USDC-base row valued by the resolver's VWAP
 		// (+0.7%) instead of the $1 peg identity.
 		{"resolver-priced base_pegged row", str("125.87500000"), TierBasePegged, "1250000000", "10000000000", false, "125.00000000", true, true},
 		// One unit at the render scale — the smallest possible defect.

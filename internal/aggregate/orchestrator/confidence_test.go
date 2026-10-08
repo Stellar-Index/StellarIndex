@@ -895,7 +895,7 @@ func TestBaselineAgeDays_ProductionDensityReleasesBootstrapCap(t *testing.T) {
 // not calendar age. A pair that has existed for the whole 30-day
 // window but trades in only 200 minutes a day rests on a thin
 // baseline and MUST stay capped. Relaxing the gate far enough to
-// admit it would be the less-safe direction W8.8 refused.
+// admit it would be the less-safe direction.
 func TestBaselineAgeDays_SparseMaturePairStaysCapped(t *testing.T) {
 	now := time.Now().UTC()
 	// 200 traded minutes per calendar day → 6,000 of 43,200 buckets.
