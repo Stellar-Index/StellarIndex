@@ -37,7 +37,7 @@ func docCommentAbove(t *testing.T, text, declLine string) string {
 }
 
 // TestOnConflictDocsMatchGenerationGuardedUpsert guards that doc
-// comments on writers backed by an INV-3 generation-guarded corrective
+// comments on writers backed by a generation-guarded corrective
 // ON CONFLICT ... DO UPDATE (migration 0110) must not describe the
 // pre-migration DO NOTHING / no-op / positional-PK behaviour those
 // upserts replaced. A doc that still claims "no-op" or omits a PK

@@ -9,10 +9,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for audit W4-storage-1 (ContractEventsRecent + EventsByTx
-// read stellar.contract_events — a ReplacingMergeTree — with no FINAL /
-// LIMIT 1 BY / uniqExact, so during a merge window an un-merged duplicate part
-// was served as a duplicate EVENT). Same class as the other ReplacingMergeTree reads, same query-SHAPE
+// Regression tests for the ContractEventsRecent and EventsByTx reads of
+// stellar.contract_events — a ReplacingMergeTree. Without FINAL / LIMIT 1 BY /
+// uniqExact, an un-merged duplicate part would be served as a duplicate EVENT
+// during a merge window. Same class as the other ReplacingMergeTree reads, same query-SHAPE
 // proof idiom: the stubConn/stubRows harness (tx_hash_index_test.go) does not
 // implement real ReplacingMergeTree semantics, so these assert the emitted SQL
 // carries the dedup construct the siblings use — the live-ClickHouse proof that
@@ -35,7 +35,7 @@ func contractEventRecentRowFor(seq uint32, opIndex, eventIndex uint32) []any {
 // carry NEITHER `FINAL` (defeats the contract_id bloom skip-index for
 // quiet contracts) NOR `LIMIT 1 BY` (disables the reverse read-in-order
 // early exit for busy ones — measured 16.3s vs 0.16s on r1,
-// the CCW5IBJ7… contract-page 503). The W4-storage-1 dedup moved to
+// the CCW5IBJ7… contract-page 503). Dedup is a
 // Go-side adjacent-row collapse.
 func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	conn := &stubConn{}
@@ -60,7 +60,7 @@ func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContractEventsRecent: %v", err)
 	}
-	// audit W4-storage-1: the duplicate part must still collapse — now in Go.
+	// The duplicate part must still collapse — now in Go.
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2 (adjacent duplicate collapsed)", len(rows))
 	}
@@ -215,8 +215,8 @@ func TestContractEventsRecent_PartialWalkShortPageFallsThrough(t *testing.T) {
 	}
 }
 
-// TestContractEventsRecent_EmptyWalkFallsThrough is the audit
-// W1-chrollup-3 regression: the contract_active_ledgers probe is a
+// TestContractEventsRecent_EmptyWalkFallsThrough is the
+// empty-walk regression: the contract_active_ledgers probe is a
 // LIMIT-1 table-global emptiness check that cannot see PARTIAL backfill
 // coverage. When the index is present-but-still-backfilling, a quiet
 // contract's per-contract walk comes back EMPTY even though its events
@@ -278,7 +278,7 @@ func TestEventsByTx_UsesFinal(t *testing.T) {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
 	q := conn.queries[len(conn.queries)-1]
-	// audit W4-storage-1: ledger+tx_hash-scoped so FINAL stays cheap (partition +
+	// ledger+tx_hash-scoped so FINAL stays cheap (partition +
 	// primary-key-prefix bounded), matching the byte-twin OperationsByTx.
 	if !strings.Contains(q, "FROM stellar.contract_events FINAL") {
 		t.Fatalf("query = %q, want `FROM stellar.contract_events FINAL`", q)

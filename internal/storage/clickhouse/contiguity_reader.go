@@ -212,7 +212,7 @@ const ecTxScopedRow = "tx_hash != ''"
 //   - uniqExactIf(..., ledger_seq IN (SELECT … FROM ledger_entry_changes …))
 //     is the anti-join's complement, evaluated over the SAME tx-bearing row
 //     set as the total. Restricting coverage to that set is the whole fix
-//     for C4-085; a standalone uniqExact over ledger_entry_changes counts
+//     for the coverage over-count; a standalone uniqExact over ledger_entry_changes counts
 //     tx_count == 0 ledgers as coverage of ledgers that are not in the
 //     expected set at all.
 //

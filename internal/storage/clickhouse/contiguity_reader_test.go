@@ -57,7 +57,7 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 	}{
 		{"fully-covered", 900, 900, 0},
 		{"deficit", 900, 850, 50},
-		// Unreachable through QueryECWindowCoverage since C4-085 (the
+		// Unreachable through QueryECWindowCoverage (the
 		// covered side is a SUBSET of the tx-bearing side), but the guard
 		// must still SATURATE to 0 rather than wrap uint64 to ~1.8e19 if a
 		// caller hands over unrelated cardinalities.

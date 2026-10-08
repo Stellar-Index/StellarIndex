@@ -165,7 +165,7 @@ func TestUSDVolumeRestampDecision(t *testing.T) {
 }
 
 // TestExactTierRestampScope_MirrorsTheDecision pins the SQL scope to the
-// Go decision: the predicate must (1) carry the INV-3 generation guard,
+// Go decision: the predicate must (1) carry the generation guard,
 // (2) skip rows already satisfying the identity via IS DISTINCT FROM, (3)
 // exclude NULLs unless FillNull, (4) bind the Go-decided leg + 10^decimals
 // per group rather than deciding either in SQL, and (5) refuse non-exact

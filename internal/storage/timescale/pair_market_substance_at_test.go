@@ -14,7 +14,7 @@ import (
 )
 
 // [Store.PairMarketSubstanceAt] is the SQL half of the POINT-IN-TIME
-// thin-market verdict (finding T038): the substance of the market that
+// thin-market verdict: the substance of the market that
 // existed in the window ending at a requested instant. Its sibling
 // [Store.PairMarketSubstance] always ends its window at now, which is
 // the defect — so what these tests pin is WHERE the window sits.

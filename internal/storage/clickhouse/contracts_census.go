@@ -59,7 +59,7 @@ func censusDayInsert(staging string) string {
 // crypto-random suffix, so two concurrent census runs (the 30-min timer
 // and a manual `ch-census-rollup -backfill`, which are separate processes
 // and cannot share an in-process lock) never write to the same staging
-// table. This is the W1-chrollup-4 isolation.
+// table. This is the private-staging isolation.
 func privateStagingTable() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -138,7 +138,7 @@ func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (
 // run computes into its OWN private staging table, so the 30-min timer
 // and a manual `ch-census-rollup -backfill` (a separate process, both
 // reaching `today`) can never interleave a DROP/INSERT/REPLACE against a
-// shared staging partition. See W1-chrollup-4.
+// shared staging partition.
 //
 // A recompute smaller than the live partition (fewer contracts or fewer
 // events) is refused with ErrCensusShrink unless shrinkOK: the lake only

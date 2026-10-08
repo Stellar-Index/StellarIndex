@@ -196,7 +196,7 @@ func (p *schemaProbe) record(err error, empty, requireRows bool) bool {
 		// The server ANSWERED, and the object is not usable now: it is
 		// empty, or it has vanished from under a process that had seen it
 		// (the DROP half of a DROP+recreate — latching that would pin the
-		// slow path until a restart, the C1-048 shape re-entered through
+		// slow path until a restart, the schema-probe latch shape re-entered through
 		// the lease). Any positive verdict is revoked at once; nothing
 		// latches, and a later probe picks the object back up.
 		p.settled, p.present = false, false
@@ -1993,8 +1993,7 @@ func (r *ExplorerReader) txHashIndexCovered(ctx context.Context) bool {
 
 // contractLedgersIndexAvailable reports whether
 // stellar.contract_active_ledgers is USABLE: exists AND non-empty (see the
-// probe field doc for why emptiness must not settle). NOTE (audit
-// W1-chrollup-3): a true verdict means the table has at least one row — it
+// probe field doc for why emptiness must not settle). NOTE: a true verdict means the table has at least one row — it
 // does NOT prove per-contract backfill coverage, so callers must treat an
 // empty PER-CONTRACT walk as "unknown, fall back", never as authoritative
 // "no rows for this contract" (see ContractEventsRecent).
@@ -2626,7 +2625,7 @@ const contractEventsDedupHeadroom = 100
 // reverse read-in-order early exit for busy ones — which is why the fast
 // query carries NO FINAL and NO LIMIT 1 BY (both disable one of those two
 // paths; see contractEventsRecentQuery). The RMT duplicate-part
-// over-count (audit W4-storage-1) is collapsed by adjacent-row dedup in
+// over-count is collapsed by adjacent-row dedup in
 // contractEventsScan, with an in-CH dedup fallback when the headroom is
 // exhausted. A set cursor keyset-pages to older events by the full
 // row-identity composite (ledger_seq, tx_hash, op_index, event_index) — a
@@ -2644,7 +2643,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	// to those ledgers — every event the page can serve lives in them (≥1
 	// event per active ledger), so the bound is lossless for both the page
 	// and its cursor. An EMPTY walk is NOT treated as authoritative "no
-	// events" (audit W1-chrollup-3): the availability probe is a LIMIT-1
+	// events": the availability probe is a LIMIT-1
 	// table-global emptiness check that cannot see PARTIAL backfill
 	// coverage, so an applied-but-still-backfilling index can hold zero
 	// rows for a quiet contract whose events do exist in contract_events.
@@ -2721,7 +2720,7 @@ func (r *ExplorerReader) contractEventsScan(ctx context.Context, q, contractID s
 		raw++
 		if len(out) > 0 && e.Seq == last.Seq && e.TxHash == last.TxHash &&
 			e.OpIndex == last.OpIndex && e.EventIndex == last.EventIndex {
-			continue // un-merged RMT duplicate part (W4-storage-1)
+			continue // un-merged RMT duplicate part
 		}
 		last = e
 		if len(out) == keep {

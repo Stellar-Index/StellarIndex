@@ -11,7 +11,7 @@ import (
 )
 
 // The ops-batch identity resolves from the environment and ONLY from
-// the environment (2026-08-28 r1: ch-rebuild as CH `default` starved
+// the environment (ch-rebuild as CH `default` starved
 // the aggregator's supply refresher; the fix is that ops jobs
 // authenticate as the low-priority `ops_batch` user when
 // /etc/default/stellarindex-ops carries the pair).

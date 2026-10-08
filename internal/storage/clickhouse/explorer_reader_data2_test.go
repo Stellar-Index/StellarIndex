@@ -14,7 +14,7 @@ import (
 // proof against real un-merged parts lives in test/integration (tagged
 // integration); the stubConn harness cannot model RMT merge semantics, so
 // these assert the emitted SQL carries the dedup / distinct-cap construct the
-// fix installs — the same query-SHAPE idiom the W4-storage-1 tests use.
+// fix installs — the same query-SHAPE idiom the ContractEventsRecent dedup tests use.
 
 // TestContractActivitySummaryFor_DedupsRMTCount — audit CHQ-2:
 // ContractActivitySummaryFor read stellar.contract_active_ledgers (an RMT)

@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── C4-055/066: the exact-tier valuation identity ───────────────
+// ─── the exact-tier valuation identity ───────────────
 
 func testQuoteSpec(t *testing.T) *USDVolumeQuoteSpec {
 	t.Helper()
@@ -113,7 +113,7 @@ func TestUSDVolumeTier_Exact(t *testing.T) {
 	}
 }
 
-// TestExactTierDelta_HoldsAndCatchesOneUnit is the C4-055/066 core.
+// TestExactTierDelta_HoldsAndCatchesOneUnit is the core of the exact-tier identity.
 //
 // For an exact tier the stored column must satisfy
 // usd_volume == pegged_leg / 10^decimals with NO tolerance — it is a decimal

@@ -34,7 +34,7 @@ func osztHash(n uint32) string { return fmt.Sprintf("%064x", n) }
 
 // TestIsOneSideZeroFill pins the predicate that separates the EXPECTED,
 // benign SDEX rounding artifact (exactly one leg == 0) from every other
-// Validate failure. It is the W1-defi-1 classifier: a false positive would
+// Validate failure. It is that classifier: a false positive would
 // silence a genuine decoder bug; a false negative would re-fire the spurious
 // insert-error alert on an ordinary one-side-zero fill.
 func TestIsOneSideZeroFill(t *testing.T) {

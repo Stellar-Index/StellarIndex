@@ -18,7 +18,7 @@ import (
 // fire only on the destructive combination (about to write NULL, resolution never
 // wired), NOT on every re-derive write. A blanket guard would refuse tier-1
 // CEX-USD trades, which price correctly from quote decimals with no resolver at
-// all — an over-broad guard breaks the INV-3 integration test, which is why
+// all — an over-broad guard breaks the generation-guard integration test, which is why
 // the "computed != nil passes" case below exists.
 func TestReDeriveNullVolumeGuard_ACRIT1(t *testing.T) {
 	priced := "12.34000000"

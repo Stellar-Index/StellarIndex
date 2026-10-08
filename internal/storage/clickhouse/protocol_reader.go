@@ -434,7 +434,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 // error / deadline / resource blip is NOT an answer (definitive=false):
 // callers must not cache it, or one ClickHouse hiccup at first probe
 // would latch the raw 12B-row scans for the process lifetime (the same
-// class as C1-048; see schemaProbe for the founding precedent). An empty
+// class as the schemaProbe latch; see schemaProbe for the founding precedent). An empty
 // table is also non-definitive — it exists but hasn't been backfilled
 // yet, and the probe is a LIMIT 1 read cheap enough to re-ask.
 func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available, definitive bool) {

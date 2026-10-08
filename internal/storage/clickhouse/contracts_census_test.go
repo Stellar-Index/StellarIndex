@@ -221,7 +221,7 @@ func (e *execRecorder) stagingTables() map[string]bool {
 	return out
 }
 
-// TestRunCensusDay_PrivateStagingPerRun is the W1-chrollup-4 regression:
+// TestRunCensusDay_PrivateStagingPerRun is the private-staging regression:
 // the 30-min census-rollup timer and a manual `ch-census-rollup -backfill`
 // are two separate processes that both drive RunCensusDay against the
 // current UTC day. Without per-run staging both DROP/INSERT/REPLACE against the ONE

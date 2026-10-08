@@ -47,8 +47,8 @@ func trustlineEntry(t *testing.T, holder, code, issuer string, lastModified uint
 // The table is ReplacingMergeTree ORDER BY (ledger_seq, tx_hash, op_index,
 // change_index), and snapshot rows all share tx_hash="" and op_index=-1. With
 // a constant ChangeIndex, every snapshot entry that shares a ledger_seq
-// collapses to ONE arbitrary survivor at merge time — the 2026-07-03 site
-// audit measured over 55% of the 48M-entry Phase-C snapshot already destroyed,
+// collapses to ONE arbitrary survivor at merge time — a site audit
+// measured over 55% of the 48M-entry Phase-C snapshot already destroyed,
 // taking account-state, trustline, supply and wasm reads down with it.
 //
 // crc32(key_xdr) restores per-key uniqueness AND keeps a re-run idempotent

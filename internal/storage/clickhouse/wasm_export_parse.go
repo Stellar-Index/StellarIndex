@@ -65,7 +65,7 @@ func (r *reader) eof() bool { return r.i >= len(r.b) }
 // safeCap bounds a make() prealloc hint by the reader's remaining bytes. A
 // LEB128 count is attacker-influenced — a ~5-byte field encodes ~5e9 — so
 // `make([]T, 0, count)` would attempt a multi-GB allocation (or panic in
-// makeslice) BEFORE the read loop ever reaches errTruncated (audit W6-go-1).
+// makeslice) BEFORE the read loop ever reaches errTruncated.
 // Every element consumes at least one byte of input, so no section can
 // legitimately declare more entries than the bytes remaining; cap the hint
 // there. This only sizes the prealloc — a genuinely oversized count still

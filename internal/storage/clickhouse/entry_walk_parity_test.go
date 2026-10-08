@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// This file is finding X1's remediation: the live dispatcher walker and the
+// This file guards the parity of two walkers: the live dispatcher walker and the
 // lake walker are two independent implementations of ONE contract ("the lake's
 // rows match what the live LedgerEntryChangeDecoder hook sees"), and until now
 // that contract was enforced only by a comment in each file saying it mirrored

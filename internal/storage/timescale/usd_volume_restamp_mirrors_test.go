@@ -292,7 +292,7 @@ func TestRestampDecide_ResolverErrorAbortsNotDeclines(t *testing.T) {
 
 // TestRestampTierGates_KeepTheTiersDisjoint: every row belongs to exactly
 // ONE tier. Two tiers claiming a row would each stamp it at their own
-// generation, and the INV-3 guard would make the run ORDER decide the
+// generation, and the generation guard would make the run ORDER decide the
 // value.
 func TestRestampTierGates_KeepTheTiersDisjoint(t *testing.T) {
 	t.Parallel()

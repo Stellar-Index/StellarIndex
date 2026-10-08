@@ -127,7 +127,7 @@ func TestProbeSchema_ContextDeadlineDoesNotLatch(t *testing.T) {
 }
 
 // TestProbeSchema_ResourceExceptionDoesNotLatch pins the second-review half
-// of C1-048. ClickHouse raises an Exception for plain RESOURCE conditions —
+// of the schema-probe latch rule. ClickHouse raises an Exception for plain RESOURCE conditions —
 // 202 TOO_MANY_SIMULTANEOUS_QUERIES, 159 TIMEOUT_EXCEEDED, 241
 // MEMORY_LIMIT_EXCEEDED, 209 SOCKET_TIMEOUT — not just for schema verdicts.
 // Treating "any *clickhouse.Exception" as a definitive answer meant one
