@@ -964,60 +964,23 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
-// tradesInRangeAfterWithAliases reads one page of raw trades UNIONED
-// across every XLM dual-form alias pair — the raw-trade twin of
-// [Server.chartMergeAliasPairs].
+// tradesInRangeAfterWithAliases reads one page of raw trades unioned across
+// every XLM alias form, each in both stored directions — the raw-trade twin of
+// [Server.chartMergeAliasPairs]. A literal-keyed, one-direction read is blind
+// to venues that publish XLM under another id, and to markets recorded the
+// other way round.
 //
-// A literal-keyed read is blind to every venue publishing XLM under
-// the other id: `?base=native&quote=fiat:USD` served an empty page while
-// the identical window under `?base=crypto:XLM` returned a full one, and
-// /v1/vwap — which loops the aliases — reported a live trade population for
-// the pair the same hour. `native` is the documented spelling of XLM on
-// this parameter, so the blind form is the one the API description sends a
-// reader to first.
+// Union, not first-hit: the cursor carries no form field ([historyCursor]), so
+// falling through to a sibling form on the next page would silently skip its
+// rows at or before the cursor. [mergeTradeStreams] merges all streams into one
+// keyset-ordered page; ties break on stream order, so the literal form leads.
+// Raw rows are unioned rather than ranked per bucket, because a row does not
+// aggregate to one number.
 //
-// Each alias form is read in BOTH stored directions
-// ([readAliasFormStreams]). A market has no stored direction of its own —
-// the SDEX decoder records XLM/USDC and USDC/XLM as separate rows — and
-// [HistoryReader.TradesInRangeAfter] keys on (base_asset, quote_asset)
-// literally, so reading one direction answered `?base=AQUA&quote=USDC`
-// with an empty page for every market recorded the other way round,
-// while /v1/ohlc and /v1/chart served the same window from the same rows
-// through a store read that folds the two directions in SQL
-// ([Store.OHLCSeries]).
-//
-// UNION, not first-hit. Serving the first alias form with a non-empty
-// page is unsound under pagination: the cursor carries no asset/form
-// field ([historyCursor]), so once the form that minted a cursor drains,
-// the next page falls through to a SIBLING form and resumes it from a
-// `ts` bound that excludes every one of ITS rows at or before that
-// point — not spliced in with a jump, silently gone.
-// [mergeTradeStreams] instead merges every alias form's both-direction
-// streams into one keyset-ordered page under a single cursor over the
-// whole union — the same tie-group completion the two-direction merge
-// already needed, generalised across however many streams
-// [readAliasFormStreams] built. The literal form still leads on a tie
-// (ties break on stream order, earliest first), so a populated literal
-// pair still answers with its own rows first; it is just not the ONLY
-// form a page can carry.
-//
-// Cross-form trade FUSION at the bucket granularity remains
-// [Server.chartMergeAliasPairs]'s separate design decision to rank forms
-// per bucket rather than blend them: a bucket aggregates to one number,
-// so ranking picks the venue that answers it; a raw trade row does not
-// aggregate, so the correct union is every row, not a pick.
-//
-// The returned cursor is the read's own answer about where the next page
-// resumes, nil when the window is drained. It is deliberately NOT
-// derived from `len(page) == limit`: the merge can cut a page short
-// while rows remain (see the tie-group rule below), a page can run OVER
-// `limit`, and the resume point is not always the last row's own key
-// ([streamPageCursor]).
-//
-// Non-XLM pairs have exactly one spelling, so they cost one page read
-// per direction, same as a single alias form always did. The caller's
-// deadline covers ALL scans (same rule as [Server.computeObservations]).
-// The first error propagates unchanged.
+// The returned cursor (nil when drained) is not derived from
+// `len(page) == limit`: tie-group completion can cut a page short or run it
+// over `limit` ([streamPageCursor]). The caller's deadline covers every scan;
+// the first error propagates unchanged.
 func (s *Server) tradesInRangeAfterWithAliases(
 	ctx context.Context,
 	reader HistoryReader,

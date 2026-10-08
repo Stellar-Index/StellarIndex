@@ -219,64 +219,15 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 	return q, true
 }
 
-// handleCursors serves GET /v1/diagnostics/cursors — the rows of
-// `ingestion_cursors` so operators (and the explorer /diagnostics
-// page) can see per-source ingest progress at a glance.
+// handleCursors serves GET /v1/diagnostics/cursors; parameters are
+// documented in the OpenAPI spec.
 //
-// Every row carries a derived `state` (`live` / `stale` /
-// `abandoned`, see [cursorStateFor]), and the response DEFAULTS to the
-// non-abandoned set: `ingestion_cursors` accumulates one permanent row
-// per one-shot job shard, so without that default the public response
-// is dominated by months-old records of work nothing is doing
-// (measured on r1: 4,703 of 4,815 rows). It is also capped — see
-// `limit` — so no future job's shard fan-out can grow it without
-// bound. The live cursor namespaces are exempt from `abandoned` at any
-// age, so the default response can never go quiet on stuck ingest —
-// that row stays, carrying its full lag.
-//
-// Optional query params:
-//
-//   - status — convenience filter. Values:
-//
-//   - "active"    → only rows with lag_seconds <= 600 (10m).
-//
-//   - "stale"     → only rows with lag_seconds > 600 that are not
-//     abandoned; useful for spotting dead ingest
-//     paths that are still worth resuming.
-//
-//   - "abandoned" → only one-shot job rows past the 7-day
-//     abandoned boundary (implies
-//     include_abandoned). Never a live namespace,
-//     which is what `reap-cursors` deletes.
-//
-//   - "" / omitted → live + stale.
-//     Invalid values return 400 invalid-status.
-//
-//   - include_abandoned — "true" adds the abandoned rows back to any
-//     of the above. Reach for it when reconciling what a past
-//     backfill covered, or before running `stellarindex-ops
-//     reap-cursors`.
-//
-//   - max_age — Go-duration string (e.g. "1h", "30m", "5m"). When
-//     present, rows with lag_seconds greater than this value are
-//     excluded. Lower-level than `status` — use this when you
-//     need an arbitrary threshold (e.g. "5 min" or "2h") rather
-//     than the active/stale boundary. Setting both `status` and
-//     `max_age` returns the intersection. Invalid duration →
-//     400 invalid-max-age.
-//
-//   - source — exact-match filter on the `source` column. Today's
-//     production values are "ledgerstream" (the live indexer),
-//     "projector", and one row per shard for each one-shot job
-//     ("backfill", "projected-rebuild", "census-backfill", …).
-//     Empty / omitted = return all sources. Unknown values return
-//     an empty array (not 400) — keeps the surface predictable when
-//     an operator typos vs. a brand-new source we haven't seen yet.
-//
-//   - limit / cursor — page size (default 500, max 2000) and the
-//     offset token echoed from `pagination.next`. Rows keep
-//     ListCursors' (source, sub_source) ordering, so paging over a
-//     table that is append-mostly, shrinking only under the explicit reap command is stable.
+// The response defaults to non-abandoned rows: `ingestion_cursors` keeps one
+// permanent row per one-shot job shard, which otherwise dominates it
+// (measured on r1: 4,703 of 4,815 rows). Live namespaces are never
+// `abandoned` at any age, so stuck ingest cannot drop out of the default
+// view. Unknown `source` values return an empty array rather than 400, so a
+// typo and a brand-new source look the same.
 func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 	if s.Cursors == nil {
 		writeProblem(w, r,
