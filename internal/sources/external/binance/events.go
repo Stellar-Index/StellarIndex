@@ -2,14 +2,9 @@
 // public combined-stream WebSocket endpoint and translates them into
 // canonical.Trade values.
 //
-// Why aggTrade, not raw trades: Binance emits one `@trade` message
-// per executed fill, which on a busy pair like XLMUSDT is a firehose
-// of ≥ 50 msg/s at typical US hours. The `@aggTrade` stream merges
-// consecutive fills at the same price in the same millisecond into a
-// single message — lossless for VWAP because the aggregated volume is
-// preserved, and ~5-10× lower throughput in practice. The same
-// pattern powers the predecessor system's Binance connector and it's been
-// stable at production volume there for years.
+// aggTrade, not raw trades: `@aggTrade` merges consecutive fills at the
+// same price in the same millisecond, which is lossless for VWAP (volume is
+// preserved) at ~5-10× lower throughput than the per-fill `@trade` stream.
 //
 // Wire format (verified against
 // https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams):
@@ -34,20 +29,12 @@
 //	  }
 //	}
 //
-// Symbol normalization: Binance concatenates base+quote with no
-// separator, always uppercase (XLMUSDT not xlm-usdt). Our normalizer
-// consults a hardcoded pair map at init for the v1 pair set; future
-// auto-enumeration pulls the full list from
-// `GET /api/v3/exchangeInfo` at connector start.
+// Symbols are base+quote with no separator, uppercase (XLMUSDT); the
+// normalizer maps them through a hardcoded pair map.
 //
-// Depeg policy: a Binance XLMUSDT trade emits as
-// canonical.Trade{Pair: XLM/USDT} — the aggregator's fiat-proxy
-// table (USDT→USD, USDC→USD, etc.) decides at VWAP compute time
-// whether to fold it into XLM/USD. Per the maintainer's guidance (memory:
-// feedback_production_artifacts): stablecoins pegs to fiat at the
-// aggregator layer, not at ingest. If the stablecoin depegs and
-// VWAP goes sideways, that's the correct failure mode — the data
-// stays honest.
+// An XLMUSDT trade emits as canonical.Trade{Pair: XLM/USDT}: stablecoins
+// are mapped to fiat by the aggregator at compute time, never at ingest,
+// so a depeg stays visible in the data.
 package binance
 
 import (

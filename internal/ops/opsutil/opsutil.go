@@ -350,45 +350,24 @@ func HistoricReadBucket(cfg config.Config, override string) (string, error) {
 // (ch-backfill, census-backfill) must go through this rather than
 // defaulting to a bucket of its own choosing.
 //
-// The failure this closes: a walker that defaults to cfg.Storage.S3BucketLive
-// unconditionally is silently wrong for exactly the ranges these commands
-// exist to serve. The live bucket holds only what galexie has exported
-// since this node started (on r1 it is also the TRIMMED one — see
-// docs/operations/r1-deployment-state.md), so a historic range resolves
-// to zero objects there. Because every ops walker opts into
-// TolerateTrailingMissing (NewBoundedLedgerStreamConfig), that walk ends
-// WITHOUT an error, and the caller records the window as DONE on exit 0 —
-// a permanent hole, recorded as success. The per-command coverage checks
-// close the second half of that trap; this closes the first.
-//
-// It lives here rather than in one subcommand package so the two callers
-// cannot hold INDEPENDENT copies of the default: fixing one and leaving the
-// other is how this class survives a remediation. One seam policy, one place.
+// The live bucket holds only what galexie exported since this node started
+// (on r1 it is also trimmed), so a historic range there resolves to zero
+// objects. With TolerateTrailingMissing that walk exits 0 and the caller
+// records a permanent hole as done. One shared resolver keeps callers from
+// holding independent copies of the default.
 //
 // Resolution order:
-//  1. An explicit -bucket always wins: the operator knows their layout, and
-//     every runbook that matters already passes it.
-//  2. With a live seam configured (ingestion.live_seam_ledger), the RANGE
-//     decides — entirely below the seam reads the archive, entirely at or
-//     above it reads live. A range that STRADDLES the seam is an error, not
-//     a guess: one walk reads one bucket, so either choice silently drops
-//     the ledgers on the other side, which is the same vacuous-success
-//     failure in a subtler shape.
-//  3. With NO seam configured (r1 today), the live bucket — unchanged.
-//     Without a seam the live bucket's floor is not knowable from config,
-//     and guessing it is how this whole class of failure arises.
-//     Silently switching the default to the archive would also break
-//     scripts/ops/ch-live-catchup.sh, which heals live-era holes and
-//     extends the tip with no -bucket at all: the archive is an
-//     hourly MIRROR of live, so it lags the tip by up to an hour and that
-//     timer would fail on every run until the mirror caught up. So the
-//     default stays, and the caller's coverage check is what makes a wrong
-//     bucket unmissable instead of silent — a historic range now fails
-//     naming galexie-live and telling the operator to pass the archive
-//     bucket. Setting ingestion.live_seam_ledger promotes this host to
-//     case 2 and makes the choice automatic, but it also changes the
-//     INDEXER's read path (StreamArchiveThenLive), so it is an operator
-//     decision, not a default this function should assume.
+//  1. An explicit -bucket always wins.
+//  2. With a live seam configured (ingestion.live_seam_ledger), the range
+//     decides: entirely below the seam reads the archive, at or above it
+//     reads live. A range that straddles the seam is an error, because one
+//     walk reads one bucket and either choice drops the other side.
+//  3. With no seam, the live bucket. Its floor is not knowable from config,
+//     and switching the default to the archive (an hourly mirror that lags
+//     the tip) would break scripts/ops/ch-live-catchup.sh. The caller's
+//     coverage check makes a wrong bucket fail loudly instead. Setting the
+//     seam also changes the indexer's read path, so it stays an operator
+//     decision.
 func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (string, error) {
 	if override != "" {
 		return override, nil
@@ -421,56 +400,29 @@ func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (s
 // NewBoundedLedgerStreamConfig returns the ledgerstream.Config that ops
 // subcommands should ALWAYS use when their `-to` may equal the live
 // galexie-archive tip. Always opts into TolerateTrailingMissing; never
-// override that downstream.
+// override that downstream: without it a walk reaching the tip fails on
+// the trailing-edge missing file.
 //
-// Without that flag a walk whose range reaches the tip fails on the
-// trailing-edge missing file. Every ops subcommand that streams LCM
-// (verify-archive, wasm-history, verify-decoders, scan-soroban-events)
-// can hit that when called with `-to 0` (live tip), so this helper
-// centralises the construction and the flag can't be forgotten.
-//
-// parallel is the number of concurrent ledgerstream.Stream walkers
-// the CALLER is about to run against copies of the returned Config
-// (ch-backfill's -parallel, wasm-history's -parallel, verify-archive's
-// -workers all split a bounded range into N contiguous chunks and walk
-// each on its own goroutine — see boundedWalkerBufferConfig below).
-// Single-walker callers pass 1.
+// parallel is the number of concurrent ledgerstream.Stream walkers the
+// CALLER will run against copies of the returned Config; single-walker
+// callers pass 1.
 //
 // # Why this sets an explicit Buffered override
 //
-// Left nil, [ledgerstream.Stream] falls back to the SDK's
-// ingest.DefaultBufferedStorageBackendConfig(lpf). Because this helper
-// never populates DataStore.Schema, lpf resolves to 1 inside Stream,
-// which selects the SDK's "small files" branch: BufferSize=10000,
-// NumWorkers=10 (github.com/stellar/go-stellar-sdk v0.6.0
-// ingest/producer.go — sized "so a bounded range fits entirely" for a
-// SINGLE walker). Each ledgerstream.Stream call constructs its own
-// BufferedStorageBackend with an independent priority-queue buffer, so
-// N parallel walkers sharing one process multiply that queue depth by
-// N. On r1, `stellarindex-ops ch-backfill -parallel 2` and `-parallel
-// 4` both OOM-killed the 20G ops job cap (run-heavy-job.sh) within
-// ~1000 ledgers; `-parallel 1` was stable at ~12GB using the same
-// 10000-deep default. The single walker is IO-latency-bound (it sleeps
-// on serial MinIO fetches; CPU is idle) — parallelism is the right
-// throughput lever for a backfill, but only once per-walker buffer
-// memory is bounded so it doesn't scale unboundedly with N.
+// Left nil, each Stream builds its own SDK buffered backend with a
+// 10000-ledger queue, so N parallel walkers multiply that memory by N: on
+// r1 `ch-backfill -parallel 2` and `-parallel 4` OOM-killed the 20G ops cap
+// within ~1000 ledgers. Walkers are IO-latency-bound, so parallelism is the
+// right lever once per-walker memory is bounded.
 //
-// boundedWalkerBufferBudget is a TOTAL ledger-count budget shared
-// across all N walkers a caller intends to run concurrently: each
-// walker's BufferSize is boundedWalkerBufferBudget/parallel, floored
-// at boundedWalkerBufferMin so a high -parallel still keeps enough
-// read-ahead to hide MinIO fetch latency (that's the buffer's only
-// job here — it doesn't need to hold a large window). At parallel=1
-// this alone shrinks the queue depth from the SDK's 10000 to 200 — a
-// single walker never needed a range's-worth of prefetch either.
-// NumWorkers is fixed at a modest per-backend fetch concurrency
-// (well under boundedWalkerBufferMin, satisfying the SDK's NumWorkers
-// <= BufferSize invariant at any parallel). RetryLimit/RetryWait match
-// the SDK's own defaults — only BufferSize/NumWorkers needed bounding.
+// boundedWalkerBufferBudget is a TOTAL ledger budget split across the N
+// walkers, floored at boundedWalkerBufferMin so each keeps enough
+// read-ahead to hide MinIO latency. NumWorkers stays under that floor to
+// satisfy the SDK's NumWorkers <= BufferSize invariant; retry settings
+// match the SDK defaults.
 //
-// The indexer's live-tail path (internal/pipeline.LedgerstreamConfig)
-// is deliberately NOT touched by this — it runs exactly one walker
-// and legitimately wants the SDK's larger default for throughput.
+// The indexer's live-tail path (internal/pipeline.LedgerstreamConfig) runs
+// one walker and keeps the SDK's larger default.
 func NewBoundedLedgerStreamConfig(cfg config.Config, bucket string, parallel int) ledgerstream.Config {
 	return ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{

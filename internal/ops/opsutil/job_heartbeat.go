@@ -62,14 +62,8 @@ const jobHeartbeatInterval = 60 * time.Second
 const jobHeartbeatLabel = "ops_job"
 
 // JobHeartbeat publishes liveness + progress for one long-running
-// stellarindex-ops job as node_exporter textfile gauges.
-//
-// The gap it closes: without it NO backfill-progress alert exists in
-// either rule tree. A backfill that wedged — a stalled S3 read, a
-// ClickHouse connection that never returns, an OOM-killed worker — would
-// look exactly like a backfill still working, for as long as nobody
-// happened to tail the journal. The two states are distinguished here by
-// publishing them SEPARATELY:
+// stellarindex-ops job as node_exporter textfile gauges, so a wedged
+// backfill is distinguishable from a working one:
 //
 //   - stellarindex_ops_job_running       1 while the process is alive
 //   - stellarindex_ops_job_heartbeat_unix rewritten every minute by a
@@ -80,37 +74,21 @@ const jobHeartbeatLabel = "ops_job"
 //     to move during a phase that completes no units — see [JobHeartbeat.ProgressBytes]
 //
 // all labelled `ops_job=` — see [jobHeartbeatLabel] for why NOT `job=`.
+// `running==1 ∧ stale heartbeat` means the process died hard (SIGKILL, OOM,
+// reboot); `running==1 ∧ fresh heartbeat ∧ flat progress` means it is alive
+// and hung. They need different responses, so they are different alerts.
 //
-// so `running==1 ∧ stale heartbeat` is "the process died hard without
-// cleanup" (SIGKILL, OOM, host reboot) while `running==1 ∧ fresh
-// heartbeat ∧ flat progress` is "the process is alive and hung". Those
-// need different operator responses, which is why they are different
-// alerts and not one.
+// ONE RUN PER TEXTFILE. Whichever of two runs sharing a path exits first
+// would write running=0 and silence the other's alerts, so [NewJobHeartbeat]
+// flocks the path and, when it is held, falls back to a per-invocation
+// `.pid<N>` path. That file carries a `pid` label and the alerts join
+// `on (ops_job, instance, pid)`, so a finished primary is never "rescued"
+// by a running sibling. Dead siblings are reaped by [sweepStalePIDFiles]
+// and [JobHeartbeat.sweepIfPrimary].
 //
-// ONE RUN PER TEXTFILE. Two concurrent invocations of the same subcommand
-// resolving to the same default path would trample each other: whichever
-// exits first writes running=0 and silences the survivor's stall alerts
-// for the rest of its run. [NewJobHeartbeat] therefore takes an exclusive
-// flock on the resolved path and, when it is already held, falls back to a
-// per-invocation `.pid<N>` path so BOTH runs stay observable rather than
-// one silently disabling the other. Operators do run overlapping windows
-// (`ch-full-backfill.sh` alongside a hand-driven catch-up), so this is a
-// real state, not a theoretical one.
-//
-// The fallback file carries an extra `pid` label, and the alerts join
-// `on (ops_job, instance, pid)` because of it: two files that differ only
-// by a label the join ignores would cross-match, and a cleanly-finished
-// primary would be "rescued" by its still-running sibling into a permanent
-// false ticket. Dead siblings are reaped on the next contention, on the
-// primary's own heartbeat tick, and when the primary stops — see
-// [sweepStalePIDFiles] and [JobHeartbeat.sweepIfPrimary].
-//
-// Deliberately FAIL-SOFT: every write error is swallowed. A heartbeat is
-// observability for a job whose actual work is re-deriving the lake;
-// aborting a multi-day backfill because a metrics file could not be
-// written would be strictly worse than losing the metric. A write that
-// never succeeds surfaces as a stale/absent heartbeat, which is exactly
-// what the alert already covers.
+// Deliberately FAIL-SOFT: every write error is swallowed. Aborting a
+// multi-day backfill over a metrics file is worse than losing the metric,
+// and a write that never succeeds surfaces as a stale heartbeat anyway.
 //
 // Zero value is not usable — construct with [NewJobHeartbeat].
 type JobHeartbeat struct {

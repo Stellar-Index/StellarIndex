@@ -29,53 +29,28 @@ const claimableSeedBatchSize = 2000
 // credit asset (ADR-0022 / migration 0012). It is the claimable analogue of
 // `supply seed-sac-balances -full-history`.
 //
-// # Why this exists (verified on r1)
+// The live observer only sees balances created since it started, so older
+// unclaimed balances were missing from Algorithm-2 classic supply; for AQUA
+// the claimable component was the whole gap to Horizon (−13.2% with it,
+// +0.61% without).
 //
-// claimable_observations was never seeded from history: 997 rows, minimum
-// ledger 63,301,831 — i.e. only what the live LedgerEntryChange observer
-// (internal/sources/claimable_balances) has seen since it started. Every
-// claimable balance created before that floor and still unclaimed is missing
-// from the Algorithm-2 classic-supply sum
-// (Trustline + Claimable + LPReserve + SACWrapped), leaving the claimable
-// component roughly 4% populated. Measured against Horizon for AQUA: we serve
-// 86,711,792,598 against Horizon's component sum 99,923,674,166 (−13.2%),
-// while against Horizon's total MINUS its claimable component
-// (86,186,028,534) we are only +0.61% — the claimable component IS the gap.
+// The seed reduces ClaimableBalanceEntry state latest-write-wins out of
+// stellar.ledger_entry_changes, so it is always correct to run and
+// idempotent: rows land at each balance's true last-modified ledger with
+// intra_ledger_seq = [timescale.SeedIntraLedgerSeq], so a later live
+// observation (notably a claim's is_removal row) always wins. A balance the
+// served tier holds as live but the lake shows claimed is written as an
+// is_removal tombstone at the claim's ledger; one the lake has no record of
+// fails the pass by name after the writes.
 //
-// The seed reads AUTHORITATIVE on-chain state (the ClaimableBalanceEntry
-// itself, reduced latest-write-wins out of stellar.ledger_entry_changes), so
-// it is always correct to run, and it is idempotent: rows land at each
-// balance's TRUE last-modified ledger with intra_ledger_seq =
-// [timescale.SeedIntraLedgerSeq], so a re-seed rewrites the same row and a
-// later live observation (notably the is_removal row a claim produces) always
-// wins the served reader's `DISTINCT ON (claimable_id) … ORDER BY ledger DESC`.
-// A balance the served tier still holds as live but the lake shows claimed
-// (claimed while the live observer was not recording) is written as an
-// is_removal tombstone at the claim's ledger, so a re-seed retracts it without a
-// DELETE. A served-live balance the lake has no record of through the walk's
-// upper ledger fails the pass by name after the writes.
+// Every classic credit asset is seeded by default: a seed that covered only
+// some would leave the rest under-reported. -assets narrows a run and prints
+// a PARTIAL banner. Native claimable balances belong to Algorithm 1 and are
+// never seeded.
 //
-// # Scope
-//
-// EVERY classic credit asset by default. Unlike the SAC seed there is no
-// operator-curated watched set to scope to — claimable balances span the whole
-// network — and a seed that quietly covered only some assets would leave the
-// rest under-reported in exactly the way this command exists to fix. `-assets`
-// narrows a run (useful for a targeted re-seed, or to bound memory on a host
-// under pressure) and is EMPTY by default; a narrowed run prints a loud
-// PARTIAL banner because the assets left out keep the pre-seed under-count.
-//
-// Native (XLM) claimable balances are never seeded, matching the live
-// observer: they belong to Algorithm 1, whose reader does not consume
-// claimable_observations.
-//
-// # Cost
-//
-// This walks the whole chain over a ~150-billion-row table and MUST run under
-// run-heavy-job.sh on r1 (AGENTS.md heavy-job doctrine). Expect several hours
-// and NO output until the end — the latest-write-wins reduction can only emit
-// once the last ledger window has been folded, so every insert lands after the
-// scan rather than interleaved with it. Silence is not a hang.
+// The walk covers a ~150-billion-row table: run it under run-heavy-job.sh on
+// r1. It takes hours and prints nothing until the last ledger window is
+// folded; silence is not a hang.
 //
 // Flags:
 //
@@ -84,23 +59,20 @@ const claimableSeedBatchSize = 2000
 //	-assets LIST     Comma-separated classic assets (CODE-ISSUER or
 //	                 CODE:ISSUER) to scope the seed to. EMPTY (default) =
 //	                 every classic credit asset.
-//	-timeout DUR     Whole-run deadline (default 12h). The scan is hours
-//	                 long and all writes happen at the end, so a deadline
-//	                 that expires mid-scan loses the whole pass.
+//	-timeout DUR     Whole-run deadline (default 12h). All writes happen at
+//	                 the end, so a deadline that expires mid-scan loses the
+//	                 whole pass.
 //	-heartbeat PATH  node_exporter textfile for the ops-job heartbeat
-//	                 (default: the textfile-collector dir when present). The
-//	                 walk reports ledgers reduced, so the long silent scan
-//	                 still shows progress.
+//	                 (default: the textfile-collector dir when present),
+//	                 reporting ledgers reduced during the silent scan.
 //	-write           Apply. Without it the pass is a dry run: read + print
 //	                 per-asset claimable count + summed balance, nothing
 //	                 written (-dry-run is a no-op alias).
 //
-// A batch insert that fails is retried row by row, so one bad row does not
-// abort the pass; rows that still fail are named and exit non-zero. Only a
-// clean pass (every row written, every served-live balance resolved) upserts
-// claimable_seed_provenance (migration 0184), one row per asset, carrying the
-// ledger the lake was verified through. There is no resume cursor: the output
-// exists only after the whole walk, and every write is an idempotent upsert, so
+// A failed batch insert is retried row by row; rows that still fail are
+// named and exit non-zero. Only a clean pass upserts claimable_seed_provenance
+// (migration 0184), one row per asset, with the ledger the lake was verified
+// through. There is no resume cursor: every write is an idempotent upsert, so
 // a re-run is the resume.
 func supplySeedClaimableBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-claimable-balances", flag.ContinueOnError)
