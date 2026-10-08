@@ -9,25 +9,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ErrMalformedArgs flags an InvokeContract call whose arg slice
-// doesn't match the function's published shape (wrong arity, wrong
-// SCVal types). Surfaced via the dispatcher's drop-counter; the
-// router decoder skips the call rather than aborting the ledger.
+// ErrMalformedArgs flags call args that don't match the function's shape; the call is skipped and counted.
 var ErrMalformedArgs = errors.New("soroswap_router: malformed args")
 
-// ErrUnknownFunction is returned when the dispatcher routed a call
-// to this decoder but the function name isn't one we handle. The
-// dispatcher's Matches() should have filtered first; this is a
-// defensive double-check.
+// ErrUnknownFunction is a defensive double-check behind the dispatcher's Matches().
 var ErrUnknownFunction = errors.New("soroswap_router: unknown function")
 
-// decodeRouterArgs converts one Soroswap router InvokeContract call
-// into a single RouterSwap. Returns ErrMalformedArgs / ErrUnknownFunction
-// for skip-and-count cases; per-arg context wraps the underlying
-// scval / xdr error for diagnostic logging.
-//
-// Soroswap router function signatures (from soroswap-core's
-// `contracts/router/src/lib.rs`):
+// decodeRouterArgs converts one Soroswap router InvokeContract call into a RouterSwap, returning
+// ErrMalformedArgs / ErrUnknownFunction for skip-and-count cases. Signatures (soroswap-core
+// contracts/router/src/lib.rs):
 //
 //	swap_exact_tokens_for_tokens(
 //	    amount_in:        i128,
@@ -45,11 +35,7 @@ var ErrUnknownFunction = errors.New("soroswap_router: unknown function")
 //	    deadline:         u64,
 //	) -> Vec<i128>
 //
-// Both shapes return Vec<i128> of realized per-hop amounts but we
-// don't decode the return value here — the dispatcher only routes
-// the call's args, not its result. The realized amounts are
-// recoverable from the per-pair `SoroswapPair("swap")` events in
-// the same tx (already decoded by the sister soroswap package).
+// The return value is not routed to us; realized amounts come from the same tx's SoroswapPair("swap") events.
 func decodeRouterArgs(
 	fnName string,
 	args []string,
@@ -69,14 +55,10 @@ func decodeRouterArgs(
 	if len(args) != 5 {
 		return nil, fmt.Errorf("%w: %s expects 5 args, got %d", ErrMalformedArgs, fnName, len(args))
 	}
-	// Destructure into named locals so each later access is on a
-	// non-indexed binding — keeps the bounds check visible to
-	// gosec G602 across the long function body.
+	// Named locals keep the bounds check visible to gosec G602 across the long body.
 	rawAmount0, rawAmount1, rawPath, rawTo, rawDeadline := args[0], args[1], args[2], args[3], args[4]
 
-	// Position 0 + 1 are i128. The semantic of which is amount-in
-	// vs amount-out depends on which function — but both are still
-	// i128, so the parse is identical.
+	// Positions 0 and 1 are i128 whichever function; their meaning is mapped below.
 	a0, err := parseI128(rawAmount0)
 	if err != nil {
 		return nil, fmt.Errorf("%w: args[0]: %w", ErrMalformedArgs, err)
@@ -86,10 +68,8 @@ func decodeRouterArgs(
 		return nil, fmt.Errorf("%w: args[1]: %w", ErrMalformedArgs, err)
 	}
 
-	// Position 2: Vec<Address> path. Length-2 = direct (single
-	// pair); length-3+ = multi-hop. The router refuses len < 2
-	// at the contract level, so a malformed-short path means the
-	// dispatcher routed something the router itself would reject.
+	// Position 2: Vec<Address> path (2 = direct, 3+ = multi-hop). The router refuses len < 2, so a
+	// short path is something the router itself would reject.
 	pathSv, err := scval.Parse(rawPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: args[2] path: %w", ErrMalformedArgs, err)
@@ -130,41 +110,20 @@ func decodeRouterArgs(
 		return nil, fmt.Errorf("%w: args[4] deadline: %w", ErrMalformedArgs, err)
 	}
 
-	// deadline == 0 is a "no deadline" sentinel, not a real
-	// 1970-01-01T00:00:00Z expiry. Leave DeadlineTs as the zero
-	// time.Time so the sink's IsZero() guard NULLs the column
-	// rather than storing the Unix epoch. (Without this, a 0
-	// deadline lands as 1970 — distinguishable in neither intent
-	// nor the IsZero guard from a missing value.)
+	// deadline == 0 is a "no deadline" sentinel, not a 1970 expiry: leave the zero time.Time so the
+	// sink's IsZero() guard NULLs the column.
 	var deadlineTs time.Time
 	if deadline != 0 {
-		// UnboundedUnixSeconds only guards the int64 cast: a deadline
-		// near math.MaxUint64 wraps to a small negative int64 and would
-		// otherwise silently stamp a bogus near-epoch deadline instead
-		// of leaving it unset. Legitimate far-future deadlines (below
-		// MaxInt64) are preserved as-is; the sink NULLs anything still
-		// outside postgres's timestamptz range.
+		// Guards the int64 cast: a deadline near math.MaxUint64 would wrap to a bogus near-epoch value.
+		// The sink NULLs anything still outside timestamptz range.
 		if t, ok := canonical.UnboundedUnixSeconds(deadline); ok {
 			deadlineTs = t
 		}
 	}
 
-	// Map (a0, a1) → (AmountIn, AmountOut) per function shape.
-	//
-	// CAVEAT (audit DOM-1): these are the two i128 CALL ARGS as
-	// DECLARED, not two realized amounts. Exactly ONE side is the
-	// exact/realized amount; the OTHER is a caller-declared slippage
-	// BOUND, so the amount_in/amount_out label is a trap:
-	//   - swap_exact_tokens_for_tokens: AmountIn = amount_in (exact,
-	//     realized) but AmountOut = amount_out_min — a slippage FLOOR
-	//     (the minimum acceptable output, typically BELOW what filled).
-	//   - swap_tokens_for_exact_tokens: AmountOut = amount_out (exact,
-	//     realized) but AmountIn = amount_in_max — a slippage CEILING
-	//     (the maximum acceptable input, typically ABOVE what filled).
-	// Each stored value is a FAITHFUL decode of its arg; only the
-	// column label mis-implies "realized" on the bound side. The
-	// realized per-hop amounts are recoverable from the per-pair
-	// SoroswapPair("swap") events in the same tx (sister soroswap pkg).
+	// Map (a0, a1) → (AmountIn, AmountOut). These are the DECLARED call args: exactly one side is the
+	// exact amount, the other a slippage BOUND (amount_out_min floor for exact-in, amount_in_max ceiling
+	// for exact-out). Realized per-hop amounts come from the same tx's SoroswapPair("swap") events.
 	amountIn, amountOut := a0, a1 // exact_tokens_for_tokens default
 	if fnName == FnSwapTokensForExactTokens {
 		amountIn, amountOut = a1, a0
@@ -193,13 +152,8 @@ func decodeRouterArgs(
 	}, nil
 }
 
-// callPosition derives (CallDepth, CallKind) from the ordered
-// ancestor+self contract chain. callPath always ends in this call's
-// own contract (dispatcher.ContractCallContext.CallPathContracts
-// convention), so a top-level call carries callPath == [contractID]
-// (len 1, depth 0). A caller that doesn't supply callPath (e.g. an
-// older/defensive call site) is treated as top-level rather than
-// producing a negative depth.
+// callPosition derives (CallDepth, CallKind) from the ancestor+self contract chain, which always ends
+// in this call's contract (so top-level is len 1, depth 0). An empty callPath is treated as top-level.
 func callPosition(callPath []string) (int, string) {
 	depth := 0
 	if n := len(callPath); n > 1 {
@@ -211,8 +165,7 @@ func callPosition(callPath []string) (int, string) {
 	return depth, CallKindTopLevel
 }
 
-// parseI128 wraps the (Parse → AsAmountFromI128) chain so the
-// per-arg error paths in decodeRouterArgs stay one-line.
+// parseI128 chains Parse → AsAmountFromI128 so decodeRouterArgs' per-arg error paths stay one line.
 func parseI128(b64 string) (canonical.Amount, error) {
 	sv, err := scval.Parse(b64)
 	if err != nil {
