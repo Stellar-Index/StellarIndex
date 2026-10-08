@@ -23,7 +23,7 @@
 #
 # Producers: internal/aggregate/orchestrator (freeze lifecycle step),
 # metrics declared in internal/obs/metrics.go. Every series here is
-# zero-seeded at process start (F-0033), so `increase()` reads a real
+# zero-seeded at process start, so `increase()` reads a real
 # zero rather than "no data" before the first event.
 #
 # Cardinality: the three lifecycle metrics above are unlabelled by

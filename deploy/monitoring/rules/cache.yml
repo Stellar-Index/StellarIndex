@@ -6,7 +6,7 @@ groups:
     interval: 30s
     rules:
 
-      # F-1329: redis_exporter emits no `role` label, so
+      # redis_exporter emits no `role` label, so
       # `redis_up{role="master"}` matched no series and this PAGE was
       # dead. `redis_up` (1 = exporter reached the server, 0 = it could
       # not) is the direct liveness signal.
@@ -98,7 +98,7 @@ groups:
             degrading. Scale up / free memory (OOM) or fix the
             replication topology (READONLY/NOREPLICAS) immediately.
 
-      # F-1329: `redis_expected_slaves` is defined NOWHERE (no exporter,
+      # `redis_expected_slaves` is defined NOWHERE (no exporter,
       # no recording rule, no external label) — the comparison silently
       # produced no series and this alert was dead. redis_exporter emits
       # `redis_connected_slaves`; the EXPECTED count is the ADR-0024
