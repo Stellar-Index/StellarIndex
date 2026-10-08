@@ -15,7 +15,7 @@ import (
 )
 
 // fakeSchemaReader is a v1.SchemaVersionReader with a scriptable
-// applied schema state, so the REC-06 checker can be exercised
+// applied schema state, so the schema checker can be exercised
 // without a live Postgres.
 type fakeSchemaReader struct {
 	version uint
@@ -27,7 +27,7 @@ func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, e
 	return f.version, f.dirty, f.err
 }
 
-// TestSchemaVersionChecker_Ping pins the REC-06 assertion: the
+// TestSchemaVersionChecker_Ping pins the schema assertion: the
 // checker fails-closed when the applied schema head is BELOW what the
 // binary was built against, or when schema_migrations is dirty, and
 // passes only when the applied head is >= expected and clean. This is
@@ -130,12 +130,12 @@ func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
 }
 
 // TestReadyz_SchemaMismatchDrainsBackend is the end-to-end gate
-// demonstration: with the REC-06 critical checker wired into the
+// demonstration: with the schema critical checker wired into the
 // readiness round reporting an applied head one below the binary's
 // expectation, /v1/readyz returns 503 (unready) and names the schema
-// failure — where before REC-06 there was NO schema check and the
-// same node answered 200. Postgres itself is up (its stub passes), so
-// the 503 is attributable solely to the schema/binary mismatch.
+// failure; without the check the same node answered 200. Postgres
+// itself is up (its stub passes), so the 503 is attributable solely to
+// the schema/binary mismatch.
 func TestReadyz_SchemaMismatchDrainsBackend(t *testing.T) {
 	stale := fakeSchemaReader{version: v1.ExpectedSchemaVersion - 1}
 	ts := newTestServer(t,
@@ -163,7 +163,7 @@ func TestReadyz_SchemaMismatchDrainsBackend(t *testing.T) {
 // TestExpectedSchemaVersionMatchesMigrationsHead is the registry-parity
 // guard: v1.ExpectedSchemaVersion MUST equal the highest-numbered
 // migration under migrations/. Adding a migration without bumping the
-// constant would silently weaken the REC-06 assertion (the binary would
+// constant would silently weaken the schema assertion (the binary would
 // accept a schema older than it was built against), so this fails CI.
 func TestExpectedSchemaVersionMatchesMigrationsHead(t *testing.T) {
 	t.Parallel()

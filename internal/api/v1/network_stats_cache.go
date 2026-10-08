@@ -69,7 +69,7 @@ func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timesca
 // stale-serve path (the value is a prior success the cache kept past its
 // TTL while a refresh is pending/failing). The handler stamps flags.stale
 // + an honest as_of from these, instead of silently asserting stale:false
-// / as_of=now over data a failing refresh has let age (REC-05; mirrors
+// / as_of=now over data a failing refresh has let age (mirrors
 // CachedMarketsReader.SourceMarketsAt). A zero observedAt means "live /
 // uncached read" — the handler defaults as_of to now and stale=false.
 func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error) {
