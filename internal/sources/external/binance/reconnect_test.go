@@ -8,10 +8,9 @@ import (
 // NewStreamer's default backoff is 5 s — large enough to
 // avoid hammering Binance on a venue-wide outage, small enough that
 // the per-cycle data-loss window is ~5 s on a healthy connection.
-// Pre-fix it was 1 s (defaults) but with no reset path, so in
-// production the running value drifted to MaxBackoff (60 s) and
-// stayed there. The defaults change + healthy-connection reset in
-// run() are the actual fix; this test pins the defaults so a future
+// A 1 s default with no reset path would drift in
+// production to MaxBackoff (60 s) and stay there. The healthy-connection
+// reset in run() prevents that; this test pins the defaults so a future
 // drive-by edit can't silently regress them.
 func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
 	s := NewStreamer(nil)

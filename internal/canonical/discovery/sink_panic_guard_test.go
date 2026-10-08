@@ -23,7 +23,7 @@ func (panickingRecorder) IsKnown(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-// K012 — AsyncSink's drain worker is a detached goroutine, and an
+// AsyncSink's drain worker is a detached goroutine, and an
 // unrecovered panic in ANY goroutine terminates the WHOLE process it is
 // linked into (here: stellarindex-api and stellarindex-indexer alike), not
 // just the worker. Without the guard this test does not fail, it CRASHES the

@@ -18,8 +18,8 @@ func TestMapOracleSymbol(t *testing.T) {
 		{"USD", AssetFiat, true},
 		{"EUR", AssetFiat, true},
 		{"BTC", AssetCrypto, true},
-		// 2026-08-29: the two reflector-fx slots that paged
-		// stellarindex_ingestion_oracle_unknown_symbols on r1 v0.48.0
+		// The two reflector-fx slots that paged
+		// stellarindex_ingestion_oracle_unknown_symbols
 		// (raw:VES / raw:XAU). VES is fiat (ADR-0010); XAU is the spot
 		// gold commodity and lands in the rwa: namespace (ADR-0028),
 		// NOT fiat — TestIsKnownFiat_AllowList pins the exclusion.

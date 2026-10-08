@@ -16,7 +16,7 @@ func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, e
 	return f.version, false, nil
 }
 
-// TestMetricsMuxReadyzGatesOnSchemaHead pins GH-1167: the deploy gate
+// TestMetricsMuxReadyzGatesOnSchemaHead pins that the deploy gate
 // probes the aggregator's /readyz, which must 503 when the applied schema is
 // behind the binary, while /healthz stays a constant liveness 200.
 func TestMetricsMuxReadyzGatesOnSchemaHead(t *testing.T) {

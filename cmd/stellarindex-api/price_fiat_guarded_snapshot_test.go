@@ -116,7 +116,7 @@ func getBody(t *testing.T, url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// TestPriceFiatCrossNeverServesABandRefusedRate pins F004 / F026 / K032
+// TestPriceFiatCrossNeverServesABandRefusedRate pins
 // end to end through everything this binary wires on the fiat path: the
 // real forex.Worker running its production Run loop against a fake
 // upstream, the forex.Cache it installs into, newForexAdapter, and the

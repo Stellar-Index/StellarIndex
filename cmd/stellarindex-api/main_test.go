@@ -671,7 +671,7 @@ func TestInProcessLoginThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	}
 }
 
-// TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing — F010. The
+// TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing. The
 // fallback must share auth.RedisLoginThrottle's email identity: a +tag
 // re-spelling of the same inbox must not get its own throttle budget.
 func TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing(t *testing.T) {
@@ -698,8 +698,8 @@ func TestInProcessLoginThrottle_CanonicalizesEmailBeforeHashing(t *testing.T) {
 	}
 }
 
-// TestInProcessSignupIPThrottle_MasksIPv6ToSlash64 — F010, same class of
-// bug on the signup-IP fallback: CheckIP keyed on the raw address.
+// TestInProcessSignupIPThrottle_MasksIPv6ToSlash64: same class of
+// bug as on the signup-IP fallback: CheckIP keyed on the raw address.
 func TestInProcessSignupIPThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	th := newInProcessSignupIPThrottle()
 	ctx := context.Background()

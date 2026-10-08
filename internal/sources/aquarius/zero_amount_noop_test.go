@@ -23,7 +23,7 @@ import (
 // not an error, which blinds the projection reconcile; and not a
 // canonical.Trade, which Validate would reject (zero side breaks price
 // derivation). Same classification pattern as redstone's empty
-// write_prices batch (commit 78486ae6).
+// write_prices batch.
 const (
 	zeroAmountTradeContract = "CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV"
 	zeroAmountTradeValue    = "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAAAAAAIAAAAKAAAAAAAAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAA"

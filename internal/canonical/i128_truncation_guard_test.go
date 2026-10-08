@@ -3,9 +3,8 @@
 
 package canonical
 
-// This file is the REAL i128-truncation guard ADR-0003 long claimed
-// to have (the "custom golangci analyzer" its 2026-06-12 reality note
-// admits never existed). It walks every non-test Go package in the
+// This file is the REAL i128-truncation guard ADR-0003 relies on
+// (no "custom golangci analyzer" exists). It walks every non-test Go package in the
 // repo with go/types and FAILS on lossy numeric conversions of the
 // hi/lo words of xdr.Int128Parts / xdr.UInt128Parts / xdr.Int256Parts
 // / xdr.UInt256Parts — the KALIEN-class bug where int64(parts.Lo)
@@ -509,7 +508,7 @@ func TestI128TruncationGuard(t *testing.T) {
 // isPartsType (an SDK field rename, a moved Int128Parts, a changed /xdr path)
 // would make the guard return "" for every site and pass on an effectively
 // empty tree: "detector works, tree clean" becomes indistinguishable from
-// "detector broken, finds nothing" (audit W6-tst-2, the "a guard that never
+// "detector broken, finds nothing" (the "a guard that never
 // fails is decorative" class).
 //
 // It is fully self-contained — a synthetic package whose path ends in "/xdr"

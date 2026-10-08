@@ -13,10 +13,8 @@ import (
 // is not confined to the goroutine that panicked. This binary spawns a large
 // fleet of detached workers (baseline / supply / change-summary / rollup /
 // gap-detector / mev / decimals / price-alert refreshers, plus the metrics
-// HTTP listener). Before W4-cmd-1 NONE of the workers recovered — the API
-// binary had recoverBackgroundWorker on every worker but the aggregator had
-// zero panic isolation, so a single worker panic crash-looped the whole price
-// pipeline.
+// HTTP listener). Without recovery a single worker panic crash-loops the whole price
+// pipeline; the API binary wraps every worker in recoverBackgroundWorker.
 //
 // Why an AST guard rather than a behavioural test: the failure mode that
 // actually bites is the NEXT worker someone adds without the defer. A
@@ -83,7 +81,7 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 
 	// Guard against the guard covering nothing (e.g. the spawn idiom
 	// changes and the AST match stops finding anything). 14 detached
-	// workers exist as of W4-cmd-1; this is a floor, not an exact count.
+	// workers exist today; this is a floor, not an exact count.
 	if checked < 14 {
 		t.Errorf("only %d background goroutine(s) discovered, expected at least 14 — "+
 			"the discovery in this test has drifted from the code and is no longer "+

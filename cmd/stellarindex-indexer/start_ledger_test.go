@@ -12,8 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// resolveStartLedger decides where every indexer restart begins reading
-// (#340 item 4). Each of its three arms fails in a different and
+// resolveStartLedger decides where every indexer restart begins reading.
+// Each of its three arms fails in a different and
 // expensive way, and none of them fails loudly at the point of the
 // mistake:
 //

@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// TestShutdownSelectNeverReturnsBeforeTheDrain is a guard-coverage test
-// for #368 M2.
+// TestShutdownSelectNeverReturnsBeforeTheDrain is a guard-coverage test.
 //
 // The shutdown path is: wait for either a signal or the producer's exit,
 // then externalWait -> close(events) -> wait for sinkDone -> wait for the
@@ -112,7 +111,7 @@ func shutdownSpan(t *testing.T) []string {
 			start = i
 		}
 		// The drain call's spelling changes as the shutdown path is
-		// hardened — it was a bare externalWait(), and #368 wrapped it in
+		// hardened — the drain is wrapped in
 		// waitBounded so a stuck connector cannot hang the exit. Match the
 		// CALL SITE by the function it drains, not by an exact line, or
 		// this guard silently stops finding the span (which is what it did

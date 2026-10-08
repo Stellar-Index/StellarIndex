@@ -16,7 +16,7 @@ import (
 // (route paths, HTTP verbs, etc).
 var llmsTxtAssetIDExample = regexp.MustCompile("`(native|XLM|[a-z]+:[A-Za-z0-9:]+|[A-Z0-9]+-G[A-Z0-9]{55})`")
 
-// TestLlmsTxtAssetExamples_ParseAsCanonicalAssets pins T259: llms.txt
+// TestLlmsTxtAssetExamples_ParseAsCanonicalAssets pins that llms.txt
 // is public-facing documentation an AI agent reads to learn our
 // asset_id format, and it once taught a shape (`credit:USDC:G…`) that
 // ParseAsset rejects outright — a colon inside the issuer breaks the

@@ -37,7 +37,7 @@ func TestGet_OversizeBodyFails(t *testing.T) {
 	}
 }
 
-// TestCurrencyNames_RefusesPaginationOffHost pins T019: a next_url that
+// TestCurrencyNames_RefusesPaginationOffHost pins that a next_url that
 // points off the configured Massive host must not be followed, because
 // [Client.get] unconditionally attaches the bearer token to whatever
 // URL it is given. A malicious or compromised upstream response could

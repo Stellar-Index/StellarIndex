@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// GH-1130: the single-host port-collision shift must key off whether the
+// The single-host port-collision shift must key off whether the
 // operator actually set obs.metrics_listen (config.ObsConfig.MetricsListenSet),
 // never off comparing the value to the indexer's default by equality. An
 // operator who explicitly pins the aggregator to 127.0.0.1:9464 — the same

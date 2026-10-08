@@ -280,7 +280,7 @@ func TestSupplyAggregatorLedgers_PropagatesCursorReadError(t *testing.T) {
 // lake lookup actually scans. They are one constant today, and this is what
 // keeps them one: a resolver that refuses past 512 while the lookup reads
 // every partition below the cursor pays chain-history-sized reads for rows it
-// can never accept (measured on r1 2026-09-05: 735.59 MiB per call, once per
+// can never accept (measured on r1: 735.59 MiB per call, once per
 // watched asset per 5-minute tick), and a resolver that accepts further back
 // than the lookup reads would fail closed on a lake that is merely lagging.
 func TestSupplyLakeClampMatchesLookupWindow(t *testing.T) {

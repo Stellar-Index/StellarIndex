@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// K027 — the divergence-service and freeze-sink customer-webhook
+// The divergence-service and freeze-sink customer-webhook
 // payloads were `map[string]any` literals: nothing tied their key set
 // to openapi/stellar-index.v1.yaml's AnomalyFreezeWebhookPayload /
 // DivergenceFiringWebhookPayload schemas, so a field rename on either

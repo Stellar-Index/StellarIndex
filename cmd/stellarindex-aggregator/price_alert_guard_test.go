@@ -154,7 +154,7 @@ func (f fakeAlertDecimalsLookup) Lookup(assetID string) (int, bool) {
 	return d, ok
 }
 
-// TestPriceAlertReader_NonstandardDecimalsCorrected proves #748: a
+// TestPriceAlertReader_NonstandardDecimalsCorrected proves that a
 // confirmed non-7-decimal base leg (the runbook's real CC2RB… incident,
 // decimals()=9 vs USDC's 7, raw ratio 41.32) must be corrected the same
 // way /v1/price's TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg

@@ -4,7 +4,7 @@ package main
 // point-in-time price reader must apply the serving-sanity guard to a
 // prices_1m answer.
 //
-// Finding F031: storePriceAtReader.PriceAt is the seam behind
+// storePriceAtReader.PriceAt is the seam behind
 // /v1/price/at AND every /v1/price/changes horizon, and
 // ClosedVWAPAtOrBefore's ladder puts the raw prices_1m CAGG bucket
 // FIRST for any instant inside 48 h — the same bare Σ(quote)/Σ(base)

@@ -6,7 +6,7 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
-// TestRouterEnabled_FoldsWhitespaceAndCase pins T187: routerEnabled gates
+// TestRouterEnabled_FoldsWhitespaceAndCase pins that routerEnabled gates
 // the routed-via attribution sweeper on membership in
 // ingestion.enabled_sources, but internal/config/validate.go and
 // internal/pipeline/dispatcher.go both fold that list with
@@ -34,7 +34,7 @@ func TestRouterEnabled_FoldsWhitespaceAndCase(t *testing.T) {
 	}
 }
 
-// TestAmmSignerEnabled_FoldsWhitespaceAndCase is T187's ammSignerEnabled
+// TestAmmSignerEnabled_FoldsWhitespaceAndCase is the ammSignerEnabled
 // analog: it reads the same timescale.AMMSignerSources list the tagger
 // UPDATE filters on, so a fold mismatch here silently disables signer
 // attribution for a correctly-configured, correctly-dispatched source.
