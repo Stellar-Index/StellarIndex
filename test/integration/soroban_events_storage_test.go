@@ -75,7 +75,7 @@ func TestSorobanEventsBatchInsert(t *testing.T) {
 	}
 }
 
-// TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics is the C2-11
+// TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics is the
 // DB-round-trip guard: a row carrying MORE than four topics must
 // persist through InsertSorobanEventsBatch → topics_xdr (migration
 // 0114) → StreamSorobanEvents with EVERY topic byte-for-byte intact,

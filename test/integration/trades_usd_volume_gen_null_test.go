@@ -34,8 +34,8 @@ func (r *flakeyFXResolver) USDPriceAt(_ context.Context, asset c.Asset, _ time.T
 	return p, true, nil
 }
 
-// TestUSDVolumeGenerationAwareNullPreservation is the proven-red regression
-// for W1-flowtradeingest-1: in production persist_per_source=true, a DEX trade
+// TestUSDVolumeGenerationAwareNullPreservation is the proven-red regression:
+// in production persist_per_source=true, a DEX trade
 // is DOUBLE-WRITTEN at deriveGeneration=0 by both the dispatcher's
 // BatchInsertTrades and the projector's InsertTrade on the same store. If one
 // writer resolves a usd_volume and the other races the same PK while its FX

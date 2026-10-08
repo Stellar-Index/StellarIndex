@@ -491,7 +491,7 @@ func (r *aliasTierReader) LookupTriangulated(_ context.Context, base, _ canonica
 	return "", time.Time{}, false, nil
 }
 
-// TestComputeGlobalPrice_AggregatorTierLoopsAliases pins C4-014: the
+// TestComputeGlobalPrice_AggregatorTierLoopsAliases pins that the
 // aggregator tier must find the headline price when the base's
 // aggregator coverage lives under an alias form (here crypto:XLM) and
 // the caller queries native. A tryAggregatorTier querying only
@@ -532,7 +532,7 @@ func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
 }
 
 // TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast pins
-// C4-014 for tier 3: the triangulated tier must reach the SAC form,
+// the alias loop for tier 3: the triangulated tier must reach the SAC form,
 // and only as the LAST resort. Calling LookupTriangulated
 // once with the literal base means a `native` query never sees a bridge
 // path published under the SAC form.
@@ -613,7 +613,7 @@ func TestAssetAliases(t *testing.T) {
 }
 
 // TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast is the
-// manipulation-surface guard for C4-012: adding the XLM SAC to the
+// manipulation-surface guard for the SAC alias: adding the XLM SAC to the
 // alias family widened what tryVWAPTier can find, and the whole safety
 // of that widening is the ORDER. Two assertions, both load-bearing:
 //

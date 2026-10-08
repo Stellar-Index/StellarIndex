@@ -67,7 +67,7 @@ func TestProcessEventSafely_RecoversDecoderPanic(t *testing.T) {
 	}
 }
 
-// TestProcessEventSafely_SinkErrorPropagates pins C2-1: a downstream sink
+// TestProcessEventSafely_SinkErrorPropagates pins that a downstream sink
 // write failure must be RETURNED to the caller (not swallowed), with
 // `emitted` counting only the outputs that committed before it.
 func TestProcessEventSafely_SinkErrorPropagates(t *testing.T) {

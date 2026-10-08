@@ -32,7 +32,7 @@ import (
 // It drives the REAL projector ([projector.New] + [projector.Run]) reading
 // one seeded soroban_events row, with a sink that:
 //   - FAILS the first cycle's write with a transient Postgres fault (a
-//     deadlock, SQLSTATE 40P01 — exactly the class C2-1 describes), then
+//     deadlock, SQLSTATE 40P01 — the transient class an old sink swallowed), then
 //   - SUCCEEDS on the retry, delegating to the production
 //     [pipeline.HandleEvent] so the row lands for real.
 //
@@ -46,8 +46,8 @@ import (
 // `toLedger` UNCONDITIONALLY (ignoring the sink error) — keeping the
 // SinkFunc/HandleEvent error signatures — and assertion (a) fails (the cursor
 // jumps past the failing ledger) and (b) fails (the idle next cycle never
-// re-reads it, so the row is permanently lost). This mirrors the loss C2-1
-// documents: `-resume` skips it, reconcile re-sums the equally-short table,
+// re-reads it, so the row is permanently lost). This mirrors the silent-loss
+// path: `-resume` skips it, reconcile re-sums the equally-short table,
 // and obs reports it as `ok`.
 func TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -201,7 +201,7 @@ func (s *durabilitySink) handle(ctx context.Context, ev consumer.Event) error {
 	}
 	if fail {
 		// A transient Postgres fault mid-cycle (deadlock_detected, SQLSTATE
-		// 40P01) — precisely the class C2-1 says the old sink swallowed.
+		// 40P01) — precisely the class a swallowing sink would lose.
 		// timescale.IsPermanentDataError classifies it as transient, so the
 		// projector must HOLD its cursor and retry rather than skip.
 		return &pgconn.PgError{Code: "40P01", Message: "deadlock detected (injected)"}

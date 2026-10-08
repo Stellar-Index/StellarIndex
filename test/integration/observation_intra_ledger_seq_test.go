@@ -92,7 +92,7 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	// ── The unguarded behaviour, reproduced live ────────────────────────────
 	// Raw unguarded last-writer-wins (the writer without the seq guard), writing the
 	// FINAL change first and the EARLIER change last (an out-of-order worker):
-	// the stale earlier value overwrites the final. This is the C2-6 bug.
+	// the stale earlier value overwrites the final. This is the bug.
 	t.Run("unguarded_last_writer_wins_reproduces_bug", func(t *testing.T) {
 		const (
 			contractID = "CBUNGUARDEDSACWRAPPERCONTRACTID000000000000000000000000"
@@ -188,11 +188,11 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
-	// ── Walk-version renumbering: the C2-032 boundary ────────────────────
+	// ── Walk-version renumbering boundary ────────────────────────────────
 	//
 	// intra_ledger_seq is PERSISTED and compared ACROSS BINARY VERSIONS by
 	// this guard, but it is only meaningful within one walk version
-	// (dispatcher.EntryWalkVersion). The C2-032 fix renumbered every ledger:
+	// (dispatcher.EntryWalkVersion). Walk version 2 renumbered every ledger:
 	// the v1 per-tx walk gave an account's ledger-final balance a HIGH
 	// position (a fee-phase change that sorted last — the corruption); the v2
 	// ledger-wide walk correctly places that same final balance LOWER.

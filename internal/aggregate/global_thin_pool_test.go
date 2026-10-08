@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The thin-pool third-alias shape (launch-plan D7, C4-012/13) on the
+// The thin-pool third-alias shape on the
 // headline tier: TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast pins
 // the ordering for XLM's compile-time family; these pin it for the
 // families the operator declares in `[supply].sac_wrappers`, which is

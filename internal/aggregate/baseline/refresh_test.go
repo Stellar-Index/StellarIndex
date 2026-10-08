@@ -305,8 +305,8 @@ func (s *panicSource) TimedVWAPsForPair1m(ctx context.Context, pair canonical.Pa
 	return s.base.TimedVWAPsForPair1m(ctx, pair, from, to)
 }
 
-// TestRefresher_RefreshAll_RecoversPanickingPair proves the W4-cmd-1
-// fix: a panic in one pair's per-pair goroutine (the RefreshAll fan-out
+// TestRefresher_RefreshAll_RecoversPanickingPair proves that
+// a panic in one pair's per-pair goroutine (the RefreshAll fan-out
 // at refresh.go) is CONTAINED — the batch completes and the healthy pair
 // still upserts, instead of the panic crashing the whole aggregator.
 //

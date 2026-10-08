@@ -790,8 +790,8 @@ func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 // keyed by the query range width (to - from, which refreshPairWindow
 // sets to exactly the window). The package's mockStore is per-PAIR
 // only, so it can't drive two windows of the same pair down divergent
-// freeze paths in one tick — which is precisely the W3-freeze-1
-// scenario.
+// freeze paths in one tick — which is precisely the
+// sibling-window scenario.
 type windowRoutedStore struct {
 	byWindow map[time.Duration][]canonical.Trade
 }
@@ -870,7 +870,7 @@ func newTwoWindowFreeze(t *testing.T) (
 }
 
 // TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen is the
-// W3-freeze-1 regression: the freeze marker + durable ladder + serving
+// regression guard: the freeze marker + durable ladder + serving
 // Looker are keyed by (asset, quote) but the freeze lifecycle runs per
 // WINDOW. When a short window auto-releases, it must NOT clear the
 // shared marker out from under a longer window that is still frozen —
@@ -938,7 +938,7 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 		t.Fatal("short window did not auto-release after two healthy buckets past the hold")
 	}
 
-	// W3-freeze-1: the long window is still frozen, so the shared marker
+	// The long window is still frozen, so the shared marker
 	// the API reads for flags.frozen MUST still be present, the long
 	// window's lifecycle MUST still be Active, and the long window MUST
 	// NOT publish its manipulated VWAP.
@@ -962,7 +962,7 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 }
 
 // TestFreezeLifecycle_OperatorOverrideReleasesAllWindows guards the
-// W3-freeze-1 fix's edge case: the sibling-active check on the shared
+// sibling-window fix's edge case: the sibling-active check on the shared
 // marker Clear must NOT block a genuine operator force-unfreeze.
 // Deleting the marker out of band is the ADR-0019 override, and it
 // releases EVERY window for the pair — each observes the missing marker
@@ -1026,8 +1026,8 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 }
 
 // bandQuoteAmount is a price 2.5% above the last-known-good (LKG):
-// $12,730.50 over 100,000 XLM → 0.127305. Its role in the W3-freeze-3
-// regression is to sit in the band where the two freeze phases DISAGREE:
+// $12,730.50 over 100,000 XLM → 0.127305. Its role in the Phase 1
+// release regression is to sit in the band where the two freeze phases DISAGREE:
 //
 //   - Phase 1 (per-class deviation, FreezePct 2% via newAnomalyChecker):
 //     2.5% > 2% → FIRES on a single source.
@@ -1039,7 +1039,7 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 const bandQuoteAmount = 127_305_000_000 // 0.127305, +2.5% vs the 0.1242 LKG
 
 // TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears is the
-// W3-freeze-3 regression: a Phase 1 freeze must still RELEASE once the
+// regression guard: a Phase 1 freeze must still RELEASE once the
 // pair returns to statistical health, and must not stay frozen forever.
 //
 // The stuck condition (without frozenPrevVWAPs): Phase 1's class-deviation is measured
