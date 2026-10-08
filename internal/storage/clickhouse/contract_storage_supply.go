@@ -13,72 +13,39 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ContractStorageSupply is a token's supply summed from the balance LEDGER
-// ENTRIES its contract holds in Soroban contract storage, rather than from the
-// SEP-41 / CAP-67 event log.
-//
-// It answers a DIFFERENT QUESTION from the event-derived reading, and the two
-// must never be added together:
-//
-//   - Event-derived supply (Σmint − Σburn − Σclawback over stellar.supply_flows,
-//     [TokenSupply]) is an ISSUANCE accumulation. It is correct only if the log
-//     is complete from the token's first ledger; a token that emitted no events
-//     for part of its life accumulates to a figure that is too low, and one that
-//     emitted none at all accumulates to a confident ZERO.
-//   - Storage-derived supply (this type) is a DISTRIBUTION level: the sum of the
-//     balances that exist right now. It carries no history and therefore cannot
-//     be made wrong by a gap in the history.
-//
-// Because it is a level and not an accumulation, it SUPERSEDES the event
-// reading for a token the event log cannot see — it does not supplement it.
-// See [ContractStorageSupplyReader.ContractStorageSupply] for the handover rule
-// and the conditions under which this reading is refused.
+// ContractStorageSupply is a token's supply summed from the balance ledger entries its contract
+// holds in Soroban storage, not from the event log. It is a DISTRIBUTION level; the event-derived
+// supply ([TokenSupply]) is an issuance accumulation, too low for a log with gaps and a confident
+// zero for a token with no events. Never add the two. See the ContractStorageSupply method for the
+// handover rule.
 type ContractStorageSupply struct {
 	ContractID string
 
-	// Total is Σ of every `Balance(Address) → i128` entry the contract holds,
-	// in the token's smallest unit (raw, undecimalised — ADR-0003: an i128 is
-	// never handed to a JSON number).
+	// Total is Σ of every Balance(Address) → i128 entry, raw smallest unit (ADR-0003: never a JSON
+	// number).
 	Total *big.Int
 
-	// Decimals is the scale read from the contract's OWN instance storage, and
-	// DecimalsFound reports whether the chain actually declared one. A caller
-	// must not publish a decimalised figure when DecimalsFound is false: the
-	// exponent would be invented, and an invented exponent is a published money
-	// figure wrong by a power of ten.
+	// Decimals is read from the contract's own instance storage; DecimalsFound reports whether the
+	// chain declared one. Do not publish a decimalised figure when false: the exponent would be
+	// invented.
 	Decimals      uint32
 	DecimalsFound bool
 
-	// BalanceEntries is how many balance entries were summed. Zero with a nil
-	// error means the contract holds no balances in storage — which is the
-	// normal reading for a Stellar Asset Contract's classic asset, whose
-	// balances live in trustlines.
+	// BalanceEntries is how many balances were summed. Zero with a nil error means no balances in
+	// storage, normal for a SAC's classic asset (its balances live in trustlines).
 	BalanceEntries int
 
-	// DeclaredTotal is the contract's OWN self-reported total supply, when its
-	// instance storage publishes one under `TotalSupply`. nil when it does not.
-	//
-	// This is an INDEPENDENT second measurement of the same quantity: the
-	// contract's internal running total versus our sum of its individual
-	// balance entries. They are maintained by different code paths inside the
-	// contract, so agreement is meaningful evidence that we decoded every entry
-	// — see [ContractStorageSupply.SelfConsistent].
+	// DeclaredTotal is the contract's own TotalSupply from instance storage (nil if absent): an
+	// independent measurement, so agreement is evidence every entry was decoded (SelfConsistent).
 	DeclaredTotal *big.Int
 
-	// DeclaredHolders is the contract's OWN self-reported holder count, when its
-	// instance storage publishes one under `HolderCount`. nil when it does not.
-	//
-	// Compared against BalanceEntries it is the completeness check that matters
-	// most for this basis: a balance entry the lake's current-state projection
-	// never captured is absent from the sum, and a contract that says it has
-	// twelve holders while we can see ten is telling us we are missing two.
+	// DeclaredHolders is the contract's own HolderCount (nil if absent): the completeness check,
+	// since a balance the current-state projection never captured is missing from the sum.
 	DeclaredHolders *uint32
 
-	// ArchivedEntries and ArchivedTotal are the part of BalanceEntries and Total
-	// held in PERSISTENT balance entries whose TTL had lapsed at the lake tip.
-	// They stay in the sum: an archived persistent balance is still owned and
-	// restorable, and the contract's own TotalSupply and HolderCount count it.
-	// ArchivedTotal is nil when ArchivedEntries is zero.
+	// ArchivedEntries/ArchivedTotal are the part of BalanceEntries/Total in persistent balances
+	// whose TTL had lapsed at the tip. They stay in the sum: archived persistent balances are still
+	// owned and restorable. ArchivedTotal is nil when ArchivedEntries is zero.
 	ArchivedEntries int
 	ArchivedTotal   *big.Int
 
@@ -89,30 +56,21 @@ type ContractStorageSupply struct {
 	// has judged it against its TTL.
 	balances []heldBalance
 
-	// isSAC records that the instance entry named a Stellar Asset Contract,
-	// and sawInstance that an instance entry was decoded at all. Unexported so
-	// the refusals can only leave this package as an error — a caller must not
-	// be able to read the fields and serve the sum anyway.
+	// isSAC/sawInstance stay unexported so refusals can only leave this package as an error; a
+	// caller must not read the fields and serve the sum anyway.
 	isSAC       bool
 	sawInstance bool
 }
 
-// HasSelfChecks reports whether the contract published anything to cross-check
-// against — its own TotalSupply, its own HolderCount, or both. A caller that
-// serves [ContractStorageSupply.SelfConsistent] must gate on this: "nothing to
-// check" is not a verdict, and publishing it as one dresses a bare token in a
-// confirmation it never earned.
+// HasSelfChecks reports whether the contract published anything to cross-check. Gate SelfConsistent
+// on it: "nothing to check" is not a verdict.
 func (s ContractStorageSupply) HasSelfChecks() bool {
 	return s.DeclaredTotal != nil || s.DeclaredHolders != nil
 }
 
-// SelfConsistent reports whether every cross-check the contract itself offered
-// agreed with what we decoded.
-//
-// It is TRUE when a contract offered no cross-checks at all — absence of
-// contradiction, which is all a bare token can give us. Callers that need to
-// distinguish "checked and agreed" from "nothing to check" gate on
-// [ContractStorageSupply.HasSelfChecks].
+// SelfConsistent reports whether every cross-check the contract offered agreed with what we
+// decoded. TRUE when it offered none (absence of contradiction); gate on HasSelfChecks to tell the
+// difference.
 func (s ContractStorageSupply) SelfConsistent() bool {
 	if s.DeclaredTotal != nil && s.Total != nil && s.DeclaredTotal.Cmp(s.Total) != 0 {
 		return false
@@ -123,78 +81,38 @@ func (s ContractStorageSupply) SelfConsistent() bool {
 	return true
 }
 
-// ErrStorageSupplyIsStellarAsset is returned for a Stellar Asset Contract.
-//
-// It is a REFUSAL, not a failure. A SAC's contract storage holds only the slice
-// of a classic asset that has been wrapped into Soroban; the rest of the asset
-// sits in trustlines, claimable balances and liquidity-pool reserves that this
-// reader cannot see and is not looking at. Summing a SAC's storage balances and
-// calling the result the token's supply would understate it by however much of
-// the asset never entered Soroban — measured on pubnet against KALE
-// (CB23WRDQ…), storage held 471,938,508,419,832 against an event-derived
-// 3,224,226,487,856,012, a 6.8x understatement that carries no internal sign of
-// being wrong.
-//
-// The classic asset's own supply is served by the classic path, which is built
-// for exactly this and knows about all four holding domains.
+// ErrStorageSupplyIsStellarAsset is a REFUSAL for a Stellar Asset Contract: its storage holds only
+// the wrapped slice of a classic asset (the rest is in trustlines, claimable balances and pool
+// reserves), so summing it understates supply with no sign of being wrong (6.8x on KALE). The
+// classic path serves the asset's supply.
 var ErrStorageSupplyIsStellarAsset = fmt.Errorf("clickhouse: contract is a Stellar Asset Contract; its storage holds only the wrapped slice of a classic asset")
 
-// ErrStorageSupplyTooManyEntries is returned when a contract holds more balance
-// entries than [maxContractStorageBalanceEntries].
-//
-// Also a refusal rather than a failure: this read decodes every entry in the Go
-// process, so an unbounded holder set would be an unbounded response. Refusing
-// is the honest outcome — a truncated sum is a WRONG supply figure that looks
-// exactly like a right one, which is the failure mode this whole reader exists
-// to remove.
+// ErrStorageSupplyTooManyEntries is a refusal above maxContractStorageBalanceEntries: every entry
+// is decoded in Go, and a truncated sum is a wrong supply that looks right.
 var ErrStorageSupplyTooManyEntries = fmt.Errorf("clickhouse: contract holds more storage balance entries than this reader will decode")
 
-// ErrStorageSupplyNoInstance is returned when a contract holds balances but the
-// lake captured no contract-instance entry for it.
-//
-// The instance entry carries the executable type, and that is the only evidence
-// that separates a Wasm token — whose storage balances ARE its supply — from a
-// Stellar Asset Contract, whose storage balances are a fraction of a classic
-// asset's supply. With no instance entry the SAC refusal has not been evaluated,
-// it has merely not fired, and the two cases are indistinguishable from the
-// balances alone. Refusing is the only honest outcome; see
-// [ErrStorageSupplyIsStellarAsset] for what serving one anyway would cost.
+// ErrStorageSupplyNoInstance: balances exist but no instance entry was captured. The instance is
+// the only evidence separating a Wasm token from a SAC, so the SAC refusal has not been evaluated,
+// merely not fired. See ErrStorageSupplyIsStellarAsset.
 var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance entry captured, so the Stellar-Asset-Contract check could not be run")
 
-// maxContractStorageBalanceEntries bounds one storage-supply read.
-//
-// The bound protects the API path, which pays a full decode per entry inside a
-// per-request budget. 25,000 sits far above the population this basis actually
-// serves — the tokens the event log cannot see are small, closed holder sets
-// (the twenty-four private-credit deal tokens measured on pubnet ran
-// 1 to 12 holders each) — and far below the largest storage-balance holder sets
-// on pubnet (~62k), which are ordinary event-emitting tokens that never reach
-// this path because their flow-derived reading answers first.
+// maxContractStorageBalanceEntries bounds one storage-supply read, which pays a full decode per
+// entry inside a request budget. 25,000 is far above the closed holder sets this basis serves (1 to
+// 12 holders) and below the largest pubnet holder sets (~62k), which are event-emitting tokens
+// answered by the flow-derived reading first.
 const maxContractStorageBalanceEntries = 25_000
 
-// balanceKeyMarker is the fixed base64 window a `Balance(Address)` contract-data
-// LedgerKey always carries, and instanceKeyMarker is the contract-instance one.
-//
-// A contract-data key's first 40 bytes are (LedgerEntryType, ScAddress type,
-// 32-byte contract id) — a whole number of base64 groups at byte 39 — so every
-// byte of the SCVal key that follows lands at a FIXED base64 offset for every
-// contract. That makes both markers plain string comparisons on the stored
-// column, with no base64Decode and no per-row XDR parse, which is what keeps
-// the server-side filter cheap enough to run beside a primary-key range.
-//
-// The markers are a PRE-FILTER ONLY. Every row that survives them is still
-// decoded and re-checked in Go by [balanceKeyHolder]: the marker proves the
-// key's shape, not that the value is a balance. Crucially `BalanceCheckpoints`
-// — a real key on these contracts, holding a VECTOR of historical balances —
-// shares the leading symbol text `Balance` and would be swept in by any prefix
-// match; it differs here only in the symbol LENGTH bytes the marker pins.
+// balanceKeyMarker is the fixed base64 window a Balance(Address) contract-data key carries;
+// instanceKeyMarker is the instance one. A key's first 40 bytes are (type, address type, contract
+// id), so the SCVal key lands at a FIXED base64 offset: plain string comparisons, no per-row XDR
+// parse.
+// Markers are a PRE-FILTER ONLY; survivors are re-checked by balanceKeyHolder. `BalanceCheckpoints`
+// (a vector of past balances) shares the leading symbol text `Balance` and differs only in the
+// symbol LENGTH bytes the marker pins.
 const (
 	balanceKeyMarker = "ABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAAS"
-	// holderCountKeyMarker matches `Vec[Symbol("HolderCount")]`, a TOP-LEVEL
-	// persistent entry rather than an instance-storage field. It is fetched
-	// because it is the completeness check this basis most needs: the contract
-	// stating how many holders it believes it has, against how many balance
-	// entries the lake can actually show us.
+	// holderCountKeyMarker matches Vec[Symbol("HolderCount")], a top-level persistent entry: the
+	// contract's own holder count, the completeness check for this basis.
 	holderCountKeyMarker = "ABAAAAABAAAAAQAAAA8AAAALSG9sZGVyQ291bnQA"
 	instanceKeyMarker    = "ABQAAAAB"
 	// wideMarkerChars is the shared length of the two vector-key markers.
@@ -207,21 +125,12 @@ const (
 	markerOffset = contractKeyPrefixChars + 5
 )
 
-// contractStorageSupplyQuery reads one contract's balance + instance entries.
-//
-// `entry_type` then `key_xdr` lead ledger_entries_current's ORDER BY, so the
-// startsWith() is a primary-key prefix range over exactly one contract's
-// entries rather than a scan — the same lookup shape [ExplorerReader.TokenDecimals]
-// uses, and the reason this read is cheap enough to sit behind an API request.
-//
-// FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree keyed by
-// (entry_type, key_xdr), so without it a balance that has been updated returns
-// once per unmerged part and the sum silently counts stale copies of the same
-// holder.
-//
-// `change_type != 'removed'` drops entries the ledger has deleted. A removed
-// balance is not a zero balance we may add; it is an entry that no longer
-// exists, and eight of them were present on pubnet.
+// contractStorageSupplyQuery reads one contract's balance + instance entries. startsWith() on
+// key_xdr is a primary-key prefix range ((entry_type, key_xdr) lead the ORDER BY), the same shape
+// as TokenDecimals.
+// FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree, so without it an updated
+// balance returns once per unmerged part and stale copies are summed. `change_type != 'removed'`
+// drops deleted entries: a removed balance no longer exists.
 const contractStorageSupplyQuery = `
 	SELECT key_xdr, entry_xdr, ledger_seq
 	FROM stellar.ledger_entries_current FINAL
@@ -238,62 +147,23 @@ type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (ContractStorageSupply, error)
 }
 
-// ContractStorageSupply sums a token's supply out of its Soroban contract
-// storage, for tokens the SEP-41 / CAP-67 event log cannot see.
-//
-// # Why this exists
-//
-// The supply pipeline derives circulating supply from events, and that is
-// complete for every token that emits them — including classic assets, since
-// CAP-67 makes an issuer payment emit a mint. It is blind to a token that emits
-// NONE. Such tokens are not undercounted in stellar.supply_flows, they are
-// ABSENT from it, and an absent contract sums to a confident zero.
-//
-// # The handover rule
-//
-// A token whose event log starts partway through its life has BOTH a storage
-// level and an event accumulation, and they must NOT be added — the same tokens
-// are in both. The storage reading wins outright, and the reason is structural
-// rather than a preference: a level measures what exists now and cannot be made
-// wrong by missing history, while an accumulation is only ever as complete as
-// its log. Events remain useful against this basis as a CROSS-CHECK, never as
-// an addend.
-//
-// That the two agree when the log IS complete was measured, not assumed. On
-// pubnet summing storage for three event-emitting Wasm tokens
-// reproduced their event-derived totals exactly, to the unit:
-//
-//	EUTBL    (CBGV2QFQ…)  28,327,867,109,034
-//	USTBL    (CARUUX2F…)   3,621,637,634,835
-//	deJTRSY  (CBI7UCH5…)   8,763,619,974,700,234,898,508,352
-//
-// # State expiry
-//
-// The lake never records an eviction: an entry whose TTL lapsed keeps its
-// last-known row in ledger_entries_current exactly as if it were live. Every
-// summed balance is therefore judged against its stellar.ttl_live_until row at
-// the lake tip. A lapsed TEMPORARY balance has been deleted by the network and
-// is dropped. A lapsed PERSISTENT balance has been archived, not destroyed — it
-// is still owned, restorable, and counted by the contract's own TotalSupply —
-// so it stays in Total and is disclosed through ArchivedEntries/ArchivedTotal.
-// A key with no TTL row is kept: only a proven lapse justifies dropping one.
-//
-// # What this reading is blind to
-//
-// It sees only balance entries the lake's current-state projection captured.
-// An entry dormant since before that projection's coverage began is absent,
-// and nothing in the sum says so. The figure is therefore a LOWER BOUND, and
-// callers must carry the bound onto the wire; the contract's own HolderCount,
-// where it publishes one, is the check that exposes the gap.
-//
-// # Refusals
-//
-// Returns [ErrStorageSupplyIsStellarAsset] for a SAC and
-// [ErrStorageSupplyTooManyEntries] above the entry cap, and fails when the TTL
-// lookup cannot run: an unjudged sum could include deleted balances. A contract
-// that simply holds no balances returns a zero Total with BalanceEntries == 0
-// and no error; the caller distinguishes that from a refusal and must not
-// publish it as a supply.
+// ContractStorageSupply sums a token's supply out of its Soroban contract storage, for tokens the
+// SEP-41 / CAP-67 event log cannot see (they are ABSENT from supply_flows, so events sum to a
+// confident zero).
+// Handover: a token with both a storage level and an event accumulation takes the storage reading
+// outright and the two are never added; a level cannot be wrong from missing history. Events stay a
+// cross-check. Measured: storage reproduced the event-derived totals of three complete Wasm tokens
+// exactly.
+// Expiry: the lake never records an eviction, so every balance is judged against
+// stellar.ttl_live_until at the lake tip. A lapsed TEMPORARY balance is dropped; a lapsed
+// PERSISTENT one is archived, still owned, and stays in Total (disclosed via
+// ArchivedEntries/ArchivedTotal). A key with no TTL row is kept.
+// Blind spot: only entries the current-state projection captured are seen, so the figure is a LOWER
+// BOUND; callers must carry the bound to the wire. The contract's HolderCount exposes the gap.
+// Refusals: ErrStorageSupplyIsStellarAsset, ErrStorageSupplyTooManyEntries,
+// ErrStorageSupplyNoInstance, and failure when the TTL lookup cannot run (an unjudged sum could
+// include deleted balances). A contract with no balances returns zero Total, BalanceEntries == 0
+// and no error; do not publish that as a supply.
 func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID string) (ContractStorageSupply, error) {
 	prefix, err := contractDataKeyPrefix(contractID)
 	if err != nil {
@@ -324,11 +194,8 @@ func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID s
 		return ContractStorageSupply{}, fmt.Errorf("%w: %s", ErrStorageSupplyIsStellarAsset, contractID)
 	}
 	if out.BalanceEntries > 0 && !out.sawInstance {
-		// The instance entry is the ONLY thing that proves this is not a
-		// Stellar Asset Contract. Without it the SAC refusal above has not
-		// actually been evaluated — it has merely not fired — and summing a
-		// SAC's storage understates a classic asset by whatever never entered
-		// Soroban. Absence of the disproof is not the proof, so refuse.
+		// The instance entry is the only disproof of SAC; without it the SAC refusal has not been
+		// evaluated, so refuse.
 		return ContractStorageSupply{}, fmt.Errorf(
 			"%w: %s (no contract instance entry captured, so the Stellar-Asset-Contract check could not be run)",
 			ErrStorageSupplyNoInstance, contractID)
@@ -369,10 +236,9 @@ func (r *ExplorerReader) settleLapsedBalances(ctx context.Context, s *ContractSt
 	return nil
 }
 
-// settle re-derives the sum from the held balances under their TTL verdicts at
-// tip: a lapsed temporary balance is dropped, a lapsed persistent one is kept
-// and counted as archived. A live_until below the entry's own last write is
-// stale TTL data (a write needs a live entry), so that key is kept as live.
+// settle re-derives the sum under TTL verdicts at tip: lapsed temporary dropped, lapsed persistent
+// kept as archived. A live_until below the entry's own last write is stale TTL data (a write needs
+// a live entry), so the key stays live.
 func (s *ContractStorageSupply) settle(liveUntil map[string]uint32, tip uint32) {
 	s.Total, s.BalanceEntries, s.AsOfLedger = new(big.Int), 0, 0
 	s.ArchivedEntries, s.ArchivedTotal = 0, nil
@@ -402,11 +268,9 @@ type storageRow struct {
 	ledger           uint32
 }
 
-// scanInstanceFirst drains the query, decoding only the instance entry and
-// holding every other row back undecoded. The SAC refusal is a property of the
-// instance alone, so it must not wait behind — or be pre-empted by a decode
-// error in — up to maxContractStorageBalanceEntries balance decodes whose sum it
-// is about to discard.
+// scanInstanceFirst decodes only the instance entry and holds every other row back undecoded: the
+// SAC refusal depends on the instance alone and must not wait behind, or be pre-empted by a decode
+// error in, up to 25k balance decodes it will discard.
 func (s *ContractStorageSupply) scanInstanceFirst(rows driver.Rows) ([]storageRow, error) {
 	var deferred []storageRow
 	seen := 0
@@ -449,9 +313,8 @@ func isInstanceKeyB64(keyB64 string) bool {
 func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) error {
 	var key xdr.LedgerKey
 	if xdr.SafeUnmarshalBase64(keyB64, &key) != nil {
-		// A key the lake stored but we cannot parse is a decode gap, not an
-		// empty holder: skipping it would silently drop a balance from the
-		// sum. Refuse the whole reading instead.
+		// An undecodable key is a decode gap, not an empty holder; skipping it would silently drop
+		// a balance, so refuse the reading.
 		return fmt.Errorf("clickhouse: contract storage supply %s: undecodable key_xdr", s.ContractID)
 	}
 	cd, ok := key.GetContractData()
@@ -486,13 +349,12 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	}
 	amount, ok := balanceAmount(ed.Val)
 	if !ok {
-		// The key says balance and the value is not a number we recognise.
-		// Refuse rather than treat it as zero.
+		// Key says balance, value unrecognised: refuse rather than treat as zero.
 		return fmt.Errorf("clickhouse: contract storage supply %s: balance entry carries no decodable amount", s.ContractID)
 	}
 	if amount.Sign() < 0 {
-		// A negative held balance is impossible under correct token accounting.
-		// It means we decoded the wrong field, so the sum cannot be trusted.
+		// A negative balance is impossible; we decoded the wrong field, so the sum is
+		// untrustworthy.
 		return fmt.Errorf("clickhouse: contract storage supply %s: negative balance entry %s", s.ContractID, amount)
 	}
 	s.Total.Add(s.Total, amount)
@@ -542,22 +404,10 @@ func (s *ContractStorageSupply) applyInstance(val xdr.ScVal) {
 	}
 }
 
-// instanceStorageKeyName returns the name of an instance-storage entry, under
-// either of the two encodings that are live on pubnet.
-//
-// A bare `Symbol` is what the soroban-token-sdk writes for METADATA. A
-// SINGLE-ELEMENT VECTOR holding a symbol is what Rust's `#[contracttype]`
-// derives for a fieldless enum variant, which is how every hand-written token
-// that keys its instance storage off a `DataKey` enum spells the same thing —
-// including all twenty-four private-credit deal tokens, whose scale and
-// self-declared total sit under `Vec[Symbol("Config")]` and
-// `Vec[Symbol("TotalSupply")]`.
-//
-// Reading only the bare symbol was a real defect, not a hypothetical one: it
-// silently produced DecimalsFound=false and a nil cross-check for exactly the
-// population this reader was built to serve, so the supply would have been
-// summed correctly and then published with a guessed exponent and nothing to
-// check it against.
+// instanceStorageKeyName returns an instance-storage entry's name under either live encoding: a
+// bare Symbol (soroban-token-sdk METADATA) or a single-element vector holding a symbol (Rust
+// #[contracttype] fieldless enum variant, used by hand-written tokens with a DataKey enum). Reading
+// only the bare symbol leaves DecimalsFound=false and no cross-check for exactly those tokens.
 func instanceStorageKeyName(key xdr.ScVal) (string, bool) {
 	if sym, ok := key.GetSym(); ok {
 		return string(sym), true
@@ -570,15 +420,10 @@ func instanceStorageKeyName(key xdr.ScVal) (string, bool) {
 	return string(sym), ok
 }
 
-// balanceKeyHolder reports whether a contract-data key is a per-holder balance
-// key: the two-element vector `[Symbol("Balance"), Address]`.
-//
-// The exact-length, exact-arity check is the point. `BalanceCheckpoints(Address)`
-// is a real key on the tokens this reader serves and holds a VECTOR of past
-// balances; anything that matched the symbol by PREFIX would sum a token's
-// balance history into its supply. Measured on pubnet, the
-// twenty-four private-credit deal tokens each carry one BalanceCheckpoints entry
-// per holder, so a prefix match would have roughly doubled every figure.
+// balanceKeyHolder reports whether a key is a per-holder balance: the two-element vector
+// [Symbol("Balance"), Address]. The exact-arity check is the point: BalanceCheckpoints(Address)
+// holds a vector of past balances, and a prefix match would sum balance history into supply
+// (roughly doubling the deal tokens).
 func balanceKeyHolder(key xdr.ScVal) bool {
 	if key.Type != xdr.ScValTypeScvVec {
 		return false
@@ -594,17 +439,10 @@ func balanceKeyHolder(key xdr.ScVal) bool {
 	return (*vec)[1].Type == xdr.ScValTypeScvAddress
 }
 
-// balanceAmount pulls the i128 out of a balance entry's value.
-//
-// Two shapes are accepted because both are live on pubnet: a bare i128 (the
-// soroban-token-sdk's current `Balance(Address) → i128`, and what every one of
-// the twenty-four private-credit deal tokens stores), and a map carrying an
-// `amount` field alongside authorization flags (the SAC / older token-sdk
-// `BalanceValue{amount, authorized, clawback}`).
-//
-// An i128 is reassembled from its signed high and unsigned low halves: reading
-// Lo as signed would corrupt every balance whose low word has the top bit set,
-// which is roughly half of all values.
+// balanceAmount pulls the i128 out of a balance value: a bare i128 (soroban-token-sdk) or a map
+// with an `amount` field (SAC / older token-sdk BalanceValue).
+// An i128 is reassembled from signed Hi and unsigned Lo: reading Lo as signed corrupts every
+// balance whose low word has the top bit set.
 func balanceAmount(val xdr.ScVal) (*big.Int, bool) {
 	switch val.Type {
 	case xdr.ScValTypeScvI128:
@@ -631,15 +469,9 @@ func balanceAmount(val xdr.ScVal) (*big.Int, bool) {
 	return nil, false
 }
 
-// contractDataKeyPrefix returns the base64 prefix every contract-data key for
-// one contract begins with.
-//
-// A contract-data LedgerKey opens with a 4-byte LedgerEntryType, a 4-byte
-// ScAddress discriminant and the 32-byte contract id: 40 bytes before anything
-// contract-specific. 39 of those are a whole number of base64 groups, so
-// encoding the first 39 yields 52 characters that are a prefix of the full key's
-// encoding no matter what follows — which is what lets the lookup ride
-// ledger_entries_current's (entry_type, key_xdr) primary key.
+// contractDataKeyPrefix returns the base64 prefix of every contract-data key for one contract: 39
+// of the 40 leading bytes (type, address discriminant, contract id) are whole base64 groups, so the
+// 52-char prefix lets the lookup ride the (entry_type, key_xdr) primary key.
 func contractDataKeyPrefix(contractID string) (string, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
