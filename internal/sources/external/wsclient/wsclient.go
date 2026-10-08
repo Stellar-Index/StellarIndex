@@ -1,14 +1,9 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package wsclient holds the shared WebSocket-streamer lifecycle used by the
-// external CEX connectors (binance / kraken / coinbase / bitstamp): the
-// dial → subscribe → read → reconnect [Loop] (capped exponential backoff,
-// healthy-lifetime reset, per-source disconnect/decode metrics), backoff
-// jitter, the keep-alive HTTP client for upgrade dials, and the disconnect
-// error → metric-label classifier. Extracting them here keeps a single
-// canonical copy instead of four drifting duplicates; venues supply only
-// their subscribe frame(s) and frame parser.
+// Package wsclient is the shared WebSocket lifecycle for the CEX connectors:
+// the reconnect [Loop], jitter, the upgrade-dial HTTP client and the
+// disconnect classifier, kept as one copy instead of four.
 package wsclient
 
 import (
@@ -20,10 +15,8 @@ import (
 	"time"
 )
 
-// Jitter returns d ±25% (uniform). d<=0 is returned unchanged.
-//
-// The variation avoids thundering-herd reconnects if many streamers happen
-// to time their retries on the same boundary.
+// Jitter returns d ±25% (uniform), so streamers do not reconnect in lockstep;
+// d<=0 is returned unchanged.
 func Jitter(d time.Duration) time.Duration {
 	if d <= 0 {
 		return d
@@ -33,12 +26,9 @@ func Jitter(d time.Duration) time.Duration {
 	return d + time.Duration(offset)
 }
 
-// KeepAliveHTTPClient returns the shared keep-alive HTTP client used by the
-// WS streamers' upgrade dials (HTTP/2 disabled, bounded idle pool).
-//
-// Its Transport dials TCP with KeepAlive set explicitly to 30 s. Go applies
-// that value as the idle time before the first probe (zero would mean 15 s);
-// the probe interval and count stay at Go's defaults of 15 s and 9.
+// KeepAliveHTTPClient returns the shared client for upgrade dials (HTTP/2 off,
+// bounded idle pool). TCP KeepAlive is 30 s idle before the first probe;
+// interval and count stay at Go's 15 s and 9.
 func KeepAliveHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
@@ -63,15 +53,9 @@ func KeepAliveHTTPClient() *http.Client {
 // noticed. See [Loop.PingInterval].
 var ErrStreamStalled = errors.New("stream stalled: venue stopped answering pings")
 
-// ClassifyDisconnect maps a disconnect error to a stable metric label
-// (stall / reset / broken_pipe / timeout / dial / other). Venue-specific
-// reasons are handled by the caller before delegating here.
-//
-// Reasons: "stall" (venue stopped answering pings — see [ErrStreamStalled]),
-// "reset" (TCP RST from venue), "broken_pipe" (write failed, peer hung up
-// mid-frame), "timeout" (read timed out), "dial" (handshake failed),
-// "other" (everything else, including EOF / context cancellations that
-// slipped past the ctx.Err() check).
+// ClassifyDisconnect maps a disconnect error to a stable metric label: stall
+// (unanswered pings), reset, broken_pipe, timeout, dial, or other (EOF and
+// stray cancellations). Callers handle venue-specific reasons first.
 func ClassifyDisconnect(err error) string {
 	if err == nil {
 		return "other"
