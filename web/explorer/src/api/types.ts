@@ -18,7 +18,7 @@ export interface paths {
          *     touch the database, Redis, or any downstream
          *     dependency — those are the readiness probe's job.
          *
-         *     F-1210 (codex audit-2026-05-12): `/healthz` is
+         *     `/healthz` is
          *     deliberately scoped to the serving-plane process
          *     liveness, NOT to SLA truth. Use `/v1/status` (the
          *     comprehensive rollup) for ingest lag, supply
@@ -54,7 +54,7 @@ export interface paths {
          *     deadline. 200 iff all pass; 503 with a per-check
          *     failure list otherwise.
          *
-         *     F-1210 (codex audit-2026-05-12): like `/healthz`,
+         *     Like `/healthz`,
          *     `/readyz` is deliberately scoped — it answers
          *     "should the load balancer route traffic to this
          *     instance?", NOT "is the launch-readiness gate
@@ -2129,8 +2129,6 @@ export interface paths {
          *     CoinGecko / CoinMarketCap structurally cannot offer —
          *     they only see exchange-side flows, not on-chain
          *     transfers.
-         *
-         *     F-0021 closure (audit-2026-05-26).
          */
         get: operations["getContractTransfers"];
         put?: never;
@@ -7155,7 +7153,6 @@ export interface components {
              *     A request of 100000 on a free account persists 1000.
              *     The `maximum: 100000` in this schema is the hard ceiling
              *     for any tier; the effective cap is whichever is lower.
-             *     F-1256 (codex audit-2026-05-12).
              */
             rate_limit_per_min?: number;
             /** Format: int64 */
@@ -24905,7 +24902,7 @@ export interface operations {
                                  * Format: int64
                                  * @description Number of DISTINCT transactions in which this contract and the subject both emitted events, within the query window.
                                  *
-                                 *     Corrected 2026-07-25 (audit DAT-10 / DAT-11): this previously counted co-occurring EVENTS rather than transactions, so a contract emitting many events inside one shared transaction scored its event count. It also double-counted rows from a retried partial flush that the ReplacingMergeTree had not yet merged. Values are therefore LOWER than before for busy pairs — the old figure was an event count wearing a transaction count's name.
+                                 *     A transaction counts once however many events either side emitted in it, and a retried flush's duplicate rows are not counted.
                                  */
                                 shared_txs?: number;
                                 /** @description Owning protocol when attributed; absent otherwise. */

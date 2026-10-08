@@ -1,8 +1,7 @@
 # systemd timer: hourly SEP-1 issuer-metadata refresh.
 #
-# Rendered by Ansible. Companion to sep1-refresh.service. This is the cron
-# that previously never existed — issuer org_name / org_verified only updated
-# on a manual run, so the /v1/issuers metadata went stale.
+# Rendered by Ansible. Companion to sep1-refresh.service. Without it issuer
+# org_name / org_verified only update on a manual run, so /v1/issuers goes stale.
 #
 # Time slot: :12 past every hour + up to 5 min jitter. It was 05:12 UTC once
 # a day, between supply-snapshot (04:42) and compute-completeness (05:30);
