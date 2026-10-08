@@ -113,8 +113,8 @@ func TestLoginThrottle_SignedInProofIsBoundAndUnforgeable(t *testing.T) {
 	if proof == nil {
 		t.Fatalf("sign-in set no %s cookie", loginDeviceCookieWireName)
 	}
-	if proof.Path != "/v1/auth/login" || !proof.HttpOnly {
-		t.Errorf("proof cookie Path = %q HttpOnly = %v, want /v1/auth/login and true", proof.Path, proof.HttpOnly)
+	if proof.Path != "/v1/auth" || !proof.HttpOnly {
+		t.Errorf("proof cookie Path = %q HttpOnly = %v, want /v1/auth and true", proof.Path, proof.HttpOnly)
 	}
 	if bytes.Contains([]byte(proof.Value), []byte("owner2")) {
 		t.Errorf("proof cookie carries the address in clear: %q", proof.Value)
@@ -139,5 +139,53 @@ func TestLoginThrottle_SignedInProofIsBoundAndUnforgeable(t *testing.T) {
 	lr.postLoginWithCookies(t, email, browser)
 	if got := lr.sender.SentCount(); got != sent {
 		t.Fatal("an expired proof got a send past the full cap")
+	}
+}
+
+func (lr *lockoutRig) postVerifyCodeWithCookies(t *testing.T, email, code string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(verifyCodeRequest{Email: email, Code: code})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-code", bytes.NewReader(body))
+	req.RemoteAddr = "198.51.100.20:40000"
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	w := httptest.NewRecorder()
+	lr.h.HandleVerifyCode(w, req)
+	return w
+}
+
+// TestLockout_SignedInBrowserIsNotLockedOut — anyone who knows an address
+// can spend its durable code budget, so a stranger's ten wrong codes must
+// not shut the owner's own browser out of code sign-in, and that browser's
+// typos must not spend the budget strangers are held to.
+func TestLockout_SignedInBrowserIsNotLockedOut(t *testing.T) {
+	const email = "owner3@example.com"
+	lr := newLockoutRig(t)
+	browser := lr.signIn(t, email)
+
+	lr.grind(t, email, maxDurableCodeFailures)
+
+	code := lr.loginAndCode(t, email)
+	if w := lr.postVerifyCode(t, email, code); w.Code != http.StatusBadRequest {
+		t.Fatalf("pre-condition: a caller without the proof got status %d, want 400 while locked", w.Code)
+	}
+	before := lr.durableFailures(email)
+	if w := lr.postVerifyCodeWithCookies(t, email, wrongCode(code), browser); w.Code != http.StatusBadRequest {
+		t.Fatalf("wrong code from the signed-in browser: status = %d, want 400", w.Code)
+	}
+	if got := lr.durableFailures(email); got != before {
+		t.Errorf("signed-in browser's typo charged the shared budget: %d → %d", before, got)
+	}
+	w := lr.postVerifyCodeWithCookies(t, email, code, browser)
+	if w.Code != http.StatusOK || !sessionCookieSet(w) {
+		t.Fatalf("signed-in browser locked out of its own address: status = %d, body %s", w.Code, w.Body.String())
+	}
+
+	other := lr.signIn(t, "stranger@example.com")
+	lr.grind(t, email, maxDurableCodeFailures)
+	code = lr.loginAndCode(t, email)
+	if w := lr.postVerifyCodeWithCookies(t, email, code, other); w.Code != http.StatusBadRequest {
+		t.Fatalf("another address's proof passed the lockout: status = %d, want 400", w.Code)
 	}
 }

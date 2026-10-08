@@ -137,11 +137,12 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 }
 
 // LoginDeviceCookieName marks a browser that has completed a sign-in for
-// one address. Its only effect: POST /v1/auth/login from this browser, for
-// that address, still gets a link when the per-address send cap — which
-// anyone who knows the address can fill — is exhausted (see
-// [Handlers.admitSignedInBrowser]). It authenticates nothing and is
-// scoped by Path to the login route, so no other route ever receives it.
+// one address. From this browser, for that address, POST /v1/auth/login
+// still gets a link when the per-address send cap is full
+// ([Handlers.admitSignedInBrowser]), and POST /v1/auth/verify-code is not
+// barred by the per-address code lockout ([Handlers.HandleVerifyCode]);
+// anyone who knows the address can fill both. It authenticates nothing and
+// is scoped by Path to the /v1/auth routes.
 const LoginDeviceCookieName = "stellarindex_login_device"
 
 // loginDeviceTTL is the longest cookie lifetime browsers honour (RFC 6265bis
@@ -166,7 +167,7 @@ func (h *Handlers) setLoginDeviceCookie(w http.ResponseWriter, email string) {
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: HttpOnly, SameSite=Lax; Secure follows cookie_secure (default true, false only for http dev)
 		Name:     LoginDeviceCookieName,
 		Value:    strconv.FormatInt(expires, 10) + loginIntentSeparator + loginDeviceMAC(h.cfg.Generator.Secret, email, expires),
-		Path:     "/v1/auth/login",
+		Path:     "/v1/auth",
 		Domain:   h.cfg.SessionHintDomain,
 		MaxAge:   int(loginDeviceTTL / time.Second),
 		HttpOnly: true,

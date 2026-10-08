@@ -742,7 +742,9 @@ type verifyCodeResponse struct {
 // The code is matched only against the email's NEWEST in-flight login
 // token — one comparison per request, so each guess has 1-in-1e6 odds no
 // matter how many sign-in emails an attacker has triggered — and every
-// attempt is charged — per token and per email — BEFORE it is compared, atomically in the store, so a burst of concurrent guesses
+// attempt is charged — per token, and per email unless the browser holds
+// this address's [LoginDeviceCookieName] proof — BEFORE it is compared,
+// atomically in the store, so a burst of concurrent guesses
 // gets no more comparisons than sequential ones (see [maxCodeAttempts],
 // [maxDurableCodeFailures]). All failure modes return one generic error
 // so a caller can't tell "no token" from "wrong code" from "too many
@@ -779,12 +781,19 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A browser that has signed in to this address before is held to the
+	// per-token cap only. The durable budget is shared by everyone who
+	// knows the address, so charging the owner against it would let a
+	// stranger's ten guesses lock them out; the proof is only ever issued
+	// to a browser that already proved control of the address.
+	ownerBrowser := h.hasLoginDeviceProof(r, email)
+
 	// Durable per-email lockout, checked BEFORE any candidate is
 	// compared so a locked address burns no code space. Same generic 400
 	// as every other failure — a distinguishable "you are locked out"
 	// would be an enumeration oracle, and the anti-enumeration contract
 	// on this endpoint is absolute.
-	if h.loginCodeLocked(r, email) {
+	if !ownerBrowser && h.loginCodeLocked(r, email) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -799,7 +808,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// The status check above is only a cheap early refusal: under a
 	// concurrent burst every request can pass it. The charge is what
 	// bounds the burst, so it must precede the comparison.
-	if !h.chargeLoginCodeAttempt(r, email) {
+	if !ownerBrowser && !h.chargeLoginCodeAttempt(r, email) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
