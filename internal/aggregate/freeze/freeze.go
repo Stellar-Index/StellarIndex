@@ -685,50 +685,25 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 // that believes it is the pair's LAST frozen window, and reports whether
 // the marker was nevertheless kept.
 //
-// The belief is the problem. The orchestrator decides "last" from its
-// in-memory ladder map, and a window only enters that map by reaching the
-// freeze step in the current process. A window sitting under the
-// USD-volume floor never does, and after a restart no window has yet —
-// so such a window's freeze exists ONLY in the marker (and the durable
-// record behind it), where the in-memory check cannot see it. Clearing on
-// that check deleted the marker and retired the durable ladder out from
-// under it: an ESCALATED freeze, which ADR-0019 holds "until manual
-// unfreeze", ended because a sibling window recovered, and the window's
-// next qualifying bucket — cold, so with no prev-VWAP comparator to
-// re-fire on — published.
+// The caller's belief comes from its in-memory ladder map, which misses any
+// window under the USD-volume floor and every window after a restart.
+// Trusting it let a sibling's recovery end an ESCALATED freeze, which
+// ADR-0019 holds until manual unfreeze, and the cold window then published.
+// So the record is asked: if another window owns a ladder in the marker
+// (merely ACTIVE counts, matching the cold-key rehydrate), or the marker
+// carries a live unowned one, this is [Writer.RetireWindowLadder] and the
+// marker and `flags.frozen` stay. Otherwise it is [Writer.Clear].
 //
-// So the record is asked, not only the process. If any OTHER window still
-// owns a ladder in the marker, or the marker still carries a live unowned
-// one, this is [Writer.RetireWindowLadder]: the window's own ladder goes,
-// the marker and `flags.frozen` stay. Otherwise it is [Writer.Clear].
+// A marker naming no sibling (absent, undecodable, old-format or rebuilt
+// during a durable-read failure) is not evidence that none is frozen, and
+// [Writer.Clear] retires every window's durable ladder, so the durable
+// record is asked too ([Writer.durableSiblingHeld]). Skipping that let a
+// 5m window's release during a Redis loss retire an escalated 1h sibling.
 //
-// An owned sibling ladder counts while it is merely ACTIVE, not only while
-// [LadderStillLive]: that is the test the cold-key rehydrate applies to an
-// owned entry, and a release that used a narrower one would delete a
-// ladder the very next read would have honoured. The marker's own TTL is
-// what bounds a sibling nobody is advancing.
-//
-// The marker is only the FIRST place the record lives. A marker that names
-// no sibling — absent, undecodable, written before per-window ladders, or
-// rebuilt while the durable read was failing — is not evidence that no
-// sibling is frozen, and [Writer.Clear] is not only a Redis DEL: it retires
-// the WHOLE durable record, every window's ladder with it. So before
-// clearing, the durable record (migration 0163) is asked the same question
-// ([Writer.durableSiblingHeld]). Reading the absent marker as "no sibling"
-// let a recovering 5m window's release during a Redis loss — the one
-// situation the durable ladders exist for — retire an escalated 1h
-// sibling's freeze, and the escalated window published.
-//
-// A record that cannot be read is NOT cleared, marker or durable — the
-// error is returned, the marker is left to its TTL and the durable ladders
-// to their own holds. Not knowing whether a sibling is frozen is no ground
-// for unfreezing it.
-//
-// The operator override is unaffected. `stellarindex-ops freeze-unfreeze`
-// calls [Writer.Clear] directly, which retires the durable record, and
-// then stamps recovered_at; by the time a window's release lands here both
-// the marker and the record read as absent, no sibling is found, and this
-// is the same idempotent clear it always was.
+// An unreadable record is NOT cleared: the error is returned and the holds
+// run out on their own. Not knowing whether a sibling is frozen is no
+// ground for unfreezing it. `freeze-unfreeze` calls [Writer.Clear]
+// directly, so by the time a release lands here it is an idempotent clear.
 func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (bool, error) {
 	label := windowLabel(window)
 	marker, ok, err := w.readMarker(ctx, cachekeys.Freeze(asset, quote))
@@ -1020,104 +995,59 @@ func windowLabel(window time.Duration) string {
 // back to the durable ladder (migration 0119) when the marker is gone.
 //
 // Returns (State{}, false, nil) only when the pair has NO live freeze by
-// either authority — never frozen, already recovered, or force-unfrozen by
-// an operator. The caller reads that as "not frozen", and under a live
-// in-memory freeze as the ADR-0019 §"Freeze duration" operator override.
+// either authority. The caller reads that as "not frozen", and under a live
+// in-memory freeze as the ADR-0019 operator override.
 //
-// # Why the marker alone is not the authority
+// The marker alone cannot be the authority: Redis runs without persistence
+// and is flushed in incidents, so a flush would read as an override and
+// release every live freeze, ESCALATED ones included. A missing marker is
+// disambiguated against freeze_events:
 //
-// Returning (State{}, false, nil) on any missing marker rests on the
-// reasoning that "a missing marker under a live freeze is a
-// deliberate signal, not a lost write". Redis falsifies that: it is a cache,
-// deployed without persistence and flushed during incidents. A flush
-// would therefore not merely forget the ladder — it would read as an operator
-// override, so the next tick would RELEASE every live freeze, and a pair that had
-// climbed the whole 2-hour ladder to ESCALATED ("stays active until manual
-// unfreeze") would silently republish the price a P1 alert had already put in
-// front of a human.
+//   - open row, hold not lapsed: Redis lost the marker; return the stored
+//     ladder as PRESENT.
+//   - no open row: the freeze ended. freeze-unfreeze clears the marker AND
+//     stamps recovered_at, so the supported override still sticks.
+//   - open row lapsed beyond the grace: the aggregator was down longer than
+//     the hold; do NOT resurrect it, or a week-old unclosed row re-freezes a
+//     healthy pair on restart.
 //
-// So a missing marker is now disambiguated against the durable record:
+// A raw `redis-cli DEL` is therefore not an override; it never was a
+// supported one (see internal/ops/accounts/freeze_unfreeze.go).
 //
-//   - open freeze_events row + hold not lapsed  → Redis lost the marker.
-//     Return the stored ladder as PRESENT; the freeze and its escalation
-//     survive. This is the fix.
-//   - no open row                               → the freeze genuinely
-//     ended. `stellarindex-ops freeze-unfreeze` clears the marker AND
-//     stamps recovered_at, so the supported override still reads as
-//     absent and still sticks.
-//   - open row but hold lapsed beyond the grace → the aggregator has been
-//     down longer than the freeze's own hold. Do NOT resurrect it; behave
-//     as if no row existed. The grace bound is what keeps a week-old
-//     never-closed row from re-freezing a healthy pair on restart.
-//
-// A raw `redis-cli DEL` is no longer an override, by design: it never was a
-// supported one (untyped, unlogged, un-mirrored — see the header of
-// internal/ops/accounts/freeze_unfreeze.go, which exists to replace it), and
-// treating it as one is precisely what made a Redis flush indistinguishable
-// from an operator decision.
-//
-// A marker that is PRESENT but does not decode is reported as
-// (State{}, true, nil) — present, lifecycle unknown — not as absent.
-// Present-with-zero-state keeps the freeze and merely forgets where it was
-// on the ladder, which is also exactly how a marker written by a
-// pre-lifecycle build reads.
-//
-// With no ladder store wired, behaviour is bit-for-bit the pre-0119 one.
+// A PRESENT marker that does not decode is (State{}, true, nil): the
+// freeze is kept and only its ladder position is forgotten. With no ladder
+// store wired, only the marker is consulted.
 func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
 	return w.loadState(ctx, asset, quote, 0)
 }
 
-// LoadStateForWindow is [Writer.LoadState] answering for ONE aggregation
-// window of the pair — which is what every ADR-0019 lifecycle caller
-// actually needs, because the ladder advances per (pair, window) while
-// this marker is keyed per (asset, quote).
+// LoadStateForWindow is [Writer.LoadState] for ONE aggregation window of
+// the pair: the ladder advances per (pair, window) while the marker is
+// keyed per (asset, quote).
 //
-// PRESENCE is unchanged and stays pair-scoped: the marker is what the
-// API serves as `flags.frozen` for the whole (asset, quote), and its
-// absence under a live freeze is the ADR-0019 operator override for
-// EVERY window — so a marker only a sibling window's freeze is keeping
-// alive still reports present=true here, and deleting it still releases
-// every window.
+// PRESENCE stays pair-scoped: the marker is the API's `flags.frozen` for
+// the whole pair, and its absence is the operator override for EVERY
+// window.
 //
-// The LADDER is what gets scoped, to [Marker.Ladders]`[window]`. A
-// window with no entry owns no ladder and returns the zero [State]: it
-// is not mid-freeze, and if its own bucket is anomalous it fires its own
-// ladder from the bottom. Adopting another window's instead is the
-// defect this method exists to remove — a window that had been sitting
-// under the aggregator's USD-volume floor (so it never entered the
-// in-memory ladder map) inherited a sibling's FiredAt, HoldUntil,
-// ExtensionsUsed and Escalated on its first qualifying bucket, pinning a
-// last-known-good price on a window nothing was wrong with, with a
-// manual unfreeze the only exit once the inherited ladder escalated.
+// The LADDER is scoped to [Marker.Ladders]`[window]`. A window with no entry
+// gets the zero [State] and fires its own ladder if anomalous. Adopting a
+// sibling's ladder pinned last-known-good on a healthy window (one that
+// had sat under the USD-volume floor), with only a manual unfreeze as the
+// exit once the inherited ladder escalated.
 //
-// Two shapes carry no per-window ladders and both answer pair-wide, on
-// purpose, because the alternative is silently DROPPING a freeze that is
-// still running:
+// Two shapes carry no per-window ladder and answer pair-wide, because the
+// alternative silently DROPS a running freeze:
 //
-//   - a marker written before [Marker.Ladders] existed. The first
-//     lifecycle write upgrades it and keeps its ladder as
-//     [Marker.UnownedLadder], which a window with no entry of its own
-//     adopts only within one ladder grace of [Marker.UnownedSince] — the
-//     upgrade tick, when every window that was running it re-reads it.
-//     After that the snapshot still keeps the pair present until its own
-//     hold plus the grace, but a window reaching the freeze step later
-//     (one that was under the USD-volume floor) reads the zero [State].
-//   - a durable ladder with no recorded owner, read only when the marker
-//     is gone (the [Writer.LoadState] contract above): a `freeze_events`
-//     row written before migration 0163, or a [LadderStore] that is not
-//     a [WindowLadderStore]. A Redis flush leaves it as the one surviving
-//     record that this pair is inside an unreleased freeze.
+//   - a pre-[Marker.Ladders] marker. The first lifecycle write keeps its
+//     ladder as [Marker.UnownedLadder], which a window without an entry
+//     adopts only within one ladder grace of [Marker.UnownedSince].
+//   - a durable ladder with no recorded owner, read only when the marker is
+//     gone: the one surviving record of an unreleased freeze after a flush.
 //
-// A durable record that DOES carry the window (migration 0163) is scoped
-// exactly like the marker — see [Writer.loadDurableWindowLadder].
-//
-// The adoption bound matters because the ladder carries Escalated, which
-// ADR-0019 never auto-releases: without it a window that adopted a
-// sibling's escalated snapshot at any point in the snapshot's life held
-// until a manual unfreeze. Within the bound, over-freezing a window that
-// the unscoped record could not tell apart is preferred to
-// under-freezing, which publishes the manipulated print the freeze
-// exists to withhold.
+// A durable record that carries the window (migration 0163) is scoped like
+// the marker ([Writer.loadDurableWindowLadder]). The adoption bound matters
+// because Escalated never auto-releases; within it, over-freezing is
+// preferred to publishing the manipulated print the freeze withholds.
 func (w *Writer) LoadStateForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,

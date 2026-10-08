@@ -835,58 +835,13 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 	[]string{"method", "route"},
 )
 
-// IngestGapLedgers is the **data-derived** ingest-gap signal: total
-// missing ledgers in contiguous gaps >= the worker's threshold per
-// source. Reported by [internal/storage/timescale.GapDetector]
-// against the soroban_events hypertable on a periodic timer.
-//
-// Pairs with IngestGapCount + IngestGapMaxSize to feed an alert
-// rule that fires when an ingest gap forms (e.g. a
-// cascade-window soroban_events writer halt — the alert would have
-// caught the 92,737-ledger gap within one detector cycle instead
-// of requiring an audit pass to surface).
-//
-// Labels:
-//   - `source` — semantic source identifier (e.g. blend-positions,
-//     soroban-events, sep41-transfers). One source may span
-//     multiple tables (Blend's three projections).
-//   - `table` — the actual Postgres hypertable name. Disambiguates
-//     when one source has multiple targets.
-//
-// SDEX uses a separate ingest path (trades hypertable, classic
-// not Soroban); its detection lives under {source="sdex",
-// table="trades"} as of rc.88.
-//
-// Gauge semantics: set to current value on every detector cycle;
-// reset to 0 when the worker finds no gaps >= threshold. NOT a
-// counter — operators read absolute value, not deltas.
-// DependencyUp reports the result of each /v1/readyz readiness check
-// as an alertable gauge: 1 when the dependency answered, 0 when it did
-// not.
-//
-// The API has always CHECKED its dependencies — computeReadyz pings
-// postgres, schema, redis and clickhouse on every readiness round — but
-// the outcome existed only as JSON on an HTTP endpoint. Nothing scraped
-// it, so nothing could alert on it.
-//
-// That left ClickHouse with no health signal at all.
-// Postgres, Redis and MinIO each have a Prometheus exporter on r1;
-// ClickHouse has none, and it is the raw lake — the substrate the
-// ADR-0033 completeness claim rests on. If it went away, the only
-// symptom would be endpoints failing one by one.
-//
-// Exposing the existing check is deliberately cheaper than adding a
-// ClickHouse exporter: it needs no new scrape target, no new package on
-// the host, and it measures the thing that actually matters — whether
-// the API can reach the dependency — rather than whether a sidecar can.
-// It also covers every dependency at once rather than just the one that
-// prompted it.
-//
-// Gauge semantics: overwritten on every readiness round, so it reflects
-// the most recent check rather than a historical high-water mark. A
-// dependency that disappears from the check set stops being reported;
-// alert on `== 0`, never on `absent()` alone, or a renamed check reads
-// as an outage.
+// DependencyUp reports each /v1/readyz readiness check as an alertable gauge:
+// 1 when the dependency answered, 0 when it did not. It exists because
+// ClickHouse, the raw lake the ADR-0033 completeness claim rests on, had no
+// exporter and so no health signal; exposing the existing check covers every
+// dependency with no new scrape target, and measures whether the API can
+// reach it. Alert on `== 0`, never on `absent()` alone: a renamed check
+// would read as an outage.
 var DependencyUp = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_dependency_up",
@@ -895,6 +850,13 @@ var DependencyUp = prometheus.NewGaugeVec(
 	[]string{"dependency"},
 )
 
+// IngestGapLedgers is the data-derived ingest-gap signal: total missing
+// ledgers in contiguous gaps >= the worker's threshold, per source and
+// table, set by [internal/storage/timescale.GapDetector] each cycle and
+// reset to 0 when none remain. With IngestGapCount and IngestGapMaxSize it
+// feeds the gap alert, which would have caught a 92,737-ledger writer halt
+// in one detector cycle instead of an audit pass. SDEX reports under
+// {source="sdex", table="trades"}.
 var IngestGapLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_ledgers",
@@ -1124,58 +1086,30 @@ var ProjectorWedged = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ProjectorReplayWindowActive flags that a source's projector cursor is
-// still INSIDE an operator-recorded projection dirty window — i.e. a
-// `stellarindex-ops projector-replay` deliberately rewound the cursor and
-// it has not yet climbed back to where it was. 1 = inside the recorded
-// rewind, 0 = outside it (the normal state).
+// ProjectorReplayWindowActive is 1 while a source's projector cursor is
+// still inside a window recorded by `stellarindex-ops projector-replay`, and
+// 0 otherwise. A replay is an INTENDED lag: a 2.57M-ledger rewind once held
+// stellarindex_projector_lag_high in a ~4h ticket that told the operator
+// nothing and masked a genuine lag on the same source. The lag rule joins
+// against this (`unless … == 1`), and stellarindex_projector_replay_stalled
+// tickets if the replay STOPS climbing.
 //
-// Why it exists (reflector-fx): a replay is an INTENDED lag.
-// The 2,574,496-ledger rewind that repaired the VES/XAU served-row deficit
-// put `stellarindex_projector_lag_high` into a ~4h ticket that carried no
-// information the operator did not already have — and, worse, MASKED a
-// genuine lag on that same source for the whole window. This gauge is the
-// discriminator the lag rule joins against (`unless … == 1`), so the
-// expected lag is silent while the replay is climbing and the paired
-// `stellarindex_projector_replay_stalled` rule tickets if it STOPS
-// climbing (the failure that actually matters during a replay).
+// Three bounds keep the suppression narrow (projector.replayWindowCovers):
 //
-// THREE bounds keep the excuse narrow — a suppression is only ever as
-// good as the proof it stays narrow (projector.replayWindowCovers holds
-// them):
+//  1. PROVENANCE: only projector-replay windows count. A projected-rebuild
+//     window routinely covers the live cursor, so keying on it would silence
+//     a HELD source, the state the lag ticket exists to catch.
+//  2. UPPER BOUND, EXCLUSIVE: the flag clears when the cursor regains the
+//     window's to_ledger, not when the row is reconciled up to a day later.
+//  3. LOWER BOUND: replay parks the cursor at from_ledger-1, so a cursor
+//     below that was not put there by this rewind.
 //
-//  1. PROVENANCE. Only a window written by `projector-replay` counts. The
-//     table's other writer, `projected-rebuild -write`, does NOT keep its
-//     range below the live cursor: `-to` defaults to the live cursor, its
-//     one-writer guard admits `liveLastLedger >= to` (equality), and
-//     `-allow-live-overlap` bypasses the guard entirely.
-//     A rebuild window therefore routinely covers the
-//     cursor's own position, and keying on the cursor alone would hold
-//     this flag at 1 while a source is HELD there — the exact state the
-//     lag ticket exists to catch, with no operator rewind on record to
-//     explain the silence.
-//  2. UPPER BOUND, EXCLUSIVE. Deliberately NOT "a dirty window row
-//     exists": the row survives until compute-completeness re-verifies the
-//     range (up to a day later). The flag clears the moment the cursor
-//     REGAINS the window's `to_ledger` (its pre-rewind position); a
-//     projector wedged exactly at that ledger has finished replaying and
-//     stays fully alertable.
-//  3. LOWER BOUND. `projector-replay` parks the cursor at
-//     `from_ledger`-1, so a cursor below that was not put there by this
-//     recorded rewind.
+// Accepted residual: the one row per source WIDENS on upsert, so a replay
+// recorded while a rebuild window is pending may expire at the rebuild's
+// higher to_ledger; it stays provenance-gated and still expires.
 //
-// Known residual (accepted, bounded): the table holds ONE row per source
-// and the upsert WIDENS it (LEAST/GREATEST) while keeping the newest
-// reason, so a replay recorded while a rebuild window is still pending
-// yields a replay-reasoned row whose `to_ledger` may be the rebuild's.
-// The flag then expires at that higher ledger instead of the replay's own
-// pre-rewind position. It is still provenance-gated, still cursor-bounded
-// and still expires; it needs both tools pending on the SAME source at
-// once.
-//
-// Fails OPEN toward alerting: if the dirty-window read errors the gauge is
-// forced to 0 for every source, so a monitoring-side failure can never
-// silence a real lag ticket.
+// Fails OPEN: a dirty-window read error forces 0 everywhere, so monitoring
+// failure never silences a real lag ticket.
 var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_replay_window_active",
@@ -3151,51 +3085,23 @@ var TradeInsertsTotal = prometheus.NewCounterVec(
 	[]string{"source", "usd_volume_populated"},
 )
 
-// TradeInsertOutcomeTotal — per-source counter of trade-insert
-// outcomes. `new` means a fresh row landed.
+// TradeInsertOutcomeTotal counts trade-insert outcomes per source; `new`
+// means a fresh row landed.
 //
-// ⚠ `duplicate` IS A CONFLATION, and the name now understates it. The
-// trade upsert is a generation-guarded `DO UPDATE` rather than
-// `ON CONFLICT DO NOTHING`, so the underlying
-// `count(*) FILTER (WHERE inserted)` returns 0 for THREE different
-// outcomes: a true duplicate, a generation-guarded CORRECTION that
-// updated an existing row, and a guard-SKIPPED write (lower generation).
-// Only the first is what this label's name suggests.
+// `duplicate` is a CONFLATION: the upsert is a generation-guarded DO UPDATE,
+// so a true duplicate, an applied correction and a guard-skipped write all
+// score as `duplicate`. A corrective re-derive therefore looks exactly like
+// a stuck cursor, and a landing correction is not observable here. The real
+// fix is splitting the label using the SQL's `xmax = 0`, which touches the
+// hot money-path insert and is deliberately not bundled with this counter.
 //
-// Two consequences an operator needs to know:
-//
-//   - The duplicate-flood alert below false-positives during a corrective
-//     re-derive. A re-derive legitimately updates rows in place, which
-//     scores as `duplicate` with zero `new` — byte-identical to the
-//     stuck-cursor signature.
-//   - A landing correction is NOT observable here. The whole point of
-//     the generation guard is that corrected re-derives take effect, and this counter
-//     cannot distinguish "correction applied" from "nothing happened".
-//
-// Splitting the label into new/updated/skipped is the real fix — the SQL
-// already has the `xmax = 0` signal needed to tell them apart — but that
-// touches the hot money-path insert and is deliberately not bundled here.
-//
-// TradeInsertsTotal counts attempts and is silent about dedupe; on
-// a healthy live indexer the two counters track 1:1, but a stuck
-// cursor or replay loop (seen live on r1: 157
-// SDEX insert-attempts/min while the trades hypertable's max(ts)
-// is 11 h old) produces a fast-growing `duplicate` rate with zero
-// `new`. Pairing the two lets operators alert on a nonzero duplicate
-// rate with no new rows — but write that second clause as
-// `unless on (source) rate(new[10m]) > 0`, NEVER as
-// `and on (source) rate(new[10m]) == 0`: this vector is call-site-
-// seeded and `source` is config-dependent (not pre-seeded in
-// seedBoundedLabelSeries, per the AggregatorFXSnapFallbackTotal `leg`
-// convention), so a source that has landed no new row since process
-// start has NO `outcome="new"` child for an `and` join to match and
-// the alert goes silent in exactly the post-restart replay flood it
-// exists for. A duplicate-only stream is the
-// signature of a duplicate-flood, BUT see the conflation note above:
-// a running corrective re-derive produces the same shape, so correlate
-// with whether a re-derive is in flight before treating it as a stuck
-// cursor. Cardinality: one source × two outcomes per registered source
-// (low-tens of series at maturity).
+// Against TradeInsertsTotal, a duplicate rate with no `new` rows is the
+// stuck-cursor signature (seen on r1: 157 SDEX attempts/min with max(ts)
+// 11 h old). Write that clause as `unless on (source) rate(new[10m]) > 0`,
+// NEVER `and on (source) rate(new[10m]) == 0`: `source` is not pre-seeded,
+// so after a restart there is no `new` child to join and the alert goes
+// silent in the replay flood it exists for. Check whether a re-derive is
+// running before calling it a stuck cursor.
 var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_insert_outcome_total",
@@ -5325,52 +5231,26 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 	},
 )
 
-// NonstandardDecimalsLockstepMismatchTotal counts every observation that
-// the two decimals resolvers DISAGREE for one asset: the lake's on-chain
-// decimals() (clickhouse.TokenDecimals — the source of truth) versus the
-// `nonstandard_decimals_assets` projection of it that every price-shaped
-// serving path and the aggregator's VWAP normalise through
-// (aggregate.ResolveDecimals). Labels: site, asset (C-strkey) — asset is
-// populated ONLY at the bounded site below; see GH-1059.
+// NonstandardDecimalsLockstepMismatchTotal counts every observation where the
+// lake's on-chain decimals() (clickhouse.TokenDecimals, the source of truth)
+// and the nonstandard_decimals_assets projection every price path normalises
+// through (aggregate.ResolveDecimals) DISAGREE. The invariant: a projection
+// row exists iff lake decimals != 7, and then the two are equal.
 //
-// The projection is a materialised view of the lake for the non-7
-// subset, so the invariant is: for every token, projection row present
-// ⇔ lake decimals ≠ 7, and when present the two values are equal. Three
-// sites check it:
+// Sites:
+//   - guard_reconcile: the aggregator's decimals guard repairs a persisted
+//     row toward the lake, once per repaired row. The only site with the
+//     asset label, because its walked set is the bounded projection table.
+//   - asset_detail, asset_listing, rwa_contract, lending_reserve: a request
+//     met the disagreement before the guard repaired it, and REFUSED the
+//     affected market cap or USD figures rather than divide a supply on one
+//     scale by a price on another. asset is "": request paths pick the
+//     contract, so labelling it would mint a series per captured contract;
+//     correlate via the paired WARN log line.
 //
-//   - site="guard_reconcile" — the aggregator's decimals-guard re-reads
-//     every persisted row against the lake each sweep tick
-//     (decimalsguard.Guard.Reconcile) and REPAIRS the row toward the lake
-//     (upsert the lake's value, or delete when the lake confirms 7). One
-//     increment per repaired row. This is the lockstep enforcement at
-//     aggregation time, and the ONLY site the asset label is populated for
-//     — the walked set is the projection table itself, bounded and
-//     operator-visible, not request-driven.
-//   - site="asset_detail" — GET /v1/assets/{id} found the lake and the
-//     projection disagreeing at request time (a row the guard has not yet
-//     seeded or repaired — the 15m tick and the 60s cache refresh both
-//     lag the lake). The response REFUSES market_cap_usd / fdv_usd for
-//     that request (market_cap_decimals_mismatch=true) rather than divide
-//     a supply on one scale by a price normalised on another. One
-//     increment per refused request. asset is "" — the request path picks
-//     the contract id, so labelling it here would mint one Prometheus
-//     series per distinct contract the lake has ever captured metadata
-//     for (GH-1059); correlate the contract from the paired WARN log line.
-//   - site="asset_listing" — GET /v1/assets found the same disagreement
-//     for a listing row (GH-1009). Same refusal, same unlabelled asset.
-//   - site="rwa_contract" — GET /v1/rwa/assets found it for a contract
-//     row's DEX-priced market cap. Same refusal (valuation status
-//     decimals_unavailable), same unlabelled asset.
-//   - site="lending_reserve" — GET /v1/lending/pools/{pool}/reserves found
-//     a reserve's decimals disagreeing with the scale its USD price was
-//     normalised with. The reserve's USD figures are withheld and it is
-//     left out of tvl_usd.
-//
-// Expected value is 0 in steady state. A nonzero guard_reconcile count is
-// a repaired drift (hand-seeded row that contradicted the lake, or a
-// re-captured instance); a sustained count at any request site means
-// the guard is not converging and is folded into the
-// stellarindex_nonstandard_decimals_correction_failing alert.
+// Steady state is 0. A guard_reconcile count is a repaired drift; a
+// sustained count at a request site means the guard is not converging
+// (stellarindex_nonstandard_decimals_correction_failing).
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
