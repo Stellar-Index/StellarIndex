@@ -7,14 +7,13 @@ package timescale
 
 // ─── Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band) ─────
 //
-// Everything here is COUNTS + TIMESTAMPS over oracle_updates scoped by
-// source = the protocol page's name (which matches oracle_updates.source
-// exactly for all five oracle pages — verified on r1). No price
-// averaging, rescaling, or aggregation happens on this page: aggregated
-// pricing is the aggregator's domain (ADR-0006 / docs/methodology), and
-// oracle sources never feed VWAP anyway (external.Registry class policy).
-// The one place a price appears — the "Latest feed prices" table — shows
-// the raw observed integer verbatim with its declared decimals column.
+// Everything here is COUNTS + TIMESTAMPS over oracle_updates scoped by source
+// = the protocol page's name. No price averaging, rescaling, or aggregation
+// happens on this page: aggregated pricing is the aggregator's domain
+// (ADR-0006 / docs/methodology), and oracle sources never feed VWAP anyway
+// (external.Registry class policy). The one place a price appears — the
+// "Latest feed prices" table — shows the raw observed integer verbatim with
+// its declared decimals column.
 //
 // Batch semantics: some sources (redstone in particular — one "REDSTONE"
 // event per batch push containing every updated feed) land one ROW PER
@@ -23,11 +22,10 @@ package timescale
 // publication timestamps, not rows — row-to-row gaps within one batch are
 // zero and would report a dishonest "0s cadence".
 //
-// History note: oracle_updates carries NO retention (migration 0040
-// drops the 90-day policy), so "all-time" figures cover every
-// retained observation — history begins at each source's first ingested
-// observation (e.g. reflector-* 2026-03-11, redstone 2025-09-09 on r1),
-// NOT at protocol genesis.
+// History note: oracle_updates carries NO retention (migration 0040 drops the
+// 90-day policy), so "all-time" figures cover every retained observation —
+// history begins at each source's first ingested observation, NOT at protocol
+// genesis.
 //
 // Every windowed query is bounded by ts > now() - $N::interval (1-day
 // hypertable chunks make this a cheap chunk-excluded scan); the two

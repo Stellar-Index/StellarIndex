@@ -184,21 +184,19 @@ type SEP41KindTotals struct {
 // ledger ≤ asOfLedger).
 //
 // Genesis baseline (migration 0088). When the contract has a SEEDED
-// pre-Soroban baseline (genesis_baseline_ledger IS NOT NULL) and asOfLedger
-// is at-or-above that boundary, the per-kind pre-Soroban totals are ADDED to
-// the Soroban-era totals so the result is LIFETIME supply. A classic asset's
-// SAC-wrapper was largely issued before Soroban existed; those mints live
-// only in the ClickHouse lake below ledger [clickhouse.SorobanGenesisLedger]
-// and are seeded once via `stellarindex-ops supply seed-sep41-genesis`.
-// Tokens with no pre-genesis flows carry a zero baseline, so their served
-// total is unchanged (no double-count). The baseline slice and the
-// Soroban-era slice must be a disjoint ledger partition, so the Soroban-side
-// queries are floored at the boundary (see [sep41SorobanFloor]; unfloored,
-// 13 contracts on r1 double-counted, one by 114%). For a historical read
-// strictly below the baseline boundary the genesis is NOT added (the
-// pre-Soroban answer would be a ledger-bounded subset the seed doesn't
-// carry) — the aggregator always reads at the chain tip, so this affects
-// only rare backfill reads.
+// pre-Soroban baseline (genesis_baseline_ledger IS NOT NULL) and asOfLedger is
+// at-or-above that boundary, the per-kind pre-Soroban totals are ADDED to the
+// Soroban-era totals so the result is LIFETIME supply. A classic asset's
+// SAC-wrapper was largely issued before Soroban existed; those mints live only
+// in the ClickHouse lake below ledger [clickhouse.SorobanGenesisLedger] and
+// are seeded once via `stellarindex-ops supply seed-sep41-genesis`. Tokens
+// with no pre-genesis flows carry a zero baseline, so their served total is
+// unchanged (no double-count). The baseline slice and the Soroban-era slice
+// must be a disjoint ledger partition, so the Soroban-side queries are floored
+// at the boundary (see [sep41SorobanFloor]. For a historical read strictly
+// below the baseline boundary the genesis is NOT added (the pre-Soroban answer
+// would be a ledger-bounded subset the seed doesn't carry) — the aggregator
+// always reads at the chain tip, so this affects only rare backfill reads.
 //
 // Each component is non-nil; zero is a valid answer for a contract with
 // no events of that kind observed yet (e.g. a token that's never been
@@ -339,11 +337,10 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 // ABOVE its own last_ledger, so a fold accumulated under any other floor can
 // never re-apply this one: a contract the worker folded at floor 0 before its
 // first seed holds the CAP-67-replayed pre-boundary band in mint_total, and a
-// seed that wrote only the genesis columns would add that band a second time
-// (measured on r1: 13 contracts, worst case +114%). Rebuilding the fold on
-// EVERY seed, not only when the floor moves, is what lets a re-run repair a
-// row that was already seeded over such a fold: there the floor no longer
-// moves, and nothing else would ever notice.
+// seed that wrote only the genesis columns would add that band a second time.
+// Rebuilding the fold on EVERY seed, not only when the floor moves, is what
+// lets a re-run repair a row that was already seeded over such a fold: there
+// the floor no longer moves, and nothing else would ever notice.
 //
 // Rebuilding inside the transaction, rather than zeroing last_ledger and
 // leaving the aggregator to re-fold, keeps the serving read on its fast path:
@@ -432,14 +429,13 @@ func validateSEP41GenesisBaseline(contractID string, genesis SEP41KindTotals) er
 // boundary, because the projector's cursor starts at ledger 1000 and
 // CAP-67 replays classic movements into contract events.
 //
-// Unbounded, the double-count was measured on r1: 346 such rows across
-// 13 contracts, EVERY ONE of them genesis-seeded — so all 13 served a
-// double-counted lifetime supply. Worst case CCUMQ5V3… served
-// 18,762,638,134 for a true 8,762,638,134 (+114%, i.e. 2.14x).
-// CCW67TSZ… (USDC SAC) +112.5e12 (+3.98%). Several were NEGATIVE
-// contributions (a double-counted burn), which can push
-// mint-burn-clawback below zero and route a consistent contract to the
-// paging compute_error outcome.
+// Unbounded, the double-count was: 346 such rows across 13 contracts, EVERY
+// ONE of them genesis-seeded — so all 13 served a double-counted lifetime
+// supply. Worst case CCUMQ5V3… served 18,762,638,134 for a true 8,762,638,134
+// (+114%, i.e. 2.14x). CCW67TSZ… (USDC SAC) +112.5e12 (+3.98%). Several were
+// NEGATIVE contributions (a double-counted burn), which can push
+// mint-burn-clawback below zero and route a consistent contract to the paging
+// compute_error outcome.
 //
 // The verifier cannot catch it unless it shares the floor:
 // SEP41SupplyEventKindResum is bounded here too, or verify-rollup would
@@ -530,12 +526,12 @@ func parseSEP41Totals(mintRaw, burnRaw, clawbackRaw string) (SEP41KindTotals, er
 // supply simply hasn't changed is not stale, but a gate reading it as a
 // stalled producer would refuse every snapshot, freezing the served supply.
 //
-// [Store.MinClassicComponentLedger] guards the same trap, and it bites
-// HARDER here: 40 of 48 watched assets were C-address SEP-41 tokens that
-// never touch the classic component tables, so a per-contract anchor on
-// this path froze the majority. Measured on r1: watermark 63,671,020, while
-// frozen contracts sat 46k–169k ledgers behind it and the one asset still
-// publishing had a last event landing exactly ON the watermark.
+// [Store.MinClassicComponentLedger] guards the same trap, and it bites HARDER
+// here: 40 of 48 watched assets were C-address SEP-41 tokens that never touch
+// the classic component tables, so a per-contract anchor on this path froze
+// the majority. Measured: watermark 63,671,020, while frozen contracts sat
+// 46k–169k ledgers behind it and the one asset still publishing had a last
+// event landing exactly ON the watermark.
 //
 // The perverse shape worth remembering: under a per-contract anchor a
 // contract with NO events returns 0 and skips the gate entirely, so it

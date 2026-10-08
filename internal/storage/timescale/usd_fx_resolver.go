@@ -92,19 +92,17 @@ type VWAPUSDFXResolver struct {
 	// a stale rate land in a fresh trade's usd_volume.
 	freshness time.Duration
 
-	// bridgeFreshness is the staleness bound for the tier-3b XLM
-	// bridge leg. Deliberately much wider than `freshness`: that one
-	// is calibrated for liquid direct markets, while the bridge exists
-	// precisely to price tokens whose markets are thin. Measured
-	// on r1, the tokens behind the largest unpriced classes trade
-	// $8-$220 across a whole day, so requiring a bridge rate from the
-	// last hour rejects most of them — and the alternative to a
-	// slightly-stale rate is not a better rate, it is NULL, which
-	// silently drops the trade from every aggregate built on
-	// usd_volume. The error this admits is also bounded by the size of
-	// what it prices: these are sub-cent valuations, so even a badly
-	// stale rate moves aggregate volume by a rounding error, whereas
-	// each NULL removes a row outright.
+	// bridgeFreshness is the staleness bound for the tier-3b XLM bridge leg.
+	// Deliberately much wider than `freshness`: that one is calibrated for
+	// liquid direct markets, while the bridge exists precisely to price tokens
+	// whose markets are thin. Measured, the tokens behind the largest unpriced
+	// classes trade $8-$220 across a whole day, so requiring a bridge rate
+	// from the last hour rejects most of them — and the alternative to a
+	// slightly-stale rate is not a better rate, it is NULL, which silently
+	// drops the trade from every aggregate built on usd_volume. The error this
+	// admits is also bounded by the size of what it prices: these are sub-cent
+	// valuations, so even a badly stale rate moves aggregate volume by a
+	// rounding error, whereas each NULL removes a row outright.
 	bridgeFreshness time.Duration
 
 	// cacheTTL caps how long a cached rate is valid before
@@ -533,15 +531,14 @@ const fiatUSDRateScale = 18
 // from `fx_quotes`, and is the reason non-USD-quoted external-exchange
 // trades can be priced at all.
 //
-// A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]:
-// that path looks for `<asset>/<peg>` in prices_1m, and prices_1m holds
-// crypto markets only — there is no `fiat:EUR/fiat:USD` row and there
-// never will be one. Before this branch existed, every CEX pair quoted
-// in a currency other than USD (binance BTC/EUR, kraken ETH/GBP, …)
-// fell through all four tiers of [tradeUSDVolume] and inserted with
-// `usd_volume` NULL, silently deflating every aggregate built on that
-// column — measured at ~$939M of unpriced volume on a single day,
-// ~23% of that day's total. See docs/operations/usd-volume-coverage-plan.md.
+// A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]: that
+// path looks for `<asset>/<peg>` in prices_1m, and prices_1m holds crypto
+// markets only — there is no `fiat:EUR/fiat:USD` row and there never will be
+// one. Before this branch existed, every CEX pair quoted in a currency other
+// than USD (binance BTC/EUR, kraken ETH/GBP, …) fell through all four tiers of
+// [tradeUSDVolume] and inserted with `usd_volume` NULL, silently deflating
+// every aggregate built on that column. See
+// docs/operations/usd-volume-coverage-plan.md.
 //
 // The rate is computed by [fxSnapFromRows] as an exact *big.Rat
 // (rate_usd(USD)/rate_usd(TICKER), with the USD leg an exact 1).
@@ -685,12 +682,11 @@ func trimNumericText(s string) string {
 const bridgeLegMinUSDVolume = "0.01"
 
 // bridgeRateSigDigits is how many SIGNIFICANT digits a bridged rate is
-// rendered with. Significance, not a fixed decimal scale, is what this
-// needs: prices_1m stores raw ratios, so a token declaring 18 decimals
-// prices against XLM's 7 at around 1e-12, and a fixed 18-place render
-// would leave such a rate barely six significant figures — silently
-// degrading the valuation of exactly the tokens that need the bridge
-// most. (Three tokens confirmed on R1 declare decimals()=18.)
+// rendered with. Significance, not a fixed decimal scale, is what this needs:
+// prices_1m stores raw ratios, so a token declaring 18 decimals prices against
+// XLM's 7 at around 1e-12, and a fixed 18-place render would leave such a rate
+// barely six significant figures — silently degrading the valuation of exactly
+// the tokens that need the bridge most.
 //
 // 25 digits comfortably exceeds what usd_volume's own 8-decimal render
 // can express for any realistic trade size, so the rate is never the
@@ -708,12 +704,8 @@ const bridgeRateMaxScale = 80
 //
 //	USD per asset = (XLM per asset) x (USD per XLM)
 //
-// This is what takes on-chain coverage past the USD-pegged markets.
-// Most Stellar tokens have no stablecoin pair at all but do have an XLM
-// one — measured on r1, the tokens behind the largest unpriced
-// classes (6T, F8, YxT, aTTaiN, GYEN, uniT) ALL have XLM markets, and
-// 237,305 on-chain trades in one day were unpriced purely because
-// neither leg was XLM or a stablecoin while both legs had XLM markets.
+// This is what takes on-chain coverage past the USD-pegged markets. Most
+// Stellar tokens have no stablecoin pair at all but do have an XLM one.
 //
 // Returns ("", zero, nil) on a miss — a token with no XLM market
 // either, which is the documented end of the waterfall.
@@ -970,22 +962,18 @@ const pegQuoteScaleDenominator = 10_000_000
 // split across them by VENUE, so binding `native` alone made the anchor
 // structurally blind to every Soroban XLM book.
 //
-// Measured on r1, prices_1m buckets clearing this query's own
+// Prices_1m buckets clearing this query's own
 // dust floor, XLM base x the operator's single declared peg:
 //
-//	base=native      x quote=USDC-GA5Z… (classic)  215,790  from 2026-03-12
-//	base=CAS3J7…SAC  x quote=CCW67T…SAC (the SAC)  291,883  from 2024-03-12
+//	base=native      x quote=USDC-GA5Z… (classic)  215,790
+//	base=CAS3J7…SAC  x quote=CCW67T…SAC (the SAC)  291,883
 //	every other base/quote combination of those forms       0
 //
 // So the two axes are not independent — only the both-alias-complete
 // predicate matches anything new, which is why the peg side widened to
 // [VWAPUSDFXResolver.pegForms] in the same change. With both, the XLM/USD
-// anchor gains ~2 years of reach: measured minutes NOT covered within the
-// 1h freshness window fall to 0.00-0.50% for every month from 2025-01
-// through 2026-02 (the window that reads $0.00 today), 2.6-8.2% for
-// 2024-11/12, and 23-95% across 2024-03..2024-10, where the Soroban book
-// is genuinely sparse. Before 2024-03-12 nothing is recoverable from a
-// peg-quoted market at all — the only XLM/USD series that reaches back
+// anchor gains ~2 years of reach. Before the Soroban XLM book began,
+// nothing is recoverable from a peg-quoted market at all — the only XLM/USD series that reaches back
 // further is the CEX `crypto:XLM/fiat:USD` one, and `fiat:USD` is not a
 // declared peg, so it stays out of scope here.
 //

@@ -11,9 +11,7 @@ import (
 // This file is the read side for GET /v1/accounts/{g_strkey}/trades —
 // per-address historic trades out of the `trades` hypertable.
 //
-// ACCOUNT ATTRIBUTION — what the table actually holds: `trades` has no
-// source_account column (verified against migrations/ and the live r1
-// schema). The per-row account attribution is:
+// ACCOUNT ATTRIBUTION. The per-row account attribution is:
 //
 //   taker — the acting account: the tx-level source for sdex, the
 //           user/sender address for aquarius, phoenix, and comet, and
@@ -131,15 +129,13 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 // each value once regardless of arm count.
 func accountTradesQuery(hasCursor bool) string {
 	// $2 is always the compression-horizon ts floor computed by
-	// tradesUncompressedHorizon: the per-account partial indexes
-	// exist only on UNCOMPRESSED chunks — a compressed chunk has no
-	// btree, so an arm that descends into one decompress-scans it (~46k
-	// buffers/chunk; 16.4M buffers ≈ 8s measured proving a ZERO-trade
-	// account empty). The floor is the END of the newest COMPRESSED
-	// chunk, so ts >= floor can never resolve to a compressed chunk and
-	// ChunkAppend excludes them outright. The caller surfaces the floor
-	// as an explicit coverage note rather than serving a silently-partial
-	// "all time" answer.
+	// tradesUncompressedHorizon: the per-account partial indexes exist only on
+	// UNCOMPRESSED chunks — a compressed chunk has no btree, so an arm that
+	// descends into one decompress-scans it. The floor is the END of the
+	// newest COMPRESSED chunk, so ts >= floor can never resolve to a
+	// compressed chunk and ChunkAppend excludes them outright. The caller
+	// surfaces the floor as an explicit coverage note rather than serving a
+	// silently-partial "all time" answer.
 	cursorClause := ""
 	limitPh := "$3"
 	if hasCursor {
@@ -168,33 +164,24 @@ const tradesHorizonFailClosedWindow = 24 * time.Hour
 // of the NEWEST COMPRESSED chunk — not the start of the oldest
 // uncompressed one.
 //
-// The two are not interchangeable: compression is not a time
-// prefix. An old chunk can sit uncompressed (a stuck compression job, a
-// late-arriving backfill) while everything after it has already
-// compressed, and min(range_start) over uncompressed chunks then picks
-// that ancient straggler as the "floor" — observed on r1 publishing
-// 2021 as trades_total_since while 313 of 472 trades chunks were
-// already compressed, i.e. not a floor at all. max(range_end) over
-// COMPRESSED chunks is monotone-safe instead: by definition of max, no
-// compressed chunk's range extends past it, so ts >= floor can never
-// need a compressed-chunk scan regardless of what an out-of-order
-// straggler below it is doing.
+// The two are not interchangeable: compression is not a time prefix. An old
+// chunk can sit uncompressed (a stuck compression job, a late-arriving
+// backfill) while everything after it has already compressed, and
+// min(range_start) over uncompressed chunks then picks that ancient straggler
+// as the "floor".
 //
 // A stranded uncompressed chunk (one whose range starts before that
 // floor) doesn't make the floor unsafe — it's excluded either way — but
 // it is an anomaly worth an operator's attention (genuinely-indexed
 // history is being excluded from the fast path), so it's logged.
 //
-// Cached for 10 minutes; the horizon only moves when the compression
-// policy compresses another chunk. Fails CLOSED — a short recent window
-// (tradesHorizonFailClosedWindow), NOT epoch — on a catalog lookup
-// error: epoch means "no floor", which sends the read straight into the
-// unindexed full-history scan, which on r1 hit the 8s timeout and
-// returned 503. AccountTrades and computeAccountActivity already render
-// any non-zero, post-1971 horizon as an honest "showing trades since
-// <date>" / trades_total_since coverage note, so failing closed degrades
-// into that same channel instead of silently serving as if all history
-// were indexed.
+// Cached for 10 minutes; the horizon only moves when the compression policy
+// compresses another chunk. Fails CLOSED — a short recent window
+// (tradesHorizonFailClosedWindow), NOT epoch. AccountTrades and
+// computeAccountActivity already render any non-zero, post-1971 horizon as an
+// honest "showing trades since <date>" / trades_total_since coverage note, so
+// failing closed degrades into that same channel instead of silently serving
+// as if all history were indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()
@@ -284,14 +271,11 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 	return out, horizon, nil
 }
 
-// CountAccountTrades returns the address's attributed trade count
-// (taker or maker side, each row once) SINCE the returned horizon —
-// the compression boundary below which the per-account partial indexes
-// don't exist (an all-time OR count decompress-scanned all 248
-// compressed chunks in ~8s when measured, burning the activity
-// endpoint's trades_total budget). The OR here stays deliberate: with
-// the ts floor the scan is confined to indexed uncompressed chunks,
-// where a bitmap-or counts each row once.
+// CountAccountTrades returns the address's attributed trade count (taker or
+// maker side, each row once) SINCE the returned horizon — the compression
+// boundary below which the per-account partial indexes don't exist. The OR
+// here stays deliberate: with the ts floor the scan is confined to indexed
+// uncompressed chunks, where a bitmap-or counts each row once.
 func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
 	horizon := s.tradesUncompressedHorizon(ctx)
 	const q = `SELECT count(*) FROM trades WHERE (taker = $1 OR maker = $1) AND ts >= $2`

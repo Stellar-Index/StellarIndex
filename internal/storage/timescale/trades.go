@@ -180,7 +180,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	// one trade to set token/XLM, and every later trade against that
 	// token is valued by multiplying through it.
 	//
-	// Measured on r1, one sdex row: base 5 XLM (the only real
+	// Example, one sdex row: base 5 XLM (the only real
 	// value in the trade) traded for 49,999,980 units of a classic asset
 	// whose code impersonates XLM. Tier 3b read that issuer's own 1:1
 	// self-trade as the rate and stored
@@ -222,12 +222,10 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	return usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver)
 }
 
-// tradeUSDVolumeViaUSDBase is tier 2b: value the trade off a
-// USD-pegged BASE leg. A waterfall inspecting only the
-// quote asset so a `USDC/TOKEN`-oriented market — where the
-// dollar leg is the base — fell through every tier even though its
-// USD value was sitting right there in base_amount. Measured at
-// 43,277 unpriced on-chain trades in one day.
+// tradeUSDVolumeViaUSDBase is tier 2b: value the trade off a USD-pegged BASE
+// leg. A waterfall inspecting only the quote asset so a `USDC/TOKEN`-oriented
+// market — where the dollar leg is the base — fell through every tier even
+// though its USD value was sitting right there in base_amount.
 //
 //	usd_volume = base_amount / 10^decimals
 //
@@ -378,11 +376,10 @@ func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.R
 	return candidate, nil
 }
 
-// usdLegAgreementFactor is how far the two independently-valued legs of
-// one trade may diverge before the FX tier stores the smaller. 10x is
-// far beyond honest spread/rounding on any real market (the incident
-// rows diverged by ~10^10) while never firing on ordinary thin-market
-// noise.
+// usdLegAgreementFactor is how far the two independently-valued legs of one
+// trade may diverge before the FX tier stores the smaller. 10x is far beyond
+// honest spread/rounding on any real market while never firing on ordinary
+// thin-market noise.
 var usdLegAgreementFactor = big.NewRat(10, 1)
 
 // singleLegMaxUSDVolume bounds a DEX trade whose usd_volume rests on ONE
@@ -395,7 +392,7 @@ var usdLegAgreementFactor = big.NewRat(10, 1)
 // NULL) rather than served. Deliberately set high so the large legitimate
 // class of unresolvable-base DEX trades keeps its honest value: the ceiling
 // only removes the implausible, uncross-checkable tail an attacker can drive
-// arbitrarily high through a self-authored bridge rate (the base-unresolvable variant of the $182M fake-print incident).
+// arbitrarily high through a self-authored bridge rate.
 var singleLegMaxUSDVolume = new(big.Rat).SetInt64(100_000_000)
 
 // fxLegValue values one leg of a trade through the resolver: amount /
@@ -1940,7 +1937,7 @@ func offChainSourcesArg() string {
 //     not, is an index SEEK. Same table, same absence of a time bound,
 //     different cost class. [TestRawTradeReadsSpanBothStoredDirections]
 //     pins the arms that make it so.
-//  2. Measured, not asserted. On r1: 49 ms (native/fiat:USD), 289 ms
+//  2. Measured, not asserted: 49 ms (native/fiat:USD), 289 ms
 //     (heaviest pair), 47 ms to prove a novel pair EMPTY — the
 //     full-history walk, the worst case, over every chunk. EXPLAIN puts
 //     the second arm's cost at exactly 2x with the skip scan surviving
@@ -2128,18 +2125,17 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // requested orientation. Ordered by (ts ASC, ledger ASC) —
 // chronological, which is what OHLC / VWAP callers want.
 //
-// Both directions, because a market has no stored direction of its own
-// (see the block above [Store.LatestTradesForPair]) and this read feeds
-// aggregates: /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip
-// and the aggregator orchestrator. Measured on r1, one hour
-// of native/USDC-GA5Z…: 2957 rows stored one way round and 2794 the
-// other, so the served window held 51.4% of the market's prints — and
-// a biased 51.4%, since the decoder sets base = soldAsset and the
-// visible half is therefore the sell side. Over that hour the folded
-// high is 0.1818181818 against the 0.1806435916 served (+0.65%) and
-// the folded low 0.1794054551 against 0.1796178598: the extremes were
-// both wrong on the flagship market, in a randomly chosen hour, on a
-// bar that never looked empty.
+// Both directions, because a market has no stored direction of its own (see
+// the block above [Store.LatestTradesForPair]) and this read feeds aggregates:
+// /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the aggregator
+// orchestrator. Measured, one hour of native/USDC-GA5Z…: 2957 rows stored one
+// way round and 2794 the other, so the served window held 51.4% of the
+// market's prints — and a biased 51.4%, since the decoder sets base =
+// soldAsset and the visible half is therefore the sell side. Over that hour
+// the folded high is 0.1818181818 against the 0.1806435916 served (+0.65%) and
+// the folded low 0.1794054551 against 0.1796178598: the extremes were both
+// wrong on the flagship market, in a randomly chosen hour, on a bar that never
+// looked empty.
 //
 // The fold is a per-ROW leg swap ([orientTradeTo]) and nothing else.
 // That is enough for every aggregate downstream because each is
@@ -2170,16 +2166,15 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // window — not an error. Callers distinguish "empty" from "error"
 // by testing len(rows).
 //
-// limit is clamped to [MaxTradesInRangeLimit]. That ceiling is enforced
-// in config validation too, because a silent clamp here does double
-// damage: the scan does not widen AND the orchestrator's truncation
-// detector (len(t) >= cfg.MaxTradesPerWindow) can never fire again, so
-// the ~48%-of-windows truncation rate measured on r1 would read as 0%
-// while nothing had actually changed.
-// MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps
-// its limit to. Exported so config validation can refuse a
-// max_trades_per_window above it rather than let an operator raise a
-// number that silently does nothing.
+// limit is clamped to [MaxTradesInRangeLimit]. That ceiling is enforced in
+// config validation too, because a silent clamp here does double damage: the
+// scan does not widen AND the orchestrator's truncation detector (len(t) >=
+// cfg.MaxTradesPerWindow) can never fire again, so the ~48%-of-windows
+// truncation rate would read as 0% while nothing had actually changed.
+// MaxTradesInRangeLimit is the hard ceiling [Store.TradesInRange] clamps its
+// limit to. Exported so config validation can refuse a max_trades_per_window
+// above it rather than let an operator raise a number that silently does
+// nothing.
 const MaxTradesInRangeLimit = 10000
 
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
@@ -2489,12 +2484,9 @@ func (s *Store) FXQuoteAtOrBefore(
 
 	// Both stored directions, same rule and same two limited arms as
 	// [Store.TradesInRange]. A quote recorded USD/EUR answers a EUR/USD
-	// question by swapping its two legs, which is the exact reciprocal
-	// rate; the alternative was an entry in [directionExempt] saying a
-	// price-serving read may stay blind, which is what that list exists
-	// to refuse. The legacy `trades` arm holds no FX rows on r1 today
-	// (both FX sources, 400 days, zero rows), so
-	// this widens a dormant path rather than a hot one.
+	// question by swapping its two legs, which is the exact reciprocal rate;
+	// the alternative was an entry in [directionExempt] saying a price-serving
+	// read may stay blind, which is what that list exists to refuse.
 	const q = `
         (SELECT source, ts, base_asset, base_amount, quote_amount
            FROM trades

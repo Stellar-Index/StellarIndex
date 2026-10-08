@@ -9,22 +9,19 @@ package timescale
 //     sdex) ───────────────────────────────────────────────────────────────
 //
 // Three data tiers, chosen per query so nothing scans the 300M+-row trades
-// hypertable unbounded (every figure below ground-truthed READ-ONLY on r1):
+// hypertable unbounded:
 //
 //  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true) — the
 //     daily per-(source, pair) rollup. Backs the >1-day windows: KPIs,
 //     daily volume/trade series, the pair breakdown, top-5 pair lines and
-//     the top-pairs table. Row counts: sdex 3.13M rows (2.1M in 90d,
-//     99,562 distinct pairs), aquarius 25,688, soroswap 6,476, phoenix
-//     1,112, comet 229. sdex 90d timings after two deliberate shapes:
-//     window KPI 0.67s (a hash-agg pair-count subquery — the naive
-//     count(DISTINCT (base,quote)) row-comparison sort measured 6.0s) and
-//     top-5 series 0.87s (top CTE + direct index join — re-aggregating the
-//     CAGG through a grouped CTE measured 19.8s). AMM sources are all
-//     ≤50ms on the same shapes.
+//     the top-pairs table. Two deliberate shapes keep sdex 90d cheap:
+//     the window KPI uses a hash-agg pair-count subquery (a naive
+//     count(DISTINCT (base,quote)) row-comparison sort is ~9x slower) and
+//     the top-5 series uses a top CTE + direct index join (re-aggregating
+//     the CAGG through a grouped CTE is ~20x slower).
 //
-//     HONESTY FLOOR: the CAGG's materialization starts 2026-03-18 (its
-//     min(bucket) on r1) while raw sdex trades extend back to 2018 —
+//     HONESTY FLOOR: the CAGG's materialization starts well after
+//     genesis (its min(bucket)) while raw sdex trades extend back to 2018 —
 //     re-materializing genesis-wide was not done. So lifetime figures are
 //     served as "since <floor date>" KPIs, never as "all-time".
 //
@@ -38,7 +35,7 @@ package timescale
 //     come from here, window-bounded. Compression segments by (base,
 //     quote, source), so per-source scans prune well: aquarius 90d (1.0M
 //     rows) 1.0s, soroswap/phoenix/comet 90d ≤0.3s, sdex 24h (754k rows)
-//     0.3–1.0s. sdex 7d measured 1.4s and extrapolates to ~15–20s at 90d,
+//     0.3–1.0s. sdex 7d is 1.4s and extrapolates to ~15–20s at 90d,
 //     so raw-derived surfaces are gated OFF for sdex beyond 7 days
 //     (dexRawWindowOK) and the omission is Noted on the block.
 //
@@ -75,22 +72,21 @@ const (
 	dexTopPairPrefix = "Top pairs · "
 )
 
-// dexRawWindowOK reports whether raw-trades-derived surfaces (unique
-// traders, avg trade size, largest trades, the 24h per-pair shapes) are
-// servable for source at this window. sdex is the one source big enough
-// to price out: 754k rows/24h (~1s), 5.0M rows/7d (1.4s measured), ~15–20s
-// extrapolated at 90d — so sdex serves raw-derived surfaces on the 24h/7d
-// windows only. Every other DEX source is ≤1.0M rows even at 90d.
+// dexRawWindowOK reports whether raw-trades-derived surfaces (unique traders,
+// avg trade size, largest trades, the 24h per-pair shapes) are servable for
+// source at this window. sdex is the one source big enough to price out: 754k
+// rows/24h (~1s), 5.0M rows/7d, ~15–20s extrapolated at 90d — so sdex serves
+// raw-derived surfaces on the 24h/7d windows only. Every other DEX source is
+// ≤1.0M rows even at 90d.
 func dexRawWindowOK(source string, windowDays int) bool {
 	return source != "sdex" || windowDays <= 7
 }
 
 // ─── query builders ──────────────────────────────────────────────────────
 //
-// Every windowed query binds source=$1 and the window=$2::interval and
-// bounds its time column through dexWindowSQL; the since-totals query binds
-// source=$1 only (it is deliberately unwindowed over the materialized-only
-// CAGG — 0.23s for sdex's 3.13M rows on r1).
+// Every windowed query binds source=$1 and the window=$2::interval and bounds
+// its time column through dexWindowSQL; the since-totals query binds source=$1
+// only.
 
 // dexWindowSQL is the window predicate on col. 24h is a rolling 24 hours;
 // longer windows are the N complete UTC days before today, because the
@@ -298,12 +294,11 @@ func dexLargestTradesQuery(windowDays int) string {
 		ORDER BY usd_volume DESC LIMIT 10`
 }
 
-// dexSinceTotalsQuery returns the source's lifetime-within-the-rollup
-// totals: (usd_volume, trades, floor_date) over ALL materialized buckets.
-// Deliberately unwindowed (0.23s over sdex's 3.13M CAGG rows on r1) and
-// deliberately NOT called "all-time": the rollup's materialization floor
-// is 2026-03-18 on r1 while raw sdex history reaches 2018 — the floor
-// date is served with the KPI so the label stays honest.
+// dexSinceTotalsQuery returns the source's lifetime-within-the-rollup totals:
+// (usd_volume, trades, floor_date) over ALL materialized buckets. Deliberately
+// unwindowed and deliberately NOT called "all-time": the rollup's
+// materialization floor is well after genesis while raw sdex history reaches 2018 —
+// the floor date is served with the KPI so the label stays honest.
 func dexSinceTotalsQuery() string {
 	return `
 		SELECT round(COALESCE(sum(vol),0),2)::text, COALESCE(sum(trades),0)::text, COALESCE(min(bucket)::date::text, '')
@@ -423,9 +418,7 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 	}
 
 	// Per-source captured-liquidity augments (reserves / net-flow depth /
-	// staking / skim) — independent of trade volume so a quiet window still
-	// surfaces depth, and empty-safe until the decoders have captured
-	// anything on r1.
+	// staking / skim).
 	if err := s.dexSourceAugments(ctx, blk, source, windowDays); err != nil {
 		return nil, err
 	}

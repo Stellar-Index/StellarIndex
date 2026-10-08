@@ -83,11 +83,11 @@ type GapDetectorTarget struct {
 	// cross-chain hops) need a much higher threshold or every
 	// quiet stretch trips the page-tier alert as a false positive.
 	//
-	// Measured live on r1: blend_auctions had 8049 distinct
-	// ledgers across a 5.9M-ledger span — one event per ~735
-	// ledgers AVERAGE, so the 1000-ledger threshold is
-	// guaranteed to produce hundreds of "gaps" that aren't gaps.
-	// Use a per-target threshold tuned to the source's emit cadence.
+	// blend_auctions had 8049 distinct ledgers across a
+	// 5.9M-ledger span — one event per ~735 ledgers AVERAGE, so the
+	// 1000-ledger threshold is guaranteed to produce hundreds of "gaps" that
+	// aren't gaps. Use a per-target threshold tuned to the source's emit
+	// cadence.
 	//
 	// Setting this to a positive value DOES NOT make the source
 	// less monitored — it just shifts the page threshold to a
@@ -105,15 +105,11 @@ type GapDetectorTarget struct {
 	// dense source goes quiet" tripwires; do not read it as coverage.
 	MinGapSizeOverride int64
 
-	// ScanCadence overrides [GapDetectorInterval] for this target.
-	// Default 0 means "use the global default of 30 min." Use a
-	// LONGER cadence for huge-table targets where the LAG-DISTINCT
-	// scan is structurally slow (on r1, a scan of SDEX trades at
-	// ~62M rows took > 15 min; running it every 30 min stacked new
-	// cycles on top of unfinished ones, lighting both the
-	// `slo_latency_burn` page and starving trade-insert latency).
-	// For these targets we accept a 6-hour signal cadence in
-	// exchange for postgres not being permanently saturated.
+	// ScanCadence overrides [GapDetectorInterval] for this target. Default 0
+	// means "use the global default of 30 min." Use a LONGER cadence for
+	// huge-table targets where the LAG-DISTINCT scan is structurally slow. For
+	// these targets we accept a 6-hour signal cadence in exchange for postgres
+	// not being permanently saturated.
 	//
 	// The scan still has the per-target Go-side timeout (15 min) +
 	// the SQL `SET LOCAL statement_timeout` backstop
@@ -135,35 +131,29 @@ type GapDetectorTarget struct {
 	// The result feeds the same gauge / snapshot / density_pct path as
 	// the generic query; only the SOURCE of the number changes.
 	//
-	// Exists because the generic query is a full scan on any table
-	// with no leading-`ledger` index — on soroban_events (257 GB,
-	// partitioned + compressed by ledger_close_time, no `ledger`
-	// index) it ran 556 s mean and took r1 down. See
-	// [sorobanEventsDistinctLedgerCountSQL].
+	// Exists because the generic query is a full scan on any table with no
+	// leading-`ledger` index. See [sorobanEventsDistinctLedgerCountSQL].
 	//
 	// SAFETY: interpolated verbatim; ADR-0030 compile-time-const
 	// discipline applies exactly as for Table / WhereFilter.
 	DistinctLedgerCountSQL string
 
-	// CloseTimeColumn names the table's ledger-close-time partition
-	// column when the hypertable is partitioned by time rather than by
-	// ledger. The gap scan then also bounds that column by the close
-	// times ledger_ingest_log records around [from, to]; without it a
-	// `ledger BETWEEN` filter excludes no chunk and decompresses every
-	// compressed one (soroban_events on r1: 780 s timeout for a
-	// 4.5k-ledger window). Same ADR-0030 const discipline as Table.
+	// CloseTimeColumn names the table's ledger-close-time partition column
+	// when the hypertable is partitioned by time rather than by ledger. The
+	// gap scan then also bounds that column by the close times
+	// ledger_ingest_log records around [from, to]; without it a `ledger
+	// BETWEEN` filter excludes no chunk and decompresses every compressed one.
+	// Same ADR-0030 const discipline as Table.
 	CloseTimeColumn string
 }
 
-// sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in
-// [$1, $2] carry Soroban events" from ledger_ingest_log (migration
-// 0051) instead of from soroban_events itself. ledger_ingest_log has
-// one narrow row per fully-processed ledger keyed by ledger_seq (PK
-// btree), and its soroban_event_count is the LCM-derived census whose
-// documented invariant is `= COUNT(soroban_events WHERE ledger = N)`,
-// so this is a PK range scan (milliseconds) that returns the same
-// number the 257 GB hypertable scan did (measured on r1: 556 s mean,
-// 18.7 h of IO, load 19.6, 503s on the serving path).
+// sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in [$1, $2]
+// carry Soroban events" from ledger_ingest_log (migration 0051) instead of
+// from soroban_events itself. ledger_ingest_log has one narrow row per
+// fully-processed ledger keyed by ledger_seq (PK btree), and its
+// soroban_event_count is the LCM-derived census whose documented invariant is
+// `= COUNT(soroban_events WHERE ledger = N)`, so this is a PK range scan
+// (milliseconds) that returns the same number the 257 GB hypertable scan did.
 //
 // SEMANTIC NOTE — census vs observed rows: this counts ledgers the
 // indexer RECORDED as carrying >= 1 eligible contract event (written
@@ -228,9 +218,8 @@ func (t GapDetectorTarget) EffectiveScanCadence() time.Duration {
 // so a slow target (typically soroban_events itself) doesn't delay
 // the lighter signals.
 //
-// `soroban-events` is the historical first target, kept at the end
-// because its scan is by far the most expensive (~5min on r1 vs
-// <30s for the per-source tables).
+// `soroban-events` is the historical first target, kept at the end because its
+// scan is by far the most expensive.
 var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// Soroban era starts at L50,457,424 on pubnet. SEP-41 tokens
 	// have no single deploy-ledger genesis (the standard is
@@ -238,12 +227,11 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// as the conservative lower bound — anything earlier has no
 	// SEP-41 emissions by definition.
 	{Source: "sep41-transfers", CanonicalSource: "sep41_transfers", Table: "sep41_transfers", LedgerColumn: "ledger", Genesis: 50_457_424},
-	// SEP-41 supply events fire only on mint/burn/clawback — much
-	// rarer than transfers. Live r1: most token issuers go many
-	// hours without a supply mutation.
+	// SEP-41 supply events fire only on mint/burn/clawback — much rarer than
+	// transfers.
 	{Source: "sep41-supply", CanonicalSource: "sep41_supply", Table: "sep41_supply_events", LedgerColumn: "ledger", Genesis: 50_457_424, MinGapSizeOverride: 100000},
 	// CCTP / Rozo are cross-chain bridges with sparse traffic
-	// (hours-to-days between events). A measured natural quiet window
+	// (hours-to-days between events). A natural quiet window
 	// of 138,629 ledgers (~8 days) tripped a 100K threshold while
 	// ADR-0033 completeness verified cctp complete=t / coverage 1.0 —
 	// i.e. pure sparsity, not loss. 200K (~14 days) sits above the
@@ -264,21 +252,16 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// 17 natural gaps across cascade-era data with max 7826 ledgers
 	// (~11h of natural pool silence). 50K threshold.
 	{Source: "comet-liquidity", CanonicalSource: "comet", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
-	// blend-emitter: protocol-emissions plumbing (distribute / drop /
-	// q_swap / swap). Measured over the lake: 465 lifetime
-	// `distribute` events (the dominant kind — 99% of the table's
-	// rows) across [51,524,666, 63,380,088] had a max natural gap of
-	// 107,826 ledgers (~7.5 days), avg ~26K. The other three kinds
-	// (drop ×2, q_swap ×1, swap ×1 — one-off admin actions) sit inside
-	// that same span. 200K sits above the observed envelope, matching
-	// cctp's threshold for a similarly sparse per-protocol table.
+	// blend-emitter: protocol-emissions plumbing (distribute / drop / q_swap /
+	// swap). The other three kinds (drop ×2, q_swap ×1, swap ×1 — one-off
+	// admin actions) sit inside that same span. 200K sits above the observed
+	// envelope, matching cctp's threshold for a similarly sparse per-protocol
+	// table.
 	{Source: "blend-emitter", CanonicalSource: "blend_emitter", Table: "blend_emitter_events", LedgerColumn: "ledger", Genesis: 51_499_914, MinGapSizeOverride: 200000},
-	// soroswap-skim: a pair skim() is a manually-triggered, uncommon
-	// operation (excess-balance sweep) — 21 lifetime events on r1, last
-	// at L61,962,034. ADR-0033 has soroswap complete=t / coverage 1.0
-	// (every skim in the lake is captured), so the ~564K-ledger quiet
-	// stretches are genuine rarity, not a decoder gap. 700K override
-	// sits above the observed natural envelope.
+	// ADR-0033 has soroswap complete=t / coverage 1.0 (every skim in the lake
+	// is captured), so the ~564K-ledger quiet stretches are genuine rarity,
+	// not a decoder gap. 700K override sits above the observed natural
+	// envelope.
 	{Source: "soroswap-skim", CanonicalSource: "soroswap", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-liquidity: pair deposit/withdraw (LP add/remove) are
 	// sparse — 156 events across the recent ~1M-ledger window (deposit
@@ -287,14 +270,9 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// Genesis = soroswap protocol genesis (same as skim/trades).
 	{Source: "soroswap-liquidity", CanonicalSource: "soroswap", Table: "soroswap_liquidity", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-router: router invocations dispatched via
-	// dispatcher.ContractCallDecoder (router itself emits no
-	// Soroban events, hence no soroban_events landing). Per-source
-	// gap signal lives on the new soroswap_router_swaps hypertable
-	// (migration 0049). Router activity is dense on r1 (multiple
-	// swaps per minute) so the default 1000-ledger threshold would
-	// produce false-positive pages on natural quiet stretches —
-	// 100k matches the trades-table aquarius/soroswap thresholds
-	// (~5.8 days, well above any observed natural quiet stretch).
+	// dispatcher.ContractCallDecoder (router itself emits no Soroban events,
+	// hence no soroban_events landing). Per-source gap signal lives on the new
+	// soroswap_router_swaps hypertable (migration 0049).
 	{Source: "soroswap-router", Table: "soroswap_router_swaps", LedgerColumn: "ledger", Genesis: 50_746_272, MinGapSizeOverride: 100000},
 	// defindex: dual-layer protocol (strategy + vault) persisted to
 	// defindex_flows (migration 0050). Both layers emit on capital
@@ -338,11 +316,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	{Source: "phoenix-admin-events", CanonicalSource: "phoenix", Table: "phoenix_admin_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 100000000},
 	{Source: "phoenix-stake", CanonicalSource: "phoenix", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// aquarius-liquidity: deposit_liquidity / withdraw_liquidity are
-	// user-action-triggered and sparse (a few thousand events/month on
-	// r1 vs 360K+ trades) — multi-hour quiet windows are normal, so a
-	// wide override matches the phoenix-liquidity cadence. Genesis is
-	// the Aquarius pool deploy ledger (same as the aquarius trades
-	// target below). Migration 0089.
+	// user-action-triggered and sparse — multi-hour quiet windows are normal,
+	// so a wide override matches the phoenix-liquidity cadence. Genesis is the
+	// Aquarius pool deploy ledger (same as the aquarius trades target below).
+	// Migration 0089.
 	{Source: "aquarius-liquidity", CanonicalSource: "aquarius", Table: "aquarius_liquidity", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 200000},
 	// aquarius-reserves: update_reserves fires on EVERY state-changing
 	// pool op (trade/deposit/withdraw), so it is roughly as dense as
@@ -382,20 +359,15 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// the DENSEST of the eight kinds); wide override matches
 	// blend-admin's sparsity treatment.
 	{Source: "aquarius-admin", CanonicalSource: "aquarius", Table: "aquarius_admin", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 1300000},
-	// blend_auctions: live r1 showed 8049 distinct ledgers across a
-	// 5.9M-ledger span = one event per ~735 ledgers. The observed max
-	// gap (53515) sat just over a 50K threshold, which paged on natural
-	// sparsity, so the override is 100K.
+	// The observed max gap (53515) sat just over a 50K threshold, which paged
+	// on natural sparsity, so the override is 100K.
 	{Source: "blend-auctions", CanonicalSource: "blend", Table: "blend_auctions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
 	// blend_positions: live ingest started late, so the 7635-ledger
 	// max gap = pre-history boundary + natural sparsity. 50K threshold.
 	{Source: "blend-positions", CanonicalSource: "blend", Table: "blend_positions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
-	// blend_emissions: emissions update on operator action (rare).
-	// blend_admin: admin actions are rare by design — only 261 lifetime
-	// events on r1, with a historical max quiet stretch of ~1,042,850
-	// ledgers (~90 days). ADR-0033 has blend complete=t / coverage 1.0,
-	// so that's genuine rarity. 1.3M override sits above it; real loss
-	// is caught by completeness_snapshots, not this threshold.
+	// ADR-0033 has blend complete=t / coverage 1.0, so that's genuine rarity.
+	// 1.3M override sits above it; real loss is caught by
+	// completeness_snapshots, not this threshold.
 	{Source: "blend-emissions", CanonicalSource: "blend", Table: "blend_emissions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
 	{Source: "blend-admin", CanonicalSource: "blend", Table: "blend_admin", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 1300000},
 	// blend-backstop: the Backstop insurance module's event surface.
@@ -404,30 +376,20 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// Genesis = blend_backstop.BackstopGenesisLedger; V1 backstop events
 	// appear from 51_499_926, so a later floor hides that era.
 	{Source: "blend-backstop", CanonicalSource: "blend_backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
-	// sorocredit — consumer-USDC credit / CDP protocol (single main
-	// contract). Four tables. Genesis = the main contract's first event
-	// (2026-03-12). Wide override: live ingest starts at deploy and the
-	// historical back-window fills only via projector-replay, so a large
-	// threshold avoids paging on the empty pre-fill range. See
-	// internal/sources/sorocredit/README.md.
+	// sorocredit — consumer-USDC credit / CDP protocol (single main contract).
+	// Four tables. Genesis = the main contract's first event. Wide override:
+	// live ingest starts at deploy and the historical back-window fills only
+	// via projector-replay, so a large threshold avoids paging on the empty
+	// pre-fill range. See internal/sources/sorocredit/README.md.
 	{Source: "sorocredit-positions", CanonicalSource: "sorocredit", Table: "credit_positions", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	{Source: "sorocredit-statements", CanonicalSource: "sorocredit", Table: "credit_statements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	{Source: "sorocredit-settlements", CanonicalSource: "sorocredit", Table: "credit_settlements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	{Source: "sorocredit-events", CanonicalSource: "sorocredit", Table: "credit_events", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
-	// soroban-events spans the entire Soroban era from pubnet
-	// activation. Same lower bound as sep41-transfers. Long
-	// ScanCadence: 50M+ rows, scan dominates postgres for 5+ min
-	// per cycle so 30 min cadence starves trade-insert latency
-	// (observed on r1). The early Soroban era (just after genesis
-	// 50,457,424) is sparse — observed natural max gap 47,869 ledgers
-	// on r1 while recent data was dense (370M+ rows past L62M of 3.36B
-	// total). 100K override (~5.8 days) silences early-era sparsity; a
-	// recent writer wedge is caught faster by the per-projected-source
-	// targets + completeness. The density count comes from the
-	// ledger_ingest_log census (DistinctLedgerCountSQL) — soroban_events
-	// has NO index on `ledger` and the generic COUNT(DISTINCT ledger)
-	// measured 556 s per cycle (a 257 GB full scan). The gap scan
-	// still reads observed rows, chunk-pruned via CloseTimeColumn.
+	// soroban-events spans the entire Soroban era from pubnet activation. Same
+	// lower bound as sep41-transfers. Long ScanCadence: 50M+ rows, scan
+	// dominates postgres for 5+ min per cycle so 30 min cadence starves
+	// trade-insert latency. The gap scan still reads observed rows,
+	// chunk-pruned via CloseTimeColumn.
 	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL, CloseTimeColumn: "ledger_close_time"},
 	// SDEX is classic-DEX and does NOT flow through soroban_events.
 	// Its rows live in the unified `trades` hypertable alongside
@@ -436,16 +398,12 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// SDEX would have no data-derived coverage signal, and a writer
 	// halt in the classic-DEX path would go undetected. (See ADR-0030.)
 	//
-	// 1M-ledger threshold: a live r1 measurement showed 35.86M
-	// distinct ledgers across the 61.9M-ledger span from SDEX
-	// inception → tip (~58% density). Before 2024 SDEX was very
-	// thinly traded — the largest natural-sparsity contiguous gap
-	// at the time of measurement was 574,674 ledgers, so the 1K
-	// default would page constantly on historical data. A 1M-ledger
-	// gap (~1.5 weeks of network time) on SDEX still pages because
-	// recent SDEX is densely active (>1M trades / day when measured).
-	// SDEX scans 62M trades rows — long ScanCadence so we don't
-	// pile concurrent runs on postgres (see soroban-events comment).
+	// Before 2024 SDEX was very thinly traded — the largest natural-sparsity
+	// contiguous gap at the time of measurement was 574,674 ledgers, so the 1K
+	// default would page constantly on historical data. A 1M-ledger gap (~1.5
+	// weeks of network time) on SDEX still pages because recent SDEX is
+	// densely active. SDEX scans 62M trades rows — long ScanCadence so we
+	// don't pile concurrent runs on postgres (see soroban-events comment).
 	{Source: "sdex", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sdex'", Genesis: 2, MinGapSizeOverride: 1000000, ScanCadence: 6 * time.Hour},
 	// NO target for sdex_offer_events. Migration 0026 created the
 	// table but no writer exists — nothing in internal/ or cmd/
@@ -463,10 +421,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	{Source: "aquarius", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'aquarius'", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	{Source: "soroswap", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'soroswap'", Genesis: 50_746_266, MinGapSizeOverride: 100000},
 	{Source: "phoenix", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'phoenix'", Genesis: 51_572_016, MinGapSizeOverride: 100000},
-	// comet: Balancer-v1 pool swaps are sparse — a 6-day quiet window
-	// on r1 (110k ledgers) tripped the gap_free metric at a 100k
-	// threshold. 200k ≈ 11.5 days fits the observed natural
-	// trading-quietness envelope.
+	// comet: Balancer-v1 pool swaps are sparse.
 	{Source: "comet", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'comet'", Genesis: 51_499_546, MinGapSizeOverride: 200000},
 	// sushiswap_v3: 100k matches the other concentrated/constant-product
 	// DEXs. The widest quiet window in the source's whole history is
@@ -479,14 +434,9 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// as a decoder outage.
 	{Source: "sushiswap_v3-positions", CanonicalSource: "sushiswap_v3", Table: "sushiswap_v3_position_events", LedgerColumn: "ledger", Genesis: 61_487_379, MinGapSizeOverride: 700000},
 	// upshift: the vaults write their own hypertable, not `trades` — they
-	// publish no price. Institutional deposit flow is genuinely sparse:
-	// measured over every row-producing event in both vaults' history, the
-	// widest quiet window is 334,407 ledgers (~19 days, earnXLM) and
-	// earnUSDC's is 56,858. 600k (~35 days) leaves ~1.8x headroom over the
-	// observed envelope — the same ratio comet's 200k override carries.
-	// Genesis is the protocol's first event (an `admin_set`, which produces
-	// no row); the first ROW lands 15,341 ledgers later, far inside the
-	// threshold, so the two never disagree in practice.
+	// publish no price. Genesis is the protocol's first event (an `admin_set`,
+	// which produces no row); the first ROW lands 15,341 ledgers later, far
+	// inside the threshold, so the two never disagree in practice.
 	{Source: "upshift", Table: "upshift_vault_events", LedgerColumn: "ledger", Genesis: 62_623_313, MinGapSizeOverride: 600000},
 	// spectra: own hypertable, no price. Markets are few and weeks apart;
 	// 600k (~40 days) is a starting bound to revisit after the backfill.
@@ -683,18 +633,12 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 		return nil, nil
 	}
 
-	// SQL-level statement_timeout backstop: when the Go-side ctx
-	// times out mid-query the database/sql driver tries to cancel
-	// via PG's async cancellation protocol — best-effort. On r1,
-	// three concurrent SDEX scans once accumulated over multiple
-	// cycles because Go cancellation didn't reach PG; the queries
-	// kept running and starved trade-insert latency. A session
-	// statement_timeout makes PG itself abort, no leak possible.
-	// [gapDetectorStatementTimeoutMS] (13 min) stays under the
-	// gap-detector's 15-min per-target Go-side timeout while
-	// leaving room for the heaviest scans: on r1, sdex's 2.7B-row
-	// and soroban_events's 12M+ ledger LAG-over-DISTINCT both
-	// exceeded a 5-min cap.
+	// SQL-level statement_timeout backstop: when the Go-side ctx times out
+	// mid-query the database/sql driver tries to cancel via PG's async
+	// cancellation protocol — best-effort. Concurrent SDEX scans
+	// once accumulated over multiple cycles because Go cancellation didn't
+	// reach PG; the queries kept running and starved trade-insert latency. A
+	// session statement_timeout makes PG itself abort, no leak possible.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps begin: %w", err)

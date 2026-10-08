@@ -11,13 +11,13 @@ import (
 
 // ─── the usd_volume VALUE reconcile ─────────────
 //
-// The existing usd-volume alerts (configs/prometheus/rules.r1/
-// usd-volume-coverage.yml) are a COVERAGE check: they read the ratio of
+// The existing usd-volume alerts (configs/prometheus/rules.r1/usd-volume-coverage.yml)
+// are a COVERAGE check: they read the ratio of
 // trades inserted with a non-NULL `usd_volume`. That catches "we stopped
-// pricing this venue" and nothing else. A trade priced with the WRONG
-// number is 100% covered and completely wrong, and every volume surface we
-// publish — DEX volume, asset volume, venue rankings, market share — is a
-// sum of that column.
+// pricing this venue" and nothing else. A trade priced with the WRONG number
+// is 100% covered and completely wrong, and every volume surface we publish —
+// DEX volume, asset volume, venue rankings, market share — is a sum of that
+// column.
 //
 // This file is the value half's read side: the day-scoped SQL aggregation
 // and the exact rational arithmetic that judges it. The TIER CLASSIFIER
@@ -242,13 +242,11 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 // day-group's Σusd_volume must land within an intraday-range tolerance
 // of Σbase/1e7 × day-VWAP.
 //
-// A day-granular rate CAN false-alarm on normal intraday movement.
-// The anchor reads a
-// per-MINUTE prices_1m XLM/<peg> bucket and this reads a DAY bucket off
-// a different (CEX) series, so an honest day scores up to
-// max(intraday_hi/day_vwap, day_vwap/intraday_lo) — measured worst 1.2206
-// over 120 days of r1 data, against a 1.30 edge. The margin is measured,
-// not structural; see [chops.xlmBaseBoundTolerance] for the full numbers.
+// A day-granular rate CAN false-alarm on normal intraday movement. The anchor
+// reads a per-MINUTE prices_1m XLM/<peg> bucket and this reads a DAY bucket
+// off a different (CEX) series, so an honest day scores up to
+// max(intraday_hi/day_vwap, day_vwap/intraday_lo). The margin is measured, not
+// structural; see [chops.xlmBaseBoundTolerance] for the full numbers.
 func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `

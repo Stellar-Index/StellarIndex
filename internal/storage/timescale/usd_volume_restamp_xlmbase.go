@@ -29,13 +29,12 @@ import (
 // higher `derive_generation`, so the window ends the day before that
 // re-derive's first row (the runbook gives the `-to` value).
 //
-// It is mostly coverage, not valuation: per month on r1 the PRICED rows
-// aggregate to within 0.3% of the anchor, and the gap is rows stored
-// NULL. So the bulk of a run is `-fill-null`; wrong-leg corrections (an
-// `XLM/<token>` trade valued through the token's own thin `<token>/USDC`
-// bucket) are a long tail. A CAGG-derived ratio misreads this:
-// `prices_1m`/`prices_1d` coalesce a NULL `usd_volume` to 0, so a
-// coverage hole reads as a valuation error.
+// It is mostly coverage, not valuation: per month the PRICED rows aggregate to
+// within 0.3% of the anchor, and the gap is rows stored NULL. So the bulk of a
+// run is `-fill-null`; wrong-leg corrections (an `XLM/<token>` trade valued
+// through the token's own thin `<token>/USDC` bucket) are a long tail. A
+// CAGG-derived ratio misreads this: `prices_1m`/`prices_1d` coalesce a NULL
+// `usd_volume` to 0, so a coverage hole reads as a valuation error.
 //
 // Three rules make this a re-derive rather than a guess, and they are the
 // reason the arithmetic is NOT done in SQL:
@@ -94,12 +93,11 @@ type XLMBaseRestampParams struct {
 	// them anyway, and scanning them would only widen the read.
 	Sources map[string]bool
 
-	// FillNull admits rows whose stored usd_volume is NULL. Off by
-	// default: filling an unpriced row is a COVERAGE change (~31% of this
-	// population on the measured days), which the operator opts into
-	// rather than a value-repair tool doing it silently. The planner
-	// counts the NULL population either way, so a dry run always shows
-	// what -fill-null would add.
+	// FillNull admits rows whose stored usd_volume is NULL. Off by default:
+	// filling an unpriced row is a COVERAGE change, which the operator opts
+	// into rather than a value-repair tool doing it silently. The planner
+	// counts the NULL population either way, so a dry run always shows what
+	// -fill-null would add.
 	FillNull bool
 
 	// MaxGeneration is the derive_generation read guard: rows already stamped by a
@@ -207,14 +205,12 @@ type XLMBaseRestampStats struct {
 	RelBucket map[string]int64
 }
 
-// XLMBaseRelBuckets are the relative-move magnitudes the report counts
-// changed rows into. Reporting a DISTRIBUTION rather than a single
-// "materially changed" number is deliberate: that count depends entirely
-// on where the threshold is put (the measured population moves ~0.1-1% on
-// almost every priced row and >30% on a few hundred thousand of them), and
-// landing a guessed threshold on a money surface is exactly the mistake
-// verify-usd-volume's own footer warns about. The operator reads the split
-// and picks.
+// XLMBaseRelBuckets are the relative-move magnitudes the report counts changed
+// rows into. Reporting a DISTRIBUTION rather than a single "materially
+// changed" number is deliberate: that count depends entirely on where the
+// threshold is put, and landing a guessed threshold on a money surface is
+// exactly the mistake verify-usd-volume's own footer warns about. The operator
+// reads the split and picks.
 var XLMBaseRelBuckets = []struct {
 	Label string
 	Min   *big.Rat
@@ -554,11 +550,11 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 //
 // The remedy is information, not a different write: `t.ts = v.ts` already
 // forces every matched row's `ts` to be one of the batch's own values, so
-// bounding `t.ts` by the batch's own minimum and maximum cannot exclude a
-// row the join would have matched. It is a provably redundant predicate
-// that the planner can prune on. With it the same batch plans as ONE
-// result relation over a nested loop / merge join driven by an index —
-// cost 61.99 at 23 rows, 18,614 at 10,000 (measured on the same schema).
+// bounding `t.ts` by the batch's own minimum and maximum cannot exclude a row
+// the join would have matched. It is a provably redundant predicate that the
+// planner can prune on. With it the same batch plans as ONE result relation
+// over a nested loop / merge join driven by an index — cost 61.99 at 23 rows,
+// 18,614 at 10,000.
 //
 // Two smaller shapes hang off the same statement:
 //

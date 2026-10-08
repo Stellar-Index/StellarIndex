@@ -21,8 +21,7 @@ import (
 //
 //	usd_volume = quote_amount / 10^<source scale> x <fiat>/USD at ts
 //
-// Measured population on r1: ~12.6M rows, `fiat:EUR` and `fiat:GBP`
-// today.
+// Population: ~12.6M rows, `fiat:EUR` and `fiat:GBP`.
 //
 // # Why these rows are NULL, and why the rate is NOT prices_1m
 //
