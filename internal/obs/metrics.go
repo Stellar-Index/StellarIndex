@@ -3810,34 +3810,11 @@ var DEXTVLReconcileTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// SDEXOrderBookMaintainTotal — per-outcome counter for the in-process
-// SDEX live order book behind /v1/sdex/orderbook. Three operation
-// classes share the label space because they share a failure surface
-// (the lake) but have wildly different costs:
-//
-//   - `load_ok` / `load_error`       — the initial (or retried)
-//     full-slice FINAL load. Runs once per process start; minutes of
-//     streaming IO.
-//   - `advance_ok` / `advance_error` / `advance_held` — the 60s
-//     incremental partition-pruned change apply. `advance_held` is a
-//     clean (no-error) tick that made ZERO cursor progress — an
-//     unhealed lake hole or a full ingest halt, not a legitimate
-//     advance that applied zero CHANGES while the tip still moved
-//     (see SDEXOrderBookCache.Advance).
-//   - `verify_ok` / `verify_error`   — the per-tick quarantine drain:
-//     batched (ledger, key) removal probes that graduate version-tie
-//     suspect offers into the served book or discard them as
-//     proven-dead zombies. Unobserved when the quarantine is empty.
-//
-// Sustained `advance_error` means the served book is drifting from
-// the live ledger while the endpoint keeps answering (it serves the
-// last applied state, honestly timestamped). Repeated `load_error`
-// means the endpoint is stuck on its 503 warming problem — that is
-// the louder, user-visible failure. Repeated `verify_error` means the
-// served book stays thinner than the real chain state (quarantined
-// offers can't graduate). Sustained `advance_held` means the same
-// staleness as `advance_error` but WITHOUT ever erroring, so it needs
-// its own alert (stellarindex_sdex_orderbook_advance_held).
+// SDEXOrderBookMaintainTotal counts /v1/sdex/orderbook book maintenance by outcome. load_* is the startup
+// FINAL load (repeated load_error = stuck on its 503 warming); advance_* is the 60s incremental apply
+// (advance_error = served book drifting, honestly timestamped; advance_held = a clean tick with zero cursor
+// progress, the same staleness without an error, alerted by stellarindex_sdex_orderbook_advance_held);
+// verify_* drains the quarantine (repeated verify_error = book thinner than chain state).
 var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sdex_orderbook_maintain_total",
@@ -3846,14 +3823,8 @@ var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// SDEXOrderBookMaintainDurationSeconds — latency histogram for order-
-// book maintenance, labelled like the counter. Buckets span 50 ms →
-// 30 min: `advance_*` lives in the bottom buckets (a pruned
-// incremental read), `load_*` in the top (the worker caps the initial
-// load at 30 min). The interesting charts are advance_ok p95 (drift
-// risk as offer churn grows) and the raw load_ok observation — the
-// wall-time of the one big scan, which the launch plan watches as its
-// own acceptance item.
+// SDEXOrderBookMaintainDurationSeconds is maintenance latency, labelled like the counter. Buckets 50ms–30min:
+// advance_* sits low, load_* high (capped at 30min). Watch advance_ok p95 and the load_ok wall-time.
 var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_sdex_orderbook_maintain_duration_seconds",
@@ -3863,17 +3834,10 @@ var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// SDEXOrderBookCrossedPairs — the order book's data-quality invariant
-// tripwire. Stellar's DEX executes crossing offers at submission, so a
-// RESTING classic book can never have best bid > best ask (a PASSIVE
-// offer may rest touching at equal price, so that is not counted); a crossed
-// pair in the SERVED in-process book means phantom offers (the
-// zombie class: version-tie survivors of intra-less
-// backfill rows served 4.7-year-dead XLM/USDC bids at 0.4327 against
-// a 0.1722 ask). The book maintainer quarantines + lake-verifies the
-// suspect class, so this should sit at 0; sustained non-zero means a
-// zombie whose removal the lake never ingested at all (verification
-// cannot disprove it) — a coverage gap to chase, not a serving bug.
+// SDEXOrderBookCrossedPairs counts crossed pairs (best bid > best ask) in the served book. A resting classic
+// book cannot cross, so each is a phantom offer (a version-tie zombie once served 4.7-year-dead XLM/USDC
+// bids at 0.4327 against a 0.1722 ask). Quarantine should keep it at 0; sustained non-zero is a removal the
+// lake never ingested, a coverage gap rather than a serving bug.
 var SDEXOrderBookCrossedPairs = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_sdex_orderbook_crossed_pairs",
@@ -3881,14 +3845,9 @@ var SDEXOrderBookCrossedPairs = prometheus.NewGauge(
 	},
 )
 
-// SDEXOrderBookPendingOffers — offers loaded from the lake's
-// current-state projection but quarantined from the served book until
-// the change-stream removal probe proves them live (version-tie
-// suspect class, intra_ledger_seq == 0). Drains at
-// SDEXOrderBookVerifyBatch per advance tick after every process
-// start; a value stuck high with verify_error in the maintain
-// counters means the book is serving thinner-than-real depth because
-// verification can't reach the lake.
+// SDEXOrderBookPendingOffers is offers quarantined (version-tie suspects, intra_ledger_seq == 0) until a lake
+// removal probe proves them live; drains SDEXOrderBookVerifyBatch per tick. Stuck high with verify_error means
+// the served depth is thinner than real.
 var SDEXOrderBookPendingOffers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_sdex_orderbook_pending_offers",
@@ -3896,14 +3855,9 @@ var SDEXOrderBookPendingOffers = prometheus.NewGauge(
 	},
 )
 
-// SDEXOrderBookUndecodableOffersTotal — offer-entry rows the order-book
-// reader could not decode. A non-removed change row
-// whose entry_xdr fails to decode is SKIPPED, which silently FREEZES the
-// offer key's previously-applied state in the served book (the price/
-// amount update it carried is lost until the next decodable change for
-// that key). Should sit at 0 — offer entries are core-emitted XDR;
-// sustained increments mean a lake ingestion/schema problem upstream of
-// the book, and the served depth is quietly stale for the affected keys.
+// SDEXOrderBookUndecodableOffersTotal counts offer rows whose entry_xdr would not decode. The row is skipped,
+// FREEZING that key's last applied state in the served book; should be 0, so increments mean a lake ingest or
+// schema problem upstream.
 var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sdex_orderbook_undecodable_offers_total",
@@ -3911,40 +3865,9 @@ var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 	},
 )
 
-// ExplorerSWRRefreshTotal — per-cache, per-outcome counter for the
-// explorer's detached stale-while-revalidate refreshers (the
-// accounts-routes fix: request handlers serve the previous snapshot
-// with flags.stale while a single-flight background goroutine
-// recomputes). `cache` is a bounded, code-enumerated set:
-//
-//   - `accounts_wealth` — /v1/accounts wealth ranking
-//     (clickhouse.ExplorerReader wealth cache).
-//   - `asset_holders`   — /v1/assets/{id}/holders board.
-//   - `contracts_dir`   — /v1/contracts directory.
-//   - `op_type_stats`   — operation-type stats strip.
-//   - `ttl_liveness`    — the /v1/pools/reserves archived-pair
-//     verdict snapshot (clickhouse ttlLivenessCache).
-//   - `contract_detail` — the shared per-contract detail cache
-//     (recent events / interactions / code-history).
-//   - `network_throughput` — the /v1/network/throughput daily series.
-//   - `protocol_bespoke` — the last-good cache under the
-//     /v1/protocols/{name} bespoke analytics block.
-//     Served-tier (Postgres), not lake, but the refresh
-//     contract is identical, so it shares this pair rather than
-//     minting a fourth near-duplicate metric.
-//
-// The SWR design makes refresh failures INVISIBLE at the API surface
-// by construction (stale-but-real keeps serving) — this counter is
-// the only place a persistently-dying refresher shows up before the
-// data is hours old. A sustained `error` rate on any one cache is a
-// ticket; bursts during lake merges self-heal.
-// WorkerPanicsTotal counts panics recovered by worker.Recover, per worker
-// name. Without it a recovered panic leaves ONE log line
-// and nothing else: the worker is stopped for good while the process
-// stays up, and neither rule tree can see it — ~45 background workers
-// could die one by one with the first signal being a downstream freshness
-// alert hours later. Each increment is one dead worker until the binary
-// restarts; alerted by stellarindex_worker_panicked (infra.yml).
+// WorkerPanicsTotal counts panics recovered by worker.Recover, per worker. A recovered panic stops that
+// worker for good while the process stays up, otherwise leaving one log line; each increment is one dead
+// worker until restart. Alert: stellarindex_worker_panicked (infra.yml).
 var WorkerPanicsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_worker_panics_total",
@@ -3953,28 +3876,11 @@ var WorkerPanicsTotal = prometheus.NewCounterVec(
 	[]string{"worker"},
 )
 
-// Auth-reaper liveness. Background reapers bound the
-// attacker-fillable / speculative / PII auth tables (login_code_lockouts,
-// magic_link_tokens, speculative-account orphans, ended sessions). Each reports
-// WHAT it did — rows deleted, errors, row-count gauges — but none reported
-// THAT it ran. A reaper that dies (panic, hung Postgres call, never
-// started) leaves every one of those signals frozen at a healthy-looking
-// value, so the bound is lost silently. Two gauges, one label:
-//
-//	stellarindex_auth_reaper_last_sweep_unix{reaper}   set at the END of
-//	    every Sweep — INCLUDING failed sweeps (a failing reaper is alive;
-//	    its errors counter says so), EXCLUDING the ctx-cancelled early
-//	    return (that is the reaper going away, which is what we want to
-//	    see).
-//	stellarindex_auth_reaper_interval_seconds{reaper}  the configured
-//	    cadence, set once at construction, so the alert threshold is
-//	    relative to the deployment's own interval rather than a
-//	    hard-coded hour.
-//
-// Alert: stellarindex_auth_reaper_stalled — time() - last_sweep >
-// 3 × interval, for 15m. A DISABLED reaper (config-gated, never
-// constructed) publishes no series and therefore never alerts: absence is
-// a configuration choice, not a death.
+// Auth-reaper liveness: the reapers bounding attacker-fillable and PII auth tables report what they did but
+// not that they ran, so a dead one leaves every signal frozen at a healthy value. last_sweep_unix{reaper} is
+// set after every sweep, failed ones included (only ctx-cancel skips it); interval_seconds{reaper} is the
+// configured cadence. Alert: stellarindex_auth_reaper_stalled (time() - last_sweep > 3 × interval, 15m).
+// A disabled reaper publishes no series, so never alerts.
 const (
 	AuthReaperLoginCode = "login_code"
 	AuthReaperMagicLink = "magic_link"
@@ -4036,6 +3942,9 @@ var AuthReaperIntervalSeconds = prometheus.NewGaugeVec(
 	[]string{"reaper"},
 )
 
+// ExplorerSWRRefreshTotal counts the explorer's detached stale-while-revalidate refreshes per cache and
+// outcome; `cache` is a bounded, code-enumerated set. SWR hides refresh failure at the API by design, so this
+// is the only early sign of a dying refresher: a sustained `error` rate on one cache is a ticket.
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_swr_refresh_total",
@@ -4044,14 +3953,9 @@ var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	[]string{"cache", "outcome"},
 )
 
-// ExplorerRefreshGateSaturatedTotal — detached refreshes the shared
-// clickhouse.RefreshGate REFUSED, by class and by which bound tripped
-// (`class` = the per-class fairness bound, `global` = the pool-wide limit,
-// which for a client-keyed class excludes the slot reserved for the rest).
-// A refusal never reaches the SWR counter above (that fires only after a
-// slot is held), and at the API it surfaces as a 503 — so this is the only
-// signal separating an unauthenticated key-churn burst from real capacity
-// pressure. Counts skipped refreshes, not the requests waiting on them.
+// ExplorerRefreshGateSaturatedTotal counts detached refreshes clickhouse.RefreshGate REFUSED, by class and
+// bound (`class` fairness or `global` pool limit). A refusal never reaches the SWR counter and surfaces as a
+// 503, so this alone separates an unauthenticated key-churn burst from real capacity pressure.
 var ExplorerRefreshGateSaturatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_refresh_gate_saturated_total",
@@ -4060,14 +3964,8 @@ var ExplorerRefreshGateSaturatedTotal = prometheus.NewCounterVec(
 	[]string{"class", "bound"},
 )
 
-// ExplorerSWRRefreshDurationSeconds — latency histogram for one
-// detached SWR refresh, labelled like the counter. Buckets span
-// 50 ms → 300 s (the widest per-cache refresh timeout). These
-// refreshes are exactly the reads that would otherwise time out inline at
-// the request deadline — their `ok` p95 per cache is the direct
-// measure of how much headroom the detach bought, and a p95 climbing
-// toward its cache's refresh timeout predicts the stale-age growing
-// user-visible.
+// ExplorerSWRRefreshDurationSeconds is per-refresh latency, labelled like the counter. Buckets 50ms–300s
+// (the widest refresh timeout); `ok` p95 nearing a cache's timeout predicts user-visible stale age.
 var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_explorer_swr_refresh_duration_seconds",
@@ -4103,32 +4001,10 @@ var CHSchemaProbeUnansweredTotal = prometheus.NewCounterVec(
 	[]string{"probe"},
 )
 
-// ProtocolDetailRefreshTotal — per-outcome counter for detached
-// /v1/protocols/{name} detail rebuilds (internal/api/v1's
-// protoDetail cache): both the boot/steady-state prewarm sweep
-// (Server.PrewarmProtocolDetails — every protocol × ?days= window) and
-// request-kicked stale revalidations share the single-flight and are
-// counted here. Labels:
-//
-//   - `ok`       — the view built fully: lake analytics + bespoke both
-//     healthy (analytics.status="ok" on the wire).
-//   - `stale`    — the view built COMPLETE, but its bespoke block came
-//     from the last-good cache past bespokeStaleAfter
-//     (analytics.status="stale" on the wire). Every panel is present;
-//     the bespoke numbers are older than the sweep cadence, which means
-//     that battery has been failing or starved for a while.
-//   - `degraded` — the build completed but at least one analytics
-//     component failed/was skipped (the served view carries
-//     analytics.status="unavailable"; the page still renders its
-//     registry/roster halves).
-//   - `timeout`  — the build outran its detached budget. A previously
-//     built entry is KEPT (old-but-real beats blank); only a
-//     stone-cold key caches the partial view.
-//
-// Operators: a sustained `degraded`/`timeout` rate means protocol pages
-// are serving without their analytics suites — exactly the
-// replay-load failure this worker exists to prevent. Bursts during lake
-// merges / replays self-heal on the next sweep.
+// ProtocolDetailRefreshTotal counts detached /v1/protocols/{name} detail rebuilds (prewarm sweep and stale
+// revalidations): ok; stale (complete, but bespoke from last-good past bespokeStaleAfter); degraded (an
+// analytics component failed, served as analytics.status="unavailable"); timeout (a previous entry is kept).
+// Sustained degraded/timeout means pages serve without analytics; bursts during replays self-heal.
 var ProtocolDetailRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_protocol_detail_refresh_total",
@@ -4137,15 +4013,9 @@ var ProtocolDetailRefreshTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// ProtocolDetailRefreshDurationSeconds — latency histogram for one
-// detached protocol-detail rebuild, labelled like the counter. One
-// rebuild is the roster/verdict joins + three parallel lake reads + the
-// category's bespoke query battery (measured on r1 UNDER
-// replay load: soroswap 90d bespoke ~1.9s, cctp ~0.4s). Buckets span
-// 50 ms → 90 s — the top bucket is the rebuild's hard budget
-// (protocolDetailRefreshTimeout), not headroom. Chart `ok` p95: a creep
-// here is the early warning that a bespoke query lost its rollup (the
-// raw-trades-scan class) before builds start timing out.
+// ProtocolDetailRefreshDurationSeconds is per-rebuild latency, labelled like the counter (measured on r1
+// under replay load: soroswap 90d bespoke ~1.9s, cctp ~0.4s). Buckets 50ms–90s; the top is the hard budget
+// (protocolDetailRefreshTimeout). Creeping `ok` p95 warns a bespoke query lost its rollup.
 var ProtocolDetailRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_protocol_detail_refresh_duration_seconds",
@@ -4182,20 +4052,9 @@ var APISparkline7dRowsTotal = prometheus.NewCounterVec(
 	[]string{"result"},
 )
 
-// APICoverageFloorProbesTotal — every consultation of the coverage-floor
-// memo behind the API's outside-coverage signal, by outcome. `hit` is
-// served from the in-process cache and costs NOTHING; `found` /
-// `absent` / `error` each cost exactly one bounded `min(bucket)` read
-// against prices_1d; `evicted` fires when admitting a key forced an
-// older one out.
-//
-// Why it exists: the signal is reachable ANONYMOUSLY — any caller
-// asking for an empty window triggers the probe — so its cost has to be
-// measurable on r1 before it can be trusted. `rate(…{result!="hit"})`
-// IS the added database load, in reads/s; over `rate(…)` it is the
-// memo's miss rate. A sustained non-zero `evicted` rate means the cache
-// is being key-enumerated rather than warmed by real traffic, which is
-// the shape of a caller minting distinct pairs to force reads.
+// APICoverageFloorProbesTotal counts coverage-floor memo consultations: hit (free), found/absent/error (one
+// bounded prices_1d read each), evicted. The probe is reachable ANONYMOUSLY, so rate(…{result!="hit"}) is the
+// added DB load; a sustained `evicted` rate means callers are enumerating keys to force reads.
 var APICoverageFloorProbesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_coverage_floor_probes_total",
