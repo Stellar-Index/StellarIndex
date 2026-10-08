@@ -1,13 +1,7 @@
-// Package soroswap_router decodes Soroban InvokeContract calls
-// against the Soroswap Router contract. The router emits no events
-// itself (its work is calling down to per-pair contracts that
-// emit `SoroswapPair("swap")`); this package observes the router's
-// invocation directly via dispatcher.ContractCallDecoder so we
-// capture user-level intent (path, amount_in, amount_out_min)
-// distinct from the per-pair leg-level swaps.
-//
-// Sister package: internal/sources/soroswap (pair + factory event
-// decoder). Same upstream protocol; different vantage point.
+// Package soroswap_router decodes InvokeContract calls to the Soroswap Router. The router emits no
+// events itself (per-pair contracts emit `SoroswapPair("swap")`), so this package observes the invocation
+// via dispatcher.ContractCallDecoder to capture user-level intent (path, amounts) distinct from the
+// per-pair legs decoded by internal/sources/soroswap.
 package soroswap_router
 
 import (
@@ -20,64 +14,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SourceName is the registry key for this source. Used in
-// `external.Registry`, `routers.name`, and trade attribution.
+// SourceName is the registry key, used in `external.Registry`, `routers.name` and trade attribution.
 const SourceName = "soroswap-router"
 
-// MainnetRouter is the contract ID of the Soroswap router on
-// Stellar pubnet, as recorded in
-// docs/operations/wasm-audits/soroswap-router.md.
+// MainnetRouter is the pubnet router contract (docs/operations/wasm-audits/soroswap-router.md).
 const MainnetRouter = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
 
-// Function names the router exposes. We track only the swap
-// entry points; admin / read-only methods (set_pair_fee,
-// router_pairs, init, …) don't move tokens and aren't useful
-// for attribution. Per docs/operations/wasm-audits/soroswap-router.md
-// (export-name dump of the router's single, never-upgraded
-// WASM hash), these two entry points are the router's COMPLETE
-// token-moving surface — there is no third swap function this decoder
-// could be missing.
+// Swap entry points tracked. Per the WASM audit's export dump of the router's single, never-upgraded
+// hash, these two are its COMPLETE token-moving surface; admin and read-only methods are not tracked.
 const (
 	FnSwapExactTokensForTokens = "swap_exact_tokens_for_tokens"
 	FnSwapTokensForExactTokens = "swap_tokens_for_exact_tokens"
 )
 
-// CallKind discriminates where in a tx's Soroban auth tree a router
-// call was observed. Most real router traffic arrives as a sub-invocation
-// (the router invoked by an aggregator or another contract), which the
-// dispatcher reaches by walking the auth tree; routing that saw top-level
-// calls only undercounted router activity ~8,729x.
+// CallKind says where in a tx's Soroban auth tree a router call was observed. Most router traffic
+// is a sub-invocation; routing that saw top-level calls only undercounted it ~8,729x.
 const (
-	// CallKindTopLevel is a direct call: the router is the tx op's own
-	// InvokeContract target (CallDepth == 0, CallPath == [router]).
+	// CallKindTopLevel is a direct call (CallDepth == 0, CallPath == [router]).
 	CallKindTopLevel = "top_level"
-	// CallKindSubInvocation is a nested call: some other contract
-	// (an aggregator, a batcher, …) invoked the router as part of its
-	// own authorized call tree (CallDepth > 0).
+	// CallKindSubInvocation is a call nested in another contract's authorized tree (CallDepth > 0).
 	CallKindSubInvocation = "sub_invocation"
 )
 
-// RouterSwap is the canonical wire shape one router invocation
-// projects to. One `RouterSwap` corresponds to ONE call to
-// `swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`,
-// which in turn emits N per-pair `Trade` events (one per hop) from
-// the existing soroswap pair decoder.
-//
-// Path is the hop sequence the user requested (or that the router
-// computed). Length 2 = direct swap (single pair); length 3+ =
-// multi-hop. Each adjacent pair (Path[i], Path[i+1]) maps to one
-// pair contract that emits the underlying swap event.
-//
-// Function discriminates the two router entry points:
-//   - `swap_exact_tokens_for_tokens`: user fixes input, accepts
-//     any output ≥ AmountOutMin.
-//   - `swap_tokens_for_exact_tokens`: user fixes output, accepts
-//     any input ≤ AmountInMax.
-//
-// AmountIn / AmountOut both populate; the "min" / "max" semantics
-// depend on Function. Slippage analysis happens at the aggregator
-// level by comparing requested vs realized amounts (the realized
-// amount comes from the per-pair swap events with matching tx_hash).
+// RouterSwap is one call to `swap_exact_tokens_for_tokens` (input fixed, output >= AmountOutMin) or
+// `swap_tokens_for_exact_tokens` (output fixed, input <= AmountInMax); each hop's pair emits its own
+// Trade. Path has 2 entries for a direct swap, 3+ for multi-hop.
 type RouterSwap struct {
 	Source     string // always SourceName
 	Ledger     uint32
@@ -90,47 +51,23 @@ type RouterSwap struct {
 
 	Function  string // FnSwap*
 	Recipient string // `to` arg — where output lands
-	// Path is the hop sequence of token contract C-strkeys
-	// the router walked. Stored as raw C-strkeys so the
-	// downstream SAC-wrapper resolver (cfg.Supply.SacWrappers)
-	// can map to canonical.Asset on its own schedule. Length
-	// ≥ 2 by router contract precondition.
+	// Path is the walked token C-strkeys, kept raw so the SAC-wrapper resolver
+	// (cfg.Supply.SacWrappers) maps them on its own schedule. Length >= 2.
 	Path []string
-	// AmountIn / AmountOut mix a REALIZED amount with a user-supplied LIMIT,
-	// per Function: swap_exact_tokens_for_tokens fixes AmountIn (realized) and
-	// AmountOut is `amount_out_min` (a lower bound); swap_tokens_for_exact_tokens
-	// fixes AmountOut (realized) and AmountIn is `amount_in_max` (an upper
-	// bound). NEVER treat AmountOut/AmountIn as an execution price — one leg is
-	// a slippage guardrail, not a fill. The realized price comes from the
-	// per-pair swap events (matching tx_hash), which carry both actual amounts;
-	// this struct is the router's INTENT record only.
+	// AmountIn / AmountOut mix a realized amount with a user LIMIT per Function (amount_out_min for
+	// exact-in, amount_in_max for exact-out). NEVER treat them as an execution price; this is the INTENT
+	// record, and realized amounts come from the per-pair swap events.
 	AmountIn   canonical.Amount // realized (exact-in fn) OR amount_in_max upper bound
 	AmountOut  canonical.Amount // realized (exact-out fn) OR amount_out_min lower bound
 	DeadlineTs time.Time        // user-supplied expiry
 
-	// CallPath is the ordered chain of contract C-strkeys from the
-	// top-level invocation down to and including the router itself —
-	// sourced from dispatcher.ContractCallContext.CallPathContracts
-	// (the dispatcher's auth-tree walk). Length 1 for a direct call
-	// (CallPath == [ContractID]); length >1 for a sub-invocation, e.g.
-	// [aggregator, router] when an aggregator wraps the router one
-	// level deep. CallPath[0] is always the outermost invoked
-	// contract; CallPath[len(CallPath)-1] always equals ContractID.
-	//
-	// This is the column that turns "the dispatcher now SEES
-	// sub-invocations" into "we can tell operators WHO wrapped the router
-	// and how deep" — without it every captured call looks identical
-	// regardless of whether it was direct or aggregator-routed.
+	// CallPath is the contract chain from the top-level invocation down to the router
+	// (dispatcher.ContractCallContext.CallPathContracts); its last element is always ContractID. It is
+	// what tells operators who wrapped the router and how deep.
 	CallPath []string
-	// CallDepth is len(CallPath)-1: 0 for a direct call, N for an
-	// N-level-deep sub-invocation. Redundant with CallPath's length
-	// but stored/queried directly so a coverage dashboard doesn't need
-	// array-length arithmetic in SQL.
+	// CallDepth is len(CallPath)-1, stored so dashboards avoid array-length SQL.
 	CallDepth int
-	// CallKind is the discriminator: CallKindTopLevel when CallDepth
-	// == 0, CallKindSubInvocation otherwise. Cheap to filter/aggregate
-	// on directly (e.g. "what fraction of router activity is
-	// aggregator-routed").
+	// CallKind is CallKindTopLevel when CallDepth == 0, else CallKindSubInvocation.
 	CallKind string
 	// AuthOccurrence is dispatcher.ContractCallContext.AuthOccurrence:
 	// 0 for the first identical call in its auth entry, n for the
@@ -138,13 +75,8 @@ type RouterSwap struct {
 	AuthOccurrence int
 }
 
-// Event wraps a RouterSwap so it satisfies consumer.Event for
-// the dispatcher / pipeline path. The persist layer writes one
-// soroswap_router_swaps row per invocation (pipeline/sink.go);
-// same-tx Trade rows are then tagged with trades.routed_via =
-// SourceName by the routed-via sweeper (Phase B —
-// internal/pipeline/routedvia.go live, `stellarindex-ops
-// tag-routed-via` historical).
+// Event wraps a RouterSwap as a consumer.Event: one soroswap_router_swaps row per invocation, after
+// which the routed-via sweeper tags same-tx trades (internal/pipeline/routedvia.go; `tag-routed-via` for history).
 type Event struct {
 	Swap RouterSwap
 }
@@ -155,30 +87,13 @@ func (e Event) EventKind() string { return "soroswap-router.swap" }
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
 
-// CallSig is the per-call discriminator in the soroswap_router_swaps PK. A
-// single InvokeContract op can carry MULTIPLE distinct router swaps — an
-// aggregator splitting a trade, or a batch distributing to several recipients —
-// which all share (ledger, tx_hash, op_index). Without a discriminator the
-// served PK collapses them to one row (verified: 106 genuinely-distinct swaps
-// across pubnet history were being lost). CallSig is a deterministic 128-bit
-// content hash over the swap's economic identity (function + recipient + path +
-// requested amounts), so distinct swaps get distinct PKs (all stored), while
-// auth-tree DUPLICATES of the same call — a multi-entry (co-signed) tx surfaces
-// the identical call at several CallPaths — hash equal and dedup via ON
-// CONFLICT. deadline is excluded: it's a user sentinel (often garbage; see the
-// deadline_ts NULL-clamp) that doesn't distinguish economic intent.
-//
-// CallPath/CallDepth/CallKind are deliberately EXCLUDED from the hash for
-// the same reason as deadline: they describe WHERE in the tx a call was
-// observed, not the economic content of the swap. Including them would
-// break the auth-tree-duplicate dedup this doc comment describes — the
-// same economic call surfacing at two CallPaths in a co-signed tx must
-// still collapse to one row.
-//
-// AuthOccurrence is the one positional input: two identical calls in ONE
-// auth entry are two executions and must not collapse, while a re-listing
-// in another entry keeps occurrence 0. Occurrence 0 adds nothing to the
-// hash, so every call_sig already stored is unchanged.
+// CallSig is the per-call discriminator in the soroswap_router_swaps PK: one op can carry several
+// distinct router swaps sharing (ledger, tx_hash, op_index), and without it 106 were lost across pubnet
+// history. It is a 128-bit hash of the economic identity (function, recipient, path, requested amounts),
+// so auth-tree duplicates of one call (a co-signed tx surfaces it at several CallPaths) dedup via ON
+// CONFLICT. deadline and CallPath/CallDepth/CallKind describe the sentinel or position, not the swap, so
+// they are excluded. AuthOccurrence is the one positional input: two identical calls in one auth entry
+// are two executions; occurrence 0 adds nothing to the hash, so stored call_sigs are unchanged.
 func (s RouterSwap) CallSig() string {
 	parts := make([]string, 0, len(s.Path)+5)
 	parts = append(parts, s.Function, s.Recipient)
