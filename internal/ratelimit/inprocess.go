@@ -11,9 +11,8 @@ import (
 
 // localStore is the in-process fixed-window counter that backs a
 // [Bucket] constructed with a nil Redis client. It is the fail-CLOSED
-// fallback for the C3-13 / C3-22 gap: when Redis is absent at boot the
-// old code omitted the rate-limit middleware entirely and the whole
-// API ran uncapped (an anonymous flood had no limiter at all). With
+// fallback for a boot without Redis, which would otherwise omit the
+// rate-limit middleware and leave the whole API uncapped. With
 // this fallback the anon / key tiers stay enforced — degraded to
 // single-instance accounting, which is correct for the R1
 // single-instance deployment.

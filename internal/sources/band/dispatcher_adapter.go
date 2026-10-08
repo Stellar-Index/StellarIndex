@@ -37,7 +37,7 @@ func (d *Decoder) Name() string { return SourceName }
 // corroboration makes the dispatcher drop any Band call that is not the
 // op's top-level EXECUTED invocation — the shape every genuine relayer
 // update takes (docs/protocols/band.md: "observes the InvokeContract op
-// itself"). W8.4a.
+// itself").
 func (d *Decoder) RequiresExecutionCorroboration() bool { return true }
 
 // Matches implements [dispatcher.ContractCallDecoder]. Cheap

@@ -65,7 +65,7 @@ type User struct {
 // The cookie carries a high-entropy random token, NOT the ID.
 // Only TokenHash (sha256 of that token) is persisted, mirroring
 // api_keys/magic_link_tokens: a read of the sessions table is
-// therefore not directly replayable (W1-auth-passkey-2). ID stays
+// therefore not directly replayable. ID stays
 // the internal primary-key handle used by Touch/Revoke and never
 // leaves the server.
 type Session struct {

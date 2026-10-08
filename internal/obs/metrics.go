@@ -538,7 +538,7 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "error"} {
 		SignupReaperRunsTotal.WithLabelValues(outcome)
 	}
-	// C3-032: the durable login-code lockout's three fail-soft paths.
+	// The durable login-code lockout's three fail-soft paths.
 	// Seeded because all three are silent at the HTTP layer — a
 	// fail-open control with an ABSENT series is indistinguishable from
 	// one that has never failed, which is the exact ambiguity that let
@@ -586,7 +586,7 @@ func seedBoundedLabelSeries() {
 	for _, op := range []string{"mark_hold", "clear"} {
 		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
 	}
-	// C3-067: privileged-mutation surfaces whose audit row can fail to
+	// Privileged-mutation surfaces whose audit row can fail to
 	// land. Bounded and enumerated at the six call sites; seeded so the
 	// alert's increase() reads a real zero instead of "no data" on a
 	// freshly-deployed API — the state that is otherwise
@@ -595,7 +595,7 @@ func seedBoundedLabelSeries() {
 	for _, surface := range []string{
 		"account_override", "key_mint", "key_revoke",
 		"status_notice",
-		// C3-056: the staff customer look-up is a PII READ rather than a
+		// The staff customer look-up is a PII READ rather than a
 		// mutation, but the accountability gap is identical — the row
 		// that records who read whose data is the only trace it happened.
 		"staff_customer_lookup",
@@ -624,7 +624,7 @@ func seedBoundedLabelSeries() {
 	// over the gocognit ceiling, and two literal routes read no worse.
 	MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")
 	MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")
-	// C3-023: producer-side webhook fan-out losses. The event-type set
+	// Producer-side webhook fan-out losses. The event-type set
 	// is platform.WebhookEventType's closed enum (kept as literals here
 	// so internal/obs stays free of an internal/platform import); the
 	// reason set is the three FanoutFailure* constants above. Seeded
@@ -641,7 +641,7 @@ func seedBoundedLabelSeries() {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
 	}
-	// C2-030: FX sanity-band rejections. Bounded (one source × three
+	// FX sanity-band rejections. Bounded (one source × three
 	// reasons) and seeded because the alertable state is a SUSTAINED
 	// non-zero rate — an absent series would make "the band has never
 	// rejected anything" and "the worker never started" identical.
@@ -757,7 +757,7 @@ func seedBoundedLabelSeriesTail() {
 // `increase(...) > 0` query reads a real zero (not "no data") before the
 // first cold read. Without this the both_missing series is absent until
 // the cold path first runs, which is precisely the "looks dead vs is
-// dead" ambiguity W5-mon-3 closed by making this metric always-registered.
+// dead" ambiguity that registering this metric unconditionally removes.
 // Peeled into its own helper for the same gocognit ceiling that split
 // seedBoundedLabelSeries.
 func seedLedgerstreamTierSeries() {
@@ -1387,8 +1387,8 @@ var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
 
 // SourceUncorroboratedCallsTotal — per-source counter of oracle-class
 // ContractCall invocations dropped before Decode because they were only
-// DECLARED in the auth tree, never executed (W8.4a,
-// dispatcher.Stats.UncorroboratedCalls). Non-zero on an oracle source means
+// DECLARED in the auth tree, never executed
+// (dispatcher.Stats.UncorroboratedCalls). Non-zero on an oracle source means
 // either a rejected price-forgery attempt or a routing-shape change; this counter is the
 // only signal for either.
 var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
@@ -1553,8 +1553,8 @@ var AMMSwapReceivedDivergenceTotal = prometheus.NewCounterVec(
 // wsclient.Loop). Reason is one of:
 //
 //   - stall              — venue stopped answering pings, a half-open
-//     socket TCP hasn't noticed yet (wsclient.ErrStreamStalled,
-//     C2-017/C2-031); operationally the most important reason, since
+//     socket TCP hasn't noticed yet (wsclient.ErrStreamStalled);
+//     operationally the most important reason, since
 //     it means the connection LOOKS alive but is dead.
 //   - reset               — TCP RST surfaced as "connection reset by peer"
 //   - broken_pipe         — write after peer hung up
@@ -1999,8 +1999,8 @@ var DiscoveryRecordFailuresTotal = prometheus.NewCounter(
 // are the package-level [LedgerstreamTierReadTotal] /
 // [LedgerstreamColdReadDurationSeconds] below, registered unconditionally
 // at boot, so the ledgerstream-tier `both_missing` page is live in
-// production regardless of this gauge's value (W5-mon-3 fix). This gauge
-// now tracks only the SDK buffer-metric coverage, which stays nil-gated.
+// production regardless of this gauge's value. This gauge
+// tracks only the SDK buffer-metric coverage, which stays nil-gated.
 var MetricsRegistryPresent = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_metrics_registry_present",
@@ -2022,10 +2022,9 @@ var MetricsRegistryPresent = prometheus.NewGaugeVec(
 // ledgerstream.Config.Registry — because the production builder leaves
 // that registry nil (the SDK's non-idempotent registration panics across
 // the archive→live→catch-up Stream calls). Emitted by
-// internal/ledgerstream/tiered.go's TieredDataStore. Before W5-mon-3 this
-// lived as a per-TieredDataStore CounterVec that only registered when a
-// registry was passed, so it was nil in production and the `both_missing`
-// page could never fire.
+// internal/ledgerstream/tiered.go's TieredDataStore. A per-TieredDataStore CounterVec would register only
+// when a registry is passed, so it would be nil in production and the
+// `both_missing` page could never fire.
 var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_tier_read_total",
@@ -2051,7 +2050,7 @@ var LedgerstreamStreamPathTotal = prometheus.NewCounterVec(
 // bucket) reads. `outcome` is `ok` (cold hit) / `miss` (cold not-found,
 // i.e. a both_missing read) / `error` (cold transient failure). The
 // paired-histogram sibling of [LedgerstreamTierReadTotal]; same
-// package-level, always-registered rationale (W5-mon-3).
+// package-level, always-registered rationale.
 var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name: "stellarindex_ledgerstream_cold_read_duration_seconds",
@@ -2186,7 +2185,7 @@ var MonthlyQuotaFailOpenTotal = prometheus.NewCounter(
 // MonthlyQuotaFailClosedTotal — counter of requests REJECTED with 429
 // because the month-to-date counter had been unreadable continuously
 // for longer than the fail-open dwell window, so the middleware flipped
-// from fail-OPEN to fail-CLOSED (W1-flow-register-4).
+// from fail-OPEN to fail-CLOSED.
 //
 // The dwell-guarded companion to [MonthlyQuotaFailOpenTotal]: a
 // transient counter blip increments the fail-OPEN counter (the request
@@ -2787,7 +2786,7 @@ var APIKeyRows = prometheus.NewGauge(
 )
 
 // Operation labels on [LoginCodeLockoutErrorsTotal]. Bounded set of
-// three — one per place the durable login-code lockout (C3-032) can
+// three — one per place the durable login-code lockout can
 // fail without the sign-in itself failing.
 const (
 	// LoginCodeLockoutOpStatusCheck — the pre-match lockout read failed.
@@ -2805,7 +2804,7 @@ const (
 )
 
 // LoginCodeLockoutRows — current row count of `login_code_lockouts`
-// (migration 0122, C3-032), refreshed by each retention sweep.
+// (migration 0122), refreshed by each retention sweep.
 //
 // This table's primary key is ATTACKER-CHOSEN. POST /v1/auth/verify-code
 // is unauthenticated and accepts any well-formed address, so one wrong
@@ -2844,7 +2843,7 @@ var LoginCodeLockoutRowsDeletedTotal = prometheus.NewCounter(
 )
 
 // LoginCodeLockoutErrorsTotal — failures of the durable login-code
-// lockout's own machinery (C3-032), labelled by `op`.
+// lockout's own machinery, labelled by `op`.
 //
 // Every one of these paths is deliberately non-fatal to the request:
 // the lockout is defence-in-depth over the per-token `maxCodeAttempts`

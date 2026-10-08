@@ -101,7 +101,7 @@ var (
 //     manipulated/fat-finger print would be served through with
 //     stale=false. accept alone cannot tell them apart — the serving path
 //     MUST consult [ServedBaselineValidated] on the same trailing slice
-//     and surface an unvalidated accept as low-confidence/stale (W6-fresh-1).
+//     and surface an unvalidated accept as low-confidence/stale.
 //   - accept=false, lkgIdx>=0 → the candidate is grossly off the robust
 //     centre; serve trailing[lkgIdx] instead — the newest trailing value
 //     that IS within the band (last-known-good). Because the robust
@@ -137,8 +137,7 @@ func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgI
 // two acceptances are indistinguishable from (accept, lkgIdx) alone, yet
 // only the first is a validated price; the second is an UNVALIDATED
 // fail-open a single manipulated/fat-finger print would otherwise be
-// served through with stale=false and no volume floor (adversarial-review
-// W6-fresh-1).
+// served through with stale=false and no volume floor.
 //
 // A serving path consults this on the SAME trailing slice it passed to
 // [GuardServedVWAP] and, when it is false, surfaces the accepted value as

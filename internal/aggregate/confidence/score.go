@@ -43,9 +43,8 @@ const (
 // 1,440 a day, so a reading of X days-equivalent PROVES at least X
 // calendar days of observed history; clearing 28.5 therefore implies
 // a pair observed across at least 28.5 of ADR-0019's 30 calendar
-// days. It cannot un-cap a genuinely new asset — the failure mode the
-// W8.8 money-safety panel refused — and it does not un-cap a
-// mature-but-sparse pair either, which W8.8 deliberately keeps capped:
+// days. It cannot un-cap a genuinely new asset, and it does not un-cap
+// a mature-but-sparse pair either, which stays capped deliberately:
 // a pair trading 200 minutes a day reads 4.17 days-equivalent, an
 // order of magnitude below the gate. The headroom the other way is
 // measured, not guessed: r1's densest pairs run ≈99.2% coverage

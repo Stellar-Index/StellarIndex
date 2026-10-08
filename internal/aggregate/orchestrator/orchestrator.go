@@ -104,7 +104,7 @@ type Cache interface {
 	// observed-at stamp (and a composite's meta) in one MULTI/EXEC, so
 	// no reader observes one without the other: a direct value clears a
 	// prior composite's "triangulated" marker in the same transaction
-	// that writes it (W1-flow-price-serve-2). The freeze path extends
+	// that writes it. The freeze path extends
 	// the held value's and its stamp's TTLs through it too.
 	TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
@@ -1514,7 +1514,7 @@ func (o *Orchestrator) decideBucket(
 	// keep the previous bucket's value in cache (don't overwrite)
 	// and emit a freeze marker so flags.frozen=true on the next read.
 	// evaluateAndMaybeFreeze stands down while THIS window already holds
-	// an active freeze (W3-freeze-3), so the Phase 2 lifecycle below stays
+	// an active freeze, so the Phase 2 lifecycle below stays
 	// the sole release authority once frozen.
 	stateKey := pair.String() + ":" + window.String()
 	mb := o.scoreMinutes(trades, pair, stateKey, vwap)
@@ -1693,7 +1693,7 @@ func (o *Orchestrator) vwapTTL(window time.Duration) time.Duration {
 // "triangulated" provenance a prior composite left there, in one
 // MULTI/EXEC: the API serves the Redis fallback only under that marker,
 // so a direct (possibly thin, single-source) value must never be
-// readable beneath it (W1-flow-price-serve-2). Then it streams the
+// readable beneath it. Then it streams the
 // bucket, once.
 func (o *Orchestrator) serveDirect(
 	ctx context.Context,
@@ -1998,7 +1998,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		return anomaly.ActionAllow, true
 	}
 
-	// W3-freeze-3: once THIS window holds an active freeze, Phase 1 stands
+	// Once THIS window holds an active freeze, Phase 1 stands
 	// down and the ADR-0019 lifecycle (driven by the Phase 2 confidence
 	// step in refreshPairWindow) becomes the SOLE release authority.
 	//

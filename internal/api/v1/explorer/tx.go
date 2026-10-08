@@ -96,8 +96,8 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		if h.txReadFailed(w, r, ctx, err, "OperationResultsByTx", hash) {
 			return
 		}
-		// Non-fatal: serve ops without per-op result codes, but DISCLOSE it
-		// (W1.2). result_code is omitempty, so a failed read is otherwise
+		// Non-fatal: serve ops without per-op result codes, but DISCLOSE it:
+		// result_code is omitempty, so a failed read is otherwise
 		// byte-identical to a genuinely absent code.
 		h.Logger.Error("explorer OperationResultsByTx failed", "err", err, "hash", hash)
 		results = nil
@@ -109,8 +109,8 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		if h.txReadFailed(w, r, ctx, err, "EventsByTx", hash) {
 			return
 		}
-		// Non-fatal: serve the tx without its contract events, but DISCLOSE it
-		// (W1.2). events is omitempty, so a failed read is otherwise
+		// Non-fatal: serve the tx without its contract events, but DISCLOSE it:
+		// events is omitempty, so a failed read is otherwise
 		// byte-identical to a tx that emitted none.
 		h.Logger.Error("explorer EventsByTx failed", "err", err, "hash", hash)
 		events = nil
