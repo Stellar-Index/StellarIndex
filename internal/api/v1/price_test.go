@@ -36,7 +36,7 @@ type stubPriceReader struct {
 	err       error
 	errByPair map[string]error
 
-	// calls counts LatestPrice invocations (HO-344 coalescing check).
+	// calls counts LatestPrice invocations (coalescing check).
 	calls int32
 	// startedCh, if non-nil, is signaled on entry to every LatestPrice
 	// call; releaseCh, if non-nil, is read before the call returns —
@@ -1844,7 +1844,7 @@ func TestPrice_StablecoinProxy_GateAllEmpty_FastMiss(t *testing.T) {
 	}
 }
 
-// TestPrice_ConcurrentRequests_Coalesced is the HO-344 regression: a
+// TestPrice_ConcurrentRequests_Coalesced is a regression guard: a
 // burst of concurrent requests for the SAME pair must collapse onto one
 // upstream LatestPrice call, not drive one per request.
 func TestPrice_ConcurrentRequests_Coalesced(t *testing.T) {

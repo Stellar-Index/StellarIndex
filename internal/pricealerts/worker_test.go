@@ -393,7 +393,7 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 	}
 }
 
-// TestSweep_FiredMarkFlaky_NoDuplicateDelivery pins NTF-PA-01: a
+// TestSweep_FiredMarkFlaky_NoDuplicateDelivery: a
 // transient ClaimPriceAlertFire failure must NOT cause the crossing to be
 // re-delivered to the same webhooks on the next tick. With the fired-mark
 // advanced before the fan-out, each subscribed webhook receives the

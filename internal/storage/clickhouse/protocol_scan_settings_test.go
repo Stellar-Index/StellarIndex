@@ -93,7 +93,7 @@ func TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound(t *testing.T) {
 // (protocolEventBreakdownQuery, protocolDailyActivityQuery) already carry.
 // Without it, a contract's roster count includes the still-accumulating
 // current day and wobbles on every re-read as more events land — the same
-// UXP-16 phantom-cliff class those siblings are bounded against.
+// phantom-cliff class those siblings are bounded against.
 func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
 	if !strings.Contains(protocolContractActivityQuery, "close_time < toStartOfDay(now())") {
 		t.Errorf("protocolContractActivityQuery lost its complete-days-only bound — "+

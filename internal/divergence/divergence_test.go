@@ -737,7 +737,7 @@ func TestCoinGecko_StalenessGate(t *testing.T) {
 }
 
 // blockingReference ignores context cancellation entirely — the
-// REL-01 hazard. Real-world shapes: a third-party SDK doing a blocking
+// hang hazard. Real-world shapes: a third-party SDK doing a blocking
 // socket read, a cgo call, an operator-supplied Reference that forgets
 // to select on ctx.Done(). release lets the test unblock it at the end
 // so the goroutine doesn't outlive the run.

@@ -147,7 +147,7 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 	// finishes. Rows this high are the table's max(ledger_seq), which bounds
 	// every whole-lake walker in the process: left behind, they cost each
 	// later claimable-balance / SAC full-history seed walk ~16,000 empty
-	// 250k-ledger windows (CO-22). The quiet + archived rows at quietLedger
+	// 250k-ledger windows. The quiet + archived rows at quietLedger
 	// stay — they are below any realistic tip and bound nothing.
 	purgeLakeFixtureLedgers(t, addr, base, base+churn)
 

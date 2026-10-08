@@ -14,7 +14,7 @@ func hasTicker(entries []*VerifiedCurrency, ticker string) bool {
 	return false
 }
 
-// TestCatalogue_StellarExternalSplit pins the LC-001 predicate: StellarIssued()
+// TestCatalogue_StellarExternalSplit pins the split predicate: StellarIssued()
 // (→ /v1/assets) and External() (→ /v1/external/assets) partition the catalogue
 // by "has a Stellar on-chain issuance". Fiat + reference-only coins are external.
 func TestCatalogue_StellarExternalSplit(t *testing.T) {

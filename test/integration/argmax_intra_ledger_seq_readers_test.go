@@ -116,7 +116,7 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	// full-history seeds step it in 250k-ledger windows). Left in place, a row
 	// here turns each of their walks into ~16,000 empty windows — 53-58 s a
 	// walk unloaded, past the 5-minute test deadline on a loaded machine
-	// (CO-22). purgeLakeFixtureLedgers removes it again, synchronously.
+	// purgeLakeFixtureLedgers removes it again, synchronously.
 	const ledger = uint32(4_000_000_000)
 	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -208,7 +208,7 @@ const lakeFixturePartitionLedgers = uint32(1_000_000)
 // table's max(ledger_seq) is global state no key can scope. Every whole-lake
 // walker steps from min to max in fixed-width windows, so one abandoned
 // 4,000,000,000-ledger row costs each later walk ~16,000 round-trips in the
-// same process (CO-22). The range must be the caller's OWN: ledger ranges are
+// same process. The range must be the caller's OWN: ledger ranges are
 // per-test here, which is what makes a range delete safe.
 //
 // The delete is a mutation scoped IN PARTITION, so it rewrites only the

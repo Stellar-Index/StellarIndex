@@ -41,7 +41,7 @@ func (s *listingOnlyAssets) GetAssetByAssetID(_ context.Context, assetID string)
 	return timescale.AssetRow{AssetID: assetID}, nil // nil changes — production shape
 }
 
-// TestCatalogueStatsUseListingReader pins the AM-10 enrichment to the
+// TestCatalogueStatsUseListingReader pins the catalogue enrichment to the
 // listing reader: catalogue rows must gain the twin's change/volume.
 func TestCatalogueStatsUseListingReader(t *testing.T) {
 	cat, err := currency.LoadEmbedded()

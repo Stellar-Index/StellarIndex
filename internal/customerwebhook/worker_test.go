@@ -533,8 +533,8 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 	}
 }
 
-// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry is the
-// NTF-13 regression.
+// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry is a
+// regression guard.
 //
 // The failure it encodes: GetWebhook fails with a TRANSPORT error — a
 // connection reset, a fail-over, a statement timeout — while the webhook
@@ -580,7 +580,7 @@ func TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry(t *testing.T) {
 }
 
 // TestWorker_MissingWebhook_IsStillTerminal guards the other side of the
-// NTF-13 split: a genuinely deleted webhook must still terminate the
+// transient/missing split: a genuinely deleted webhook must still terminate the
 // delivery, or the row retries until its attempt budget burns out.
 func TestWorker_MissingWebhook_IsStillTerminal(t *testing.T) {
 	store := newFakeStore() // no webhook registered → platform.ErrNotFound
@@ -655,7 +655,7 @@ func TestWorker_UnsealableKey(t *testing.T) {
 }
 
 // TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins
-// NTF-WH-01: when a TERMINAL MarkAttemptFailed store write fails, the
+// that when a TERMINAL MarkAttemptFailed store write fails, the
 // worker must not silently discard the error. The row keeps the claim
 // lease ListPendingDeliveries set, so a dropped terminal mark re-POSTs
 // the same request every lease interval with no attempt-budget advance;

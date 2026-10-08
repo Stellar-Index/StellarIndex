@@ -219,7 +219,7 @@ func TestHandleCreate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_OmittedCooldown_DefaultsNonZero pins NTF-PA-02: a
+// TestHandleCreate_OmittedCooldown_DefaultsNonZero: a
 // create that OMITS cooldown_seconds must not land a 0 cooldown, which the
 // level-triggered evaluator treats as "re-fire every 30s tick while the
 // threshold holds" (a firehose). The omitted case must default to a sane
