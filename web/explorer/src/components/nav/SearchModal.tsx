@@ -491,7 +491,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              {/* ACC-10: the result list re-renders per keystroke but a
+              {/* The result list re-renders per keystroke but a
                 screen reader hears nothing about the count or the
                 no-match state. A visually-hidden polite live region
                 announces the outcome on each query change. */}

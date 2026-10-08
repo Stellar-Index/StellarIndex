@@ -576,9 +576,9 @@ export default async function PairPage({ params }: { params: Params }) {
                     <td className="px-3 py-2 text-right tabular-nums">
                       {t.price ?? '—'}
                     </td>
-                    {/* AM-02: amounts arrive as smallest-unit scaled
+                    {/* Amounts arrive as smallest-unit scaled
                         integers; render in asset units using the per-side
-                        decimals /v1/history now resolves (the token
+                        decimals /v1/history resolves (the token
                         contract's declared decimals() for Soroban tokens),
                         falling back to 7 for native/classic/fiat where the
                         field is omitted. formatBaseUnits divides via BigInt
@@ -727,7 +727,7 @@ function AssetBadge({ canonical }: { canonical: string }) {
     slug = 'native';
   } else if (canonical.startsWith('fiat:')) {
     // A fiat leg's declared canonical page is /external/assets/{slug}
-    // (AM-16), never /assets/{ticker} — route it through assetHrefFor
+    // never /assets/{ticker} — route it through assetHrefFor
     // rather than the generic slug/href path below.
     const ticker = canonical.replace('fiat:', '');
     return (
@@ -770,7 +770,7 @@ function AssetBadge({ canonical }: { canonical: string }) {
   );
 }
 
-// AM-06 (site audit): prices on this page are quote-per-base — a "$"
+// Prices on this page are quote-per-base — a "$"
 // prefix is only honest when the quote is USD or USD-pegged. Other
 // quotes (native, AQUA, EURC…) get the quote code as a suffix.
 function isUsdQuote(quote: string): boolean {

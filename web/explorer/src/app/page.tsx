@@ -127,7 +127,7 @@ export default function HomePage() {
 
       <HomeBlogStrip />
 
-      {/* LC-060: the flagship API product, presented as a product —
+      {/* The flagship API product, presented as a product —
           plans, keys, and where to start. */}
       <section className="rounded-card border-line bg-surface shadow-card border p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
