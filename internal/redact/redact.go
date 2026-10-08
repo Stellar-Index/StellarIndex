@@ -565,10 +565,9 @@ func commonPrefixLen(a, b string) int {
 // package's own words, and the string itself is described only when it
 // PARSES — when there is a structure to render rather than a guess to
 // make about where the password ends. An unparseable connection string
-// yields the kind and nothing else: three rounds of this fix have shown
-// that every heuristic for reading a malformed DSN has a shape that
-// leaves a fragment of the secret behind, and the operator is holding
-// the value in the file they just edited.
+// yields the kind and nothing else: every heuristic for reading a
+// malformed DSN has a shape that leaves a fragment of the secret behind,
+// and the operator is holding the value in the file they just edited.
 func ParseFailure(connString string, err error) string {
 	kind := parseErrorKind(err)
 	u, perr := url.Parse(connString)

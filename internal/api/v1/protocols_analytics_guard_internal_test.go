@@ -473,7 +473,7 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 }
 
 // closeTimeActivityStub models a synthetic, deliberately NON-theoretical
-// ledger close cadence (6s, i.e. 14,400/day — distinct from the old code's
+// ledger close cadence (6s, i.e. 14,400/day — distinct from a
 // hardcoded 17,280/day) so protocolWindowFloor's close_time boundary
 // produces a DIFFERENT, independently-computable answer than a
 // ledger-count arithmetic.

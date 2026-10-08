@@ -14,7 +14,7 @@ import (
 
 // TestInProcess_LimitsWhenRedisNil is the C3-13 / C3-22 regression: a
 // Bucket built with a nil Redis client must STILL enforce the limit
-// (the old behaviour omitted the limiter entirely so the API ran
+// (omitting the limiter entirely would leave the API
 // uncapped). The Nth+1 request inside the window is rejected.
 func TestInProcess_LimitsWhenRedisNil(t *testing.T) {
 	b := ratelimit.New(nil, 3, time.Minute)

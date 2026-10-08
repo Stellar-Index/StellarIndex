@@ -18,8 +18,7 @@ import "testing"
 // to price_usd: null — a published USD valuation for a token the
 // platform decided must publish none (MSP-05).
 //
-// Both are now one predicate with two callers. This table is the
-// contract; the cases marked RED-PRE-FIX fail against the old code.
+// Both are one predicate with two callers. This table is the contract.
 func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 	usd := "0.65"
 	for _, tc := range []struct {

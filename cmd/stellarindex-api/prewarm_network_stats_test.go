@@ -38,8 +38,8 @@ func (r *recordingNetworkStatsReader) seen() int {
 // TestPrewarmLightWarmsNetworkStats is the guard: prewarmLight — the
 // function the prewarm goroutine actually runs on both its startup pass
 // and its steady-state ticker — must warm the /v1/network/stats slot.
-// Before the fix, CachedNetworkStatsReader was never passed to
-// prewarmLight at all, so this reader was never called.
+// CachedNetworkStatsReader must be passed to prewarmLight, or this reader
+// is never called.
 func TestPrewarmLightWarmsNetworkStats(t *testing.T) {
 	rec := &recordingNetworkStatsReader{}
 	cached := v1.NewCachedNetworkStatsReader(rec, 30*time.Second)

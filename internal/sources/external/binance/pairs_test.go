@@ -9,9 +9,8 @@ import (
 )
 
 // TestDefaultPairs_GoldenSet pins the YAML-embedded pair table to the
-// exact map the previous Go-literal DefaultPairs built (pre-45b
-// swap). The expected side is constructed through the same canonical
-// constructors the old code called, so any drift — a symbol added or
+// exact map of canonical pairs. The expected side is constructed through
+// the canonical constructors, so any drift — a symbol added or
 // dropped, a class flipped (fiat EUR vs crypto EUR), a base/quote
 // swap — fails loudly. Editing pairs.yaml intentionally means
 // updating this table in the same commit.

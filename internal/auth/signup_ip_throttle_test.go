@@ -220,8 +220,8 @@ func TestRedisSignupIPThrottle_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 // recovery semantic: a single Redis success must NOT reset the fail-closed dwell
 // clock (a flapping Redis still trips fail-closed after dwellTime); only a
 // sustained healthy streak (dwellTime of unbroken successes) clears it and
-// restores fail-open. The prior behaviour — one success wipes the clock — let a
-// flapping Redis keep this signup throttle fail-open indefinitely.
+// restores fail-open. If one success wiped the clock, a flapping Redis
+// would keep this signup throttle fail-open indefinitely.
 func TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()

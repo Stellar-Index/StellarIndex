@@ -35,7 +35,7 @@ func TestIsBlockedIP(t *testing.T) {
 		{"192.168.1.1", true},
 		{"fc00::1", true},
 
-		// Extra ranges — the ones the webhook guards USED to miss (CS-008).
+		// Extra ranges, beyond the common private/loopback ones.
 		{"100.100.100.200", true}, // Alibaba Cloud metadata (100.64/10 CGNAT)
 		{"192.0.0.192", true},     // Oracle Cloud metadata (192.0.0.0/24)
 		{"198.18.0.1", true},      // RFC 2544 benchmarking

@@ -226,9 +226,8 @@ func TestSep1RetryBackoff(t *testing.T) {
 	})
 
 	t.Run("an over-range limit clamps to the ceiling, not to 100", func(t *testing.T) {
-		// The old code reset ANY out-of-range limit to 100, so an operator
-		// raising LIMIT past the cap silently got a fifth of the previous
-		// budget. It reads as "the job is slow", never as "your setting was
+		// Resetting ANY out-of-range limit to 100 would mean an operator
+		// raising LIMIT past the cap silently got a fifth of the budget. It reads as "the job is slow", never as "your setting was
 		// rejected" — precisely the shape of bug this ladder exists to
 		// remove elsewhere.
 		const extra = 150

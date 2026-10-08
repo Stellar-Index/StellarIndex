@@ -15,9 +15,9 @@ import (
 
 // ixWindowGenesis and ixWindowCadence model a synthetic, deliberately
 // NON-theoretical ledger close cadence (6s, i.e. 14,400/day — distinct from
-// the old code's hardcoded 17,280/day) so windowFloorLedger's close_time
-// boundary produces a DIFFERENT, independently-computable answer than the
-// old ledger-count arithmetic (CA2-A03-correct-0). ixWindowCloseTime is the
+// a hardcoded 17,280/day) so windowFloorLedger's close_time
+// boundary produces a DIFFERENT, independently-computable answer than
+// ledger-count arithmetic (CA2-A03-correct-0). ixWindowCloseTime is the
 // single source of truth both the fake reader and the test's expectation
 // are built from.
 var (

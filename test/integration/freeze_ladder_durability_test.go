@@ -41,7 +41,7 @@ import (
 //   - LoadLadder honours `recovered_at IS NULL`, which is what makes
 //     `stellarindex-ops freeze-unfreeze`'s override still stick;
 //   - a pre-0119 row (NULL hold_until) reports "no durable ladder" rather
-//     than a zero one, so it degrades to the old behaviour instead of
+//     than a zero one, so it degrades to marker-only behaviour instead of
 //     restoring a freeze that reads as "fired just now".
 func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
