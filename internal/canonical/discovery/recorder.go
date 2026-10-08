@@ -6,49 +6,24 @@ import (
 	"sync"
 )
 
-// Recorder persists [Hit] records. The dispatcher calls Record once
-// per Hit emitted by [Sniff]. Implementations are responsible for
-// idempotency on ContractID — a single discovered contract should
-// produce one row, not one row per event.
-//
-// Production wiring: a Postgres adapter against the
-// `discovered_assets` table. In-memory [InMemoryRecorder] satisfies
-// the same contract for tests + the dev binary.
-//
-// Errors are surfaced so the caller can decide whether to log +
-// continue or stop the dispatcher. For the discovery flow specifically,
-// the standard policy is "log + continue" — a recorder outage
-// shouldn't block event processing; the discovered contract will
-// re-appear in subsequent events and the next event will retry the
-// write.
+// Recorder persists [Hit] records, idempotent on ContractID: one row per
+// contract, not per event. Callers log and continue on error; the contract
+// reappears on a later event and the write is retried.
 type Recorder interface {
-	// Record persists or updates the hit. Returns nil on success.
-	// Should be idempotent on Hit.ContractID — repeated Record
-	// calls for the same contract update event_count + last-seen,
-	// they don't produce duplicate rows.
+	// Record upserts the hit, updating event_count and last-seen.
 	Record(ctx context.Context, hit Hit) error
 
-	// IsKnown reports whether a contract has already been recorded.
-	// Optional fast-path — callers MAY use this to short-circuit
-	// discovery for hot contracts without a write round-trip.
-	// A returning impl that doesn't track membership efficiently
-	// can return (false, nil) and let Record handle the dedupe.
+	// IsKnown reports whether a contract is already recorded; an impl that cannot
+	// answer cheaply may return (false, nil) and let Record dedupe.
 	IsKnown(ctx context.Context, contractID string) (bool, error)
 }
 
-// ErrAlreadyKnown is returned by [Recorder.Record] implementations
-// that prefer to surface the known-contract case as an error rather
-// than a silent no-op. Production Postgres uses INSERT ... ON
-// CONFLICT and never returns this; the in-memory variant uses it for
-// ergonomic test assertions.
+// ErrAlreadyKnown lets a Recorder surface a known contract as an error; the
+// Postgres recorder upserts and never returns it.
 var ErrAlreadyKnown = errors.New("discovery: contract already recorded")
 
-// InMemoryRecorder is a [Recorder] backed by a sync.Map. Used by
-// tests and by the dev binary's "scratch" mode. NOT suitable for
-// production — restarts lose all discovered contracts and there's
-// no cross-process synchronisation.
-//
-// Safe for concurrent calls.
+// InMemoryRecorder is a concurrency-safe [Recorder] for tests and the dev
+// binary; it loses everything on restart.
 type InMemoryRecorder struct {
 	mu    sync.Mutex
 	hits  map[string]Hit

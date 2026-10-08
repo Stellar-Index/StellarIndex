@@ -5,20 +5,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Kind classifies which sniffer produced a [Hit]:
-//
-//   - [KindSEP41] — the original topic[0] sniffer, one of the four
-//     SEP-41 event symbols (transfer/mint/burn/clawback). Populates
-//     Hit.EventType (legacy field, unchanged) as well as Hit.Symbol.
-//   - [KindOracleEvent] — the broader oracle-suggestive topic[0]
-//     sniffer added per docs/architecture/oracle-manipulation-defense.md
-//     §"Event-shaped discovery". Only Hit.Symbol is populated.
-//   - [KindOracleCall] — the ContractCallContext-path sniffer for
-//     event-less oracles (the Band pattern), added per the same
-//     note's §"Event-less discovery". Only Hit.Symbol is populated.
-//
-// Stable string values appear in discovered_assets.discovery_kind —
-// renaming a value is a wire break.
+// Kind names the sniffer that produced a [Hit]. Its values are stored in
+// discovered_assets.discovery_kind, so renaming one is a wire break.
 type Kind string
 
 const (
@@ -41,12 +29,8 @@ const (
 	// position-3 was added post-P23 (CAP-67) for unified events.
 	EventTransfer SEP41EventType = "transfer"
 
-	// EventMint fires on `mint` events. Topic shape is shape-dependent:
-	// legacy SAC ("mint", admin, to); CAP-67/spec ("mint", to,
-	// sep0011_asset?) — the dominant mainnet form (the admin was dropped
-	// post-P23). The sniffer only reads topic[0], so the position shift is
-	// immaterial here; the supply observer's [sep41_supply.decodeCounterparty]
-	// handles it.
+	// EventMint fires on `mint`. The topic shape varies (legacy SAC carries an
+	// admin), which only topic[0] readers can ignore.
 	EventMint SEP41EventType = "mint"
 
 	// EventBurn fires on `burn` events. Topic shape:
@@ -54,79 +38,36 @@ const (
 	// — burn is voluntary, clawback is admin-driven.
 	EventBurn SEP41EventType = "burn"
 
-	// EventClawback fires on `clawback` events. Topic shape is
-	// shape-dependent: legacy SAC ("clawback", admin, from); CAP-67/spec
-	// ("clawback", from, sep0011_asset?) — the dominant mainnet form.
-	// Compliance-significant: a token with frequent clawbacks reads
-	// differently from one with frequent voluntary burns.
+	// EventClawback fires on `clawback`; frequent clawbacks are a compliance
+	// signal distinct from voluntary burns.
 	EventClawback SEP41EventType = "clawback"
 )
 
-// Hit is the structured result of a successful [Sniff],
-// [SniffOracleEvent], or [SniffOracleCall]. ContractID is the
-// C-strkey of the emitting/invoked contract; Kind identifies which
-// sniffer produced the hit; Ledger + ObservedAt locate the
-// observation in time.
-//
-// The struct is small and copyable; the [Recorder] is responsible
-// for de-duplicating on ContractID before writing.
+// Hit is one sighting from a sniffer: the C-strkey of the contract, which
+// sniffer, and when.
 type Hit struct {
 	ContractID string
-	// Kind identifies which sniffer produced this Hit. Always set
-	// (Sniff sets [KindSEP41] explicitly) — never left as the zero
-	// value by a sniffer function; hand-built Hits in tests/legacy
-	// callers that leave it empty are treated as KindSEP41 by
-	// [Recorder] implementations for backward compatibility.
+	// Kind is always set by a sniffer; Recorders treat an empty Kind as
+	// KindSEP41.
 	Kind Kind
-	// EventType identifies which SEP-41 topic fired. Populated ONLY
-	// for Kind == KindSEP41 (or the legacy empty-Kind case) — kept
-	// as its own typed field, unchanged, so existing SEP-41
-	// consumers (discovered_assets.first_seen_event, metric labels)
-	// are untouched by the broader discovery this file adds.
+	// EventType is set only for KindSEP41, the field existing consumers
+	// (first_seen_event, metric labels) read.
 	EventType SEP41EventType
-	// Symbol is the raw matched topic[0] symbol (KindOracleEvent) or
-	// InvokeContract function name (KindOracleCall) that tripped the
-	// sniffer. Also populated for KindSEP41 hits (mirroring
-	// string(EventType)) so a single field lets callers read "what
-	// got sighted" without branching on Kind.
+	// Symbol is the matched topic[0] symbol or function name, set for
+	// every Kind.
 	Symbol string
 	Ledger uint32
-	// ObservedAtRFC3339 is event.LedgerClosedAt (or the equivalent
-	// ContractCallContext.ClosedAt, formatted) verbatim — the caller
-	// parses to time.Time when needed (typically at recorder
-	// boundary). Kept as string so the sniffer is allocation-light
-	// in the hot dispatch path.
+	// ObservedAtRFC3339 is the ledger close time, kept as a string to stay
+	// allocation-light on the hot path.
 	ObservedAtRFC3339 string
-	// Count is how many real observations this Record call represents.
-	// Zero means 1, the common single-observation case (every sniffer
-	// and hand-built Hit leaves it unset). [AsyncSink] sets it
-	// explicitly when flushing an accumulated in-process-dedup delta,
-	// so a Recorder can increment event_count by the true observed
-	// volume instead of by 1 per call.
+	// Count is the observations this Record represents; zero means 1.
+	// [AsyncSink] sets it when flushing a dedup delta.
 	Count int64
 }
 
-// Sniff inspects an event and reports whether it matches a SEP-41
-// topic shape. Returns (hit, true) when the event's topic[0] decodes
-// to one of the four SEP-41 event symbols; (zero, false) otherwise.
-//
-// Sniff is pure: no I/O, no allocations beyond the SCVal parse.
-// Designed to run in the dispatcher's hot path on every contract
-// event without measurable overhead.
-//
-// Returns (zero, false) when:
-//   - The event is not a contract event (Type != "contract").
-//   - Topic is empty or topic[0] doesn't decode to a Symbol.
-//   - The symbol value isn't one of the four SEP-41 events.
-//   - ContractID is empty (defensive — should never happen for
-//     contract events but the guard prevents writing junk to the
-//     Recorder).
-//
-// Specifically does NOT validate topic arity beyond topic[0] —
-// SEP-41 went through several revisions across Soroban genesis, and
-// older contracts may emit transfer events with three topics rather
-// than four. Discovery records the contract-id sighting; downstream
-// decoders reject malformed bodies on their own schedule.
+// Sniff reports whether a contract event's topic[0] is one of the four SEP-41
+// symbols. It is pure and does not check arity beyond topic[0]: older SEP-41
+// contracts emit three-topic transfers, and decoders reject bad bodies.
 func Sniff(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -148,11 +89,8 @@ func Sniff(ev events.Event) (Hit, bool) {
 	}, true
 }
 
-// parseTopic0Symbol extracts and decodes topic[0] as an SCVal Symbol,
-// applying the same precondition checks [Sniff] and [SniffOracleEvent]
-// both need: contract event, non-empty ContractID, non-empty Topic,
-// topic[0] decodes to a Symbol. Shared so the two event-path sniffers
-// don't duplicate (and can't drift on) the defensive-guard list.
+// parseTopic0Symbol decodes a contract event's topic[0] as a Symbol, with the
+// guards [Sniff] and [SniffOracleEvent] share.
 func parseTopic0Symbol(ev events.Event) (string, bool) {
 	if ev.Type != "contract" {
 		return "", false
@@ -194,17 +132,9 @@ func classifySymbol(sym string) (SEP41EventType, bool) {
 	}
 }
 
-// oracleEventSymbols is the oracle-suggestive topic[0] symbol set
-// from the ClickHouse lake census
-// (docs/architecture/oracle-manipulation-defense.md §"Lake census" — the exact
-// `WHERE topic_0_sym IN (...)` list the census ran against r1's
-// `stellar.contract_events` table). Sighting one of these on a
-// contract we don't already track flags it for operator review; it
-// is NOT an attribution signal — the census itself found several
-// false positives against this exact list (a beef-traceability
-// anchor on `update`, dead RedStone test deployments on `REDSTONE`,
-// tutorial contracts on `price_update`), which is precisely why
-// discovery only records a sighting and never decodes/attributes.
+// oracleEventSymbols is the topic[0] list from the lake census in
+// docs/architecture/oracle-manipulation-defense.md. The census found false
+// positives on it, which is why a match is a sighting, never an attribution.
 var oracleEventSymbols = map[string]struct{}{
 	"price":             {},
 	"prices":            {},
@@ -237,21 +167,9 @@ var oracleEventSymbols = map[string]struct{}{
 	"assets":            {},
 }
 
-// SniffOracleEvent inspects an event and reports whether its topic[0]
-// matches the oracle-suggestive symbol set in [oracleEventSymbols].
-// This is the event-path half of the discovery broadening described
-// in docs/architecture/oracle-manipulation-defense.md §"Event-shaped discovery": a
-// NEW oracle deploying tomorrow with an event shape resembling
-// SEP-40/RedStone/Band gets sighted here even though its contract id
-// is unknown to every real decoder.
-//
-// Pure, allocation-light, and disjoint from [Sniff]'s four SEP-41
-// symbols (no overlap between the two sets) — an event can trip at
-// most one of the two event-path sniffers.
-//
-// Returns (zero, false) under the same preconditions as [Sniff]
-// (non-contract event, empty ContractID/Topic, unparseable topic[0])
-// PLUS when the symbol isn't in the oracle-suggestive set.
+// SniffOracleEvent reports whether an event's topic[0] is in
+// [oracleEventSymbols], so a new oracle is sighted before any decoder knows it.
+// The set is disjoint from [Sniff]'s.
 func SniffOracleEvent(ev events.Event) (Hit, bool) {
 	sym, ok := parseTopic0Symbol(ev)
 	if !ok {
@@ -269,16 +187,8 @@ func SniffOracleEvent(ev events.Event) (Hit, bool) {
 	}, true
 }
 
-// oracleCallFunctions is the oracle-suggestive InvokeContract
-// function-name allow-list from
-// docs/architecture/oracle-manipulation-defense.md §"Event-less discovery" — the
-// curated candidate list the investigation named for the
-// ContractCallContext path: `lastprice`, `price`, `prices`, `relay`,
-// `force_relay`, `write_prices`, `x_last_price`. Every entry here is
-// already a member of [oracleEventSymbols] (SEP-40 read methods and
-// Band/RedStone write functions double as plausible event topics),
-// so the two watch-lists never diverge on meaning, only on which
-// dispatcher seam they're checked against.
+// oracleCallFunctions is the InvokeContract allow-list from the same note's
+// "Event-less discovery"; every entry is also in [oracleEventSymbols].
 var oracleCallFunctions = map[string]struct{}{
 	"lastprice":    {},
 	"price":        {},
@@ -289,10 +199,8 @@ var oracleCallFunctions = map[string]struct{}{
 	"x_last_price": {},
 }
 
-// OracleCallInput is the minimal call-shape [SniffOracleCall] needs.
-// Defined locally (rather than accepting a dispatcher.ContractCallContext
-// value) to avoid an import cycle — internal/dispatcher already
-// imports this package for the event-path hook.
+// OracleCallInput is the call shape [SniffOracleCall] needs, declared here
+// because internal/dispatcher imports this package.
 type OracleCallInput struct {
 	ContractID        string
 	FunctionName      string
@@ -300,20 +208,9 @@ type OracleCallInput struct {
 	ObservedAtRFC3339 string
 }
 
-// SniffOracleCall inspects one Soroban InvokeContract call (function
-// name only — args are NOT inspected) and reports whether the
-// invoked function name matches [oracleCallFunctions]. This is the
-// event-less-oracle half of the discovery broadening
-// (docs/architecture/oracle-manipulation-defense.md §"Event-less discovery"): the
-// seam Band uses (relay/force_relay update storage without
-// publishing an event), generalized so a FUTURE event-less oracle
-// under a different function name still gets sighted instead of
-// being structurally invisible to the topic[0] sniffers.
-//
-// Cheap by construction: a single map lookup on functionName, no
-// SCVal parsing, no argument decoding — safe to call on every
-// InvokeContract call the dispatcher observes without measurable
-// per-op overhead when nothing matches.
+// SniffOracleCall reports whether an InvokeContract function name is in
+// [oracleCallFunctions], catching oracles that update storage without an event
+// (Band's relay). One map lookup; args are not inspected.
 func SniffOracleCall(in OracleCallInput) (Hit, bool) {
 	if in.ContractID == "" || in.FunctionName == "" {
 		return Hit{}, false

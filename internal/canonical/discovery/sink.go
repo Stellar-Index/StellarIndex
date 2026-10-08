@@ -9,39 +9,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AsyncSink is a non-blocking [DiscoverySink]-compatible adapter
-// over a [Recorder]. The dispatcher's hot path Push call enqueues
-// to a buffered channel; a worker goroutine drains the channel and
-// calls Recorder.Record at production-grade rates without backing
-// up dispatch.
-//
-// In-process dedup: the Recorder upserts on (contract_id, event_type),
-// so re-pushing the same key doesn't need a channel-buffer slot of its
-// own. AsyncSink keeps a process-local set of (ContractID, EventType)
-// keys it has already enqueued and skips sending repeats to the
-// channel — but it does NOT discard them: each skipped Push increments
-// an in-memory delta (count + latest ledger/observed-at) for that key,
-// which [AsyncSink.Stop] flushes as a single Record call carrying
-// [Hit.Count] set to the true accumulated observation count. Without
-// this, event_count and last_seen_ledger would advance only once per
-// (key, process lifetime) instead of tracking real event volume. The
-// skip counter is exposed via [AsyncSink.SkippedCount] alongside
-// [AsyncSink.DroppedCount] so operators can see how much of the
-// pre-dedup volume was duplicates.
-// A process restart resets the set; the first Push for any key after
-// restart still records (the recorder's upsert handles the
-// already-known case).
-//
-// Buffer-full policy: when the channel is full, Push silently
-// drops the new Hit. Discovery is best-effort — losing one record
-// for a contract that already produced 10,000 events is acceptable;
-// stalling the dispatch loop is not. The drop counter is exposed
-// via [AsyncSink.DroppedCount] for operator monitoring.
-//
-// Construct via [NewAsyncSink] + Start; Stop drains the buffer and
-// shuts down the worker. Safe for concurrent Push from multiple
-// goroutines (the dispatcher itself is single-threaded but the
-// indexer may run multiple dispatchers in the future).
+// AsyncSink is a non-blocking [Recorder] adapter for the dispatcher hot path:
+// Push enqueues, one worker records. A repeat (ContractID, Kind, EventType,
+// Symbol) key is not re-enqueued but folded into a pending delta that Stop
+// flushes with the true [Hit.Count], so event_count tracks real volume. A full
+// buffer drops the hit (counted in DroppedCount): stalling dispatch is worse
+// than losing one sighting of a busy contract.
 type AsyncSink struct {
 	rec          Recorder
 	logger       *slog.Logger
@@ -71,40 +44,24 @@ type AsyncSink struct {
 	pending map[string]*pendingDelta
 }
 
-// pendingDelta is the accumulated-but-not-yet-recorded observation
-// count for one dedup key, plus the most recent hit that produced it
-// (so the eventual flush carries the true last-seen ledger/timestamp,
-// not the first one).
+// pendingDelta is one dedup key's unrecorded observation count and its latest
+// hit, so the flush carries the true last-seen ledger.
 type pendingDelta struct {
 	hit   Hit
 	count int64
 }
 
-// seenKey is the in-process dedup key for a Hit. Single definition
-// because THREE call sites must agree on it byte-for-byte — Push's
-// mark, Push's buffer-full rollback, and run's record-failure rollback
-// — and a drifted key silently disables the rollback rather than
-// failing loudly.
-//
-// The key combines Kind + both symbol-carrying fields rather than just
-// EventType: KindSEP41 hits (from [Sniff]) populate EventType;
-// KindOracleEvent/KindOracleCall hits (from
-// [SniffOracleEvent]/[SniffOracleCall]) populate only Symbol.
-// Concatenating both keeps the legacy SEP-41 dedup key byte-for-byte
-// unchanged (Kind/Symbol are empty on any hand-built Hit that only
-// sets EventType, e.g. existing tests) while still giving every
-// (contract, kind, symbol) tuple its own key for the two new lanes.
+// seenKey is the dedup key. Push's mark and both rollbacks must agree on it
+// byte-for-byte, or the rollback silently stops working. Kind and Symbol are
+// empty on a plain SEP-41 hit, so its key equals the EventType-only one.
 func seenKey(hit Hit) string {
 	return hit.ContractID + "\x00" + string(hit.Kind) + "\x00" + string(hit.EventType) + "\x00" + hit.Symbol
 }
 
 // AsyncSinkOptions configures a [NewAsyncSink].
 type AsyncSinkOptions struct {
-	// BufferSize is the channel depth. Must be > 0. Production
-	// default is 1024 — covers a few minutes of SEP-41 event volume
-	// at network peak. With in-process dedup the steady-state
-	// occupancy is much lower; this is mostly a tail-end safety net
-	// for cold-start / restart bursts.
+	// BufferSize is the channel depth; must be > 0. Production uses 1024, a
+	// safety net for restart bursts given dedup.
 	BufferSize int
 
 	// RecordTimeout caps how long a single Recorder.Record call may
@@ -112,10 +69,8 @@ type AsyncSinkOptions struct {
 	// fails the record (logged) rather than holding up the queue.
 	RecordTimeout time.Duration
 
-	// DrainTimeout bounds the whole shutdown drain in [AsyncSink.Stop].
-	// Default 10 seconds. Hits still buffered when it expires are
-	// abandoned and counted in DroppedCount; discovery is best-effort
-	// and a contract re-appears on its next event.
+	// DrainTimeout bounds the whole drain in [AsyncSink.Stop] (default 10s);
+	// hits still buffered then are abandoned and counted as dropped.
 	DrainTimeout time.Duration
 
 	// Logger is used for warn/error lines from the worker. nil
@@ -163,26 +118,11 @@ func (s *AsyncSink) Start() {
 	s.startOnce.Do(func() { go s.run() })
 }
 
-// Push enqueues a Hit. Non-blocking. Behaviour:
-//   - After [AsyncSink.Stop] → dropped, DroppedCount incremented.
-//   - Already-enqueued (ContractID, Kind, EventType, Symbol) →
-//     SkippedCount incremented and the hit is folded into that key's
-//     pending delta (see [AsyncSink.pending]) instead of being sent.
-//   - Channel full → dropped, DroppedCount incremented.
-//   - Otherwise → marked seen and enqueued.
-//
-// Implements [dispatcher.DiscoverySink] (structurally; circular
-// import means dispatcher declares its own interface and this method
-// satisfies it).
-//
-// The whole body runs under s.mu, including the non-blocking send.
-// That is what makes Push safe against a concurrent Stop: Stop takes
-// the same mutex to set `stopped` BEFORE closing the channel, so a
-// Push either completes its send first or observes `stopped` and
-// never sends. Without it, a Push racing shutdown could send on a
-// closed channel and panic the dispatcher (AGT-lifecycle-race). Held
-// across the send safely because the send is non-blocking and the
-// drain worker never sends.
+// Push enqueues a Hit without blocking: dropped after Stop or when the buffer
+// is full, folded into the key's pending delta if already enqueued. It
+// satisfies dispatcher.DiscoverySink structurally (import cycle). The whole
+// body, send included, holds s.mu so a concurrent Stop cannot close the
+// channel under it; safe because the send is non-blocking.
 func (s *AsyncSink) Push(hit Hit) {
 	key := seenKey(hit)
 
@@ -220,11 +160,9 @@ func (s *AsyncSink) Push(hit Hit) {
 	}
 }
 
-// Stop closes the input channel and waits for the worker to finish
-// draining, for at most DrainTimeout: the indexer's systemd stop
-// timeout is sized from that bound (pipeline.IndexerStopTimeout), so an
-// unbounded drain would be SIGKILLed along with every sink draining
-// after it. Idempotent.
+// Stop closes the input and waits at most DrainTimeout for the drain; the
+// indexer's systemd stop timeout (pipeline.IndexerStopTimeout) is sized from
+// that bound. Idempotent.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		timer := time.AfterFunc(s.drainTimeout, s.drainCancel)
@@ -240,32 +178,24 @@ func (s *AsyncSink) Stop() {
 	})
 }
 
-// DroppedCount returns the number of Hits dropped because the
-// channel was full. Operators alert when this counter rises
-// monotonically — it indicates the worker can't keep up with peak
-// event rate (typically a Postgres outage; in-process dedup means
-// healthy steady-state should never drop).
+// DroppedCount returns hits dropped because the buffer was full or the sink
+// stopped; a rising value usually means a Postgres outage.
 func (s *AsyncSink) DroppedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.dropped
 }
 
-// SkippedCount returns the number of Hits skipped because their
-// (ContractID, EventType) had already been enqueued in this process.
-// A high ratio of Skipped to (Skipped + Recorded) is expected and
-// healthy — most events for already-discovered contracts are noise.
+// SkippedCount returns hits folded into an already-enqueued key; a high
+// ratio is normal.
 func (s *AsyncSink) SkippedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.skipped
 }
 
-// FailedCount returns the number of Hits whose Recorder.Record write
-// failed (recorder outage/timeout). Bridged to
-// obs.DiscoveryRecordFailuresTotal for alerting — a sustained non-zero
-// rate means discovery coverage is degrading under recorder pressure,
-// which a log line alone would not surface.
+// FailedCount returns failed Recorder writes, bridged to
+// obs.DiscoveryRecordFailuresTotal so a recorder outage alerts.
 func (s *AsyncSink) FailedCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,22 +229,13 @@ func (s *AsyncSink) run() {
 		}
 		ctx, cancel := context.WithTimeout(s.drainCtx, s.timeout)
 		if err := s.rec.Record(ctx, hit); err != nil {
-			// Count the write failure: a log-only path would let a recorder
-			// outage silently stop discovered_assets from growing. Exposed via
-			// FailedCount() and bridged to obs.DiscoveryRecordFailuresTotal
-			// by the indexer, mirroring dropped/skipped. Record's contract
-			// is best-effort (the contract re-appears on a later event), so
-			// this is a failure-RATE signal, not permanent-loss.
+			// Counted, not just logged, so a recorder outage that stops
+			// discovered_assets growing is visible.
 			s.mu.Lock()
 			s.failed++
-			// Roll back the seen-mark, exactly as the buffer-full path
-			// does. Record IS best-effort — but only because "the
-			// contract re-appears on a later event", and the seen-set
-			// suppresses every later Push for this key. So without this
-			// rollback a contract first sighted DURING a recorder outage
-			// would be dropped from discovery permanently, for the
-			// lifetime of the process, with nothing but a failure
-			// counter to show for it.
+			// Roll back the seen-mark: the seen-set suppresses every later
+			// Push, so a contract first sighted during an outage would
+			// otherwise never be recorded.
 			delete(s.seen, seenKey(hit))
 			s.mu.Unlock()
 			s.logger.Warn("discovery: record failed",
@@ -327,14 +248,8 @@ func (s *AsyncSink) run() {
 	s.flushPending()
 }
 
-// flushPending records the accumulated-but-not-yet-written observation
-// deltas for every key whose repeat Pushes were skipped by in-process
-// dedup (see [AsyncSink.pending]). Called once, after the input channel
-// has fully drained (Stop closes it), so it runs at most once per
-// Stop. Best-effort: a failed flush is logged and counted in
-// FailedCount, not retried — the process is shutting down, and the
-// same key's delta will start accumulating again from the next Push
-// after restart.
+// flushPending records every pending delta once, after the drain. Failures are
+// logged and counted, not retried; the process is shutting down.
 func (s *AsyncSink) flushPending() {
 	s.mu.Lock()
 	batch := s.pending
