@@ -151,8 +151,8 @@ func (plainSep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.I
 // sourced listing rows (asset_class=fiat|stablecoin|crypto,
 // /v1/external/assets, and the catalogue phase of asset_class=all) must
 // gain the same SEP-1 logo overlay the classic_assets-backed listing rows
-// already got in b8d817f0. Before this change projectCatalogueRows never
-// touched Image at all, regardless of what the SEP-1 cache held.
+// already get. projectCatalogueRows must set Image from the SEP-1 cache
+// rather than leave it untouched.
 func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
 		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},

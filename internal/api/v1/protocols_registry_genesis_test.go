@@ -13,8 +13,8 @@ import (
 // genesis ledger across the three places it is restated: the source
 // package's exported constant, protocols_registry.go's ProtocolMeta,
 // and per_source_gaps.go's DefaultGapDetectorTargets floor for that
-// source. Without this, correcting one copy (as happened historically
-// with cctp's stale 62_403_000 ingestion-config floor) leaves the
+// source. Without this, correcting one copy (e.g. cctp's
+// stale 62_403_000 ingestion-config floor) leaves the
 // others silently wrong and nothing fails.
 func TestCCTPRozoGenesisLocksStepAcrossRegistries(t *testing.T) {
 	cases := []struct {

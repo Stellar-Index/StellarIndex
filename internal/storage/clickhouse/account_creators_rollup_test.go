@@ -75,7 +75,7 @@ func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 // aggregates, each by the source predicate that defines it, together
 // with the ledger range that source can ACTUALLY hold a creation in.
 //
-// That last column is the fact the board originally got wrong and
+// That last column is the fact easiest to get wrong and
 // is not a restatement of the SQL. stellar.account_movements' create_account
 // rows have exactly one writer, `stellarindex-ops classic-movements-backfill`,
 // whose -to is hard-clamped below P23BoundaryLedger because ADR-0047 D2

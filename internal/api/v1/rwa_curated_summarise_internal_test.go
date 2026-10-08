@@ -12,8 +12,8 @@ import (
 //
 // A curated snapshot that answered (snap.available) says nothing about
 // whether the SEPARATE contract-catalogue read behind the per-asset rows
-// also answered. Before this fix a failed catalogue read (rows == nil,
-// degraded == true) fell through the switch's default branch exactly
+// also answered. A failed catalogue read (rows == nil,
+// degraded == true) must not fall through the switch's default branch
 // like a curator with a genuinely empty recognised set: "served" with
 // Assets: 0. Those two states are not the same thing and must not
 // render identically (RWC-524).

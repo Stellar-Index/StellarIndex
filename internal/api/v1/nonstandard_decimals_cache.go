@@ -28,8 +28,7 @@ type NonstandardDecimalsReader interface {
 // /v1/ohlc, /v1/price/at and the chart surfaces can NORMALIZE a pair
 // touching such an asset without a per-request DB round trip.
 //
-// The "real normalization" this originally promised has since shipped:
-// these surfaces no longer decline, they correct, applying
+// These surfaces correct rather than decline, applying
 // aggregate.AdjustPrice's exact 10^(baseDecimals-quoteDecimals) factor
 // (see Server.normalizeRawRatioString). 60s keeps the cache tight so an
 // operator who corrects a row sees serving follow within one interval
