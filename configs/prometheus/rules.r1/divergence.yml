@@ -48,8 +48,8 @@ groups:
       - alert: stellarindex_oracle_stream_rows_unparsed
         # Deliberately NOT pre-seeded, unlike the divergence outcome
         # counters. Seeding matters when a rule COMPARES two children of
-        # one metric (an absent `ok` child makes the comparison empty —
-        # wave-D ALERT-06) or DIVIDES by one (wave-D ALERT-04). This is a
+        # one metric (an absent `ok` child makes the comparison empty)
+        # or DIVIDES by one. This is a
         # bare threshold on a single series: it goes from absent to
         # present exactly when the bad thing happens. Seeding it would
         # add a permanent zero series for every oracle source for no gain.

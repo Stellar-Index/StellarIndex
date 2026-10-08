@@ -1006,8 +1006,7 @@ jobs:
         # v0.40.0..v0.49.0 have an EMPTY config-surface diff. So a
         # catch-up or skip-ahead deploy could get a green
         # "no config-surface changes … the binary deploy is complete"
-        # while config from every skipped release stayed unapplied
-        # (wave-D LID-5).
+        # while config from every skipped release stayed unapplied.
         #
         # Best-effort by design: an unreachable sidecar leaves the output
         # empty and the gate falls back to its documented ancestry

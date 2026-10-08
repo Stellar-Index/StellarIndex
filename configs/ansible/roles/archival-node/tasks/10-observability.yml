@@ -826,7 +826,7 @@
           # run, not a skip. `[ -x ] || continue` silently dropped it,
           # so a chmod-644 stellarindex-ops scored skew=0 AND
           # probe_success=1 — while the alert description named "not
-          # executable" as a cause it covers (wave-D LID-2).
+          # executable" as a cause it covers.
           while IFS= read -r m; do
             m="${m#"${m%%[![:space:]]*}"}"
             if [ "$m" = "$name" ]; then

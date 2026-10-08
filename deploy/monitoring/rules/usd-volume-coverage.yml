@@ -36,7 +36,7 @@ groups:
         # no zero pre-initialisation), so at 100% NULL coverage the
         # numerator series does not exist, the division drops that source
         # entirely, and the alert goes SILENT at exactly its worst case —
-        # total pricing failure (wave-D ALERT-04). Substituting an
+        # total pricing failure. Substituting an
         # explicit zero for a source present in the denominator makes
         # 0/N = 0 and the alert fire.
         expr: |
@@ -87,8 +87,8 @@ groups:
         # `or vector(0)` for the same reason as the CEX arm above: with
         # no priced insert in the window the numerator is the EMPTY
         # vector, not zero, so the ratio yields nothing and total pricing
-        # failure is the one case this alert cannot see (wave-D
-        # ALERT-04). vector(0) rather than the `* 0` form because this
+        # failure is the one case this alert cannot see.
+        # vector(0) rather than the `* 0` form because this
         # arm aggregates without `by`, so there is no label set to carry.
         # "unroutable" (unpriced, both classic legs from one issuer) has no
         # independent market to price it, so a wash burst on one issuer's

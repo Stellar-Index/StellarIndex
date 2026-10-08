@@ -20,7 +20,7 @@ name: orphan-branches
 # Branches with only a CLOSED (unmerged) PR are still listed, annotated,
 # because delete_branch_on_merge only removes merged ones.
 #
-# DISPOSITIONED BRANCHES ARE NOT ORPHANS (wave-D RD-04). This repo's
+# DISPOSITIONED BRANCHES ARE NOT ORPHANS. This repo's
 # remediation flow is: a worktree fixer pushes `fix/issue-<N>`, then a
 # BATCH PR squashes the verified subset. Squash-merges
 # leave no ancestry, so a landed fix branch looks identical to a

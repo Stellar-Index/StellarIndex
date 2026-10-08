@@ -202,7 +202,7 @@
     echo "applied ${applied} of ${want} fresh-host schema file(s) cleanly"
   changed_when: true
 
-# ─── Tier-1 lake self-healer (wave-D LID-1) ──────────────────────────
+# ─── Tier-1 lake self-healer ──────────────────────────
 #
 # ch-live-catchup is the ONLY thing that fills a hole in the ClickHouse
 # Tier-1 lake. The script (scripts/ops/ch-live-catchup.sh) and both units

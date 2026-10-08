@@ -77,7 +77,7 @@ EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/a
 # producer exists" and "the producer is invisible to this lint" — which
 # is exactly the confusion this lint exists to prevent, and it is the
 # same is_emitted() blind spot that let a severity:page reference a
-# counter no scraped process increments (wave-D ALERT-07/ALERT-12).
+# counter no scraped process increments.
 #
 # Scoped to task/handler YAML deliberately: pointing this at all of
 # configs/ would let a RULE file satisfy its own reference, which would
@@ -98,7 +98,7 @@ KNOWN_INERT=(
   # listed because is_emitted() could not see an inline ansible
   # `content:` block. That is fixed above (ANSIBLE_TASK_PATHS), so they
   # are gone from this list — KNOWN_INERT means "no producer exists"
-  # again, and nothing else (wave-D ALERT-12).
+  # again, and nothing else.
   # stellar.yml — no archive-publish-error counter is wired to Prometheus.
   stellarindex_stellar_archive_publish_errors_total
   # stellar.yml — stellar-core / stellar-rpc metrics come from the

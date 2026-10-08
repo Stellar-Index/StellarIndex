@@ -6,7 +6,7 @@
 # named in scripts/ci/unit-failed-dedicated.baseline. That inversion is
 # the whole point: naming units individually is how ~20 oneshot timers
 # — including directory-sync, sole writer of the table the scam-pricing
-# gate reads — ended up in no alert at all (wave-D LID-6).
+# gate reads — ended up in no alert at all.
 #
 # An exclusion list is one edit away from becoming a suppression list.
 # This asserts:

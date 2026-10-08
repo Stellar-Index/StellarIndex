@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Migration lint: money-column (ADR-0003) + file integrity
-# + register completeness (wave-D PS-01) + ClickHouse money-column
+# + register completeness + ClickHouse money-column
 # + hypertable index builds + CAGG re-materialization + atomicity
 # + priceable leg division.
 #
