@@ -89,7 +89,7 @@ describe('SupplyTabPanel market-cap chart', () => {
   });
 });
 
-// #1013: the live supply block scaled every token by the ASSET's decimals
+// The live supply block scaled every token by the ASSET's decimals
 // (7 by default), so an 18-decimal token read 10^11 too large, and the
 // hook dropped the envelope so `flags.stale` and the floor caveat never
 // rendered.
@@ -151,7 +151,7 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.getByText(/Fresh to ledger 63,340,102/)).toBeInTheDocument();
   });
 
-  // #660: useAsset dropped the envelope, so the asset's own flags never
+  // useAsset dropped the envelope, so the asset's own flags never
   // reached the client-fetched Supply tab.
   it('renders the asset envelope flags', () => {
     supplyQuery.data = undefined;

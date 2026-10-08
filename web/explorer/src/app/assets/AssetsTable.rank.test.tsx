@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AssetsTable } from './AssetsTable';
 import type { Coin } from '@/api/hooks';
 
-// #356 — the /assets directory table.
+// The /assets directory table.
 //
 // 1. RANKING. JFKBANK2 (issuer tagged malicious/unsafe) rendered at #12
 //    on the live page — above USDV, MJQ and BRAVO — on $62.32K of 24h

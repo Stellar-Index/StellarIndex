@@ -81,7 +81,7 @@ function renderTable() {
   );
 }
 
-// #1013: the table re-derived the dust-liquidity gate with its own $1,000
+// The table re-derived the dust-liquidity gate with its own $1,000
 // volume rule, blanking caps the server deliberately published and
 // suppressing any row whose volume was absent.
 describe('AssetsTable market cap follows the server verdict', () => {

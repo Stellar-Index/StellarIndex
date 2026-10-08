@@ -199,7 +199,7 @@ const STATUS_FEED_UNREACHABLE_AFTER = 2;
 //                                   envelope's `data` so a 200 with a
 //                                   body that isn't actually healthy
 //                                   (an empty collection standing in
-//                                   for an outage, #784) can't pass
+//                                   for an outage) can't pass
 //                                   silently — use `expectEnvelope`
 //                                   when any well-formed body is fine.
 //   { kind: 'requires-auth' }    — show "auth req'd", no probe
@@ -226,7 +226,7 @@ const expectEnvelope = () => true;
 // rows" masks a real outage — Reflector wedged: /v1/oracle/latest
 // keeps answering 200 {"data":[]}; a withheld row: /v1/price/batch
 // omits it rather than erroring — a bare res.ok reports green through
-// a total outage (#784, #743, same root as the on-host SLA probe).
+// a total outage (same root as the on-host SLA probe).
 const expectNonEmptyArray = (data: unknown) =>
   Array.isArray(data) && data.length > 0;
 
@@ -278,7 +278,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/price/batch',
     group: 'Pricing',
     description: 'Batch lookup, up to 1000 assets',
-    // A withheld row is OMITTED, not errored (#784/#743) — an empty
+    // A withheld row is OMITTED, not errored — an empty
     // `data` array for a single requested asset is the outage.
     probe: {
       kind: 'get',
@@ -431,7 +431,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/oracle/latest?asset=crypto:XLM',
-      // #784/#743: Reflector wedged keeps answering 200 {"data":[]};
+      // Reflector wedged keeps answering 200 {"data":[]};
       // an empty reading set for one asset is the outage, not a probe pass.
       expect: expectNonEmptyArray,
     },
@@ -1572,7 +1572,7 @@ export function probeEndpoint(
       // A 200 whose envelope is well-formed but whose payload fails
       // the endpoint's own expectation (an empty collection standing
       // in for a real outage — Reflector wedged, a withheld price
-      // row — #784) is the outage, not a pass: report it exactly
+      // row) is the outage, not a pass: report it exactly
       // like a non-2xx so the badge goes red, not amber.
       if (!expect(envelope.data)) {
         return { kind: 'down', latencyMs, status: res.status };

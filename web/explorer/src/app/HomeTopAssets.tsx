@@ -45,7 +45,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * the same TanStack cadence as the rest of the home page.
  */
 export function HomeTopAssets() {
-  // #328: ranking and half the columns are USD-derived. On a net with no
+  // Ranking and half the columns are USD-derived. On a net with no
   // aggregator every price/volume is null, so the grid ranked ten assets
   // by a column of nulls and rendered four "—" columns. Rank by the
   // chain-native observation count there and drop the priced columns.
@@ -270,7 +270,7 @@ function rankTopAssets(
   if (!native || rows.some((c) => c.asset_id === native.asset_id)) {
     return demoteFlaggedLast(rows, tagsOf).slice(0, 10);
   }
-  // #328: compare on the SAME measure the request asked the API to order
+  // Compare on the SAME measure the request asked the API to order
   // by. On a net with no aggregator every volume is null, so comparing
   // USD volume put every row at 0 and left the order to sort stability —
   // a "top assets by activity" grid whose ranking was arbitrary.

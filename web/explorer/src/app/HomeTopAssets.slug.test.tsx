@@ -11,7 +11,7 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { HomeTopAssets } from './HomeTopAssets';
 
-// #1069 item 1: every sibling identity dereference in this file was
+// Every sibling identity dereference in this file was
 // migrated to coinSlug(coin) (falls back slug -> asset_id) except the
 // row's sub-label, which still read the bare, optional `slug` field —
 // a classic asset with no catalogue slug rendered a blank sub-label

@@ -1,4 +1,4 @@
-// #328: the /insights hub and the three feeds it fronts (/anomalies,
+// The /insights hub and the three feeds it fronts (/anomalies,
 // /divergences, /mev) are aggregator outputs — every one of them returns
 // an empty list on a network that runs no aggregator. The rail dropped
 // the hub on the lean test nets, but the PAGE had no gate at all: a

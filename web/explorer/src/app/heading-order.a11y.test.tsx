@@ -1,4 +1,4 @@
-// Guard: page-level sections render an <h2>, not an <h3> (#486, WCAG 1.3.1).
+// Guard: page-level sections render an <h2>, not an <h3> (WCAG 1.3.1).
 //
 // The built-export scan (lib/heading-order.built.test.ts) is the wide net,
 // but it can only see what the STATIC HTML contains. Most of the explorer's

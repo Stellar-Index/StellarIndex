@@ -44,7 +44,7 @@ function verdictLabel(v: Verdict): string {
     default:
       // The API pairs an "unknown" verdict with a non-null age in
       // exactly one case: a stamp from the FUTURE of its clock (skew,
-      // or a corrupt backup label — issue #311). Name that cause; it
+      // or a corrupt backup label). Name that cause; it
       // is a different problem from an absent series, and the reader
       // must not read the grey row as "nothing is exported here".
       return isFutureDated(v) ? 'stamp from the future' : 'no data';

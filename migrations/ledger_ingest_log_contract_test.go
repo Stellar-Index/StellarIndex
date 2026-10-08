@@ -15,7 +15,7 @@ import (
 // projector. Every place that tells a reader what the row means — the
 // catalog comments an operator reads through `\d+`, 0051's header, the
 // README register row and ADR-0033's Invariant — must say so rather than calling it
-// a post-persist "ledger is done" marker (GH #923).
+// a post-persist "ledger is done" marker.
 func TestLedgerIngestLogNotClaimedPostPersist(t *testing.T) {
 	tableComment := lastCommentOn(t, "COMMENT ON TABLE ledger_ingest_log IS")
 	colComment := lastCommentOn(t, "COMMENT ON COLUMN ledger_ingest_log.persisted_at IS")

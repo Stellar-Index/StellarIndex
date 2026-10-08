@@ -689,7 +689,7 @@ describe('probeEndpoint body-shape check', () => {
     probe: { kind: 'get', path: '/v1/readyz', expect: () => true },
   };
 
-  // #784/#743: an endpoint that can answer 200 with an empty
+  // An endpoint that can answer 200 with an empty
   // collection during a total outage — Reflector wedged,
   // /v1/oracle/latest keeps answering 200 {"data":[]}.
   const oracleLatestEndpoint: PublicEndpoint = {
@@ -767,7 +767,7 @@ describe('probeEndpoint body-shape check', () => {
     expect(result.kind).toBe('degraded');
   });
 
-  // #784: a total oracle outage renders `200 {"data":[]}`, not a
+  // A total oracle outage renders `200 {"data":[]}`, not a
   // non-2xx — a bare res.ok reports the row green through the outage.
   it('reports down, not fast, for a 200 oracle body with an empty reading set', async () => {
     vi.stubGlobal(
