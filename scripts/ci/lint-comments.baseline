@@ -4,14 +4,12 @@ internal/ops/ingest/backfill_index.go	2017-08-23
 internal/ops/ingest/backfill_index.go	2017-11-15
 internal/ops/ingest/backfill_index.go	2018-02-15
 internal/ops/ingest/backfill_index.go	pre-2018
-internal/sources/classicmovements/events.go	2025-09-03
 internal/sources/external/ecb/poller.go	2026-04-23
 internal/sources/external/exchangeratesapi/events.go	2026-04-24
 internal/sources/external/kraken/events.go	2026-04
 internal/sources/external/tiingo/events.go	2026-09
 internal/sources/external/tiingo/events.go	2026-09-22
 internal/sources/reflector/decode.go	2026-04-23
-internal/sources/sorocredit/events.go	2026-03-12
 internal/storage/timescale/aggregates.go	2000-01-03
 internal/storage/timescale/bespoke_dex.go	2026-03-18
 internal/storage/timescale/bespoke_dex.go	2026-03-18

@@ -494,8 +494,7 @@ func (s *AsyncSink) run() {
 // channel nobody reads again, counted neither written nor dropped.
 func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	// s.stopping is already closed here, so leaving abortFlush pointing
-	// at it would abandon every batch this drain flushes — the bug this
-	// grace window fixes. Bounded, so Stop() still returns promptly.
+	// at it would abandon every batch this drain flushes. Bounded, so Stop() still returns promptly.
 	grace := make(chan struct{})
 	timer := time.AfterFunc(s.drainGrace, func() { close(grace) })
 	defer timer.Stop()

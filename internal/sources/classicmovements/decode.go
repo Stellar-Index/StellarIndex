@@ -41,9 +41,8 @@ func SupportedOpTypes() []string {
 }
 
 // matchesSupportedOp reports whether op is one of this package's
-// op-only in-scope classic operation types (was matchesPhase1Op
-// through Phase 1; renamed once Phase 2 made "Phase1" inaccurate —
-// see doc.go). See recognition_test.go for the exhaustive-enum guard
+// op-only in-scope classic operation types. See recognition_test.go
+// for the exhaustive-enum guard
 // that pins this switch.
 func matchesSupportedOp(op xdr.Operation) bool {
 	switch op.Body.Type {

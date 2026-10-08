@@ -16,12 +16,11 @@ import (
 const SourceName = "classic-movements"
 
 // P23StartLedger is ADR-0047 D2's hard upper bound: the first ledger
-// of Protocol 23 (Whisk, mainnet 2025-09-03), from which every
+// of Protocol 23 (Whisk), from which every
 // classic-asset movement already emits a unified CAP-67 event
 // (internal/sources/sep41_transfers) — this package's pre-P23
 // reconstruction has nothing to do at or beyond this ledger.
-// README.md's "Protocol boundaries" table confirms this exact value against
-// stellar.ledgers on r1 — NOT an approximation.
+// README.md's "Protocol boundaries" table confirms this exact value.
 //
 // The canonical, exported home for this value: internal/ops/chops's
 // classic-movements-backfill clamp and ADR-0048 D5's
