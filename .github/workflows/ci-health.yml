@@ -352,8 +352,7 @@ jobs:
           steps.assess.outputs.verdict_rc != '0' &&
           (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
         # DEAD/FAILING ride in `env:` rather than being interpolated into
-        # the shell — the same rule ansible-drift.yml's steps follow
-        # (F-1298).
+        # the shell — the same rule ansible-drift.yml's steps follow.
         env:
           DEAD: ${{ steps.assess.outputs.dead }}
           FAILING: ${{ steps.assess.outputs.failing }}

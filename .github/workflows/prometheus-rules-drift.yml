@@ -70,7 +70,7 @@ jobs:
 
       - name: Set up SSH
         # Mirrors deploy.yml's "Set up SSH" / ansible-drift.yml's "SSH key
-        # + known_hosts" (F-1297/F-1298): route the key through `env:`, pin
+        # + known_hosts": route the key through `env:`, pin
         # the host key from R1_SSH_KNOWN_HOSTS, fail fast if either secret
         # is unset rather than reporting a connection failure as drift.
         env:

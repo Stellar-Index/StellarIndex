@@ -176,7 +176,7 @@ jobs:
       - name: Set up SSH to the probe host
         id: ssh
         if: steps.gate.outputs.source_ready == 'true'
-        # Mirrors deploy.yml / ansible-drift.yml (F-1297/F-1298): the key
+        # Mirrors deploy.yml / ansible-drift.yml: the key
         # travels through `env:`, never interpolated into the shell, and is
         # written with printf; the host key is PINNED from
         # R1_SSH_KNOWN_HOSTS with no live ssh-keyscan fallback, which was a

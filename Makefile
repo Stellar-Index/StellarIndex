@@ -39,7 +39,7 @@ BINARIES := \
 # Packages that hold integration tests (gated by build tag). Besides
 # ./test/integration/..., these packages carry `//go:build integration`
 # tests that a ./test/integration-only compile-check would miss:
-#   - cmd/stellarindex-ops   — F-1334: omitting it let an interface-signature
+#   - cmd/stellarindex-ops   — omitting it let an interface-signature
 #                              change break the ops integration test undetected.
 #   - internal/ops/archive   — W6-tst-1: the runVerifyChunks chunked
 #                              archive-verify test (hash-chain integrity,
@@ -380,7 +380,7 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@# One promtool process per file across all cores: a file's groups run
 	@# serially, so the 841h-horizon groups sit in files of their own.
 	@printf '%s\n' deploy/monitoring/rule-tests/*.yml | xargs -n 1 -P "$$(getconf _NPROCESSORS_ONLN)" promtool test rules
-	@# F-1329: promtool only checks PromQL SYNTAX, not whether a metric
+	@# promtool only checks PromQL SYNTAX, not whether a metric
 	@# has a producer. This guard catches dead stellarindex_* references
 	@# (an alert that can never fire because nothing emits its metric).
 	@./scripts/ci/lint-metric-refs.sh
@@ -494,7 +494,7 @@ docs-metrics: ## (no-op) Metrics reference is hand-edited — drift is guarded b
 	@# written today — there's no Prometheus Registry walker wired up.
 	@# Drift is guarded by scripts/ci/lint-docs.sh section 3 (every
 	@# registered metric in internal/obs must appear in the README).
-	@# F-1256 (audit-2026-05-12) — kept under `docs-metrics` so the
+	@# Kept under `docs-metrics` so the
 	@# parallel structure with docs-api / docs-config / docs-postman
 	@# survives, but the help string now states explicitly that this
 	@# is a no-op.

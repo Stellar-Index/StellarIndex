@@ -1458,7 +1458,7 @@ function EndpointMatrix({
 //   - 'degraded' is a 2xx whose envelope body reports `data.status
 //     === "degraded"` (RLT-468: /v1/readyz returns HTTP 200 by
 //     design when a non-critical dependency fails — see server.go
-//     computeReadyz's F-1275 comment — so `res.ok` alone can't tell
+//     computeReadyz's comment — so `res.ok` alone can't tell
 //     a healthy readyz from a degraded one)
 //   - 'error' is a fetch that threw (network, abort, TLS)
 //   - 'static' is a non-probed endpoint (auth-gated, streaming);
@@ -1482,7 +1482,7 @@ export type EndpointProbeResult =
 // challenge page, a maintenance interstitial or a misrouted edge
 // response can all return 200 with an unrelated body (probeEndpoint
 // must not report those as 'fast'); and a genuine envelope's
-// `data.status` can itself be "degraded" on a 200 (readyz, F-1275).
+// `data.status` can itself be "degraded" on a 200 (readyz).
 async function readEnvelope(
   res: Response,
 ): Promise<{ ok: boolean; data?: unknown; dataStatus?: string }> {

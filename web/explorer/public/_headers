@@ -68,12 +68,9 @@
   # Issuer-hosted asset icons load through the /icon Pages Function
   # (functions/icon.js), so the browser never contacts issuer hosts.
   #
-  # F-0054 (audit-2026-05-26): an earlier revision permitted
-  # http://localhost:3000 in connect-src as a dev-convenience —
-  # left over after a one-time test of serving the built bundle
-  # against a local API. The Next dev server doesn't read _headers
-  # at all (it serves no production headers), so production
-  # leakage is the only effect. Removed.
+  # No http://localhost:3000 in connect-src: the Next dev server
+  # doesn't read _headers at all, so allowing it would only leak a
+  # dev convenience into production.
   Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io https://api.testnet.stellarindex.io https://api.futurenet.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
 
 # Fingerprinted Next.js assets — far-future cache. CF Pages already
