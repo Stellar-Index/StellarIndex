@@ -184,7 +184,7 @@ async function fetchPool(
 
 export default async function LendingPoolPage({ params }: { params: Params }) {
   const { pool } = await params;
-  // T278: functions/lending/[[path]].js serves this same built HTML for
+  // functions/lending/[[path]].js serves this same built HTML for
   // any /lending/* pool id outside the pre-render set above — a pool
   // deployed by the Blend factory between builds otherwise hard-404'd on
   // the static host. Case-insensitive to match the sentinel every other

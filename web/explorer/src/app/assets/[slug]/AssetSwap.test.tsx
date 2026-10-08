@@ -66,7 +66,7 @@ async function pickEURAsReceiveLeg() {
   fireEvent.click(eur);
 }
 
-// T303. useFiatTokens ran its /v1/price/batch fetch (and 5-minute poll)
+// useFiatTokens ran its /v1/price/batch fetch (and 5-minute poll)
 // unconditionally on mount, before the picker that is the only place fiat
 // rates are shown was ever opened.
 describe('AssetSwap fiat batch fetch', () => {
@@ -142,7 +142,7 @@ describe('AssetSwap fiat leg basis', () => {
   });
 });
 
-// T267. TokenPicker hand-rolled an Escape listener instead of the shared
+// TokenPicker hand-rolled an Escape listener instead of the shared
 // useDialog contract: no dialog role, no focus trap, and focus fell to
 // <body> on close instead of returning to the leg the user opened it from.
 describe('AssetSwap token picker dialog contract', () => {

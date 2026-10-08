@@ -22,7 +22,7 @@ describe('HBarList', () => {
     );
     // Each row must be exposed as its own accessible list item — role="img"
     // on the list would collapse every row's label/value/annotation into
-    // the single aria-label string, per T280.
+    // the single aria-label string.
     expect(screen.queryByRole('img', { name: 'ops by type' })).toBeNull();
     expect(screen.getByRole('list', { name: 'ops by type' })).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(2);

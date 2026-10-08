@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { usePricePoll } from './hooks';
 
-// REGRESSION (T304): usePricePoll's tick() called raw fetch() with no
+// REGRESSION: usePricePoll's tick() called raw fetch() with no
 // AbortController/signal — the `cancelled` flag only gated the subsequent
 // setState calls, never the in-flight request itself, so a hung /v1/price
 // round trip outlived the component that started it. Every other request

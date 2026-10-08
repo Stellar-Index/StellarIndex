@@ -69,7 +69,7 @@ describe('DegradedBanner', () => {
     } as Response);
   }
 
-  // W1.4 honesty residue: a failed Alertmanager query zeroes the counts
+  // Honesty residue: a failed Alertmanager query zeroes the counts
   // AND (server-side) trips backendErr → overall="degraded", so the
   // banner renders. Reading `active_count ?? 0` published "0 active
   // alerts" — a false all-clear while alerting was blind. incidents_status

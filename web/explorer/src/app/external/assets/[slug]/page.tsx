@@ -34,7 +34,7 @@ import { ExternalAssetPathView } from './ExternalAssetPathView';
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 // `shell` backs functions/external/assets/[[path]].js for a slug added
-// after this build (T291) — see ExternalAssetPathView. Every return path
+// after this build — see ExternalAssetPathView. Every return path
 // carries it: the Function needs the document on CI-stub builds too.
 const SHELL = { slug: 'shell' };
 const isShell = (slug: string) => slug.toLowerCase() === 'shell';

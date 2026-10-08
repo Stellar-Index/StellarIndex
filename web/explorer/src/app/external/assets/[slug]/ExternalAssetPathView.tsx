@@ -13,7 +13,7 @@ import { ExternalAssetDetailView } from './ExternalAssetDetailView';
 /**
  * ExternalAssetPathView — the runtime fallback for /external/assets/[slug]
  * outside the build-time pre-render, served by
- * functions/external/assets/[[path]].js (T291). Reads the slug from the
+ * functions/external/assets/[[path]].js. Reads the slug from the
  * URL and renders the same detail view the build bakes.
  */
 export function ExternalAssetPathView() {

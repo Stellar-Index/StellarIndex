@@ -44,7 +44,7 @@ function renderView() {
 const marketCalls = () =>
   apiGet.mock.calls.filter(([path]) => path === '/v1/markets');
 
-// The runtime fallback for a source registered after the last build (T291).
+// The runtime fallback for a source registered after the last build.
 describe('SourcePathView', () => {
   beforeEach(() => {
     seen.length = 0;

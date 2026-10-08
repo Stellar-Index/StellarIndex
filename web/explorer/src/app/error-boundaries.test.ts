@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // ("The URL must be of scheme file").
 const APP_DIR = dirname(fileURLToPath(import.meta.url));
 
-// T295: a segment without its own error.tsx has no boundary — a render
+// A segment without its own error.tsx has no boundary — a render
 // throw anywhere under it propagates up to the nearest ancestor
 // error.tsx (or, absent one, to global-error.tsx, which replaces the
 // ENTIRE root layout and white-screens the whole site for a failure

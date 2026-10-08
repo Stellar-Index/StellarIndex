@@ -144,7 +144,7 @@ describe('SourceDetailPage per-source markets', () => {
   });
 });
 
-// T291: functions/sources/[[path]].js serves /sources/shell/ for every
+// functions/sources/[[path]].js serves /sources/shell/ for every
 // source registered after the build, so the build must bake that document
 // and it must not be the fail-hard "promised but unlisted" path.
 describe('SourceDetailPage runtime shell', () => {

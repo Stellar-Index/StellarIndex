@@ -13,7 +13,7 @@ import (
 // against dropping the operator step for its bare in-transaction
 // trades_signer_idx build: the up body is immutable (README "Amending a
 // shipped migration"), so the header and register row are the only place
-// a populated-node operator learns that a pre-build fails the migration (T444).
+// a populated-node operator learns that a pre-build fails the migration.
 func TestMigration0150HeaderNamesPopulatedNodeApply(t *testing.T) {
 	header := upHeader(t, "0150_add_trades_signer.up.sql")
 	for _, want := range []string{
@@ -44,7 +44,7 @@ func TestMigration0150HeaderNamesPopulatedNodeApply(t *testing.T) {
 var numberedHeaderRe = regexp.MustCompile(`^-- (\d{4}) (up|down)\b`)
 
 // TestMigrationHeaderNumberMatchesFilename catches a copy-paste header
-// left over from the previous migration in the sequence (T417): the
+// left over from the previous migration in the sequence: the
 // leading "-- NNNN up"/"-- NNNN down" comment must name the same number
 // as the file it lives in, for every migration using that convention.
 // A stale number silently misdescribes the file to anyone reading the

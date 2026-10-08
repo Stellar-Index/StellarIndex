@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { SourceHealthPanel } from './SourceHealthPanel';
 
-// W6-web-2: on an explorer-ahead-of-API deploy the /v1/sources/{name}/health
+// On an explorer-ahead-of-API deploy the /v1/sources/{name}/health
 // response can omit `entries_24h` (the field predates the older API). The
 // unguarded `data.entries_24h.toLocaleString()` throws on the missing value,
 // which trips the segment error boundary and blanks the panel. The guarded

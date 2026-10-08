@@ -41,11 +41,11 @@ BINARIES := \
 # tests that a ./test/integration-only compile-check would miss:
 #   - cmd/stellarindex-ops   — omitting it let an interface-signature
 #                              change break the ops integration test undetected.
-#   - internal/ops/archive   — W6-tst-1: the runVerifyChunks chunked
+#   - internal/ops/archive   — the runVerifyChunks chunked
 #                              archive-verify test (hash-chain integrity,
 #                              ADR-0033/0016) had zero executing coverage
 #                              until this package was listed.
-#   - scripts/ops            — fx-history-backfill's INV-3 test
+#   - scripts/ops            — fx-history-backfill's correction test
 #                              (operator fx_quotes corrections must carry a
 #                              positive derive generation) was compiled and
 #                              run by nothing until this was listed.
@@ -374,7 +374,7 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@# `check rules` only proves the PromQL PARSES. The unit tests in
 	@# deploy/monitoring/rule-tests/ prove each alert actually FIRES on the
 	@# state it claims to catch and stays silent otherwise — the class of
-	@# defect (C4-037/038, C6-118) where a rule is syntactically perfect and
+	@# defect where a rule is syntactically perfect and
 	@# structurally unfireable. They were written but never wired into any
 	@# gate, so a regression in the rules they cover shipped green.
 	@# One promtool process per file across all cores: a file's groups run

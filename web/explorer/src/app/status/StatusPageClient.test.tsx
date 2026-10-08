@@ -618,7 +618,7 @@ describe('StatusPageClient overall banner ticket note', () => {
   });
 
   // incidents_status "unknown" means the Alertmanager query FAILED, so the
-  // counts beside it are absence-of-signal (W1.1) — the trust signal is read
+  // counts beside it are absence-of-signal — the trust signal is read
   // FIRST and the counts are not read at all. Carrying a non-zero count here
   // is the case that separates that rule from the zero check above: a note
   // sourced from an untrusted count is fabricated whatever the number says.
@@ -651,7 +651,7 @@ describe('StatusPageClient overall banner ticket note', () => {
   // failed query) is absence-of-signal, not an all-clear. The panel used
   // to ignore incidents_status entirely and always render "No active
   // incidents." for an empty array, which is the exact silent collapse
-  // W1.1 exists to prevent elsewhere on this page.
+  // the tri-state exists to prevent elsewhere on this page.
   it('does not claim "No active incidents" when the alerting query failed', async () => {
     renderWithIncidents(
       { active_count: 0, page_count: 0, ticket_count: 0 },

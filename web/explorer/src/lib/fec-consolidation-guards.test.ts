@@ -169,7 +169,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // T308: a cursor-paged board that follows ledger closes must gate the
+  // A cursor-paged board that follows ledger closes must gate the
   // follow on its first page, or every close re-runs the deeper page's
   // keyset query and reshuffles the rows under the reader.
   it('every paged ledger follow is gated on the pager atTip', () => {

@@ -9,7 +9,7 @@ import (
 // TestReadmeTWAPColumnNotedAsLive guards rule 8 against re-claiming that
 // prices_1m's twap column (migration 0002) "is read by nothing": migration
 // 0081/0126's twap_1h/twap_1d CAGGs are avg(prices_1m.twap) and ARE read,
-// via internal/storage/timescale/aggregates.go::combineDirTWAP (T338).
+// via internal/storage/timescale/aggregates.go::combineDirTWAP.
 func TestReadmeTWAPColumnNotedAsLive(t *testing.T) {
 	raw := readReadme(t)
 	rule8 := extractRule8(t, raw)
@@ -25,7 +25,7 @@ func TestReadmeTWAPColumnNotedAsLive(t *testing.T) {
 // TestReadmeStripeDeadLetterClaimNotesTombstone guards the 0118/0121 rows
 // against describing the stripe_event_log dead-letter/claim columns in
 // present tense with no note that migration 0152 dropped the columns and
-// deleted their Go writers (T409).
+// deleted their Go writers.
 func TestReadmeStripeDeadLetterClaimNotesTombstone(t *testing.T) {
 	raw := readReadme(t)
 

@@ -27,7 +27,7 @@ describe('MethodologyPage closed-bucket section', () => {
   });
 });
 
-// T276: the freeze-triggers list claimed a >50%-filtered-trades outlier
+// The freeze-triggers list claimed a >50%-filtered-trades outlier
 // check, an all-exchange-source-class-collapse trigger, a >=2-oracle
 // cross-oracle-divergence trigger, and an operator "freeze a pair
 // manually" control. None of that exists: mapFreezeReason

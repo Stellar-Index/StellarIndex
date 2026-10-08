@@ -46,7 +46,7 @@ describe('SortableTh', () => {
   });
 });
 
-// T282: lib/format.ts's every formatter "passes 'en-US' explicitly so
+// lib/format.ts's every formatter "passes 'en-US' explicitly so
 // ... [output] match[es] between SSG and hydration" — compareValues'
 // string fallback must carry the same pin, or a non-ASCII column's sort
 // order can differ between the server-rendered order and the client's

@@ -46,7 +46,7 @@ export function DegradedBanner() {
   // catch: a total outage).
   const unreachable = (feed?.consecutiveFailures ?? 0) >= FAILURE_THRESHOLD;
   const overall = feed?.status?.overall ?? 'unknown';
-  // Trust signal for the incident counts (W1.1). When "unknown" (alerting
+  // Trust signal for the incident counts. When "unknown" (alerting
   // query failed) the counts are absence-of-signal, not an all-clear — the
   // banner renders "alert status unknown" rather than "0 active alerts".
   // Fail closed: a missing trust signal is treated as "unknown", never

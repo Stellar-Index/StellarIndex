@@ -42,7 +42,7 @@ interface CurrencyDetail {
 const FALLBACK = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY'];
 
 // `shell` backs functions/embed/currency/[[path]].js for an id outside this
-// build's pre-render (T291) — see EmbedCurrencyPathView. Every return path carries it.
+// build's pre-render — see EmbedCurrencyPathView. Every return path carries it.
 const SHELL = { ticker: 'shell' };
 const isShell = (ticker: string) => ticker.toLowerCase() === 'shell';
 

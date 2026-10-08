@@ -34,7 +34,7 @@
 # itself generates at build time — it issues no runtime 308 for a typed
 # or externally-shared bare-form request. The table below lists the
 # trailing-slash form (matching Next's own generated links); the single
-# catch-all rule after it (T247) normalizes any bare-form request onto
+# catch-all rule after it normalizes any bare-form request onto
 # that form instead of doubling every entry here (CF's free-plan
 # ~100-rule cap, see the fiat de-dup section below).
 # Crypto /currencies/ aliases — assets-unification.
@@ -50,7 +50,7 @@
 # Fiat currencies — assets-unification (R-018). Each entry maps
 # /currencies/{friendly}/ and /currencies/{iso}/ to the
 # canonical /assets/{friendly}/. Trailing-slash form only — see the
-# catch-all rule at the end of this block (T247) for the bare form. Cap
+# catch-all rule at the end of this block for the bare form. Cap
 # _redirects below CF's free-plan ~100-rule limit (R-018 finish-up), which
 # is exactly why the bare form is one shared rule rather than a doubled
 # per-slug table.
@@ -93,7 +93,7 @@
 /currencies/norwegian-krone/  /external/assets/norwegian-krone/  301
 /currencies/nok/  /external/assets/norwegian-krone/  301
 
-# T247: bare-form fallback for the whole /currencies/* alias set above.
+# Bare-form fallback for the whole /currencies/* alias set above.
 # There is no live Next.js server (static export) to 308 a request like
 # `/currencies/xlm` onto `/currencies/xlm/`, so without this it 404s on
 # Cloudflare Pages. This

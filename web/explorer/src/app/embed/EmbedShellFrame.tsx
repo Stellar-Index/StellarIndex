@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
- * EmbedShellFrame — the chrome shared by the /embed/* runtime shells
- * (T291): the same label row, explorer link and attribution the baked
+ * EmbedShellFrame — the chrome shared by the /embed/* runtime shells:
+ * the same label row, explorer link and attribution the baked
  * widgets render, around whatever live body the shell fetched.
  */
 export function EmbedShellFrame({

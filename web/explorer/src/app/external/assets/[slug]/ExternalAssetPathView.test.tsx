@@ -4,8 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { ExternalAssetPathView } from './ExternalAssetPathView';
 
-// The runtime fallback for a reference asset added after the last build
-// (T291).
+// The runtime fallback for a reference asset added after the last build.
 function renderAt(pathname: string, status: number, body: unknown) {
   const fetchSpy = vi.fn(
     async (_input: RequestInfo | URL) =>

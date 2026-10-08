@@ -349,7 +349,7 @@ export function isSafeHref(href: string): boolean {
   // fails to match — the control char isn't in [a-zA-Z0-9+.-] — and the
   // function FALLS OPEN, returning true as if it were a harmless relative
   // ref, while the browser still executes the javascript: scheme
-  // (audit C4-13: control-char-obfuscated-scheme stored-XSS bypass). Stripping
+  // (control-char-obfuscated-scheme stored-XSS bypass). Stripping
   // first makes the sanitizer see exactly the scheme the browser will.
   const h = href.replace(/[\u0000-\u001F\u007F]/g, '').trim();
   if (h === '') return false;

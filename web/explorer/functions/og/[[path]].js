@@ -153,7 +153,7 @@ function recordUpstreamOutcome(ok) {
   }
 }
 
-// T270: the old fixed-precision formatter here dropped into exponential
+// The old fixed-precision formatter here dropped into exponential
 // notation below 1e-6 (e.g. "7.407e-7"), the same scientific-notation
 // regression `@/lib/format`'s formatSubunitPrice
 // was written to avoid (2026-08-06: "is not user-friendly"). This
@@ -182,7 +182,7 @@ export function resetOgGatesForTest() {
   cardFont = null;
 }
 
-// T246: with no `fonts` option workers-og fetches Google Fonts inside its
+// With no `fonts` option workers-og fetches Google Fonts inside its
 // lazy PNG stream with no timeout, after a 200 + public Cache-Control is
 // already committed. Load the same default font here, bounded, once per
 // isolate; a failure is not memoized so the next request retries.

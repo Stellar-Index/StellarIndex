@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * T247: `public/_redirects` only ever lists the trailing-slash form of the
+ * `public/_redirects` only ever lists the trailing-slash form of the
  * `/currencies/*` aliases, on the premise ("next.js 308 handles bare form",
  * comments at the top of the crypto/fiat currency blocks) that a live
  * Next.js server 308-redirects a bare-form request to the trailing-slash

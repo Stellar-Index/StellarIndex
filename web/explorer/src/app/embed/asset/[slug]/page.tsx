@@ -181,7 +181,7 @@ function fetchChartSparkline(
 }
 
 // `shell` backs functions/embed/asset/[[path]].js for an id outside this
-// build's pre-render (T291) — see EmbedAssetPathView. Every return path carries it.
+// build's pre-render — see EmbedAssetPathView. Every return path carries it.
 const SHELL = { slug: 'shell' };
 const isShell = (slug: string) => slug.toLowerCase() === 'shell';
 

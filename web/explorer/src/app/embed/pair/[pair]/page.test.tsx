@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import EmbedPairPage from './page';
 
-// W8.10: the pair embed baked a BUILD-time price into a static <span> and
+// The pair embed baked a BUILD-time price into a static <span> and
 // served it as live — under a deploy freeze it read days-stale with no
 // refresh and no honest "as baked" hint. The fix wires the shared
 // <LivePrice> client component (baked value as initial paint, then a 60s

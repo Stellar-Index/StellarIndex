@@ -10,7 +10,7 @@ import { LivePrice } from '../../LivePrice';
 /**
  * EmbedPairPathView — the runtime fallback for /embed/pair/[base~quote]
  * outside the build-time top-100 pre-render, served by
- * functions/embed/pair/[[path]].js (T291). Price and 24h change load live.
+ * functions/embed/pair/[[path]].js. Price and 24h change load live.
  */
 export function EmbedPairPathView() {
   const slug = useLastPathSegment();

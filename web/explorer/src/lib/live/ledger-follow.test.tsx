@@ -168,7 +168,7 @@ describe('useLedgerFollow', () => {
     now.mockRestore();
   });
 
-  // T306: AccountMovementsPanel folds the runtime account id into its
+  // AccountMovementsPanel folds the runtime account id into its
   // follow key (['/v1/accounts/{id}/movements', id, ...]), so the throttle
   // map's key set is NOT bounded by call sites — it grows with every
   // distinct account a tab visits, and nothing evicted an entry once its
@@ -202,7 +202,7 @@ describe('useLedgerFollow', () => {
   });
 });
 
-// T648: resetLedgerFollowThrottleForTest is an ungated production export
+// ResetLedgerFollowThrottleForTest is an ungated production export
 // that clears module-level state shared by every mounted follower. It
 // must refuse to run outside tests rather than being callable from a
 // production bundle.

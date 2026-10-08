@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// T497: the file's own header comment claims auto-discovery at "the
+// The file's own header comment claims auto-discovery at "the
 // conventional /openapi.yaml and /openapi.json paths", but the rule table
 // only ever defined the .yaml/.yml/.spec forms, never .json. A tool that
 // probes /openapi.json (or /spec.json) hit the CF Pages SPA fallback
