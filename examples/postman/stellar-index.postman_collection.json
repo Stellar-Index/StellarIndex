@@ -9,7 +9,7 @@
           "request": {
             "name": "Liveness — process is up.",
             "description": {
-              "content": "Shallow liveness probe. Returns 200 as long as the\nprocess is running and the mux is serving. Does NOT\ntouch the database, Redis, or any downstream\ndependency — those are the readiness probe's job.\n\nF-1210 (codex audit-2026-05-12): `/healthz` is\ndeliberately scoped to the serving-plane process\nliveness, NOT to SLA truth. Use `/v1/status` (the\ncomprehensive rollup) for ingest lag, supply\nfreshness, per-pair latency, evidence-timer\ncoverage, and the rest of the launch-readiness\nsignals — those are dashboarded separately because\nliveness probes (k8s, systemd, load balancer pool\nmembership) MUST NOT flap when a backfill stalls,\nan external source goes silent, or a non-critical\ntimer misfires.\n",
+              "content": "Shallow liveness probe. Returns 200 as long as the\nprocess is running and the mux is serving. Does NOT\ntouch the database, Redis, or any downstream\ndependency — those are the readiness probe's job.\n\n`/healthz` is\ndeliberately scoped to the serving-plane process\nliveness, NOT to SLA truth. Use `/v1/status` (the\ncomprehensive rollup) for ingest lag, supply\nfreshness, per-pair latency, evidence-timer\ncoverage, and the rest of the launch-readiness\nsignals — those are dashboarded separately because\nliveness probes (k8s, systemd, load balancer pool\nmembership) MUST NOT flap when a backfill stalls,\nan external source goes silent, or a non-critical\ntimer misfires.\n",
               "type": "text/plain"
             },
             "url": {
@@ -84,7 +84,7 @@
           "request": {
             "name": "Readiness — serving-plane dependencies reachable.",
             "description": {
-              "content": "Deep readiness probe scoped to the SERVING PLANE:\nevery registered `ReadyChecker` (Postgres, Redis)\nis pinged in parallel under a shared 2-second\ndeadline. 200 iff all pass; 503 with a per-check\nfailure list otherwise.\n\nF-1210 (codex audit-2026-05-12): like `/healthz`,\n`/readyz` is deliberately scoped — it answers\n\"should the load balancer route traffic to this\ninstance?\", NOT \"is the launch-readiness gate\ngreen?\" Ingest lag, supply freshness, latency\nSLOs, alert state, and evidence-timer coverage are\nthe rich-rollup concern at `/v1/status`. An ingest\nstall must NOT pull every API instance out of\nrotation — it would turn a backfill-only outage\ninto a customer-facing total outage.\n\nOperators monitoring launch-readiness should poll\n`/v1/status` (which the Cloudflare-Pages status\npage also consumes). Customers checking \"can I\ncall the API right now\" use `/v1/healthz` (cheap)\nor `/v1/readyz` (deeper, but still serving-plane\nonly).\n",
+              "content": "Deep readiness probe scoped to the SERVING PLANE:\nevery registered `ReadyChecker` (Postgres, Redis)\nis pinged in parallel under a shared 2-second\ndeadline. 200 iff all pass; 503 with a per-check\nfailure list otherwise.\n\nLike `/healthz`,\n`/readyz` is deliberately scoped — it answers\n\"should the load balancer route traffic to this\ninstance?\", NOT \"is the launch-readiness gate\ngreen?\" Ingest lag, supply freshness, latency\nSLOs, alert state, and evidence-timer coverage are\nthe rich-rollup concern at `/v1/status`. An ingest\nstall must NOT pull every API instance out of\nrotation — it would turn a backfill-only outage\ninto a customer-facing total outage.\n\nOperators monitoring launch-readiness should poll\n`/v1/status` (which the Cloudflare-Pages status\npage also consumes). Customers checking \"can I\ncall the API right now\" use `/v1/healthz` (cheap)\nor `/v1/readyz` (deeper, but still serving-plane\nonly).\n",
               "type": "text/plain"
             },
             "url": {
@@ -18972,7 +18972,7 @@
                   "request": {
                     "name": "Per-contract SEP-41 transfer audit trail.",
                     "description": {
-                      "content": "Returns the most-recent N (default 100, max 500)\naudit-trail rows for the given SEP-41 token contract,\nordered newest-first. Includes every `transfer` /\n`approve` / `set_admin` / `set_authorized` event the\ndecoder observed; `mint` / `burn` / `clawback` live\nseparately in supply analytics.\n\nPowers the per-account net-position queries that\nCoinGecko / CoinMarketCap structurally cannot offer —\nthey only see exchange-side flows, not on-chain\ntransfers.\n\nF-0021 closure (audit-2026-05-26).\n",
+                      "content": "Returns the most-recent N (default 100, max 500)\naudit-trail rows for the given SEP-41 token contract,\nordered newest-first. Includes every `transfer` /\n`approve` / `set_admin` / `set_authorized` event the\ndecoder observed; `mint` / `burn` / `clawback` live\nseparately in supply analytics.\n\nPowers the per-account net-position queries that\nCoinGecko / CoinMarketCap structurally cannot offer —\nthey only see exchange-side flows, not on-chain\ntransfers.\n",
                       "type": "text/plain"
                     },
                     "url": {

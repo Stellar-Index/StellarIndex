@@ -73,7 +73,7 @@ emitted metrics. Design rationale lives in
   Variables are intentionally not defaulted in `defaults/main.yml`
   to prevent stale-SHA rot.
 
-- **Listener bind + firewall** (F-1290, codex audit-2026-05-13):
+- **Listener bind + firewall:**
   The role binds Prometheus to `0.0.0.0:9090` and Alertmanager to
   `0.0.0.0:9093` (not loopback) so the peer-Prometheus scrape and
   alert delivery work in the multi-host topology. The role's
@@ -191,8 +191,8 @@ The preflight task warns when neither is set.
 
 ## Operator UI access
 
-F-1287/F-1290 (codex audit-2026-05-13): the listeners bind to
-`0.0.0.0:9090/9093` (changed from loopback in wave 120 so peer-
+The listeners bind to
+`0.0.0.0:9090/9093` (not loopback, so peer-
 Prometheus scrape + alert delivery work in the multi-host
 topology). Public exposure is blocked by the role's
 `06-firewall.yml` drop-in: nftables priority -100 chain opens

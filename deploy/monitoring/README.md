@@ -4,7 +4,7 @@ Prometheus alerting rules that correspond 1:1 to the rows in
 [docs/operations/alerts-catalog.md](../../docs/operations/alerts-catalog.md).
 Loaded by AlertManager; routed per
 [sev-playbook.md §3](../../docs/operations/sev-playbook.md#3-detection-channels).
-**Reality check (audit-2026-07-23 OBS-08):** on the live single-host
+**Reality check:** on the live single-host
 R1 config ([`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml))
 the page tier fans out to Discord ONLY — `chat-page` has no
 `pagerduty_configs`. The multi-host template

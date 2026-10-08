@@ -2,11 +2,10 @@
 #
 # The CI ansible-lint step (.github/workflows/ci.yml, job `toolchain-gates`)
 # runs `ansible-lint --profile moderate roles/ playbooks/ tasks/` from this
-# directory. It previously ended in `|| true`, which silently swallowed the
-# exit code so the REQUIRED check was permanently green even on real
-# error-level violations — a false green.
+# directory. It must not end in `|| true`: that swallows the exit code and
+# turns the REQUIRED check into a false green on real error-level violations.
 #
-# Dropping `|| true` bare would flip the check permanently RED, because the
+# Without it the check would be permanently RED, because the
 # tree carries ~535 pre-existing moderate-profile findings that predate this
 # gate. This file GRANDFATHERS exactly those pre-existing rule classes so the
 # check exits 0 today, while a NEW violation in any rule NOT listed below
