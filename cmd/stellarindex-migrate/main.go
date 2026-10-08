@@ -382,9 +382,7 @@ func errf(format string, args ...any) {
 // formats, which is the one class this binary does not write itself —
 // the driver embedding the URL it was handed into its own error.
 //
-// Two rounds of this fix tried to make echo-and-scrub the primary
-// control, and each round a shape turned up that the scrubber parsed
-// differently from the way the operator meant it: a malformed DSN is by
+// Echo-and-scrub is not the primary control: a malformed DSN is by
 // definition not parseable, so every rule for "where the password ends"
 // in one has a counter-example. Scrubbing is kept because a library's
 // text cannot be audited in advance, not because it is sufficient.

@@ -7,7 +7,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// REGRESSION (RLT-386): a withheld price (404/403 from /v1/price) left
+// REGRESSION: a withheld price (404/403 from /v1/price) left
 // the widget silently showing the build-time `initial` price with no
 // on-screen hint that it is stale — only a hover-only `title` tooltip,
 // invisible on the touch/iframe surfaces these widgets embed into.

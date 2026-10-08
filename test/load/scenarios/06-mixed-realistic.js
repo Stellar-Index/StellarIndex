@@ -33,7 +33,7 @@
 // babel, which parses array spread but NOT object spread. This file
 // used object spread from the day it was written (dc145698) and so had
 // NEVER compiled — the compile gate sat behind secrets that do not
-// exist, which is exactly the invisibility #316 was about. Use
+// exist, which is exactly the invisibility that gap caused. Use
 // Object.assign({}, a, {...}) for header merges; `make test-load-check`
 // now runs on every PR touching test/load/** and will catch a relapse.
 

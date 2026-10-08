@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 import { Panel } from './Panel';
 
-// #335 F5 (WCAG 1.3.1 / axe heading-order). Panel — not Card — is what
+// WCAG 1.3.1 / axe heading-order. Panel — not Card — is what
 // renders the section titles on /divergences, and it hardcoded <h3>. With
 // the page's own <h1> above it and the reference cards' <h2> below, the
 // live outline read h1 → h3 → h3 → h3 → h2: a skipped level.

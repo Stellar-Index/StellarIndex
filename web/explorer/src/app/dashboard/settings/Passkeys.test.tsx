@@ -76,7 +76,7 @@ describe('Passkeys settings section', () => {
     expect(await screen.findByText('No passkeys yet')).toBeInTheDocument();
   });
 
-  // GH-1073: removal is destructive, so it confirms like key revoke and
+  // Removal is destructive, so it confirms like key revoke and
   // alert delete; declining must not call the DELETE endpoint.
   it('asks for confirmation and removes nothing when declined', async () => {
     listPasskeys.mockResolvedValue([passkey()]);

@@ -181,16 +181,15 @@ type EventSink interface {
 // Implemented by `internal/storage/timescale.FreezeEventSink` against the
 // migration-0119 columns on `freeze_events`.
 //
-// Why this exists at all. Before 0119 the ladder lived in exactly two
-// volatile places: the aggregator's in-process state map, and a JSON blob
-// inside the Redis marker. Redis is a cache — deployed without persistence,
-// flushed during incidents — and the orchestrator reads a MISSING marker
-// under a live freeze as the ADR-0019 operator override, because until now
-// that was the only way it could happen. So a Redis flush did not merely
-// forget how far a pair had climbed the ladder: the next tick RELEASED
-// every live freeze, and a pair that had spent the whole 2-hour ladder to
-// ESCALATED — which ADR-0019 holds "until manual unfreeze" — silently
-// unfroze and republished the price a P1 had already escalated to a human.
+// Why this exists at all. The ladder would otherwise live only in volatile
+// places: the aggregator's in-process state map and a JSON blob inside the
+// Redis marker. Redis is a cache — possibly without persistence, flushed
+// during incidents — and the orchestrator reads a MISSING marker under a
+// live freeze as the ADR-0019 operator override. So a Redis flush would not
+// merely forget how far a pair had climbed the ladder: the next tick would
+// RELEASE every live freeze, and a pair at ESCALATED — which ADR-0019 holds
+// "until manual unfreeze" — would silently unfreeze and republish the price
+// a P1 had already escalated to a human.
 //
 // Optional, and separate from [EventSink] on purpose: a deployment that
 // wires no ladder store keeps precisely the pre-0119 Redis-only behaviour,
@@ -422,8 +421,7 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenV
 // observed pair.
 //
 // ttl <= 0 falls back to the writer's default, so a caller that
-// forgets to plumb the outcome's TTL degrades to the old behaviour
-// rather than writing a marker that never expires.
+// forgets to plumb the outcome's TTL still gets a marker that expires.
 func (w *Writer) MarkHold(
 	ctx context.Context,
 	asset, quote canonical.Asset,

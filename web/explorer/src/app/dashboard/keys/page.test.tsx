@@ -89,7 +89,7 @@ describe('/dashboard/keys scope display', () => {
   });
 });
 
-// GH-1076: a mint that times out client-side may still have committed
+// A mint that times out client-side may still have committed
 // server-side, so the bare "Create failed" fallback is misleading — it
 // must name the timeout and point the customer at the key list.
 describe('/dashboard/keys create-key timeout', () => {
@@ -122,7 +122,7 @@ describe('/dashboard/keys create-key timeout', () => {
   });
 });
 
-// GH-1073: the server accepts and enforces expires_at, but the dashboard
+// The server accepts and enforces expires_at, but the dashboard
 // offered no way to set it and no way to see it.
 describe('/dashboard/keys expiry', () => {
   it('sends the chosen expiry as an RFC 3339 expires_at', async () => {

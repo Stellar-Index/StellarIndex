@@ -186,7 +186,7 @@ describe('useLedgerFollow', () => {
     expect(followThrottleSizeForTest()).toBe(0);
   });
 
-  // Two panels sharing one key (the #470 shape) must not have the entry
+  // Two panels sharing one key (the shared-key shape) must not have the entry
   // evicted while either is still mounted — only the LAST unmount clears it.
   it('keeps the throttle entry while a sibling follower of the same key is still mounted', () => {
     const a = renderFollowers([['/v1/assets']]);

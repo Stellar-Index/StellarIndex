@@ -248,10 +248,10 @@ function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
 }
 
 // Server-computed trailing-24h percentage change (decimal string, e.g.
-// "+1.27"). RLT-069: re-deriving this from two /v1/chart points
+// "+1.27"). Re-deriving this from two /v1/chart points
 // duplicated a computation the API already publishes and disagreed with
 // it whenever a bucket was missing or backfilled — but the figure only
-// exists on /v1/price/batch (CA2-A35-correct-5), so it's baked from a
+// exists on /v1/price/batch, so it's baked from a
 // one-asset batch call rather than the single-row /v1/price fetch above.
 // softFail for the same reason as fetchPrice: a cold/slow batch lookup
 // must degrade to no baked badge, not abort the export.
@@ -353,7 +353,7 @@ export default async function PairPage({ params }: { params: Params }) {
     perSource.set(t.source, (perSource.get(t.source) ?? 0) + 1);
   }
 
-  // 24h change: the server's own computed figure (RLT-069) — never
+  // 24h change: the server's own computed figure — never
   // re-derived from two /v1/chart points, which disagrees with it
   // whenever a bucket is missing, backfilled, or the window boundary
   // doesn't land exactly on the two samples picked here.
@@ -728,7 +728,7 @@ function AssetBadge({ canonical }: { canonical: string }) {
   } else if (canonical.startsWith('fiat:')) {
     // A fiat leg's declared canonical page is /external/assets/{slug}
     // (AM-16), never /assets/{ticker} — route it through assetHrefFor
-    // rather than the generic slug/href path below (GH-894/K064).
+    // rather than the generic slug/href path below.
     const ticker = canonical.replace('fiat:', '');
     return (
       <Link

@@ -10,7 +10,7 @@ import { AssetLabel } from './AssetLabel';
 // (bidirectional — the org's stellar.toml lists the issuer back). org_name
 // alone is self-declared: a scam issuer can point its on-chain home_domain
 // at a reputable org's domain to borrow that org's ORG_NAME. Rendering it
-// unqualified would launder the spoof (CS-100 / trust-spoofing audit).
+// unqualified would launder the spoof.
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
@@ -91,7 +91,7 @@ describe('AssetLabel org attribution gating (CS-100)', () => {
   });
 });
 
-// CA2-A36: a Soroban pool pairs against SAC contract addresses, not
+// A Soroban pool pairs against SAC contract addresses, not
 // classic asset ids. Two DISTINCT issuers can share a code (a scam SAC
 // wrapping "USDC-<attacker issuer>" alongside the real "USDC-<Circle
 // issuer>"): the resolved-SAC branch must disambiguate on the issuer,

@@ -134,7 +134,7 @@ export function formatPairPrice(n: number): string {
 }
 
 // formatOraclePrice — the oracle-reading price column (/oracles and the
-// per-asset oracle panel, #336). Takes the wire STRING so a value the
+// per-asset oracle panel). Takes the wire STRING so a value the
 // API sent but JS cannot parse renders verbatim rather than as '—': an
 // oracle reading is evidence, and dropping it because our formatter
 // dislikes it is the one thing this column must not do.

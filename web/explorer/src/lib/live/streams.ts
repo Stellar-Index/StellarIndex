@@ -25,7 +25,7 @@ type Listener = (data: string) => void;
 
 // Connection status surfaced to subscribers so a page can render a
 // "reconnecting"/stale badge instead of a value that has silently gone
-// dark (GH-1038). 'reconnecting' covers both the initial connect and
+// dark. 'reconnecting' covers both the initial connect and
 // the post-hard-failure wait for STREAM_REOPEN_MS.
 export type StreamStatus = 'live' | 'reconnecting';
 type StatusListener = (status: StreamStatus) => void;

@@ -11,7 +11,7 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { AssetSwap } from './AssetSwap';
 
-// RLT-384. The converter's fiat legs come from /v1/price/batch, which
+// The converter's fiat legs come from /v1/price/batch, which
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
 // `price_type` and `observed_at` were dropped and every fiat leg looked
 // like a fresh observed quote. It is not a theoretical gap: measured on

@@ -16,7 +16,7 @@ import { ExternalAssetPathView } from './ExternalAssetPathView';
  * /external/assets/[slug] — detail page for a NON-Stellar reference
  * asset (fiat currency or reference-only coin like BTC / ETH). The
  * Stellar-side counterpart lives at /assets/[slug]; this is the
- * external half of the LC-001 Stellar/external split.
+ * external half of the Stellar/external split.
  *
  * Backed by GET /v1/external/assets/{slug} (envelope `{data:
  * GlobalAssetView}`). It's a LEAN page: it renders only the

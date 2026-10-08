@@ -187,7 +187,7 @@ describe('DivergenceFeed board rows are keyboard-operable', () => {
   });
 });
 
-// REGRESSION (RLT-215): the board's column headers were bare <th> with no
+// REGRESSION: the board's column headers were bare <th> with no
 // scope, so a screen reader announcing a data cell never names which column
 // it belongs to.
 describe('DivergenceFeed table header cells declare their scope', () => {

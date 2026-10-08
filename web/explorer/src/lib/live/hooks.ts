@@ -152,7 +152,7 @@ export interface LiveTip {
 
 /**
  * tipCaveat — the caveat a price surface must append beside a live tip
- * tick, derived from the SAME flags/window the server sent (GH-772: the
+ * tick, derived from the SAME flags/window the server sent (the
  * widened LiveTip/LiveTipFlags carried divergence_warning/frozen/
  * window_seconds but no price surface read them). Frozen wins over a
  * divergence warning — a frozen tick isn't moving at all, which is the
@@ -426,7 +426,7 @@ export function usePricePoll({
    * `title`/`detail` off the 404 body — internal/api/v1/price.go's
    * `priceWithheldWording`), e.g. "issuer flagged" vs "market too thin
    * to aggregate". Null until a withheld verdict lands; callers must not
-   * hardcode a liquidity-only caption over these (GH-772). */
+   * hardcode a liquidity-only caption over these. */
   withheldTitle: string | null;
   withheldDetail: string | null;
   /** The price comes from a market below the substance floor. */

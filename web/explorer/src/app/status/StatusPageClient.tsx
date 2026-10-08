@@ -199,7 +199,7 @@ const STATUS_FEED_UNREACHABLE_AFTER = 2;
 //                                   envelope's `data` so a 200 with a
 //                                   body that isn't actually healthy
 //                                   (an empty collection standing in
-//                                   for an outage, #784) can't pass
+//                                   for an outage) can't pass
 //                                   silently — use `expectEnvelope`
 //                                   when any well-formed body is fine.
 //   { kind: 'requires-auth' }    — show "auth req'd", no probe
@@ -226,7 +226,7 @@ const expectEnvelope = () => true;
 // rows" masks a real outage — Reflector wedged: /v1/oracle/latest
 // keeps answering 200 {"data":[]}; a withheld row: /v1/price/batch
 // omits it rather than erroring — a bare res.ok reports green through
-// a total outage (#784, #743, same root as the on-host SLA probe).
+// a total outage (same root as the on-host SLA probe).
 const expectNonEmptyArray = (data: unknown) =>
   Array.isArray(data) && data.length > 0;
 
@@ -278,7 +278,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/price/batch',
     group: 'Pricing',
     description: 'Batch lookup, up to 1000 assets',
-    // A withheld row is OMITTED, not errored (#784/#743) — an empty
+    // A withheld row is OMITTED, not errored — an empty
     // `data` array for a single requested asset is the outage.
     probe: {
       kind: 'get',
@@ -431,7 +431,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/oracle/latest?asset=crypto:XLM',
-      // #784/#743: Reflector wedged keeps answering 200 {"data":[]};
+      // Reflector wedged keeps answering 200 {"data":[]};
       // an empty reading set for one asset is the outage, not a probe pass.
       expect: expectNonEmptyArray,
     },
@@ -500,7 +500,7 @@ export interface IncidentHistoryEntry {
   severity: 'major' | 'minor' | 'maintenance';
   // Reference to the published postmortem (URL or repo path), when one
   // exists. null/absent means no postmortem has been written yet — the
-  // "Read full postmortem" link must not claim one exists (GH-837).
+  // "Read full postmortem" link must not claim one exists.
   postmortem?: string | null;
 }
 
@@ -987,7 +987,7 @@ function StatusNotices() {
         if (cancelled) return;
         // A 200 with flags.stale means the store read failed server-side and
         // the empty/last-known list it returned is NOT a genuine "nothing to
-        // announce" — treat it the same as a network failure (RLT-465):
+        // announce" — treat it the same as a network failure:
         // keep the last-known notices, surface the caveat, don't clear.
         if (env.flags?.stale) {
           throw new Error('notice read failed upstream');
@@ -1337,7 +1337,7 @@ function ActiveIncidents({
   // internal/api/v1/status.go). "unknown" means the Alertmanager query
   // FAILED, so an empty `incidents` array is absence-of-signal, not an
   // all-clear — rendering "No active incidents" for it would be the same
-  // silent collapse W1.1 guards against elsewhere on this page (RLT-465).
+  // silent collapse W1.1 guards against elsewhere on this page.
   incidentsStatus?: string;
 }) {
   const trusted = incidentsStatus === 'ok' || incidentsStatus === 'degraded';
@@ -1456,7 +1456,7 @@ function EndpointMatrix({
 // EndpointProbeResult is the union of states the matrix renders.
 //   - 'fast' / 'slow' / 'down' come from a real fetch
 //   - 'degraded' is a 2xx whose envelope body reports `data.status
-//     === "degraded"` (RLT-468: /v1/readyz returns HTTP 200 by
+//     === "degraded"` (/v1/readyz returns HTTP 200 by
 //     design when a non-critical dependency fails — see server.go
 //     computeReadyz's comment — so `res.ok` alone can't tell
 //     a healthy readyz from a degraded one)
@@ -1572,7 +1572,7 @@ export function probeEndpoint(
       // A 200 whose envelope is well-formed but whose payload fails
       // the endpoint's own expectation (an empty collection standing
       // in for a real outage — Reflector wedged, a withheld price
-      // row — #784) is the outage, not a pass: report it exactly
+      // row) is the outage, not a pass: report it exactly
       // like a non-2xx so the badge goes red, not amber.
       if (!expect(envelope.data)) {
         return { kind: 'down', latencyMs, status: res.status };

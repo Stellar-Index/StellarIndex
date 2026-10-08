@@ -135,7 +135,7 @@ export function AssetsTable({
    * Base path for the filter/pagination URL updates (`router.push`)
    * AND per-row detail links. `/assets` (default) routes rows to the
    * Stellar detail page; `/external/assets` routes them to the
-   * external (fiat / reference-coin) detail page (LC-001 split).
+   * external (fiat / reference-coin) detail page.
    */
   basePath?: string;
   /**
@@ -155,7 +155,7 @@ export function AssetsTable({
 
   const limit = parseLimit(limitParam);
 
-  // #328: every USD column below (price, the three change windows, market
+  // Every USD column below (price, the three change windows, market
   // cap, 24h volume, the 7d price sparkline) is aggregator-derived. On a
   // net with no aggregator they are ALL null, so the directory rendered
   // six dashes per row and paid for a 7d price series that does not exist.
@@ -215,7 +215,7 @@ export function AssetsTable({
     ariaSort,
   } = useTableSort<Coin, string>(assets, sortColumns, null);
 
-  // #356: a directory-flagged (malicious/unsafe/fraud/scam/hack/phishing)
+  // A directory-flagged (malicious/unsafe/fraud/scam/hack/phishing)
   // issuer's asset ranks BELOW every unflagged one whatever the active
   // sort key. The server already orders the fetched page that way; this
   // re-applies it after the client-side column sort, which would otherwise

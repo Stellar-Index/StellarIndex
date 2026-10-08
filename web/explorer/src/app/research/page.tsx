@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 
 // TOPICS held the GitHub-only catch-all topic cards. As each
 // topic earns a curated on-site browser, its card is removed.
-// Today there is none — operations got curated in #868-ish; the
+// Today there is none — operations got curated; the
 // per-alert runbooks remain GitHub-only.
 const TOPICS: { name: string; description: string; href?: string }[] = [];
 

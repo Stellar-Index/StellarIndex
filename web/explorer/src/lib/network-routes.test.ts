@@ -1,7 +1,7 @@
 // Per-network route availability — the contract every nav, search,
 // sitemap and card-grid surface now asks instead of keeping its own copy.
 //
-// #328: /anomalies, /divergences and /mev are aggregator-derived and empty
+// /anomalies, /divergences and /mev are aggregator-derived and empty
 // on every net without an aggregator. They were dropped from the rail (via
 // their /insights hub) but still listed by the sitemap and still carded on
 // the /network hub, because each surface carried its own hidden-href set.
@@ -82,8 +82,8 @@ describe('routeAvailable', () => {
 
   it('gates the asset + SDEX surfaces on futurenet only', async () => {
     // Futurenet is contracts-only (0 assets, 0 SDEX trades); testnet has
-    // both. Before #328 this fact lived as an `id === 'futurenet'` check on
-    // the homepage alone, so futurenet's nav still offered both.
+    // both. The gate is per-network config, not an `id === 'futurenet'`
+    // check on the homepage alone, which left futurenet's nav offering both.
     const futurenet = await loadFor('futurenet');
     for (const href of ['/assets', '/issuers', '/sdex', '/liquidity-pools']) {
       expect(futurenet.routeAvailable(href)).toBe(false);

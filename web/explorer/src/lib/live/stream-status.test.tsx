@@ -40,7 +40,7 @@ class FakeEventSource {
   }
 }
 
-// GH-1038: a hard-failed stream kept rendering its last frame as current
+// A hard-failed stream kept rendering its last frame as current
 // until the caller's staleness window (30 s for the ledger tick) ran out,
 // so a dead stream looked exactly like a quiet one.
 describe('useLedgerStream connection status', () => {

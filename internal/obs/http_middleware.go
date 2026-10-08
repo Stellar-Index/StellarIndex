@@ -260,7 +260,7 @@ func RouteFromContext(ctx context.Context) string {
 //
 // Any method outside the known set collapses to the bounded label "other".
 // net/http accepts an ARBITRARY token as a request method, so passing
-// unknown verbs through verbatim (the old behaviour) let an unauthenticated
+// unknown verbs through verbatim would let an unauthenticated
 // client mint unbounded metric label children — `curl -X <random>` in a
 // loop grows HTTPRequestsTotal without limit and OOMs the API + Prometheus
 // (metric-cardinality DoS, audit W4-obs-1). The label is telemetry only:

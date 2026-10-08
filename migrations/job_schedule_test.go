@@ -36,7 +36,7 @@ var (
 	durationRe        = regexp.MustCompile(`^(\d+)\s*(second|minute|hour|day|week|month)s?$`)
 )
 
-// TestJobScheduleIntervalsFitJobFailureAlert pins #888's load-bearing
+// TestJobScheduleIntervalsFitJobFailureAlert pins the load-bearing
 // assumption: every TimescaleDB job a migration schedules runs often enough
 // for the job-failure alert's slow arm to be able to fire on it.
 func TestJobScheduleIntervalsFitJobFailureAlert(t *testing.T) {

@@ -95,7 +95,7 @@ export function HomeNetworkStrip() {
       : null;
   const xlmChange = native.change24hPct;
 
-  // #328: on a net with no aggregator both USD tiles are structurally "—"
+  // On a net with no aggregator both USD tiles are structurally "—"
   // AND both link to /markets, which is empty there — so the strip sent
   // the reader from a dash to a blank table. Drop them and narrow the
   // grid rather than render two dead tiles pointing at a dead page; the

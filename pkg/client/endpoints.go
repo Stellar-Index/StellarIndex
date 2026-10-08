@@ -487,9 +487,8 @@ func (c *Client) Assets(ctx context.Context, opts AssetsOptions) (*Envelope[[]As
 // The returned [AssetLookup] carries whichever shape the server
 // sent; branch on [AssetLookup.Kind] or call StellarAsset() /
 // Catalogue() directly rather than assuming which one you'll get —
-// see [AssetLookup]'s doc comment for why an earlier version of this
-// method (always decoding into [AssetDetail]) was a live, silent bug
-// for catalogue-slug callers.
+// see [AssetLookup]'s doc comment for why always decoding into
+// [AssetDetail] would silently break catalogue-slug callers.
 func (c *Client) Asset(ctx context.Context, assetID string) (*Envelope[AssetLookup], error) {
 	if assetID == "" {
 		return nil, &APIError{Status: 400, Title: "asset_id required"}

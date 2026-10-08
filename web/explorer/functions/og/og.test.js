@@ -197,7 +197,7 @@ describe('liveSubline — upstream circuit breaker (F101)', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(5);
 
     // The next call should short-circuit: no further network call made, and
-    // the result is marked degraded (GH-893) — an attempted-but-failed fetch,
+    // the result is marked degraded — an attempted-but-failed fetch,
     // not "no live data applies here".
     const result = await liveSubline('markets', id);
     expect(result).toEqual({ sub: null, degraded: true });
@@ -216,7 +216,7 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
       'https://api.stellarindex.io',
     );
     // No fetch was ever attempted, so this is not an upstream failure
-    // (GH-893) — distinct from the breaker-open/fetch-failed cases above.
+    // — distinct from the breaker-open/fetch-failed cases above.
     expect(result).toEqual({ sub: null, degraded: false });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -309,7 +309,7 @@ describe('og function — degraded card cache-control (GH-893)', () => {
     expect(res.status).toBe(200);
     // Distinct from and shorter than CARD_CACHE_CONTROL's 60s/300s window —
     // a swallowed upstream failure must not pin a price-less card as long as
-    // a genuinely live one (GH-893).
+    // a genuinely live one.
     expect(res.headers.get('cache-control')).toBe(
       'public, s-maxage=15, stale-while-revalidate=15',
     );
@@ -465,8 +465,8 @@ describe('og function — headline renders identifiers only (T265)', () => {
   });
 });
 
-// K060: Cache-Control alone does not make CF Pages cache a Function
-// response (confirmed live, GH-893) — the function must read/write
+// Cache-Control alone does not make CF Pages cache a Function
+// response (confirmed live) — the function must read/write
 // `caches.default` itself. A minimal in-memory stand-in for that API lets
 // these tests prove the write-then-read loop without a CF runtime.
 function makeFakeCache() {

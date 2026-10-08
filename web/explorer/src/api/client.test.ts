@@ -71,7 +71,7 @@ describe('asExample', () => {
   });
 });
 
-// GH-1076: a mutation abort (timeoutSignal's own DOMException, or the
+// A mutation abort (timeoutSignal's own DOMException, or the
 // browser's native AbortError) must read as "timed out", not fall through
 // to a generic ApiError check that a bare abort never satisfies.
 describe('isTimeoutError', () => {

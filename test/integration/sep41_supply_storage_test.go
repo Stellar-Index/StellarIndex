@@ -1500,10 +1500,10 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 // asset still publishing had a last event landing exactly ON the
 // watermark.
 //
-// The old behaviour was also perverse in a way worth pinning: a contract with
-// NO events returned 0 and skipped the gate entirely, so it kept publishing —
-// while a contract that merely went quiet froze. The anchor penalised exactly
-// the contracts we had data for. Both cases are asserted below.
+// Anchoring on event ledgers would be perverse in a way worth pinning: a
+// contract with NO events would return 0 and skip the gate entirely, so it
+// kept publishing — while a contract that merely went quiet froze. Both cases
+// are asserted below.
 func TestMinSEP41ComponentLedgerUsesObserverWatermark(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -76,7 +76,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       <Panel
         headingLevel={2}
         title="Issuer identity"
-        // CS-100: org_name is only an authoritative organisation identity
+        // org_name is only an authoritative organisation identity
         // when SEP-1 verified (bidirectional). Unverified it is self-declared
         // metadata a scam issuer can spoof, so it must not headline the panel
         // as the issuer's identity — fall back to the real on-chain home_domain.
@@ -90,7 +90,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           {/* Only surface the "Organisation" attribution when verified;
               otherwise home_domain (below) carries the real on-chain value
-              without laundering an unverified name as authoritative (CS-100). */}
+              without laundering an unverified name as authoritative. */}
           {data.org_verified && data.org_name && (
             <Stat label="Organisation" value={data.org_name} />
           )}
@@ -128,7 +128,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           />
         </div>
         {data.auth_flags_source === 'last_known_before_removal' && (
-          // #374: recovered from the account's state at its REMOVAL ledger.
+          // Recovered from the account's state at its REMOVAL ledger.
           // Unlabelled pills would read as this issuer's current policy for
           // an account that no longer exists.
           <p className="text-ink-muted mt-2 text-xs">

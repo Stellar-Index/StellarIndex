@@ -1,4 +1,4 @@
-// Guard: GH-846 — 19 sites built /sources/, /exchanges/, /protocols/ and
+// Guard: 19 sites built /sources/, /exchanges/, /protocols/ and
 // /status/incident/ hrefs by interpolating an API-supplied identifier
 // (source name, protocol slug, incident filename) raw into a template
 // literal, while 13 sibling sites for the SAME fields remembered

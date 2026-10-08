@@ -1,4 +1,4 @@
-// #328: the /assets directory renders six aggregator-derived columns —
+// The /assets directory renders six aggregator-derived columns —
 // price, 1h/24h/7d change, market cap, 24h volume — plus a 7d price
 // sparkline. On a network with no aggregator every one of those values is
 // null, so a test-net visitor got a directory whose right-hand two-thirds

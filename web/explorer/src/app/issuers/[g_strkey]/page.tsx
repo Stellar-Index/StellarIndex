@@ -54,7 +54,7 @@ interface IssuerDetail {
   auth_revocable?: boolean;
   auth_immutable?: boolean;
   auth_clawback?: boolean;
-  // #374: where the four flags above came from. `last_known_before_removal`
+  // Where the four flags above came from. `last_known_before_removal`
   // means the account has been REMOVED and these are its values at the
   // removal ledger — historical, not current policy.
   auth_flags_source?: 'live' | 'last_known_before_removal';
@@ -229,7 +229,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
   // null/missing volumes drop out cleanly; the panel renders "—" when
   // every asset row had no recent USD-priced trade.
-  // #328: every USD figure on this page — the "24h volume" tile and the
+  // Every USD figure on this page — the "24h volume" tile and the
   // Price / 24h % / 24h volume / Market cap columns of the issued-asset
   // table — comes from the aggregator. On a net that runs none they are
   // all null, so the issuer page showed a dash tile above a table that was
@@ -277,7 +277,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         />
         {detail.org_name ? (
           <>
-            {/* CS-100: org_name is SELF-DECLARED SEP-1 metadata. Render the
+            {/* org_name is SELF-DECLARED SEP-1 metadata. Render the
                 verification state next to it so an unverified name can't pass
                 as an authoritative identity. Verified = the org's stellar.toml
                 lists this issuer back (bidirectional). */}
@@ -398,7 +398,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 <FlagRow label="auth_clawback" v={detail.auth_clawback} />
               </ul>
               {detail.auth_flags_source === 'last_known_before_removal' && (
-                // #374: these flags were recovered from the account's state
+                // These flags were recovered from the account's state
                 // at the ledger it was REMOVED. Rendering them unlabelled
                 // would present a dead account's configuration as its
                 // current policy — the exact thing the provenance column

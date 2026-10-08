@@ -63,7 +63,7 @@ const VALUATION_REASON: Record<string, string> = {
 /**
  * How a valuation was established, in the words the surface uses. Keyed
  * on the server's `basis` enum (six values across the classic and
- * contract arms — RLT-027): a basis missing here fell through to a
+ * contract arms): a basis missing here fell through to a
  * generic "priced by an independent oracle feed" line even for a
  * declaration or a third-party curation, which is not what either is.
  */

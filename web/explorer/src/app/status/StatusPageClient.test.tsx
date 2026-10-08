@@ -478,7 +478,7 @@ describe('StatusPageClient honest staleness', () => {
     expect(screen.getByText(/notices feed unreachable/i)).toBeInTheDocument();
   });
 
-  // RLT-465: a notice-store read failure returns HTTP 200 with an empty
+  // A notice-store read failure returns HTTP 200 with an empty
   // list and flags.stale=true (status_notices.go handleStatusNotices) —
   // byte-identical on the surface to a genuine "nothing to announce". A
   // client that only checks res.ok would silently accept the empty list
@@ -646,7 +646,7 @@ describe('StatusPageClient overall banner ticket note', () => {
     expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
   });
 
-  // RLT-465: incidents_status "unknown" means the Alertmanager query
+  // incidents_status "unknown" means the Alertmanager query
   // FAILED, so `incidents.active` (empty here — the zero value of a
   // failed query) is absence-of-signal, not an all-clear. The panel used
   // to ignore incidents_status entirely and always render "No active
@@ -689,7 +689,7 @@ describe('probeEndpoint body-shape check', () => {
     probe: { kind: 'get', path: '/v1/readyz', expect: () => true },
   };
 
-  // #784/#743: an endpoint that can answer 200 with an empty
+  // An endpoint that can answer 200 with an empty
   // collection during a total outage — Reflector wedged,
   // /v1/oracle/latest keeps answering 200 {"data":[]}.
   const oracleLatestEndpoint: PublicEndpoint = {
@@ -737,7 +737,7 @@ describe('probeEndpoint body-shape check', () => {
     expect(result.kind).toBe('fast');
   });
 
-  // RLT-468: computeReadyz (server.go) returns HTTP 200 with
+  // computeReadyz (server.go) returns HTTP 200 with
   // data.status="degraded" by design when a non-critical dependency
   // fails — 503 is reserved for a critical failure. Reading
   // `res.ok` alone can't distinguish that from a genuinely healthy
@@ -767,7 +767,7 @@ describe('probeEndpoint body-shape check', () => {
     expect(result.kind).toBe('degraded');
   });
 
-  // #784: a total oracle outage renders `200 {"data":[]}`, not a
+  // A total oracle outage renders `200 {"data":[]}`, not a
   // non-2xx — a bare res.ok reports the row green through the outage.
   it('reports down, not fast, for a 200 oracle body with an empty reading set', async () => {
     vi.stubGlobal(

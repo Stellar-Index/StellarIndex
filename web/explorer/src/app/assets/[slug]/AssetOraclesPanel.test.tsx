@@ -234,7 +234,7 @@ describe('AssetOraclesPanel', () => {
       expect(screen.queryByText('band')).not.toBeInTheDocument();
     });
 
-    // RLT-387: a 200 with zero oracle-class sources is the registry
+    // A 200 with zero oracle-class sources is the registry
     // itself failing to answer, not a fact about this asset — the
     // registry is this panel's own coverage list, so it is never
     // legitimately empty. Must read the same as registry.isError, NOT
@@ -255,7 +255,7 @@ describe('AssetOraclesPanel', () => {
     });
   });
 
-  // The #336 gate: an asset that merely BORROWS a verified currency's
+  // The gate: an asset that merely BORROWS a verified currency's
   // ticker is served no oracle rows, and the reason must not read as a
   // coverage gap.
   describe('an unverified asset sharing a verified ticker', () => {

@@ -10,7 +10,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Why each capability is missing, in the reader's terms. This is the
 // sentence a visitor who typed the URL (or followed an old link) sees
-// instead of an empty grid that looks like an outage — #328.
+// instead of an empty grid that looks like an outage.
 const REASON: Record<NetworkCapability, string> = {
   pricing:
     'This page is built from the price aggregator, which runs on Mainnet only — the test-net deployments index the chain but compute no USD prices, so there is nothing to show here rather than something missing.',

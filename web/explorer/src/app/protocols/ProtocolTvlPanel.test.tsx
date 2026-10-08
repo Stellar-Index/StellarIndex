@@ -51,7 +51,7 @@ describe('ProtocolTvlPanel', () => {
   });
 });
 
-// #338 — the headline total. The three states the wire can present, each
+// The headline total. The three states the wire can present, each
 // of which has exactly one honest rendering.
 const TOTAL: DexTvlTotal = {
   tvl_usd: '40206675.17',

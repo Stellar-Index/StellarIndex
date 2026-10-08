@@ -32,7 +32,7 @@ describe('markets/[pair] OHLC volume scale', () => {
 
   it('reads the scale the bar states via the shared BigInt-safe helper', () => {
     expect(src).toContain('quote_volume_decimals');
-    // RLT-214: a local `Number(raw) / 10 ** decimals` reimplementation
+    // A local `Number(raw) / 10 ** decimals` reimplementation
     // rounds silently above 2^53. The bar's stated scale must be applied
     // by format.ts's scaleBaseUnits (BigInt-divide-first), not inline.
     expect(src).not.toMatch(/Number\(raw\)/);
@@ -42,7 +42,7 @@ describe('markets/[pair] OHLC volume scale', () => {
   it('renders no figure at all when the bar states no scale', () => {
     // Guessing a divisor is what the finding is about; an em-dash is the
     // honest answer for a response that states no scale — `null` on the
-    // wire (GH-1285: an unregistered trade source), not just `undefined`.
+    // wire (an unregistered trade source), not just `undefined`.
     expect(src).toMatch(/decimals == null[\s\S]{0,160}return '—'/);
   });
 });

@@ -316,7 +316,7 @@ func TestCORS_AllowCredentialsEmittedOnAllowedOrigin(t *testing.T) {
 }
 
 // TestCORS_AllowCredentialsAbsentByDefault — the default config
-// (AllowCredentials: false, the original behaviour) must NOT emit
+// (AllowCredentials: false) must NOT emit
 // the header. Documented in the godoc but worth pinning so a
 // future refactor doesn't silently flip the default.
 func TestCORS_AllowCredentialsAbsentByDefault(t *testing.T) {

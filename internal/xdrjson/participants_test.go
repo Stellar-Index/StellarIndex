@@ -217,11 +217,11 @@ func testContractID() xdr.ContractId {
 }
 
 // TestParticipantAccounts_InvokeContractAddressVsStringArg documents the Soroban
-// InvokeContract discrimination and its final resolution. #79 added a per-TYPE
-// allowlist so a string arg spelling a valid G-strkey is NOT a participant while
+// InvokeContract discrimination and its final resolution. A per-TYPE
+// allowlist was added so a string arg spelling a valid G-strkey is NOT a participant while
 // an ScVal::Address arg WAS. That Address-arg inclusion was itself an injection
 // vector (args are attacker-controlled call data), so the fix now excludes BOTH:
-// the string arg (the retained #79 free-text defense) AND the Address arg. An
+// the string arg (the retained free-text defense) AND the Address arg. An
 // InvokeContract op contributes no arg-derived participant at all.
 func TestParticipantAccounts_InvokeContractAddressVsStringArg(t *testing.T) {
 	contractID := testContractID()
@@ -264,7 +264,7 @@ func TestParticipantAccounts_InvokeContractAddressVsStringArg(t *testing.T) {
 // gate on op.Auth would wrongly include the victim. The correct behavior is to
 // include NEITHER.
 //
-// This subcase is red on origin/main's blanket #79 code (the arg loop includes
+// This subcase is red on origin/main's blanket code (the arg loop includes
 // the victim) AND on the superseded consent-gate commit (it reads the victim out
 // of op.Auth) — the stronger, unconditional property both of those miss.
 func TestParticipantAccounts_InvokeContractAuthoredAuthDoesNotParticipate(t *testing.T) {

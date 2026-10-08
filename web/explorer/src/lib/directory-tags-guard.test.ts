@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
-// Guard for #879: `lib/directory-tags.ts` is the ONE place a
+// Guard: `lib/directory-tags.ts` is the ONE place a
 // directory/scam tag-class vocabulary (malicious/unsafe/fraud/scam/
 // hack/phishing/counterfeit) may be named in code. A re-derivation
 // elsewhere is how DirectoryLabel and IssuersTable each grew their own,
