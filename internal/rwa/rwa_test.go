@@ -11,7 +11,7 @@ import (
 // real-world instrument normalise; every invented synonym present in the
 // production payload set stays out. Accepting synonyms is how a closed
 // set stops being closed, and the terms below were all measured on the
-// live directory 2026-09-05.
+// live directory.
 func TestAnchorClass_ClosedVocabulary(t *testing.T) {
 	for _, in := range []string{"stock", "BOND", " commodity ", "RealEstate"} {
 		if AnchorClass(in) == "" {

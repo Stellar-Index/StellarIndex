@@ -9,9 +9,9 @@ import (
 // TestValidateRange pins the single-ledger fix: a bounded range of
 // exactly one ledger (To == From) is valid — the SDK models it as
 // ledgerbackend.SingleLedgerRange and the walk loop runs one
-// iteration. The previous `To() <= From()` check rejected it, which
-// made ch-live-catchup's tip-extend fail every time the timer fired
-// exactly one ledger behind the galexie tip (r1, 2026-06-11).
+// iteration. A `To() <= From()` check would reject it and make
+// ch-live-catchup's tip-extend fail whenever the timer fires exactly one
+// ledger behind the galexie tip.
 func TestValidateRange(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

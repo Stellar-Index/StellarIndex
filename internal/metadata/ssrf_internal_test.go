@@ -169,13 +169,12 @@ func TestDialContext_BlocksResolvedLoopback(t *testing.T) {
 // TestResolverTransportUsesSSRFGuardedDialer pins the WIRING, not just
 // the predicate.
 //
-// Every SSRF assertion in this package tested the guard's decision
-// function; none asserted that the HTTP transport actually calls it. So
-// deleting `DialContext: (&ssrfDialer{...}).DialContext` from the
-// transport left the whole repo's `go test ./...` green (cold audit
-// 2026-08-04). The sibling TestResolverTransportDisablesProxy already
-// reaches into the transport this way — the technique just wasn't
-// applied to the dialer, which is the guard that matters most:
+// The other SSRF assertions in this package test the guard's decision
+// function; this one asserts that the HTTP transport actually calls it,
+// since deleting `DialContext: (&ssrfDialer{...}).DialContext` from the
+// transport would otherwise leave `go test ./...` green. The sibling
+// TestResolverTransportDisablesProxy reaches into the transport the same
+// way. The dialer is the guard that matters most:
 // `home_domain` is attacker-controlled on-chain data, so this is what
 // stands between a malicious issuer and a GET against 169.254.169.254
 // from the sep1-refresh cron.

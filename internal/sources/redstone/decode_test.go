@@ -986,9 +986,8 @@ func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 
 // TestFeedRegistry_CountMatchesItsDocComment stops the registry's size
 // from drifting away from the number written above it. A stale count
-// in a comment for even two days is
-// exactly how a doc-truth audit ends up filing a "wrong count" finding
-// against code that is itself correct.
+// in a comment reads as a "wrong count" finding against code that is
+// itself correct.
 //
 // If you are adding a feed: update the constant AND the doc comment. The
 // point of the assertion is that you cannot forget.

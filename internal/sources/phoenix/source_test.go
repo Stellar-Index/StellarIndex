@@ -150,10 +150,10 @@ func TestBufferSeparatesSwapsByGroupKey(t *testing.T) {
 }
 
 // TestDecoderSeparatesMultiPoolSameOpSwaps pins the multi-hop-router
-// data-corruption bug both auditors found independently: two DIFFERENT
+// data-corruption case: two DIFFERENT
 // pool contracts emitting swaps within the SAME (ledger, tx_hash,
-// op_index) must reassemble into SEPARATE buffer entries. Before
-// ContractID was part of groupKey, an INCOMPLETE leg from pool A (a
+// op_index) must reassemble into SEPARATE buffer entries. Without
+// ContractID in groupKey, an INCOMPLETE leg from pool A (a
 // lost field-event, or an upgraded WASM emitting <8 fields) shared a
 // buffer slot with pool B keyed only on (ledger,tx,op): pool B's
 // field-events hijacked pool A's entry in place, so the completing

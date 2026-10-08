@@ -108,8 +108,8 @@ func TestStream_boundedRange_filesystemDatastore(t *testing.T) {
 // ledger. The SDK's ingest.ApplyLedgerMetadata rejects single-ledger
 // bounded ranges (`invalid end value for bounded range`), so Stream
 // routes them through the in-house hot-only walk — without that,
-// every catch-up run that fired exactly one ledger behind the
-// galexie tip failed (observed flapping on r1, 2026-06-11).
+// every catch-up run that fires exactly one ledger behind the
+// galexie tip would fail.
 func TestStream_singleLedgerBoundedRange(t *testing.T) {
 	tmp := t.TempDir()
 

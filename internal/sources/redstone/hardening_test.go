@@ -91,7 +91,7 @@ func TestDecode_DuplicateFeedIDs_Refused(t *testing.T) {
 	// redstone-core SDK's Config::try_new refuses them before the
 	// adapter can emit (ConfigReoccurringFeedId). Duplicates were also
 	// an attribution lever: a repeated feed inflated the state-write
-	// subset arity into forcing the payload fallback (audit F2).
+	// subset arity into forcing the payload fallback.
 	ev := hardeningEvent(t, []string{"BTC", "BTC"})
 	_, err := decodeWritePrices(ev, time.Unix(1_745_000_000, 0))
 	if !errors.Is(err, ErrDuplicateFeedIDs) {
@@ -203,7 +203,7 @@ func TestDecode_EqualArity_StateWriteMismatch_FallsBackToPayload(t *testing.T) {
 func TestSubsetFromStateWrites_DuplicateCandidatesCountWrittenFeedOnce(t *testing.T) {
 	// Defence-in-depth below the ErrDuplicateFeedIDs gate: a repeated
 	// candidate must not count the single written feed twice and
-	// inflate the subset arity (audit F2).
+	// inflate the subset arity.
 	key := adapterFeedKey(t, "BTC")
 	sub := subsetFromStateWrites([]string{"BTC", "BTC", "ETH"}, []string{key}, adapterC)
 	if len(sub) != 1 || sub[0] != "BTC" {

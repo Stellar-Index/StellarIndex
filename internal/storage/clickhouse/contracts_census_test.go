@@ -85,8 +85,8 @@ func TestRecentContracts_CensusCoverageGapFallsBack(t *testing.T) {
 	}
 }
 
-// TestRecentContracts_StaleCensusHeadFallsBack is the audit
-// W1-explorer-perf-2 regression: the census reaches back to the floor
+// TestRecentContracts_StaleCensusHeadFallsBack pins the stale-head
+// fallback: the census reaches back to the floor
 // (min(day) passes) but its HEAD is frozen days ago because the
 // census-rollup timer stalled. The old gate checked min(day) only, so it
 // served a ranking missing the last N days — stamped current. The reader

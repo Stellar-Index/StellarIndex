@@ -653,11 +653,11 @@ func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 // where hashdb has no record for ANY ledger (e.g. an append gap, or a
 // window that landed entirely before any baseline existed) must not
 // be reported as a complete/clean sweep — nothing was actually
-// compared. Before the fix, `complete` only checked that every ledger
-// was accounted for (Verified+Drifted+Missing+OutOfRange == window
-// size), which an all-Missing window satisfies trivially, so
-// hashDBVerifySweep's switch fell to its default case and logged
-// "hashdb verify sweep clean" with outcome="ok" despite Verified==0.
+// compared. `complete` must require more than every ledger being
+// accounted for (Verified+Drifted+Missing+OutOfRange == window size),
+// which an all-Missing window satisfies trivially; otherwise
+// hashDBVerifySweep logs "hashdb verify sweep clean" with outcome="ok"
+// despite Verified==0.
 func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
 	t.Parallel()
 

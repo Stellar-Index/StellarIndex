@@ -83,8 +83,8 @@ func TestShouldSkipAssetRegistryUpsert_CacheCorruption(t *testing.T) {
 }
 
 // TestAssetRegistryDedupeTTL_FrozenValue — pin the TTL so a
-// future operator can't quietly tighten it past the audit's
-// acceptable window (60s gives roughly minute-level "last
+// future operator can't quietly tighten it past the acceptable
+// window (60s gives roughly minute-level "last
 // seen" freshness in the dashboard).
 func TestAssetRegistryDedupeTTL_FrozenValue(t *testing.T) {
 	if assetRegistryDedupeTTL != 60*time.Second {

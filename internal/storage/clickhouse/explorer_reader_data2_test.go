@@ -16,9 +16,9 @@ import (
 // these assert the emitted SQL carries the dedup / distinct-cap construct the
 // fix installs — the same query-SHAPE idiom the ContractEventsRecent dedup tests use.
 
-// TestContractActivitySummaryFor_DedupsRMTCount — audit CHQ-2:
-// ContractActivitySummaryFor read stellar.contract_active_ledgers (an RMT)
-// with a bare count(), so overlapping-backfill duplicate parts inflated
+// TestContractActivitySummaryFor_DedupsRMTCount:
+// ContractActivitySummaryFor reads stellar.contract_active_ledgers (an RMT);
+// a bare count() would let overlapping-backfill duplicate parts inflate
 // ActiveLedgersTotal (a headline card number) and the daily bars up to ~2x
 // until a background merge. Both the total and the per-day aggregate must
 // count DISTINCT ledger_seq (uniqExact), matching the sibling reader
@@ -65,11 +65,11 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 	}
 }
 
-// TestContractInteractions_CapsDistinctTxsNotEventRows — audit CHQ-1: the
-// subject-tx cap subquery had no DISTINCT, so the 50k LIMIT was consumed by
-// EVENT rows, not transactions — a contract emitting ~10-20 events/tx sampled
-// only ~2.5-5k txs from the newest handful of ledgers, undercounting the
-// shared-tx ranking. The inner (ledger_seq, tx_hash) collection must be
+// TestContractInteractions_CapsDistinctTxsNotEventRows: the
+// subject-tx cap subquery needs DISTINCT, or the 50k LIMIT is consumed by
+// EVENT rows, not transactions — a contract emitting ~10-20 events/tx would
+// sample only ~2.5-5k txs from the newest handful of ledgers, undercounting
+// the shared-tx ranking. The inner (ledger_seq, tx_hash) collection must be
 // SELECT DISTINCT so the cap counts transactions, as its comment and the
 // shared_txs column name have always claimed.
 func TestContractInteractions_CapsDistinctTxsNotEventRows(t *testing.T) {

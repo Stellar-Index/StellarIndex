@@ -45,7 +45,7 @@ func TestNonNilStringArray_NonNilPassthrough(t *testing.T) {
 
 // TestNonNilStringArray_EmptyNonNilPassthrough — an explicit
 // empty (non-nil) input is preserved as zero-length. This is
-// the case the audit cared about least (it's already a safe
+// the safest case (it's already a safe
 // shape) but the helper must not accidentally allocate a new
 // array literal from it.
 func TestNonNilStringArray_EmptyNonNilPassthrough(t *testing.T) {

@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// TestWealthCacheServesAnyLimitFromOneEntry is the site-audit S3
-// verification regression: the cache must store ONE ranking that every
+// TestWealthCacheServesAnyLimitFromOneEntry pins that the cache must store ONE ranking that every
 // request size slices from, not a per-limit entry.
 //
 // The original per-limit keying meant prewarm warmed limit=100 while

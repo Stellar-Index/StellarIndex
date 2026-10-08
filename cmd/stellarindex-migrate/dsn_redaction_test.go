@@ -21,8 +21,8 @@ const dsnSentinel = "PLACEHOLDER-NOT-A-REAL-SECRET-%ZZ"
 // on every deploy, and it prints its failures to stderr, where the
 // deploy job's log, journald, promtail and Loki all pick them up.
 //
-// THE DEFECT. Nothing in this binary formatted the DSN itself, so an
-// audit of its format strings found nothing. The leak came from the
+// THE DEFECT. Nothing in this binary formats the DSN itself, so a scan
+// of its format strings finds nothing. The leak comes from the
 // library: golang-migrate rejects an unparseable database URL with
 // net/url's *url.Error, which renders as `parse "<the whole URL>": …`,
 // and `newMigrator` wrapped that with %w. A password with an unescaped
@@ -37,9 +37,8 @@ const dsnSentinel = "PLACEHOLDER-NOT-A-REAL-SECRET-%ZZ"
 // echoes the argument back verbatim through an unrelated error path.
 //
 // THE TEST BUILDS AND RUNS THE REAL BINARY, because the leak lives in a
-// dependency's error text. A unit test over our own strings is exactly
-// the audit that missed it — it can only assert that the code we wrote
-// behaves, and the code we wrote was already fine.
+// dependency's error text. A unit test over our own strings can only
+// assert that the code we wrote behaves, and that code is fine.
 func TestMigrate_FatalOutputNeverCarriesTheDSNPassword(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "stellarindex-migrate")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {

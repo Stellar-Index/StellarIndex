@@ -62,7 +62,7 @@ func TestStreamArchiveThenLive_crossesSeam(t *testing.T) {
 // TestStreamArchiveThenLive_seamZeroLiveOnly verifies the seam=0
 // short-circuit: archive bucket is unused, the call degrades to a
 // plain unbounded Stream against the live config. Critical for
-// backwards-compat with the pre-2026-04-26 deployment shape.
+// backwards-compat with the single-bucket deployment shape.
 func TestStreamArchiveThenLive_seamZeroLiveOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
