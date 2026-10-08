@@ -17254,7 +17254,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                    "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                     "type": "text/plain"
                   },
                   "key": "order_by",
@@ -17333,7 +17333,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                         "type": "text/plain"
                       },
                       "key": "order_by",
@@ -17422,7 +17422,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                         "type": "text/plain"
                       },
                       "key": "order_by",
@@ -17511,7 +17511,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                         "type": "text/plain"
                       },
                       "key": "order_by",
@@ -17654,7 +17654,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                         "type": "text/plain"
                       },
                       "key": "order_by",
@@ -17743,7 +17743,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. Pre-2026-05-10 this was the\ndefault; we kept it as an explicit option so callers\npaginating the entire universe of pairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
+                        "content": "Sort order. `volume_24h_usd_desc` (default) orders by\n24h USD volume desc (NULLS LAST), then by\n`<base>|<quote>` for ties — surfaces the high-activity\npairs first without paginating through ~5K alphabetic\ndust pairs.\n\n`pair` returns markets in lex order of\n`<base>|<quote>` — stable for paginating the full set,\nbut surfaces spam-token pairs (`0-…`, `0TAX-…`) at the\ntop of the listing. It stays available as an explicit\noption so callers paginating the entire universe of\npairs aren't broken.\n\nCursor format differs per ordering; keep using the\ncursor returned by the previous response.\n (This can only be one of pair,volume_24h_usd_desc)",
                         "type": "text/plain"
                       },
                       "key": "order_by",

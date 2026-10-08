@@ -17170,9 +17170,9 @@ export interface operations {
                  *     `pair` returns markets in lex order of
                  *     `<base>|<quote>` — stable for paginating the full set,
                  *     but surfaces spam-token pairs (`0-…`, `0TAX-…`) at the
-                 *     top of the listing. Pre-2026-05-10 this was the
-                 *     default; we kept it as an explicit option so callers
-                 *     paginating the entire universe of pairs aren't broken.
+                 *     top of the listing. It stays available as an explicit
+                 *     option so callers paginating the entire universe of
+                 *     pairs aren't broken.
                  *
                  *     Cursor format differs per ordering; keep using the
                  *     cursor returned by the previous response.
@@ -18780,8 +18780,7 @@ export interface operations {
                                  *     certified ClickHouse archive is contiguous +
                                  *     hash-chained + recognition-complete from genesis
                                  *     to tip for this source." Two-axis verdict per
-                                 *     notes/DECISION-genesis-complete-verdict-2026-07-16.md
-                                 *     (Option B).
+                                 *     ADR-0033.
                                  */
                                 lake_complete: boolean;
                                 substrate_ok: boolean;
