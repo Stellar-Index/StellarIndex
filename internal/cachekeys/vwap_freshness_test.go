@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestVWAPTTL_BoundedBySilenceGrace pins the F034 contract: a published
+// TestVWAPTTL_BoundedBySilenceGrace contract: a published
 // VWAP may not outlive its publisher by more than the silence grace.
 //
 // The aggregator recomputes and re-writes EVERY configured (pair,
@@ -50,7 +50,7 @@ func TestVWAPTTL_BoundedBySilenceGrace(t *testing.T) {
 	}
 }
 
-// TestVWAPTTLWithMaxAge_DerivesFromCaller pins #1294: VWAPMaxAge's
+// TestVWAPTTLWithMaxAge_DerivesFromCaller: VWAPMaxAge's
 // "10 missed ticks" relationship to the tick interval existed only in
 // prose. A caller whose interval differs from the package default must
 // be able to pass its OWN derived grace rather than being stuck with

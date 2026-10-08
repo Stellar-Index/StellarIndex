@@ -19,7 +19,7 @@ import (
 )
 
 // TestFreshSourceStartsAtGenesis: a source with no cursor row starts at its
-// declared Genesis, not at the lake floor (GH-567: upshift / sushiswap_v3
+// declared Genesis, not at the lake floor (upshift / sushiswap_v3
 // crawled ~85 h of ledgers that cannot hold their events), and the lake
 // floor still wins when it is the later of the two.
 func TestFreshSourceStartsAtGenesis(t *testing.T) {
@@ -97,7 +97,7 @@ var crawlsFromLakeFloor = map[string]string{
 	"redstone":        "oracle contract is operator-configured",
 }
 
-// TestProjectedSourcesDeclareGenesis is the guard for GH-567's class: every
+// TestProjectedSourcesDeclareGenesis is the guard for that class: every
 // source buildSource projects either carries the expected Genesis or is an
 // acknowledged lake-floor crawler. A Genesis is a PUBNET ledger, so only a
 // pubnet-only source may carry one.

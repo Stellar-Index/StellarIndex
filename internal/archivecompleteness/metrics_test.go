@@ -50,7 +50,7 @@ func TestWriteTextfile_BasicShape(t *testing.T) {
 	}
 }
 
-// TestWriteTextfile_ChecksExpectedFoundDenominator — GH-1095: a zero
+// TestWriteTextfile_ChecksExpectedFoundDenominator — a zero
 // archive_files_missing reading is indistinguishable from "nothing
 // was scanned" (a vacuous range) unless a denominator ships with it.
 // PopulateFromReport must carry Expected/Found onto the textfile so

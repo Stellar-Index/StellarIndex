@@ -152,7 +152,7 @@ func TestClientFromUserAgent(t *testing.T) {
 	}
 }
 
-// TestMagicLinkMessage_StatesSameBrowserConstraint pins GH-737: the callback
+// TestMagicLinkMessage_StatesSameBrowserConstraint: the callback
 // 403s without the stellarindex_login_intent cookie set by the requesting
 // browser, so the mail must say the link is browser-bound and point other
 // devices at the code (HandleVerifyCode does not need the cookie).

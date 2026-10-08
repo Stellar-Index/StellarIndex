@@ -26,7 +26,7 @@ func (nopStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.Accou
 
 // WebhookAccountStatus completes the DeliveryStore contract for
 // ctxHonouringStore. Unlike its GetWebhook this does not model a store
-// round-trip: the K025 lifetime tests turn on the attempt context
+// round-trip: the lifetime tests turn on the attempt context
 // expiring inside GetWebhook, and a second delay here would move the
 // deadline they pin.
 func (*ctxHonouringStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {

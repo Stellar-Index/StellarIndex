@@ -237,7 +237,7 @@ func TestSweep_PublishesRowCountGauges(t *testing.T) {
 	}
 }
 
-// TestSweep_MarksLiveness pins #368 M5: every COMPLETED sweep — including a
+// TestSweep_MarksLiveness: every COMPLETED sweep — including a
 // failed one — stamps the liveness gauge, and construction publishes the
 // configured interval the stalled alert scales its threshold by. A dead
 // reaper is otherwise invisible: its rows gauge just freezes at a

@@ -489,8 +489,7 @@ func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
 // errorsIs keeps the errors import live for future expansion.
 var _ = errors.Is
 
-// TestWorker_DeliveryDurationMetricRecorded pins the wave-88
-// (2026-05-13) latency-histogram wiring: a successful delivery
+// TestWorker_DeliveryDurationMetricRecorded covers the latency-histogram wiring: a successful delivery
 // produces a sample on
 // `stellarindex_customer_webhook_delivery_duration_seconds`
 // labelled `outcome="delivered"`. Without this test, a future

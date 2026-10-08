@@ -7,7 +7,7 @@ import (
 )
 
 // TestParseSEP1_CapsDocumentationFieldCount and
-// TestParseSEP1_CapsCurrencyCount pin T192: the per-field rune caps
+// TestParseSEP1_CapsCurrencyCount: the per-field rune caps
 // bound the BYTES of one value, but nothing bounded the COUNT of
 // DOCUMENTATION keys or CURRENCIES entries a hostile stellar.toml
 // could carry. Each field/entry is stored and served verbatim, so an

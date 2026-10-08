@@ -9,8 +9,7 @@ import (
 )
 
 // TestRollupRecoveryDocsMatchConstants pins the alert annotations and
-// the runbook to the constants the worker actually recovers with (GH
-// #798: both promised a catch-up the code did not perform). Changing
+// the runbook to the constants the worker actually recovers with. Changing
 // either constant fails here until the operator-facing text follows.
 func TestRollupRecoveryDocsMatchConstants(t *testing.T) {
 	want := []string{

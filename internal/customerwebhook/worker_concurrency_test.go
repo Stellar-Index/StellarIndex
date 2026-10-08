@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestWorker_StalledEndpointDoesNotBlockOthers — GH-663. The batch was
+// TestWorker_StalledEndpointDoesNotBlockOthers: the batch was
 // delivered strictly serially, so one endpoint that holds its connection
 // open delayed every other customer's delivery by the full attempt
 // timeout per row. Here endpoint A stalls on both its rows, which are

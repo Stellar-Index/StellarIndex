@@ -317,7 +317,7 @@ func TestDecodeOperationBody_InvokeHostFunction_NoAuthNoTree(t *testing.T) {
 	}
 }
 
-// TestDecodeOperationBody_InvokeHostFunction_AuthCredentials pins GH-1138:
+// TestDecodeOperationBody_InvokeHostFunction_AuthCredentials:
 // the SorobanCredentials that authorized an auth entry's root — the address
 // that actually signed a relayed invoke — must be surfaced, since the op's
 // own source_account (the relayer) is not it.
@@ -387,7 +387,7 @@ func TestDecodeOperationBody_InvokeHostFunction_SourceAccountCredentials(t *test
 	}
 }
 
-// TestDecodeOperationBody_ManageData_NonUTF8Name pins GH-1140: a manage_data
+// TestDecodeOperationBody_ManageData_NonUTF8Name: a manage_data
 // name is opaque XDR bytes (String64), not guaranteed UTF-8. name_base64 must
 // carry the exact original bytes even when name itself, once JSON-marshaled,
 // would show U+FFFD replacement characters.
@@ -420,7 +420,7 @@ func u32p(v uint32) *xdr.Uint32 {
 	return &x
 }
 
-// TestDecodeOperationBody_SetOptions pins the set_options arm of GH-1134:
+// TestDecodeOperationBody_SetOptions pins the set_options arm:
 // every field (inflation dest, thresholds, home domain, signer) decodes.
 func TestDecodeOperationBody_SetOptions(t *testing.T) {
 	home := xdr.String32("example.com")
@@ -445,7 +445,7 @@ func TestDecodeOperationBody_SetOptions(t *testing.T) {
 	}
 }
 
-// TestDecodeOperationBody_CreateClaimableBalance pins GH-1134's
+// TestDecodeOperationBody_CreateClaimableBalance covers the
 // create_claimable_balance arm: asset, amount, and the claimant list with
 // its predicate tree.
 func TestDecodeOperationBody_CreateClaimableBalance(t *testing.T) {
@@ -510,7 +510,7 @@ func TestDecodeOperationBody_ClaimAndClawbackClaimableBalance(t *testing.T) {
 	}
 }
 
-// TestDecodeOperationBody_RevokeSponsorship pins GH-1134's revoke_sponsorship
+// TestDecodeOperationBody_RevokeSponsorship covers the revoke_sponsorship
 // arm for both union cases: a sponsored ledger entry (here: a trustline) and
 // a sponsored signer.
 func TestDecodeOperationBody_RevokeSponsorship(t *testing.T) {
@@ -551,7 +551,7 @@ func TestDecodeOperationBody_RevokeSponsorship(t *testing.T) {
 	}
 }
 
-// TestDecodeOperationBody_LiquidityPoolDepositWithdraw pins GH-1134's LP arms.
+// TestDecodeOperationBody_LiquidityPoolDepositWithdraw covers the LP arms.
 func TestDecodeOperationBody_LiquidityPoolDepositWithdraw(t *testing.T) {
 	var poolID xdr.PoolId
 	for i := range poolID {
@@ -683,7 +683,7 @@ func operationBodyFixture(t *testing.T, typ xdr.OperationType) (string, bool) {
 	return "", false
 }
 
-// TestDecodeOperationBody_FieldsExhaustive pins GH-1134: every operation type
+// TestDecodeOperationBody_FieldsExhaustive: every operation type
 // the SDK knows must produce either decoded Fields or be on the explicit
 // genuinely-empty allowlist (inflation, end_sponsoring_future_reserves — the
 // op body carries nothing else) — never silently fall back to raw_xdr because

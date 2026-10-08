@@ -97,7 +97,7 @@ func newDecimalsTestRef(t *testing.T, f *chainlinkFakeRPC, pairKey, address stri
 
 // TestChainlink_Decimals_AbsentAdoptsOnChain — an operator entry with
 // no decimals adopts the contract's decimals(). The fake feed publishes
-// at 18 decimals with an answer of 1.08 × 10^18; the pre-fix constructor
+// at 18 decimals with an answer of 1.08 × 10^18; a constructor that
 // coerced the absent value to 8 and would have served 1.08 × 10^10.
 func TestChainlink_Decimals_AbsentAdoptsOnChain(t *testing.T) {
 	t.Parallel()

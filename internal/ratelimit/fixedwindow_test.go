@@ -116,7 +116,7 @@ func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) red
 // TestFixedWindowCounter_TTLSurvivesDroppedExpire is the REL-05
 // regression.
 //
-// The failure it encodes: pre-fix Incr issued INCR and then a separate,
+// The failure it encodes: an Incr that issues INCR and then a separate,
 // best-effort EXPIRE whose error was discarded. Drop that one command —
 // a reset connection, a MISCONF read-only replica, an OOM eviction — and
 // the counter key exists with NO TTL. Nothing ever revisits it (the next

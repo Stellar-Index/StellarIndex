@@ -21,9 +21,9 @@ import (
 //	(b) it LOGS the fault at Error with the worker name, the panic value,
 //	    and a stack, so a silently-stopped worker cannot pass unnoticed.
 //
-// Proven red: the pre-fix state of every worker this campaign guards was
-// "no recover() anywhere in the goroutine's stack". If worker.Recover
-// omitted its recover() (that pre-fix analog), the panic below escapes
+// Without Recover, every guarded worker has
+// no recover() anywhere in the goroutine's stack. If worker.Recover
+// omitted its recover() (that analog), the panic below escapes
 // guardedWorker into this test function, which has no recover of its
 // own, and crashes the test binary. With the guard, guardedWorker
 // returns normally and the assertions run.
@@ -66,7 +66,7 @@ func TestRecover_NilLoggerDoesNotItselfPanic(t *testing.T) {
 	guardedWorker() // must return without panicking out
 }
 
-// TestRecover_CountsThePanic — the whole point of #368 M4: a recovered panic
+// TestRecover_CountsThePanic — the whole point: a recovered panic
 // must leave a signal an alert can fire on, not just a log line. The
 // counter is per worker so the alert names the dead goroutine.
 func TestRecover_CountsThePanic(t *testing.T) {

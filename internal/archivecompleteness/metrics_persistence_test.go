@@ -126,7 +126,7 @@ func TestWriteTextfileAtomic_LastSuccessSurvivesFailedRun(t *testing.T) {
 // A host that has NEVER had a clean run must publish 0 rather than
 // nothing. `time() - 0` is enormous, so the staleness alert fires —
 // which is correct: a never-verified archive is not a healthy one,
-// and the pre-fix behaviour (no series at all) made it look like one.
+// and emitting no series at all would make it look like one.
 func TestWriteTextfile_NeverSucceededEmitsZeroNotAbsence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "archive_completeness.prom")
 	snap := archivecompleteness.NewMetricsSnapshot()

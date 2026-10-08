@@ -19,7 +19,7 @@ func repoPaths() paths {
 	}
 }
 
-// TestRealRepo_IsClean is the regression guard for #317: it goes RED the
+// TestRealRepo_IsClean is the regression guard: it goes RED the
 // moment ci.yml's golangci-lint-action step loses `verify: false` (the
 // networked schema download comes back), the moment the pinned version and
 // the vendored schema drift apart, or the moment .golangci.yml grows a key
@@ -137,7 +137,7 @@ func TestValidateConfig_AcceptsTheRealConfig(t *testing.T) {
 }
 
 // TestRun_ActionWithoutVerifyFalseFails — a workflow that leaves the action's
-// networked verify on is exactly the #317 defect, and must fail the lint.
+// networked verify on is exactly the defect, and must fail the lint.
 func TestRun_ActionWithoutVerifyFalseFails(t *testing.T) {
 	failures := runFixture(t, workflowYAML("          args: --timeout=5m\n"), "GOLANGCI_LINT_VERSION := v2.14.0\n")
 	assertFailureMentions(t, failures, "verify: false")

@@ -8,7 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// TestOpTypeNameFromEnumString_MatchesOpTypeName pins GH-1136: the lake-string
+// TestOpTypeNameFromEnumString_MatchesOpTypeName: the lake-string
 // vocabulary (OpTypeNameFromEnumString, used by the /v1/operations directory
 // and op_type_stats) must produce the identical snake_case name OpTypeName
 // gives the typed enum (used by the ledger arm, /v1/tx and account ops) for

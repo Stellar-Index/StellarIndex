@@ -374,7 +374,7 @@ func (p panickingMatcher) Decode(events.Event) ([]consumer.Event, error) {
 }
 
 // TestSafeMatches_PanicBecomesAnError pins the ops-path twin of the
-// dispatcher's poison-ledger class (#371 F1): a decoder that panics while
+// dispatcher's poison-ledger class: a decoder that panics while
 // DECIDING OWNERSHIP must not take the reconciling binary down with it. It
 // must read as an error so the caller records a blind spot — a ledger the
 // re-derive could not evaluate must never be certified clean.

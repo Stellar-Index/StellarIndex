@@ -40,8 +40,7 @@ func chainlinkSeedChild(t *testing.T, vec *prometheus.CounterVec, consumer, pair
 	return false
 }
 
-// TestNewChainlinkReferenceSeedsDecimalsCounters is the GH-641 remainder
-// regression: obs.ChainlinkFeedDecimalsMismatchTotal and
+// TestNewChainlinkReferenceSeedsDecimalsCounters: obs.ChainlinkFeedDecimalsMismatchTotal and
 // obs.ChainlinkFeedDecimalsVerifyFailedTotal are counters with no
 // producer until the first refused reading / failed decimals() call, so
 // a feed that has never mis-scaled and one whose counter was never

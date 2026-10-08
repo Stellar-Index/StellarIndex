@@ -241,7 +241,7 @@ func TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch(t *testing.T) {
 // asserted end-to-end against real Postgres in
 // test/integration/customerwebhook_account_killswitch_test.go; keeping
 // it out of this file lets the file compile — and so fail on its
-// assertions rather than on a build error — against the pre-fix code.
+// assertions rather than on a build error — against code lacking the fix.
 func TestFanout_SuppressedEnqueueIsNotALostEvent(t *testing.T) {
 	live, gone := subscriber(), subscriber()
 	store := newFanoutStore(live, gone)

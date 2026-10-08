@@ -46,7 +46,7 @@ func scan(t *testing.T, path string) []guardscan.Site {
 	return sites
 }
 
-// TestScan_FuncLiteral covers the shape the pre-#368 guard tests already
+// TestScan_FuncLiteral covers the shape the original guard tests
 // understood, plus the two ways a literal can fail to be guarded.
 func TestScan_FuncLiteral(t *testing.T) {
 	path := fixture(t, "funclit", `package main
@@ -150,7 +150,7 @@ func work() {}
 	}
 }
 
-// TestScan_NamedCalleeGoStmtsAreWalked is issue #558: a `go` statement
+// TestScan_NamedCalleeGoStmtsAreWalked: a `go` statement
 // resolved to a named callee is checked for whether the callee itself
 // defers the guard, but the callee may start further goroutines of its
 // own — in another file of the same package, as here. Before the fix,

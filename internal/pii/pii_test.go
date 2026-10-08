@@ -7,7 +7,7 @@ import (
 
 // TestMaskEmail is the single contract test for the redactor. It moved
 // here from dashboardauth when the second, untested copy in
-// internal/api/v1 was deleted (#346 F8) — that copy's doc comment
+// internal/api/v1 was deleted — that copy's doc comment
 // claimed "the contract is pinned by a test in each package", which was
 // not true, so a drift that started leaking addresses would have passed
 // CI.

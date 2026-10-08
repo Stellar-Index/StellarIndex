@@ -2,8 +2,8 @@ package main
 
 import "testing"
 
-// TestCheckGoSource_MissingGuardFails is the proven-red regression for T351:
-// before this lint existed, nothing rejected a writer that upserts a
+// TestCheckGoSource_MissingGuardFails is the regression for a missing guard:
+// without this lint, nothing rejected a writer that upserts a
 // derive_generation-carrying table with ON CONFLICT DO UPDATE but omits the
 // `WHERE <table>.derive_generation <= EXCLUDED.derive_generation` guard — a
 // corrected re-derive would silently no-op against a stale value forever.

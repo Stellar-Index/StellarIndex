@@ -108,8 +108,8 @@ func TestIsStreamingRoute(t *testing.T) {
 
 // ─── IsSyntheticRequest ───────────────────────────────────────
 
-// TestIsSyntheticRequest is the T175 regression proof at the helper
-// level: a synthetic-looking User-Agent must be trusted only when the
+// TestIsSyntheticRequest checks, at the helper
+// level, a synthetic-looking User-Agent must be trusted only when the
 // request also shows it arrived directly on loopback, bypassing
 // haproxy (which stamps X-Forwarded-For on everything it proxies —
 // see IsSyntheticRequest's doc). The UA prefix alone is

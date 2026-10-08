@@ -142,7 +142,7 @@ func TestSetOracleStalenessOverrides_Replaces(t *testing.T) {
 // TestOracleStalenessBudget_UndeclaredSourceCannotAlert documents the
 // fallback, which is chosen to be bit-for-bit what the old rule did.
 //
-// The pre-#478 expression joined against
+// An expression that joins against
 // stellarindex_oracle_resolution_seconds, so a source that never
 // declared a resolution had no right-hand side and the alert could not
 // fire for it at all. +Inf reproduces that silence (`age > +Inf` is

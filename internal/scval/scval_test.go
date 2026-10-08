@@ -181,7 +181,7 @@ func TestAsAddressStrkey_contract(t *testing.T) {
 
 // TestAsAddressStrkey_muxed pins the CAP-67 / P23 muxed-account
 // strkey encoding. SEP-41 transfers with a destination Muxed
-// Account hit this path; pre-fix the decoder tripped
+// Account hit this path; an unaware decoder trips
 // "unknown ScAddress type 2" and dropped the row.
 func TestAsAddressStrkey_muxed(t *testing.T) {
 	var ed xdr.Uint256

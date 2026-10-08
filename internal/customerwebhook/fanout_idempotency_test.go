@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestFanoutPublishOnce_RerunNotifiesOnlyTheMissed — GH-968. An operator
+// TestFanoutPublishOnce_RerunNotifiesOnlyTheMissed: an operator
 // re-runs `emit-incident` after a partial fan-out. The subscribers already
 // queued must not be queued a second time (a second SEV-1 page under a new
 // delivery id that receiver dedupe cannot collapse); only the one the

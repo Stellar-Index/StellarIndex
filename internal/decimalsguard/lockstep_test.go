@@ -423,7 +423,7 @@ func (r *deadlineRecordingResolver) TokenDecimals(ctx context.Context, _ string)
 	return r.decimals, true, nil
 }
 
-// TestReconcile_BoundsEachRowReadWithADeadline is GH-1059's #4: Reconcile
+// TestReconcile_BoundsEachRowReadWithADeadline guards that Reconcile
 // ran every row's lake read on the tick's root context, unbounded, so one
 // hung ClickHouse query stalled the whole serial pass. PROVEN RED before
 // reconcileRowReadTimeout: the resolver saw the caller's bare

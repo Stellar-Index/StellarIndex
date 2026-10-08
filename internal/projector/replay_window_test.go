@@ -330,7 +330,7 @@ func TestReplayWindow_ReadErrorFailsOpen(t *testing.T) {
 // keeps suppressing the lag ticket for a source nobody is replaying —
 // and the suppression's whole justification is that it stays narrow.
 //
-// Not unbounded even pre-fix (OpenBackground SETs statement_timeout on
+// Not unbounded without the fix either (OpenBackground SETs statement_timeout on
 // every connection, 30m by default), but 30 minutes of a wrong
 // suppressing gauge is not a bound worth relying on when a local one
 // costs two lines.

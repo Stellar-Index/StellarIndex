@@ -35,7 +35,7 @@ type fakeAlertStore struct {
 	// Postgres NOW, which is not necessarily the snapshot
 	// ListEnabledPriceAlerts handed the evaluator at the top of the sweep.
 	// Seeding it independently of `enabled` is how a test models a second
-	// evaluator having claimed the same crossing in between (#368 M10).
+	// evaluator having claimed the same crossing in between.
 	// Empty entry = SQL NULL = never fired.
 	dbLastFired map[uuid.UUID]time.Time
 	// dbDisarmed is the authoritative disarmed column; rearms counts
@@ -460,7 +460,7 @@ func TestSweep_NoPrice_NoFire(t *testing.T) {
 
 // TestSweep_StalePrice_NoFire proves the evaluator rejects a crossing
 // built off a closed VWAP bucket older than its own freshness budget
-// (GH-664): the condition is crossed and there is no cooldown in the
+// The condition is crossed and there is no cooldown in the
 // way, but the bucket closed well outside maxPriceStaleness of "now", so
 // the alert must not fire and the `stale` outcome must be recorded.
 func TestSweep_StalePrice_NoFire(t *testing.T) {
@@ -536,8 +536,8 @@ func TestConditionCrossed(t *testing.T) {
 	}
 }
 
-// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut pins #368
-// M10: the cooldown gate is check-then-act, so it cannot be the thing
+// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut:
+// the cooldown gate is check-then-act, so it cannot be the thing
 // that guarantees one notification per crossing.
 //
 // coolingDown reads a.LastFiredAt from the SNAPSHOT
@@ -556,7 +556,7 @@ func TestConditionCrossed(t *testing.T) {
 // conditional UPDATE must refuse the claim and the fan-out must not
 // happen.
 //
-// Proven red on the pre-fix code: 1 delivery enqueued, want 0.
+// Without the claim check: 1 delivery enqueued, want 0.
 func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)

@@ -447,7 +447,7 @@ func TestNewSupplyService_RejectsNoReference(t *testing.T) {
 
 // obsEmitter forwards to the real obs collectors, mirroring the
 // aggregator's obsSupplyDivergenceEmitter — used to prove the duration
-// histogram actually advances (the wave-100 obstest pattern).
+// histogram actually advances.
 type obsEmitter struct{}
 
 func (obsEmitter) Ratio(asset, reference string, ratio float64) {

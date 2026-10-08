@@ -2,7 +2,7 @@ package currency
 
 import "testing"
 
-// K033 — a SEP anchor's fiat-coded token must not be reported as an
+// A SEP anchor's fiat-coded token must not be reported as an
 // impersonation.
 //
 // # The failure this guards

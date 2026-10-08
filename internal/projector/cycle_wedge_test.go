@@ -599,7 +599,7 @@ func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 // Sink-side adaptive shrink: the cycle-level
 // half of the shrinkWindow unit test. A window whose CH scan FINISHES but
 // whose per-event sink writes exhaust PerSourceTimeout ends the cycle with a
-// dead cycleCtx and held transient rows; pre-fix the window pointer never
+// dead cycleCtx and held transient rows; without the fix the window pointer never
 // moved, so the identical dense range was retried forever (aquarius reserves
 // wedged 3.5h at ledger 63,488,687).
 // ---------------------------------------------------------------------------

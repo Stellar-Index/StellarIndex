@@ -39,7 +39,7 @@ func newChargeBucket(rdb redis.Cmdable, limit int) *ratelimit.Bucket {
 	return ratelimit.New(rdb, limit, time.Minute)
 }
 
-// TestBucket_Charge_SpendsCostTokens is the F046 regression: the
+// TestBucket_Charge_SpendsCostTokens: the
 // limiter had no notion of cost — the only N it took was a per-subject
 // LIMIT and the script did a plain INCR — so a 1000-id batch and a one-id read
 // spent the same single token. A charge of N must move the counter by

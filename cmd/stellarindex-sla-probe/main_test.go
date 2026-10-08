@@ -484,7 +484,7 @@ func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) 
 	}
 }
 
-// TestAggregateEndpointStats_LatencyExcludesFailedSamples pins GH-740 (1):
+// TestAggregateEndpointStats_LatencyExcludesFailedSamples:
 // a failed request has no response latency, and a connection-refused one
 // "takes" ~0 ms, so pooling failures into the percentiles drags them
 // toward zero exactly when the API is down.
@@ -507,7 +507,7 @@ func TestAggregateEndpointStats_LatencyExcludesFailedSamples(t *testing.T) {
 	}
 }
 
-// TestRunProbe_HardOutageEmitsNoLatency is GH-740 (1) end to end: a run
+// TestRunProbe_HardOutageEmitsNoLatency end to end: a run
 // against a refused port must not publish a 0 ms p95 that p95_breach and
 // the weekly proof's worst-run p95 read as a very fast API.
 func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
@@ -535,7 +535,7 @@ func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
 	}
 }
 
-// TestRunProbe_RequestHangingAtDeadlineIsAFailure pins GH-740 (2): the
+// TestRunProbe_RequestHangingAtDeadlineIsAFailure: the
 // API answers three requests, then accepts the fourth and never replies.
 // The run deadline must stop new requests, not cancel and discard the
 // hanging one; otherwise every run straddling a hang reads 100 % and
@@ -570,7 +570,7 @@ func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
 	}
 }
 
-// TestAggregateEndpointStats_FreshnessIsStalestResponse pins GH-743 (1):
+// TestAggregateEndpointStats_FreshnessIsStalestResponse:
 // the 30 s freshness promise is per response, so a run where 49 % of
 // reads are 120 s stale is a breach. A per-run median reads it as 1 s.
 func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
@@ -599,7 +599,7 @@ func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
 }
 
 // TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins
-// GH-743 (2): a 2xx whose body cannot carry the measurement is not a
+// that a 2xx whose body cannot carry the measurement is not a
 // success. A price surface without a parseable observed_at would
 // otherwise drop the freshness series (and its alert) with no signal,
 // and /oracle/latest answering `{"data":[]}` during an oracle outage
@@ -647,7 +647,7 @@ func TestHelperProcessMain(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestMain_RejectsOutOfRangeNumericFlags pins GH-878: every numeric flag
+// TestMain_RejectsOutOfRangeNumericFlags: every numeric flag
 // is range-checked before a request is made. Unchecked, each value below
 // produced a complete, plausible report instead of a usage error — an
 // expired -duration read as a total outage, a 0 availability target

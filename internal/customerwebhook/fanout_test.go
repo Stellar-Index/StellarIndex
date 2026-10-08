@@ -95,7 +95,7 @@ func fanoutFailures(t *testing.T, eventType platform.WebhookEventType, reason st
 
 // TestFanoutPublish_TotalEnqueueFailureIsReported — the headline defect: the
 // store rejects every insert, so every subscribed customer loses the event,
-// and pre-fix the caller received nothing at all.
+// and the caller must not receive nothing at all.
 func TestFanoutPublish_TotalEnqueueFailureIsReported(t *testing.T) {
 	a, b := subscriber(), subscriber()
 	store := newFanoutStore(a, b)

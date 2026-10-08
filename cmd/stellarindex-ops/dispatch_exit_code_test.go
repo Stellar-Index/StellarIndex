@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestDispatchExitCode_HelpIsNotAFailure pins F070/K055: every subcommand
+// TestDispatchExitCode_HelpIsNotAFailure: every subcommand
 // flag.FlagSet uses flag.ContinueOnError, so `-h`/`-help` on a subcommand
 // surfaces as flag.ErrHelp from fs.Parse, propagated up through the
 // handler's Run. That must not fall through to the generic error
