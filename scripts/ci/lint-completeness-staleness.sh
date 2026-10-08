@@ -3,7 +3,7 @@
 # must stay CALIBRATED to the deployed completeness-audit cadence.
 #
 # internal/api/v1/coverage_verdicts.go hand-calibrates two constants that
-# decide when GET /v1/coverage flags its verdict `stale` (the MNY-04 gate
+# decide when GET /v1/coverage flags its verdict `stale` (the gate
 # that stops "15/15 complete" reading healthy forever after the audit
 # died):
 #   - coverageVerdictStaleAge     (a Go time.Duration, e.g. 26 * time.Hour)
@@ -12,7 +12,7 @@
 # to the DAILY completeness timer. Nothing cross-checked them: change the
 # timer cadence (daily -> weekly) and the staleness flag silently either
 # never trips or flaps on every normal cycle — recreating the exact
-# failure class (MNY-04) the flag exists to prevent.
+# failure class the flag exists to prevent.
 #
 # The AUTHORITATIVE cadence is the r1-deployed, Ansible-rendered timer
 # (docs/operations/maintainer-workflow.md: "r1 configuration is

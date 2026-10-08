@@ -40,7 +40,7 @@ STANZA="${DRILL_STANZA:-stellarindex}"
 DRILL_REPO="${DRILL_REPO:-1}"
 # Not /var/tmp: PrivateTmp=true in restore-drill.service gives the unit a
 # private /tmp AND /var/tmp, so a drill root under there cannot be seen
-# from inside the service (226/NAMESPACE at unit start — see BDR-04).
+# from inside the service (226/NAMESPACE at unit start).
 DRILL_ROOT="${DRILL_ROOT:-/srv/restore-drill}"
 DRILL_PG_PORT="${DRILL_PG_PORT:-5499}"
 # ABSOLUTE floor only. The real capacity requirement is derived per run
@@ -77,13 +77,13 @@ DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
 # minutes (third drill failure mode: a daily-diff schedule means up
 # to ~24h of a busy ingest DB's WAL replays through archive-get).
 PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
-# Ceiling on draining the archive stream after consistency (BDR-05).
+# Ceiling on draining the archive stream after consistency.
 WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"
 # Evidence log + metric destinations. Both are EXPLICIT host paths
 # (env-overridable), NOT computed from $0 — the installed copy runs as
 # /usr/local/bin/restore-drill.sh, where the old $0-relative LOG_DIR
 # resolved to a non-existent /usr/docs/operations/drills and silently
-# dropped the whole evidence phase (BDR-03). /var is left writable by
+# dropped the whole evidence phase. /var is left writable by
 # the systemd unit's ProtectSystem=full. Operators running from a
 # checkout who want the evidence committed can point LOG_DIR at the
 # repo: RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.

@@ -101,7 +101,7 @@ for d in DIRS:
                                       f"(page templates render {sorted(REQUIRED_ALERT_ANNOTATIONS)})")
 
 # ─────────────────────────────────────────────────────────────────────
-# Rule-TEST label realism (wave-D ALERT-02 / ALERT-11).
+# Rule-TEST label realism.
 #
 # promtool test rules asserts a rule's behaviour against series the
 # FIXTURE invents. Nothing checks those series are shapes production can

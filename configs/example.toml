@@ -88,7 +88,7 @@ redis_addr         = "127.0.0.1:6379"
 # redis_sentinel_addrs = ["cache-01.internal:26379", "cache-02.internal:26379", "cache-03.internal:26379"]
 # redis_master_name    = "stellarindex-r1-cache"
 
-# redis_closed_bucket_channel (RLT-347). Redis pub/sub channel the
+# redis_closed_bucket_channel. Redis pub/sub channel the
 # aggregator's closed-bucket VWAP publisher writes to and the API's
 # subscriber listens on. Empty (default) uses redispub.DefaultChannel
 # (stellarindex:closed-bucket:v1). Set only when multiple deployments
@@ -129,8 +129,8 @@ s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 # clickhouse_serving_password = ""
 
 # background_statement_timeout — session-level Postgres
-# statement_timeout for the long-running indexer/aggregator pools
-# (REC-08), separate from api.serving_statement_timeout.
+# statement_timeout for the long-running indexer/aggregator pools,
+# separate from api.serving_statement_timeout.
 # background_statement_timeout = "30m"
 
 # Cold-tier S3 (ADR-0027, aws-public-blockchain Open Data
