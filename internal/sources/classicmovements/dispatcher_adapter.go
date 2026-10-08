@@ -27,8 +27,7 @@ import (
 // same-run claims/clawbacks for free; pending collects the ones this
 // index can't resolve (create out of this run's range, or landed in
 // a not-yet-visited window — see doc.go's ordering caveat) for the
-// caller to resolve via a second-pass ClickHouse lookup (ADR-0048 D2;
-// previously Postgres) — see
+// caller to resolve via a second-pass ClickHouse lookup (ADR-0048 D2) — see
 // TakePendingClaimableBalances / ResolvePendingClaimableBalance.
 //
 // The in-memory index is BOUNDED at maxCBIndexEntries (FIFO eviction,
@@ -217,7 +216,7 @@ func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount cano
 // caller (classic-movements-backfill) is expected to drain this
 // after each streamed window and attempt a ClickHouse-backed second
 // pass (clickhouse.FindClaimableBalanceCreates, batched across the
-// whole window's misses — ADR-0048 D2; previously Postgres) for each
+// whole window's misses — ADR-0048 D2) for each
 // entry — see ResolvePendingClaimableBalance. An entry that still can't be
 // resolved there is a genuine ADR-0047 D4 recognizable-incompleteness
 // signal: count it, log a summary, never guess an amount.

@@ -197,8 +197,8 @@ func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataE
 	return entry.Data.ContractData, false, entry.Data.ContractData != nil
 }
 
-// The SEP-41 / SAC balance decode helpers this observer used to define
-// locally — contractID-from-scAddress, the Balance(Address) key
+// The SEP-41 / SAC balance decode helpers
+// — contractID-from-scAddress, the Balance(Address) key
 // predicate, the holder extractor, and the i128-or-map value decoder —
 // now live in internal/scval (scval.ContractIDFromScAddress,
 // IsSEP41BalanceKey, HolderFromBalanceKey, SEP41BalanceAmount). They are

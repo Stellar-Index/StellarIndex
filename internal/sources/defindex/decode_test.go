@@ -1062,7 +1062,7 @@ func TestDecodeFlow_harvest(t *testing.T) {
 
 // TestDecoder_strategyHarvestEmitsFlow pins the adapter path: a
 // classified harvest event must emit one StrategyFlow consumer.Event
-// end to end (previously recognised-and-dropped with (nil, nil)).
+// end to end (not recognised-and-dropped with (nil, nil)).
 func TestDecoder_strategyHarvestEmitsFlow(t *testing.T) {
 	t.Parallel()
 	d := &Decoder{}

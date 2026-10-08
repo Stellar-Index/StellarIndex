@@ -33,8 +33,7 @@ func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 		[]xdr.ScVal{vesSv, xauSv},
 		// Synthetic magnitudes at the 14-decimal scale, NOT the live
 		// feed's: the real mainnet capture decodes to VES ≈ 2.07e-3
-		// and XAU ≈ 4720.90, so this comment used to state values the
-		// repo's own fixtures contradict (wave-D SI-OC-05).
+		// and XAU ≈ 4720.90.
 		//
 		// The constants are left as they are on purpose. This test
 		// asserts round-trip identity of whatever it encodes, and

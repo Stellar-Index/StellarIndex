@@ -38,8 +38,8 @@ func textColumnSafe(s string) bool {
 // TestDecoder_Decode_MemoIsBytesNotText is the F052 regression guard.
 //
 // The memo is an ScString: the payer chooses its BYTES, for one stroop.
-// The decoder used to hand those bytes straight to the rozo_events.memo
-// `text` column, where a NUL or an invalid UTF-8 sequence is refused on
+// Handing those bytes straight to the rozo_events.memo
+// `text` column is wrong, because there a NUL or an invalid UTF-8 sequence is refused on
 // every attempt — a permanently un-ingestible event.
 //
 // Pins, through the production Decoder.Decode entry point:

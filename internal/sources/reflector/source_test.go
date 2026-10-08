@@ -162,9 +162,9 @@ func TestDecodeUpdate_fanout(t *testing.T) {
 }
 
 func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
-	// Regression: previously OpIndex used `OperationIndex × len(prices)
-	// + i`, which could collide across events in the same tx with
-	// different vector sizes. With a fixed stride (opIndexFanoutStride),
+	// Regression guard: an OpIndex of `OperationIndex × len(prices) + i`
+	// could collide across events in the same tx with different vector
+	// sizes. With a fixed stride (opIndexFanoutStride),
 	// the op_index ranges never overlap.
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
@@ -298,9 +298,9 @@ func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 // the raw update_data vector POSITION, so the rows a mixed
 // known/unknown batch produces for its KNOWN slots must carry the
 // same OpIndex regardless of allow-list state — the unknown slot
-// used to be a `Skip` placeholder that consumed position 1 and
-// emitted nothing; it is now a raw:<symbol> row that consumes the
-// same position 1 and IS emitted. Either way the known row at
+// is a raw:<symbol> row that consumes position 1 and IS emitted
+// (a skipped placeholder would consume the same position and emit
+// nothing). Either way the known row at
 // position 2 keeps OpIndex 2, never the compacted 1, so a later
 // allow-list extension re-derives the same PK and promotes the row
 // in place instead of orphaning/duplicating it.
@@ -348,7 +348,7 @@ func TestDecodeUpdate_OpIndexStableAcrossAllowlistState(t *testing.T) {
 		t.Errorf("updates[2] = (%s, OpIndex %d), want (%s, %d) — raw vector position 2, not compacted position 1",
 			updates[2].Asset, got, usdc, want)
 	}
-	// The raw row fills the slot the placeholder used to hold.
+	// The raw row fills the unknown symbol's slot.
 	if got, want := updates[1].OpIndex, uint32(1); got != want || !updates[1].Asset.Equal(raw) {
 		t.Errorf("updates[1] = (%s, OpIndex %d), want (%s, %d)", updates[1].Asset, got, raw, want)
 	}

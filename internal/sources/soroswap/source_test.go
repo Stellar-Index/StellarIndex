@@ -341,9 +341,9 @@ func TestBufferEvictsStaleOrphans(t *testing.T) {
 func TestBufferBackfillOldEventsPair(t *testing.T) {
 	// Regression: when the orchestrator's backfill path replays a
 	// 6-hour-old ledger range, swap + sync events share an ancient
-	// ClosedAt. Previously `sweepStale` compared against wall-clock
-	// — which meant the swap got evicted as an "orphan" the moment
-	// the sync arrived, because now-5min > 6h-ago. Now sweepStale
+	// ClosedAt. Comparing `sweepStale` against wall-clock would evict
+	// the swap as an "orphan" the moment the sync arrived, because
+	// now-5min > 6h-ago. So sweepStale
 	// uses the incoming event's ClosedAt as the reference, so
 	// same-batch correlated pairs complete regardless of age.
 	buf := newBuffer()

@@ -202,9 +202,9 @@ func TestGolden_NewCollateralContract(t *testing.T) {
 	}
 }
 
-// TestDecode_NewCollateralContract_MissingPrefixRejected proves Q078's
-// fix: TrimPrefix silently returns the whole string when the "Collateral-"
-// prefix is absent, which used to mint a PositionUUID that could never
+// TestDecode_NewCollateralContract_MissingPrefixRejected proves that
+// TrimPrefix silently returns the whole string when the "Collateral-"
+// prefix is absent, which would mint a PositionUUID that could never
 // match a real StatementPublished/Liquidation topic — a permanent join
 // miss disguised as "no statement yet". A body name lacking the prefix
 // must now fail decode instead of fabricating a bogus UUID.
