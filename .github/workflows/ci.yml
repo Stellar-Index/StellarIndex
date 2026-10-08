@@ -1089,7 +1089,7 @@ jobs:
         # internal/api/v1/coverage_verdicts.go) are HAND-CALIBRATED to the
         # daily completeness-audit timer but nothing cross-checked them.
         # Change the timer cadence (daily -> weekly) and the /v1/coverage
-        # staleness flag silently never trips / flaps — recreating MNY-04
+        # staleness flag silently never trips / flaps — recreating the failure
         # ("served complete forever after the audit died"). This asserts
         # the constants stay within [period+slack, 2*period) of the
         # Ansible-deployed compute-completeness.timer.

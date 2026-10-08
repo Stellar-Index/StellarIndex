@@ -114,7 +114,7 @@
     mode: "{{ item.dir_mode | default('0755') }}"
     # Mirror 03-zfs.yml's "Ensure dataset mount points exist with correct
     # perms": default(omit) leaves root:root for datasets whose writer is
-    # root; only restore-drill (postgres-owned, BDR-04) needs it set.
+    # root; only restore-drill (postgres-owned) needs it set.
     owner: "{{ item.dir_owner | default(omit) }}"
     group: "{{ item.dir_group | default(omit) }}"
   # Root-owned with the dataset's mode; the service tasks below chown their

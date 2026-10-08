@@ -7,7 +7,7 @@
 # WHAT THIS PINS. The projector's skip arm sheds a row the sink PERMANENTLY
 # rejected and advances the cursor past it — the served tier loses the row
 # until an operator re-drives it. The quarantine arm's identical outcome has
-# had a rule since COR-11; this arm had none, and its only signal was an ERROR
+# had a rule; this arm had none, and its only signal was an ERROR
 # log. The alerts are:
 #
 #   * stellarindex_projector_row_dropped_permanent (ticket) on

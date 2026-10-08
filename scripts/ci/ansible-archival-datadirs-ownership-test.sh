@@ -6,7 +6,7 @@
 # directories with only `mode` set, never `owner`/`group`. The restore-drill
 # dataset (defaults/main.yml) declares dir_owner/dir_group: postgres because
 # pgbackrest (running as postgres) creates its scratch pgdata dir inside the
-# mountpoint (BDR-04) — but nothing else in the role chowns /srv/restore-drill
+# mountpoint — but nothing else in the role chowns /srv/restore-drill
 # on a no-ZFS host, so pgbackrest hit a root-owned, postgres-unwritable dir.
 # 03-zfs.yml's own "Ensure dataset mount points exist with correct perms"
 # task already sets owner/group from item.dir_owner/dir_group with
