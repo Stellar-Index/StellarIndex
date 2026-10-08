@@ -25,7 +25,7 @@ func TestLPReserveInsertCitesNoObserverTask(t *testing.T) {
 	}
 }
 
-// A bare issue or PR number no longer resolves after the history rewrite; provenance lives in git.
+// A bare issue or PR number does not resolve; provenance lives in git.
 func TestMarketsListingHasNoDanglingIssueReference(t *testing.T) {
 	text := readPackageSource(t, "markets.go")
 	for _, stale := range []string{"(#20)", "#20 perf"} {

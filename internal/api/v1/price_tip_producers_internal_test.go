@@ -273,8 +273,8 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 //
 // worker.Recover stops a panicking compute loop's goroutine without
 // releasing the registry entry: refs stays whatever it was, since
-// release() is never called on a panic. Before this fix, nothing
-// re-invoked start while refs > 0 — release()'s linger only fires once
+// release() is never called on a panic. Without the re-start under test, nothing
+// re-invokes start while refs > 0 — release()'s linger only fires once
 // the LAST subscriber leaves, so an existing, still-connected subscriber
 // (the one holding rel below) got heartbeats only, forever, for as long
 // as it stayed connected: exactly the "no new emits" symptom the finding

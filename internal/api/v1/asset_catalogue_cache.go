@@ -13,8 +13,7 @@ import (
 // CachedAssetsReader wraps a [AssetsReader] with a small per-key TTL
 // cache for the methods that back high-traffic listing endpoints —
 // ListAssetsExt and the batched price-history calls used by
-// /v1/assets?limit=200&include=sparkline. The legacy /v1/assetsReader
-// route was removed in rc.48; /v1/assets now sources the same data
+// /v1/assets?limit=200&include=sparkline. /v1/assets sources its data
 // through this seam. The unified listing fires that exact request
 // on every page load and the underlying SQL takes ~1.1s; without
 // this cache the explorer's time-to-interactive is gated on it.

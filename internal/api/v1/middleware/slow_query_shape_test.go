@@ -116,8 +116,8 @@ func TestQueryShapeResistsLogInjectionAndFlooding(t *testing.T) {
 
 func TestQueryShapeCapsUnallowlistedParameterNameLength(t *testing.T) {
 	// A non-allow-listed parameter's NAME is logged verbatim
-	// (`name=<set>`) — only its VALUE is redacted. Before this fix,
-	// nothing bounded that name: a caller could roll the journal by
+	// (`name=<set>`) — only its VALUE is redacted. Unbounded,
+	// that name would let a caller roll the journal by
 	// sending one absurdly long, unrecognised parameter key.
 	u, err := url.Parse("/v1/assets?" + strings.Repeat("x", 5000) + "=1")
 	if err != nil {

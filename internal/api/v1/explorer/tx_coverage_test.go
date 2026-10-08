@@ -137,9 +137,9 @@ func TestTxDetail_FailedSubReadDropsCacheBand(t *testing.T) {
 // TestTxDetail_FailedSubReadSurfacesCoverageNote is the W1.2 regression guard: a
 // FAILED per-op-result-code read and a FAILED contract-event read must each
 // surface a non-empty coverage_note distinct from a transaction that genuinely
-// had none. Both `events` and each op's `result_code` are omitempty, so before
-// the fix a failed read serialises byte-identically to a real empty — this test
-// pins that they no longer do.
+// had none. Both `events` and each op's `result_code` are omitempty, so without a
+// note a failed read serialises byte-identically to a real empty — this test
+// pins that they differ.
 func TestTxDetail_FailedSubReadSurfacesCoverageNote(t *testing.T) {
 	readErr := errors.New("clickhouse read failed")
 

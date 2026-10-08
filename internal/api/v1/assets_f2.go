@@ -116,8 +116,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 
 	// The F2 overlay fans out to up to four independent DB-bound
 	// reads — 24h volume, 24h change, USD price, supply snapshot.
-	// They were historically run serially; each is 50ms–2s, so a
-	// cold /v1/assets/{id} paid the SUM. They touch disjoint
+	// Each is 50ms–2s; run serially, a cold /v1/assets/{id} would
+	// pay the SUM. They touch disjoint
 	// AssetDetail fields (volume/change/price each write one field;
 	// the snapshot writes none), so they run concurrently here and
 	// the cold cost collapses to the slowest single read. Every

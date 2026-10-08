@@ -15,7 +15,7 @@ import (
 
 // Neither `path` nor `user_agent` is allow-listed the way QueryShape's
 // parameters are, and nothing but Go's ~1 MB default header/request-line
-// size bounds them before this fix — an attacker-chosen path or
+// size would bound them without a cap — an attacker-chosen path or
 // User-Agent is exactly the journal-flooding channel QueryShape was
 // already hardened against for query parameters.
 func TestLoggerCapsPathAndUserAgentLength(t *testing.T) {
