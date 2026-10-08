@@ -1,6 +1,6 @@
 ---
-# promtool unit tests for three of the four staleness alerts added under
-# T586 — stellarindex_patroni_textfile_stale (storage.yml),
+# promtool unit tests for three of the four staleness alerts added for
+# textfile staleness — stellarindex_patroni_textfile_stale (storage.yml),
 # stellarindex_redis_sentinel_textfile_stale (cache.yml) and
 # stellarindex_keepalived_textfile_stale (infra.yml). The fourth,
 # stellarindex_ch_schema_drift_stale (a daily-cadence, 36h-threshold

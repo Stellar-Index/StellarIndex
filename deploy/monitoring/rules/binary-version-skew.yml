@@ -119,7 +119,7 @@ groups:
             the number of stellarindex-* files in /usr/local/bin to see
             how many dropped out.
 
-      # T561: a probe whose TIMER stops firing entirely freezes every
+      # A probe whose TIMER stops firing entirely freezes every
       # gauge in its textfile at the last value node_exporter re-scrapes
       # forever — stellarindex_binary_version_probe_success stays at 1,
       # so neither _skew nor _probe_degraded (which only fire on a

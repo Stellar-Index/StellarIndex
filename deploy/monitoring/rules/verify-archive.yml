@@ -121,7 +121,7 @@ groups:
               - `journalctl -u verify-archive-tier-a.service` — what's failing?
               - check `archive_files_missing` — a gap upstream blocks verify.
 
-      # Tier B checkpoint ANCHOR (task #33 / W8 recon 14a). verify_archive.go
+      # Tier B checkpoint ANCHOR. verify_archive.go
       # has always implemented `-tier checkpoint` (cross-check each 64-ledger
       # checkpoint's LCM header-hash against the canonical hash in the local
       # /srv/history-archive mirror), but only the Tier A (chain) unit was

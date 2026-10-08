@@ -33,7 +33,7 @@ Environment=HEAVY_JOB_CLASS=scheduled
 ExecStart=/usr/local/sbin/run-heavy-job.sh ch-supply /usr/local/sbin/run-ch-supply.sh
 
 # De-privileged — the stellarindex user is
-# created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the
+# created by 04-users.yml. Talks Postgres + ClickHouse over the
 # loopback only; writes nothing to disk.
 User=stellarindex
 Group=stellarindex

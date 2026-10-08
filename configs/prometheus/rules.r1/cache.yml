@@ -6,7 +6,7 @@ groups:
     interval: 30s
     rules:
 
-      # F-1329: redis_exporter emits no `role` label, so
+      # redis_exporter emits no `role` label, so
       # `redis_up{role="master"}` matched no series and this PAGE was
       # dead. `redis_up` (1 = exporter reached the server, 0 = it could
       # not) is the direct liveness signal.
@@ -54,10 +54,10 @@ groups:
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
             hit rates drop and Timescale fallback load rises.
 
-      # T611: r1's archival-node role pins maxmemory-policy to
+      # r1's archival-node role pins maxmemory-policy to
       # noeviction (15-log-discipline.yml) to protect the
       # unrecoverable `apikey:` credential records from allkeys-lru
-      # eviction (GH #1317). Under noeviction, a full-memory Redis
+      # eviction. Under noeviction, a full-memory Redis
       # doesn't evict — it REJECTS writes with an OOM error, which
       # stellarindex_redis_evictions_high (an eviction-rate alert)
       # cannot see at all. redis_errors_total{err=...} is the
@@ -95,7 +95,7 @@ groups:
             degrading. Scale up / free memory (OOM) or fix the
             replication topology (READONLY/NOREPLICAS) immediately.
 
-      # ── INERT (F-1329) — NOT APPLICABLE ON R1 ─────────────────────
+      # ── INERT — NOT APPLICABLE ON R1 ─────────────────────
       # r1 is a SINGLE-NODE redis (no Sentinel, no replicas — see
       # docs/operations/r1-deployment-state.md). There is no replication
       # to monitor here, so this alert is intentionally INERT on the r1
@@ -121,7 +121,7 @@ groups:
             Master reports {{ $value }} connected replicas, fewer than
             expected. Sentinel can't promote on failover if replicas are gone.
 
-      # T586: redis-sentinel-textfile-scraper.timer runs every 30s
+      # redis-sentinel-textfile-scraper.timer runs every 30s
       # (OnUnitActiveSec=30s, redis-sentinel role 07-monitoring.yml) and
       # node_exporter re-serves redis_sentinel.prom's last value on every
       # scrape regardless of whether the timer is still alive — the same

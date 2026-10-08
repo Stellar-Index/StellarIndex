@@ -207,7 +207,7 @@ run       "drift: two columns reordered live, same set" 1 "$tmp/intent.sql" "$tm
 expect_msg "drift: names the reordered column list" \
   "live: address,ledger,op_index,tx_hash,amount,ingested_at" "$tmp/intent.sql" "$tmp/live-colorder.sql"
 
-# ─── secondary index (T339, 2026-09 reverification) ──────────────────
+# ─── secondary index (reverification) ──────────────────
 # idx_am_tx is declared IDENTICALLY in intent.sql and live-ok.sql above —
 # the clean case (rc=0) already proves a matching index does not itself
 # manufacture drift. The repo retunes the bloom-filter false-positive
@@ -228,7 +228,7 @@ run       "drift: index absent live entirely"     1 "$tmp/intent.sql" "$tmp/live
 expect_msg "drift: names the missing index" "DRIFT account_movements.INDEX idx_am_tx" \
   "$tmp/intent.sql" "$tmp/live-idx-missing.sql"
 
-# ─── the REVERSE direction on a declared table (T358 / T453) ─────────
+# ─── the REVERSE direction on a declared table ─────────
 # An index hand-added live during an incident (or dropped from the repo
 # but never dropped live) is an index-only divergence too. Before this it
 # was invisible: the comparison walked the repo's indices only, and the
@@ -268,7 +268,7 @@ else
   bad "$name: the multi-line PROJECTION body must be skipped by the column parser and reported by name" "$out"
 fi
 
-# ─── cut-over objects: operator DDL beside the intent (T453) ─────────
+# ─── cut-over objects: operator DDL beside the intent ─────────
 # The v2 halves of an in-flight migration are declared in an operator
 # file marked `-- si-cutover-object:` and are deliberately absent from
 # tier1_schema.sql. Before this, a live v2 table landed in UNCODIFIED and
@@ -878,8 +878,8 @@ fi
 # `transactions` DDL from each host's OWN shipped intent file and
 # comparing it to that host's live schema:
 #
-#   testnet    intent shipped 09-08 = POST-#482   live = PRE-#482  -> DRIFT (correct)
-#   futurenet  intent shipped 08-26 = PRE-#482    live = PRE-#482  -> CLEAN (false)
+#   testnet    intent = NEW shape   live = OLD shape  -> DRIFT (correct)
+#   futurenet  intent = OLD shape   live = OLD shape  -> CLEAN (false)
 #
 # Both hosts carried the SAME stale live schema. futurenet read clean
 # only because its intent file was stale by the same two weeks — the

@@ -69,7 +69,7 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-served-values \
   -timeout ${RUN_TIMEOUT}
 
 # De-privileged — the stellarindex user is
-# created by 04-users.yml (CS-119). The textfile_collector dir is
+# created by 04-users.yml. The textfile_collector dir is
 # stellarindex-owned (10-observability.yml), so the .prom emit still works.
 User=stellarindex
 Group=stellarindex

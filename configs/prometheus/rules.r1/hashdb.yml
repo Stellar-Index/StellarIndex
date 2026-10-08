@@ -14,7 +14,7 @@
 #     exists to produce. `stellarindex_hashdb_drift_total` is a
 #     monotonic counter of drifted ledgers found across every verify
 #     sweep since the indexer process started; any nonzero value
-#     means upstream history was rewritten (a previously-fetched
+#     means upstream history was rewritten (a ledger fetched earlier
 #     ledger's bytes changed under us) or the copy we're reading now
 #     is locally corrupted. Ticket severity, not page: this is a
 #     new, first-production-exposure detector and a standing data-integrity concern rather than a
@@ -30,7 +30,7 @@
 #     rather than the detector finding something.
 #
 #   - `stellarindex_hashdb_verify_stale` — the "detector went idle"
-#     companion (T132): `verify_failing` above is rate()-based and
+#     companion: `verify_failing` above is rate()-based and
 #     reads as green whenever hashDBVerifySweep takes an early return
 #     (tip hasn't cleared the safety margin, or the computed window
 #     is empty) on EVERY tick — no runs_total series ever gets a

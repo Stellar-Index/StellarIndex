@@ -109,7 +109,7 @@ all:
 
 ```sh
 cd configs/ansible
-# F-1266 (2026-05-13): the actual entrypoint is monitoring.yml,
+# The actual entrypoint is monitoring.yml,
 # not the non-existent playbooks/prometheus.yml that earlier
 # versions of this README named.
 ansible-playbook -i inventory/r1.yml playbooks/monitoring.yml --tags prometheus

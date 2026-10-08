@@ -316,7 +316,7 @@ groups:
             missed, oldest first, 7 days per sweep. Days older than 35
             days are lost.
 
-      # Q261: no `for:` equal to the rate() window. rate() is
+      # No `for:` equal to the rate() window. rate() is
       # increase()/W, so after ONE exhausted delivery the expression is true
       # for exactly 1h, and a 1h pending period could never complete — it
       # would fire only when deliveries kept exhausting for a second hour on

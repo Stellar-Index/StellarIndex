@@ -1,9 +1,9 @@
 ---
-# promtool unit tests for stellarindex_binary_version_probe_stale (T561).
+# promtool unit tests for stellarindex_binary_version_probe_stale.
 #
 #   promtool test rules deploy/monitoring/rule-tests/binary-version-skew_test.yml
 #
-# T561: node_exporter re-serves a textfile's LAST written values on
+# node_exporter re-serves a textfile's LAST written values on
 # every scrape whether or not the producer is still running. Before
 # this alert, stellarindex_binary_version_probe_success == 0 was the
 # only degraded-probe signal — but that requires the probe to have RUN

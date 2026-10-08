@@ -18,7 +18,7 @@
     state: started
     enabled: true
 
-# T641: this instance holds the SEP-10 replay guard, the rate-limit
+# This instance holds the SEP-10 replay guard, the rate-limit
 # counters and the VWAP cache — an unauthenticated redis reachable
 # from any local process is a replay/limit-bypass vector, not just a
 # cache-poisoning one. Fail fast rather than ship an open port.

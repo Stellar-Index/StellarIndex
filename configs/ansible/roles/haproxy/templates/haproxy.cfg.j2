@@ -46,7 +46,7 @@ frontend api_https
 backend api_pool
     balance roundrobin
     # Health-check via /v1/readyz — the deep ready probe.
-    # Wave-110 (F-1275) split readiness into critical vs
+    # Wave-110 split readiness into critical vs
     # non-critical: Postgres failure returns 503 (drain backend);
     # Redis failure returns 200 with status="degraded" (keep
     # backend in pool — cache misses fall through to Timescale

@@ -23,7 +23,7 @@
 	# The site block below attaches this same filter to its own access
 	# logger. That is not enough: two other loggers in the same process
 	# emit an unfiltered `request` object, and both were observed doing
-	# it on r1 (#346 F2b).
+	# it on r1.
 	#
 	#   1. `http.handlers.reverse_proxy` runtime warnings ("aborting
 	#      with incomplete response") embed request.uri and headers.
@@ -134,7 +134,7 @@
 	# Measured 2026-09-02 against the live API: with
 	# `Accept-Encoding: gzip, br, zstd` NO route came back with a
 	# `content-encoding` header — every JSON body shipped raw, 15–34 KB
-	# a page (#331 F2). Representative payloads (assets/ledgers/
+	# a page. Representative payloads (assets/ledgers/
 	# operations/markets/pools/issuers/contracts/oracle-streams,
 	# 170,924 B total) compress to 40,554 B with gzip and 39,399 B with
 	# zstd — 4.2×/4.3×, i.e. ~77% of the bytes on the read path.
@@ -187,7 +187,7 @@
 		}
 	}
 
-	# Manual serving kill-switch (audit-2026-07-23 serving-killswitch).
+	# Manual serving kill-switch.
 	# Divergence/anomaly conditions only raise alerts today — there was
 	# no way to actually stop serving during a live data-integrity
 	# incident short of stopping the API systemd unit (which also kills
@@ -320,7 +320,7 @@
 		# that signed in during the window. The API's own logger already
 		# refuses to log query parameters for exactly this reason
 		# (internal/api/v1/middleware/logger.go) — that guarantee was
-		# being defeated one layer up (cold audit 2026-08-04).
+		# being defeated one layer up (found in a cold audit).
 		#
 		# The first version of this filter ENUMERATED the one parameter
 		# to redact (`token`), so every parameter added since leaked by

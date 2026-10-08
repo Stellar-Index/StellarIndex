@@ -49,7 +49,7 @@ redis_acl_lockdown: false
 # unrecoverable), their `apikey-index:` hash and the `signup:email:`
 # map. volatile-lru evicts only keys that carry a TTL — every cache
 # family does — so those records are never evicted; an allkeys-*
-# policy deletes live credentials under memory pressure (GH #1317).
+# policy deletes live credentials under memory pressure.
 # Memory full of TTL-less keys fails writes with OOM, which pages via
 # stellarindex_redis_write_rejected_oom. 03-redis-configure.yml also
 # applies this to already-running instances.

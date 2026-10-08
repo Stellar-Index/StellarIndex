@@ -79,7 +79,7 @@ ExecStart=/usr/local/bin/stellarindex-ops curated-rwa-sync \
   $EXTRA_FLAGS
 
 # De-privileged, same shape as directory-sync and sep1-refresh
-# (CS-118/CS-119): reads config, talks HTTPS to one third party, writes
+# reads config, talks HTTPS to one third party, writes
 # Postgres.
 User=stellarindex
 Group=stellarindex

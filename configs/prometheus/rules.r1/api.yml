@@ -301,7 +301,7 @@ groups:
             missed, oldest first, 7 days per sweep. Days older than 35
             days are lost.
 
-      # Q261: no `for:` equal to the rate() window. rate() is
+      # No `for:` equal to the rate() window. rate() is
       # increase()/W, so after ONE exhausted delivery the expression is true
       # for exactly 1h, and a 1h pending period could never complete — it
       # would fire only when deliveries kept exhausting for a second hour on
@@ -372,7 +372,7 @@ groups:
       # Mirror of the rule in deploy/monitoring/rules/api.yml; the pair
       # lint requires both copies to stay in sync.
       #
-      # Q191: the prober (internal/api/v1/tls_probe.go) that emits this
+      # The prober (internal/api/v1/tls_probe.go) that emits this
       # gauge can itself wedge or crash, in which case the series goes
       # absent rather than reporting a safe value — a bare threshold
       # comparison sees no data and never fires, same failure shape as

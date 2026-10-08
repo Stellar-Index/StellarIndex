@@ -136,7 +136,7 @@
     enabled: true
 
 # Clean up the legacy no-op drop-in if it still exists on
-# previously-deployed hosts. Safe no-op on fresh deploys.
+# already-deployed hosts. Safe no-op on fresh deploys.
 - name: remove legacy 41-redis-sentinel.conf drop-in (was no-op)
   file:
     path: /etc/nftables.d/41-redis-sentinel.conf

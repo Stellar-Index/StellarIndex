@@ -37,7 +37,7 @@ groups:
       # deployment was actually in. With no `clickhouse` scrape job,
       # `up{job="clickhouse"}` does not exist, `== 0` evaluates over an
       # empty vector, and an alert on it alone can never fire — the
-      # F-0085 / OBS-2 blindness pattern this tree has fixed repeatedly
+      # blindness pattern this tree has fixed repeatedly
       # (restore-drill.yml, storage.yml's snapshot alerts). It is also
       # why this alert is expected to fire from the moment these rules
       # deploy until the exporter drop-in is applied: that firing IS the

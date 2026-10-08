@@ -1,10 +1,10 @@
 # Rendered by Ansible (archival-node role).
 #
-# CS-118 (audit-2026-06-30): runs de-privileged as the stellarindex
+# Runs de-privileged as the stellarindex
 # service user with the hardening block from the in-repo unit at
 # deploy/systemd/stellarindex-aggregator.service (which was drifting
 # unused while this template ran the daemon as root). The
-# stellarindex user is created by 04-users.yml (CS-119).
+# stellarindex user is created by 04-users.yml.
 # EnvironmentFile is read by systemd (PID 1), not the service user;
 # it stays 0640 root:stellarindex.
 
@@ -17,7 +17,7 @@ Wants=network-online.target
 # >=230 IGNORES StartLimit* under [Service]. More than StartLimitBurst
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
 # which node_systemd_unit_state{state="failed"} pages on instead of
-# hot-looping forever (audit-2026-07-23 REL-resource-governance — this
+# hot-looping forever (resource governance — this
 # had drifted from the deploy/systemd/*.service reference copies).
 StartLimitIntervalSec=5min
 StartLimitBurst=10
@@ -37,7 +37,7 @@ RestartSec=10s
 
 # Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
 # on this shared, memory-tight host (188 GiB total, already running
-# close to capacity per r1-deployment-state.md F-1209). MemoryHigh
+# close to capacity per r1-deployment-state.md). MemoryHigh
 # throttles (cgroup reclaim) well before the hard MemoryMax kill.
 # Deliberately generous for a lean Go service — conservative starting
 # point to avoid a false-positive OOM-kill outage; tune down once

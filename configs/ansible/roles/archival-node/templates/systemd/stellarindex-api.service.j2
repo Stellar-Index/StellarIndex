@@ -19,7 +19,7 @@ Wants=network-online.target
 # >=230 IGNORES StartLimit* under [Service]. More than StartLimitBurst
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
 # which node_systemd_unit_state{state="failed"} pages on instead of
-# hot-looping forever (audit-2026-07-23 REL-resource-governance — this
+# hot-looping forever (resource governance — this
 # had drifted from the deploy/systemd/*.service reference copies).
 StartLimitIntervalSec=5min
 StartLimitBurst=10
@@ -39,7 +39,7 @@ RestartSec=5s
 
 # Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
 # on this shared, memory-tight host (188 GiB total, already running
-# close to capacity per r1-deployment-state.md F-1209). MemoryHigh
+# close to capacity per r1-deployment-state.md). MemoryHigh
 # throttles (cgroup reclaim) well before the hard MemoryMax kill.
 # Deliberately generous for a lean Go service — conservative starting
 # point to avoid a false-positive OOM-kill outage; tune down once

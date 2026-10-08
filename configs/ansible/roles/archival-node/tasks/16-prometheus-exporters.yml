@@ -53,7 +53,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-# T641: redis-server now requires auth (08-redis.yml sets
+# redis-server now requires auth (08-redis.yml sets
 # requirepass from redis_password and flushes that restart before
 # this task runs). REDIS_PASSWORD is read directly by the exporter
 # binary (same env var oliver006/redis_exporter uses, per

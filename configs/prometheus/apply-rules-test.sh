@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # apply-rules-test.sh — fixture tests for configs/prometheus/apply-rules.sh's
-# --live-check mode (T677).
+# --live-check mode.
 #
-# T677: nothing between deploys re-checks that the LIVE rule set still
+# Nothing between deploys re-checks that the LIVE rule set still
 # matches the repo — --check-only only validates repo content, and the
 # post-install verify poll only runs during an install. --live-check closes
 # that gap for a scheduled reconciliation run. These tests prove it against
@@ -87,7 +87,7 @@ expect() {
 }
 
 # Live set matches the repo exactly, including the recording rule:
-# live-check OK. Regression proof for the F-1219 recurrence — a
+# live-check OK. Regression proof for a recording-rule bug — a
 # codified `record:` was permanently read as "loaded but NOT in the
 # repo" because the comparison set only ever held alert names.
 cat >"$TMP/matching.json" <<'EOF'
@@ -107,7 +107,7 @@ else
   echo "ok: codified recording rule not reported as drift"; pass=$((pass + 1))
 fi
 
-# Live set is missing an alert the repo declares (the T677 scenario: repo
+# Live set is missing an alert the repo declares (the scenario: repo
 # has moved on, the host has not). This is the regression proof — on the
 # unfixed script there is no --live-check flag at all, so this fails loud
 # with "unbound variable"/usage error rather than detecting the drift.

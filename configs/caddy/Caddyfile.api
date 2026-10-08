@@ -310,7 +310,7 @@ api.stellarindex.io {
 		# that signed in during the window. The API's own logger already
 		# refuses to log query parameters for exactly this reason
 		# (internal/api/v1/middleware/logger.go) — that guarantee was
-		# being defeated one layer up (cold audit 2026-08-04).
+		# being defeated one layer up (found in a cold audit).
 		#
 		# The first version of this filter ENUMERATED the one parameter
 		# to redact (`token`), so every parameter added since leaked by

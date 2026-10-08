@@ -2,7 +2,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/notify_test.yml
 #
-# Q268/RLT-324: stellarindex_notify_send_failure_ratio_high is 0/0 = NaN
+# stellarindex_notify_send_failure_ratio_high is 0/0 = NaN
 # whenever a template has zero send attempts, so a mailer that stops being
 # invoked entirely reads identically to a legitimately quiet window. Case 1
 # proves the stellarindex_notify_no_send_activity dead-man's-switch catches

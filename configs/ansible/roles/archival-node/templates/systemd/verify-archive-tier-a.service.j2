@@ -53,7 +53,7 @@ Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
 Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
-# P1-page export path (issue #282). The mismatch counter
+# P1-page export path. The mismatch counter
 # `stellarindex_verify_archive_mismatches_total` feeds the
 # `stellarindex_stellar_archive_divergence` page. Nothing scrapes
 # `-metrics-listen` (a one-shot job is gone between scrapes), so
@@ -114,7 +114,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
 
 # De-privileged — the stellarindex user is
-# created by 04-users.yml (CS-119). Reads the archive via S3 (network)
+# created by 04-users.yml. Reads the archive via S3 (network)
 # and writes only the state file under /var/lib/stellarindex, which is
 # stellarindex-owned (04-users.yml).
 User=stellarindex

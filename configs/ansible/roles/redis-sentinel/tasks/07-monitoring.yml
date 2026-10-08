@@ -62,7 +62,7 @@
     group: root
     mode: "0600"
     content: |
-      # F-1295: secret env-file for redis_exporter. 0600 root-only.
+      # Secret env-file for redis_exporter. 0600 root-only.
       # Sourced via the systemd unit's `EnvironmentFile=`.
       REDIS_PASSWORD={{ redis_password }}
   no_log: true
@@ -172,7 +172,7 @@
       Description=Redis Sentinel → Prometheus textfile scraper
       [Service]
       Type=oneshot
-      # F-1295 follow-up: pull REDIS_PASSWORD from the 0600 env-file
+      # Pull REDIS_PASSWORD from the 0600 env-file
       # rather than inlining into the script. Leading '-' allows the
       # service to fail-fast inside the script if the file is absent.
       EnvironmentFile=-/etc/default/redis_exporter

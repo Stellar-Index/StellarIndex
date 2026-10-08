@@ -13,7 +13,7 @@
 # which is precisely what a job failing every night looks like on this
 # signal, and what is indistinguishable from health on the timer gauge.
 #
-# Q280: both rules select `stellarindex_verify_archive_last_success_unix
+# Both rules select `stellarindex_verify_archive_last_success_unix
 # {tier=...} > 0`, so a host that has NEVER written the textfile at all
 # (node_exporter down, the collector directory misconfigured, the unit
 # never scheduled) leaves the series absent — not old. `time() - x` over
@@ -22,7 +22,7 @@
 # restore-drill.yml, curated-rwa-sync.yml, storage.yml's
 # ch-schema-snapshot alert). The "never written" cases below cover that.
 #
-# PROVEN-RED (Q280): delete the `or absent_over_time(...) == 1` arm from
+# PROVEN-RED: delete the `or absent_over_time(...) == 1` arm from
 # either alert in verify-archive.yml and re-run — the matching "never
 # written" case reports 0 firing alerts (FAIL) because with the series
 # absent nothing selects it.
@@ -81,7 +81,7 @@ tests:
         summary: verify-archive Tier B checkpoint anchor hasn't run cleanly in 1d 15h 59m 0s
         description: "The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+\n(24h cadence + 12h cushion) — either the timer isn't enabled or\nevery recent attempt failed. The single-source-corruption anchor\ncheck is not running. Lower urgency than the Tier A chain staleness\npage (Tier B is defence-in-depth), but investigate. Diagnosis:\n  - `systemctl status verify-archive-tier-b.timer` — is it active?\n  - `journalctl -u verify-archive-tier-b.service` — what's failing?\n  - is the /srv/history-archive mirror synced to the checked range?\n\nRunbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed\n"
 
-# ── Q280: textfile never written at all (series absent, not stale) ──
+# ── Textfile never written at all (series absent, not stale) ──
 - interval: 1h
   name: chain tier never written pages off the absent_over_time branch
   input_series:

@@ -32,7 +32,7 @@ evaluation_interval: 1m
 tests:
   # ══ 1. ordinary lag still tickets ═════════════════════════════════
   # No replay on record (the flag is a real, published zero), so the
-  # `unless` arm must not touch this: the pre-#325 behaviour exactly.
+  # `unless` arm must not touch this: the unchanged behaviour exactly.
   - interval: 1m
     name: sustained lag with no replay on record tickets as before
     input_series:

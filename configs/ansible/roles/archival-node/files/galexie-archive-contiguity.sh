@@ -8,7 +8,7 @@
 # partition [0,63999] plus [ARCHIVE_FROM=49984000 → tip] — the middle
 # is a DELIBERATE capacity trim (recoverable only from
 # aws-public-blockchain). That mismatch sat unnoticed because nothing
-# recurring asserted the archive's SHAPE: tip-lag (#31) proves the
+# recurring asserted the archive's SHAPE: tip-lag proves the
 # newest edge advances, archive-fill proves the pipe runs, but a
 # partition silently deleted (bad trim cutoff, fat-fingered mc rm,
 # MinIO heal failure) or an overlap from a botched re-fill would only

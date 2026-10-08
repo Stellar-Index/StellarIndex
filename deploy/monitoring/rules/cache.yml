@@ -54,14 +54,14 @@ groups:
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
             hit rates drop and Timescale fallback load rises.
 
-      # T611: under `maxmemory-policy noeviction`, a full-memory Redis
+      # Under `maxmemory-policy noeviction`, a full-memory Redis
       # doesn't evict — it REJECTS writes with an OOM error, invisible
       # to stellarindex_redis_evictions_high (an eviction-rate alert).
       # redis_errors_total{err=...} is the prometheus-redis-exporter
       # counter fed by Redis's Errorstats section (INFO ERRORSTATS). The
       # multi-host topology defaults to volatile-lru
       # (redis-sentinel/defaults/main.yml), which never evicts the
-      # TTL-less credential records (GH #1317); it rejects writes OOM
+      # TTL-less credential records; it rejects writes OOM
       # once only those remain, or on a can't-evict-fast-enough burst,
       # and this catches both plus a noeviction override.
       #
@@ -122,7 +122,7 @@ groups:
             ADR-0024 expected 2. Sentinel can't promote on failover if
             replicas are gone.
 
-      # T586: redis-sentinel-textfile-scraper.timer runs every 30s
+      # redis-sentinel-textfile-scraper.timer runs every 30s
       # (OnUnitActiveSec=30s, redis-sentinel role 07-monitoring.yml) and
       # node_exporter re-serves redis_sentinel.prom's last value on every
       # scrape regardless of whether the timer is still alive — the same

@@ -31,7 +31,7 @@ ExecStart=/usr/local/bin/stellarindex-ops directory-sync \
   -write \
   $EXTRA_FLAGS
 
-# De-privileged, same shape as sep1-refresh (CS-118/CS-119): reads
+# De-privileged, same shape as sep1-refresh: reads
 # config, fetches one HTTPS tarball, writes Postgres.
 User=stellarindex
 Group=stellarindex

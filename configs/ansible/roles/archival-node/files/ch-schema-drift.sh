@@ -178,7 +178,7 @@ if [[ -z "$INTENT" ]]; then
   fi
 fi
 
-# ─── cut-over objects: the operator DDL beside the intent (T453) ─────
+# ─── cut-over objects: the operator DDL beside the intent ─────
 # deploy/clickhouse/*.sql files marked `-- si-cutover-object: X` declare
 # the v2 halves of an in-flight r1 migration. They are deliberately NOT
 # in tier1_schema.sql — a completed cut-over would read as drift forever
@@ -386,7 +386,7 @@ parse_schema() {
           }
         } else if (c ~ /^(PROJECTION|CONSTRAINT) /) {
           # Projections and constraints: compared on EXISTENCE by name,
-          # both directions (T453). Their bodies (a SELECT, a CHECK
+          # both directions. Their bodies (a SELECT, a CHECK
           # expression) are re-rendered by ClickHouse the way an MV
           # SELECT body is, so text equality would be the same false-positive
           # machine the header refuses for column types.
@@ -881,7 +881,7 @@ while IFS= read -r t; do
     fi
   done
   # ─── named sub-objects: indices, projections, constraints — BOTH ways ──
-  # (T339 / T358 / T453.) An index's TYPE+params+GRANULARITY (e.g.
+  # An index's TYPE+params+GRANULARITY (e.g.
   # idx_lec_key_xdr's bloom_filter false-positive rate) is exact declared
   # text on both sides, so it is compared textually; a projection's SELECT
   # and a constraint's CHECK are re-rendered by ClickHouse the way an MV's

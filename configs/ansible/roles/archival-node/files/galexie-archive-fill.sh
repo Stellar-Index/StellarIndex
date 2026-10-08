@@ -3,7 +3,7 @@
 #
 # WHY: mc mirror --overwrite=false errors on every object whose mtime
 # differs between source AWS and dest MinIO (which is every object that
-# was previously copied via mc cp), then deadlocks. The runbook claim
+# was copied earlier via mc cp), then deadlocks. The runbook claim
 # that --overwrite=false skips silently is wrong as of mc 2025-08-13.
 #
 # Strategy: compute (AWS partitions − local partitions) = missing
@@ -185,7 +185,7 @@ fi
 
 # Phase 1b — auto-detect trailing-edge partials by sampling the latest
 # PARTIAL_CHECK_WINDOW partitions on AWS and comparing file counts to
-# local. This is the F-0158 fix: a partition with 416/64000 files
+# local. This is the partial-partition check: a partition with 416/64000 files
 # present locally would otherwise be silently skipped by the Phase 2
 # partition-level set diff. The recursive `mc ls` per partition costs
 # one round-trip per partition we check — bounded by the window size,
@@ -229,7 +229,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
       # roughly 85 GiB/day of AWS egress to re-fetch data we already had,
       # rising toward ~11 GiB/run as the partition fills to 64,000 files.
       #
-      # The F-0158 bug this branch exists for is REAL and still fixed:
+      # The bug this branch exists for is REAL and still fixed:
       # Phase 2's `comm -23` is a presence-only set diff, so a partition
       # that exists locally but is incomplete is never revisited. Adding
       # it to the needs-work list closes that hole without the delete.

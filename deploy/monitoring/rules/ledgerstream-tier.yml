@@ -11,7 +11,7 @@
 # Alert family:
 #
 #   - `stellarindex_ledgerstream_tier_both_missing` — any increase in
-#     the trailing 5 min, firing at once (`for: 0m`, Q261 — see the
+#     the trailing 5 min, firing at once (`for: 0m` — see the
 #     rule's own comment). Both hot (local galexie-archive) AND cold
 #     (aws-public-blockchain) responded with not-found for the same
 #     LCM. The indexer cannot progress; depending on which cursor
@@ -25,7 +25,7 @@ groups:
     interval: 60s
     rules:
 
-      # Q261: `for: 0m`. `for: 5m` over a 5m increase window could not
+      # `for: 0m`. `for: 5m` over a 5m increase window could not
       # fire on ONE both-tiers miss (true for 5m after the increment, pending
       # needs a further 5m). It paged only when a consumer kept missing.
       # Firing at once is safe because no scraped process emits this

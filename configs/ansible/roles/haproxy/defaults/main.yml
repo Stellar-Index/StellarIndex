@@ -29,7 +29,7 @@ keepalived_unicast_peer_ips: []    # the OTHER lb node(s)' IP(s)
 
 # ── HAProxy backend ────────────────────────────────────────────
 # Default health-check path. /v1/readyz is the deep ready probe.
-# Wave-110 (F-1275) split readiness into critical (Postgres —
+# Wave-110 split readiness into critical (Postgres —
 # 503 when down) vs non-critical (Redis — 200 + status="degraded"
 # when down, because cache misses fall back to Timescale per
 # ADR-0007). HAProxy backends therefore stay in the pool during

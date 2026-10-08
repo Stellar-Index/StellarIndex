@@ -11,14 +11,14 @@
 #
 # The budget these rules burn against is the published availability
 # commitment — ≥ 99.9 % non-5xx over 30 days (stellarindex.io/sla), an
-# error budget of 0.001. Until #487 the expressions compared against
-# 0.0001, the budget of a 99.99 % objective nobody had published, so a
-# 0.5 % error rate paged as a fast burn at 35× a budget the service
+# error budget of 0.001. The expressions must not compare against
+# 0.0001, the budget of a 99.99 % objective nobody published: a
+# 0.5 % error rate would page as a fast burn at 35× a budget the service
 # never promised. These cases pin the arithmetic to the published
 # figure: an error rate inside the budget stays silent, one that burns
 # it at 5× tickets and does not page, one that burns it at 20× pages.
 #
-# The latency cases at the bottom (RLT-329, #739) pin the min-signal
+# The latency cases at the bottom pin the min-signal
 # guard on the latency burn family. Its predecessor was a floor on
 # TOTAL request rate sized off a synthetic-monitoring baseline; once
 # the synthetic User-Agents were excluded from the histogram, real
@@ -244,7 +244,7 @@ tests:
 
   # Twelve slow requests in the trailing hour over the SAME traffic
   # volume: real signal, so the alert fires. This is the regression
-  # assertion for #739 — with the old `api_latency_slo_request_rate:1h
+  # assertion for the min-signal guard — with the old `api_latency_slo_request_rate:1h
   # > 5` guard this traffic never clears 5 req/s and the alert stays
   # silent no matter how many requests were slow.
   - interval: 1m
@@ -334,7 +334,7 @@ tests:
                 Follow the api-latency runbook; check Redis cache hit rate
                 + Postgres connection pool first.
 
-  # ── stellarindex_slo_latency_burn_medium (T477): the 30m+6h tier ──
+  # ── stellarindex_slo_latency_burn_medium: the 30m+6h tier ──
   #
   # burn_medium shares the same `> 5` min-signal guard on
   # stellarindex:api_slow_request_count:1h as burn_fast, but trips on

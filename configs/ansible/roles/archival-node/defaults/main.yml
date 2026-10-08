@@ -78,7 +78,7 @@ run_promtail:        true
 run_redis:               true
 run_clickhouse:          false
 
-# T641: redis-server on the archival node was unauthenticated and
+# redis-server on the archival node was unauthenticated and
 # reachable from any local process (no requirepass, no bind
 # hardening) even though it holds the SEP-10 replay guard, the
 # rate-limit counters and the VWAP cache. Set from vault

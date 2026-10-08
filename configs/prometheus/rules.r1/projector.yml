@@ -110,7 +110,7 @@ groups:
       # re-driveable via `stellarindex-ops projector-replay`, but a
       # quarantine is otherwise SILENT data-completeness debt. Sensitive
       # (any nonzero increase over the window fires).
-      # Q261: `for: 0m` plus a born-inside-the-window arm. `for: 15m` over
+      # `for: 0m` plus a born-inside-the-window arm. `for: 15m` over
       # a 15m increase window cannot fire on ONE quarantine — the expression
       # is true for only 15m after the increment and the pending period
       # needs a further 15m — and a quarantine is one row by construction
@@ -160,7 +160,7 @@ groups:
       # such a window for QuarantineAfterCyclesNoProgress (~1 h) and then
       # bleeds one row per cycle, which makes the stall visible — but the rows
       # that do leave still leave the served tier silently without this.
-      # Same posture, and same Q261 born-inside-the-window arm, as the
+      # Same posture, and same born-inside-the-window arm, as the
       # quarantine rule: the {source,outcome="sink_permanent"} child is
       # unseeded (no projector series on r1 has ever carried an outcome other
       # than "ok"), so it is born at 1 by the very drop the rule is for and

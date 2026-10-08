@@ -37,7 +37,7 @@ alertmanager_port: 9093
 prometheus_listen: "0.0.0.0:{{ prometheus_port }}"
 alertmanager_listen: "0.0.0.0:{{ alertmanager_port }}"
 
-# T643: the firewall (06-firewall.yml, @internal_v4/@internal_v6) was the
+# The firewall (06-firewall.yml, @internal_v4/@internal_v6) was the
 # ONLY control on 9090/9093 — anything inside prometheus_internal_cidrs
 # reached both with no credentials. Optional basic auth, layered on top
 # of (not instead of) the firewall. Vault-supplied bcrypt hash, e.g.
@@ -71,7 +71,7 @@ alertmanager_group: alertmanager
 # `configs/ansible/deploy/monitoring/rules`; `find` on a missing
 # path returns an empty list, and the stale-rule cleanup task in
 # 03-prometheus-configure.yml would then delete EVERY rule file on
-# the host and reload Prometheus with zero alert rules (F-1357).
+# the host and reload Prometheus with zero alert rules.
 # The non-empty assert in that task is the guard-rail against a
 # regression here.
 prometheus_rules_source_dir: "{{ playbook_dir }}/../../../deploy/monitoring/rules"
@@ -112,7 +112,7 @@ alertmanager_discord_webhook_url_alerts: ""
 # routine notice (an oracle listing a ticker we do not map yet) cannot
 # bury a ticket in the same feed. Empty = the receiver renders as a
 # stub and informational alerts are visible only in the Alertmanager
-# UI — the pre-#485 behaviour, in which every informational alert was
+# UI — the behaviour in which every informational alert was
 # matched, routed and delivered nowhere.
 alertmanager_discord_webhook_url_informational: ""
 

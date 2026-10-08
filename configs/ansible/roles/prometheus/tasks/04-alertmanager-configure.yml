@@ -1,5 +1,5 @@
 ---
-# T643: opt-in basic auth in front of the 0.0.0.0 listener, layered on
+# Opt-in basic auth in front of the 0.0.0.0 listener, layered on
 # the firewall. No-op (file absent, flag unwired below) when
 # alertmanager_basic_auth_password_hash is unset.
 - name: render /etc/alertmanager/web-config.yml (basic auth)

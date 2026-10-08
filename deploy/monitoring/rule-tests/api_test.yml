@@ -840,7 +840,7 @@ tests:
         alertname: stellarindex_failed_auth_rate_high
         exp_alerts: []
 
-  # ── T403: a latched schema-absent probe tickets per instance ─────
+  # ── A latched schema-absent probe tickets per instance ─────
   # r1 started before the lake DDL: tx_hash_index answered absent once
   # and the gauge holds 0 for the process lifetime. r2 has it.
   - interval: 1m

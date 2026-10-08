@@ -1,4 +1,4 @@
-# promtool unit tests for Q191: stellarindex_tls_cert_expiring_soon had no
+# promtool unit tests for stellarindex_tls_cert_expiring_soon, which had no
 # absent()/absent_over_time() arm, unlike stellarindex_api_price_stale a few
 # lines above it in the same file. If the TLS self-probe
 # (internal/api/v1/tls_probe.go) wedges or crashes, the

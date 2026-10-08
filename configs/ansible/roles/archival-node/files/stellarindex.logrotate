@@ -1,6 +1,5 @@
 # /etc/logrotate.d/stellarindex
 # Rotate operator-side logs in /var/log/stellarindex/.
-# Wave-2 fix for F-0009 / F-0015 from 2026-05-26 audit.
 #
 # Uses copytruncate because some logs are written by long-running
 # stellarindex-ops processes (backfill, gap-fill, replay) that hold

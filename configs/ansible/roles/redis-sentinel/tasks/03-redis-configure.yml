@@ -58,7 +58,7 @@
 # redis_maxmemory_policy never reaches a running cluster through the
 # template. Apply it live on every node and persist it with CONFIG
 # REWRITE: an allkeys-* policy left running evicts the TTL-less
-# credential records (GH #1317). Under ACL lockdown only the sentinel
+# credential records. Under ACL lockdown only the sentinel
 # user holds CONFIG SET/REWRITE.
 - name: enforce maxmemory-policy on the running instance
   shell: |
