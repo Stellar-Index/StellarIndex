@@ -113,7 +113,7 @@ func newWatermarkRefresher(store *timescale.Store, snapshotLedger uint32, insert
 // have not CHANGED for far longer than the dormancy horizon must NOT trip the
 // XLM supply freshness gate.
 //
-// RED ON UNFIXED CODE: before the fix, Store.MaxAccountObservationLedger
+// A reader that took Store.MaxAccountObservationLedger
 // returned MAX(ledger) FROM account_observations = the last balance-change
 // ledger (50_000_000). The anchor assertion below fails (got 50_000_000, want
 // the 50_030_000 watermark), and — end to end — the refresher rejects the

@@ -16,7 +16,7 @@ import (
 )
 
 // TestCustomerWebhookRotateSecretKeepsQueue executes migration 0200 up and
-// down and the in-place rotation it backs (GH #665): the key changes on the
+// down and the in-place rotation it backs: the key changes on the
 // SAME row, the outgoing key is kept until its expiry, and the webhook's
 // queued deliveries survive — the delete + recreate it replaces cascaded
 // them away.

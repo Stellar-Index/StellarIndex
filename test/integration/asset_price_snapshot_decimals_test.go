@@ -138,13 +138,13 @@ func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Sto
 	}
 }
 
-// TestAssetPriceSnapshot_NormalisesNonstandardDecimals is the F017
+// TestAssetPriceSnapshot_NormalisesNonstandardDecimals is the
 // regression for the /v1/assets LISTING price. asset_price_snapshot's
 // writer stored the RAW prices_1m ratio, so every reader of the rollup
 // — the listing spine and ContractCatalogueRows, the latter feeding the
 // RWA contract listing's market cap — published a price off by
 // 10^(7 - decimals) for a confirmed non-7-decimals token. Before the
-// fix the three flagged rows below read 0.0250000000, 0.0000000001 and
+// a raw-ratio writer the three flagged rows below read 0.0250000000, 0.0000000001 and
 // 200.0000000000.
 func TestAssetPriceSnapshot_NormalisesNonstandardDecimals(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -275,7 +275,7 @@ func derefOrNil(s *string) string {
 	return *s
 }
 
-// TestAssetCatalogue_RoundsAfterDecimalsCorrection is the F017 regression
+// TestAssetCatalogue_RoundsAfterDecimalsCorrection is the regression
 // for the catalogue reads that stay RAW and are corrected by the API: the
 // per-asset row's price_usd and the four price-history series. They
 // rounded the raw ratio to 10 places BEFORE the correction could run, so
@@ -311,7 +311,7 @@ func TestAssetCatalogue_RoundsAfterDecimalsCorrection(t *testing.T) {
 	}{
 		// 9 dp, k = 2: 12 places.
 		{"nine", decimalsNineContract, "0.025000000000", "0.012500000000"},
-		// 18 dp, k = 11: 21 places. Was 0.0000000001.
+		// 18 dp, k = 11: 21 places. Raw rounding gave 0.0000000001.
 		{"eighteen", decimalsEighteenContract, "0.000000000140000000000", ""},
 		// 5 dp scales DOWN: k floors at 0, the 10 places it always had.
 		{"five", decimalsFiveContract, "200.0000000000", ""},

@@ -16,10 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestFreezeEventSink_LKGVWAPLandsOnRow exercises the F-1228 path:
+// TestFreezeEventSink_LKGVWAPLandsOnRow exercises the path:
 // `RecordFreeze` writes the frozen_value column with the
 // orchestrator-supplied LKG VWAP rather than the hardcoded 0 the
-// pre-F-1228 implementation used.
+// a bare insert would write.
 func TestFreezeEventSink_LKGVWAPLandsOnRow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -136,7 +136,7 @@ func TestFreezeEventSink_FirstTickFreezeHookGetsNoSentinel(t *testing.T) {
 	}
 }
 
-// TestFreezeEventSink_RecoveryRoundTrip exercises the F-1229 path:
+// TestFreezeEventSink_RecoveryRoundTrip exercises the path:
 // ListOpen → MarkRecovered → ListOpen returns one fewer row. Pins
 // the worker's contract against the postgres schema.
 func TestFreezeEventSink_RecoveryRoundTrip(t *testing.T) {
@@ -200,8 +200,8 @@ func TestFreezeEventSink_RecoveryRoundTrip(t *testing.T) {
 
 // TestFreezeEventSink_IdempotentOpenRow — two RecordFreeze calls
 // for the same (asset, quote) while the first is still firing
-// (recovered_at NULL) MUST NOT insert a second row. Pre-F-1228 we
-// relied on the (asset, quote, frozen_at) PK with microsecond
+// (recovered_at NULL) MUST NOT insert a second row. The guard
+// does not rely on the (asset, quote, frozen_at) PK with microsecond
 // resolution; the explicit `WHERE NOT EXISTS` clause is what
 // guarantees idempotency.
 func TestFreezeEventSink_IdempotentOpenRow(t *testing.T) {

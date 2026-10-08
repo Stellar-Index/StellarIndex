@@ -36,8 +36,7 @@ import (
 //     wins) rather than erroring on Postgres's "cannot affect row a second
 //     time" (which the old DO NOTHING absorbed).
 //
-// scripts/ci/lint-derive-generation-guard is the static, PR-time complement
-// (T351): it enumerates every derive_generation-carrying table from
+// scripts/ci/lint-derive-generation-guard is the static, PR-time complement: it enumerates every derive_generation-carrying table from
 // migrations/ and every hand-written ON CONFLICT DO UPDATE writer under
 // internal/storage/timescale/, so a NEW writer that forgets the guard fails
 // CI without needing its own representative-table integration test here.

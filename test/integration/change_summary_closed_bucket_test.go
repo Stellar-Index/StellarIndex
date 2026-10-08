@@ -13,7 +13,7 @@ import (
 )
 
 // TestTimedVWAPs1mForChangeSummary_ExcludesTheOpenBucket runs the
-// /v1/changes source read against the real prices_1m CAGG (GH-757).
+// /v1/changes source read against the real prices_1m CAGG.
 // The worker passes its wall clock as `to`, and `bucket < to` admitted the
 // minute that clock sits inside: a fat-finger print there became
 // current_value and, through the upsert's GREATEST/LEAST, the stored

@@ -240,7 +240,7 @@ func tableSnapshot(t *testing.T, ctx context.Context, db *sql.DB, accountID uuid
 	return s
 }
 
-// TestAccountErasure pins GH #809 end to end against real Postgres and
+// TestAccountErasure pins account erasure end to end against real Postgres and
 // Redis: a whole-database and whole-Redis leak scan after the erasure, a
 // control account left byte-identical, staff audit rows kept, a retry
 // after a mid-transaction failure, and a different person whose address

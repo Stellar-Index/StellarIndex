@@ -16,7 +16,7 @@ import (
 // TestMigration0186_DivergenceRefObservedAt runs 0186 against a compressed
 // divergence_observations chunk holding a row the previous binary wrote, then
 // round-trips the reference time through the sink and the /v1/divergence
-// reader (GH-823): the new row returns exactly what was recorded, the old row
+// reader: the new row returns exactly what was recorded, the old row
 // and a record with no reference time return nil, and down drops the column.
 func TestMigration0186_DivergenceRefObservedAt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

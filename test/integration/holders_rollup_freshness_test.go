@@ -12,7 +12,7 @@ import (
 
 // TestHoldersRollupFreshness_ExecutesAgainstServer runs the real
 // ch-holders-rollup cycle, then ages its stamp, against a real ClickHouse
-// server (T390). It proves: the writer's UTC-pinned cycle stamp round-trips
+// server. It proves: the writer's UTC-pinned cycle stamp round-trips
 // as the true instant; a fresh cycle is served from the rollup, including
 // the live-table stamp read for an asset absent from it; and once the cycle
 // is older than the reader's max age, AssetHolders stops serving the rollup

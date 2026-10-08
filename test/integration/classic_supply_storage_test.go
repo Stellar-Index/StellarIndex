@@ -204,7 +204,7 @@ func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 		// observation at all" from "observations exist and (possibly)
 		// sum to zero" — SumSACBalancesAtOrBefore's COALESCE(sum, 0)
 		// alone can't tell those apart, and CrossCheckSubsetBound's
-		// CS-087 escrow gate relies on that distinction.
+		// escrow gate relies on that distinction.
 		const neverSeenAsset = "SHX:GDNEVERSEENSACBALANCEOBSERVATIONFORTHISASSETXXXXXXXXXXXX"
 		exists, err := store.SACBalanceObservationsExist(ctx, neverSeenAsset, 5000)
 		if err != nil {
@@ -307,7 +307,7 @@ func insertSAC(t *testing.T, ctx context.Context, store *timescale.Store, contra
 // persist and the DISTINCT ON must choose deterministically.
 //
 // Before the fix the readers ordered by `ledger DESC` alone and the pick was
-// left to the planner — the same shape as audit C2-4c, where a tie between a
+// left to the planner — the same shape as a case where a tie between a
 // `state` before-image and its `updated` after-image serves whichever the
 // engine happens to keep. The seed row must win: it reconstructs the
 // ledger's FINAL state, so it belongs at the end of the intra-ledger order.
@@ -358,7 +358,7 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 	}
 }
 
-// TestMinClassicComponentLedgerUsesObserverWatermark pins CS-102: the
+// TestMinClassicComponentLedgerUsesObserverWatermark pins that the
 // freshness anchor must be the slowest component OBSERVER's watermark, not
 // the asset's last activity in that component.
 //

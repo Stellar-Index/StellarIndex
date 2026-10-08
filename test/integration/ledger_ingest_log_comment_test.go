@@ -25,7 +25,7 @@ const ledgerIngestLogComment0051 = `Substrate-continuity record (ADR-0033). One 
 	`this table is Claim 1 of the completeness model.`
 
 // TestLedgerIngestLogComment pins the catalog comments on ledger_ingest_log
-// after migration 0182 up and down (GH #923): the indexer writes the row
+// after migration 0182 up and down: the indexer writes the row
 // after ENQUEUE to the async sink, so `\d+` must not call it post-persist.
 func TestLedgerIngestLogComment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -27,7 +27,7 @@ type appendOnlyFixture struct {
 	userID   uuid.UUID
 }
 
-// TestAuditLogAppendOnly pins migration 0179 (GH #969): the app role
+// TestAuditLogAppendOnly pins migration 0179: the app role
 // cannot rewrite, detach, delete or truncate the audit trail, while the
 // ON DELETE SET NULL foreign keys still let the signup reaper delete an
 // account (and a user be deleted) without losing its audit rows.

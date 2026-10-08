@@ -23,7 +23,7 @@ import (
 // TestChRebuildProjectedScript_DeleteSQLOnRealPostgres executes the SQL
 // that scripts/ops/ch-rebuild-projected.sh ACTUALLY emits — captured by
 // running the shipped script with a recording `psql` — against real
-// TimescaleDB, and checks which rows survive (F075, RLT-380, RLT-381).
+// TimescaleDB, and checks which rows survive.
 //
 // internal/ops/chops/ch_rebuild_projected_script_*_test.go hold the script
 // to its rules by reading that SQL as text. Text is not proof: only the

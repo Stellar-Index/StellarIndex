@@ -72,7 +72,7 @@ func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 		t.Fatalf("BatchInsertTrades: %v", err)
 	}
 
-	// classic_assets must now carry the asset (C2-13b): before the fix this
+	// classic_assets must now carry the asset: without the fix this
 	// row did not exist and readRegistry fatals with "no rows".
 	gotCount, gotLastLedger := readRegistry(t, store, usdc.String())
 	if gotCount == 0 {
@@ -92,7 +92,7 @@ func TestBatchInsertTrades_PopulatesClassicAssetRegistry(t *testing.T) {
 
 	// A replay of the SAME batch (cold dedupe cache = simulated restart) must
 	// NOT inflate observation_count: the hook only fires for genuinely-landed
-	// (xmax=0) rows, matching the single-row path's F-1243 guard.
+	// (xmax=0) rows, matching the single-row path's guard.
 	store.ResetAssetRegistryDedupeForTest()
 	if err := store.BatchInsertTrades(ctx, batch); err != nil {
 		t.Fatalf("BatchInsertTrades (replay): %v", err)

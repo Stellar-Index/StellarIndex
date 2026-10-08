@@ -403,7 +403,7 @@ func breakdownCount(rows []chstore.ProtocolEventTypeCount, name string) uint64 {
 // dedup story — doesn't require FINAL to be correct), MaxAccountMovementLedger
 // resolves the right resume point, and FindClaimableBalanceCreates'
 // batched balance_id lookup (the ClickHouse replacement for the retired
-// Postgres fallback) resolves a previously-written create.
+// Postgres fallback) resolves a already-written create.
 func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -726,7 +726,7 @@ func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
 	}
 }
 
-// TestNetworkThroughput_DedupsReingestedLedger is the audit C2-12 guard:
+// TestNetworkThroughput_DedupsReingestedLedger guards that
 // stellar.ledgers is ReplacingMergeTree, and a re-ingested ledger (a ch-backfill
 // re-derive) leaves an un-merged duplicate PART until a background merge. Before
 // the fix NetworkThroughput's count()/sum(*_count) ran WITHOUT FINAL, so during

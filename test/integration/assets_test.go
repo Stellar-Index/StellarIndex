@@ -114,7 +114,7 @@ func TestAssetsReader(t *testing.T) {
 		t.Error("HasAsset(EUR) should be false")
 	}
 
-	// F-0157 perf: an unknown classic asset must route through
+	// Perf: an unknown classic asset must route through
 	// classic_assets PK lookup and return false. The classic_assets
 	// table is populated by InsertTrade's registerClassicAssetSeen
 	// hook; an asset_id never seen by that hook (e.g. a random

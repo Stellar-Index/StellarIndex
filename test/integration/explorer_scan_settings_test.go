@@ -292,7 +292,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 // returned VALUES on a real server, down both of its paths: first served by
 // the keyed contract_instance_changes index (populated by the shipped MV),
 // then — with this contract's index rows deleted while the table stays
-// non-empty — as an unproven per-contract miss (#716/REC-04): the index's
+// non-empty — as an unproven per-contract miss: the index's
 // emptiness for this contract is not proof it never upgraded, so the reader
 // falls back to the changes-log scan, which still holds the instance writes
 // and returns the same real timeline. The seeded timeline carries an

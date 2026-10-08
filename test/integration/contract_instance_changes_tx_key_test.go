@@ -18,7 +18,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// T356/T377: contract_instance_changes was keyed (contract_hash, ledger_seq,
+// contract_instance_changes keyed (contract_hash, ledger_seq,
 // change_index), and change_index restarts per TRANSACTION. Two transactions
 // writing one contract's instance in the same ledger — both at change_index 0
 // — collapsed to one row on merge, so a same-ledger upgrade vanished from the

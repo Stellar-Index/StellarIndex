@@ -19,7 +19,7 @@ import (
 // part (the legitimate post-heal / ch-rebuild / partial-flush-retry state).
 //
 // Determinism: the two same-key inserts create two parts, and a background merge
-// would collapse them on its own (making the pre-fix reader accidentally pass).
+// would collapse them on its own (making a non-deduping reader accidentally pass).
 // SYSTEM STOP MERGES pins the table in its un-merged state for the duration, so
 // the dedup MUST come from the query — reverting the fix makes both readers
 // return 4 rows (2 events x 2 parts) instead of 2.

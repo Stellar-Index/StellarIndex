@@ -218,7 +218,7 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 		// stores ("usd→eur ≈ 0.92 means 1 USD buys 0.92 EUR"). NOT 1.085
 		// (that is USD-per-EUR = C:EURUSD, the inverse — an earlier fixture used
 		// it and, paired with the then-inverted fxSnapFromRows division, the two
-		// errors cancelled to a plausible result and masked audit M3). float64
+		// errors cancelled to a plausible result and masked errors). float64
 		// 0.92 round-trips through the pgx driver as the shortest decimal "0.92",
 		// stored exactly in NUMERIC.
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{

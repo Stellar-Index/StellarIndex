@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMarketIdentity_BothOrientationsAreOneMarket executes GH-701's
+// TestMarketIdentity_BothOrientationsAreOneMarket executes the
 // readers against one market stored in both directions: sdex writes
 // XLM/USDC and USDC/XLM, soroswap only XLM/USDC, aquarius only
 // USDC/XLM. Every reader must see ONE market holding all four trades.

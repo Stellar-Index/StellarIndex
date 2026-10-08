@@ -36,7 +36,7 @@ func legacyBlendReservesSQL() string {
 const legacyBlendWindowLedgers = uint32(250_000)
 
 // TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead is the
-// live-ClickHouse proof for #504 (`/v1/lending/pools/{pool}/reserves` →
+// live-ClickHouse proof for (`/v1/lending/pools/{pool}/reserves` →
 // 503 lending-timeout at 12.1s on the largest Blend pool; 9.31s — 78% of the
 // same 12s budget — on a SMALL one).
 //
@@ -60,7 +60,7 @@ const legacyBlendWindowLedgers = uint32(250_000)
 // projection without an explicit staleness bound hands a DEAD pool's final
 // reserves to the handler, which prices them at today's USD rate into
 // `tvl_usd` and stamps the current watermark with flags.stale=false — a
-// fabricated TVL where the pre-fix code returned an empty reserve list. So the
+// fabricated TVL where a naive read returned an empty reserve list. So the
 // read is paired with the same archived-entry drop the three sibling readers
 // carry, and this test pins BOTH halves: quiet-but-live must answer, archived
 // must not. Conflating those two is the bug this fixture exists to prevent.

@@ -71,7 +71,7 @@ func TestAssetRegistry_HeldButNeverTradedAssetIsRegistered(t *testing.T) {
 		t.Fatalf("NewClassicAsset(impersonator): %v", err)
 	}
 
-	// The impersonator trades. This is the pre-fix world in one statement:
+	// The impersonator trades. A registry fed only by trades learns only
 	// the only BENJI the registry could ever learn about is the one with a
 	// market, not the one with the holders.
 	tradeAt := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
@@ -310,7 +310,7 @@ func countRegistryRowsForCode(t *testing.T, ctx context.Context, store *timescal
 }
 
 // insertBenjiTrade stores one XLM/asset trade, which is the only way the
-// pre-fix registry could ever learn an asset exists.
+// trade-fed registry could ever learn an asset exists.
 func insertBenjiTrade(t *testing.T, ctx context.Context, store *timescale.Store, asset c.Asset, ledger uint32, ts time.Time) {
 	t.Helper()
 	pair, err := c.NewPair(c.NativeAsset(), asset)

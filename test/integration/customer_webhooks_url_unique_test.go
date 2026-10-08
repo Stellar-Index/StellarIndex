@@ -22,7 +22,7 @@ import (
 
 const dupWebhookURL = "https://hooks.example/stellarindex"
 
-// TestCustomerWebhooksURLUnique pins migration 0180 (GH #828): one webhook
+// TestCustomerWebhooksURLUnique pins migration 0180: one webhook
 // per (account, url), surfaced by the store as platform.ErrConflict; the
 // migration refuses — rather than merges or deletes — pre-existing
 // duplicates; and a quota of 0 (TierAnon) admits nothing.

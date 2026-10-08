@@ -14,7 +14,7 @@ import (
 )
 
 // TestAPI_MarketsAssetFilter_XLMAliasComplete proves the served rate for
-// the /v1/markets?asset= alias-completeness fix (F-1340) against real
+// the /v1/markets?asset= alias-completeness fix against real
 // TimescaleDB: an XLM market keyed under `crypto:XLM` (as every CEX feed
 // writes it) MUST surface for a ?asset=native query, and vice-versa.
 //

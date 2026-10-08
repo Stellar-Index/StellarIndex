@@ -11,7 +11,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestClickHouseAccountHistoryServesNewestUnmergedVersion is the GH-1141
+// TestClickHouseAccountHistoryServesNewestUnmergedVersion is the
 // regression: stellar.transactions and stellar.operations are
 // ReplacingMergeTree(ingested_at), so a re-derive leaves the stale and the
 // corrected row in separate parts until a background merge. The account

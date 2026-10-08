@@ -26,7 +26,7 @@ import (
 //
 // This proves AccountStore.UpdateAtomic serialises the race: one
 // PATCH raises the rate-limit override, a concurrent one suspends the
-// account, and BOTH must land — a lost update (pre-fix Get+Update)
+// account, and BOTH must land — a lost update (Get+Update)
 // would show one field reverted to its pre-race value.
 func TestAccountStoreUpdateAtomic_SerialisesConcurrentPatches(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

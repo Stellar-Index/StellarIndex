@@ -268,7 +268,7 @@ func TestCatalogCorrectionsAndScaffoldDrop(t *testing.T) {
 // assertRewardsKindsMatchCheck proves the corrected "12 kinds" comment lists
 // exactly the values the event_kind CHECK constraint admits — so a future
 // widening of the CHECK that forgets the comment fails here rather than
-// re-creating the #357 F4 drift.
+// re-creating catalogue drift.
 func assertRewardsKindsMatchCheck(t *testing.T, db *sql.DB, ctx context.Context, comment string) {
 	t.Helper()
 

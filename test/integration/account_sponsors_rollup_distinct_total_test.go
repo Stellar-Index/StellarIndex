@@ -18,7 +18,7 @@ import (
 // Fixture: two different sponsors, each begin-then-end sponsoring the
 // SAME account in its own transaction. Per-sponsor distinct_sponsored
 // is 1 for each sponsor (correct: each sponsor covered one account),
-// so summing it across sponsors gives 2 — the pre-fix bug. The account
+// so summing it across sponsors gives 2 — the bug this guards against. The account
 // is in fact sponsored by two sponsors, so the true distinct count
 // over the whole board is 1.
 func TestSponsorsRollup_DistinctSponsoredTotalIsGlobal(t *testing.T) {

@@ -27,15 +27,15 @@ import (
 // ledger deterministically wins, exactly as ledger_entries_current FINAL does.
 //
 // Every test seeds two changes to ONE key in the SAME ledger, in the adversarial
-// physical order the pre-fix query mis-resolves, and asserts the reader returns
-// the LAST change. They go RED against the un-fixed reader query and GREEN with
+// physical order an argMax over ledger_seq alone mis-resolves, and asserts the reader returns
+// the LAST change. They go RED against a plain argMax reader and GREEN with
 // the composite order.
 
 // TestQueryAccountBalance_SameLedgerLastChangeWins proves
 // account_balance_reader.go's argMax(balance, (ledger_seq, intra_ledger_seq)).
 // The two 'account' changes share a ledger; the stale one (intra 8) sorts FIRST
 // in the base table's ORDER BY (ledger_seq, tx_hash, op_index, change_index), so
-// the pre-fix argMax(balance, ledger_seq) — which keeps the first row on a
+// a plain argMax(balance, ledger_seq) — which keeps the first row on a
 // version tie — returns the stale balance. The composite order keeps the later
 // change (intra 9).
 func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
@@ -91,15 +91,15 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 // TestBlendPoolReserves_SameLedgerLastChangeWins proves
 // blend_pool_state_reader.go on both axes of the fix:
 //
-//   - reserveVal (asset seeded update→update in one ledger): the pre-fix
+//   - reserveVal (asset seeded update→update in one ledger): a plain
 //     argMax(entry_xdr, ledger_seq) keeps the first-sorted row (op 0, the stale
 //     b_rate); the composite order keeps the final b_rate.
-//   - reserveGone (asset seeded update→remove in one ledger): the pre-fix
+//   - reserveGone (asset seeded update→remove in one ledger): a
 //     non-empty-entry_xdr WHERE filter excluded the removal from the argMax, so
 //     an earlier same-ledger update resurrected the key; the fix lets the
 //     removal participate and drops it via HAVING on the winning change_type.
 //
-// Since #504 the reader gets both properties from ledger_entries_current rather
+// The reader gets both properties from ledger_entries_current rather
 // than folding them itself — FINAL over ReplacingMergeTree(version), where
 // version = (ledger_seq << 32) | intra_ledger_seq, and a non-empty `entry_xdr` on the
 // row FINAL kept. The assertions are unchanged BECAUSE the semantics are: this
@@ -157,7 +157,7 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 			KeyXDR: resDataKeyB64(t, pool, assetGone), EntryXDR: "",
 		},
 		// reserveGone: the earlier update (op 0, intra 8) — a live entry the
-		// pre-fix `entry_xdr != ''` filter would resurrect.
+		// naive `entry_xdr != ''` filter would resurrect.
 		{
 			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendgone", OpIndex: 0, ChangeIndex: 0,
 			IntraLedgerSeq: 8, ChangeType: "updated", EntryType: "contract_data",
@@ -257,7 +257,7 @@ func purgeLakeFixtureLedgers(t *testing.T, addr string, from, to uint32) {
 // TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins proves
 // liquidity_pool_state_reader.go's argMax(entry_xdr, version) over
 // ledger_entries_current. Two same-ledger changes to one pool key differ only in
-// intra_ledger_seq (and thus the materialized `version`); the pre-fix
+// intra_ledger_seq (and thus the materialized `version`); a plain
 // argMax(entry_xdr, ledger_seq) ties on ledger_seq and can serve the stale
 // reserves, while the `version` tie-break keeps the final change.
 func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
@@ -284,9 +284,9 @@ func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
 	// Two separate inserts → two un-merged ledger_entries_current parts, each
 	// with one row for the key (optimize_on_insert would collapse duplicates
 	// within a single block, so the reader-level tie must be exercised across
-	// parts). Both rows share ledger_seq, so the pre-fix argMax(entry_xdr,
+	// parts). Both rows share ledger_seq, so a plain argMax(entry_xdr,
 	// ledger_seq) ties; on the pinned ClickHouse image the tie resolves to the
-	// LAST-created part, so seeding FINAL first and STALE last makes the pre-fix
+	// LAST-created part, so seeding FINAL first and STALE last makes a plain
 	// query serve the stale reserves — while argMax(entry_xdr, version) keeps the
 	// higher-version final row regardless of part order.
 	final := []chstore.LedgerEntryChangeRow{{

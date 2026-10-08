@@ -21,7 +21,7 @@ import (
 // regression for the pair-keyed durable ladder, driven through the
 // production entry point — freeze.Writer wired to the real
 // timescale.FreezeEventSink — and deliberately through NOTHING that did not
-// exist before the fix, so it fails against the pre-0163 code for the right
+// exist without the ladder, so it fails against a non-laddered build for the right
 // reason rather than by not compiling.
 //
 // Scenario. One pair, two of its windows frozen independently:

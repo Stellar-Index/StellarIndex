@@ -18,7 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// GH-968 — EnqueueDelivery dropped the caller's delivery ID and nothing
+// EnqueueDelivery must not drop the caller's delivery ID and nothing
 // else was unique, so re-running `stellarindex-ops emit-incident` after a
 // partial fan-out queued a second copy, under a fresh delivery id, for
 // every subscriber the first run had already reached. This executes the

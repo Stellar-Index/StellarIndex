@@ -21,7 +21,7 @@ import (
 // TestClickHouseAccountActivityBackfillVerifySeesGapInLaterWindow executes
 // the SQL of deploy/clickhouse/account_activity.sql's operator runbook — the
 // Step-2 backfill INSERTs and the Step-3 verify, extracted from the file, not
-// copied — against a live ClickHouse (F112).
+// copied — against a live ClickHouse.
 //
 // stellar.account_activity feeds a HARD `ledger_seq <= watermark` bound on
 // the account-history readers, so a Step-2 backfill that skipped a window
