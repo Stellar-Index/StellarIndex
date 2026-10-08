@@ -85,7 +85,7 @@ ReadWritePaths=/var/lib/node_exporter/textfile_collector
 
 # Memory ceiling — streams + decodes lake events in 50k-ledger windows
 # with 50k-row insert batches; 4G is far above a healthy run (incl. the
-# initial backfill loop) and far below the blast radius (the 2026-07-05
+# initial backfill loop) and far below the blast radius (the swap
 # wedge class). Swap-kill, not swap-crawl.
 MemoryMax=4G
 MemorySwapMax=0

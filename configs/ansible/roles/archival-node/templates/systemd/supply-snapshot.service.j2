@@ -44,7 +44,7 @@ ExecStart=/bin/sh -c '/usr/local/bin/stellarindex-ops supply snapshot \
   $(if [ -n "${TEXTFILE_OUTPUT}" ]; then echo "-textfile-output ${TEXTFILE_OUTPUT}"; fi) \
   ${EXTRA_FLAGS}'
 
-# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# De-privileged — the stellarindex user is
 # created by 04-users.yml (CS-119). The textfile_collector dir is
 # stellarindex-owned (10-observability.yml), so the metric emit still works.
 User=stellarindex

@@ -1,4 +1,4 @@
-# ansible-lint configuration (CID-3, audit-2026-08-14)
+# ansible-lint configuration
 #
 # The CI ansible-lint step (.github/workflows/ci.yml, job `toolchain-gates`)
 # runs `ansible-lint --profile moderate roles/ playbooks/ tasks/` from this

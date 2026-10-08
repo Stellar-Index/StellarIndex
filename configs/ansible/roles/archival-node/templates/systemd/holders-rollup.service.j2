@@ -62,7 +62,7 @@ TimeoutStartSec=80min
 
 # Memory ceiling — the rollup's window functions spill externally at
 # 4GB (SETTINGS in the job SQL); this is the host-level backstop
-# (the 2026-07-05 wedge class). Swap-kill, not swap-crawl.
+# (the swap-wedge class). Swap-kill, not swap-crawl.
 MemoryMax=4G
 MemorySwapMax=0
 # Batch-class weights: this must never starve galexie's captive core.

@@ -60,7 +60,7 @@ ExecStart=/usr/local/bin/stellarindex-ops issuer-flags \
   -write \
   $EXTRA_FLAGS
 
-# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# De-privileged — the stellarindex user is
 # created by 04-users.yml (CS-119). Reads config + ClickHouse, writes
 # Postgres. Nothing else.
 User=stellarindex
@@ -82,7 +82,7 @@ TimeoutStartSec=40min
 # of AccountEntry rows plus the candidate G-strkey slice in memory at
 # once, and it shares this host with galexie's captive core, Postgres
 # and ClickHouse. 1G is far above a healthy run (500 entries per batch)
-# and far below the blast radius of the 2026-07-05 wedge, where an
+# and far below the blast radius of the swap wedge, where an
 # unbounded job swapped core into `invalid local state` and froze the
 # lake for 11 hours. MemorySwapMax=0 so a runaway is killed rather than
 # swapping the box.

@@ -76,7 +76,7 @@ ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -write \
   $EXTRA_FLAGS
 
-# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# De-privileged — the stellarindex user is
 # created by 04-users.yml (CS-119). Reads config + ClickHouse, writes Postgres.
 User=stellarindex
 Group=stellarindex
@@ -116,7 +116,7 @@ TimeoutStartSec=30min
 #
 # Unbounded, that competes for RAM with galexie's captive core,
 # Postgres and ClickHouse on this single host — the documented
-# 2026-07-05 failure mode where an unbounded job swapped core into an
+# swap-wedge failure mode where an unbounded job swapped core into an
 # `invalid local state` wedge and froze the lake for 11 hours. 2G is
 # far above a healthy run (hundreds of small TOMLs) and far below the
 # blast radius. MemorySwapMax=0 matches run-heavy-job.sh so a
