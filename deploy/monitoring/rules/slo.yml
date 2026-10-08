@@ -40,7 +40,7 @@
 #     internal/ops/chops/sla_figure_consistency_test.go fails the build
 #     if the two drift. The 99.99% that ADR-0008 carries was the design
 #     target of the three-node HA topology, never the customer
-#     commitment (#487).
+#     commitment.
 
 groups:
   - name: stellarindex.slo.latency

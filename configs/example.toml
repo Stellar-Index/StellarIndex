@@ -21,7 +21,7 @@ id          = "r1"
 # deployment — the tier label /v1/status echoes in its `region` block.
 # Purely a label; nothing keys behaviour off it. Set "testnet" /
 # "futurenet" on the lean test-net deployments, which otherwise report
-# themselves as PRODUCTION to the explorer status page (#328).
+# themselves as PRODUCTION to the explorer status page.
 deployment  = "production"        # production | testnet | futurenet | staging
 
 # ──────────────────────────────────────────────────────────────────
@@ -485,7 +485,7 @@ cdn_enabled              = true
 # `overall` up from ("api" is always reported; it answers the request).
 # Drop one ONLY where it is genuinely not installed: the lean test nets
 # run no aggregator, and listing it there held overall at "degraded"
-# forever on a perfectly healthy deployment (#328). The flip side is
+# forever on a perfectly healthy deployment. The flip side is
 # that a service omitted here can never be reported DOWN.
 status_services          = ["indexer", "aggregator"]
 # archive_report_path — where GET /v1/diagnostics/archive reads the
