@@ -24,39 +24,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// reconcileBalances is the stellarindex-ops `reconcile-balances`
-// subcommand — an ADR-0033-style acceptance test for the "verified
-// explorer" claim: it proves stellar.ledger_entry_changes (the
-// substrate every completeness claim in this repo is built on)
-// reflects TRUE on-chain state, by comparing our latest recorded
-// NATIVE (XLM) balance for an account against an INDEPENDENT external
-// source.
+// reconcileBalances is the `reconcile-balances` subcommand, an
+// ADR-0033-style acceptance test that stellar.ledger_entry_changes reflects
+// true on-chain state: it compares our latest recorded native (XLM) balance
+// for an account against an independent source.
 //
-// Horizon is that external source. This is deliberate and does NOT
-// violate ADR-0001 ("Horizon is not in our architecture"): ADR-0001
-// scopes the ban to the PRODUCTION INGEST PIPELINE — we don't run
-// Horizon, ingest from it, or proxy to it. reconcile-balances is
-// none of those things; it's a one-off, read-only, operator-invoked
-// VERIFIER that by construction needs a source of truth independent
-// of our own pipeline, and public Horizon is the obvious one. No
-// production code path depends on it.
+// That source is public Horizon. ADR-0001 bans Horizon from the production
+// ingest pipeline; this is a read-only, operator-invoked verifier that needs
+// truth independent of our pipeline, and no production path depends on it.
 //
 // Usage: reconcile-balances (-account G... | -sample N) [-ch-addr H:P]
 // [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N]
-// [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR]. Exactly one of -account/-sample is
-// required. Exit code is the number of MISMATCHes (capped at 255); a run whose
-// ERROR rate exceeds -max-error-rate ALSO fails non-zero (fail-open guard
-// — an all-errored run verified nothing and must not look clean), as does a
-// run — -account or -sample alike — that verified (MATCH/MISMATCH) zero of
-// the accounts it was asked to check, or covered fewer accounts than
-// requested (e.g. cancelled mid-sample) (a vacuous or incomplete
-// run must not look clean), or any account that is MERGED_OR_ABSENT on
-// Horizon while we still hold a positive balance for it (stale
-// data, not report-only), mirroring scripts/dev/r1-smoke.sh's
-// "exit code = number of failed checks" convention so cron/Healthchecks.io
-// can consume it directly — see opsutil.ExitCodeError's doc comment for how a
-// Go subcommand reports a non-1 exit code without breaking realMain's
-// flush-on-exit discipline.
+// [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR].
+// Exactly one of -account/-sample is required. The exit code is the number of
+// MISMATCHes (capped at 255), so cron/Healthchecks.io can consume it like
+// scripts/dev/r1-smoke.sh; [reconcileExitError] lists the other failing
+// tallies.
 func reconcileBalances(args []string) error { //nolint:funlen // linear: flag parse+validate, resolve account set, per-account loop, report.
 	fs := flag.NewFlagSet("reconcile-balances", flag.ContinueOnError)
 	account := fs.String("account", "", "reconcile exactly this account (G...); mutually exclusive with -sample")
@@ -498,34 +481,18 @@ func clampExitCode(n int) int {
 }
 
 // reconcileExitError maps a completed run's tally to its exit error (nil =
-// clean) plus a human-readable reason for stderr, consolidating the mismatch
-// exit code with the error-rate, vacuous/incomplete, and stale-merged
-// fail-open guards so all are decided — and tested — in one pure place.
-// `errored` counts OUR-side (ClickHouse) failures ONLY; Horizon/truth outages
-// are outcomeTruthUnavailable and excluded, so a Horizon rate-limit episode
-// can't fail an otherwise-healthy -sample gate. Pure —
-// unit-testable.
+// clean) and a reason for stderr. It fails a run on mismatches, on an error
+// rate above -max-error-rate, on verifying zero accounts or fewer than
+// requested (either mode), and on staleMergedHeld.
 //
-// `requested` is how many accounts the run set out to check (either mode);
-// `n` is how many it actually produced a result for (can trail `requested`
-// if the run was cancelled mid-sample); `verified` is how many of those
-// results were MATCH or MISMATCH — the only outcomes meaning a comparison
-// actually happened (NO_DATA, MERGED_OR_ABSENT, ERROR and
-// TRUTH_UNAVAILABLE all mean nothing was compared for that account).
-//
-// A run that verified zero accounts, or ran short of what it was
-// asked to cover, confirmed nothing about the population it claimed to
-// check — in EITHER -account or -sample mode. The prior guard keyed on run
-// mode (a -sample-only "matched nothing" check) and treated
-// TRUTH_UNAVAILABLE as an exempt outcome rather than "nothing verified", so
-// a single -account run during a Horizon outage passed clean; and a
-// -sample run cancelled after a handful of matches passed on the partial
-// tally rather than failing on incomplete coverage.
-//
-// staleMergedHeld: count of MERGED_OR_ABSENT accounts (any mode) where we
-// still hold a positive recorded balance — Horizon says the account is gone
-// but our lake claims it has funds, a correctness signal worth failing on
-// rather than report-only.
+// `errored` counts OUR-side (ClickHouse) failures only; Horizon outages are
+// outcomeTruthUnavailable and excluded, so a Horizon rate-limit cannot fail a
+// healthy -sample gate. `requested` is how many accounts the run set out to
+// check; `n` how many produced a result (it trails `requested` when
+// cancelled); `verified` how many were MATCH or MISMATCH, the only outcomes
+// where a comparison happened. staleMergedHeld counts MERGED_OR_ABSENT
+// accounts we still hold a positive balance for: Horizon says the account is
+// gone but our lake says it has funds.
 func reconcileExitError(mismatches, errored, n, requested, verified int, maxErrorRate float64, staleMergedHeld int) (reason string, err error) {
 	// Too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
