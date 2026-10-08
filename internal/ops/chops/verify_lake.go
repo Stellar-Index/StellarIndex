@@ -14,44 +14,34 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyLake is the stellarindex-ops `verify-lake` subcommand — a single
-// "is the lake sound?" invocation with one verdict + exit code, run daily by
-// verify-lake.timer and used as the restore acceptance gate. Over one
-// resolved [-from,-to] range it runs:
+// verifyLake is the stellarindex-ops `verify-lake` subcommand: one "is the lake
+// sound?" verdict, run daily by verify-lake.timer and used as the restore
+// acceptance gate. Over one resolved [-from,-to] range it runs:
 //
 //  1. Ledger substrate contiguity (verify-contiguity's Check 1).
-//  2. stellar.ledger_entry_changes coverage, floor-gated at -ec-floor
-//     (verify-contiguity's Check 2; 0 = auto-derived from the lake) —
-//     below the floor is backfill-pending and informational only, and the
-//     exempted range is printed, same as verify-contiguity.
-//  3. Hash-chain integrity, in-window + boundary links (verify-hashchain's
-//     one check).
-//  4. Raw-table census: transactions, operations and contract_events
-//     against the ledger headers' tx/op/soroban_event counts per 1M-ledger
-//     partition; operation_results and operation_participants presence-only
-//     (verify_raw_census.go).
+//  2. stellar.ledger_entry_changes coverage, floor-gated at -ec-floor (0 =
+//     derived from the lake); below the floor is backfill-pending and only
+//     reported.
+//  3. Hash-chain integrity, in-window and boundary links.
+//  4. Raw-table census: transactions, operations and contract_events against
+//     the ledger headers' counts per 1M-ledger partition; operation_results and
+//     operation_participants presence-only (verify_raw_census.go).
 //
-// Checks 1-3 call the same run* funcs verify-contiguity and verify-hashchain
-// call. Each check prints its own report section, then one summary block.
+// Checks 1-3 share verify-contiguity's and verify-hashchain's run* funcs.
 //
 // Exit code = ledger gaps + entry-change deficiencies at/above -ec-floor +
-// hash-chain broken links + short raw-table partitions, capped at 255 —
-// backfill-pending entry_changes below -ec-floor are reported but never
-// counted, mirroring verify-contiguity's own floor-gating.
+// broken hash links + short raw-table partitions, capped at 255.
 //
-// -textfile PATH writes lake_verify.prom (per-check failure counts, range,
-// last-run time) once every requested check has completed; a run that errors
-// out writes nothing, so the stale alert covers it.
+// -textfile PATH writes lake_verify.prom only once every requested check has
+// completed; an erroring run writes nothing, so the stale alert covers it.
 //
 // Usage: verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N]
 // [-ec-floor N] [-checks contiguity,entrychanges,hashchain,rawcensus]
-// [-textfile PATH]. Read-only; touches ClickHouse only (no Postgres).
+// [-textfile PATH]. Read-only; ClickHouse only.
 //
-// reconcile-balances (the ADR-0033 external-Horizon balance-sample
-// check) is deliberately NOT composed in here: it's network-bound
-// (calls public Horizon) and account-sampled rather than range-scoped —
-// a different shape from these structural lake checks. Run it
-// separately: `stellarindex-ops reconcile-balances -sample N`.
+// reconcile-balances is not composed in: it is network-bound and
+// account-sampled, not range-scoped. Run `stellarindex-ops reconcile-balances
+// -sample N` separately.
 func verifyLake(args []string) error {
 	fs := flag.NewFlagSet("verify-lake", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
