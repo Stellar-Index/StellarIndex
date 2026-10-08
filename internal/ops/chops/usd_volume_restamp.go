@@ -20,96 +20,38 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// usdVolumeRestamp is the stellarindex-ops `usd-volume-restamp` subcommand
-// — the corrective WRITE half of verify-usd-volume
-// (docs/operations/usd-volume-rederive-*.md §5).
+// usdVolumeRestamp is the `usd-volume-restamp` subcommand, the corrective
+// WRITE half of verify-usd-volume (docs/operations/usd-volume-rederive-*.md
+// §5). usd_volume holds two kinds of number, and the estimated kind is
+// reached three ways, hence four -tier values:
 //
-// It carries four TIERS, selected by -tier, because the usd_volume column
-// holds two kinds of number and the estimated kind is reached by three
-// different routes:
+//	exact (default): tiers 1/2/2b, a pure rescaling of an amount on the row,
+//	  repairable as a SQL identity. The measured dirty class was USDC-base
+//	  sdex rows valued by VWAP (+0.7%) instead of the $1 peg.
+//	xlm-base: the tier-4 XLM anchor, re-derived in GO through the store's
+//	  resolver because it depends on prices_1m at the row's ts. It repairs
+//	  rows valued through a thin counterparty book (43x under on the measured
+//	  row) or left NULL (usd_volume_restamp_xlmbase.go).
+//	xlm-quote: its mirror, XLM in the quote leg.
+//	cex-fx: CEX trades quoted in non-USD fiat, valued from fx_quotes;
+//	  prices_1m holds no fiat pair, which is why these rows are NULL.
 //
-//	-tier exact (default) — tiers 1/2/2b, where usd_volume is a pure
-//	  decimal rescaling of an amount already on the row
-//	  (`pegged_leg / 10^decimals`). Repairable as a SQL identity; that is
-//	  what this file does. The measured repair class was 66 dirty days,
-//	  in which every violation was a `[base_pegged] sdex` USDC-base row
-//	  valued by the resolver's VWAP (+0.7%) instead of the $1 peg identity.
+// Every tier: DRY RUN by default; a bounded window walked one -slice at a
+// time; refused if it overlaps the live ledgerstream cursor (one writer)
+// unless -allow-live-overlap; idempotent, so an interrupted run resumes by
+// re-running; reversible through usd_volume_restamp_log, written in the
+// UPDATE's own transaction (migration 0175 carries the undo); a heartbeat
+// for the ops_job stall alerts. Tier and value come from the SAME functions
+// the insert path uses, never re-spelled here. A row that cannot be priced is
+// reported and left exactly as it is, never blanked or given a second-choice
+// estimate. Token/token pairs are outside every tier on purpose: their only
+// rate is the tier-3b bridge a counterparty authors.
 //
-//	-tier xlm-base — the tier-4 XLM anchor
-//	  (`base_amount/1e7 x XLM/USD at ts`), re-derived in GO through the
-//	  store's own [timescale.Store] resolver rather than in SQL, because
-//	  the value is a function of prices_1m at the row's timestamp and not
-//	  of the row alone. It repairs XLM-base DEX trades valued
-//	  QUOTE-side through the counterparty's
-//	  own thin book (a 43x under-valuation on the measured row) or left
-//	  NULL (~31% of the population). See usd_volume_restamp_xlmbase.go.
+// Acceptance: `verify-usd-volume -day <last> -days <N>` over the span.
 //
-//	-tier xlm-quote — the MIRROR of xlm-base (~18.0M rows on r1): the
-//	  DEX trades the pool stored the other way round, XLM in the quote
-//	  leg. `quote_amount/1e7 x XLM/USD at ts`, through the same anchor.
-//
-//	-tier cex-fx — the off-chain population (~12.6M rows on r1): CEX
-//	  trades quoted in a non-USD fiat (`fiat:EUR`, `fiat:GBP`), valued
-//	  from the `fx_quotes` vendor feed at or before the trade. prices_1m
-//	  holds no fiat pair at all, which is why these rows are NULL.
-//
-// Both mirrors live in usd_volume_restamp_mirrors.go and share the
-// xlm-base tier's run, walk, chunk driver and money rules.
-//
-// Discipline shared by every tier:
-//   - fail-closed DRY RUN by default; -write applies (opsutil.WriteGate);
-//   - bounded window: -from/-to UTC days (inclusive), walked oldest →
-//     newest one -slice at a time so no single UPDATE spans more than one
-//     slice of a compressed chunk;
-//   - a one-writer refusal: the window must sit BEHIND the live
-//     ledgerstream cursor (checkRestampLiveOverlap), overridable only by
-//     the explicit -allow-live-overlap;
-//   - idempotent: a row that already holds the correct value is not
-//     touched (value or derive_generation), so a re-run reports 0 — which
-//     is also what makes an interrupted run resumable by re-running it;
-//   - reversible: every rewritten row's prior usd_volume and
-//     derive_generation land in `usd_volume_restamp_log` in the UPDATE's
-//     own transaction, keyed by the run's generation (migration 0175's
-//     header carries the undo statement);
-//   - node_exporter heartbeat like ch-backfill (-heartbeat), so a wedged
-//     run under run-heavy-job.sh trips the ops_job stall alerts;
-//   - the tier decision and the value both come from the SAME functions
-//     the insert path uses (timescale.ClassifyUSDVolumeTier for the exact
-//     tiers, usdVolumeViaXLMBaseAnchor for the two XLM anchors,
-//     tradeUSDVolumeViaFX for the fiat quotes) — never re-spelled here;
-//   - a row the anchor or the FX feed cannot price is REPORTED and left
-//     exactly as it is: a stored NULL stays NULL, a stored value is never
-//     blanked, and neither is replaced by a second-choice estimate;
-//   - a pair with no trustworthy leg — neither XLM, nor a declared USD
-//     peg, nor a supported fiat — is never priced at all. The ~54M
-//     token/token rows on r1 are outside every tier's scan AND its Go
-//     gate, deliberately: their only available rate is the tier-3b bridge
-//     a counterparty authors.
-//
-// Acceptance after a run: `verify-usd-volume -day <last> -days <N>` over
-// the span.
-//
-// Usage: usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD
-// [-tier exact|xlm-base|xlm-quote|cex-fx] [-slice DUR] [-sources a,b]
-// [-fill-null] [-heartbeat PATH] [-allow-live-overlap] [-write]
-// [-chunks [-min-free-bytes N] [-generation N] [-allow-live-adjacent]
-// [-resume-paused-policy]]
-// and, for the ESTIMATED tiers only: [-report] [-sample N] [-batch N]
-// [-min-rel-delta F] [-max-generation N] [-chunk-batch N];
-// for -tier cex-fx only: [-fx-max-staleness DUR].
-//
-// `-chunks` is the chunk-by-chunk walk of usd_volume_restamp_chunks.go,
-// available to EVERY tier: take the run lock, pause the trades
-// compression policy, decompress each compressed `trades` chunk in the
-// window, restamp inside it, re-compress it, re-enable the policy,
-// release the lock. It exists because an in-place walk measured ~1,574
-// rows/min against compressed chunks — a rate every tier
-// pays, since they write the same column of the same chunks. The three
-// estimated tiers share one per-chunk restamp
-// (usd_volume_restamp_chunks_estimated.go) and the exact tier has its own
-// (usd_volume_restamp_chunks_exact.go); everything around it — the lock,
-// the policy dance, the free-space pre-flight, the resume line — is one
-// driver. See that file's header.
+// -chunks (usd_volume_restamp_chunks.go) is available to every tier because
+// an in-place walk measured ~1,574 rows/min against compressed chunks, and
+// every tier writes the same column of the same chunks.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")

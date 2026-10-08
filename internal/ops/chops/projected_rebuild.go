@@ -33,57 +33,26 @@ import (
 )
 
 // projectedRebuild is the ADR-0048 D3 bulk catch-up path for projected
-// (Soroban-derived) sources: `stellarindex-ops projected-rebuild -config
-// PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume]
-// [-write]`.
+// (Soroban-derived) sources.
 //
-// WHY THIS EXISTS: `projector-replay` rewinds the LIVE projector's cursor
-// and lets its own tick-cadence catch-up walk the range — Interval-bound
-// (one ≤BatchLimit=1,000-ledger window per 5s tick, PerSourceTimeout=60s
-// deadline per cycle), a ceiling of roughly 720k ledgers/hour. That is
-// fine for small rewinds but hopeless for a multi-million-ledger held job
-// (an r1 backlog: blend_backstop from ledger 51.5M, blend_emitter
-// from 51.5M, aquarius rewards from 52.7M — each ~11-12M ledgers, i.e.
-// 15-17+ hours apiece at the projector's ceiling with ZERO parallelism).
-// projected-rebuild removes the tick/deadline ceiling entirely and adds
-// worker parallelism, at 10-20x the projector-replay rate (ADR-0048 D3).
+// projector-replay rewinds the live projector and is capped by its tick
+// cadence (~720k ledgers/hour, no parallelism), hopeless for ~11M-ledger
+// backlogs. This removes that ceiling and adds workers, at 10-20x the rate.
+// Rule of thumb: projector-replay under ~1M ledgers, this above
+// (docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled).
 //
-// IDENTICAL ROWS: this tool builds the exact same decoder the live
-// projector uses for the requested source (projector.BuildRegistry, the
-// same registry.go the indexer's projector goroutine builds from) and
-// writes through the exact same sink (pipeline.HandleEvent — the function
-// the projector's own SinkFunc wraps in cmd/stellarindex-indexer/main.go).
-// Every per-source table's ON CONFLICT DO NOTHING makes the two writers
-// idempotent against each other, so overlap or a retried window is always
-// safe at the ROW level.
+// Rows are IDENTICAL to the live projector's: same decoder registry, same
+// pipeline.HandleEvent sink, and ON CONFLICT DO NOTHING makes the two
+// writers idempotent against each other.
 //
-// ONE-WRITER CONTRACT (ADR-0048 D3, loudly, because getting this wrong
-// means two writers racing the SAME historical range — still row-safe via
-// ON CONFLICT, but wasteful and confusing to operate): this tool does NOT
-// touch the live projector's cursor. It requires, by default, that the
-// live projector's cursor for this source already be AT OR ABOVE the
-// requested rebuild's -to — i.e. the source is live-current and this bulk
-// job only fills HISTORY BEHIND the live tail, a range the live tail will
-// never walk into again. If the live cursor is still inside [-from,-to]
-// the command REFUSES to run (see checkLiveCursorGuard) unless the
-// operator passes -allow-live-overlap, which is an explicit "I have
-// verified the live projector will not touch this range concurrently"
-// override. The live projector keeps running at tip throughout — this
-// tool never pauses, parks, or rewinds it.
+// ONE WRITER: it never touches the live projector's cursor, and refuses to
+// run while that cursor is still inside [-from,-to] (checkLiveCursorGuard)
+// unless -allow-live-overlap. Overlap stays row-safe but is two writers
+// racing one range.
 //
-// CHECKPOINTING: independent of the projector's own cursor. Each ledger
-// window gets its own row in ingestion_cursors
-// (source="projected-rebuild", sub_source="<name>:<wlo>-<whi>"),
-// written only in -write mode after that window's stream completes.
-// -resume consults these (see loadDoneWindows/pendingWindows) so a
-// crashed or interrupted multi-hour run picks up exactly where it left
-// off, regardless of which of the K workers happened to claim which
-// window.
-//
-// See docs/architecture/ingest-pipeline.md's catch-up discussion and
-// docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled for when to use this vs
-// projector-replay (rule of thumb: projector-replay for rewinds under
-// ~1M ledgers, projected-rebuild for anything bigger).
+// Checkpoints are per-window ingestion_cursors rows written after each
+// window completes, so -resume picks up exactly where a crash left off
+// whichever worker claimed which window.
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
 	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
