@@ -20,18 +20,15 @@ const (
 // instance-timeline table from ledger_entry_changes history — the same
 // fixed-offset extraction as contract_instance_changes_mv
 // (deploy/clickhouse/contract_instance_changes.sql; keep the two in
-// lockstep). Windowed on ledger_seq (the source's primary-key prefix,
-// so each window prunes) and bounded like the sibling backfills; the
-// target RMT collapses re-runs of overlapping windows, so the backfill
-// is idempotent and resumable. table is one of the two constants above,
-// never caller text (BackfillContractInstanceChangesInto checks).
+// lockstep). Windowed on ledger_seq (the source's primary-key prefix); the
+// target RMT collapses re-runs of overlapping windows, so it is idempotent
+// and resumable. table is one of the two constants above, never caller text
+// (BackfillContractInstanceChangesInto checks).
 //
-// FINAL on the source read, for txHashIndexBackfillQuery's reason:
-// ledger_entry_changes is ReplacingMergeTree(ingested_at), so a window a
-// corrected re-ingest touched can hold the stale part beside the fix. Both
-// would land in one INSERT whose target rows tie on their DEFAULT now()
-// ingested_at, leaving the stale wasm_hash free to survive the collapse.
-// FINAL is bounded by the same ledger_seq window predicate.
+// FINAL on the source read, for txHashIndexBackfillQuery's reason: a window a
+// corrected re-ingest touched can hold the stale part beside the fix, and both
+// would tie on their DEFAULT now() ingested_at in the target, letting the
+// stale wasm_hash survive the collapse. FINAL is bounded by the window.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s

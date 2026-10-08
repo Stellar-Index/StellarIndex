@@ -24,19 +24,17 @@ type MintBurnFlow struct {
 }
 
 // StreamMintBurnFlows streams the supply flows (mint/burn/clawback contract
-// events) for [from,to] inclusive, ordered by ledger. Under the r1 archive's
-// uniform V4 meta these include CAP-67 classic-asset issuance/destruction back
-// to genesis AND SEP-41 token mint/burn/clawback — so Σ over all history gives
-// total supply for EVERY token (baseline = 0 at asset/contract genesis), per
+// events) for [from,to] inclusive, ordered by ledger. These include CAP-67
+// classic-asset issuance/destruction back to genesis AND SEP-41 token
+// mint/burn/clawback, so Σ over all history gives total supply for EVERY token
+// (baseline = 0 at genesis), per
 // docs/architecture/storage-considerations.md#supply-flows-in-the-lake.
 //
 // useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time
-// (correct, but the all-history merge over 12 B rows is ~40× slower). Without
-// it, the scan streams parts directly (fast) but double-counts the sample/
-// validation re-run partitions 25/45/62 — acceptable for a quick all-token
-// estimate (<0.2% error for tokens active across history; only test-tokens
-// confined to those partitions inflate). The topic_0_sym IN filter keeps the
-// scan to the ~570 M supply flows, not the ~12 B total contract_events.
+// (correct, but the all-history merge is ~40× slower). Without it the scan
+// double-counts the re-run partitions 25/45/62: acceptable only for a quick
+// estimate. The topic_0_sym IN filter keeps the scan to supply flows rather
+// than all contract_events.
 func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useFinal bool, fn func(MintBurnFlow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

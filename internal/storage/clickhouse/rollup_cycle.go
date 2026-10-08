@@ -20,11 +20,9 @@ const rollupLedgerWindow = 1_000_000
 // (boundedScanSettings: two concurrent part streams, an 8 GiB tracked
 // ceiling, spill at 4 GiB) plus a per-WINDOW execution cap.
 //
-// The cap is per window, not per cycle: the widest window measured on r1
-// took 24.7 s (stellar.operations partition 62, 819.5 M rows,
-// 54.86 GiB read, max_threads=2), so 600 s leaves better than 20x
-// headroom for a contended box while still failing one wedged window
-// fast instead of spending the unit's whole TimeoutStartSec budget on it.
+// The cap is per window, not per cycle: 600 s leaves >20x headroom over the
+// widest window measured, yet fails one wedged window fast instead of
+// spending the unit's whole TimeoutStartSec budget on it.
 const rollupWalkSettings = boundedScanSettings + ", max_execution_time = 600"
 
 // rollupStep is one statement of a recompute cycle.
@@ -67,34 +65,18 @@ func windowBindArgs(lo, hi uint32, pairs int) []any {
 // steps repeated over consecutive rollupLedgerWindow-wide ledger windows
 // from ledger 1 up to the lake tip.
 //
-// WHY THE WALK IS THE SHAPE AND NOT A BIGGER CEILING. A single statement
-// that aggregates a whole archive holds two things at once whose sizes
-// are set by different populations: the dedupe hash table, one state per
-// surviving source row over ALL of history, and — where the statement
-// also joins — the join's build side, one row per account that exists.
-// Neither shrinks on its own, so the pair outgrows any fixed ceiling as
-// the chain grows, and the ceiling only decides which cycle is the one
-// that fails. Measured on r1, the creator board's single
-// statement read all 10,309,146,441 movement rows (315.97 GiB) and died
-// at 8.12 GiB in FillingRightJoinSide with its dedupe already spilled to
-// 32 external parts — the two consumers summed past the budget.
+// A single statement over the whole archive holds a dedupe hash table
+// sized by ALL of history plus, where it joins, a build side sized by
+// every account; the pair outgrows any fixed ceiling as the chain grows.
+// Walking makes the first population per-window, and the account-population
+// join runs ONCE against the narrow working table the walk wrote. A join a
+// walked step keeps has a window-bounded build side and pins it rather
+// than trusting a planner estimate.
 //
-// Walking makes the first population a per-partition one: the widest
-// creation window measured holds 1,027,707 rows at 701.17 MiB, and a
-// window would need roughly twelve times that to reach the same ceiling.
-// The second population is taken out of the walk entirely — the board's
-// account-population join runs ONCE, against the narrow working table
-// the walk wrote, so it is paid once per cycle rather than once per
-// window. A join a walked step does keep (the creators cycle's post-P23
-// arm, which pairs a window's transfers with that window's CreateAccount
-// operations) is one whose build side is bounded by the window, and it
-// pins that side rather than leaving it to a planner estimate.
-//
-// The atomic-swap guarantee is unchanged and is why the walk writes to a
-// working table rather than to staging: nothing touches a staging arm
-// until the walk has finished, so a cycle interrupted mid-walk leaves
-// the live board exactly as the previous cycle left it, and the single
-// EXCHANGE stays the one moment anything becomes visible.
+// The walk writes to a working table, not staging: nothing touches a
+// staging arm until the walk finishes, so an interrupted cycle leaves the
+// live board as it was, and the single EXCHANGE is the one moment anything
+// becomes visible.
 func runRollupCycle(ctx context.Context, addr, label string, steps []rollupStep, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

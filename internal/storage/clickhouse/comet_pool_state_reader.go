@@ -12,41 +12,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout,
-// derived from the protocol's public Rust source
-// (CometDEX/comet-contracts-v1, contracts/src/c_pool/storage_types.rs
-// + metadata.rs @ main):
+// Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout, derived
+// from the protocol's public Rust source (CometDEX/comet-contracts-v1,
+// c_pool/storage_types.rs + metadata.rs).
 //
-//	DataKey is a #[contracttype] enum of unit variants (NO explicit
-//	u32 discriminants), so per the Soroban custom-types spec each
-//	variant encodes as a single-element vector:
-//	ScvVec[ScvSymbol("<Variant>")].
+// DataKey is a #[contracttype] enum of unit variants, so each variant
+// encodes as ScvVec[ScvSymbol("<Variant>")].
+// DataKey::AllRecordData → Map<Address, Record>, PERSISTENT, the per-token
+// balance records this reader consumes:
 //
-//	DataKey::AllRecordData → Map<Address, Record>, PERSISTENT —
-//	the per-token balance records this reader consumes:
+//	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
 //
-//	  Record { balance: i128, weight: i128, scalar: i128, index: u32 }
+// Earlier WASM generations carried a different Record field set; decode is
+// by field name, so only the `balance` i128 is required.
 //
-//	(#[contracttype] struct → ScvMap keyed by field-name Symbols.)
-//	Earlier WASM generations carried a different Record field set
-//	(bound/index/denorm/balance); decode is by field name, so only
-//	the `balance` i128 is required and either generation reads.
-//
-// VALIDATED ON R1: of the two candidate key encodings
-// probed, the Vec[Symbol] form matched the real AllRecordData entry for
-// the sole mainnet pool (CAS3FL6T…); decode yielded 2 legs —
-// ~748k USDC + ~71.7M BLND — plausible Blend-backstop magnitudes. The
-// dual-probe stays (cheap, robust to upgrades).
-//
-// VALIDATE-ON-R1 (original derivation note): layout is source-derived, NOT yet validated against
-// real lake entries (no r1 access from the implementing session), and
-// the single curated pool (Blend's BLND/USDC backstop, WASM
-// 8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36)
-// predates current main — the deployed key encoding could differ. The
-// reader therefore probes BOTH plausible encodings of the
-// AllRecordData key (Vec[Symbol] per the spec, bare Symbol
-// defensively) and decodes whichever the lake holds. An operator
-// should confirm with (HTTP port 8123):
+// The reader probes BOTH plausible key encodings (Vec[Symbol] per the spec,
+// bare Symbol defensively) because upgrades may change it, and decodes
+// whichever the lake holds. Operator check (HTTP port 8123):
 //
 //	SELECT key_xdr, ledger_seq, entry_xdr != '' AS present
 //	FROM stellar.ledger_entries_current FINAL
@@ -55,10 +37,8 @@ import (
 //	                   comet.MainnetBackstopPool — both candidate
 //	                   encodings>)
 //
-// (exactly one row expected), then cross-check the decoded BLND/USDC
-// balances against Blend's public backstop figures. A mismatch shows
-// up as the pool landing in the undecodable list — fail-to-absent,
-// never a misread number.
+// Exactly one row is expected. A mismatch shows up as the pool landing in
+// the undecodable list — fail-to-absent, never a misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"

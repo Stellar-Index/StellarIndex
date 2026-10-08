@@ -43,37 +43,25 @@ func classicOpTypeInList(opTypes []string) string {
 	return strings.Join(quoted, ",")
 }
 
-// StreamClassicOps reads stellar.operations JOIN operation_results
-// for [from,to] inclusive, restricted to opTypes
-// (xdr.OperationType.String() values, e.g. "OperationTypePayment")
-// AND successful transactions, reconstructs op.Body + the
-// OperationResult from the retained XDR blobs, and invokes fn for
-// each in dispatcher emission order.
+// StreamClassicOps reads stellar.operations JOIN operation_results for
+// [from,to] inclusive, restricted to opTypes (xdr.OperationType.String()
+// values) AND successful transactions, reconstructs op.Body + the
+// OperationResult from the retained XDR blobs, and invokes fn for each in
+// dispatcher emission order.
 //
-// This is the SHARED ADR-0047 lake-read harness every phase of
-// pre-P23 classic-movement reconstruction reuses: Phase 1
-// (internal/sources/classicmovements) calls it with
-// classicmovements.SupportedOpTypes(); Phases 2-4 extend the
-// CALLER's opTypes list, not this function — no reader change
-// needed as the reconstruction's op-type scope grows.
+// The SHARED ADR-0047 lake-read harness for pre-P23 classic-movement
+// reconstruction: later phases extend the CALLER's opTypes list, not this
+// function.
 //
-// Mirrors StreamSDEXOps's shape and its NO-FINAL / grace_hash-join
-// rationale (see that function's doc comment for the full incident
-// history): duplicate rows from unmerged ReplacingMergeTree parts on
-// the WRITE side are harmless — stellar.account_movements is itself a
-// ReplacingMergeTree (ADR-0048 D2), so a redundant re-derived row
-// collapses on its own ORDER BY key. The Postgres classic_movements
-// writer (migration 0105) is
-// retired (ADR-0048 D2) and was never the mechanism anyway. On the
-// READ side a duplicate op is NOT harmless: it fans out to k*m
-// identical ClassicOp rows here, and a caller that counts them 1:1
-// against Movement events (classic-movements-backfill's -verify)
-// double-counts every duplicate. Callers that count MUST dedupe on
+// Same NO-FINAL / grace_hash-join rationale as StreamSDEXOps: duplicate
+// rows from unmerged parts are harmless on the WRITE side
+// (stellar.account_movements is a ReplacingMergeTree, ADR-0048 D2) but NOT
+// on the READ side, where a duplicate op fans out to k*m identical
+// ClassicOp rows. Callers that count MUST dedupe on
 // (ledger_seq, tx_hash, op_index) themselves — see
-// classicMovementsDecodeOpsSurface's `seen` map (CA2-A14). The
-// successful-tx restriction matters for the same reason it does for
-// SDEX: a failed tx's op results can still carry stale/partial data
-// for ops that ran before the failing one, but those movements were
+// classicMovementsDecodeOpsSurface's `seen` map. Failed transactions are
+// excluded because their op results can carry stale data for ops that were
+// rolled back.
 // rolled back and never happened.
 func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes []string, fn func(ClassicOp) error) error {
 	if len(opTypes) == 0 {

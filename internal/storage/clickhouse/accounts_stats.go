@@ -54,7 +54,7 @@ const topHeldAssetsLimit = 12
 // standard warming message rather than serving zeros as facts.
 //
 // The four rollup tables below are exchanged as ONE atomic group by the
-// writer (asset_holders_rollup.go's holdersRollupStatements, RA-2), but read
+// writer (asset_holders_rollup.go's holdersRollupStatements), but read
 // here as four independent round trips — the swap can land between any two
 // of them and blend two rollup cycles into one served snapshot. Since
 // the swap touches stellar.accounts_stats too, re-reading its computed_at

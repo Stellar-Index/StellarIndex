@@ -27,19 +27,16 @@ type ContractCallOp struct {
 // contract — the projection input for event-less ContractCall sources (band,
 // soroswap-router) which have no soroban_events landing zone.
 //
-// stellar.operations carries no contract_id column, so we can't filter by
-// contract in a plain WHERE. Instead we restrict to InvokeHostFunction ops in
-// [from,to] and match the contract's raw 32-byte ID as a substring of the
-// base64-DECODED body_xdr (the ContractAddress is embedded in the InvokeContract
-// args). `contractHex` is the lowercase hex of the strkey-decoded 32-byte
-// contract ID. Measured ~2.5s per 100k-ledger window — the full Soroban range
-// (~590M invokes) filters in ~minutes, vs days to decode every invoke in Go.
+// stellar.operations has no contract_id column, so we restrict to
+// InvokeHostFunction ops in [from,to] and match the contract's raw 32-byte ID
+// (`contractHex`, lowercase hex of the strkey-decoded ID) as a substring of
+// the base64-DECODED body_xdr. That is far faster than decoding every invoke
+// in Go.
 //
-// Successful txs only: a failed tx's invoke never executed, so it produced no
-// served event — counting it would over-state the census (mirrors the SDEX
-// reader's successful-tx restriction). The match is a cheap SUPERSET filter
-// (any op whose body merely contains the 32 bytes); the caller's
-// ContractCallDecoder.Matches gives the exact contract+function predicate.
+// Successful txs only: a failed tx's invoke never executed, so counting it
+// would over-state the census. The match is a cheap SUPERSET filter; the
+// caller's ContractCallDecoder.Matches gives the exact contract+function
+// predicate.
 func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, to uint32, fn func(ContractCallOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -56,21 +53,17 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 }
 
 // contractCallOpsQuery is StreamContractCallOps' SQL, at package level so its
-// text stays independently assertable (StreamContractCallOps dials its own
-// connection via openRead — see sdexOpsQuery's note on the same seam).
+// text stays independently assertable (see sdexOpsQuery's note on the seam).
 //
 // The successful-tx restriction is a grace_hash INNER JOIN, not an
-// IN-subquery: IN builds the whole window's tx-hash set in memory
-// (CreatingSetsTransform blew the 10 GiB query budget on a dense
-// 250k-ledger window). grace_hash spills join buckets
-// to disk — the same rationale as StreamSDEXOps/StreamClassicOps.
+// IN-subquery: IN builds the window's tx-hash set in memory and blew the
+// 10 GiB query budget on a dense window.
 //
 // The FIVE bind parameters are, in order: the successful-tx SUBQUERY's from +
-// to (the joined derived table is written FIRST, so its window binds first),
-// then the outer scan's from + to, then contractHex. Note this is the reverse
-// nesting of sdexOpsQuery, where the subquery trails — which is exactly why the
-// order is pinned by test: swapping the pairs is invisible when from/to are the
-// same values and catastrophic when a caller ever windows them apart.
+// to (the joined derived table is written FIRST), then the outer scan's from +
+// to, then contractHex. This is the reverse nesting of sdexOpsQuery, so the
+// order is pinned by test: swapping the pairs is invisible when from/to match
+// and catastrophic when a caller windows them apart.
 const contractCallOpsQuery = `
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account, o.body_xdr
 		FROM stellar.operations AS o FINAL

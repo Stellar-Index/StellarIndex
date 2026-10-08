@@ -52,40 +52,24 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
-			// This is the heavy-FINAL gate/reconcile read class. We keep
-			// `max_execution_time` UNLIMITED on purpose — a legitimate FINAL
-			// stream over a full-history window runs for many minutes and we do
-			// NOT want it aborted mid-stream (see the ReadTimeout note below).
-			// What actually wedged CH was MEMORY (the FINAL merge
-			// + the system.log spam loop on the full root), not wall time — so
-			// the right guard here is a per-query memory ceiling, conservative
-			// enough never to clip a healthy streaming read but low enough to
-			// fail a pathological query before it starves Postgres on the shared
-			// host. 24 GiB is still well under the CH server cap (ADR-0034;
-			// r1 has 188 GB): the sdex projection reconcile legitimately
-			// outgrew 12 GiB (two OOM-failed recomputes, one with
-			// the host otherwise idle — the wide body_xdr InOrder read, not a
-			// pathological query). max_threads bounds how many wide part
-			// streams hold buffers concurrently, which is what actually
-			// drives this class's peak.
+			// Heavy-FINAL gate/reconcile read class. `max_execution_time` stays
+			// UNLIMITED: a legitimate FINAL stream over a full-history window
+			// runs for many minutes (see the ReadTimeout note below). What wedged
+			// CH was MEMORY, so the guard is a per-query memory ceiling, low
+			// enough to fail a pathological query before it starves Postgres on
+			// the shared host (ADR-0034). max_threads bounds how many wide part
+			// streams hold buffers concurrently, which drives this class's peak.
 			"max_execution_time": 0,
-			// 24G→10G + threads 8→3: the sep41 projection
-			// reconcile — streaming the CAP-67 firehose's wide
-			// op_args_xdr/data_xdr columns InOrder — repeatedly drove
-			// CH's SERVER-WIDE 64G OvercommitTracker cap on its own
-			// (per-query tracking undercounts the read-pool buffers of
-			// many wide part streams). Fewer threads = fewer concurrent
-			// wide-part buffers, which is what actually bounds this
-			// class's true footprint. Growth costs time, not failures.
+			// Streaming the CAP-67 firehose's wide columns InOrder drove CH's
+			// SERVER-WIDE OvercommitTracker cap on its own (per-query tracking
+			// undercounts the read-pool buffers of many wide part streams), so
+			// threads are low: fewer concurrent wide-part buffers bounds the
+			// true footprint. Growth costs time, not failures.
 			"max_memory_usage": 10 * 1024 * 1024 * 1024,
 			"max_threads":      3,
-			// Spill instead of OOM: after the 12→24 GiB raise the sdex
-			// reconcile STILL hit the ceiling — in MergeSortingTransform
-			// (an ORDER BY over the full-range census). Chasing the
-			// ceiling is the wrong game for a query class that scales
-			// with chain history; external sort/group-by makes growth
-			// cost time (disk spill on the ZFS data pool) instead of
-			// failures.
+			// Spill instead of OOM: raising the ceiling is the wrong game for a
+			// query class that scales with chain history; external sort/group-by
+			// makes growth cost time (disk spill) instead of failures.
 			"max_bytes_before_external_sort":     8 * 1024 * 1024 * 1024,
 			"max_bytes_before_external_group_by": 8 * 1024 * 1024 * 1024,
 		},
@@ -96,14 +80,10 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		// (~5 min) trips with "i/o timeout" mid-stream. 1h tolerates the longest
 		// inter-block gap for full-history reprojection windows.
 		ReadTimeout: time.Hour,
-		// DO NOT lower MaxOpenConns below 2 (audit F7). The
-		// state-write-key enricher (state_write_keys.go, reached via
-		// StreamContractEventsFiltered withStateWriteKeys=true) issues
-		// its batched ledger_entry_changes lookups MID-STREAM, while
-		// the event stream still holds one connection open on this same
-		// conn — at MaxOpenConns=1 that lookup blocks forever waiting
-		// for the connection the stream won't release until the lookup
-		// completes: a self-deadlock, not a slow query.
+		// DO NOT lower MaxOpenConns below 2. The state-write-key enricher
+		// (state_write_keys.go) issues its batched ledger_entry_changes lookups
+		// MID-STREAM while the event stream holds one connection on this same
+		// conn; at 1 that lookup self-deadlocks.
 		MaxOpenConns:    2,
 		MaxIdleConns:    1,
 		ConnMaxLifetime: time.Hour,

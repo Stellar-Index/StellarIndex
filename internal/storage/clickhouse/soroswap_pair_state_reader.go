@@ -61,24 +61,19 @@ type TokenDisplayMeta struct {
 // SoroswapPairReserves reads the CURRENT reserve state for the given
 // Soroswap pair contracts from the lake in a single batched
 // `key_xdr IN (...)` lookup against ledger_entries_current (PK-prefix
-// on (entry_type, key_xdr) — cheap even for every pair at once).
-// Pairs whose instance entry isn't captured, or whose storage doesn't
-// match the verified u32-keyed layout, are absent from the result —
-// callers treat absence as "reserves unavailable", never as zero.
+// on (entry_type, key_xdr)). Pairs whose instance entry isn't captured, or
+// whose storage doesn't match the verified u32-keyed layout, are absent from
+// the result — callers treat absence as "reserves unavailable", never zero.
 //
-// ARCHIVED pairs are absent too. ledger_entries_current keeps a
-// Soroban entry's last-known value after its TTL lapses, so an unfiltered read
-// reports a dead pool's final reserves as CURRENT liquidity — phantom depth on
-// every surface that consumes this. Absence is already the honest signal for
-// "unavailable", so an archived pair uses it rather than being reported as
-// live. Same fail-open contract as elsewhere: only a positively-resolved,
-// lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
+// ARCHIVED pairs are absent too: ledger_entries_current keeps a Soroban
+// entry's last-known value after its TTL lapses, so an unfiltered read would
+// report a dead pool's final reserves as live liquidity. Fail-open: only a
+// positively-resolved, lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
 // soroswapPairStateQuery is the batched current-state lookup — a
-// PK-prefix probe on (entry_type, key_xdr). SETTINGS pins are the
-// shared guard rails the sibling readers use (see cometPoolStateQuery
-// / phoenixPoolStateQuery, ttlLivenessBatchQuery): the read is cheap,
-// and a planner or layout shift must fail THIS query loudly rather
-// than fan out on the shared host.
+// PK-prefix probe on (entry_type, key_xdr). SETTINGS pins are the shared
+// guard rails the sibling readers use (cometPoolStateQuery,
+// phoenixPoolStateQuery, ttlLivenessBatchQuery): a planner or layout shift
+// must fail THIS query loudly rather than fan out on the shared host.
 const soroswapPairStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
