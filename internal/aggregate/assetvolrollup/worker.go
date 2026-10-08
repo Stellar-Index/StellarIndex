@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultInterval is the refresh cadence. The SUM scans ~24h of
-// prices_1m per asset — the heaviest of the two 24h rollups (78dff337b, e0fbbbc3b) — so a
+// prices_1m per asset — the heaviest of the two 24h rollups — so a
 // couple of minutes keeps the aggregator load modest while a
 // trailing-24h volume figure a minute or two stale is immaterial to the
 // /v1/assets listing it feeds.

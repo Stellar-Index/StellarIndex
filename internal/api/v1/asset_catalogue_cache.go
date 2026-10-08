@@ -207,7 +207,7 @@ func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []s
 // fans out ~9 of these per request and GetAssetByAssetID /
 // GetNativeAssetRow run the whole-asset-universe listAssetsBaseSelect
 // query (~13s under load), with GetAssetTradeCount24h /
-// GetAssetMarketsCount adding multi-second trades-OR scans (385d564e8).
+// GetAssetMarketsCount adding multi-second trades-OR scans.
 // SWR moves all of that off the request path with zero correctness
 // loss (serve stale instantly, single-flighted background refresh).
 
@@ -516,8 +516,8 @@ func (c *CachedAssetsReader) fetchRowsAt(
 	// it's expired. Serve the stale rows IMMEDIATELY and, if no
 	// refresh is already running, kick exactly one in the
 	// background. Concurrent callers during the refresh also get
-	// stale — nobody ever waits on the upstream call. This is the
-	// entire fix for ba0374697: the expiry refetch (~seconds on the
+	// stale — nobody ever waits on the upstream call. The
+	// expiry refetch (~seconds on the
 	// listing aggregate) must never land on a user request.
 	if ok && !e.at.IsZero() {
 		stale, staleAt := e.rows, e.at

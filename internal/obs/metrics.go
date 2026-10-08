@@ -2510,7 +2510,7 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 
 // ProtocolEventsRollupSweepsTotal — per-sweep outcome counter for the
 // aggregator's protocol-events rollup worker
-// (internal/aggregate/protoeventsrollup, 78dff337b), which folds the
+// (internal/aggregate/protoeventsrollup), which folds the
 // trailing-24h per-source event census into the protocol_events_24h
 // table so /v1/protocols' events_24h column reads a keyed-on-PK lookup
 // instead of a multi-table UNION count per request. Labels:
@@ -2536,8 +2536,8 @@ var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
 // ~17 hypertables + one upsert + one prune), labelled by outcome so
 // operators chart `ok` p95/p99 separately from the fail-fast error path.
 //
-// Buckets span 10 ms → 30 s: the census is the multi-second leg the
-// 78dff337b rollup moved off the request path, so watching its p95 here is
+// Buckets span 10 ms → 30 s: the census is the multi-second leg that
+// rollup keeps off the request path, so watching its p95 here is
 // how an operator learns the served-tier census is getting heavier.
 var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{

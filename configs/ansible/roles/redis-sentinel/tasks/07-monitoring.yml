@@ -85,7 +85,7 @@
       # the unit file is 0644 so any local user could recover the
       # password.
       EnvironmentFile=/etc/default/redis_exporter
-      {# F-1272 (codex audit-2026-05-13): the exporter user is #}
+      {# The exporter user is #}
       {# only meaningful under ACL lockdown — `users.acl.j2` is #}
       {# only rendered when `redis_acl_lockdown` is true. With #}
       {# lockdown off, the legacy `default` user is `on nopass #}
@@ -97,9 +97,8 @@
       {# application user denies via `-@admin -@dangerous`. #}
       {# Same `redis_password` either way; the `-redis.user` #}
       {# flag is what differentiates the ACL roles when lockdown #}
-      {# is on. (wave-106 shipped this unconditionally and #}
-      {# pointed the default-config exporter at a user the ACL #}
-      {# file never rendered — wave-107 makes it conditional.) #}
+      {# is on, so it must stay conditional: without lockdown #}
+      {# the ACL file is not rendered and the user does not exist. #}
       ExecStart=/usr/local/bin/redis_exporter \
         -redis.addr=redis://127.0.0.1:{{ redis_port }} \
         {% if redis_acl_lockdown | bool -%}
