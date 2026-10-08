@@ -224,7 +224,7 @@ export interface paths {
          *
          *     NON-Stellar assets — fiat currencies (USD, EUR, …) and
          *     reference-only coins (BTC, ETH, …) that have no Stellar issuance
-         *     — are served by **`GET /external/assets`**, not here (LC-001).
+         *     — are served by **`GET /external/assets`**, not here.
          *     `asset_class=fiat` therefore returns an empty page on this route.
          *
          *     The `asset_class` query param is the major dispatch (see its
@@ -260,8 +260,8 @@ export interface paths {
         };
         /**
          * List non-Stellar (external) assets.
-         * @description Paginated list of the NON-Stellar assets split off `/assets`
-         *     (LC-001): fiat currencies (USD, EUR, …) and reference-only coins
+         * @description Paginated list of the NON-Stellar assets split off `/assets`:
+         *     fiat currencies (USD, EUR, …) and reference-only coins
          *     (BTC, ETH, …) from the verified-currency catalogue that have no
          *     Stellar on-chain issuance. These exist to feed the pricing /
          *     divergence pipeline and are surfaced here for browsing; they are
@@ -297,7 +297,7 @@ export interface paths {
          *     counterpart lives on `/assets/{asset_id}`; a Stellar-issued slug
          *     (usdc, aqua, …) returns **404** here, and a non-Stellar slug
          *     returns 404 on `/assets/{asset_id}` — each asset resolves on
-         *     exactly one path (LC-001, no redirect). Every slug 404s on
+         *     exactly one path (no redirect). Every slug 404s on
          *     testnet and futurenet, matching the empty `/external/assets`.
          */
         get: operations["getExternalAsset"];
@@ -357,7 +357,7 @@ export interface paths {
          *       current USD price + price authority. Per-issuance Stellar
          *       detail lives on the canonical asset_id form below. A slug for
          *       a NON-Stellar asset (fiat, reference-only coin) returns **404**
-         *       here — its detail lives on `/external/assets/{slug}` (LC-001);
+         *       here — its detail lives on `/external/assets/{slug}`;
          *       there is no redirect.
          *     - **Canonical Stellar asset_id** (`native`, `CODE-G…`,
          *       `C…` SAC contract, `fiat:CODE`) → returns the existing
@@ -1365,7 +1365,7 @@ export interface paths {
          *        Defaults: `from = to - 1h`, `to = now` (clamped to the
          *        previous 30 s closed-bucket boundary per ADR-0015).
          *
-         *     2. **Multi-bar series (CG/CMC parity, F-0071)**: `interval` is
+         *     2. **Multi-bar series (CG/CMC parity)**: `interval` is
          *        one of `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`.
          *        Returns `OHLCSeriesResponse` — an `intervals[]` array of
          *        closed CAGG-backed bars sourced from `prices_<N>`. The
@@ -7834,7 +7834,7 @@ export interface components {
             /** @default false */
             divergence_warning: boolean;
             /**
-             * @description True only when a live cross-reference divergence check ran (at least `min_sources_for_warning` responding references, the quorum the warning is gated on). When false the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087); a `true` warning is the last evaluated verdict carried forward through the outage, not a fresh one. Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip` and `/v1/price/tip/stream` — for the exact (base, quote) spelling the value was served from, never another spelling's market (XLM's `native` and `crypto:XLM` are different venue populations). The verdict compares the aggregator's shortest-window VWAP, so a rolling `?window=` (300/3600/86400) carries it only for that window and reports `false` for any other. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, `/v1/vwap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, and `/v1/vwap` computes over a caller-chosen range from raw trades; the verdict — a claim about the CURRENT shortest-window VWAP — speaks to neither. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
+             * @description True only when a live cross-reference divergence check ran (at least `min_sources_for_warning` responding references, the quorum the warning is gated on). When false the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree"; a `true` warning is the last evaluated verdict carried forward through the outage, not a fresh one. Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip` and `/v1/price/tip/stream` — for the exact (base, quote) spelling the value was served from, never another spelling's market (XLM's `native` and `crypto:XLM` are different venue populations). The verdict compares the aggregator's shortest-window VWAP, so a rolling `?window=` (300/3600/86400) carries it only for that window and reports `false` for any other. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, `/v1/vwap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, and `/v1/vwap` computes over a caller-chosen range from raw trades; the verdict — a claim about the CURRENT shortest-window VWAP — speaks to neither. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
              * @default false
              */
             divergence_checked: boolean;
@@ -10392,7 +10392,7 @@ export interface components {
             status: "ok" | "degraded";
             /** @description Human-readable process uptime, truncated to the second (e.g. `3h12m4s`). */
             uptime?: string;
-            /** @description Pointer at `/v1/status` — the SLA-truth rollup (F-1210). */
+            /** @description Pointer at `/v1/status` — the SLA-truth rollup. */
             status_root?: string;
         };
         HealthEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -10896,7 +10896,7 @@ export interface components {
             home_domain?: string | null;
             /** @description On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata; 7 when the metadata isn't derivable from the lake. */
             decimals: number;
-            /** @description Issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2) — a UI preference for how many fractional digits to SHOW, never a unit scale and never an input to amount math. Omitted when the issuer's SEP-1 overlay declares none. Distinct from `decimals` deliberately: F-1321 found that setting the unit scale from this issuer-controlled hint inflated market_cap_usd by up to 10^(7-display_decimals)×, so the two are now separate fields with separate meanings — divide by 10^`decimals`, round for display to `display_decimals`. */
+            /** @description Issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2) — a UI preference for how many fractional digits to SHOW, never a unit scale and never an input to amount math. Omitted when the issuer's SEP-1 overlay declares none. Distinct from `decimals` deliberately: setting the unit scale from this issuer-controlled hint would inflate market_cap_usd by up to 10^(7-display_decimals)×, so the two are separate fields with separate meanings — divide by 10^`decimals`, round for display to `display_decimals`. */
             display_decimals?: number;
             /**
              * @description State of the SEP-1 overlay for this asset.
@@ -12206,7 +12206,7 @@ export interface components {
              */
             truncated?: boolean;
         };
-        /** @description Multi-bar OHLC series response (F-0071). */
+        /** @description Multi-bar OHLC series response. */
         OHLCSeriesResponse: {
             /** @description Canonical base asset id. */
             base: string;
@@ -12419,7 +12419,7 @@ export interface components {
             last_trade_at: string;
             /**
              * Format: date-time
-             * @description Start-of-day UTC of the prices_1d bucket the pair was last active in. Aligns to midnight UTC by construction. Pre-2026-05-27 (F-0065) this value was incorrectly returned as `last_trade_at`; the field is preserved for callers that want the daily bucket reference, but do NOT use it for staleness.
+             * @description Start-of-day UTC of the prices_1d bucket the pair was last active in. Aligns to midnight UTC by construction. The field is preserved for callers that want the daily bucket reference, but do NOT use it for staleness.
              */
             bucket_close_at: string;
             /** @description Activity count in the trailing 24h window. */
@@ -17412,7 +17412,7 @@ export interface operations {
                             /**
                              * @description True only when SEP-1 verification is
                              *     bidirectional (the issuer's toml lists this
-                             *     issuer back — CS-100). When false, org_name
+                             *     issuer back). When false, org_name
                              *     is unverified self-declared metadata.
                              */
                             org_verified?: boolean;
@@ -17524,7 +17524,7 @@ export interface operations {
                              *     issuer back (bidirectional proof; one-way is
                              *     spoofable). When false, `org_name` is unverified
                              *     self-declared metadata — clients must present it
-                             *     as such, not as a verified identity (CS-100).
+                             *     as such, not as a verified identity.
                              */
                             org_verified: boolean;
                             auth_required?: boolean | null;
