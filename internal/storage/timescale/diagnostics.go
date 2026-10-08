@@ -214,65 +214,27 @@ var allowedCAGGViews = func() map[string]bool {
 func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName] }
 
 // CAGGsLiveForever is the ORDERED set of served price rungs, one per
-// [HistoryGranularity]. The backfill tool refreshes all of [TradesCAGGs]
-// after each chunk, of which this is the prices_* subset. It holds all seven, and
-// the name is literal for six of them: migration 0002 gave prices_1m
-// and prices_15m a 30-day retention and migration 0031 removed it,
-// alongside the 90-day one on raw `trades`.
+// [HistoryGranularity]: the prices_* subset of [TradesCAGGs] that the
+// backfill tool refreshes after each chunk. Every SERVED rung has to be here:
+// the policy refresher only rolls forward, so a rung left out is a permanent
+// hole in every backfilled range. The minute grains are served
+// over caller-chosen windows (/v1/ohlc 1m-30m, /v1/chart 1m|15m up to
+// `all`, /v1/history/since-inception 1m|15m, which returns any gap first).
 //
-// prices_1m is the exception since migration 0156, which attaches a
-// 90-day retention policy to THAT VIEW ALONE. The policy ships
-// DISABLED, so on a deployment that has not armed it nothing has
-// changed. Where it IS armed, this view stays in the refresh set — a
-// backfilled chunk inside the window needs its minute buckets like any
-// other rung — but for a chunk OLDER than the window the rows it
-// writes are dropped again by the next retention run. That is wasted
-// work rather than a fault, and the repair for an old range is the
-// forced refresh the migration's header states, run with the policy
-// disarmed. Nothing else here has ever been pruned.
+// migration 0002 gave prices_1m and prices_15m a 30-day retention and
+// migration 0031 removed it; none carries retention now except prices_1m,
+// whose 90-day policy (migration 0156) ships disabled. Where armed, refreshing an older chunk is wasted
+// work, not a fault; the repair for an old range is the migration header's
+// forced refresh with the policy disarmed.
 //
-// Every SERVED rung has to be here, because a rung left out is a
-// permanent hole at that resolution in every backfilled range: the
-// rows land in `trades`, the policy refresher only rolls forward, and
-// no read can reach what was never materialised. The minute grains
-// are not a recent-only working set — each is served over a window
-// the caller chooses:
+// twap_1h and twap_1d are built FROM prices_1m, so they are not rungs here,
+// but [PlanCAGGRefresh] refreshes them after forcing prices_1m over their
+// window. prices_1m leads because it is the one view another aggregate is
+// defined over, in [TradesCAGGs]' order.
 //
-//   - /v1/ohlc?interval=1m and ?interval=15m take `from`/`to`
-//     verbatim (parseOHLCSeriesFromTo) into OHLCSeries, which reads
-//     prices_1m / prices_15m.
-//   - /v1/ohlc?interval=5m and ?interval=30m re-bucket prices_1m
-//     (OHLCSeriesReBucketed).
-//   - /v1/chart?granularity=1m|15m reads the same two views through
-//     chartVWAPReader → HistoryPointsInRange, at every timeframe
-//     including the unbounded `all`.
-//   - /v1/history/since-inception?granularity=1m|15m reads them
-//     through HistoryPoints — no time bound at all, ordered oldest
-//     bucket first. It is the surface most exposed to a gap in
-//     historical materialisation, because the gap is the FIRST thing
-//     it would return. (Plain /v1/history is a different handler and
-//     is not one of these sites: it reads raw trades via
-//     TradesInRangeAfter, no CAGG involved.)
-//
-// twap_1h and twap_1d are materialised FROM prices_1m (migrations
-// 0081 / 0126 / 0147), so they are not rungs of this set, but backfill
-// refreshes them after prices_1m through [PlanCAGGRefresh], which forces
-// prices_1m over every window they read first.
-//
-// prices_1m leads because it is the one view another aggregate is
-// defined over; same order as [TradesCAGGs].
-//
-// COST of the two fine rungs, from the MinWindow constants in [TradesCAGGs]
-// rather than an estimate. All seven read `trades`, so each rung is one more
-// pass over the chunk's rows: seven passes instead of five. On scanned ts
-// range the fine rungs are the CHEAP ones — they pad to 2 and 30 minutes,
-// while the coarse set pads to 3h + 12h + 3d + 21d + 93d ≈ 117 days no matter
-// how short the chunk is, so adding both widens the range this function
-// touches by 0.3% for a 4-hour chunk, ~10% for a week and ~28% for a 30-day
-// chunk. What they do cost is rows written: one minute bucket per
-// (pair-direction, minute) that traded, bounded above by the chunk's own trade
-// count, against ≤ 937 buckets per pair for the five coarse rungs over 30
-// days. Those rows are exactly what the surfaces listed above read.
+// The two fine rungs pad the scanned range by only 2 and 30 minutes against
+// the coarse set's ~117 days; their cost is rows written, bounded by the
+// chunk's trade count, and those rows are exactly what the surfaces read.
 //
 // CAGGSpec names a continuous aggregate and its minimum refresh window.
 type CAGGSpec struct {

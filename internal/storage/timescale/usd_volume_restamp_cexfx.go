@@ -13,63 +13,31 @@ import (
 
 // ─── the CEX FIAT-QUOTE usd_volume RE-DERIVE ──────────────────────────
 //
-// The two XLM tiers repair on-chain rows off the XLM leg. This one
-// repairs the OFF-CHAIN population the same way, off a leg no market
-// participant authors either: an exchange trade quoted in a non-USD fiat
-// currency (binance BTC/EUR, kraken ETH/GBP, …), valued through the
-// vendor FX feed.
+// Re-derives off-chain trades quoted in a non-USD fiat (binance BTC/EUR,
+// kraken ETH/GBP, …) through the vendor FX feed, a leg no market
+// participant authors:
 //
 //	usd_volume = quote_amount / 10^<source scale> x <fiat>/USD at ts
 //
-// Population: ~12.6M rows, `fiat:EUR` and `fiat:GBP`.
+// prices_1m holds only crypto markets, so before the resolver read
+// `fx_quotes` these rows inserted NULL; the insert path is fixed and this
+// repairs the history. The rate comes from `fx_quotes` (rate_usd = units
+// per 1 USD, migration 0028) through the insert path's own resolver
+// ([VWAPUSDFXResolver.usdPriceForFiat] → [Store.fxQuotesSnapAtOrBefore]),
+// inverted in exact *big.Rat space.
 //
-// # Why these rows are NULL, and why the rate is NOT prices_1m
+// As-of rule, per row: take the newest daily bucket AT OR BEFORE `ts`,
+// never a later one and never an interpolation, which would be a rate the
+// vendor never published. The guarantee is per UTC day: the worker
+// rewrites today's bucket and the trailing 7 days, so runs inside that
+// window can differ by intraday FX. REFUSE the row when that bucket is
+// older than [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]);
+// stored values and NULLs are left as they are.
 //
-// prices_1m is a continuous aggregate over `trades` and holds CRYPTO
-// markets: there is no `fiat:EUR/fiat:USD` row in it and there never will
-// be. So before the resolver learned to read `fx_quotes`
-// every non-USD-quoted CEX pair fell through all four tiers of
-// [tradeUSDVolume] and inserted with `usd_volume` NULL — ~$939M of
-// unpriced volume on one day alone
-// (docs/operations/usd-volume-coverage-plan.md). The insert path is
-// correct at HEAD; what is left is the history behind it.
-//
-// The rate therefore comes from `fx_quotes` — the daily vendor snapshots
-// the `massive` feed writes, with rate_usd = UNITS-OF-TICKER PER 1 USD
-// (migration 0028) — read through the SAME resolver branch the insert
-// path uses ([VWAPUSDFXResolver.usdPriceForFiat] →
-// [Store.fxQuotesSnapAtOrBefore]), which inverts it in exact *big.Rat
-// space. Nothing here re-spells that arithmetic.
-//
-// # The as-of rule
-//
-// fx_quotes buckets are DAILY (the forex worker truncates every write to
-// 24h) and weekday-only for most tickers, so a trade's timestamp almost
-// never lands on a bucket. The rule, applied per row:
-//
-//   - take the most recent bucket AT OR BEFORE the trade's `ts`. Never a
-//     later bucket. The guarantee is per UTC day, not per publication:
-//     the live worker rewrites today's bucket on every refresh and the
-//     trailing-7d history bars rewrite the days before it, so the stored
-//     rate may have been published after the trade, and a run over rows
-//     inside that 7-day window can differ from a later run by intraday
-//     FX movement. Older buckets change only through an operator
-//     fx-history-backfill correction. Never an interpolation
-//     between two buckets either — that would be a rate the vendor never
-//     published, invented by this tool on a money column.
-//   - REFUSE the row when the nearest such bucket is more than
-//     [CEXFiatMaxQuoteStaleness] old, and count the refusal
-//     ([XLMBaseRestampStats.FXDeclinedStale]). A stored value is left
-//     exactly as it is; a stored NULL stays NULL.
-//
-// The tolerance is 7 days because that is [fxQuotesSnapLookback] — the
-// bound the LIVE insert path already applies through the same resolver.
-// Any wider and this tool would write values `InsertTrade` would decline
-// to write today, which is the one property the whole re-derive rests on;
-// narrower is the operator's call (`-fx-max-staleness`) when they want a
-// run to touch only rows with a near-contemporaneous quote. 7 days is
-// also the longest routine weekend/holiday gap in the feed, so at the
-// default the rule refuses staleness rather than ordinary calendar gaps.
+// The default tolerance is [fxQuotesSnapLookback], 7 days, the bound the
+// live insert path applies, so this never writes what `InsertTrade` would
+// decline; `-fx-max-staleness` may narrow it. 7 days also covers the
+// feed's longest routine holiday gap.
 
 // CEXFiatMaxQuoteStaleness is the default (and maximum) as-of tolerance
 // for the cex-fx tier: how far back the nearest `fx_quotes` bucket at or
