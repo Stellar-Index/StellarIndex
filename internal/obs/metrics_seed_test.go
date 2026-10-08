@@ -33,10 +33,8 @@ func childLabelValues(t *testing.T, vec *prometheus.CounterVec, label string) ma
 	return out
 }
 
-// TestDivergenceRefreshOutcomesAreSeeded is the wave-D ALERT-06
-// regression.
-//
-// Both divergence guards — stellarindex_divergence_no_reference and
+// TestDivergenceRefreshOutcomesAreSeeded: both divergence guards —
+// stellarindex_divergence_no_reference and
 // stellarindex_divergence_refresh_error_dominant — compare a FAILURE
 // outcome's rate against the `ok` outcome's rate. A counter child does
 // not exist until its first .Inc(), so a process that has never had a

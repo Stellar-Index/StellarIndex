@@ -676,8 +676,7 @@ func seedBoundedLabelSeriesTail() {
 	// both unreachable, the aggregator restarted during the outage (as
 	// deploys routinely do), so `ok` is never registered while
 	// flags.divergence_warning serves frozen and a live depeg goes
-	// unflagged (wave-D ALERT-06). This was the one alert-referenced
-	// outcome counter missing from this list.
+	// unflagged.
 	//
 	// Values mirror internal/aggregate/orchestrator/divergence_refresh.go
 	// exactly: no_vwap, parse_error, the refresh_error/no_reference pair,

@@ -89,8 +89,8 @@ func TestValidateAssetsCursor_volumeOrder(t *testing.T) {
 	}
 }
 
-// TestValidateAssetsCursor_rejectsShapesThatReachTheDatabase pins the
-// wave-D KP-2 cases: cursors that passed validation and then failed —
+// TestValidateAssetsCursor_rejectsShapesThatReachTheDatabase pins
+// cursors that passed validation and then failed —
 // or worse, silently degenerated — further down.
 //
 // The validator's job is to make a malformed cursor a 400 at the

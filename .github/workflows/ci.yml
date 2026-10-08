@@ -312,12 +312,12 @@ jobs:
               # etc.) read this file directly. Without it here, a diff
               # confined to openapi/**  sets `go=false` and the `test` job
               # (gated on needs.preflight.outputs.go) skips every one of
-              # them — RLT-169.
+              # them.
               - 'openapi/**'
               # go:embed inputs are not *.go files, so a diff confined to
-              # one of them also set `go=false` and skipped the test job
+              # one of them would set `go=false` and skip the test job
               # that decodes it (pairs_test.go, circulation_test.go, the
-              # currency-catalogue tests, incidents_test.go) — RLT-046.
+              # currency-catalogue tests, incidents_test.go).
               - 'internal/sources/external/binance/pairs.yaml'
               - 'internal/sources/external/forex/circulation_data.csv'
               - 'internal/currency/data/seed.yaml'
@@ -342,9 +342,9 @@ jobs:
               # clickhouse-exporter-test.sh (toolchain-gates job) pins the
               # Prometheus port + job name across the scrape config and
               # both rule trees below, but neither lives under
-              # configs/ansible/**, so a diff confined to one of them set
-              # `ansible=false` and skipped the only test that reads
-              # them — RLT-046.
+              # configs/ansible/**, so a diff confined to one of them would
+              # set `ansible=false` and skip the only test that reads
+              # them.
               - 'configs/prometheus/**'
               - 'deploy/monitoring/**'
       # dorny/paths-filter's glob matching cannot be exercised offline

@@ -823,11 +823,9 @@ func ValidateMarketsCursor(cursor string, order MarketsOrder) error {
 		volPart := cursor[:idx]
 		// Volume prefix may be empty (last row had a null vol_usd).
 		// Otherwise: digits with at most one '.', no leading sign.
-		// Shared with the assets cursor rather than re-inlined. This was a
-		// hand-copied duplicate of the same loop, and it carried the same
-		// defect: no digit was required, so a lone "." validated (wave-D
-		// KP-2). Two copies of a predicate is two places to fix it and one
-		// place to forget.
+		// Shared with the assets cursor rather than re-inlined: at least one
+		// digit is required, so a lone "." fails. Two copies of a predicate
+		// is two places to fix it and one place to forget.
 		if volPart != "" && !isNumericPrefix(volPart) {
 			return fmt.Errorf("non-numeric volume prefix")
 		}

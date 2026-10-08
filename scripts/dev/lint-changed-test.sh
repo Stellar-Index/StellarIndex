@@ -53,8 +53,8 @@ INSTALL="$PWD/scripts/dev/install-hooks.sh"
 TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
-# The shellcheck step is the one lint-changed defers when the tool is absent
-# (RLT-055): every fixture assertion that counts steps has to branch on
+# The shellcheck step is the one lint-changed defers when the tool is absent:
+# every fixture assertion that counts steps has to branch on
 # this, not just the one at "shellcheck -x on the files" below, or the
 # hard-coded totals go red on a checkout without it on PATH.
 if command -v shellcheck >/dev/null 2>&1; then HAVE_SHELLCHECK=1; else HAVE_SHELLCHECK=0; fi
