@@ -16,84 +16,43 @@ import (
 
 // Oracle NAV reference and premium/discount for /v1/rwa/assets.
 //
-// A tokenized treasury has two prices: what an independent oracle says
-// the instrument is worth, and what the Stellar market will pay for the
-// token. The gap between them is the number a holder of a tokenized
-// treasury actually needs, and it is the one figure on this surface that
-// no query over public chain data alone can produce — it needs both the
-// oracle stream and the gated market price, which this index holds
-// together.
+// The gap between an oracle's NAV for a tokenized treasury and what the
+// Stellar market pays for the token needs both the oracle stream and the
+// gated market price, which this index holds together. Five rules gate
+// it; each blocks a number that means something other than what it says.
 //
-// Five rules decide whether the gap may be published. Each removes a way
-// of publishing a number that means something other than what it says.
+// R-0 — bound to this (code, issuer). Anyone may issue a USTRY; a
+// code-only join would publish an unrelated $0.20 token at an 81%
+// discount to a real security. [rwa.InstrumentFeed] is a curated,
+// fail-closed binding on the pair (ADR-0040).
 //
-// R-0 — THE REFERENCE MUST BE BOUND TO THIS (CODE, ISSUER). Asset codes
-// are not unique on Stellar; any account may issue a token called USTRY.
-// A reference joined on the code alone answers every one of them with the
-// real instrument's net asset value, and an unrelated token trading at
-// $0.20 is published at an 81% discount to a security it has nothing to
-// do with. [rwa.InstrumentFeed] is a curated, exact, fail-closed binding
-// on the pair (the ADR-0040 curated-set mechanism); an unbound pair gets
-// silence and a stated reason.
+// R-A — quoted in dollars. A bare `_FUNDAMENTAL` feed publishes NAV in
+// the token's reserve asset, a ratio; registering two as USD once served
+// a BTC-backed token at $1.00 (internal/sources/redstone/feeds.go). The
+// stored row's quote must be `fiat:USD`; nothing is unit-converted here.
 //
-// R-A — THE REFERENCE MUST BE DOLLARS. A feed's value is denominated in
-// whatever the registry says it is denominated in, and a bare
-// `_FUNDAMENTAL` feed publishes net asset value in the token's RESERVE
-// asset — a RATIO, not a dollar figure. Registering two such feeds as
-// USD once served "a BTC-backed token is worth $1.00" for a token its
-// own USD sibling priced at $78,313 (D8, internal/sources/redstone
-// feeds.go). So the quote is read off the STORED ROW and must be
-// `fiat:USD`; a row quoted in anything else is refused with that as the
-// stated reason, never unit-converted into dollars here.
+// R-B — prices one token. `rwa:XAU` is gold per troy ounce and
+// `rwa:SPXU` one ETF share; no binding may target either.
 //
-// R-B — THE REFERENCE MUST PRICE A TOKEN. `rwa:XAU` is spot gold per
-// troy ounce and `rwa:SPXU` is one share of an exchange-traded fund;
-// neither is one token of anything. No binding may target one, and a
-// token of such a code is refused with that as the stated reason.
+// R-C — published by an [external.ClassOracle]. Aggregators share the
+// hypertable, and a premium against one would compare the market with
+// itself.
 //
-// R-C — THE PUBLISHER MUST BE AN ORACLE. Only sources the registry
-// classes [external.ClassOracle] qualify. Aggregators and the
-// authority-sanity feeds write into the same hypertable for divergence
-// comparison; a premium measured against an aggregator's own guess at
-// the market price would be the market compared with itself.
+// R-D — the market price is observed. A `price_basis` price is a peg or
+// a transitive derivation; a premium against it echoes the issuer's claim.
 //
-// R-D — THE MARKET PRICE MUST BE OBSERVED. A price carried on
-// `price_basis` is a declared peg or a transitive derivation rather than
-// a market's opinion. Measuring a premium against a declared peg reports
-// the issuer's own claim back as a market finding.
+// A refused row names its rule and never carries a zero.
 //
-// A row failing any of them carries no premium figure and says which
-// rule refused it. None of them ever produces a zero.
+// `reference_valuation` is the reference times the float. Most RWAs are
+// held, not traded, so a market valuation would publish nothing while
+// the oracle prices the backing daily. It rides R-0 through R-C but not
+// R-D (it holds no market price), so it is published under its own name
+// and total, beside `market_cap_usd` and never inside it.
 //
-// # The reference-priced valuation
-//
-// The same reference, multiplied by the float, is `reference_valuation`
-// — what the backing behind the circulating tokens is claimed to be
-// worth. It exists because a real-world asset is bought and held rather
-// than traded: most of the set has never had a trade on this network,
-// so a market-price valuation has nothing to work with and publishes
-// nothing at all, while the instrument behind it is priced daily by an
-// oracle this index already reads.
-//
-// It rides R-0 through R-C — an unbound pair, a non-dollar quote, an
-// off-chain unit, a non-oracle publisher and a flagged issuer all
-// refuse it exactly as they refuse a reference — and it is deliberately
-// NOT subject to R-D, the rule requiring an observed market price:
-// there is no market price in it. That is also its whole limitation,
-// and the reason it is published under its own name, with its own
-// total, beside `market_cap_usd` and never inside it. Nothing about
-// this figure changes what a market cap means or which rows carry one.
-//
-// # One refusal, two fields
-//
-// Every rule above refuses the premium and the reference valuation
-// together, so `premium.status` and `reference_valuation.status` carry
-// the SAME string on those rows — assigned at the same line, from the
-// same constant, so they cannot drift into two accounts of one event.
-// They diverge only where the reasons genuinely differ: a row with a
-// reference but no observed market price has no premium and a full
-// reference valuation, and a row with a reference but no supply reading
-// has the premium and no valuation.
+// `premium.status` and `reference_valuation.status` are assigned from the
+// same constant on the same line, so a shared refusal cannot read as two
+// events. They differ only when the reasons do: no observed market price
+// leaves a valuation without a premium; no supply reading, the reverse.
 
 // rwaReferenceTTL bounds the reuse of one oracle-stream snapshot.
 //

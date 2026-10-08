@@ -15,102 +15,33 @@ import (
 )
 
 // A listing-sourced valuation for a verified-catalogue asset whose
-// MARKET capitalisation this index declines to publish.
+// market cap this index declines to publish (e.g. USDT0, whose ~$100/day
+// Stellar market trips the dust-liquidity guard). Supply times an
+// independent listing's USD price is true and separately checkable;
+// folded into market cap it would be false. So, like the RWA surface
+// (rwa_reference.go), it ships as a `reference` block plus a `valuation`
+// block, labelled with provenance and never written into `market_cap_usd`.
 //
-// # The hole this fills, and the hole it must not fill
+// The listing must name the asset exactly: its classic CODE-GISSUER id or
+// its SAC address. A SAC address derives from one (code, issuer) pair, so
+// an impersonator's contract never matches. Both forms are read because
+// the upstream uses each for about half the set. Matching by code is never
+// done: this network carries impersonating PYUSD, USDT, USDC and XLM issuers.
 //
-// USDT0 is the motivating case. It launched on Stellar in September 2026
-// and trades about a hundred dollars a day there. The dust-liquidity
-// guard therefore suppresses its market cap, and that is
-// the guard working: a price scraped off a $106/day market, multiplied
-// by two and a half million tokens, is a headline nobody should publish
-// and this index refuses to. Nothing below relaxes that refusal — the
-// market cap stays absent, the guard's flag stays set, and no figure
-// here is ever written into `market_cap_usd`.
+// Membership in the verified catalogue (internal/currency/data/seed.yaml)
+// is a second, independent gate: the listing corroborates, the catalogue
+// attests. [Server.listingValuationFor] then fills only a price hole:
 //
-// What was missing was never the price. An independent listing platform
-// publishes a USD price for this exact token, derived from venues this
-// index does not observe and has no opinion about. Serving supply times
-// THAT price, under its own name and its own provenance, states
-// something true and separately checkable. Folding it into market cap
-// would state something false.
+//   - a published market cap wins ([ListingValuationMarketCapPublished]);
+//   - an observed, substance-gated market price means the hole is in our
+//     own data, not the price ([ListingValuationMarketPriceObserved]);
+//     a declared-peg or transitive `price_basis` is not an observation;
+//   - scam-flagged and unverified-collision rows get no valuation at all.
 //
-// So this surface is the /v1/assets twin of the split the RWA surface
-// already ships (internal/api/v1/rwa_reference.go): a `reference` block
-// carrying the price and where it came from, beside a `valuation` block
-// carrying supply times that price. Never summed into market cap, never
-// substituted for it, and labelled on every row with the provenance that
-// says which kind of claim it is.
-//
-// # Two routes to the binding, both exact, neither on the code
-//
-// A row qualifies when the listing directory names EITHER
-//
-//	CODE-GISSUER   the asset's own classic id, or
-//	C…             the Stellar Asset Contract address that
-//	               canonical.Asset.SacContractID() derives from that
-//	               exact (code, issuer) pair and the network passphrase.
-//
-// The second route is safe for a structural reason and not a
-// probabilistic one: SAC derivation is a pure function of the asset and
-// the network, so the address the listing published is reachable from
-// one (code, issuer) pair and no other. An impersonator minting the same
-// code from a different G-account derives a DIFFERENT contract address,
-// and the listing's row does not name it.
-//
-// Both routes are needed because the upstream publishes each asset under
-// one form or the other, with no pattern this index controls. Measured
-// against the live upstream: EURC, AQUA, SHX, VELO, BLND
-// and yUSDC are named by their classic ids; USDC, PYUSD, USDT0 and XLM
-// are named by their SAC addresses and not by their classic ids at all.
-// A reader supporting only one form would silently drop half the set.
-//
-// Matching by CODE is the one thing that is never done. This network
-// carries impersonating issuers of PYUSD, USDT, USDC and XLM, one of
-// them holding a 920-billion fake balance; a code match would hand each
-// of them the real instrument's price.
-//
-// # Membership is the second, independent gate
-//
-// An exact address match is not on its own enough to publish a dollar
-// figure, so the asset must ALSO be a verified-catalogue entry — a
-// (code, issuer) pair written into internal/currency/data/seed.yaml,
-// which is a code change and a redeploy. The listing directory
-// corroborates; the catalogue attests. Neither alone publishes anything.
-//
-// # It only ever fills a hole
-//
-// Every one of these conditions has to hold, and the order below is the
-// order [Server.listingValuationFor] tests them in:
-//
-//   - the row publishes NO market cap. Where the existing gates DO
-//     publish one, this arm records [ListingValuationMarketCapPublished]
-//     and stops. A served market cap is never replaced, never adjusted
-//     and never compared against;
-//   - the hole is a PRICE hole. A row carrying an observed market price
-//     that cleared the substance gate, with no dust suppression, is
-//     missing its cap for some other reason (most often no supply
-//     reading yet), and pricing it from a third party would paper over
-//     a gap in this index's own data with somebody else's number. That
-//     row records [ListingValuationMarketPriceObserved] and stops. A
-//     declared-peg or transitive price is NOT an observation and does
-//     not stop it — `price_basis` is precisely the field that says so;
-//   - the row is not scam-flagged and not an unverified collision. Those
-//     rows publish no valuation of any kind, here or anywhere.
-//
-// # Fail closed, and say so
-//
-// A snapshot that could not be read, or that came back with no fresh
-// rows, publishes NOTHING and records [ListingValuationUnavailable]. It
-// does not carry a previous snapshot forward. This is the same posture,
-// and the same reasoning, as [Server.rwaListingSnapshot]: an old price
-// served as current is a lie about a number, and this surface would
-// rather say it is not answering.
-//
-// The price's own age is bounded by the same two constants the RWA
-// reference arm uses — [rwaReferenceStaleAfter] to LABEL and
-// [rwaReferenceMaxAge] to WITHHOLD — rather than by a second pair
-// invented here. One bound, one meaning, one place to change it.
+// An unreadable or empty snapshot publishes nothing
+// ([ListingValuationUnavailable]) rather than carrying an old price
+// forward, as [Server.rwaListingSnapshot] does. Price age uses the RWA
+// bounds: [rwaReferenceStaleAfter] labels, [rwaReferenceMaxAge] withholds.
 
 // ─── wire shape ─────────────────────────────────────────────────────
 

@@ -492,75 +492,27 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // the supply /v1/assets and /v1/rwa/assets publish does not depend on how
 // recently somebody looked.
 //
-// # Why warming does not wait for requests
+// Request-path warming only converges under traffic. Without it, entries
+// expire at [classicLakeSupplyTTL] and the listing falls back to the
+// trustline-only sum, which misses claimable balances, LP reserves and
+// SAC-held supply (measured on r1 after ~19h idle: PYUSD 73% and XRF 82%
+// understated). Source ranking is unchanged (ADR-0011 observation outranks
+// the lake), and every failure path serves what an unwarmed entry would.
 //
-// Everything above this line warms itself from the REQUEST path: a listing
-// request finds nothing cached, kicks a detached refresh for
-// [classicLakeSupplyBatch] of the assets it asked about, and serves the
-// trustline sum for the rest. That shape converges under sustained traffic —
-// the served figures then match Horizon's all-component totals to within
-// 0.012% — and it never converges without it. Convergence assumes traffic,
-// which a service with no consumer traffic does not have:
-// entries expire unread at [classicLakeSupplyTTL] and the listing falls back
-// to the trustline-only sum, which is blind to claimable balances, LP reserves
-// and SAC-held supply by construction (see the top of this file). Measured on
-// r1, ~19 h after the last request:
+// It lives in the API process because s.lakeSupply is per-process memory;
+// warming from a job would need a materialised table and a new staleness
+// contract.
 //
-//	PYUSD  served  3,149,454   lake  11,778,001   (73% understated)
-//	XRF    served 21,895,149   lake 118,333,629   (82% understated)
+// Coverage is the pages `opts` names (production: the same
+// assetListingPrewarmOptions() prewarmAssetListings warms) plus the
+// /v1/rwa/assets membership. Asking each surface which assets it serves
+// cannot drift from what it serves; "every classic asset" would be 450k+
+// SAC lookups. RWA members are chosen by attestation, not rank, and are
+// held rather than traded, so listing pages alone left them cold: the
+// trustline floor rotated across members (USTRY 9%, TESOURO 15% short).
 //
-// The readings and the preference chain are right, so this changes only the
-// warming: the source ranking is untouched (the ADR-0011 supply observation
-// outranks the lake, which cannot fall below the trustline floor), and every
-// failure path degrades to exactly what an unwarmed entry serves.
-//
-// # Why it lives in the API process rather than a job
-//
-// s.lakeSupply is per-process memory with no external store behind it, so no
-// timer, worker or cron outside this process can fill it. Moving the warming
-// out would mean materialising the sums into a table and teaching the read
-// path about it — a strictly larger change with its own staleness contract.
-//
-// # Which assets it covers
-//
-// `opts` is the set of listing shapes the caller already keeps warm —
-// production passes assetListingPrewarmOptions(), the SAME set
-// prewarmAssetListings warms — and the population is whatever those pages
-// return. Both alternatives are worse: "every classic asset" is 450k+ SAC
-// lookups for rows no page shows, and a hand-maintained asset list here would
-// drift from the pages callers actually receive. Asking the listing which
-// assets it serves cannot drift from the listing.
-//
-// THE LISTING IS NOT THE ONLY SURFACE THAT READS THIS CACHE, and taking its
-// pages as the whole population left the other one short. /v1/rwa/assets
-// publishes supply for a set chosen by ATTESTATION, not by rank, and a
-// tokenized instrument is bought and held — so its members can sit well
-// outside pages ordered by observation count and 24h volume, never be warmed,
-// and serve the trustline floor indefinitely rather than for one TTL gap.
-//
-// Measured on r1, an hour after a restart, with the floor visible on the
-// wire because the row declares its own basis:
-//
-//	USDY     served 461,621,813.40   all domains 467,502,151.70   (1.26% short)
-//	USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
-//	TESOURO  served   1,417,840.27   all domains   1,666,298.84   (14.91%)
-//
-// Those three cleared within the hour as traffic warmed them, and the floors
-// moved onto four other members — which is the actual defect. The shortfall
-// ROTATES: whichever members were looked at recently serve the four-domain
-// figure and the rest fall back, so no single total describes it and the next
-// row to go cold is the next row understated. When the floors landed on BENJI
-// minutes later they cost nothing at all, because every BENJI token is in a
-// trustline and its floor IS its all-domain total. The remedy is the same
-// principle, not an exception to it: ask the
-// RWA SURFACE which assets it serves, exactly as this asks the listing. That
-// set cannot drift from the RWA page for the same reason the listing pages
-// cannot drift from the listing, and it is bounded by the membership cap
-// rather than by the chain.
-//
-// Best-effort throughout, like every other supply overlay on this path: no
-// token-supply reader, no bulk capability, no assets reader, a listing error
-// or a lake error each leave the cache exactly as it was.
+// Best-effort: a missing reader or capability, or a listing or lake error,
+// leaves the cache as it was.
 func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.ListAssetsOptions) {
 	if s.TokenSupply == nil || s.AssetsReader == nil {
 		return

@@ -12,94 +12,37 @@ import (
 )
 
 // ohlcSeriesFiatCombined builds a fiat-denominated (e.g. XLM/USD) OHLC
-// series by COMBINING every USD-pegged constituent series per bucket,
-// rather than the first-hit single-pair read used for non-fiat quotes.
+// series by combining every USD-pegged constituent per bucket, rather
+// than the first-hit single-pair read used for non-fiat quotes.
 //
-// Why: the continuous aggregates key bars by the real stored quote_asset
-// (`native/USDC-GA5Z…`, `crypto:XLM/fiat:USD`, …). A fiat quote like
-// `fiat:USD` has no trades of its own except the recent direct CEX feeds,
-// so first-hit served only ~5 weeks while the deep history sits under the
-// USD-pegged stablecoin pairs (Circle USDC back to 2021). Combining them
-// — using the SAME constituent set the live aggregator computes its VWAP
-// over (aggregate.ExpandTargetPairWithClassicPegs) — yields the full
-// multi-year series and keeps the historical bars methodologically
-// consistent with the live /v1/price path (AGENTS.md "stablecoins-as-fiat
-// is aggregator policy, late-bound at compute time").
+// `fiat:USD` itself only has recent CEX trades; the deep history sits
+// under the stablecoin pairs. Combining over the live aggregator's own
+// constituent set (aggregate.ExpandTargetPairWithClassicPegs) gives the
+// multi-year series and keeps bars consistent with /v1/price, where
+// stablecoin-as-fiat is late-bound at compute time.
 //
-// Combine math per bucket (exact in NUMERIC/big.Rat):
-//   - volume      = Σ base_volume                (exact)
-//   - quote_vol   = Σ quote_volume               (exact)
-//   - high / low  = max(high) / min(low)         (exact)
-//   - open/close  = Σ(price·base_vol) / Σ base_vol  (base-volume-weighted)
-//     — the only approximation, and only in buckets where >1 constituent
-//     trades; deep-history buckets have a single constituent (USDC) so
-//     open/close are exact there. Base-volume weighting matches the VWAP
-//     definition (Σ price·base / Σ base).
+// Per bucket, exact in NUMERIC/big.Rat: volumes are summed, high/low are
+// max/min, open/close are base-volume-weighted (the VWAP definition) —
+// approximate only where more than one constituent traded.
 //
-// SCALE (series arm of the money path). Every one of those sums is over
-// SMALLEST-UNIT amounts, and the smallest unit is a per-SOURCE scale: an
-// on-chain DEX leg is 7-decimal stroops, a CEX leg 8, an FX poller 6. The
-// constituent set really does span them — `native/fiat:USD` combines
-// `native/<USDC classic>` (sdex, 7dp) with `crypto:XLM/crypto:USDT`
-// (binance, 8dp) and `crypto:XLM/fiat:USD` (bitstamp/coinbase/kraken,
-// 8dp) in the SAME buckets — so summing the raw integers adds
-// incommensurable quantities and weights the 8dp legs 10x per decimal
-// against the 7dp one. Measured unscaled on one r1 1h
-// bar: the sdex leg's 135,713.79 XLM entered the combine as 13,571.38,
-// v_base understated the market by 3.41%, and that leg carried 0.39% of
-// the open/close weight where it should carry 3.79%.
+// Amounts are smallest units at a per-source scale (DEX 7dp, CEX 8, FX 6),
+// and one bucket can mix them, so each bar is lifted to the response's
+// maximum scale before summing: an exact multiply, no division (ADR-0003).
+// This is the bar-level twin of [aggregate.NormalizeAmountScale] on
+// [Server.fiatCombinedTrades]. Scale comes from the bar's own
+// [OHLCSeriesBar.Sources], not its pair spelling: on-chain venues stamp at
+// the asset's decimals, so spelling is not scale.
 //
-// So every bar is lifted to one common scale before it is accumulated —
-// the MAXIMUM scale present in the response, so each lift is an exact
-// integer multiply by 10^(max−scale) ≥ 1 with no division and no
-// precision loss (ADR-0003). This is the bar-level twin of
-// [aggregate.NormalizeAmountScale], which [Server.fiatCombinedTrades]
-// applies to the raw-trade POINT path over the identical constituent
-// set, so the two agree by construction rather than by the accident of
-// every fixture being single-scale. A response whose bars all share one
-// scale — every non-fiat quote, and any fiat window served by one venue
-// class — is byte-identical to its unlifted sums, because every factor
-// is 10^0 = 1.
+// Established constituents are always combined. Held-back ones (a declared
+// peg's SAC wrapper) fill only a bucket no established spelling answered:
+// merged into a book-backed bucket, one $0.60 Soroban print moved a real
+// bar's high by +37%. Gating per bucket, not per response, keeps a day
+// rendering the same whatever window it is read in; see
+// [docs/architecture/aggregation-plan.md §"The direction fold"] §7.5.
 //
-// A bar states its own scale rather than having one guessed from its pair
-// spelling: [OHLCSeriesBar.Sources] carries the CAGG's own
-// `array_agg(DISTINCT source)` column. Spelling is not scale — the
-// registry itself records that on-chain venues stamp at the ASSET decimals
-// — so inferring 7 from a classic quote id would be a guess that happens
-// to hold today.
-//
-// REACH. The constituents come in two sets. The established spellings —
-// the aggregator's own source set — are combined unconditionally. The
-// held-back ones, a declared peg's SAC
-// wrapper, are read too, but a held-back bar is admitted ONLY into a
-// bucket no established spelling answered. That gate is what makes the
-// widening safe rather than merely wider:
-//
-//   - A bucket the book answered is untouched. A held-back bar is not
-//     down-weighted there, it is not there at all, so the per-bucket
-//     max/min and the per-bucket sums cannot see it. Merged instead, one
-//     $0.60 Soroban print moved a real r1 bar's high by +37.32% against
-//     660 book prints, and the launch plan's own measured shape — a
-//     100-print book over 6,000,000 units beside a two-print pool —
-//     served n=102 with high 0.50 and low 0.01.
-//   - A bucket nothing established answered is filled from the pool
-//     rather than reported as quiet, which is the whole point: 43 assets
-//     on r1 have USD depth under the USDC SAC and under no spelling the
-//     expansion names.
-//
-// Per BUCKET and not per response, because the alternative makes the
-// constituent set a function of the WINDOW: the same day would render
-// one way inside a window the book also covers and another way inside
-// one it does not. See [docs/architecture/aggregation-plan.md §"The direction fold"]
-// §7.5 for the decision and the measurement behind it.
-//
-// Each constituent read goes through the cached HistoryReader, so repeat
-// requests hit the per-pair cache.
-// The bool return is `proxied` — true when at least one bar that
-// actually contributed to the response came from a constituent whose
-// own quote leg differs from `pair.Quote` (a peg's classic/SAC form, or
-// a stablecoin backer), mirroring [Server.mergeConstituentTrades]'
-// `proxied` on the point path. It drives `flags.triangulated`.
+// Reads go through the cached HistoryReader. The bool is `proxied`: some
+// contributing bar's quote leg differs from `pair.Quote`, as in
+// [Server.mergeConstituentTrades]; it drives `flags.triangulated`.
 func (s *Server) ohlcSeriesFiatCombined(
 	ctx context.Context,
 	pair canonical.Pair,

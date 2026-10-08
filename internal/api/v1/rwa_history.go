@@ -22,63 +22,27 @@ import (
 // GET /v1/rwa/history — the tokenized-real-world-asset set valued over
 // time, on the reference basis.
 //
-// # What this series is, and the one thing it is not
+// It is the reference valuation of /v1/rwa/assets over time, not its
+// market cap: most of the set is held to maturity and never trades, so a
+// market series would chart a small overlap under a sector headline.
+// Per-asset market-cap history is /v1/chart?price_type=market_cap.
 //
-// /v1/rwa/assets publishes two totals over the set: a MARKET CAP, summed
-// from prices buyers were observed paying, and a REFERENCE VALUATION,
-// summed from what independent oracles say the underlying instruments
-// are worth. This surface is the second of those over time, and it is
-// deliberately not the first. Most of the set is held to maturity and
-// has never traded — the market-cap total covers a handful of rows while
-// the reference total covers nearly all of them — so a market series
-// would be a chart of the small overlap, drawn under a headline about
-// the sector. A per-asset market-cap history already exists for the rows
-// that do trade, at /v1/chart?price_type=market_cap.
+// A member's daily value is circulating supply × the day's closing oracle
+// value. Supply is cumulated from the lake's append-only mint/burn/
+// clawback log (`stellar.supply_flows`, keyed on the SAC address); the
+// log records every level change, so carrying it across a silent day is
+// arithmetic. Price comes from `oracle_prices_1d` (`rwa:<CODE>` /
+// `fiat:USD`) and is never carried: a silent oracle day drops that member
+// and shows in `assets_valued`. A day with no valued member has no point,
+// because a zero cannot say whether it means worthless or unseen.
 //
-// # The two legs, and why only one of them may be carried forward
+// Supply is not read from `supply_1d`: it rolls up only the operator's
+// `watched_classic_assets`, which holds no RWA issuer, so it would chart
+// an empty sector.
 //
-// A day's value for one member is `circulating supply × the day's
-// closing oracle value of the instrument`. The legs come from different
-// stores and have different rights:
-//
-//   - SUPPLY comes from the lake's append-only mint/burn/clawback log
-//     (`stellar.supply_flows`, keyed on the asset's deterministic SAC
-//     address), cumulated from the contract's first flow. Because the
-//     log records EVERY event that can move the level, a day with no row
-//     is a day the supply did not change — not a day it was not
-//     observed. Carrying the running total across it is arithmetic.
-//
-//   - PRICE comes from the `oracle_prices_1d` continuous aggregate
-//     (migration 0034), keyed `rwa:<CODE>` / `fiat:USD`. It is an
-//     observation of a quantity that moves on its own, so a day the
-//     oracle was silent is a GAP. The member contributes nothing that
-//     day, the point says so in `assets_valued`, and no value is
-//     invented for it.
-//
-// A day on which NO member can be valued produces NO POINT AT ALL. The
-// series has holes in it rather than zeros, for the reason every money
-// surface here withholds rather than defaults: a reader cannot tell a
-// zero that means "worthless" from a zero that means "we could not see".
-//
-// # Why the supply leg is not supply_1d
-//
-// `supply_1d` is the CAGG the crypto market-cap chart uses, and it is
-// the obvious candidate. It holds nothing for this set: it rolls up
-// `asset_supply_history`, which the aggregator writes only for the
-// operator-curated `watched_classic_assets` list (USDC, EURC, AQUA,
-// yXLM, VELO, BLND, PHO, KALE), and no RWA issuer is on it. Reading it
-// here would have produced an empty chart that looked like a finding
-// about the sector rather than a gap in a watch list.
-//
-// # Membership is today's, applied backwards
-//
-// The set is rebuilt from TODAY's SEP-1 attestations and TODAY's curated
-// directory. An asset that qualifies now is valued back to its first
-// flow, and an asset that would have qualified last year but does not
-// now is absent for the whole window. This is stated on the wire
-// (`membership_as_of`, and the `basis` prose) rather than left for a
-// reader to assume, because the alternative — reconstructing membership
-// per day — needs an attestation history the index does not keep.
+// Membership is today's SEP-1 attestations and curated directory, applied
+// to the whole window, and says so in `membership_as_of` and `basis`; a
+// per-day membership would need an attestation history we do not keep.
 
 // rwaHistoryTTL bounds the reuse of one assembled history.
 //
