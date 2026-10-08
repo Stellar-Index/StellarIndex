@@ -1,6 +1,6 @@
 ---
 # API-plane security tripwires. Currently one: the CORS wildcard-in-prod
-# guard (F-1244).
+# guard.
 #
 # stellarindex_api_cors_decisions_total (internal/obs/metrics.go) counts
 # every per-request CORS decision by outcome (no_origin | allowed_origin |
@@ -18,7 +18,7 @@ groups:
       # actually matched it — not merely that the policy is set. This
       # tree (configs/prometheus/rules.r1) is the r1 production tree, so
       # any non-zero rate here is a wildcard CORS policy live in prod,
-      # which is incompatible with credentialed auth_mode (F-1244).
+      # which is incompatible with credentialed auth_mode.
       - alert: stellarindex_api_cors_wildcard_in_prod
         expr: |
           sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m])) > 0

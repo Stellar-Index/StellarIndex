@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
 # gcr.io/distroless/static-debian12:nonroot` (multi-platform index digest).
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=builder /out/stellarindex-migrate /usr/local/bin/stellarindex-migrate
-# F-1227 (codex audit-2026-05-12): the migrate binary defaults
+# The migrate binary defaults
 # `-migrations migrations`, so a runtime image that copies only the
 # binary cannot apply schema out of the box — `stellarindex-migrate
 # up` exits with "open migrations: no such file or directory" before

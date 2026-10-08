@@ -91,7 +91,7 @@ groups:
       # durable freeze_events rows once the Redis marker TTL elapses.
       # When it stalls, the explorer /anomalies timeline shows
       # resolved freezes as still-firing — silent quality regression
-      # rather than an outage. F-1229.
+      # rather than an outage.
       - alert: stellarindex_anomaly_freeze_recovery_stalled
         expr: |
           stellarindex_anomaly_freeze_active > 0
