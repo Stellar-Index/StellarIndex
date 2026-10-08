@@ -1520,65 +1520,33 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 // callers translate that to the API's price-not-found problem or
 // fall back to the latest-trade path.
 func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (Vwap1mRow, error) {
-	// Combine BOTH stored directions of the market into the requested
-	// orientation. The SDEX decoder records the same market both ways
-	// (XLM/USDC and USDC/XLM), so reading only (base=$1, quote=$2) used half
-	// the liquidity — and returned ErrNoRows if the latest minute happened to
-	// trade only the flipped way. We read both, and for the flipped rows
-	// invert the vwap (1/vwap) so every row expresses the price of $1 in $2,
-	// then trade-count-weight them within the latest closed bucket.
-	// Closed-bucket-only (ADR-0015) is preserved, and the combine is
-	// deterministic across regions. Find the latest closed bucket via the
-	// (base,quote,bucket DESC) index — one fast max() per direction, UNIONed —
-	// then point-read + combine just that bucket's 1-2 rows.
+	// Combine BOTH stored directions of the market: the SDEX decoder records
+	// XLM/USDC and USDC/XLM, so one direction alone halves the liquidity and
+	// misses a minute that traded only the flipped way. Flipped rows are
+	// inverted (1/vwap) and trade-count-weighted within the latest closed
+	// bucket (ADR-0015).
 	//
-	// PERF (two layers, both required):
+	// PERF (both layers required):
 	//
-	//  1. The "closed bucket" predicate MUST be `bucket <= now() - 1min`, NOT
-	//     `bucket + 1min <= now()`. The latter is a function on the indexed
-	//     `bucket` column → non-sargable → max() runs a per-chunk partial
-	//     aggregate over the WHOLE history. The sargable form lets max() read
-	//     the newest chunk via the index (446ms → 26ms execution).
-	//  2. That still left ~280ms of PLANNING time: prices_1m has ~374 chunks,
-	//     and `now()` is only known at RUN time, so TimescaleDB does runtime
-	//     (startup) chunk exclusion — the PLANNER still enumerates all 374
-	//     chunks. We add a LITERAL recent lower bound (`bucket >= <cutoff>`,
-	//     cutoff computed in Go) so the planner excludes old chunks at PLAN
-	//     time, collapsing planning to ~2ms. The literal is our own UTC
+	//  1. The closed-bucket predicate MUST be `bucket <= now() - 1min`, not
+	//     `bucket + 1min <= now()`; a function on the indexed column makes
+	//     max() scan every chunk (446ms → 26ms).
+	//  2. `now()` is only known at run time, so the planner still enumerates
+	//     all ~374 chunks (~280ms planning). A LITERAL lower bound computed in
+	//     Go excludes old chunks at plan time (~2ms). It is our own UTC
 	//     timestamp — no injection surface.
 	//
-	// A single bounded query — NO unbounded fallback. A two-tier
-	// (bounded → unbounded) form would make the no-data case slow: the
-	// handler reads native/fiat:USD as an alias on every XLM query, that
-	// synthetic pair has zero rows, so the bounded miss would fall through
-	// to the slow all-chunk scan finding nothing. A pair with no closed
-	// bucket in the window returns ErrNoRows, which the price handler
-	// already resolves via its Redis-triangulation / last-trade fallback
-	// chain — the right path for a synthetic pair, and the honest answer
-	// for a genuinely-dead asset (a stale "latest" is not a current price).
+	// No unbounded fallback: the handler probes native/fiat:USD on every XLM
+	// query, and that synthetic pair has zero rows, so a fallback would make
+	// every miss an all-chunk scan. ErrNoRows sends the handler to its
+	// triangulation / last-trade chain instead.
 	//
-	// Empty aliases: the two layers above make the EMPTY pair cheap only
-	// WARM. The value walk's max() arms still have to PROVE emptiness
-	// across the whole (generous, ~400-day) literal window — min/max
-	// short-circuits when a matching row exists, but a truly-empty
-	// (base,quote) forces touching every chunk in the window to conclude "no
-	// rows". COLD (post-ARC-eviction, decompressing hundreds of old chunks)
-	// that is minutes, not milliseconds, and /v1/price?asset=native would
-	// time out on the native/fiat:USD alias probe BEFORE the fast
-	// crypto:XLM/fiat:USD alias was ever tried. So gate the value walk
-	// behind a cheap recent-existence probe bounded to the last
-	// latestVWAPGateWindow: a populated pair short-circuits at the first
-	// row (one recent chunk); a truly-empty pair proves emptiness over
-	// only ~2 weeks of recent (hot, mostly-uncompressed) chunks and
-	// returns ErrNoRows. The gate — NOT the value walk's window — is the
-	// freshness horizon: a pair with no closed 1-minute bucket in a
-	// fortnight is not "currently priced", and the handler's fallback
-	// chain surfaces its last trade with an honest observed_at. Reordering
-	// the handler's aliases can't fix this (it just moves the empty walk
-	// onto the SDEX native/<asset> pairs); the gate makes the empty case
-	// cheap for EVERY pair. On a gate HIT the value walk below is the same
-	// ungated walk (combined-direction, literal-cutoff pruned) and returns
-	// the same recent bucket it would without the gate.
+	// Proving a pair EMPTY still touches every chunk in the ~400-day window,
+	// which is minutes COLD. So a cheap existence probe over
+	// latestVWAPGateWindow (~2 weeks of hot chunks) runs first. The gate is
+	// the freshness horizon: no closed bucket in a fortnight is not "currently
+	// priced". On a gate hit the value walk returns the same bucket it would
+	// without the gate.
 	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
 	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
 	if err != nil {

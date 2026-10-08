@@ -376,61 +376,31 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // Stellar code (no Stellar issuance, or a Soroban-only one), keyed on its
 // ticker.
 //
-// Such an entry never enters indexStellarEntries' issuance loop, so its
-// ticker never reached byStellarCode and StellarCollision could not speak
-// about it. That is the same gap the native-XLM branch closes, and it is
-// much wider: it covers every `reference_only` entry (USDT, BTC, ETH,
-// SOL, BNB, XRP, ADA, DOGE, AVAX, POL, DOT, LINK, UNI, AAVE, WBTC).
+// Such an entry never enters indexStellarEntries' issuance loop, so without
+// this StellarCollision could not speak about it. That gap covers every
+// `reference_only` entry (USDT, BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX,
+// POL, DOT, LINK, UNI, AAVE, WBTC): byStellarCode would hold only 11 keys,
+// and `?code=XRP` would return hundreds of rows with none flagged. No
+// legitimate classic asset can bear a ticker verified as an off-Stellar
+// asset, so EVERY classic `USDT-G…` is an impersonator.
 //
-// Without it, byStellarCode would hold only 11 keys, so those would be the
-// ONLY codes an impersonation could ever be reported for, and a query like
-// `?code=XRP` would return hundreds of rows with none flagged.
+// A legitimately-anchored wrapper gets no ticker allowlist — that would
+// reopen this exact vector (internal/currency is hand-vetted; see
+// docs/architecture/domain-traps.md). Instead add the issuance as a
+// `network: stellar` entry on the SAME seed.yaml entry: indexStellarEntries
+// then indexes it as the verified issuer and this function is never
+// reached. Until then, flagging all bearers is the fail-closed default.
 //
-// The reasoning is the native-XLM one: no legitimate classic asset can
-// bear a ticker this catalogue has verified as belonging to an
-// off-Stellar ASSET, so EVERY classic `USDT-G…` is by construction an
-// impersonator and every issuer is the right answer to report.
-//
-// Policy for a legitimately-anchored wrapper (DOM-02): there is no separate
-// anchor allowlist, and there must not be one — internal/currency is a
-// hand-vetted trust surface (docs/architecture/domain-traps.md: adding a
-// currency is a code change; never auto-populate it) and an allowlist keyed on ticker alone would
-// reopen exactly the impersonation vector this function closes. The
-// mechanism is the one already used for every other reclassification: if
-// an anchor issues a genuine bridged/wrapped form of a ticker-only entry
-// (e.g. a regulated WBTC issuance) on Stellar, add that issuance as a
-// `network: stellar` entry on the SAME catalogue entry in seed.yaml.
-// indexStellarEntries then indexes it into byStellarCode as the verified
-// issuer before this function ever runs (`indexed` is only false, and this
-// function only reached, when the entry has NO Stellar issuance yet), so
-// the wrapper becomes the answer StellarCollision reports instead of an
-// impersonation target. Until that code change lands, every classic asset
-// bearing the ticker has no verified issuer to be a legitimate instance of,
-// so flagging all of them is the fail-closed, correct default.
-//
-// A SOVEREIGN CURRENCY is the one kind of entry that reasoning does not
-// reach, so ClassFiat lands in byFiatCode instead. USDT, XRP and
-// BTC each name a token somebody issues somewhere, and a classic
-// `USDT-G…` claims to be that token. `USD` names a unit of account
-// nobody issues — the catalogue's own fiat entries carry `networks: []`
-// and an M2 supply, and External() routes them off the Stellar listing
-// entirely. On Stellar the ISO code is how SEP-1 tells an anchor to
-// denominate a deposit token (`anchor_asset_type: fiat`,
-// `anchor_asset: USD`, classic code `USD`), so a regulated anchor
-// issuing `USD-G…` is following the spec, not impersonating the dollar
-// — and there is no verified issuer for it to be mistaken for, because
-// the entry has none. Reporting it as an impersonation cost every such
-// anchor its market cap, its listing valuation and a warning saying its
-// code "matches a well-known asset that has NO verified issuance on
-// Stellar" — said of a dollar token, about the dollar.
-//
-// Nothing is dropped from the catalogue's reach by this: the code stays
-// answerable through FiatDenomination, and a fiat entry that ever GAINS
-// a verified Stellar issuance is indexed by the loop above and collides
-// like any other verified code. What a fiat-coded classic asset gets
-// instead is the treatment every other uncatalogued classic asset gets
-// — the issuer directory, the scam tags and the substance gate, which
-// are the mechanisms that actually judge an anchor.
+// A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode.
+// `USD` names a unit of account nobody issues (fiat entries carry
+// `networks: []`), and SEP-1 tells an anchor to denominate a deposit token
+// by its ISO code (`anchor_asset_type: fiat`, `anchor_asset: USD`). A
+// regulated `USD-G…` is following the spec, not impersonating the dollar;
+// flagging it cost such anchors their market cap, listing valuation and a
+// false impersonation warning. The code stays answerable through
+// FiatDenomination, a fiat entry that gains a verified Stellar issuance
+// collides like any other, and a fiat-coded classic asset is judged by the
+// issuer directory, scam tags and substance gate like any uncatalogued one.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {
