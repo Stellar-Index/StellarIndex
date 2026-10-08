@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# promtail-listen-address-test.sh — pins T573/T594: the archival-node
+# promtail-listen-address-test.sh — pins that the archival-node
 # role's rendered promtail config (and its r1 hand-installed twin)
 # set `http_listen_port: 9080` / `grpc_listen_port: 0` with no
 # `http_listen_address` / `grpc_listen_address`, so dskit/weaveworks

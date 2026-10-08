@@ -1,5 +1,5 @@
 {% set drift_live = ch_schema_drift_use_live | default(true) | bool %}
-# systemd timer: daily ClickHouse schema drift check (C6-008/C6-003).
+# systemd timer: daily ClickHouse schema drift check.
 #
 # Rendered by Ansible. Enabled by default for the same reason the
 # snapshot timer is: it costs a loopback SHOW CREATE sweep and a fraction

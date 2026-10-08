@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// TestInProcess_LimitsWhenRedisNil is the C3-13 / C3-22 regression: a
+// TestInProcess_LimitsWhenRedisNil is the nil-Redis regression: a
 // Bucket built with a nil Redis client must STILL enforce the limit
 // (omitting the limiter entirely would leave the API
 // uncapped). The Nth+1 request inside the window is rejected.

@@ -81,8 +81,8 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to
 # whatever the archive contained at run-launch.
-# Routed through run-heavy-job.sh for the per-job singleton lock (C4-14 /
-# INF-11): this is the longest heavy job (~13.8h first pass), so a slow run
+# Routed through run-heavy-job.sh for the per-job singleton lock:
+# this is the longest heavy job (~13.8h first pass), so a slow run
 # is the most likely to still be going when the next timer fires. The wrapper
 # runs as User=stellarindex (non-root) so it takes the lock then `exec`s the
 # binary in place — the payload stays the unit's MAIN pid, keeping Type=notify

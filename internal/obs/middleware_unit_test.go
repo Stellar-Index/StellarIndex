@@ -42,7 +42,7 @@ func TestNormalizeMethod(t *testing.T) {
 }
 
 // TestNormalizeMethod_CardinalityIsBounded is the regression proof for
-// W4-obs-1: an attacker sending many distinct junk method tokens must NOT
+// label cardinality: an attacker sending many distinct junk method tokens must NOT
 // be able to mint one metric-label child per token. Every unknown verb —
 // however many distinct ones — must map to the single "other" bucket.
 func TestNormalizeMethod_CardinalityIsBounded(t *testing.T) {

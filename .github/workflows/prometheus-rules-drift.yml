@@ -1,6 +1,6 @@
 name: prometheus-rules-drift
 
-# T677: the only codified≠live check for Prometheus rules ran at deploy
+# The only codified≠live check for Prometheus rules ran at deploy
 # time — ci.yml's `apply-rules.sh --check-only` validates the repo's own
 # copy (PR-time, no live host involved) and deploy.yml's apply step
 # verifies the rules it JUST installed. Neither catches drift that

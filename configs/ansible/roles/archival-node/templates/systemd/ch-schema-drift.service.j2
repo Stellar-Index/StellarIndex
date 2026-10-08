@@ -1,5 +1,5 @@
 {% set drift_live = ch_schema_drift_use_live | default(true) | bool %}
-# systemd unit: ClickHouse schema DRIFT check (C6-008/C6-003).
+# systemd unit: ClickHouse schema DRIFT check.
 #
 # Rendered by Ansible. Runs /usr/local/bin/ch-schema-drift.sh, which
 # compares the repo's founding lake DDL (deploy/clickhouse/tier1_schema.sql)

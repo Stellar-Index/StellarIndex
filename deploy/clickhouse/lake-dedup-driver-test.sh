@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lake-dedup-driver-test.sh — fixture tests for the two fail-open guards
-# in deploy/clickhouse/lake-dedup-driver.sh (audit T429).
+# in deploy/clickhouse/lake-dedup-driver.sh.
 #
 # clickhouse-client and df are STUBBED (fake-ch / fake-df, dropped in a
 # throwaway PATH dir), so this runs anywhere in under a second and never
@@ -285,7 +285,7 @@ fi
 # not a toYYYYMM(ingested_at) proxy — a partition spanning two ingest
 # months with zero actual duplicate rows must not be flagged, and one
 # with duplicates inside a single ingest month must be. Both are the
-# same defect (T340/T357): a months-based proxy gets each case wrong.
+# same defect: a months-based proxy gets each case wrong.
 run real_dup_probe SORTKEY_ANSWER='ledger_seq, tx_index' ENUM_PARTS=$'0000000003\n' -- transactions
 if grep -q 'uniqExact((ledger_seq, tx_index))' "$LOG_STMT"; then
   ok "candidate query measures real duplicates via the table's own ORDER BY key"

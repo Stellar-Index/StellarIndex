@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-healthcheck-oneshot-timeout-test.sh — fixture tests for the
-# oneshot start bound gate (scripts/ci/lint-healthcheck-oneshot-timeout.sh, T592).
+# oneshot start bound gate (scripts/ci/lint-healthcheck-oneshot-timeout.sh).
 #
 # A Type=oneshot unit re-armed by a .timer that hangs with no
 # TimeoutStartSec blocks every future scheduled run forever, invisibly;
