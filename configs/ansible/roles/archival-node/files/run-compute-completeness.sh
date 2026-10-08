@@ -28,7 +28,7 @@
 #      never blocked by the CS-083 write guard (the low-tip substrate flap a
 #      chunked run could never clear). The tool still refuses to REGRESS an
 #      advanced verdict (CS-083 monotonic-tip guard) and never upgrades a failing
-#      verdict without a full re-verify (INV-5).
+#      verdict without a full re-verify.
 #
 # Same DSN sourcing as compute-archive-to.sh (peer-auth fails under systemd's
 # restricted user-switch context).

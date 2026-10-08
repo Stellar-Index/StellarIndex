@@ -39,7 +39,7 @@ Environment=HEAVY_JOB_CLASS=scheduled
 # 12h wait above covers it.
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
-# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# De-privileged — the stellarindex user is
 # created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the
 # loopback only; writes nothing to disk.
 User=stellarindex

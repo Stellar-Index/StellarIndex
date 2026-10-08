@@ -118,7 +118,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP} \
   -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
 
-# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# De-privileged — the stellarindex user is
 # created by 04-users.yml (CS-119). Reads the archive via S3 (network)
 # and writes only the state file under /var/lib/stellarindex, which is
 # stellarindex-owned (04-users.yml).

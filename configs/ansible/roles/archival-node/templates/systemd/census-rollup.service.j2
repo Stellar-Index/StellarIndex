@@ -44,7 +44,7 @@ ProtectControlGroups=true
 TimeoutStartSec=30min
 
 # Memory ceiling — the day GROUP BY spills externally at 4GB (SETTINGS
-# in the job SQL); host-level backstop per the 2026-07-05 wedge class.
+# in the job SQL); host-level backstop per the swap-wedge class.
 MemoryMax=4G
 MemorySwapMax=0
 CPUWeight=25
