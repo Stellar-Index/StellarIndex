@@ -69,33 +69,21 @@ func (h *HoldingsScanner) Close() error {
 // trustlineAssetsPageQuery is one page of the walk, keyset-paginated on
 // the asset string.
 //
-// WHY NO FINAL. ledger_entries_current is a ReplacingMergeTree whose FINAL
-// resolves each (entry_type, key_xdr) to its highest-version row. This
-// query groups on `asset` and takes min/max over `ledger_seq`, so the
-// duplicate versions FINAL would collapse are folded by the GROUP BY
-// anyway. Dropping FINAL removes the read-time merge — the single most
-// expensive thing about scanning this table — for an answer that differs
-// only in the direction of MORE evidence: every row present, superseded or
-// not, is a ledger at which a trustline for this asset genuinely existed.
-// max() is merge-invariant (the surviving row is the max-version one).
-// min() is not — an unmerged older version can lower it — but the writer
-// takes LEAST across runs, so successive scans can only move first_seen
-// EARLIER, converging toward the truth instead of oscillating.
+// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`,
+// so the duplicate versions FINAL would collapse are folded by the GROUP BY
+// anyway, and the read-time merge is the most expensive part of scanning this
+// table. The answer differs only toward MORE evidence: any row present,
+// superseded or not, is a ledger at which a trustline existed. max() is
+// merge-invariant; min() is not, but the writer takes LEAST across runs, so
+// first_seen can only move EARLIER, converging on the truth.
 //
-// WHY NO change_type FILTER. The holders rollup beside this one excludes
-// `removed` because it is answering "who holds this now". This one is
-// answering "does this asset exist", and a deleted trustline is still
-// proof that it did. An asset whose every holder has since closed their
-// line stays in the registry, which is correct: it existed, it has a
-// history, and its issuer is still worth attesting.
+// NO change_type FILTER: this answers "does this asset exist", and a deleted
+// trustline is still proof it did (the holders rollup excludes `removed`
+// because it answers "who holds this now").
 //
-// WHY THE SPILL SETTINGS ARE INHERITED, NOT RESTATED. [openRead] already
-// sets max_bytes_before_external_group_by and max_bytes_before_external_sort.
-// This query deliberately does NOT set optimize_aggregation_in_order:
-// beside an external-group-by threshold that setting CANCELS the spill
-// valve, and an aggregation that was going to spill becomes an OOM
-// instead. There is nothing to gain from it here either — `asset` is not
-// in the table sort key, so no aggregation order exists to exploit.
+// Spill settings are inherited from [openRead]. Do NOT set
+// optimize_aggregation_in_order here: beside an external-group-by threshold
+// it CANCELS the spill valve and turns a spill into an OOM.
 const trustlineAssetsPageQuery = `
 	SELECT asset,
 	       min(ledger_seq) AS first_ledger,
@@ -137,24 +125,18 @@ func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, erro
 // TrustlineAssetsAfter returns up to `limit` distinct classic assets whose
 // asset string sorts strictly after `after`, in ascending asset order.
 //
-// The walk is keyset-paginated rather than offset-paginated so a resumed
-// run re-enters exactly where the previous one stopped, and so the page a
-// caller gets does not shift under concurrent ingest. Pass "" for the
-// first page; pass the last Asset of page N for page N+1. An empty result
-// means the walk is complete.
+// Keyset- rather than offset-paginated so a resumed run re-enters exactly
+// where the previous one stopped. Pass "" for the first page and the last
+// Asset of page N for page N+1; an empty result means the walk is complete.
 //
-// entry_type is the FIRST column of the table sort key, so the
-// `entry_type = 'trustline'` predicate prunes granules rather than
-// filtering rows — which is what makes paging affordable at all. Each page
-// still re-aggregates the trustline range (the LIMIT cannot stop an
-// aggregation early), so `limit` trades passes against per-pass memory:
-// bigger pages mean fewer passes.
+// entry_type is the FIRST sort-key column, so the `entry_type = 'trustline'`
+// predicate prunes granules. Each page still re-aggregates the trustline
+// range, so bigger pages mean fewer passes at more memory per pass.
 //
-// Native XLM and pool-share trustlines are excluded in SQL because they
-// have no (code, issuer) identity — the registry is keyed on one. The two
-// exact-match predicates cover the two spellings TrustLineAssetID emits,
-// the `pool:<hex>` form and the bare `pool` fallback, without also
-// matching a real credit asset code that happens to start with "pool"
+// Native XLM and pool-share trustlines are excluded in SQL: they have no
+// (code, issuer) identity. The two exact-match predicates cover the
+// `pool:<hex>` form and the bare `pool` fallback without matching a real
+// credit asset code starting with "pool" (codes are case-sensitive).
 // (asset codes are case-sensitive and "poolX" etc. are valid).
 func (h *HoldingsScanner) TrustlineAssetsAfter(ctx context.Context, after string, limit int) ([]TrustlineAssetSeed, error) {
 	if limit <= 0 {

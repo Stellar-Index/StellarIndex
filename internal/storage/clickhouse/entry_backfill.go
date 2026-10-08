@@ -50,21 +50,13 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		LedgerSeq: uint32(post.LastModifiedLedgerSeq), //nolint:gosec // ledger seq fits uint32
 		CloseTime: closeTime,
 		OpIndex:   -1,
-		// ChangeIndex MUST be per-key unique within a ledger_seq: the
-		// table is ReplacingMergeTree ORDER BY (ledger_seq, tx_hash,
-		// op_index, change_index), and snapshot rows all share
-		// tx_hash="" + op_index=-1. With ChangeIndex=0 every snapshot
-		// entry modified in the same ledger collapsed to ONE arbitrary
-		// survivor at merge time — the site audit measured
-		// >55% of the 48M-entry Phase-C snapshot already destroyed
-		// (blast radius: account-state, trustline, supply, and wasm
-		// readers). crc32(key) is deterministic, so re-runs stay
-		// idempotent per key instead of duplicating — but a 32-bit
-		// checksum still collides between two DIFFERENT keys sharing a
-		// ledger_seq often enough in a multi-million-row backfill to
-		// reproduce the same collapse. This is only the BASE value:
-		// InsertEntryChanges resolves any residual collision across the
-		// whole write batch before it reaches ClickHouse.
+		// ChangeIndex MUST be per-key unique within a ledger_seq: the table is
+		// ReplacingMergeTree ORDER BY (ledger_seq, tx_hash, op_index,
+		// change_index) and snapshot rows share tx_hash="" + op_index=-1, so a
+		// constant would collapse every same-ledger entry to ONE survivor.
+		// crc32(key) is deterministic (idempotent re-runs) but only the BASE
+		// value: InsertEntryChanges resolves residual 32-bit collisions across
+		// the write batch.
 		ChangeIndex: crc32.ChecksumIEEE([]byte(keyB64)),
 		ChangeType:  "state",
 		EntryType:   entryTypeName(post.Data.Type),
@@ -94,19 +86,16 @@ const entryBackfillChunk = 20_000
 // InsertEntryChanges batch-inserts rows directly into
 // stellar.ledger_entry_changes, bypassing the Sink's per-ledger commit-marker
 // flow: it writes NO stellar.ledgers row, so it never advances the completeness
-// watermark (which keys off a ledgers row meaning "this ledger is fully
-// durable"). That makes it the correct path for backfilling historical /
-// snapshot entries — e.g. the state-snapshot contract-code + instance backfill
-// (DATA-TRUTH-PLAN G1) — into the append-log the WASM + account-state readers
-// query (and which the ledger_entries_current MV folds into current state).
-// Idempotent under the table's ReplacingMergeTree. Returns the number written.
-// throttle is a pause between chunks — keep it non-zero for large backfills so
-// the insert + the ledger_entries_current MV don't spike the live serving CH.
+// watermark. That makes it the correct path for backfilling snapshot entries
+// into the append-log the WASM + account-state readers query. Idempotent under
+// the table's ReplacingMergeTree. Returns the number written. throttle is a
+// pause between chunks; keep it non-zero for large backfills so the insert and
+// the ledger_entries_current MV don't spike the live serving CH.
 //
 // Resolves any ChangeIndex collision across the whole batch before writing
-// (resolveChangeIndexCollisions) — SnapshotEntryRow's crc32(key) base value is
-// only collision-free in the common case; this is the chokepoint that makes
-// it collision-free in fact for every row that reaches ClickHouse.
+// (resolveChangeIndexCollisions): SnapshotEntryRow's crc32(key) base value is
+// only collision-free in the common case, and this is the chokepoint that
+// makes it so for every row reaching ClickHouse.
 func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChangeRow, throttle time.Duration) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -183,18 +172,14 @@ func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerE
 const maxChangeIndexProbeAttempts = 1 << 20
 
 // resolveChangeIndexCollisions makes ChangeIndex unique within every
-// (ledger_seq, tx_hash, op_index) group in rows — the exact tuple prefix the
+// (ledger_seq, tx_hash, op_index) group in rows — the tuple prefix the
 // table's ReplacingMergeTree ORDER BY shares change_index with. A 32-bit
-// crc32(key) base value collides between two DIFFERENT keys often enough in a
-// multi-million-row backfill (site audit, SnapshotEntryRow's doc
-// comment) to silently drop one of them at merge time.
+// crc32(key) base value collides between different keys often enough in a
+// multi-million-row backfill to silently drop one at merge time.
 //
-// Colliding rows within a group are walked in KeyXDR-sorted order — never
-// arrival order — and re-hashed with an incrementing salt until free. Sorting
-// by key means the outcome depends only on the SET of keys sharing the group,
-// so re-running the same rows in any order (an interrupted backfill resumed)
-// resolves to the same final indices and stays idempotent rather than
-// duplicating.
+// Colliding rows are walked in KeyXDR-sorted order, never arrival order, and
+// re-hashed with an incrementing salt until free, so the outcome depends only
+// on the SET of keys in the group and a resumed backfill stays idempotent.
 func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
 	type groupKey struct {
 		ledgerSeq uint32

@@ -100,28 +100,15 @@ func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolID
 // aggregate over the `liquidity_pool` entry_type (~40k pools, ~0.07s on
 // r1); callers cache the ranked result rather than re-scan per request.
 func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]NativeLiquidityPoolState, error) {
-	// argMax over the ReplacingMergeTree versions (manual dedup —
-	// cheaper than FINAL for a whole-prefix scan), latest entry per pool.
+	// argMax over the ReplacingMergeTree versions (manual dedup — cheaper
+	// than FINAL for a whole-prefix scan), latest entry per pool. The
+	// trailing removal (empty entry_xdr) is dropped by `HAVING e != ''`.
 	//
-	// Version key: `version` where the D3 reproject has run, else
-	// `ledger_seq`.
-	//
-	// site-audit S3: this query hard-coded `version`, a column that does not
-	// exist on R1's pre-D3 table, so /v1/liquidity-pools 500'd on 100% of
-	// requests ("Unknown identifier `version`"). `version` is the
-	// (ledger_seq<<32)|intra_ledger_seq RMT version that
-	// deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (D3)
-	// introduces to disambiguate same-ledger changes. D3 is
-	// freeze-gated and runs after D2, so the served table is still
-	// ReplacingMergeTree(ledger_seq) with no such column — while CI's
-	// ClickHouse has the post-D3 schema.
-	//
-	// Probing (once per process) makes the query correct on both: `version`
-	// gives true same-ledger-last-wins resolution where it exists;
-	// `ledger_seq` matches the pre-D3 engine exactly and carries the same
-	// same-ledger-tie limitation FINAL already has there. When D3 lands on
-	// R1 the probe flips and pools get it automatically, no code change.
-	// The trailing removal (empty entry_xdr) is dropped by `HAVING e != ''`.
+	// Version key: `version` ((ledger_seq<<32)|intra_ledger_seq, from
+	// ledger_entries_current_intra_ledger_seq.sql) where that schema is
+	// applied, else `ledger_seq`. The column is absent on the pre-D3 served
+	// table, so it is probed once per process; hard-coding it 500s the
+	// endpoint.
 	versionKey := "ledger_seq"
 	if r.ledgerEntriesVersioned(ctx) {
 		versionKey = "version"

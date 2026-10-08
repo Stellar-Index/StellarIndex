@@ -9,35 +9,25 @@ import (
 )
 
 // txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window
-// INSERT…SELECT. FINAL on the source read stellar.transactions
-// is ReplacingMergeTree(ingested_at), so a window that has already seen a
-// re-ingest (retry, or a decode-fix re-derive) can hold un-merged duplicate
-// PARTS for the same (ledger_seq, tx_index) key; without FINAL, this INSERT…
-// SELECT would enqueue BOTH — including, on a genuine correction, the STALE
-// tx_hash alongside the corrected one — into stellar.tx_hash_index,
-// which is itself keyed on tx_hash and just as exposed to the same
-// ingested_at-tie ambiguity documented on txByLedgerAndHash. Cheap here: this
-// is an operator-run backfill (not a per-request path) and FINAL is bounded
-// by the SAME `ledger_seq >= ? AND ledger_seq <= ?` window predicate that
-// already caps this function's per-iteration work — no new full-scan.
-// The ARRAY JOIN indexes a fee bump's inner hash beside its outer one, the
-// backfill twin of tx_hash_index_inner_mv.
+// INSERT…SELECT. FINAL on the source read: stellar.transactions is
+// ReplacingMergeTree(ingested_at), so a re-ingested window can hold un-merged
+// duplicate PARTS, and without FINAL the INSERT would enqueue the STALE
+// tx_hash beside the corrected one into stellar.tx_hash_index (same
+// ingested_at-tie ambiguity as txByLedgerAndHash). FINAL is bounded by the
+// `ledger_seq` window predicate. The ARRAY JOIN indexes a fee bump's inner
+// hash beside its outer one, the backfill twin of tx_hash_index_inner_mv.
 const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
 	SELECT h, ledger_seq, tx_index FROM stellar.transactions FINAL
 	ARRAY JOIN arrayFilter(x -> x != '', [tx_hash, inner_tx_hash]) AS h
 	WHERE ledger_seq >= ? AND ledger_seq <= ?`
 
 // BackfillTxHashIndex fills stellar.tx_hash_index (the hash-ordered
-// GET /v1/tx/{hash} lookup table, perf-todo §4) from stellar.transactions in
-// inclusive [from, to] ledger windows of `window` ledgers each — one
-// server-side INSERT…SELECT per window. Windowing is what makes the 10.2B-row
-// full-history fill operable on r1: each window is bounded work, progress is
-// reported after every window with the exact resume point, and an interrupt /
-// failure loses at most one window (re-running a window is idempotent — the
-// table is ReplacingMergeTree keyed on tx_hash).
-//
-// The materialized view (tx_hash_index_mv) already covers everything ingested
-// AFTER the schema deploy; this fills the history behind it.
+// GET /v1/tx/{hash} lookup table) from stellar.transactions in inclusive
+// [from, to] ledger windows of `window` ledgers each — one server-side
+// INSERT…SELECT per window, so an interrupt loses at most one window and
+// re-running one is idempotent (ReplacingMergeTree keyed on tx_hash). The
+// materialized view (tx_hash_index_mv) covers everything ingested after the
+// schema deploy; this fills the history behind it.
 //
 // logf receives one line per completed window (progress + resume point).
 func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint32, logf func(format string, args ...any)) error {

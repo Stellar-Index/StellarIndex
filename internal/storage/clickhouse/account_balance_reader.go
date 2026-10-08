@@ -16,17 +16,11 @@ import (
 // the account/native-balance analogue.
 type AccountBalanceSnapshot struct {
 	// Stroops is argMax(balance, (ledger_seq, intra_ledger_seq)) — the
-	// balance from the LAST change (in canonical intra-ledger walk order) to
-	// this account. The intra_ledger_seq tie-break makes same-ledger
-	// multi-change resolution deterministic: one
-	// ledger can hold several changes to a single account (receive-then-send
-	// across two ops, or update-then-merge), and ledger_seq alone ties them,
-	// so a single-column argMax picked an ARBITRARY same-ledger row — possibly
-	// a mid-ledger balance. The composite order keeps the final change.
-	// stellar.ledger_entry_changes.balance is Int64 (stroops fit
-	// comfortably within int64 for the whole XLM supply — unlike
-	// arbitrary Soroban i128 token amounts, which is why this column
-	// isn't NUMERIC/big per ADR-0003).
+	// balance from the LAST change in canonical intra-ledger walk order. The
+	// intra_ledger_seq tie-break matters: one ledger can hold several changes
+	// to an account, and ledger_seq alone ties them, picking an ARBITRARY
+	// mid-ledger balance. The column is Int64: stroops fit within int64 for
+	// the whole XLM supply, unlike Soroban i128 amounts (ADR-0003).
 	Stroops int64
 	// AtLedger is the ledger_seq that snapshot was recorded at.
 	AtLedger uint32
@@ -43,13 +37,12 @@ type AccountBalanceSnapshot struct {
 // zero-balance account still has at least one 'created'/'updated'
 // row).
 //
-// SHAPE NOTE: this is the ONE
-// remaining `account_id = ?` bloom-shaped filter in the package, and it
-// is deliberate — this function backs ONLY the `reconcile-balances`
-// operator diagnostic (internal/ops/chops), never a serving path, and
-// its aggregate over the account's FULL change history in the append
-// log is the tool's whole purpose (a key_xdr point read against
-// ledger_entries_current would answer a different question). Every
+// SHAPE NOTE: this is the ONE remaining `account_id = ?` bloom-shaped filter
+// in the package, and it is deliberate: it backs ONLY the `reconcile-balances`
+// operator diagnostic (internal/ops/chops), never a serving path, and the
+// aggregate over the account's FULL change history is the tool's purpose.
+// Every SERVING account read rides a primary-key shape. Do not copy this
+// filter shape into a handler path.
 // SERVING account read rides a primary-key shape: key_xdr point/prefix
 // (account state), the table's own sort key (account_movements), or
 // the ops_by_source / operation_participants projections (history).
@@ -97,18 +90,13 @@ const sampleAccountIDsQuery = `
 
 // SampleAccountIDs returns up to n distinct account_ids that have a
 // stellar.ledger_entry_changes 'account' entry above minLedger —
-// reconcile-balances' -sample source set. Restricting to
-// ledger_seq > minLedger biases the sample toward accounts active
-// recently enough that their LATEST recorded snapshot approximates
-// current chain state (an account untouched since minLedger could
-// have changed on-chain without us knowing, which would show up as a
-// false MISMATCH rather than a real one).
-//
-// The frame is the change log itself, not the ledger_entries_current
-// projection: the tool proves the change log, so an account the projection
-// lost must still be drawable. Callers keep the scan affordable with a
-// tip-relative minLedger (the table's ORDER BY leads with ledger_seq, so the
-// window prunes to its own granules).
+// reconcile-balances' -sample source set. Restricting to ledger_seq >
+// minLedger biases the sample toward recently active accounts, whose LATEST
+// snapshot approximates current chain state (a stale one would show up as a
+// false MISMATCH). The frame is the change log itself, not the
+// ledger_entries_current projection, so an account the projection lost is
+// still drawable; callers keep the scan affordable with a tip-relative
+// minLedger.
 //
 // The order is cityHash64(account_id, seed): a seeded pseudo-shuffle, so
 // each seed draws a different cohort while one seed reproduces its cohort

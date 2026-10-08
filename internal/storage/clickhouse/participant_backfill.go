@@ -18,30 +18,25 @@ import (
 // two can never drift (ADR-0038 Phase B account history).
 //
 // It returns one row per NON-source G-account the op body touches, as decoded
-// by xdrjson.ParticipantAccounts: the payment / path-payment / account-merge
-// destination, the allow-trust / set-trust-line-flags trustor, and the clawback
-// `from`. Soroban InvokeContract ops deliberately contribute NO participant —
-// their call args and SorobanAuthorizationEntry auth entries are both attacker-
-// controllable at decode time, so neither can name a trusted participant (see
-// xdrjson.ParticipantAccounts). Muxed (M-)
-// destinations resolve to their underlying G. The op's own resolved
-// source_account is deliberately EXCLUDED: it is already the full-history
-// operations.source_account lake column, and the account-history reader UNIONs
-// the two arms on the invariant that an op is sourced XOR has the account as a
-// non-source participant (explorer_reader.AccountOperations). Writing a source
-// row here would double-count that op for its own source account.
+// by xdrjson.ParticipantAccounts (payment / path-payment / account-merge
+// destination, allow-trust / set-trust-line-flags trustor, clawback `from`).
+// Soroban InvokeContract ops contribute NO participant: their args and auth
+// entries are attacker-controllable at decode time. Muxed (M-) destinations
+// resolve to their underlying G.
 //
-// Not captured (a property of the shared derivation, so live-forward and
-// historical stay consistent — NOT a backfill-specific gap): asset ISSUERS
-// (they render as "CODE-ISSUER", not a bare strkey — an issuer is not a
-// counterparty in the received-activity sense), and the counterparties of op
-// types xdrjson doesn't field-decode yet (create-claimable-balance claimants,
-// sponsorship targets). Extending either is a live-path change, out of scope
-// for a re-derive that must reproduce live output byte-for-byte.
+// The op's own source_account is EXCLUDED: it is already the full-history
+// operations.source_account column, and the account-history reader UNIONs the
+// two arms on the invariant that an op is sourced XOR has the account as a
+// non-source participant (explorer_reader.AccountOperations); writing a
+// source row would double-count it.
 //
-// A malformed body_xdr returns the decode error; callers soft-skip + count it
-// (resilient like the extractor). The deterministic, deduplicated, sorted
-// output makes a re-derive idempotent against the ReplacingMergeTree.
+// Not captured, so live and historical stay consistent: asset ISSUERS and
+// counterparties of op types xdrjson doesn't field-decode yet. Extending
+// either is a live-path change; a re-derive must reproduce live output.
+//
+// A malformed body_xdr returns the decode error; callers soft-skip + count it.
+// Deterministic, deduplicated, sorted output makes a re-derive idempotent
+// against the ReplacingMergeTree.
 func operationParticipantRows(bodyB64, opSource string, ledger uint32, closeTime time.Time, txHash string, txIndex, opIndex uint32) ([]OperationParticipantRow, error) {
 	accts, err := xdrjson.ParticipantAccounts(bodyB64)
 	if err != nil {
@@ -83,23 +78,18 @@ const participantInsertBatch = 50_000
 // BackfillOperationParticipants fills stellar.operation_participants (the
 // NON-source side of ADR-0038 Phase B account history) for the inclusive
 // [from,to] ledger range by re-deriving participants from
-// stellar.operations.body_xdr — a CH-INTERNAL job, NOT a multi-day Galexie
-// re-walk. operation_participants captures live-forward only;
-// stellar.operations holds the full genesis→tip history WITH the op body, so
-// every historical participant set is derivable in the lake. Each op is decoded
-// with the SAME operationParticipantRows the live extractor uses, so the output
-// is byte-identical to what live capture would have written.
+// stellar.operations.body_xdr — a CH-INTERNAL job, not a Galexie re-walk.
+// Each op is decoded with the SAME operationParticipantRows the live
+// extractor uses, so output is byte-identical to live capture.
 //
-// Windowed + resumable like BackfillTxHashIndex: one streaming
-// read-decode-insert pass per `window` ledgers, progress + the exact resume
-// point logged after each window (via logf), and re-running a window is
+// Windowed + resumable like BackfillTxHashIndex: progress and the exact
+// resume point are logged after each window, and re-running a window is
 // idempotent (ReplacingMergeTree keyed on (account, ledger_seq, tx_index,
-// op_index)). Memory is bounded: operation rows are STREAMED from the read
-// connection and participant rows are flushed to the write connection in fixed
-// batches; neither the read window nor the write buffer materialises whole.
+// op_index)). Memory is bounded: rows are STREAMED and flushed in fixed
+// batches.
 //
 // dryRun decodes + counts the participants that WOULD be written but writes
-// nothing — the operator's pre-flight cost probe.
+// nothing.
 func BackfillOperationParticipants(ctx context.Context, addr string, from, to, window uint32, dryRun bool, logf func(format string, args ...any)) (ParticipantBackfillStats, error) {
 	var stats ParticipantBackfillStats
 	if from == 0 || to < from || window == 0 {

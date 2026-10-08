@@ -18,31 +18,24 @@ import (
 const maxTokenSymbolRunes = 32
 
 // TokenSymbol resolves a token contract's `symbol()` from the certified
-// lake, by the same route and the same convention as [TokenDecimals]:
-// the soroban-token-sdk persists TokenMetadata in the contract INSTANCE
-// storage under Symbol "METADATA" as Map{decimal: U32, name: String,
-// symbol: String}, so reading the instance entry gives what calling the
-// contract would, without executing WASM.
+// lake, by the same route as [TokenDecimals]: the soroban-token-sdk persists
+// TokenMetadata in the contract INSTANCE storage under Symbol "METADATA" as
+// Map{decimal: U32, name: String, symbol: String}, so reading the instance
+// entry gives what calling the contract would, without executing WASM.
 //
-// found=false (nil error) when the instance is not captured in the lake,
-// the contract stores no METADATA map, the map carries no symbol, or the
-// declared value is not a plausible ticker. Callers treat that as "no
-// usable metadata" — never as an empty symbol, which would compare equal
-// to other things that are also empty.
+// found=false (nil error) when the instance is not captured, the contract
+// stores no METADATA map or symbol, or the value is not a plausible ticker.
+// Callers treat that as "no usable metadata", never as an empty symbol.
 //
 // # What this value may and may not be used for
 //
-// It is CONTRACT-AUTHORED text, with all that implies. It is exactly as
-// trustworthy as a classic asset code, which is to say not at all on its
-// own: any contract may call itself BENJI, and the lake holds many that
-// call themselves things they are not.
-//
-// The RWA definition reads it only under requirement C4, and only AFTER
-// C2 and C3 have established that an independent third party named that
-// exact contract address. In that position it answers WHICH instrument
-// an already-vouched-for address holds. It must never be used to answer
-// WHETHER an address is vouched for — a join on this value alone is the
-// code-only identity every part of that definition refuses.
+// It is CONTRACT-AUTHORED text, exactly as trustworthy as a classic asset
+// code: any contract may call itself BENJI. The RWA definition reads it only
+// under requirement C4, AFTER C2 and C3 established that an independent third
+// party named that exact contract address; it answers WHICH instrument an
+// already-vouched-for address holds. It must never answer WHETHER an address
+// is vouched for — a join on this value alone is the code-only identity the
+// definition refuses.
 func (r *ExplorerReader) TokenSymbol(ctx context.Context, contractID string) (string, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {

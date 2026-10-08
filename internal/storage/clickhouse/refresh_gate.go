@@ -20,35 +20,22 @@ var ErrRefreshSaturated = errors.New("clickhouse: detached refresh capacity satu
 // RefreshGate is a small non-blocking semaphore bounding how many DETACHED
 // cache refreshes may run concurrently against the explorer's lake pool.
 //
-// Why it exists: the explorer's stale-while-revalidate caches (account
-// state here; asset holders / contracts directory / contract detail in
-// internal/api/v1/explorer) each single-flight PER KEY — but the key space
-// is attacker-chosen on unauthenticated routes. Churning fabricated
-// G-addresses (every one shape-valid, every one a cache miss) launched one
-// detached multi-minute lake scan PER KEY with no bound across keys, all
-// contending on the shared explorer pool — an unauthenticated
-// amplification from cheap requests to unbounded expensive scans.
+// The stale-while-revalidate caches single-flight PER KEY, but the key
+// space is attacker-chosen on unauthenticated routes: fabricated
+// shape-valid addresses would each launch a detached multi-minute lake
+// scan with no bound across keys.
 //
-// The gate deliberately SKIPS on saturation rather than queueing: a
-// refresh that can't start simply doesn't (the caller serves whatever is
-// cached, or misses honestly and the next request retries). Queueing would
-// just move the unbounded backlog from the pool into the gate. Legitimate
-// traffic is unaffected in steady state — prewarm loops and TTL refreshes
-// re-kick on their next pass — while an attacker is capped at `limit`
-// concurrent scans instead of thousands.
+// The gate SKIPS on saturation rather than queueing: a refresh that can't
+// start simply doesn't (the caller serves what is cached, or misses
+// honestly and the next request retries). Queueing would only move the
+// unbounded backlog into the gate.
 //
 // A nil *RefreshGate admits everything (handy for test stubs).
 //
-// PER-CLASS FAIRNESS: the single
-// global bound stops the amplification but lets one key CLASS starve
-// the rest — a crawler churning fabricated contract ids could hold all
-// 4 slots with contract-detail refreshes, and every cold account /
-// holders / directory page then fast-503d behind it. TryAcquireClass
-// therefore caps each client-keyed class at a quarter of the global limit
-// (so several driven classes cannot fill the pool between them) and keeps
-// one slot that no client-keyed class may take, so the server-keyed
-// prewarm refreshes always have room. The global bound (the pool-safety
-// property) is unchanged.
+// PER-CLASS FAIRNESS: a global bound alone lets one key CLASS starve the
+// rest. TryAcquireClass caps each client-keyed class at a quarter of the
+// global limit and keeps one slot no client-keyed class may take, so the
+// server-keyed prewarm refreshes always have room.
 type RefreshGate struct {
 	sem chan struct{}
 
@@ -68,17 +55,12 @@ var serverKeyedClasses = map[string]bool{
 }
 
 // DefaultDetachedRefreshLimit is the production bound on concurrently
-// running detached refreshes. Half the explorer pool: worst case the
-// detached tier can never consume every connection, so inline
-// request-path reads always have headroom.
+// running detached refreshes. Half the 16-connection explorer pool, so
+// inline request-path reads always have headroom.
 //
 // Sized against a PAGE, not a request: a cold contract page fans out to
-// five reads, so a bound below one page's width would refuse some of its
-// own panels even with per-panel classes and leave a second visitor
-// nothing. 8 is half the 16-connection explorer pool, so detached
-// refreshes can never take the whole pool; r1 has 20 cores and idled at
-// ~2 concurrent ClickHouse queries, and every explorer scan carries
-// max_threads = 4, so the ceiling this implies is well within the host.
+// five reads, so a smaller bound would refuse some of its own panels and
+// leave a second visitor nothing.
 const DefaultDetachedRefreshLimit = 8
 
 // NewRefreshGate returns a gate admitting at most limit concurrent

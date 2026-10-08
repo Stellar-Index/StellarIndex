@@ -88,29 +88,20 @@ const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 
 // DistinctTopicShapes returns one representative event per distinct
 // (contract_id, topic_0_sym) in contract_events over [from,to]. Optionally
-// excludes topic[0] symbols (e.g. the CAP-67 classic-token firehose, which the
-// enabled protocol decoders don't claim — pass ClassicTokenTopic0Syms to focus
-// the audit on protocol shapes). Results are ordered by Count descending.
+// excludes topic[0] symbols (e.g. pass ClassicTokenTopic0Syms to drop the
+// CAP-67 classic-token firehose and focus on protocol shapes). Results are
+// ordered by Count descending.
 //
-// Structure: the old single GROUP BY carried
-// argMax(topics_xdr)/argMax(data_xdr) exemplar states — one WIDE string pair
-// per distinct key — over the whole range in one query. Post-P23/CAP-67 every
-// classic asset movement emits events, so the distinct key set and the wide
-// read behind it grew until the query died at ANY server memory cap (the
-// in-order read pool's buffers scale with parts × width, and are undertracked
-// per-query while counted server-wide). Now:
+// Two phases, so peak memory stays bounded regardless of history size:
 //
 //  1. SCAN: per-partition windows GROUP BY only the NARROW identity columns
-//     (contract_id, topic_0_sym) + count/min/max — no wide column is read at
-//     all — merged Go-side into the distinct set (small: shape identities +
-//     counters).
+//     (contract_id, topic_0_sym) + count/min/max, merged Go-side. No wide
+//     column is read.
 //  2. EXEMPLAR: for each distinct shape, fetch the representative event's
-//     bytes with a point read pinned to the shape's MaxLedger (a primary-key
-//     range of ONE ledger), batched exemplarBatchSize shapes per query. Same
-//     semantics as the old argMax(…, ledger_seq): the newest event's encoding.
+//     bytes with a point read pinned to the shape's MaxLedger, batched
+//     exemplarBatchSize shapes per query (the newest event's encoding).
 //
-// Both phases carry boundedScanSettings, so peak memory is bounded regardless
-// of history size or server cap; growth costs time, not failures.
+// Both phases carry boundedScanSettings: growth costs time, not failures.
 func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string) ([]TopicShape, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

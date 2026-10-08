@@ -40,23 +40,14 @@ func (w HashChainWindowResult) Checked() uint64 {
 }
 
 // hashChainWindowLinksQuery is the in-window headline: a single pass over
-// [from,to] that computes both Present (count()) and Broken
-// (countIf(...)) in one query, so the headline pass costs exactly one
-// query per window regardless of how many links turn out to be broken.
+// [from,to] computing both Present (count()) and Broken (countIf(...)), so
+// the cost is one query per window however many links are broken.
 //
-// FINAL is required here — unlike QueryLedgerRangeCoverage's uniqExact(),
-// which collapses duplicate ledger_seq rows from stellar.ledgers'
-// unmerged ReplacingMergeTree(ingested_at) parts for free, this query reads
-// ledger_hash/prev_hash VALUES through a window function. An unmerged
-// duplicate row for the same ledger_seq would introduce a tie in the
-// ORDER BY ledger_seq the window function relies on, corrupting
-// lagInFrame's notion of "the immediately-preceding ledger" — the exact
-// class of bug FINAL exists to prevent (see tier1_schema.sql's "Query with
-// FINAL / GROUP BY for read-time dedup until merges settle" and this
-// package's gate.go / explorer_reader.go, which FINAL for the same reason
-// whenever they read stellar.ledgers' column VALUES rather than just its
-// key set). boundedScanSettings caps per-query memory the same way every
-// other full-history-capable reader in this package does (event_reader.go).
+// FINAL is required: unlike QueryLedgerRangeCoverage's uniqExact(), this
+// reads ledger_hash/prev_hash VALUES through a window function, and an
+// unmerged duplicate row for a ledger_seq would tie the ORDER BY
+// lagInFrame relies on, corrupting "the immediately-preceding ledger".
+// boundedScanSettings caps per-query memory as in event_reader.go.
 const hashChainWindowLinksQuery = `
 	SELECT count() AS present, countIf(want_prev != '' AND prev_hash != want_prev) AS broken
 	FROM (
@@ -68,18 +59,12 @@ const hashChainWindowLinksQuery = `
 	` + boundedScanSettings
 
 // QueryHashChainWindowLinks runs the ADR-0034 hash-chain in-window headline
-// over [from,to], one query per stride-wide window (see
-// forEachLedgerWindow) so peak query cost never exceeds one lake partition
-// regardless of the overall range's size — same windowing discipline as
-// QueryLedgerWindowCoverage. Unlike Check 1's headline (a single unwindowed
-// uniqExact() that only windows AFTER finding a deficit), this is windowed
-// unconditionally: the hash-chain check needs window-sized buckets anyway
-// so the caller can run QueryHashChainBoundary at each seam, so there is no
-// cheaper unwindowed alternative to fall back to first. Still cheap per
-// call — one COUNT-shaped query per window, no row-level detail — so a
-// healthy chain's steady-state cron run pays for windowing but not for
-// per-ledger localization (that's QueryBrokenHashLinks, called only for
-// windows this function already flagged Broken>0).
+// over [from,to], one query per stride-wide window (see forEachLedgerWindow)
+// so peak query cost never exceeds one lake partition. Windowed
+// unconditionally: the caller needs window-sized buckets to run
+// QueryHashChainBoundary at each seam. One COUNT-shaped query per window, no
+// row-level detail; per-ledger localization is QueryBrokenHashLinks, called
+// only for windows flagged Broken>0.
 func QueryHashChainWindowLinks(ctx context.Context, addr string, from, to, stride uint32) ([]HashChainWindowResult, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -132,15 +117,11 @@ const hashChainBoundaryQuery = `SELECT ledger_seq, ledger_hash, prev_hash FROM s
 
 // QueryHashChainBoundary is the boundary point lookup for a single window
 // seam: IN (seq-1, seq) reads at most two rows regardless of lake size, so
-// running one per window (a few dozen even across full mainnet history at
-// the 1M stride) is cheap enough to run unconditionally as part of the
-// headline pass, unlike QueryBrokenHashLinks' per-ledger localization.
+// one per window is cheap enough to run unconditionally.
 //
-// seq==0 returns a zero-value result immediately without querying — no
-// predecessor exists below ledger 0, and callers never legitimately pass
-// seq==0 in practice (ADR-0034's genesis floor is ledger 2), but this
-// avoids a PredecessorSeq=seq-1 uint32 underflow rather than relying on
-// callers to never ask.
+// seq==0 returns a zero-value result without querying: no predecessor exists
+// below ledger 0 (the genesis floor is ledger 2), and this avoids a
+// PredecessorSeq=seq-1 uint32 underflow rather than trusting callers.
 func QueryHashChainBoundary(ctx context.Context, addr string, seq uint32) (HashChainBoundaryResult, error) {
 	res := HashChainBoundaryResult{Seq: seq}
 	if seq == 0 {

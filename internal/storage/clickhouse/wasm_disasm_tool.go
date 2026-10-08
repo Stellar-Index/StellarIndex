@@ -9,22 +9,14 @@ import (
 )
 
 // wasm_disasm_tool.go — best-effort WAT disassembly + wasm-decompile pseudocode via
-// the wabt toolchain (wasm2wat / wasm-decompile). These are OPTIONAL: if the
-// binaries aren't on PATH the metadata + native-parsed exports still ship, and
-// the ToolNote explains the absence. The contract pages' "see the code" view
-// degrades gracefully rather than 503-ing on a missing system dependency.
+// the wabt toolchain (wasm2wat / wasm-decompile). OPTIONAL: if the binaries
+// aren't on PATH the metadata + native-parsed exports still ship, and the
+// ToolNote explains the absence rather than 503-ing.
 //
-// Deployment: wabt isn't installed on r1 by default but is in apt
-// (`apt install wabt`). Until it's installed these fields are empty; once it
-// is, they populate with no code change. `Cache-Control: max-age=86400`
-// (wasm_view.go) only bounds re-fetches a CACHING CLIENT or a CDN chooses to
-// honour — it is not itself a server-side cache, and a deployment with no CDN
-// in front of it (CacheControlWithCDN(false), L3.14) pays the header with no
-// effect at all. The fork/exec cost that actually recurs per request is
-// bounded HERE instead: ExplorerReader.disasmCache (wasm_disasm_cache.go)
-// keys a successful run by wasm hash — content-addressed and immutable — so
-// wasm2wat/wasm-decompile run at most once per contract per process, not once
-// per request.
+// `Cache-Control: max-age=86400` (wasm_view.go) is not a server-side cache,
+// so the recurring fork/exec cost is bounded HERE: ExplorerReader.disasmCache
+// (wasm_disasm_cache.go) keys a successful run by wasm hash (content-addressed,
+// immutable), so the tools run at most once per contract per process.
 
 // wasmToolTimeout bounds each external tool invocation. WAT/decompile of a
 // ~50 KB module is sub-second; the timeout only fires on a pathological input.
