@@ -625,8 +625,7 @@ fi
 # Measured on real tags: the 2-arg form reports "no config-surface
 # changes between v0.47.1 and v0.47.2 — the binary deploy is complete"
 # and exits 0, while the 3-arg form against a real host baseline of
-# v0.45.0 finds THIRTEEN changed config surfaces and exits 1 (wave-D
-# LID-5).
+# v0.45.0 finds THIRTEEN changed config surfaces and exits 1.
 #
 # A script-level test cannot catch a caller-level omission, so check the
 # caller.

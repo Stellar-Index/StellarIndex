@@ -126,7 +126,7 @@ groups:
         # sum(rate()) over nothing is the EMPTY VECTOR — not zero. The
         # alert stops matching and Alertmanager sends a RESOLVED for a
         # SEV-1 while ingestion is still completely down, which reads to
-        # a responder as "it fixed itself" (wave-D ALERT-01).
+        # a responder as "it fixed itself".
         #
         # absent_over_time takes over at exactly the point rate() gives
         # up — both use a 5m window — so the two branches hand over

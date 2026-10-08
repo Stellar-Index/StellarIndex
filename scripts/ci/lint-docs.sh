@@ -160,7 +160,7 @@ fi
 # INLINE and also $refs the shared component for the same (name, in)
 # pair ships a spec with two conflicting definitions of one parameter —
 # /v1/assets carried an inline `limit` with no default alongside
-# `$ref: Limit` which has default 100 (wave-D KP-5). Generators pick one
+# `$ref: Limit` which has default 100. Generators pick one
 # arbitrarily, so the rendered docs, the Postman collection and the
 # explorer's generated types can each disagree about the same field.
 #
@@ -249,7 +249,7 @@ fi
 # its OWN number. 0125_projection_dirty_windows.up.sql opened with
 # "0124 up", and 0096_create_blend_emitter_events.up.sql with "0095 up"
 # — both real but DIFFERENT migrations, so a reader following the
-# reference lands on an unrelated change (wave-D CV-7).
+# reference lands on an unrelated change.
 #
 # This check originally EXEMPTED those two on the grounds that an
 # applied migration is immutable and even a comment-only edit changes

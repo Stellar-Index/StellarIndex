@@ -21,7 +21,7 @@
 #     deployed unit, reads like one, and is not one. r1-deployment-state.md
 #     documents an operator convention of scp-ing units straight out of
 #     this directory, so an orphan is a live footgun: it will start, and
-#     nothing will ever reconcile it (wave-D LID-7).
+#     nothing will ever reconcile it.
 #
 # Every orphan must be listed in deploy/systemd/ORPHANS with a reason, so
 # adding one is a deliberate act with a written justification rather than
