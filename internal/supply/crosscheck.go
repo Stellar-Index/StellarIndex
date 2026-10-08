@@ -40,72 +40,41 @@ type WrapClass string
 const (
 	// WrapClassPartial is the default, safe classification: most of
 	// the classic asset's economic supply is presumed to live OUTSIDE
-	// the SAC. Under this class [CrossCheckForClass] does NOT check
-	// total-vs-total equality (that would be the category error this
-	// type exists to fix). Instead it checks the one invariant that
-	// DOES provably hold regardless of wrap fraction: the SAC's
-	// total_supply (Algorithm 3 — the wrapped amount) can never
-	// exceed the classic asset's total_supply (Algorithm 2), because
-	// Algorithm 2's total is Trustline + Claimable + LPReserve +
-	// SACWrapped (see [ClassicSupplyComponents]) — SACWrapped is one
-	// of four non-negative addends, so it is definitionally ≤ the
-	// sum. sac_total > classic_total is therefore impossible under
-	// correct accounting and IS a genuine corruption signal (an
-	// "escrow != minted" violation) worth alerting on; sac_total ≤
-	// classic_total is the expected, unremarkable case for a
-	// partially-wrapped asset and must not page.
+	// the SAC, so [CrossCheckForClass] does NOT check total-vs-total
+	// equality (the category error this type exists to fix). It checks
+	// the invariant that holds at any wrap fraction: the SAC's
+	// total_supply (Algorithm 3) can never exceed the classic
+	// total_supply (Algorithm 2), because SACWrapped is one of Algorithm
+	// 2's four non-negative addends ([ClassicSupplyComponents]).
+	// sac_total > classic_total is a genuine "escrow != minted"
+	// corruption signal; sac_total ≤ classic_total must not page.
 	//
-	// SECOND LEG: [CrossCheckSubsetBound] ALSO checks the true subset
-	// compare, Algorithm 2's SACWrapped component vs Algorithm 3's total_supply.
-	// Both measure the SAME quantity (the amount escrowed inside the
-	// SAC) via independent data paths — a ledger-entry snapshot sum
-	// (`sac_balance_observations`) vs an event-flow sum — so
-	// SACWrapped > sac_total is impossible under correct accounting and
-	// is a genuine escrow-exceeds-minted violation.
+	// SECOND LEG: [CrossCheckSubsetBound] compares Algorithm 2's
+	// SACWrapped component with Algorithm 3's total_supply — the SAME
+	// escrowed quantity via independent paths (`sac_balance_observations`
+	// snapshot sum vs event-flow sum) — so SACWrapped > sac_total is a
+	// genuine violation. It reads `asset_supply_history.sac_wrapped_stroops`
+	// (migration 0117, via [Supply.SACWrappedStroops] populated by
+	// [ClassicComputer.Compute]), never
+	// [ClassicSupplyStore.SumSACBalancesAtOrBefore] directly, which would
+	// read at an unrelated ledger (the skew [CrossCheckLedgerTolerance]
+	// bounds) and add a second, divergent read path. A nil
+	// SACWrappedStroops (pre-0117 row, or an algorithm without the
+	// component) leaves [CrossCheckResult.SubsetBoundChecked] false: a
+	// zero default would pass vacuously and publish a green check that
+	// verified nothing.
 	//
-	// The plumbing is `asset_supply_history.sac_wrapped_stroops`
-	// (migration 0117) + [Supply.SACWrappedStroops] +
-	// [ClassicComputer.Compute] populating it from
-	// [ClassicSupplyComponents.SACWrapped]. The refresher does NOT
-	// query [ClassicSupplyStore.SumSACBalancesAtOrBefore] directly: it
-	// would re-read a component at a ledger unrelated
-	// to the snapshot's own, re-introducing exactly the freshness skew
-	// [CrossCheckLedgerTolerance] exists to bound, and would give the
-	// aggregator a second, divergent read path to the same number.
-	//
-	// The leg is gated on the component being present: a snapshot
-	// with a nil SACWrappedStroops (a pre-0117 row, or a non-classic algorithm that has no such
-	// component) leaves [CrossCheckResult.SubsetBoundChecked] false and
-	// the leg UNEVALUATED. It is deliberately not defaulted to zero —
-	// 0 <= sac_total holds vacuously, so a zero default would publish a
-	// green check that verified nothing.
-	//
-	// KNOWN LIMITATION (see docs/architecture/supply-pipeline.md
-	// "Dormant contract-held SAC balances" for the full trail): this
-	// inequality assumes Algorithm
-	// 2's total is not itself an undercount. BLND/EURC/KALE/PHO were a
-	// documented case where it was: their largest holders are Phoenix/
-	// Blend POOL CONTRACTS that acquired the SAC-wrapped token years
-	// before the ClickHouse current-state projection's ~62M coverage
-	// floor existed and have been dormant (no further Balance-key
-	// writes) since, so `supply seed-sac-balances`'s default
-	// current-state read never saw them. The balances are ordinary
-	// `Vec(Symbol("Balance"), Address(pool))` entries on the SAC's OWN
-	// storage, identical in shape to every other holder, not
-	// pool-internal keys needing protocol-specific decoders. The fix is
-	// `supply seed-sac-balances -full-history`
-	// (clickhouse.StreamSACBalanceSeedsFullHistory), which reads
-	// stellar.ledger_entry_changes — complete to genesis (ADR-0034) —
-	// instead of the floor-limited current-state projection; per-contract
-	// seed provenance (source + holder count + ledger bounds) is recorded
-	// in `sac_balance_seed_provenance` (migration 0102) so an operator
-	// can see whether a residual divergence for a pair is "expected,
-	// never full-history seeded" or "actually anomalous, already
-	// full-history seeded". Until a pair IS full-history seeded, this
-	// check can still false-positive in the sac_total > classic_total
-	// direction for it. An equality check would be wrong for such a
-	// pair too; this is named so an operator doesn't mistake a
-	// not-yet-seeded pair's divergence for corruption.
+	// KNOWN LIMITATION (docs/architecture/supply-pipeline.md "Dormant
+	// contract-held SAC balances"): the inequality assumes Algorithm 2's
+	// total is not itself an undercount. For BLND/EURC/KALE/PHO it was:
+	// their largest holders are pool contracts dormant since before the
+	// ClickHouse current-state projection's ~62M floor, so the default
+	// `supply seed-sac-balances` never saw them. The fix is
+	// `-full-history` (clickhouse.StreamSACBalanceSeedsFullHistory, reading
+	// stellar.ledger_entry_changes to genesis); `sac_balance_seed_provenance`
+	// (migration 0102) records whether a pair was full-history seeded.
+	// Until it is, this check can false-positive in the sac_total >
+	// classic_total direction for that pair; that is not corruption.
 	WrapClassPartial WrapClass = "partial_wrap"
 
 	// WrapClassFull is an operator attestation that a classic asset's
