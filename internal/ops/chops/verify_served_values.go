@@ -17,34 +17,20 @@ import (
 	"time"
 )
 
-// verify-served-values — the "data-correct, not just code-correct"
-// harness: proving the CODE sound does not prove a served VALUE right
-// (the flagship XLM market cap read +58% with sound code until it was
-// sampled by hand).
-//
-// It fetches a curated set of values we SERVE and reconciles each
-// against an INDEPENDENT ground truth, emitting node_exporter
-// textfile gauges (same collector pattern as data-freshness.sh) so a
-// drifting served value alerts within a day instead of at the next
-// hand audit:
+// verify-served-values reconciles values we SERVE against independent ground
+// truth, because sound code does not prove a served value right. It emits
+// node_exporter textfile gauges so a drifting value alerts within a day:
 //
 //   - XLM circulating + total supply vs the SDF lumen API
-//     (https://developers.stellar.org/docs — dashboard.stellar.org/api/v3/lumens),
-//     the canonical source for XLM supply.
+//     (dashboard.stellar.org/api/v3/lumens).
 //   - USDC-on-Stellar total supply vs Stellar Expert's asset API.
-//   - The configured SDF reserve-account LIST vs the list SDF publishes
-//     (sdf_reserve_list.go) — the 2% value tolerance above cannot see
-//     a single added or retired reserve account.
+//   - The configured SDF reserve-account LIST vs SDF's published list
+//     (sdf_reserve_list.go); the 2% value tolerance cannot see one added or
+//     retired account.
 //
-// Deliberately NOT here: price cross-checks (the divergence worker
-// compares served prices against CoinGecko/Chainlink continuously —
-// duplicating it would double-count the same references) and lake
-// count reconciliation (compute-completeness owns served↔lake).
-//
-// The check table is designed to GROW — adding a check is one entry.
-// Mind the window trap:
-// every ground truth here is point-in-time state, never a windowed
-// counter, so both sides measure the same thing.
+// Price cross-checks belong to the divergence worker and served-vs-lake counts
+// to compute-completeness. Every ground truth here is point-in-time state,
+// never a windowed counter, so both sides measure the same thing.
 //
 // Usage:
 //
@@ -53,10 +39,9 @@ import (
 //	    -config /etc/stellarindex.toml \
 //	    -textfile /var/lib/node_exporter/textfile_collector/served_values.prom
 //
-// Empty -textfile prints the gauges to stdout (operator spot-run).
-// Empty -config skips the reserve-list check (a spot-run off-host has
-// no node config to diff). Exits 1 when any check failed or every VALUE
-// check was skipped (see servedValuesExitError), 0 otherwise.
+// Empty -textfile prints to stdout; empty -config skips the reserve-list
+// check. Exits 1 when any check failed or every VALUE check was skipped (see
+// servedValuesExitError), 0 otherwise.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
