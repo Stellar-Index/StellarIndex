@@ -216,7 +216,7 @@ func TestRedisSignupIPThrottle_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery pins the REL-06
+// TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery pins the
 // recovery semantic: a single Redis success must NOT reset the fail-closed dwell
 // clock (a flapping Redis still trips fail-closed after dwellTime); only a
 // sustained healthy streak (dwellTime of unbroken successes) clears it and
@@ -253,7 +253,7 @@ func TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	}
 
 	// FLAPPING: one lucky success, then continued error past the dwell window.
-	// The stray success must NOT reset the clock → fail-CLOSED (the REL-06 fix).
+	// The stray success must NOT reset the clock → fail-CLOSED.
 	heal()
 	_ = check() // single success
 	poison()

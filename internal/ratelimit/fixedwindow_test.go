@@ -88,7 +88,7 @@ func TestFixedWindowCounter_RedisErrorPropagates(t *testing.T) {
 }
 
 // dropExpireHook fails every standalone EXPIRE the client issues and
-// passes everything else through — the observable shape of the REL-05
+// passes everything else through — the observable shape of the
 // leak: a connection reset / MISCONF / OOM that lands between the INCR
 // and the follow-up EXPIRE. It cannot intercept an EXPIRE issued from
 // INSIDE a Lua script, which is exactly the point: after the fix there
@@ -113,7 +113,7 @@ func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) red
 	return next
 }
 
-// TestFixedWindowCounter_TTLSurvivesDroppedExpire is the REL-05
+// TestFixedWindowCounter_TTLSurvivesDroppedExpire is the
 // regression.
 //
 // The failure it encodes: an Incr that issues INCR and then a separate,

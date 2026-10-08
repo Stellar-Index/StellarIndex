@@ -51,7 +51,7 @@ func meteredBillable(t *testing.T, handler http.HandlerFunc) (int, int64) {
 }
 
 // A server-side read deadline is answered 503, and a 5xx is otherwise
-// unbillable (COR-05) — so without the deadline mark the most expensive
+// unbillable — so without the deadline mark the most expensive
 // request shape metered at zero while a 2 ms 404 metered at one.
 func TestReadDeadline503_DebitsMonthlyQuota(t *testing.T) {
 	// A driver that re-phrases the cancellation (pg SQLSTATE 57014).

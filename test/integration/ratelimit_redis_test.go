@@ -15,7 +15,7 @@ package integration_test
 //   - **Wall-clock key expiry.** miniredis only expires on an explicit
 //     FastForward, so "the 2×window drain TTL actually drains" is
 //     asserted nowhere today. If it didn't, the throttle namespace
-//     would grow without bound — the REL-05 leak, re-introduced from
+//     would grow without bound — the leak, re-introduced from
 //     the server side instead of the client side.
 //   - **TTL is set on the creating INCR and never re-armed.** A
 //     sliding TTL under sustained load makes a hot key immortal, which
@@ -23,7 +23,7 @@ package integration_test
 //   - **The EXPIRE race on an unset key.** Two clients, two connection
 //     pools, one missing key, same window: real Redis single-threads
 //     the EVAL so exactly one caller observes `current == 1`. That is
-//     the atomicity REL-05 bought by folding INCR+EXPIRE into Lua, and
+//     the atomicity bought by folding INCR+EXPIRE into Lua, and
 //     it can only be observed against a server with real concurrency.
 //   - **NOSCRIPT recovery.** go-redis's Script.Run issues EVALSHA and
 //     falls back to EVAL when the server has never seen the SHA. Every
@@ -188,7 +188,7 @@ func testFixedWindowDrainTTL(ctx context.Context, t *testing.T, rdb *redis.Clien
 // testFixedWindowTTLNotReArmed pins the `if current == 1` guard in
 // incrLua. Without it the TTL would be re-armed on every increment and
 // a key under sustained load would never expire — the same unbounded
-// namespace REL-05 closed, arrived at from the other direction.
+// namespace, arrived at from the other direction.
 func testFixedWindowTTLNotReArmed(ctx context.Context, t *testing.T, rdb *redis.Client) {
 	t.Helper()
 	at := time.Unix(1_700_000_000, 0).UTC()
@@ -249,7 +249,7 @@ func testFixedWindowTTLNotReArmed(ctx context.Context, t *testing.T, rdb *redis.
 	}
 }
 
-// testFixedWindowUnsetKeyRace is the EXPIRE race REL-05 exists for,
+// testFixedWindowUnsetKeyRace is the EXPIRE race the Lua fold exists for,
 // observed against a real server: many goroutines over several
 // INDEPENDENT clients (separate connection pools, so the contention is
 // genuinely server-side) hit one missing key inside one window.

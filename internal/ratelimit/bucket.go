@@ -79,8 +79,8 @@ type Bucket struct {
 	// healthySince marks the start of the CURRENT unbroken run of Redis
 	// successes; any failure resets it to zero. redisErrorSince (the fail-closed
 	// clock) is cleared only once this streak has lasted dwellTime. A single
-	// stray success under a flapping Redis must NOT reset the clock (REL-06:
-	// otherwise 1 success/<dwellTime keeps the limiter — and the auth
+	// stray success under a flapping Redis must NOT reset the clock
+	// (otherwise 1 success/<dwellTime keeps the limiter — and the auth
 	// brute-force + signup throttles that share this Bucket type — fail-open
 	// indefinitely while Redis is effectively down).
 	healthySince time.Time
@@ -211,7 +211,7 @@ func (b *Bucket) observeRedisFailure() bool {
 
 // observeRedisSuccess advances the recovery streak. The fail-closed clock
 // (redisErrorSince) is cleared only after dwellTime of UNBROKEN successes —
-// NOT on a single success (REL-06). Under a flapping Redis the interspersed
+// NOT on a single success. Under a flapping Redis the interspersed
 // failures keep resetting healthySince via observeRedisFailure, so the streak
 // never reaches dwellTime, redisErrorSince stays armed, and observeRedisFailure
 // trips fail-CLOSED as designed instead of failing open forever. A genuine,

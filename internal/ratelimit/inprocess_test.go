@@ -99,7 +99,7 @@ func TestInProcess_WindowRollover(t *testing.T) {
 	}
 }
 
-// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket is the REL-05
+// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket is the
 // regression, driven through the exported API at the real cap.
 //
 // The attack: a distinct-key flood (>100k unique keys inside one window
