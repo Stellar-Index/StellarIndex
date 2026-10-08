@@ -324,68 +324,36 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 //     rows, prices_1m, the CAGGs and every on-chain surface write this.
 //   - `crypto:XLM` — the cross-network global-ticker form (ADR-0014).
 //     Every CEX venue and Reflector's CEX oracle publish under it.
-//   - `CAS3J7GY…` — the Stellar Asset Contract that wraps native XLM.
-//     Soroban AMMs (Aquarius, Phoenix, Soroswap) trade the SAC, so
-//     Soroban-sourced trade rows carry the C-address on the leg where
-//     `native` would appear on SDEX.
+//   - `CAS3J7GY…` — the Stellar Asset Contract that wraps native XLM,
+//     which Soroban AMMs trade.
 //
-// All three are the SAME asset with the same economic value. A read
-// keyed by one form that does not try the others silently omits every
-// venue publishing under the alias — the failure this primitive exists
-// to prevent, observed live when /v1/price?asset=native fell through
-// to a 39h-stale triangulated bucket while a fresh CEX VWAP sat under
-// `crypto:XLM`.
+// All three are the SAME asset. A read keyed by one form that does not
+// try the others silently omits every venue publishing under an alias
+// (observed: /v1/price?asset=native served a 39h-stale bucket while a
+// fresh CEX VWAP sat under `crypto:XLM`).
 //
 // # Why the SAC form is LAST, deliberately
 //
-// Priority order is a manipulation-surface decision, not a style
-// choice. The read paths that loop these aliases (v1.readPriceWithAliases,
-// aggregate.tryVWAPTier, v1.lookupPriceAt, the OHLC/chart pair walks)
-// take the FIRST form that produces a usable answer. Soroban XLM pools
-// are, today, orders of magnitude thinner than SDEX + the CEX feeds:
-// putting the SAC form anywhere but last would let a few thousand
-// dollars of liquidity in one Soroban pool become THE served XLM price
-// while deep, corroborated SDEX and CEX data sat one loop iteration
-// away. Last means the SAC form is reached ONLY when both established
-// forms miss — i.e. when the alternative is no price at all, where a
-// thin-pool print beats a 404 and still carries the same freshness,
-// trade-count-floor (aggregate.GlobalPriceOptions.VWAPMinTradeCount) and
-// divergence-freeze guards as any other source.
+// Read paths that loop these aliases take the FIRST form that produces an
+// answer, and Soroban XLM pools are orders of magnitude thinner than SDEX
+// and the CEX feeds. Anywhere but last, a few thousand dollars in one pool
+// could become THE served XLM price. Last means it is reached only when
+// the alternative is no price, still behind the usual freshness,
+// trade-count and divergence guards. A caller who names the C-address
+// still gets that form first.
 //
-// The literal input still comes first even when it IS the SAC form: a
-// caller who names the C-address is asking about that form, and it is
-// what the pre-alias code already served for that spelling — the
-// addition is the native/crypto:XLM FALLBACK behind it, never a
-// promotion of the thin pool over the deep ones for a `native` query.
-//
-// # Set-shaped callers
-//
-// Membership filters (v1.sourceStatsAliases → the timescale per-source
-// breakdowns) consume this as a SET, where order is irrelevant but
-// COMPLETENESS is not: those SQL predicates already treat the SAC
-// literal as XLM in their volume CASE, so a filter that omitted it
-// undercounted Soroban XLM volume while valuing it as XLM wherever it
-// did match.
+// Set-shaped callers (v1.sourceStatsAliases) ignore order but need
+// COMPLETENESS: omitting the SAC literal undercounted Soroban XLM volume.
 //
 // # Generalising beyond XLM: the alias registry
 //
-// EVERY SAC-wrapped classic asset has the same dual identity (USDC's SAC,
-// AQUA's SAC, …). XLM's three-way split is unconditional (see
-// [baseAliasFamilies]); every OTHER classic↔SAC pair is operator data,
-// declared in `[supply].sac_wrappers` (SAC C-strkey → `CODE:ISSUER`).
-//
-//   - Derive: [Asset.SacContractID] is a pure function, so the
-//     classic→SAC direction needs no table at all. The REVERSE
-//     (C-address → classic) is not invertible — it is a hash — so a
-//     C-address seen in a trade row can only be resolved through a
-//     lookup table, which is exactly what `sac_wrappers` is.
-//   - Register: [NewAliasRegistry] builds that table from the config
-//     map at binary start-up, and [InstallAliasRegistry] publishes it as
-//     the process-wide registry this function resolves against. The
-//     publish is a single atomic store before serving, so there is no
-//     data race and no per-call config dependency threaded into the leaf
-//     package — AssetAliases keeps its signature and every call site is
-//     unchanged, while becoming alias-complete for the configured pairs.
+// Every SAC-wrapped classic asset has the same dual identity. XLM's
+// three-way split is unconditional ([baseAliasFamilies]); other pairs are
+// operator data in `[supply].sac_wrappers` (SAC C-strkey → `CODE:ISSUER`),
+// because [Asset.SacContractID] is a hash and cannot be inverted.
+// [NewAliasRegistry] builds the table at start-up and
+// [InstallAliasRegistry] publishes it with one atomic store, so this
+// function keeps its signature without a per-call config dependency.
 //
 // Until a registry is installed (unit tests, or a binary that never
 // serves reads) the function resolves against the baseline for the network

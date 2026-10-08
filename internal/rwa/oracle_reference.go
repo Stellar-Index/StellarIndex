@@ -6,63 +6,33 @@ import (
 )
 
 // Oracle reference bindings — which oracle feed, if any, prices the
-// instrument behind a specific Stellar asset.
+// instrument behind a specific Stellar asset: given an admitted
+// (code, issuer), is there a feed measuring the SAME QUANTITY the
+// Stellar market prices for that exact token?
 //
-// The RWA surface admits an asset on identity and attestation
-// ([Qualify]); this file answers a later and much narrower question:
-// given an admitted (code, issuer), is there an oracle feed measuring
-// the SAME QUANTITY the Stellar market prices for that exact token?
+// The binding is keyed on the exact (code, issuer), never the code. A
+// code-keyed reference would publish an unrelated token called USTRY or
+// BENJI at a large "discount" to a real security's net asset value: a
+// false financial claim, attacker-authored pricing in a new coordinate.
 //
-// # Why this is keyed on (code, issuer) and never on the code
-//
-// Asset codes are not unique on Stellar. Any account may issue a token
-// called USTRY, BENJI or XAU, and the network holds many that do — the
-// same fact that forces [Qualify] to identify assets by pair rather than
-// by code. A reference keyed on the code alone answers every one of
-// those tokens with the real instrument's net asset value: an unrelated
-// token trading at $0.20 is published at an 81% discount to a security
-// it has nothing to do with. That is a false financial claim about a
-// real instrument — attacker-authored pricing in a new coordinate.
-//
-// The binding is therefore explicit, on the exact pair, and checked in
-// code. Prose asserting that the issuer's declaration establishes the
-// correspondence is not a gate; nothing reads prose.
-//
-// # A curated set, fail-closed and visible
-//
-// This is the curated-set mechanism ADR-0040 sanctions for gates whose
-// membership cannot be derived on chain: an enumerated allow-list,
-// review-gated by living in code, where an unlisted candidate is refused
-// and its refusal is REPORTED rather than silently absorbed. An
-// unbound pair gets silence and a stated reason — never a number.
-//
-// The served set is published as `definition.bound_instruments` so a
-// consumer can audit every pair this surface is willing to compare,
-// rather than inferring the rule from whichever rows carry a figure
-// today.
+// It is an ADR-0040 curated set, fail-closed and visible: an unbound
+// pair gets a stated reason, never a number, and the served set is
+// published as `definition.bound_instruments` so consumers can audit it.
 //
 // # What binds an entry
 //
 // Each entry below records the evidence for it. An entry needs all
 // three:
 //
-//  1. The issuer publishes a SEP-1 [[CURRENCIES]] entry for this exact
-//     (code, issuer) from the domain its account names on chain, naming
-//     the real-world instrument. This is requirement R2 of the
-//     definition, already checked at membership time.
+//  1. The issuer's SEP-1 [[CURRENCIES]] entry for this exact (code,
+//     issuer) names the real-world instrument (requirement R2).
 //  2. The curated account directory attributes that G-address to a named
-//     entity. Requirement R3, likewise already checked. Where ADR-0028
-//     also attributes the feed to an entity, the two must AGREE — but
-//     note that ADR-0028 attributes only some feeds by entity (USDY,
-//     USST, XAUm, deJAAA, deJTRSY) and lists CETES, USTRY, TESOURO,
-//     GILTS, KTB and SPXU by ticker alone. For a ticker-only feed this
-//     requirement cannot be met by matching attributions, and
-//     requirement 3 carries the binding.
-//  3. Something ties the FEED to that issuer specifically, not merely to
-//     an instrument of that name. Price agreement between the token's
-//     Stellar market price and the feed is the strongest form and is
-//     noted where it exists; a documented product-line correspondence is
-//     the weaker form and is marked as such.
+//     entity (R3). Where ADR-0028 also attributes the feed to an entity,
+//     the two must AGREE; for its ticker-only feeds (CETES, USTRY,
+//     TESOURO, GILTS, KTB, SPXU) requirement 3 carries the binding.
+//  3. Something ties the FEED to that issuer specifically: price
+//     agreement with the token's Stellar market (strongest), or a
+//     documented product-line correspondence (weaker, marked as such).
 //
 // Entries carrying only the weaker form are the ones to challenge first
 // in review. Nothing here is inferred at runtime: adding a pair is a

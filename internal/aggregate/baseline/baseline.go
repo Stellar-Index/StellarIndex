@@ -153,76 +153,42 @@ func (b Baseline) scale() float64 {
 //
 //	driftZ = |Median| * sqrt(N) / MAD
 //
-// Why the per-observation z-score is blind to a slow drift: ZScore
-// asks "is THIS bucket's return unusual for this window?", and a
-// frog-boiling attacker's whole method is to keep every individual
-// return well inside the noise. Worse, the window's own Median
-// tracks the drift, so the attacker's returns are scored against a
-// baseline the attacker is moving — the drift is normalised away and
-// z stays ~0 no matter how far the price has travelled. Adding more
-// window lengths does not help: every window scores the same small
-// per-bucket return (ADR-0019's "the 30d window still sees pre-attack
-// data" only holds for price LEVELS; in return space there is no
-// level memory to preserve).
+// ZScore is blind to a slow drift: a frog-boiling attacker keeps every
+// per-bucket return inside the noise, and the window's own Median tracks
+// the drift, so z stays ~0 however far the price travels. More window
+// lengths do not help; in return space there is no level memory.
 //
-// The drift statistic escapes that trap by never comparing the price
-// to a baseline at all. It asks a question the attacker cannot
-// normalise away: is the drift PERSISTENT relative to the window's
-// own noise? Under an honest random walk the price wanders ~MAD*sqrt(N)
-// over N buckets in no particular direction, and the median return is
-// ~0. A sustained one-directional push instead accumulates Median*N.
-// The ratio of the two is the classic drift-vs-diffusion statistic
-// above, which grows as sqrt(N) — so a persistent drift becomes
-// arbitrarily significant given enough buckets, while honest
-// volatility does not.
+// The drift statistic never compares price to a baseline. Under an
+// honest random walk the price wanders ~MAD*sqrt(N) in no direction and
+// the median return is ~0; a sustained push accumulates Median*N. The
+// ratio grows as sqrt(N), so persistent drift becomes significant while
+// honest volatility does not. Suppressing per-bucket moves to dodge
+// ZScore keeps MAD, the denominator, small: the largest displacement that
+// hides under threshold T is ~T*MAD*sqrt(N) per window, scaled by the
+// asset's own volatility (ADR-0019 §Consequences).
 //
-// This puts the attacker in a squeeze with no escape: suppressing
-// per-bucket moves to stay under ZScore keeps MAD small, which is the
-// denominator here. Concretely, the largest cumulative displacement
-// that can hide under a threshold T is ~T*MAD*sqrt(N) per window —
-// a bound that scales with the asset's own volatility rather than an
-// operator-chosen percentage, matching ADR-0019 §Consequences
-// ("no operator picks the right percentage").
+// The numerator is the MEDIAN return, so a single spike cannot fake a
+// drift (ADR-0019 §Alternatives-considered).
 //
-// Robustness: the numerator is the MEDIAN return, not the mean, so a
-// single spike cannot fake a drift (ADR-0019 §Alternatives-considered
-// rejects mean/stddev for exactly this reason).
+// Partial coverage does NOT simply dilute away: sqrt(N) amplifies a
+// partly-shifted median. Measured on the 30d window, a weak 0.5%/day
+// push needs ~60% coverage to reach z=5, a +50%-over-7-days move only
+// ~23%. That trade of coverage against sqrt(N) is why
+// [MultiBaseline.MaxDriftZScore]'s three scales are non-redundant.
 //
-// Partial coverage does NOT simply dilute away. The median shifts
-// roughly in proportion to the fraction of the window the drift
-// covers, and sqrt(N) (208 at the 30d scale) then amplifies what is
-// left, so how much coverage is needed depends on the drift's
-// strength rather than on a 50% majority. Measured on the 30d window:
-// a weak 0.5%/day push needs ~60% coverage to reach z=5, while a
-// stronger +50%-over-7-days move is still detected at ~23% coverage.
-// Treat "it must cover most of the window" as false.
-//
-// This is also why [MultiBaseline.MaxDriftZScore]'s three scales are
-// genuinely non-redundant rather than three views of the same number:
-// they trade coverage against sqrt(N).
-//
-// Consequence for callers: because a drift stays visible long after
-// it ends (it must age out of the window, not merely stop), this
+// A drift stays visible until it ages out of the window, so this
 // statistic is unsuitable for gating a per-bucket decision. See
 // [MultiBaseline.MaxDriftZScore].
 //
 // Returns (_, false) when N < [MinDriftSamples] — see that constant
 // for the measured small-sample false-positive rates.
 //
-// MAD == 0 keeps its own convention here — it deliberately does NOT
-// take [Baseline.ZScore]'s [MinMAD] floor. The drift statistic's
-// whole squeeze is that suppressing per-bucket moves to stay under
-// ZScore keeps MAD small, and MAD is this denominator: flooring it
-// would let an attacker buy immunity by simply drifting below
-// 5·[MinMAD]·sqrt(N) per window, which is exactly the frog-boiling
-// case this exists to catch (measured: a real 15%-over-30d push
-// drops from z≈9 to z≈0.7 under a 1e-3 floor). The false positive
-// the floor removes from ZScore is also absent here — the realistic
-// quiet shape (price sits still in most buckets) has Median == 0 and
-// scores 0. So: a zero Median is 0 (a flat, never-moving price — the
-// common illiquid case, and NOT anomalous), a nonzero Median with
-// zero MAD is +Inf (every return in the window identical and nonzero
-// is a perfectly linear ramp — no real market does that).
+// MAD == 0 deliberately does NOT take [Baseline.ZScore]'s [MinMAD]
+// floor: flooring the denominator would let an attacker drift below
+// 5·[MinMAD]·sqrt(N) per window undetected (measured: a 15%-over-30d
+// push drops from z≈9 to z≈0.7 under a 1e-3 floor). A zero Median scores
+// 0 (a flat price, the common illiquid case); a nonzero Median with zero
+// MAD is +Inf (a perfectly linear ramp no real market produces).
 func (b Baseline) DriftZScore() (float64, bool) {
 	if b.N < MinDriftSamples {
 		return 0, false
