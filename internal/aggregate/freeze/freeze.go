@@ -48,87 +48,28 @@ type Marker struct {
 	// the freeze's age. Read [State.FiredAt] for that.
 	FrozenAt time.Time `json:"frozen_at"`
 
-	// Windowed reports that this marker was written by a build that
-	// records per-window ladders, i.e. that [Marker.Ladders] — and not
-	// [Marker.State] — is the authority for "which ladder does window W
-	// own". It is a separate flag rather than `len(Ladders) > 0` so an
-	// EMPTY map (every window's ladder retired while the marker is kept
-	// alive for a still-frozen sibling, see
-	// [Writer.RetireWindowLadder]) cannot be mistaken for a marker
-	// written before per-window ladders existed.
+	// Windowed reports that [Marker.Ladders], not [Marker.State], is the per-window authority.
+	// A separate flag so an EMPTY map (every ladder retired, marker kept for a frozen sibling)
+	// is not mistaken for a marker written before per-window ladders.
 	Windowed bool `json:"windowed,omitempty"`
 
-	// Ladders is the ADR-0019 lifecycle PER aggregation window, keyed by
-	// the canonical [time.Duration] label ("5m0s", "1h0m0s", "24h0m0s").
-	// Authoritative when [Marker.Windowed]; a window with no entry, or
-	// whose entry fails [LadderStillLive], owns no ladder.
-	//
-	// The marker's key is (asset, quote) because its PRESENCE is the
-	// single flag the API serves as `flags.frozen` for the whole pair —
-	// but the lifecycle inside it advances per (pair, window), and the
-	// windows run independently. One ladder per marker could therefore
-	// only ever be one window's, with nothing to say whose: a window
-	// arriving at the freeze step with a cold key (the aggregator drops
-	// a window under its USD-volume floor BEFORE the confidence and
-	// freeze steps, so a thin window's key stays cold across ticks)
-	// adopted a SIBLING window's FiredAt, HoldUntil, ExtensionsUsed and
-	// Escalated as its own — pinning a last-known-good price on a window
-	// nothing was wrong with and, once the inherited ladder had
-	// escalated, leaving a manual `freeze-unfreeze` as the only exit.
-	// Carrying every window's ladder keeps each window's rehydrate its
-	// own, INCLUDING across a restart, where every window is cold at
-	// once and a single owner tag would strand every window but one.
+	// Ladders is the ADR-0019 lifecycle per window, keyed by duration label ("5m0s"). The marker
+	// is keyed per pair but the ladder advances per (pair, window): a single ladder let a cold window
+	// adopt a sibling's escalated ladder and pin a healthy price, and would strand all but one on restart.
 	Ladders map[string]State `json:"ladders,omitempty"`
 
-	// UnownedLadder is a ladder known to be live for the PAIR but with
-	// no recorded owning window. It is what a window with no entry in
-	// [Marker.Ladders] falls back to, and it exists so narrowing the
-	// record can never DROP a freeze that is still running.
-	//
-	// Exactly two things produce one, and both are records that predate
-	// or lack the window dimension:
-	//
-	//   - upgrading a marker written before [Marker.Ladders] existed:
-	//     its pair-level [Marker.State] becomes the unowned ladder.
-	//   - recovering from a durable ladder with no recorded owner: a
-	//     `freeze_events` row written before migration 0163 (one
-	//     pair-level ladder, no window), or any [LadderStore] that is not
-	//     a [WindowLadderStore]. When the marker is gone and that ladder
-	//     is still live, the first window to re-mark records it here, so
-	//     the pair's OTHER windows — cold in the same recovery, and with
-	//     no prev-VWAP comparator to re-fire on — do not read the freshly
-	//     narrowed marker as "you were never frozen" and publish the
-	//     bucket the freeze was withholding. (A per-window durable record
-	//     needs none of this: each window's ladder is restored under its
-	//     own label.)
-	//
-	// It is carried forward only while [LadderStillLive] holds for it:
-	// an unowned ladder is a snapshot nobody is advancing, so it retires
-	// itself once its own hold plus the grace has passed. Until then it
-	// keeps the pair present, but a window may ADOPT it only within one
-	// grace of [Marker.UnownedSince] — see [Writer.LoadStateForWindow].
+	// UnownedLadder is a ladder live for the pair with no owning window (a pre-Ladders marker, or
+	// a durable row from before 0163 / a non-window store); windows without an entry fall back to it so
+	// narrowing never drops a running freeze. It retires once [LadderStillLive] fails and may be ADOPTED
+	// only within one grace of [Marker.UnownedSince] (see [Writer.LoadStateForWindow]).
 	UnownedLadder State `json:"unowned_ladder,omitempty"`
 
-	// UnownedSince is when [Marker.UnownedLadder] was recorded: the
-	// upgrade or durable recovery that produced it, carried forward
-	// unchanged. Zero when there is none.
+	// UnownedSince is when [Marker.UnownedLadder] was recorded; zero when there is none.
 	UnownedSince time.Time `json:"unowned_since,omitempty"`
 
-	// State is the ADR-0019 freeze-lifecycle state (fired_at,
-	// hold_until, extensions_used, escalated, unfreeze_streak). Zero
-	// for markers written by the pre-lifecycle [Writer.Mark] path.
-	//
-	// Carried in the marker for two reasons: an operator dumping
-	// `freeze:*` can see how far up the extension ladder a pair is
-	// without reading logs, and the aggregator re-hydrates the ladder
-	// from here after a restart instead of silently starting the
-	// 2-hour escalation clock over.
-	//
-	// On a [Marker.Windowed] marker this mirrors the most recently
-	// written window's ladder and is NOT the per-window authority: it
-	// exists so a reader from before [Marker.Ladders] — a rolled-back
-	// binary, an operator script — keeps reading exactly what it read
-	// before. [Writer.LoadStateForWindow] reads Ladders.
+	// State is the pair-level lifecycle, so an operator dump shows the ladder and a restart does
+	// not reset the 2-hour escalation clock. On a Windowed marker it only mirrors the latest window,
+	// for pre-Ladders readers (rollback binaries, scripts).
 	State State `json:"state,omitempty"`
 }
 
@@ -143,110 +84,33 @@ type RedisCache interface {
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
-// EventSink is the optional durable-mirror seam for freeze events.
-// The Writer calls RecordFreeze on every Mark; the implementation
-// is responsible for de-duplicating against the still-firing row
-// (so refreshing a Redis TTL doesn't create N rows in postgres).
-//
-// Nil sinks are valid — pre-existing deployments without a sink
-// keep their Redis-only behaviour. Production wires
-// `internal/storage/timescale.FreezeEventSink` here; tests pass
-// either nil or a fake.
-//
-// Per docs/architecture/explorer-data-inventory.md §11.3: this
-// migrates the Redis-only freeze state into a queryable postgres
-// timeline that powers /v1/anomalies.
+// EventSink is the optional durable mirror behind /v1/anomalies (nil = Redis only); production
+// wires `timescale.FreezeEventSink`.
 type EventSink interface {
-	// RecordFreeze persists a freeze event. Idempotent against the
-	// "currently firing" row for (asset, quote): if a row with
-	// recovered_at IS NULL already exists for this pair, the call
-	// is a no-op. Otherwise INSERT a new row with frozen_at=now.
-	//
-	// frozenValue is the last-known-good VWAP we're freezing on,
-	// formatted as a fixed-precision decimal string (matching the
-	// API wire shape — the orchestrator passes
-	// `formatRatFixed(prev, 12)`). Empty string is allowed when no
-	// prior bucket exists (first-tick freeze) — implementations
-	// stamp NULL or 0 in that case, but must not forward that
-	// storage filler to anything that reads it as a price.
-	//
-	// Implementations must NOT block the Writer's hot path on
-	// network failures — log + continue. The Redis marker write
-	// is the load-bearing operation; the durable mirror is best-
-	// effort.
+	// RecordFreeze persists a freeze event, a no-op while the pair has an open row. frozenValue
+	// is the last-known-good VWAP as a fixed decimal string, empty on a first-tick freeze; any NULL/0
+	// filler must never be read as a price. Must not block on network failure: Redis is the authority.
 	RecordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error
 }
 
-// LadderStore is the durable home for the ADR-0019 lifecycle [State].
-// Implemented by `internal/storage/timescale.FreezeEventSink` against the
-// migration-0119 columns on `freeze_events`.
-//
-// Why this exists at all. The ladder would otherwise live only in volatile
-// places: the aggregator's in-process state map and a JSON blob inside the
-// Redis marker. Redis is a cache — possibly without persistence, flushed
-// during incidents — and the orchestrator reads a MISSING marker under a
-// live freeze as the ADR-0019 operator override. So a Redis flush would not
-// merely forget how far a pair had climbed the ladder: the next tick would
-// RELEASE every live freeze, and a pair at ESCALATED — which ADR-0019 holds
-// "until manual unfreeze" — would silently unfreeze and republish the price
-// a P1 had already escalated to a human.
-//
-// Optional, and separate from [EventSink] on purpose: a deployment that
-// wires no ladder store keeps precisely the pre-0119 Redis-only behaviour,
-// which is the same "nil sink = legacy" idiom this file already uses for
-// the durable mirror.
-//
-// Implementations must be concurrent-safe. Both methods are best-effort
-// from the Writer's perspective — a store failure must never take down the
-// Redis write, which remains the serving path's authority for
-// `flags.frozen`.
+// LadderStore is the durable home for the lifecycle [State] (migration 0119). Redis may be
+// flushed, and a MISSING marker under a live freeze reads as the operator override, so without it a
+// flush would RELEASE every freeze, escalated ones included. Optional (nil = Redis only), concurrent-safe,
+// best-effort: a store failure never blocks the Redis write.
 type LadderStore interface {
-	// SaveLadder persists `state` as the current lifecycle for
-	// (asset, quote). Called on EVERY lifecycle transition, so it must be
-	// idempotent; the whole state is written each time, which makes a lost
-	// write self-correcting on the next tick.
-	//
-	// Implementations must NOT create a freeze record — [EventSink] owns
-	// row creation. "Nothing to update" IS an error (timescale.ErrNotFound):
-	// zero rows affected means the open row is missing — most likely
-	// migration 0119 has not been applied under this binary — and callers
-	// count it via AnomalyFreezeLadderWriteFailuresTotal.
+	// SaveLadder writes the whole state on every transition, so it is idempotent and self-correcting.
+	// It never creates a record; zero rows affected is an error (timescale.ErrNotFound), counted.
 	SaveLadder(ctx context.Context, asset, quote canonical.Asset, state State) error
 
-	// LoadLadder returns the durable lifecycle for (asset, quote) and
-	// whether one exists.
-	//
-	// ok=false means "this pair has no durable open freeze": never frozen,
-	// already recovered, or — critically — force-unfrozen by an operator,
-	// since `stellarindex-ops freeze-unfreeze` stamps recovered_at as the
-	// second half of the override. Distinguishing that from "Redis lost the
-	// marker" is the entire point of the store.
+	// LoadLadder returns the durable lifecycle; ok=false means no open freeze, including one an
+	// operator force-unfroze (freeze-unfreeze stamps recovered_at), which is how a flush is told apart.
 	LoadLadder(ctx context.Context, asset, quote canonical.Asset) (State, bool, error)
 }
 
-// WindowLadderStore is the window-aware half of [LadderStore]
-// (migration 0163): the same durable record, told WHICH window's ladder
-// is being written and able to answer for one window at a time.
-//
-// It exists because [LadderStore] is keyed (asset, quote) while the
-// ADR-0019 lifecycle advances per (pair, window). Every frozen window
-// mirrors its ladder on every tick, so the pair-keyed record was simply
-// whichever window wrote LAST — and the durable ladder is read at exactly
-// one moment, after Redis has lost the marker, when it is the only
-// authority left. A 5m window's fresh ten-minute ladder overwriting a 1h
-// window's ESCALATED one therefore brought the escalated freeze back as
-// an ordinary one that auto-unfreezes; the same record, copied onto every
-// cold window, also froze windows nothing was wrong with.
-//
-// Optional, in the same idiom as the orchestrator's window-aware marker
-// interface: a store that cannot scope a ladder keeps the pair-wide
-// behaviour, which errs towards holding a freeze. Production wires
-// `internal/storage/timescale.FreezeEventSink`, which implements both.
-//
-// Implementations MUST keep the pair-level [LadderStore] view in step as
-// a fail-closed summary of the live per-window ladders (furthest hold,
-// highest rung, escalated if any window is). [Recovery] and
-// `stellarindex-ops freeze-unfreeze` read that view and need no window.
+// WindowLadderStore is the per-window [LadderStore] (migration 0163). A pair-keyed record is
+// last-writer-wins, so a 5m window's fresh ladder could replace a 1h ESCALATED one in the only record
+// that survives Redis. Implementations keep the pair-level view as a fail-closed summary (furthest
+// hold, highest rung, escalated if any) for [Recovery] and freeze-unfreeze.
 type WindowLadderStore interface {
 	// SaveWindowLadder records `state` as `window`'s ladder on the pair's
 	// open freeze record, leaving every other window's untouched. An
@@ -254,31 +118,13 @@ type WindowLadderStore interface {
 	// record, zero rows is an error" contract as [LadderStore.SaveLadder].
 	SaveWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration, state State) error
 
-	// LoadWindowLadders returns every window's durable ladder for the
-	// pair, verbatim (the caller applies [LadderStillLive]).
-	//
-	// `unowned` is a ladder the record holds with no owning window: the
-	// pair-level ladder of a row written before 0163. It answers for any
-	// window with no entry of its own, because narrowing it to "nobody's"
-	// would drop a freeze that is still running.
-	//
-	// ok=false carries the [LadderStore.LoadLadder] meaning exactly: no
-	// open record, or one whose ladder has been retired.
+	// LoadWindowLadders returns every window's ladder verbatim; `unowned` is a pre-0163 pair-level
+	// ladder answering for windows without one. ok=false means what it does for LoadLadder.
 	LoadWindowLadders(ctx context.Context, asset, quote canonical.Asset) (ladders map[time.Duration]State, unowned State, ok bool, err error)
 }
 
-// Writer marks a (asset, quote) pair as frozen by writing a
-// [Marker] to Redis at the `freeze:<asset>:<quote>` key with the
-// configured TTL. Constructed by the aggregator orchestrator at
-// startup.
-//
-// When an EventSink is wired, the Writer also records the freeze
-// to the durable mirror — postgres-backed in production, used by
-// the explorer's /anomalies timeline.
-//
-// Safe for concurrent Mark calls — fields are read-only after
-// construction; the underlying RedisCache is concurrent-safe by
-// contract; the EventSink contract requires concurrent-safety.
+// Writer writes `freeze:<asset>:<quote>` markers and, when wired, the durable mirror and ladder.
+// Safe for concurrent use.
 type Writer struct {
 	cache  RedisCache
 	ttl    time.Duration
@@ -304,13 +150,8 @@ func (w *Writer) now() time.Time {
 	return time.Now()
 }
 
-// NewWriter constructs a Writer. ttl=0 falls back to
-// cachekeys.FreezeTTL — the TTL for the lifecycle-free [Writer.Mark]
-// path only; [Writer.MarkHold] takes its TTL from the caller's
-// lifecycle [Outcome] instead.
-//
-// sink is optional (nil = legacy Redis-only behaviour); production
-// passes the timescale-backed implementation.
+// NewWriter constructs a Writer; ttl=0 means cachekeys.FreezeTTL, used only by [Writer.Mark]
+// ([Writer.MarkHold] takes its TTL from the lifecycle [Outcome]).
 func NewWriter(cache RedisCache, ttl time.Duration, opts ...WriterOption) (*Writer, error) {
 	if cache == nil {
 		return nil, errors.New("freeze: RedisCache is required")
@@ -338,39 +179,19 @@ func WithClock(clock func() time.Time) WriterOption {
 	return func(w *Writer) { w.clock = clock }
 }
 
-// WithEventSink wires the durable freeze-event mirror. Pass
-// `internal/storage/timescale.FreezeEventSink` in production; tests
-// can inject a fake or omit the option entirely (nil sink = no
-// mirror, same as the pre-Phase-2 behaviour).
+// WithEventSink wires the durable freeze-event mirror.
 func WithEventSink(sink EventSink) WriterOption {
 	return func(w *Writer) {
 		w.sink = sink
 	}
 }
 
-// DefaultLadderGrace is how far past a durable hold's expiry
-// [Writer.LoadState] still honours the stored ladder when the Redis marker
-// is gone.
-//
-// It is the durable twin of [DefaultMarkerGrace], and deliberately the same
-// value: the marker's TTL is already `remaining hold + MarkerGrace`, so a
-// durable ladder honoured over exactly the same span makes losing Redis
-// behaviour-neutral rather than behaviour-changing. Too short and a flush
-// during the last seconds of a hold still drops the freeze; too long and a
-// long-dead aggregator resurrects a stale freeze on restart, which is the
-// failure mode the bound exists to prevent.
+// DefaultLadderGrace equals [DefaultMarkerGrace] so losing Redis is behaviour-neutral: shorter
+// drops a freeze flushed near its hold's end, longer lets a long-dead aggregator resurrect one.
 var DefaultLadderGrace = DefaultMarkerGrace
 
-// WithLadderStore wires the durable ADR-0019 ladder (migration 0119).
-// Production passes `internal/storage/timescale.FreezeEventSink`; tests
-// pass a fake or omit the option for the pre-0119 Redis-only behaviour.
-//
-// With a store wired, [Writer.MarkHold] mirrors the lifecycle state to it on
-// every transition and [Writer.LoadState] falls back to it when the Redis
-// marker is missing — the two halves that let an escalated freeze survive a
-// Redis flush.
-//
-// grace <= 0 falls back to [DefaultLadderGrace].
+// WithLadderStore wires the durable ladder: MarkHold mirrors every transition and LoadState
+// falls back to it on a marker miss, so an escalated freeze survives a flush. grace <= 0 → default.
 func WithLadderStore(store LadderStore, grace time.Duration) WriterOption {
 	return func(w *Writer) {
 		w.ladder = store
@@ -382,46 +203,15 @@ func WithLadderStore(store LadderStore, grace time.Duration) WriterOption {
 	}
 }
 
-// Mark records a freeze for (asset, quote) backed by the supplied
-// anomaly Decision, with the writer's flat TTL and no lifecycle
-// state. Idempotent — overwriting an existing marker refreshes its
-// TTL.
-//
-// This is NOT the freeze-duration policy. "The freeze lives as long
-// as something keeps re-marking it" was the pre-lifecycle behaviour
-// and it is exactly the defect ADR-0019's extension ladder exists to
-// prevent: it makes the release condition the negation of the fire
-// condition, evaluated on a single bucket. Callers that own a pair's
-// freeze lifecycle call [Writer.MarkHold]; this entry point remains
-// for the composite/triangulation refusal, which is a genuinely
-// per-tick decision about a derived price.
-//
-// frozenValue is the last-known-good VWAP being frozen on, encoded
-// as a fixed-precision decimal string (orchestrator passes
-// `formatRatFixed(prev, 12)`); empty string when no prior bucket
-// exists (first-tick freeze). Forwarded to the EventSink so the
-// freeze_events table records the frozen-on price; not stored in
-// the Redis marker because the API only needs the boolean flag.
-//
-// Returns the underlying error wrapped when the Redis write fails;
-// callers log + continue (the next bucket close retries the write).
+// Mark records a freeze with the flat TTL and no lifecycle, refreshing an existing marker. It is
+// NOT the freeze-duration policy (re-mark-to-live releases on one bucket, the defect ADR-0019 fixes);
+// it stays for the per-tick composite/triangulation refusal. frozenValue goes only to the EventSink.
 func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
 	return w.MarkHold(ctx, asset, quote, frozenValue, decision, State{}, w.ttl)
 }
 
-// MarkHold is [Writer.Mark] plus the ADR-0019 lifecycle: it stamps
-// the freeze's [State] into the marker and sets the marker's TTL from
-// the lifecycle's [Outcome.MarkerTTL] (the remaining hold plus the
-// silence grace) instead of the writer's flat default.
-//
-// This is the call the orchestrator's freeze path uses. The flat-TTL
-// [Writer.Mark] remains for callers with no lifecycle of their own —
-// today the triangulated-composite freeze, whose refusal is a
-// per-tick decision about a DERIVED price rather than a freeze on an
-// observed pair.
-//
-// ttl <= 0 falls back to the writer's default, so a caller that
-// forgets to plumb the outcome's TTL still gets a marker that expires.
+// MarkHold is [Writer.Mark] plus the lifecycle: State in the marker, TTL from
+// [Outcome.MarkerTTL]. ttl <= 0 falls back to the default so the marker still expires.
 func (w *Writer) MarkHold(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -433,25 +223,9 @@ func (w *Writer) MarkHold(
 	return w.markHold(ctx, asset, quote, 0, frozenValue, decision, state, ttl)
 }
 
-// MarkHoldForWindow is [Writer.MarkHold] for a caller whose freeze
-// lifecycle is scoped to ONE window of the pair — which is every
-// lifecycle caller, since ADR-0019's ladder advances per (pair, window)
-// while this marker is keyed per (asset, quote).
-//
-// It records `state` as `window`'s ladder in [Marker.Ladders], MERGING
-// with the ladders already in the marker so a sibling window's freeze
-// survives this write. Every other window's ladder is preserved
-// verbatim, including one this process knows nothing about (a window
-// that has been sitting under the USD-volume floor since startup, so
-// its ladder exists only in the marker) — which is why this is a merge
-// and not a rewrite from the caller's in-memory view.
-//
-// An inactive `state` RETIRES the window's ladder, the same as
-// [Writer.RetireWindowLadder], so a release can never leave a stale
-// ladder behind for a restart to rehydrate.
-//
-// window <= 0 writes an unscoped marker, i.e. exactly
-// [Writer.MarkHold]: the existing ladder map is carried over untouched.
+// MarkHoldForWindow records `state` as `window`'s ladder, MERGING with the marker so siblings
+// survive, including windows this process never saw (under the volume floor since startup). An
+// inactive state retires the ladder; window <= 0 is exactly [Writer.MarkHold].
 func (w *Writer) MarkHoldForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -497,27 +271,12 @@ func (w *Writer) markHold(
 		State:         state,
 	}
 	if label == "" && !state.Active() && prior != nil && w.lifecycleTTLFloor(*prior, "", now) > 0 {
-		// The lifecycle-free [Writer.Mark] landing on a marker a live
-		// ADR-0019 ladder owns. Mark is entitled to one thing — the pair
-		// carrying `flags.frozen` for its flat TTL — and the marker's
-		// presence already is that. Everything else in it belongs to the
-		// lifecycle: the ladders, the pair-level State a legacy marker
-		// keeps its only ladder in, and the owner's diagnostics. Rewriting
-		// them is how the triangulated-composite refusal (whose targets
-		// are members of the aggregator's own pair set) zeroed a legacy
-		// marker's ladder and relabelled an escalated freeze as an
-		// inherited one. Keep the owner's marker; only the expiry below
-		// can move, and only outwards.
+		// Lifecycle-free Mark on a marker a live ladder owns: keep the owner's ladders and diagnostics
+		// (rewriting them zeroed a legacy ladder and relabelled an escalated freeze); only expiry may move out.
 		marker = *prior
 	}
-	// One key, one TTL, several owners. Whoever writes must not pull the
-	// expiry in under a hold somebody else is still serving: the marker
-	// outlives every live ladder in it by the grace, which is what each
-	// ladder's own writer would have asked for. Without the floor Mark's
-	// flat five minutes replaced a 35-minute hold, and a 5m window's short
-	// remainder truncated a 1h sibling's — either of which lapses the
-	// marker, and with it the freeze, on the first tick the owning window
-	// returns early instead of re-marking.
+	// One key, several owners: never pull the expiry in under someone else's live hold, else Mark's
+	// flat 5 min or a 5m window's remainder lapses a longer sibling's freeze.
 	if floor := w.lifecycleTTLFloor(marker, label, now); floor > ttl {
 		ttl = floor
 	}
@@ -531,46 +290,18 @@ func (w *Writer) markHold(
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 
-	// Durable mirror. Best-effort: a sink failure must not surface
-	// to the caller because the Redis write — the load-bearing
-	// operation that drives flags.frozen on the API response — has
-	// already succeeded. The sink is for the explorer /anomalies
-	// timeline, not for liveness.
+	// Durable mirror, best-effort: Redis already succeeded and drives flags.frozen.
 	if w.sink != nil {
 		if sinkErr := w.sink.RecordFreeze(ctx, asset, quote, frozenValue, decision); sinkErr != nil {
-			// Swallowed on purpose: the Redis write above is the
-			// load-bearing operation and has already succeeded, and
-			// WARN-ing on every transient postgres blip would bury the
-			// transitions that matter. Note this is genuinely SILENT —
-			// neither the Writer nor the sink holds a logger — so the
-			// operator signal for a broken mirror is the gap between
-			// AnomalyFreezeEngagedTotal and the freeze_events row count,
-			// not a log line. (The ladder half below is counted directly;
-			// see saveLadder.)
+			// Silent on purpose (no logger here); a broken mirror shows as the gap between
+			// AnomalyFreezeEngagedTotal and freeze_events rows. The ladder half below is counted.
 			_ = sinkErr
 		}
 	}
 
-	// Durable ladder (migration 0119). Mirrored on EVERY lifecycle
-	// transition, not only on the fire, because the fields that matter
-	// most — extensions_used and escalated — only ever change on a LATER
-	// transition than the one that opened the row.
-	//
-	// Ordered after RecordFreeze deliberately: SaveLadder stamps the open
-	// row and never creates one, so on a fresh freeze the row has to exist
-	// first. Best-effort on the same grounds as the sink — the Redis write
-	// above already succeeded and is the serving path's authority.
-	//
-	// Only for ACTIVE states: [Writer.Mark]'s lifecycle-free path passes a
-	// zero State (the triangulated-composite refusal, which owns no
-	// ladder), and stamping that would overwrite a real pair's ladder with
-	// zeros the reader would then mistake for "fired just now".
-	//
-	// A window-scoped write goes to the window's OWN durable ladder when
-	// the store can carry one (migration 0163). The pair-level write is
-	// last-writer-wins across the pair's windows, which is how a 5m
-	// window's fresh ladder came to replace a 1h window's ESCALATED one in
-	// the only record that survives Redis.
+	// Durable ladder on EVERY transition (extensions/escalation change later than the fire), after
+	// RecordFreeze because SaveLadder never creates the row, and only for ACTIVE states (Mark's zero State
+	// would read as "fired just now"). Window-scoped when the store can, since pair-level is last-writer-wins.
 	switch {
 	case w.windowLadder != nil && window > 0:
 		w.saveWindowLadder(ctx, asset, quote, window, state, "mark_hold")
@@ -596,22 +327,9 @@ func (w *Writer) saveWindowLadder(
 	}
 }
 
-// saveLadder mirrors a lifecycle state to the durable store, counting every
-// failure. Best-effort by contract — the Redis write is the serving path's
-// authority and has already succeeded — but NOT silent.
-//
-// The silence mattered more than the failure. The Writer holds no logger and
-// the timescale sink holds no logger either, so a persistently failing
-// ladder write produced no signal anywhere: the freeze looked healthy on
-// every surface right up until a Redis flush needed the ladder that was
-// never written. The shape that makes this concrete is migration 0119 not
-// yet applied while the new binary is already running — the deploy pipeline
-// applies migrations before the binary, so a partially-failed deploy lands
-// exactly there — in which case EVERY write returns "no row matched" and the
-// durable ladder is uniformly absent.
-//
-// `op` is the low-cardinality call site (mark_hold | clear), so an operator
-// can tell "we cannot record ladders" from "we cannot retire them".
+// saveLadder mirrors a state to the durable store: best-effort but counted, since nothing here
+// logs and a missing ladder is found only when a flush needs it (e.g. binary ahead of migration 0119).
+// `op` (mark_hold | clear) tells recording failures from retiring ones.
 func (w *Writer) saveLadder(ctx context.Context, asset, quote canonical.Asset, state State, op string) {
 	if err := w.ladder.SaveLadder(ctx, asset, quote, state); err != nil {
 		obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op).Inc()
