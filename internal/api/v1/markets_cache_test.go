@@ -462,9 +462,7 @@ func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (m
 // / "PR #1185" citation into the cache-miss-rate-high runbook or its
 // Prometheus rule comment. No PR #1185 was ever opened; the
 // bare number now resolves to a real but unrelated open issue, so the
-// citation misleads a reader rather than merely dangling. Mirrors
-// TestNoDanglingIssueReferences (dangling_issue_refs_test.go) for the
-// same repo-wide class of defect.
+// citation misleads a reader rather than merely dangling.
 func TestNoDanglingPR1185Citation(t *testing.T) {
 	const stale = "#1185"
 	root := repoRoot(t)
