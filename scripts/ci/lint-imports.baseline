@@ -24,17 +24,8 @@
 # remove each line as its file's upward import goes away. Do NOT
 # add new files to this list.
 #
-# 2026-07-10 (D8 M0-1 storage-layering move, ROADMAP #47): moved the
-# plain persisted structs to the new internal/domain (zero-method
-# shapes re-exported as transparent aliases from their origin
-# package; method-bearing consumer.Event shapes — accounts.Observation,
-# blend.PositionEvent/EmissionEvent/AdminEvent — re-declared as
-# locally-defined types over the domain shape, since Go forbids
-# methods on a type alias to a foreign type). This cleared 9 of the
-# original 15 entries: account_observations.go, aggregates.go,
-# blend_admin.go, blend_emissions.go, blend_positions.go,
-# divergence_observations.go, mev.go, soroban_events.go,
-# topic_samples.go. The remaining 6 could NOT move mechanically —
+# The plain persisted structs already moved to internal/domain. The
+# remaining 6 could NOT move mechanically —
 # each pulls in actual compute/policy logic, not just a persisted
 # shape, so moving it would mean relocating business logic rather
 # than a data struct:

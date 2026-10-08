@@ -4,9 +4,8 @@
 # one: .github/workflows/deploy.yml carries ONE default binary list for three
 # regions and now FILTERS it through this file rather than obeying it.
 # Dispatching that default verbatim at a region that runs a smaller set failed
-# a health probe and rolled the binary back (futurenet, 2026-09-07 — it has no
-# stellarindex-aggregator unit at all, and the residue of that attempt is still
-# on the host as /usr/local/bin/stellarindex-aggregator.failed-v0.62.0).
+# a health probe and rolled the binary back (futurenet has no
+# stellarindex-aggregator unit at all).
 #
 # THIS FILE IS A CACHE OF A HOST PROPERTY. Every deploy re-reads the units it
 # names, before the playbook runs, and refuses when a row and its host

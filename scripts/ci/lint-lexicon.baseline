@@ -5,9 +5,8 @@
 # idiom (docs/engineering-standards.md "Go idioms"):
 #
 #   coin              — Coin* identifiers for what the lexicon calls
-#                       an asset. The bulk Coin*→Asset* rename landed
-#                       2026-07-09 (ROADMAP #47/D2); the remaining
-#                       entries are permanent — the entity_type="coin"
+#                       an asset. These entries are permanent — the
+#                       entity_type="coin"
 #                       wire vocabulary (/v1/changes/coin/{id}), the
 #                       literal proper name "USD Coin", and the
 #                       reference-only-coin domain term, none of
@@ -17,7 +16,7 @@
 #   variadic-option   — constructor takes `...Option` functional
 #                       options instead of a plain Options struct.
 #
-# SHRINK-ONLY (CS-098): lint-lexicon.sh fails on entries whose file no
+# SHRINK-ONLY: lint-lexicon.sh fails on entries whose file no
 # longer deviates — delete the line when you clean a file. Additions
 # require a `Baseline-Growth:` commit trailer (lint-baseline-growth.sh)
 # and should essentially never happen: new code uses the canonical

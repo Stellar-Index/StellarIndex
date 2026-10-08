@@ -48,11 +48,8 @@
 # risks are accepted on the localhost-only trust-boundary rationale above and
 # re-reviewed whenever this list changes.
 #
-# NOTE ON SCOPE (2026-08-18): this unblock was scoped around GO-2026-6172 and
-# GO-2026-6173 (the two pre-auth unbounded-memory parser bugs). The live vuln.go.dev
-# DB actually surfaces SEVEN *called* lib/pq vulns from the same disclosure batch,
-# all sharing the identical localhost-only mitigation; all seven are listed so CI
-# is genuinely green. See the run report / commit message for the reconciliation.
+# All seven *called* lib/pq vulns from the same disclosure batch share the
+# identical localhost-only mitigation, so all seven are listed.
 
 GO-2026-6166  # CVE-2026-56868 — GSS auth completes without mutual proof. N/A: stellarindex uses password/trust auth to its own localhost Postgres, never GSSAPI; needs a hostile server requesting GSS + MITM.
 GO-2026-6168  # CVE-2026-56869 — lib/pq/scram unbounded PBKDF2 iteration count → CPU DoS. Pre-auth; needs a malicious server / MITM. Own localhost DB only.
