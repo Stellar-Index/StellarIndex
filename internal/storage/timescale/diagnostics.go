@@ -215,20 +215,22 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 
 // CAGGsLiveForever is the ORDERED set of served price rungs, one per
 // [HistoryGranularity]: the prices_* subset of [TradesCAGGs] that the
-// backfill tool refreshes after each chunk. Every SERVED rung must be here,
-// because the policy refresher only rolls forward, so a rung left out is a
-// permanent hole in every backfilled range. The minute grains are served
+// backfill tool refreshes after each chunk. Every SERVED rung has to be here:
+// the policy refresher only rolls forward, so a rung left out is a permanent
+// hole in every backfilled range. The minute grains are served
 // over caller-chosen windows (/v1/ohlc 1m-30m, /v1/chart 1m|15m up to
 // `all`, /v1/history/since-inception 1m|15m, which returns any gap first).
 //
-// None carries retention except prices_1m, whose 90-day policy (migration
-// 0156) ships disabled. Where armed, refreshing an older chunk is wasted
+// migration 0002 gave prices_1m and prices_15m a 30-day retention and
+// migration 0031 removed it; none carries retention now except prices_1m,
+// whose 90-day policy (migration 0156) ships disabled. Where armed, refreshing an older chunk is wasted
 // work, not a fault; the repair for an old range is the migration header's
 // forced refresh with the policy disarmed.
 //
 // twap_1h and twap_1d are built FROM prices_1m, so they are not rungs here,
 // but [PlanCAGGRefresh] refreshes them after forcing prices_1m over their
-// window. prices_1m leads for that reason, in [TradesCAGGs]' order.
+// window. prices_1m leads because it is the one view another aggregate is
+// defined over, in [TradesCAGGs]' order.
 //
 // The two fine rungs pad the scanned range by only 2 and 30 minutes against
 // the coarse set's ~117 days; their cost is rows written, bounded by the
