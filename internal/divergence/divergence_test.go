@@ -264,7 +264,7 @@ func TestCoinGecko_HappyPath(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// last_updated_at mirrors the real /simple/price shape: the
 		// reference always requests include_last_updated_at=true and
-		// rejects a response that omits it (MNY-22 fail-closed gate).
+		// rejects a response that omits it (fail-closed gate).
 		_, _ = fmt.Fprintf(w, `{"stellar": {"usd": 0.07142, "last_updated_at": %d}}`, time.Now().Unix())
 	}))
 	defer ts.Close()

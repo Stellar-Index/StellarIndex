@@ -488,7 +488,7 @@ func seedBoundedLabelSeries() {
 	// pre-seeded here. AggregatorFXSnapFallbackTotal's `leg` label
 	// is per-pair (unbounded by operator config) so it stays
 	// emit-on-error.
-	// `frozen_leg` (MNY-22) landed after the original four and was not
+	// `frozen_leg` landed after the original four and was not
 	// seeded with them — so the one outcome that means "we refused to
 	// publish a derived price because a leg was frozen" was the one
 	// outcome an operator could not distinguish from "this metric is

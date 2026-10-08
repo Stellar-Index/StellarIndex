@@ -241,7 +241,7 @@ func TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_SymmetricStraddleFiresWarning is the MNY-22
+// TestRefreshPair_SymmetricStraddleFiresWarning is the
 // regression on the SERVED value (flags.divergence_warning, read
 // straight off CachedResult.WarningFired).
 //
@@ -258,7 +258,7 @@ func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
 		Threshold:            5.0,
 		MinSourcesForWarning: 2,
-		WarningPersistence:   -1, // isolate the MNY-22 agreement leg from the W3-guards-2 debounce
+		WarningPersistence:   -1, // isolate the agreement leg from the persistence debounce
 	})
 
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
@@ -296,7 +296,7 @@ func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 }
 
 // TestRefreshPair_OneDissenterDoesNotFireWarning pins the deliberate
-// limit of the MNY-22 agreement leg: it fires on "nobody agrees", NOT
+// limit of the agreement leg: it fires on "nobody agrees", NOT
 // on "somebody disagrees". With three references and one outlier, two
 // still corroborate us and the warning must stay silent — otherwise a
 // single flaky reference would pin the customer-visible flag on

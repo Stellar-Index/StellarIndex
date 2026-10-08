@@ -31,7 +31,7 @@ func notNullViolation() error {
 // whole backlog: it holds every row below the cursor (a visible stall — rising
 // lag, runs_total{outcome="sink_retry"}) for as long as the cycle cannot prove
 // the sink is otherwise healthy, then bleeds at most one row per cycle, and
-// still drains rather than wedging (COR-11).
+// still drains rather than wedging.
 //
 // Without a cap the skip arm runs inline per row: the first cycle
 // would count all five, forget them and let the cursor advance to the window's end
@@ -77,7 +77,7 @@ func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 	}
 
 	// Budget spent: the held rows are re-read and bled off one per cycle —
-	// bounded and loud, never a permanent stall (COR-11: a poison row must not
+	// bounded and loud, never a permanent stall (a poison row must not
 	// wedge a sole-writer domain).
 	for _, want := range []uint32{101, 102, 103, 104} {
 		h.cycle()
@@ -101,7 +101,7 @@ func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 // included, so it must not also be a shed candidate — shedding it would forget
 // the row identity, and the consecutive-cycle count the quarantine budget is
 // made of would restart every cycle, so the row could never be quarantined and
-// the sole-writer source would wedge forever (COR-11/COR-01).
+// the sole-writer source would wedge forever.
 func TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget(t *testing.T) {
 	const source = "rlt131-drop-plus-held"
 	quarantinedBefore := decodedCount(t, source, "sink_quarantined")

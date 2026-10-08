@@ -70,7 +70,7 @@ func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *te
 // TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne is the other side of
 // the same rail, and the reason the proof is a DISCRIMINATOR rather than a
 // blanket delay: a scattered poison row sits beside rows that commit, so the
-// proof is present and the row costs exactly one cycle — the COR-11 behaviour
+// proof is present and the row costs exactly one cycle — the behaviour
 // this arm exists for is unchanged.
 func TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne(t *testing.T) {
 	const source = "rlt131-with-health-proof"
