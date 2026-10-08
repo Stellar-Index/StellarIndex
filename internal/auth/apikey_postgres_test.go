@@ -686,7 +686,7 @@ func TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt(t *testing.T) {
 }
 
 // TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive is the
-// COR-14 drift guard (NOT a red-before-fix test: the refactor it guards
+// drift guard (NOT a red-before-fix test: the refactor it guards
 // is behaviour-preserving by construction). It pins that every path that
 // decides on a key's revoked/expired fields — the Postgres read, the
 // validator's cache hit and the Redis validator — agrees with

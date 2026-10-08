@@ -111,7 +111,7 @@ func TestPriceDerivesAnyFiatThroughUSD(t *testing.T) {
 // decimals guard) is made on the USD leg. If the cross-rate layer
 // re-reads that leg and multiplies it by an FX rate, it becomes a side
 // door that publishes exactly the price policy declined to publish —
-// the MSP-02 / MSP-06 class, where a fallback chain re-served a
+// the class where a fallback chain re-served a
 // withheld market through a route nobody had gated.
 func TestPriceWithheldUSDLegIsNotLaunderedThroughFX(t *testing.T) {
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice, withheld: true}

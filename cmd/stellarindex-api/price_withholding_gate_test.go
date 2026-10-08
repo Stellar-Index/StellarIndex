@@ -215,7 +215,7 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 // BOTH gates on EVERY branch", because a method with two arms satisfies
 // it as soon as ONE arm calls wiring.PriceWithheld().
 //
-// That is exactly the MSP-07 shape. wiring.StorePriceReader.LatestPrice has a
+// That is exactly the bypass shape. wiring.StorePriceReader.LatestPrice has a
 // closed-VWAP arm and a last-trade arm; a last-trade arm that spells out
 // `!r.substance.Allowed(...)` and never consults the SCAM gate lets an
 // operator setting disable_substance_gate=true to diagnose a coverage

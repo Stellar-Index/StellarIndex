@@ -218,7 +218,7 @@ func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 // TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked — an operator who
 // leaves divergence.min_sources_for_warning at 0 or below gets
 // divergence.NewService's own fallback (2), and `checked` follows it: a
-// single responding reference must not read as cross-checked, or COR-14
+// single responding reference must not read as cross-checked, or the bug
 // reopens for exactly the default-config deployments it matters most on.
 func TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked(t *testing.T) {
 	xlm := canonical.NativeAsset()
