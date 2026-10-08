@@ -583,8 +583,7 @@ func TestSeedDataIntegrity(t *testing.T) {
 	}
 }
 
-// TestStellarCollision_nativeAssetImpersonator is the regression test
-// for the cold audit of 2026-08-04.
+// TestStellarCollision_nativeAssetImpersonator guards native-asset impersonation.
 //
 // XLM's seed entry is `network: stellar` + `asset_id: native` with NO
 // classic `code`, so it never entered byStellarCode and StellarCollision
@@ -639,8 +638,8 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 // ISSUED asset, not only the handful that happen to have a Stellar
 // issuance.
 //
-// byStellarCode used to be populated solely inside the Issuance loop, so
-// `reference_only` entries (USDT, BTC, ETH, XRP, …) never entered it —
+// byStellarCode must not be populated solely inside the Issuance loop, or
+// `reference_only` entries (USDT, BTC, ETH, XRP, …) never enter it —
 // 11 keys total, meaning those were the only codes an impersonation
 // could ever be flagged for. Measured on r1: 22,496 codes are claimed by
 // more than one issuer across 132,808 of 194,034 classic assets, and
@@ -820,8 +819,8 @@ func TestLoadFromBytes_RejectsKnownAnchorsOutsideFiatDenomination(t *testing.T) 
 // a Stellar identity, so StellarCollision owns its ticker and
 // FiatDenomination must not answer for it — the same rule the classic
 // case follows and the census test's `StellarEntry() == nil` carve-out
-// assumes. The indexer used to route every code-less entry through the
-// ticker-only path, which files any fiat-class entry as a denomination
+// assumes. Routing every code-less entry through the
+// ticker-only path would file any fiat-class entry as a denomination
 // regardless of its issuance.
 func TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance(t *testing.T) {
 	const contract = "CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF"

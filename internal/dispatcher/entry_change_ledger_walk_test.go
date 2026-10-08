@@ -159,12 +159,11 @@ func balanceOf(c xdr.LedgerEntryChange) int64 {
 	return int64(c.Updated.Data.Account.Balance)
 }
 
-// TestProcessLedger_FailedTxFeeChangesAreObserved pins C2-023/C2-040
-// (audit-2026-07-23): a FAILED transaction still debits its fee on chain,
+// TestProcessLedger_FailedTxFeeChangesAreObserved pins that a FAILED transaction still debits its fee on chain,
 // stellar-core commits that fee change, and the lake's
 // clickhouse.extractEntryChanges has always recorded it. The live
-// dispatcher used to `continue` past the whole tx before the entry-change
-// walk, so the balance observer never saw the debit — the observed balance
+// dispatcher must not `continue` past the whole tx before the entry-change
+// walk, or the balance observer never sees the debit — the observed balance
 // drifted above the on-chain balance by the fee, and the live path and the
 // lake disagreed by exactly the failed-tx fee set (so an ADR-0034 re-derive
 // could never reconcile).
@@ -198,8 +197,7 @@ func TestProcessLedger_FailedTxFeeChangesAreObserved(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_FeePhasePrecedesApplyPhase pins C2-032
-// (audit-2026-07-23). stellar-core charges the fee for EVERY transaction
+// TestProcessLedger_FeePhasePrecedesApplyPhase pins that stellar-core charges the fee for EVERY transaction
 // in the tx set before applying ANY of them, so on chain every fee change
 // precedes every apply-phase change. The per-tx walk (tx1 fee, tx1 apply,
 // tx2 fee, ...) gave tx2's FEE-phase balance a HIGHER IntraLedgerSeq than

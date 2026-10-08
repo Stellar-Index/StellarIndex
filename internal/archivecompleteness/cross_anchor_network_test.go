@@ -10,7 +10,7 @@ import (
 )
 
 // TestNewCrossAnchorFiller_NetworkGuard is the cross-network-corruption
-// proof (audit 2026-08-26): the built-in DefaultCrossAnchorSources are all
+// proof: the built-in DefaultCrossAnchorSources are all
 // PUBNET archives, so constructing a filler for a non-pubnet archive with
 // no explicit sources MUST be refused — otherwise `archive-completeness
 // fill` on a test-net VM downloads pubnet checkpoints and writes them into
@@ -48,7 +48,7 @@ func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 }
 
 // TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot is the
-// CA2-A29-correct-2 regression: setting only one of OwnerUser/OwnerGroup
+// setting only one of OwnerUser/OwnerGroup
 // must leave the OTHER half untouched (os.Chown's -1 sentinel), not fall
 // back to Go's int zero-value, which is uid/gid 0 (root).
 func TestNewCrossAnchorFiller_HalfBlankOwnerDoesNotDefaultToRoot(t *testing.T) {

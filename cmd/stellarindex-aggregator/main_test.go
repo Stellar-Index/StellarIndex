@@ -61,7 +61,7 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 	}
 }
 
-// TestResolveUSDPeggedSorobanAssets — Guard 1 (2026-07-10): the SAC
+// TestResolveUSDPeggedSorobanAssets — Guard 1: the SAC
 // twin of config.TradesConfig.USDPeggedClassics. A SAC contract inherits a USD
 // peg ONLY when BOTH: its underlying classic ("CODE:ISSUER"/
 // "CODE-ISSUER") is on the operator's usd_pegged_classic_assets list
@@ -135,9 +135,9 @@ func TestResolveUSDPeggedSorobanAssets(t *testing.T) {
 }
 
 // TestBuildTriangulations_RespectsTriangulationEnabled pins down the
-// aggregate.triangulation_enabled master switch — pre-2026-05-02 the
-// field existed but no production code consulted it, so an operator
-// setting it false still got triangulation. The wiring lives in
+// aggregate.triangulation_enabled master switch — if no production
+// code consulted the field, an operator
+// setting it false would still get triangulation. The wiring lives in
 // buildTriangulations: when the switch is false, return nil so the
 // orchestrator's `len(cfg.Triangulations) == 0` short-circuit skips
 // the triangulation tick. Validation still runs first so a malformed
@@ -198,9 +198,9 @@ func TestBuildTriangulations_RespectsTriangulationEnabled(t *testing.T) {
 	})
 }
 
-// TestRunSupplyRefresh_DurationMetricRecorded pins the wave-90
-// (2026-05-13) latency-histogram wiring on the supply-refresh
-// loop. Final entry in the wave-92/93/94 regression-test series.
+// TestRunSupplyRefresh_DurationMetricRecorded pins the
+// latency-histogram wiring on the supply-refresh
+// loop.
 //
 // Setup: build a real *supply.Refresher with stub
 // LedgerLookup/SnapshotComputer/SnapshotInserter (the supply
@@ -267,7 +267,7 @@ func (*stubSupplyInserter) InsertSupply(_ context.Context, _ supply.Supply) erro
 
 // TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes drives the
 // migration-0085 rollup worker through one fold pass against a fake
-// advancer and pins the two properties the incident-2026-07-06 fix
+// advancer and pins the two properties the rollup
 // depends on:
 //
 //  1. Every watched contract is advanced and the (contract_id, outcome)
@@ -448,11 +448,11 @@ func TestSEP41RollupOutcome(t *testing.T) {
 	}
 }
 
-// TestBuildSupplyPolicy_TranslatesConfig — CFG-11 (audit-2026-07-23).
-// buildClassicRefreshers/buildSEP41Refreshers used to hardcode
+// TestBuildSupplyPolicy_TranslatesConfig.
+// buildClassicRefreshers/buildSEP41Refreshers must not hardcode
 // supply.Policy{} at both NewClassicComputer/NewSEP41Computer call
-// sites, so an operator-configured per_asset_locked_sets /
-// max_supply_overrides never reached the computer despite existing
+// sites: an operator-configured per_asset_locked_sets /
+// max_supply_overrides would never reach the computer despite existing
 // in config and being fully implemented in internal/supply.Policy.
 // Asserts the corrected value: the built Policy actually carries the
 // configured PerAsset locked-set entries and a working
@@ -620,10 +620,9 @@ func (f fakeCursorGetter) GetCursor(_ context.Context, source, sub string) (time
 	return f.cursor, f.err
 }
 
-// TestDivergenceLedgerAdapter_LatestLedger guards T026(d): before
-// this seam existed, NewDivergenceSink got no ledger provider and
-// every divergence_observations row carried observed_at_ledger=0
-// regardless of the live cursor. The adapter must surface the real
+// TestDivergenceLedgerAdapter_LatestLedger guards the seam: without it NewDivergenceSink gets no
+// ledger provider and every divergence_observations row carries
+// observed_at_ledger=0 regardless of the live cursor. The adapter must surface the real
 // ledgerstream cursor, not the always-0 default.
 func TestDivergenceLedgerAdapter_LatestLedger(t *testing.T) {
 	a := divergenceLedgerAdapter{cursors: fakeCursorGetter{
@@ -646,10 +645,10 @@ func TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError(t *testing.T) {
 	}
 }
 
-// TestLazyCloseTimeReader_RetriesTransientDialFailure covers GH-902: the
-// supply refresher's ClickHouse close-time reader used to dial once,
+// TestLazyCloseTimeReader_RetriesTransientDialFailure covers the case where the
+// supply refresher's ClickHouse close-time reader must not dial once,
 // synchronously, at boot — any error (including the transient cold-boot
-// race clickhouse-server's metadata load causes) aborted the whole
+// race clickhouse-server's metadata load causes) would abort the whole
 // aggregator process. newLazyCloseTimeReader must instead retry in the
 // background until the dial succeeds, exactly like the decimals-guard
 // (K024) and SAC-resolver readers already do. A dial stub that fails twice

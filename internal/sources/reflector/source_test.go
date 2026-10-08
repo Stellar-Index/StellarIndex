@@ -240,9 +240,9 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 // regression test for a same-op collision: two
 // Reflector update events emitted by the SAME operation
 // (OperationIndex equal) but at DIFFERENT positions in that
-// operation's contract-event list (EventIndex differs) used to
-// collide, because the synthetic OpIndex's fanout base was
-// OperationIndex ALONE. The fix must incorporate EventIndex too, so
+// operation's contract-event list (EventIndex differs) collide
+// if the synthetic OpIndex's fanout base were
+// OperationIndex ALONE. The base must incorporate EventIndex too, so
 // two same-source events within one op get disjoint 1024-wide
 // OpIndex blocks.
 func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {

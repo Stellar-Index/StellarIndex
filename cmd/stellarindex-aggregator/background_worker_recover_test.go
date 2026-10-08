@@ -24,14 +24,14 @@ import (
 // dependency and would still only cover the ones that exist today. So this
 // derives the worker set from the source itself and fails if any of them lacks
 // recovery. Same discipline as the API binary's TestBackgroundWorkersRecover
-// and the v1 package's TestSSEProducerGoroutinesRecover (AGT-12). The shared
+// and the v1 package's TestSSEProducerGoroutinesRecover. The shared
 // guard's own recover-and-log behaviour is proven separately in
 // internal/worker (TestRecover_ContainsPanicAndLogs).
 //
 // The walk lives in internal/worker/guardscan, shared with the indexer and
-// API guards (#368 M1). Every `go` statement here is a literal today, but
+// API guards. Every `go` statement here is a literal today, but
 // the shared scanner also resolves `go namedFunc(…)` — the spelling that
-// used to be invisible to the per-binary copies of this test — and fails on
+// a purely literal scan would miss — and fails on
 // any callee it cannot follow.
 //
 // The metrics HTTP-server goroutine is the one deliberate exemption: if the

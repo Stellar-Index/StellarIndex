@@ -34,10 +34,10 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 			"reboot, so the guard's resolver must go through the retrying dial", c.viaDecimals)
 	}
 	// dialDecimalsResolver's own delegation + the MEV tx-order resolver +
-	// the priceless-coverage SAC resolver (K024) + the supply refresher's
+	// the priceless-coverage SAC resolver + the supply refresher's
 	// close-time reader on a real (non-dry-run) boot, via
-	// newLazyCloseTimeReader (GH-902): that dial used to be a single
-	// synchronous `return err` on failure, aborting the whole aggregator
+	// newLazyCloseTimeReader: that dial must not be a single
+	// synchronous `return err` on failure, which would abort the whole aggregator
 	// over a transient ClickHouse blip.
 	const wantViaGenericRetry = 4
 	if c.viaGeneric != wantViaGenericRetry {
@@ -47,7 +47,7 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 			"cold lake at boot disables them for the process lifetime again (K024)", c.viaGeneric, wantViaGenericRetry)
 	}
 	// Every component still allowed to dial the lake inline: the supply
-	// refresher's close-time source, -dry-run branch ONLY (T184) — a
+	// refresher's close-time source, -dry-run branch ONLY — a
 	// single synchronous dial so a bad config fails -dry-run instead of
 	// only surfacing at a real start. The real boot path does not use
 	// this call; it goes through newLazyCloseTimeReader (GH-902) above.

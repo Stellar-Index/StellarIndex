@@ -6,8 +6,8 @@ import (
 )
 
 // TestCuratedRWASyncHelpMatchesHandler pins curated-rwa-sync's --help entry
-// to what the handler actually does (GH-1200). The entry used to name
-// rwa_curated_directory and a per-token USD price — neither is true:
+// to what the handler actually does. The entry must not name
+// rwa_curated_directory or a per-token USD price — neither is true:
 // internal/ops/ingest/curated_rwa_sync.go writes
 // curated_rwa_published_series via ReplaceCuratedRWAPublished (a monthly
 // market-cap total and a subclass split, not per-token prices), and

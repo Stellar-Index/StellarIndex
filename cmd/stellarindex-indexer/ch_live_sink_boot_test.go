@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// TestCHLiveSinkDialIsNonFatalAndRetried is a structural guard for K024.
+// TestCHLiveSinkDialIsNonFatalAndRetried is a structural guard.
 //
-// clickhouse.NewLiveSink used to be dialled once, inline, in realMain: a
+// clickhouse.NewLiveSink must not be dialled once, inline, in realMain: a
 // single failure returned a fatal boot error, so a host whose ClickHouse
 // was still loading metadata after a shared reboot — the same cold-boot
 // race startSignerTagger's docstring describes — could not ingest a

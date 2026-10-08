@@ -20,12 +20,12 @@ import (
 // SDEX stores the same market in BOTH orientations — the decoder files
 // each trade in the venue's observed base/quote ordering rather than
 // re-orienting it — so every serving read has to fold two directions
-// into the one the caller asked for. Two defects lived here:
+// into the one the caller asked for. Two defects to avoid:
 //
-//	R-004 / R-007: the fold weighted the two directions' prices by TRADE
+//	Count weighting: a fold must not weight the two directions' prices by TRADE
 //	  COUNT. A count-weighted mean of {vwap, 1/vwap_flipped} is provably
 //	  not the union's VWAP: it lets N dust trades outvote one whale.
-//	R-006: /v1/history and the default /v1/chart didn't fold at all —
+//	Single orientation: /v1/history and the default /v1/chart didn't fold at all —
 //	  they read one stored orientation and silently dropped every trade
 //	  recorded the other way round.
 //
@@ -91,7 +91,7 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 			want: "1.001",
 		},
 		{
-			// R-004's scenario verbatim: ONE large forward fill against
+			// the count-weighting scenario verbatim: ONE large forward fill against
 			// MANY tiny flipped fills at a different price.
 			//   forward: 999 900 XLM @ 0.1 USDC  →  99 990 USDC / 999 900 XLM
 			//   flipped:      25 USDC @ 0.25     →      25 USDC /     100 XLM
@@ -151,7 +151,7 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 
 // TestCombineDirVWAP_IsNotTradeCountWeighted states the defect directly:
 // for the fixture bucket the trade-count-weighted mean is 0.23 and the
-// union VWAP is 0.4. Serving the former is R-004/R-007.
+// union VWAP is 0.4. Serving the former is count weighting.
 func TestCombineDirVWAP_IsNotTradeCountWeighted(t *testing.T) {
 	got, ok := combineDirVWAP(combineFixture)
 	if !ok {
@@ -367,7 +367,7 @@ func TestLatestClosedVWAP1mForPair_VolumeWeightedUnion(t *testing.T) {
 	}
 }
 
-// TestClosedVWAPAtOrBefore_VolumeWeightedUnion is R-007 on the
+// TestClosedVWAPAtOrBefore_VolumeWeightedUnion pins the union VWAP on the
 // point-in-time engine behind /v1/price/at and /v1/price/changes.
 func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
@@ -418,7 +418,7 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mCombined_PerBucketUnion is R-007 on the
+// TestRecentClosedVWAP1mCombined_PerBucketUnion pins the union VWAP on the
 // trailing baseline behind the /v1/price serving-sanity guard. Buckets
 // must stay separate (one row per bucket, newest first) AND each must be
 // the volume-weighted union — the guard compares this series against the

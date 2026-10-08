@@ -22,10 +22,10 @@ import (
 // ansible hosts that file reaches batch jobs only (the daemons get
 // /etc/default/stellarindex). The deploy/systemd reference units share
 // it — the indexer reads its MinIO creds and the API its SEP-10 seed
-// out of the same file — so a self-hoster who follows the doc used to
+// out of the same file — so a self-hoster who follows the doc must not
 // demote the LIVE ledger sink (NewLiveSink -> Open) and the aggregator's
 // supply readers (NewExplorerReader) to the batch tier: the precise
-// inverse of the ch-rebuild starvation incident the profile exists to prevent.
+// inverse of what the profile exists to prevent.
 //
 // The units strip the pair with `UnsetEnvironment=`, which systemd
 // applies AFTER every Environment=/EnvironmentFile= (systemd.exec(5);

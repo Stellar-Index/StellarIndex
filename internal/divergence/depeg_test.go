@@ -24,8 +24,7 @@ import (
 //
 // Without this test, the late-binding rewrite + the divergence
 // service could silently regress in opposite directions and
-// leave the safety net broken — exactly the gap F-1230
-// (audit-2026-05-12) flagged.
+// leave the safety net broken — exactly the gap this test closes.
 //
 // Scenario:
 //

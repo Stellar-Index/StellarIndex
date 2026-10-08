@@ -321,7 +321,7 @@ func TestEndpointFailures_PerEndpointFreshnessOverride(t *testing.T) {
 	}
 
 	// And the structural bound still catches a real pipeline
-	// regression (the 2026-06-02/03 chunk-perf incident read 166-186s).
+	// regression (a chunk-perf incident read 166-186s).
 	regressed := 170.0
 	price.ObservedAtFreshSec = &regressed
 	if got := endpointFailures(price, sla); len(got) != 1 {
@@ -406,7 +406,7 @@ func abs(x float64) float64 {
 }
 
 // TestRunProbe_FreshnessMeasuredAtSampleTime is the end-to-end guard for
-// the r1 2026-09-05 reading: the probe recorded
+// a bad reading: the probe recorded
 // stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} ≈ 15 s
 // every run while the live tip served an observed_at that was
 // sub-second old. Freshness was computed as time.Since(observedAt)
@@ -710,7 +710,7 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 }
 
 // TestRunProbe_MultiPairDoesNotMergeSamples is the regression guard for
-// CA2-A31-harden-2: with two -pair flags, both pairs' endpoints share the
+// with two -pair flags, both pairs' endpoints share the
 // bare names "price"/"price-tip"/"oracle-latest". Before the fix, samples
 // were keyed by ep.Name alone, so native's fresh price-tip samples and
 // USDC's 600s-stale ones landed in the same bucket and every PerEndpoint
@@ -795,7 +795,7 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 	}
 }
 
-// TestMain_UsageDoesNotPrintAPIKey pins CA2-A31-harden-1: a flag-parse
+// TestMain_UsageDoesNotPrintAPIKey pins that a flag-parse
 // error prints Usage and the healthchecks wrapper uploads that output to a
 // third party, so the env-supplied key must never render as a flag default.
 func TestMain_UsageDoesNotPrintAPIKey(t *testing.T) {

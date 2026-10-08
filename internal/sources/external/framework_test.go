@@ -174,11 +174,6 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		// All Soroban sources are now audited; the wantUnsafe slot
 		// stays here as the structural place to put a new on-chain
 		// source while its audit is pending.
-		// History:
-		//   soroswap/phoenix/aquarius/comet/band/redstone/
-		//   reflector-{dex,cex,fx} audited 2026-04-29 → wantSafe.
-		//   blend audited 2026-05-02 (wide-net Phase 2 walk +
-		//   Phase 3 disassembly) → wantSafe.
 	}
 	for _, name := range wantUnsafe {
 		if Registry[name].BackfillSafe() {

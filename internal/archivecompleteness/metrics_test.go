@@ -165,14 +165,13 @@ func TestPopulateFromReport(t *testing.T) {
 // TestPopulateFromFillResult — repair-attempts and -failures get
 // populated from a FillResult under REAL source names.
 //
-// C4-037 (audit-2026-07-23): this test previously asserted that
-// failures land under the synthetic `multi-source-exhausted` label
-// while attempts use real source names — i.e. it pinned the defect.
-// The two label sets can never intersect, so
+// Failures must not land under a synthetic `multi-source-exhausted`
+// label while attempts use real source names: the two label sets
+// would never intersect, so
 // `archive-completeness.yml`'s
 // `sum by (source)(failures) / sum by (source)(attempts)` alert had
 // a permanently-zero numerator for every real source. The assertions
-// below are the corrected contract: one attempt per try, one failure
+// below pin the contract: one attempt per try, one failure
 // per failed try, both keyed by the source that was actually tried.
 func TestPopulateFromFillResult(t *testing.T) {
 	res := archivecompleteness.FillResult{

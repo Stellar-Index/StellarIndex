@@ -253,7 +253,7 @@ func TestOHLC_StablecoinFiatProxy_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestOHLC_DefaultOutlierFilterRejectsDustTrade exercises R-007.
+// TestOHLC_DefaultOutlierFilterRejectsDustTrade exercises the default outlier filter.
 // A bar full of normal native/USDC trades plus one 1-stroop ↔
 // 1-stroop SDEX dust print (price=1.0, ~6× the real XLM/USDC ratio)
 // must NOT have High pegged to $1 — the default 4σ filter drops the
@@ -274,7 +274,7 @@ func TestOHLC_DefaultOutlierFilterRejectsDustTrade(t *testing.T) {
 	for i := 0; i < 29; i++ {
 		trades = append(trades, mkOHLCTrade(10000, 1600, t0.Add(time.Duration(i)*time.Second)))
 	}
-	// One dust trade at price=1.0 — the R-007 contamination.
+	// One dust trade at price=1.0 — the contamination.
 	trades = append(trades, mkOHLCTrade(1, 1, t0.Add(29*time.Second)))
 
 	reader := &stubHistoryReader{trades: trades}

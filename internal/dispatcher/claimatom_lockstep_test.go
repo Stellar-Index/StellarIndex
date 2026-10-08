@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package dispatcher_test (EXTERNAL) hosts the C2-010 lock-step guard.
+// Package dispatcher_test (EXTERNAL) hosts the lock-step guard.
 // It has to live out here: the guard drives the REAL SDEX decoder via
 // sdex.AuditOp, and internal/sources/sdex imports internal/dispatcher —
 // an in-package _test.go importing it would be an import cycle.
@@ -76,7 +76,7 @@ func lsLiquidityPoolClaim(t *testing.T, soldAsset, boughtAsset xdr.Asset, sold, 
 	}
 }
 
-// lsV0Claim builds the legacy pre-CAP-27 V0 claim atom (F-1233): carries the
+// lsV0Claim builds the legacy pre-CAP-27 V0 claim atom: carries the
 // seller's raw ed25519 bytes rather than an AccountId discriminant.
 func lsV0Claim(t *testing.T, soldAsset, boughtAsset xdr.Asset, sold, bought int64) xdr.ClaimAtom {
 	t.Helper()
@@ -114,8 +114,7 @@ func lsManageSellOfferOp(claims []xdr.ClaimAtom) (xdr.Operation, xdr.OperationRe
 
 // ─── the guard ───────────────────────────────────────────────────────
 
-// TestClaimAtomCount_LockStepWithDecoder is the C2-010 regression guard
-// (audit-2026-07-23).
+// TestClaimAtomCount_LockStepWithDecoder guards the lock-step between the claim-atom count and the decoder.
 //
 // The census (ADR-0033) exists to prove the decoders lost nothing:
 // `census.ClassicTradeEffectCount MUST equal COUNT(trades WHERE

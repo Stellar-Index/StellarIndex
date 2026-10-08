@@ -44,7 +44,7 @@ import (
 //     than `[aquarius comet phoenix sdex soroswap]`.
 //   - LIMIT. /v1/markets?source=… is fired by the explorer at
 //     limit=200; the prewarm covered only the unfiltered pair list, so
-//     every /exchanges/{name} visit paid the 8s ceiling (R-002).
+//     every /exchanges/{name} visit paid the 8s ceiling.
 //
 // A test that re-states the prewarm's own constants cannot catch any of
 // these — it would agree with the prewarm and be wrong in the same
@@ -158,7 +158,7 @@ func newRecordingMarkets() (*v1.CachedMarketsReader, *callLog) {
 //
 // Adding a shape here that the prewarm does not cover is a legitimate
 // way to fail this test: it means the explorer fires a request nothing
-// warms, which is the R-001 / R-002 class.
+// warms, which is that class of failure.
 var hotRequests = []struct {
 	name string
 	path string

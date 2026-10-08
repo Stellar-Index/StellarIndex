@@ -77,8 +77,8 @@ func TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey(t *testing.T) {
 //
 // `decimals` is a uint8, so an operator who omits it in TOML gets 0.
 // Taking that literally would divide the raw int256 answer by 10^0 —
-// serving a BTC/USD price 10^8 times too large. BuildFeedSet used to
-// substitute DefaultDecimals (8) for 0 here; it now carries the 0
+// serving a BTC/USD price 10^8 times too large. BuildFeedSet must not
+// substitute DefaultDecimals (8) for 0 here; it carries the 0
 // through VERBATIM, because the poller resolves the scale from the
 // feed's on-chain `decimals()` (an omitted value ADOPTS the chain's,
 // a set value is VERIFIED against it) and `project` refuses a literal

@@ -8,9 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Pair-leg regression suite for F002/K001.
+// Pair-leg suite.
 //
-// The gate used to answer a question about ONE asset, which made the
+// A gate answering a question about ONE asset makes the
 // withholding decision depend on which leg the client named first: the
 // same market, asked the other way round, was published at 200 as the
 // exact reciprocal of the number the gate had just refused. These tests

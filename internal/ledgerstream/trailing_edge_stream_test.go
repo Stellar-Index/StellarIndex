@@ -215,10 +215,10 @@ func TestStream_TolerateTrailingMissing_DisabledStrictMode(t *testing.T) {
 }
 
 // TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors
-// is the regression test for COR-01 (audit-2026-07-23, low): a
+// pins that a
 // single-ledger bounded Stream (from == to) whose one ledger IS the
-// missing one used to tolerate unconditionally under
-// TolerateTrailingMissing — Stream returned nil having invoked the
+// missing one is not tolerated under
+// TolerateTrailingMissing — otherwise Stream returns nil having invoked the
 // callback ZERO times, a silent success indistinguishable from "there
 // was nothing to walk". Unlike a wider bounded range (see the
 // HappyPath test's documented SDK prefetch-cancel raciness), a

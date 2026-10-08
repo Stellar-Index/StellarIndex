@@ -10,10 +10,10 @@ import (
 )
 
 // TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the
-// "ClickHouse was already down when the API started" state used to
-// publish no `stellarindex_dependency_up{dependency="clickhouse"}`
-// series at all, because the checker was appended inside the success
-// branch of the boot dial. The alert over that gauge is
+// "ClickHouse was already down when the API started" state must still
+// publish the `stellarindex_dependency_up{dependency="clickhouse"}`
+// series; appending the checker inside the success branch of the boot
+// dial would leave it absent. The alert over that gauge is
 // `stellarindex_dependency_up == 0` — deliberately not absent() — so
 // the one state the runbook calls "the only signal that it is gone" was
 // the state with no signal: every lake-backed endpoint 503'd and

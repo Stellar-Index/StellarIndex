@@ -83,8 +83,8 @@ func TestEmitDiscoveryDropMetricDelta_AddsOnlyNewDrops(t *testing.T) {
 }
 
 // TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric: a
-// non-zero LedgerExtract undercount field used to be visible only as a
-// WARN log line. It must now also add its exact count (not just a
+// non-zero LedgerExtract undercount field must not be visible only as a
+// WARN log line. It must also add its exact count (not just a
 // per-ledger flag) to obs.ChLiveSinkReadUndercountTotal.
 func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -174,7 +174,7 @@ func TestRecordLedgerIngest_CensusReadErrorsMeterUndercount(t *testing.T) {
 	}
 }
 
-// TestAggregatorPairsFromCatalogue_ReportsSkippedTickers pins T103:
+// TestAggregatorPairsFromCatalogue_ReportsSkippedTickers pins that
 // a catalogue ticker with a coingecko_id that canonical.NewCryptoAsset
 // rejects (not on the ADR-0014 allow-list) must be excluded from the
 // aggregator pair set AND surfaced — via the skipped-tickers gauge and
@@ -225,7 +225,7 @@ func TestAggregatorPairsFromCatalogue_ReportsSkippedTickers(t *testing.T) {
 	}
 }
 
-// TestMergeAggregatorPairs_SupplementsRatherThanReplaces pins Q104:
+// TestMergeAggregatorPairs_SupplementsRatherThanReplaces pins that
 // a catalogue yielding even one pair must not silently replace the
 // hardcoded defaultAggregatorPairs() set — it supplements it. Before
 // the fix, `len(aggregatorPairs) == 0` was the only fallback trigger,
@@ -491,11 +491,11 @@ func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
 }
 
 // TestRecordHashdb_DriftOnReingestDoesNotOverwrite is the load-bearing
-// regression test for Q112/Q128/T133: recordHashdb previously called
-// hashdb.Append unconditionally on every live ledger, so re-ingesting
+// regression test for recordHashdb, which must not call
+// hashdb.Append unconditionally on every live ledger: re-ingesting
 // an already-recorded ledger with DIFFERENT bytes (upstream rewrite,
-// or a restart replaying past the last committed cursor) silently
-// clobbered the original fingerprint — destroying the exact tamper
+// or a restart replaying past the last committed cursor) would silently
+// clobber the original fingerprint — destroying the exact tamper
 // evidence the hashdb drift detector exists to preserve. This asserts
 // the second, differing-content call for the SAME seq leaves the
 // FIRST hash on disk, increments HashdbDriftTotal, and does NOT
@@ -649,7 +649,7 @@ func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 	}
 }
 
-// TestHashDBSweepComplete_AllMissingIsNotComplete is Q110: a window
+// TestHashDBSweepComplete_AllMissingIsNotComplete: a window
 // where hashdb has no record for ANY ledger (e.g. an append gap, or a
 // window that landed entirely before any baseline existed) must not
 // be reported as a complete/clean sweep — nothing was actually

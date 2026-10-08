@@ -108,8 +108,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 
 // TestRefreshPair_FiresWarning — references agree on a price that
 // disagrees with our value by > threshold; WarningFired=true.
-// TestRefreshPair_OnWarningFiredEdgeOnly pins F-1249 (codex
-// audit-2026-05-12): the OnWarningFired hook fires only on the
+// TestRefreshPair_OnWarningFiredEdgeOnly pins that the OnWarningFired hook fires only on the
 // `below threshold → above threshold` edge, not on every refresh
 // while a divergence stays elevated. Multiple consecutive
 // above-threshold refreshes must produce one hook call; a return
@@ -186,10 +185,10 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_MedianLegVetoedByMajorityAgreement pins #1041: at the
+// TestRefreshPair_MedianLegVetoedByMajorityAgreement pins that at the
 // quorum floor (SuccessCount==2) the median is an arithmetic mean, so
-// one reference off by more than 2×threshold used to fire the warning
-// even when the other reference agreed exactly. threshold=5%,
+// one reference off by more than 2×threshold must not fire the warning
+// when the other reference agreed exactly. threshold=5%,
 // ourPrice=50000, Sources={50000 (agrees), 56000 (+12%, disagrees)}:
 // Median=53000, DivergencePct≈5.66%>5, but 1 of the 2 (a majority)
 // corroborates us, so the median leg must be vetoed.
@@ -336,13 +335,13 @@ func xlmPair(t *testing.T, quoteFiat string) canonical.Pair {
 	return canonical.Pair{Base: canonical.NativeAsset(), Quote: q}
 }
 
-// TestLookupCached_PerPairOR_OrderIndependent pins F-1344 (G16-03):
+// TestLookupCached_PerPairOR_OrderIndependent pins that
 // the by-asset reader must report "firing if ANY quote diverges"
-// regardless of the order the worker refreshes the base's pairs. The
-// pre-fix per-base key let the LAST pair refreshed clobber the
+// regardless of the order the worker refreshes the base's pairs. A
+// per-base key would let the LAST pair refreshed clobber the
 // asset's verdict — so XLM/USD diverging but XLM/GBP not would clear
-// the warning if GBP refreshed last. With per-pair keys + the OR
-// across the base index, the verdict is stable.
+// the warning if GBP refreshed last. Per-pair keys + the OR
+// across the base index keep the verdict stable.
 func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},
@@ -530,7 +529,7 @@ func TestRefreshPair_FiresObservationSink(t *testing.T) {
 		if !r.Firing {
 			t.Errorf("ref %s: Firing=false, want true (10%% delta exceeds 5%% threshold)", r.Reference)
 		}
-		// ADR-0003 (RLT-354): OurPrice/RefPrice/DeltaPct are decimal
+		// ADR-0003: OurPrice/RefPrice/DeltaPct are decimal
 		// strings, never float64 — asserting exact strings (not just
 		// "parses to a float") pins the shortest-round-trip format
 		// the worker must emit, matching the read side's ::text cast.
@@ -567,8 +566,7 @@ func TestRefreshPair_NoSinkIsLegacyBehaviour(t *testing.T) {
 	// behaviour preserved.
 }
 
-// TestRefreshPair_ObservationStampedWithComparisonTime is the COR-12
-// regression. The durable divergence_observations row answers "when
+// TestRefreshPair_ObservationStampedWithComparisonTime pins observed_at. The durable divergence_observations row answers "when
 // did this divergence occur", and observed_at is part of its conflict
 // key — so it must carry the comparison instant the caller supplied
 // (the same instant handed to every Reference), not the wall clock at

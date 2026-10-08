@@ -39,9 +39,9 @@ func TestExplorer_Search_Classifies(t *testing.T) {
 	}
 }
 
-// TestExplorer_Search_AccountRoutesToAccountState: classifySearch used to
+// TestExplorer_Search_AccountRoutesToAccountState: classifySearch must not
 // route every G-address to /v1/issuers/{g}, which only serves accounts that
-// are actually issuers and 404s for ordinary ones. AccountState is now
+// are actually issuers and 404s for ordinary ones. AccountState is
 // mounted at /v1/accounts/{g_strkey} and covers both, so search can route
 // there and truthfully claim Supported=true.
 func TestExplorer_Search_AccountRoutesToAccountState(t *testing.T) {

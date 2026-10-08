@@ -17,11 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// C3-023 (audit-2026-07-23).
-//
-// `Fanout.Publish` used to have NO return value: a per-endpoint enqueue
-// failure logged WARN + continued, and a whole-fan-out failure (subscriber
-// list unavailable) logged WARN + returned. The producer — the aggregator's
+// `Fanout.Publish` must report failure: a per-endpoint enqueue failure and
+// a whole-fan-out failure (subscriber list unavailable) are both
+// surfaced, not just logged. The producer — the aggregator's
 // freeze and divergence hot paths, and `stellarindex-ops emit-incident` —
 // could not tell a fan-out that reached five subscribers from one that
 // reached none.
@@ -29,7 +27,7 @@ import (
 // That loss is PERMANENT in a way a delivery failure is not: no
 // `webhook_deliveries` row was ever written, so the retry worker has nothing
 // to drain and nothing downstream re-derives it. These tests pin the two
-// halves of the fix — the (result, error) contract callers act on, and the
+// halves of the contract — the (result, error) contract callers act on, and the
 // zero-seeded counter an operator alerts on.
 
 // fanoutStore is an in-memory FanoutStore whose two methods can be made to
@@ -270,8 +268,7 @@ func TestFanoutPublish_NilReceiverIsTyped(t *testing.T) {
 // internal/platform (layering), so the seed list there is a literal copy of
 // this enum; this test iterates platform.WebhookEventTypes() — itself
 // pinned to the declared constants — so a new type fails here until seeded. A missing series
-// reads as "no data" on the alert, which is exactly the silence C3-023 is
-// about.
+// reads as "no data" on the alert, which is exactly the silence this guards against.
 func TestFanoutFailureSeries_ZeroSeeded(t *testing.T) {
 	for _, evt := range platform.WebhookEventTypes() {
 		for _, reason := range []string{

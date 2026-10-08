@@ -38,7 +38,7 @@ func (nopStore) MarkAttemptFailed(context.Context, uuid.UUID, string, int, time.
 }
 
 // TestBatchLimit_WorstCaseSerialUnderLease is the MEDIUM double-delivery
-// guard (F-1270 hardening). The worker drains a batch SERIALLY, and the
+// guard. The worker drains a batch SERIALLY, and the
 // store leases each claimed row for storeLeaseDuration (5m). If the
 // worst-case serial batch time (BatchLimit × per-request Timeout) can
 // exceed that lease, a second worker re-claims the un-processed tail and
@@ -172,10 +172,9 @@ func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 	}
 }
 
-// TestWorker_retryClassification is the regression test for the cold
-// audit of 2026-08-04.
+// TestWorker_retryClassification pins retry classification.
 //
-// Every 4xx used to be terminal on the FIRST attempt, so a 429 from any
+// A 4xx must not be terminal on the FIRST attempt: a 429 from any
 // endpoint behind a rate-limiting gateway permanently destroyed the
 // event — next_attempt_at NULL, dropped out of the pending predicate,
 // with no dead-letter, no retry and no alert (the rules match only
@@ -212,14 +211,14 @@ func TestWorker_retryClassification(t *testing.T) {
 }
 
 // TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects pins the
-// WIRING of the F-1245 delivery-time SSRF defence, not just its
+// WIRING of the delivery-time SSRF defence, not just its
 // predicate.
 //
 // ssrf_test.go tests ssrfGuardedDialContext rigorously — 8 blocked
 // ranges, error text asserted. Nothing asserted that the default HTTP
 // client actually USES it, so deleting `DialContext:
 // ssrfGuardedDialContext` from the transport left the whole repo's
-// `go test ./...` green (cold audit 2026-08-04). The webhook URL is
+// `go test ./...` green. The webhook URL is
 // customer-supplied, and registration-time validation cannot catch DNS
 // rebinding between registration and delivery — which is the entire
 // reason the delivery-time guard exists.
@@ -264,7 +263,7 @@ func TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects(t *testing.T) {
 	}
 }
 
-// TestNew_RejectsOptionsThatBreakTheLeaseInvariant pins RLT-223: the
+// TestNew_RejectsOptionsThatBreakTheLeaseInvariant pins that the
 // compile-time guard beside the defaults (storeLeaseDuration vs
 // defaultBatchLimit/defaultHTTPTimeout/markWriteTimeout) only protects the
 // DEFAULT values. A caller-supplied BatchLimit or HTTPClient.Timeout that
@@ -329,7 +328,7 @@ func (*panicOnOneStore) WebhookAccountStatus(context.Context, uuid.UUID) (platfo
 	return platform.AccountActive, nil
 }
 
-// TestTick_PanicInOneDeliveryDoesNotStopTheBatch pins RLT-450: tick had no
+// TestTick_PanicInOneDeliveryDoesNotStopTheBatch pins the recover(): tick had no
 // recover() anywhere between it and deliverOne, so a panic on one row
 // (a decode edge case, a nil dereference) killed the poll loop for the
 // rest of the process — every OTHER pending delivery, including ones

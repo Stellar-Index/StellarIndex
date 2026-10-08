@@ -357,7 +357,7 @@ func expireSWREntries(c *CachedAssetsReader) {
 
 // upstreamHold parks an upstream call INSIDE the stub until the test
 // lets it go. It is what these caches' non-blocking claims are
-// asserted against, in place of the fixed delays the tests used to
+// asserted against, in place of fixed delays that
 // race: while a call is held the cache provably has not completed it,
 // so whatever a concurrent caller is served is the value that was
 // already in the entry. That turns "served the stale entry" and

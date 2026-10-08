@@ -337,9 +337,8 @@ func TestAsset_SQL_valueScan(t *testing.T) {
 
 	// Scan NULL → error, and the receiver is left untouched.
 	//
-	// This assertion was INVERTED before C4-068 (audit-2026-07-23): it
-	// required Scan(nil) to return nil and zero the receiver, which is
-	// how a NULL column became an Asset with Type=="" that survives every
+	// This assertion must not be inverted: Scan(nil) returning nil and
+	// zeroing the receiver would let a NULL column become an Asset with Type=="" that survives every
 	// ==/Equal comparison and only fails if someone remembers to call
 	// Validate. Value() refuses to write anything that fails Validate, so
 	// a NULL in an asset column is a schema/query defect, not data.

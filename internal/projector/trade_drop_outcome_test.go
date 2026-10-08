@@ -25,22 +25,22 @@ func (*invalidTradeDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	}}, nil
 }
 
-// TestCycle_DroppedTradeIsNotReportedOK pins RLT-132 end to end, through the
+// TestCycle_DroppedTradeIsNotReportedOK pins the outcome end to end, through the
 // PRODUCTION sink: cmd/stellarindex-indexer binds the projector's SinkFunc to
 // pipeline.HandleEvent, and so does this test (a nil store is safe — Validate
 // rejects the trade before the store is touched).
 //
-// persistTrade used to return nil for a permanently dropped trade, which is
-// also what a landed trade returns; processEventSafely counted it emitted and
-// the cycle published it under outcome="ok" — the label whose own comment
+// persistTrade must not return nil for a permanently dropped trade, which is
+// also what a landed trade returns; processEventSafely would count it emitted and
+// the cycle would publish it under outcome="ok" — the label whose own comment
 // promises "only events that DURABLY committed". The row is in neither the
 // served tier nor any loss counter the projector owns.
 //
 // Corrected: the drop is labelled sink_permanent, never ok — and the source
 // STILL self-heals, because a deterministic fault must not wedge a sole-writer
-// source (COR-11).
+// source.
 //
-// RLT-131 moved WHEN the cursor advances, not WHETHER. This row is the only
+// The cursor advance is deferred, not dropped. This row is the only
 // one in its window, so its cycle commits nothing else and cannot tell "this
 // trade is malformed" from "the sink rejects every trade right now" — the
 // shape a bad migration has. Advancing on cycle one is exactly the unbounded
@@ -76,7 +76,7 @@ func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 		t.Fatalf("cycle 1: cursor = %d, want 100 — with nothing else committed this cycle, a permanent verdict must stall visibly before anything is shed (RLT-131)", got)
 	}
 
-	// …and the source still self-heals: RLT-132's anti-wedge property is
+	// …and the source still self-heals: the anti-wedge property is
 	// preserved, just deferred behind the no-progress budget.
 	for i := 2; i < QuarantineAfterCyclesNoProgress; i++ {
 		h.cycle()

@@ -10,8 +10,8 @@ import (
 
 // An empty or repeated -dsn must be refused before anything is dialled.
 // The environment DSN stands in for production: an explicit `-dsn ""`
-// (the quoted expansion of an unset variable) used to fall through to it,
-// and a second -dsn silently replaced the first. Both hosts are
+// (the quoted expansion of an unset variable) must not fall through to it,
+// and a second -dsn must not silently replace the first. Both hosts are
 // unresolvable, so the host named in the output is the evidence of which
 // database the tool would have written to.
 func TestMigrate_EmptyOrRepeatedDSNIsRefusedBeforeAnyDial(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 )
 
 // TestClassifySinkFault pins the three-valued taxonomy that replaced the
-// permanent/transient boolean (COR-11 / COR-01, audit-2026-07-23). The
+// permanent/transient boolean The
 // load-bearing rows are the DETERMINISTIC ones that carry no *pgconn.PgError: they
-// used to fall into "transient" and hold a sole-writer cursor forever.
+// must not fall into "transient" and hold a sole-writer cursor forever.
 func TestClassifySinkFault(t *testing.T) {
 	cases := []struct {
 		name string
@@ -51,7 +51,7 @@ func TestClassifySinkFault(t *testing.T) {
 			// The sink recovers its own panics and wraps them in
 			// pipeline.ErrSinkPanic; its classifier drops the event. Holding it
 			// here instead re-ran the panicking decode every cycle for the whole
-			// unclassified budget (Q053).
+			// unclassified budget.
 			name: "recovered sink panic (pipeline.ErrSinkPanic)",
 			err:  fmt.Errorf("sink: %w", fmt.Errorf("%w for blend/new_auction: runtime error: index out of range", pipeline.ErrSinkPanic)),
 			want: dispositionSkip,
@@ -77,7 +77,7 @@ func TestClassifySinkFault(t *testing.T) {
 			want: dispositionRetry,
 		},
 		{
-			// COR-01: the store rejects the row BEFORE the statement runs, so
+			// the store rejects the row BEFORE the statement runs, so
 			// there is no SQLSTATE to read and no sentinel to match. It must
 			// NOT be classified transient-forever; the budget arm bounds it.
 			name: "store pre-SQL validation, no sentinel (COR-01 negative SEP-41 amount)",

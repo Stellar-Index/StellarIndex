@@ -12,11 +12,11 @@ import (
 )
 
 // TestRetryUntil_RetriesUntilTheDependencyComesBack is the behavioural
-// half of #368 M11. startSignerTagger used to dial ClickHouse ONCE, on
-// the caller's goroutine, and a single failure disabled AMM signer
-// attribution for the lifetime of the process — so a ClickHouse restart
-// during a deploy left trades.signer NULL until somebody restarted the
-// indexer. The fix is not "log it louder", it is "keep trying", and the
+// half of the signer-tagger resilience guard. startSignerTagger must not
+// dial ClickHouse ONCE, on the caller's goroutine: a single failure would
+// disable AMM signer attribution for the lifetime of the process, so a
+// ClickHouse restart during a deploy would leave trades.signer NULL until
+// somebody restarted the indexer. The answer is not "log it louder", it is "keep trying", and the
 // property that matters is that attempt N+1 happens at all.
 func TestRetryUntil_RetriesUntilTheDependencyComesBack(t *testing.T) {
 	calls := 0
@@ -93,9 +93,9 @@ func TestRetryUntil_StopsOnCancellation(t *testing.T) {
 }
 
 // TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget covers the
-// #368 LOW on the indexer's shutdown path. externalWait() used to be
-// called bare, between two deadline-bounded steps, so one wedged CEX/FX
-// connector held the whole binary until systemd escalated to SIGKILL —
+// indexer's shutdown path. externalWait() must not be
+// called bare, between two deadline-bounded steps, or one wedged CEX/FX
+// connector holds the whole binary until systemd escalated to SIGKILL —
 // the one shutdown that skips the sink drain entirely.
 //
 // The false return is load-bearing, not cosmetic: main uses it to decide

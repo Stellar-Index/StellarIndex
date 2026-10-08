@@ -54,7 +54,7 @@ func TestIsValidDomainOrHostPort_invalidInputs(t *testing.T) {
 		// Finding 2: a non-443 port on an issuer home_domain must be
 		// REJECTED — otherwise the sep1-refresh cron would open a blind
 		// TLS+GET to an arbitrary port on a public host. These three
-		// used to be BLESSED (encoding the vulnerable behaviour).
+		// must not be blessed.
 		{"redis port", "host:6379"},
 		{"http-alt port", "example.com:8080"},
 		{"max non-standard port", "example.com:65535"},

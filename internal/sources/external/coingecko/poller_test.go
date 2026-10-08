@@ -174,7 +174,7 @@ func TestPollOnce_MalformedJSON(t *testing.T) {
 func TestPollOnce_TickerToIDOverride(t *testing.T) {
 	// With a custom TickerToID, the poller queries only the tickers
 	// the operator passed in — even if the package default would
-	// have resolved more. Catalogue-driven wiring (R-018 Phase 1.2)
+	// have resolved more. Catalogue-driven wiring
 	// relies on this to scope the poll set to the verified seed.
 	srv := newTestServer(t, `{
       "stellar":  {"usd": 0.17, "last_updated_at": 1710000000},

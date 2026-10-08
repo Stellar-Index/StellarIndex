@@ -10,8 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/test/harness"
 )
 
-// TestOpenBackfillStore_StampsPositiveGeneration is the MR-1 regression (2)
-// proven-red test (audit-2026-08-14). fx-history-backfill is an INV-3
+// TestOpenBackfillStore_StampsPositiveGeneration guards the generation stamp.
+// fx-history-backfill is a
 // corrective entry point that writes historical fx_quotes rows over the key
 // the live forex worker owns. Unlike every other corrective tool
 // (backfill.go, backfill_external.go, supply.go, ch_rebuild.go) it never

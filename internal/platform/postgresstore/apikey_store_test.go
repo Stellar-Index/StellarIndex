@@ -13,7 +13,7 @@ import (
 // TestNonNilStringArray_NilBecomesEmpty — a nil input must
 // surface to the pgx driver as a non-nil zero-length
 // []string, which serialises to the SQL `'{}'` array
-// literal. F-1262 (codex audit-2026-05-13): pre-fix a
+// literal. A
 // bare nil `[]string` emitted SQL NULL, which
 // violated the migration-0027 NOT NULL constraint on
 // `api_keys.referer_allowlist` and surfaced as a 500 on the

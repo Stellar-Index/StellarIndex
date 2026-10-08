@@ -112,7 +112,7 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 // so Decode must return (nil, nil) — NOT an error. Returning an error made
 // the completeness re-derive count each as an undecodable blind spot and
 // hold the `comet` source `complete=false` forever (the 36 exploit
-// self-swaps → the INV-3 do-nothing re-derive trap).
+// self-swaps).
 func TestDecoder_Decode_SelfPairSwap_NoEventNoError(t *testing.T) {
 	d := NewDecoder()
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -219,7 +219,7 @@ func TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement(t *testing.T) {
 
 // TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric is the
 // non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
-// IncrementsDetectionMetric (T108): a swap whose body decodes cleanly but
+// IncrementsDetectionMetric: a swap whose body decodes cleanly but
 // carries a zero/negative amount is the sibling "decoded, zero honest rows"
 // drop shape to a self-pair swap, and must bump
 // obs.AMMNonPositiveSwapTotal{source="comet"} the same way, so an operator
@@ -257,7 +257,7 @@ func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.
 
 // TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement is the
 // non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
-// ReplayDoesNotIncrement (T108's must-fix): a backfill or completeness
+// ReplayDoesNotIncrement: a backfill or completeness
 // re-derive re-runs Decode over a HISTORICAL window whose ledger close
 // time is far in the past relative to wall-clock now.
 // reconciliation_catalogue.go and verify_decoders.go construct their own
@@ -294,7 +294,7 @@ func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) 
 	}
 }
 
-// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters pins Q018: the
+// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters pins why: the
 // projector builds an INDEPENDENT comet.Decoder alongside the dispatcher's
 // whenever comet is enabled and the projector is also running (ADR-0032
 // Phase-3 parallel double-write) — both decode the same live event. Without

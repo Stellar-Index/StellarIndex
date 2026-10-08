@@ -31,8 +31,7 @@ func moduleRoot(t *testing.T) string {
 	return ""
 }
 
-// TestSessionsTableComment_DoesNotClaimUnimplementedAlert — Q187
-// (audit-2026-09-18). 0027's header comment on `sessions` claimed
+// TestSessionsTableComment_DoesNotClaimUnimplementedAlert. Migration 0027's header comment on `sessions` claimed
 // "Geo + IP fields drive the 'new login from a new country' email
 // alert", but no such alert exists: internal/obs/metrics.go declares
 // exactly two notify templates (magic-link, signup-verify), and

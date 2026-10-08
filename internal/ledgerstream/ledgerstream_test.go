@@ -162,13 +162,12 @@ func TestStream_singleLedgerBoundedRange(t *testing.T) {
 	}
 }
 
-// TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError is the
-// regression test for COR-01 (audit-2026-07-23): a single-ledger
+// TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError pins that a single-ledger
 // bounded request entirely below Stellar genesis (ledger 2) — e.g.
-// Stream(from=1, to=1) — used to PrepareRange against the UNCLAMPED
-// range while the walk loop started at the CLAMPED from=2. Since
-// clamped-from (2) > To (1), the loop's bound check failed on its
-// very first iteration and Stream returned nil (success) having
+// Stream(from=1, to=1) — must not PrepareRange against the UNCLAMPED
+// range while the walk loop starts at the CLAMPED from=2. Since
+// clamped-from (2) > To (1), the loop's bound check fails on its
+// very first iteration and Stream would return nil (success) having
 // invoked the callback ZERO times — a silent no-op indistinguishable
 // from "there was nothing to walk". It must instead return an error.
 func TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError(t *testing.T) {

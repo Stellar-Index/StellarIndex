@@ -58,15 +58,12 @@ func TestCaptureEligible(t *testing.T) {
 func TestClaimAtomCount(t *testing.T) {
 	t.Parallel()
 
-	// FIXTURE NOTE (C2-010, audit-2026-07-23): these atoms must name two
-	// DISTINCT assets. They originally left AssetSold/AssetBought at
-	// their zero value, which is xdr.AssetTypeAssetTypeNative on both
-	// legs — a native/native self-cross that stellar-core never emits and
-	// that internal/sources/sdex has always dropped (canonical.NewPair
-	// rejects base == quote). The under-specified fixture was invisible
-	// while sdexclaim.RealTradeCount looked only at amounts; now that it
-	// applies the decoder's full rule set, the atoms have to be shaped
-	// like real ones. The assertions below are unchanged.
+	// These atoms must name two DISTINCT assets. Leaving
+	// AssetSold/AssetBought at their zero value is native on both legs —
+	// a native/native self-cross that stellar-core never emits and that
+	// internal/sources/sdex drops (canonical.NewPair rejects base ==
+	// quote). sdexclaim.RealTradeCount applies the decoder's full rule
+	// set, so the atoms have to be shaped like real ones.
 	usdc := xdr.Asset{
 		Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
 		AlphaNum4: &xdr.AlphaNum4{
@@ -204,14 +201,14 @@ func TestCensusLedger_emptyLedger(t *testing.T) {
 	}
 }
 
-// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins C2-054
-// (audit-2026-07-23). captureEligible's contract — stated in its own
+// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins that
+// captureEligible's contract — stated in its own
 // docstring — is that "the census count equals the soroban_events row
-// count for the ledger". It used to re-state only the CHEAP half of the
-// sink's gate and explicitly skip the ScVal MarshalBinary round-trip that
-// contractEventToEventsEvent performs, so an event whose topic or body
-// fails to marshal was DROPPED by the sink and COUNTED by the census. The
-// reconcile then reported a projector shortfall that did not exist.
+// count for the ledger". It must apply the sink's full gate, including the ScVal
+// MarshalBinary round-trip that contractEventToEventsEvent performs: an
+// event whose topic or body fails to marshal is DROPPED by the sink, so
+// counting it would make the reconcile report a projector shortfall that
+// does not exist.
 func TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes(t *testing.T) {
 	t.Parallel()
 	base, _ := makeBasicContractEvent(t)

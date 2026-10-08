@@ -554,12 +554,11 @@ func rawResponder(status int, body string) *httptest.Server {
 
 // Every response with a status >= 400 must come back as an
 // *HTTPStatusError carrying that status, whatever the body was. The
-// client used to keep the status only for a non-empty non-JSON body and
-// a valid-JSON non-envelope body; an EMPTY body surfaced as "decode:
+// client must not keep the status only for a non-empty non-JSON body and
+// a valid-JSON non-envelope body; an EMPTY body must not surface as "decode:
 // unexpected end of JSON input", a non-decodable JSON body as a decode
-// error, and an error ENVELOPE as the bare *JSONRPCError — so a caller
-// could not tell a 429 from a malformed request (RLT-416: the soroswap
-// pair seed failed the nightly pass closed on one such 429).
+// error, nor an error ENVELOPE as the bare *JSONRPCError — a caller
+// could not then tell a 429 from a malformed request.
 func TestHTTPStatusSurvivesEveryBodyShape(t *testing.T) {
 	const envelope32005 = `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limit exceeded"}}`
 	cases := []struct {

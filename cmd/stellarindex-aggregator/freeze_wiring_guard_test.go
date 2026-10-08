@@ -4,7 +4,7 @@ package main
 // the freeze WRITER must never again be gated on the Phase 1 anomaly
 // checker.
 //
-// 2026-08-22, r1 XLM/GBP incident: the writer was built under
+// The shape guarded against: the writer is built under
 // `if checker != nil && rdb != nil`, but the Phase 2 confidence
 // lifecycle (orchestrator.stepPhase2Freeze) runs on every scored bucket
 // regardless of cfg.Anomaly and REFUSES publication when its 3-signal
