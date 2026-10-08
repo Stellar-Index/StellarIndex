@@ -4,19 +4,14 @@
 
 **Please do not open a public issue for security vulnerabilities.**
 
-Report privately by email to `security@stellarindex.io`. That address is
-the `Contact:` on our live `.well-known/security.txt`, so it is where the
-RFC 9116 path leads.
+Report privately through GitHub: on the repository's **Security** tab,
+choose **Report a vulnerability**
+([direct link](https://github.com/Stellar-Index/StellarIndex/security/advisories/new)).
+The report, our replies and any fix stay private until we publish an
+advisory together.
 
-**If the mail bounces**, open an ordinary issue that asks for a private
-channel and carries **no detail of the finding** — not the endpoint, not
-the payload, not the impact. A maintainer answers with a route inside the
-acknowledgement window below. GitHub's private vulnerability reporting is
-not switched on for this repository, so the Security tab offers no
-reporting form to use instead; the mailbox and that setting are both
-tracked in
-[docs/operations/external-channels.md](docs/operations/external-channels.md)
-and [docs/operations/dns-email-perimeter.md](docs/operations/dns-email-perimeter.md).
+Or email `security@stellarindex.io`. That address is the `Contact:` on our
+live `.well-known/security.txt`, so it is where the RFC 9116 path leads.
 
 We commit to:
 

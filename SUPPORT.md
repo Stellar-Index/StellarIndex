@@ -17,14 +17,10 @@ would:
   here, because the number is usually right and computed differently from what
   was assumed.
 
-If neither answers it, open an issue and say up front that it is a question
-rather than a defect. A question that had to become an issue is usually a
-documentation gap, so the docs get fixed and the issue closed with the answer.
-
-A discussion forum is the better home for this, and is not switched on for
-this repository yet —
-[docs/operations/external-channels.md](docs/operations/external-channels.md)
-records what turning it on takes.
+If neither answers it, ask in
+[Discussions](https://github.com/Stellar-Index/StellarIndex/discussions). A question that
+keeps coming up there is a documentation gap, so the docs get fixed and the
+thread closed with a link to the answer.
 
 ## "This number looks wrong"
 

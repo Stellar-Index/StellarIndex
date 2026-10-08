@@ -21,8 +21,8 @@ comma-separated, so a pattern may not itself contain a comma.
 
 | id | state | where it is switched on | strings forbidden while disabled |
 |---|---|---|---|
-| `discussions` | `disabled` | GitHub → Settings → General → Features → **Discussions** | `github.com/Stellar-Index/StellarIndex/discussions` |
-| `private-vulnerability-reporting` | `disabled` | GitHub → Settings → Advanced Security → **Private vulnerability reporting** → Enable | `Report a vulnerability` |
+| `discussions` | `enabled` | GitHub → Settings → General → Features → **Discussions** | `github.com/Stellar-Index/StellarIndex/discussions` |
+| `private-vulnerability-reporting` | `enabled` | GitHub → Settings → Advanced Security → **Private vulnerability reporting** → Enable | `Report a vulnerability` |
 
 Check both without opening the UI:
 
@@ -31,10 +31,10 @@ gh api repos/Stellar-Index/StellarIndex --jq .has_discussions
 gh api repos/Stellar-Index/StellarIndex/private-vulnerability-reporting --jq .enabled
 ```
 
-Both print `false` today. Only the account owner can change either;
+Both print `true`. Only the account owner can change either;
 neither is reachable from CI, and nothing in this repo attempts it.
 
-## Restore once on
+## What switching on restored
 
 - `discussions`: put the Discussions link back as the headline answer in `SUPPORT.md`
   and restore the "Question about using the API" contact link in
