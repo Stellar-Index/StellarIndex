@@ -15,75 +15,29 @@ import (
 // asset_price_snapshot — the per-asset headline-price rollup behind the
 // GET /v1/assets listing.
 //
-// Deriving the listing's price column per request means twelve
-// `DISTINCT ON … FROM prices_1m` CTEs (four USD-quoted lookbacks, four
-// XLM-quoted lookbacks each reading both stored directions, four
-// XLM/USD scalar lookups) materialised for EVERY asset, on every
-// uncached variant, whatever page was asked for. Measured on r1
-// (`pg_stat_statements`) in that shape: the unfiltered listing
-// statement ran 8,019 times at mean 2,400 ms / max 10,295 ms, touching
-// 380,324 shared buffers per call to return ~116 rows; three sibling
-// shapes added 10,500 more calls at 1.5–2.1 s. `EXPLAIN (ANALYZE,
-// BUFFERS)` on `?limit=50`: 1,830 ms, 348,442 buffer hits, 51 MB of
-// `external merge` temp spill — of which the eight `DISTINCT ON` CTEs
-// were 1,353 ms (the 7-day `asset_vs_xlm` arm alone was 881 ms and
-// owned the whole disk sort).
+// Deriving the price column per request meant twelve `DISTINCT ON … FROM
+// prices_1m` CTEs for every asset on every uncached variant: on r1 the
+// listing statement averaged 2.4 s (max 10 s) with a 51 MB disk sort. So
+// [assetPriceCTEs] runs here, off the request path, on the volume rollup's
+// cadence, and the listing LEFT JOINs the result (the pattern of migrations
+// 0087 and 0149).
 //
-// So the derivation ([assetPriceCTEs]) runs here instead, off the
-// request path, and the aggregator folds it into one small keyed-on-PK
-// table on the same cadence the sibling volume rollup already runs at.
-// The listing then LEFT JOINs `asset_price_snapshot`.
-// Same pattern, same reasons, as migration 0087 (`asset_volume_24h`)
-// and 0149 (`asset_volume_character`).
+// Not a continuous aggregate: the substrate is a `DISTINCT ON` over a UNION
+// of quote forms, XLM identities and both directions, which no `GROUP BY`
+// expresses. Not a materialised view: REFRESH takes ACCESS EXCLUSIVE and
+// would stall the listing; the upsert+prune here takes row locks only, as
+// [Store.RefreshAssetVolume24h] does.
 //
-// Why a plain worker-maintained table and not the two alternatives:
+// Rollup age (CAGG lag ~90 s + 2 min refresh + 2 min API cache, ~5.5 min
+// worst case) is capped by [assetPriceSnapshotMaxAge] in the listing's
+// join, so a dead aggregator renders assets unpriced rather than serving
+// old prices. Observation age is not capped: the price is the newest
+// traded minute across arms ([priceArmPickExpr]) and can be up to the
+// 7-day lookback old, since a hard cutoff would blank every
+// weekly-trading asset.
 //
-//   - NOT a continuous aggregate. A CAGG is `time_bucket(...) GROUP BY`
-//     over one source projection. This substrate is "the LATEST row per
-//     asset across two USD-proxy quote forms, two XLM identity forms and
-//     BOTH stored directions, over a 7-day lookback, plus three
-//     point-in-time lookbacks, triangulated through a scalar XLM/USD" —
-//     a `DISTINCT ON` over a UNION, which no single `GROUP BY` expresses.
-//     Same wall 0087 and 0149 hit.
-//   - NOT a materialised view. `REFRESH MATERIALIZED VIEW` takes ACCESS
-//     EXCLUSIVE on the relation and would stall every concurrent read of
-//     the flagship customer-facing listing for the duration of the
-//     recompute; `CONCURRENTLY` avoids the lock but diffs the whole
-//     relation and still needs an external caller. The upsert+prune pair
-//     below takes row-level locks only — the same reason
-//     [Store.RefreshAssetVolume24h] is written this way.
-//
-// Staleness contract — two different ages, bounded differently.
-//
-// ROLLUP age, how long ago the served row was computed:
-//
-//	prices_1m CAGG lag      <= ~90 s  (30 s schedule + 30 s end_offset,
-//	                                   migration 0002)
-//	rollup refresh cadence   = 2 min  (assetvolrollup.DefaultInterval)
-//	API listing cache TTL    = 2 min  (v1.NewCachedAssetsReader)
-//	-------------------------------------------------------------
-//	worst-case rollup age   ~= 5.5 min
-//
-// [assetPriceSnapshotMaxAge] is a HARD ceiling on this age, spliced into
-// the listing's join, so a wedged or dead aggregator can never serve
-// indefinitely-old prices: past it the join misses, the asset renders
-// as an asset with no price (`price_usd` absent, rank tier 1), and the
-// aggregator's own per-binary heartbeat is what pages.
-//
-// OBSERVATION age, how old the trades behind the price are, is NOT
-// bounded by that ceiling and is not stored. The price comes from the
-// newest traded minute across every arm and direction
-// ([priceArmPickExpr]), which for an asset that trades rarely can be up
-// to the 7-day lookback old. Choosing by recency is what stops a
-// days-old USD print masking a live XLM market; a hard age cutoff would
-// instead blank every weekly-trading asset's price, which is a product
-// decision this rollup does not make.
-//
-// GET /v1/assets/{id} is deliberately NOT moved onto this table: it is a
-// single-asset query whose price CTEs are already narrowed to one asset
-// and cost milliseconds, so the detail view stays the freshest surface.
-// Consequence to know about: a listing row and its own detail page can
-// disagree by up to the ceiling above while a price is moving.
+// GET /v1/assets/{id} stays on its own millisecond single-asset query, so
+// a listing row can lag its detail page by up to the ceiling above.
 
 // assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may
 // be and still be served by the listing. Spliced into the listing's
@@ -189,61 +143,29 @@ func priceChangePctExpr(lookback string) string {
 // value the rollup STORES. `nda` is the refresh's LEFT JOIN onto
 // nonstandard_decimals_assets (migration 0093).
 //
-// prices_1m holds RAW quote/base ratios of smallest-unit amounts, so for
-// a token whose on-chain decimals() is not 7 every arm above is off by
-// the same 10^(7 - decimals): the direct arm divides by a 7-decimals USD
-// proxy, the XLM arm by 7-decimals XLM and then multiplies by a 7/7
-// XLM/USD ratio, and a flipped-direction row's legs are the same token
-// amounts read the other way round. One exact
-// factor, 10^(decimals - 7), corrects whichever arm answered — the same
-// single factor the API's catalogue reader applies
-// (v1.Server.normalizeCatalogueUSD).
+// prices_1m holds raw smallest-unit ratios, so for a token whose
+// decimals() is not 7 every arm is off by the same 10^(7 - decimals); one
+// factor corrects whichever arm answered, as
+// v1.Server.normalizeCatalogueUSD does.
 //
-// Why the WRITER, when every other surface normalises at read time
-// (prices_1m and change_summary_5m stay raw on purpose):
+// It normalises at write, unlike prices_1m and change_summary_5m, because
+// nothing ratchets (the whole table is overwritten each pass, unlike
+// /v1/changes' GREATEST/LEAST extremes), every listing reader and the RWA
+// market cap read this one column, and the column is unrounded NUMERIC, so
+// correcting before the listing's ROUND(price_usd, 10) keeps an 18-decimals
+// token's 1e-11 raw ratio from rounding to zero.
 //
-//   - No ratchet. /v1/changes normalises at read because its upsert
-//     keeps ath_value / atl_value with GREATEST / LEAST, and a token is
-//     flagged only after it has traded, so a write-side switch would pin
-//     the extreme to a figure from the old scale for good. This rollup
-//     has nothing of the kind: the upsert OVERWRITES every column, the
-//     whole table is recomputed each pass, and the prune drops what was
-//     not rewritten. A newly confirmed (or reconciled-away) row takes
-//     full effect on the next 2-minute pass and leaves no residue.
-//   - One place, every reader. The column is read by the listing spine,
-//     by [Store.ContractCatalogueRows], and through them by every API
-//     projection of a listing row (the /v1/assets listing phases, the
-//     RWA classic and contract listings, the catalogue-twin merge and
-//     the lake-supply prewarm). None of them normalised, and the RWA
-//     contract listing multiplies this price by supply to publish a
-//     market cap.
-//   - Full precision. The column is unrounded NUMERIC, so the multiply
-//     is exact and the listing's ROUND(price_usd, 10) now runs AFTER the
-//     correction. Correcting at read would scale an already-rounded
-//     string: an 18-decimals token worth 1 USD has a raw ratio of 1e-11,
-//     which ROUND(…, 10) turns into zero before any reader sees it.
+// A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns
+// need no factor: the scale cancels in each ratio.
 //
-// A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The three change
-// columns need no factor: each is a ratio of two legs read through the
-// same arm, so the scale cancels.
+// A MULTIPLIER OF THIS COLUMN MUST USE THE SAME DECIMALS: a market cap
+// divides a smallest-unit supply by the token's real decimals, not 7
+// (v1.Server.applyConfirmedListingDecimals,
+// v1.Server.contractPriceScaleDisagrees).
 //
-// A MULTIPLIER OF THIS COLUMN MUST USE THE SAME DECIMALS. Reading is not
-// the only way to consume a scale: a market cap is this price times a
-// smallest-unit supply divided by 10^decimals, and with a true-scale
-// price that exponent has to be the token's real decimals. Against the
-// RAW ratio the standard 7 was right by cancellation, so storing the
-// corrected price moved the divisor's requirement with it. The shared
-// listing fill takes it from this same table
-// (v1.Server.applyConfirmedListingDecimals); the RWA contract arm's own
-// fill divides by the lake's decimals() reading and refuses the cap
-// wherever that disagrees with this table's value, else 7
-// (v1.Server.contractPriceScaleDisagrees).
-//
-// The CASE (rather than a COALESCE'd factor of 1) keeps the stored value
-// for every asset with no confirmed row the exact NUMERIC it always was,
-// display scale included. power(numeric, numeric) with an integral
-// exponent is exact in both directions, so money stays NUMERIC end to
-// end (ADR-0003).
+// The CASE, rather than a COALESCE'd factor of 1, keeps unconfirmed assets'
+// stored value byte-identical; power(numeric, numeric) with an integral
+// exponent is exact, so money stays NUMERIC (ADR-0003).
 const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		         THEN ` + snapshotPriceUSDExpr + `
 		         ELSE ` + snapshotPriceUSDExpr + `

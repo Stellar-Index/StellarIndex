@@ -51,82 +51,35 @@ type USDVolumeFXResolver interface {
 }
 
 // tradeUSDVolume returns the per-trade USD-equivalent volume as a
-// NUMERIC-compatible string, or nil when the trade can't be
-// converted cleanly. Returning a *string lets the caller pass the
-// value (or sql NULL) straight into the trades.usd_volume column.
+// NUMERIC-compatible string, or nil (stored as NULL) when the trade can't
+// be converted cleanly.
 //
-// Resolution tiers, tried in order. The ordering is by EXACTNESS, not
-// convenience: tiers 1/2/2b value the trade off a declared peg with no
-// market lookup at all, so they are exact under the peg assumption and
-// always win over the estimated FX tiers below them.
+// Tiers run in order of EXACTNESS: the peg tiers need no market lookup, so
+// they always win over the estimated FX tiers.
 //
-//  1. Off-chain CEX/FX source AND quote is fiat:USD or a
-//     USD-pegged stablecoin per `aggregate.FiatProxy`
-//     (USDC/USDT/DAI/PYUSD/USDP). Decimals: the source's registered
-//     AmountScaleDecimals (8 for CEX, 6 for the FX pollers).
+//  1. Off-chain CEX/FX source, quote fiat:USD or an `aggregate.FiatProxy`
+//     stablecoin; scaled by the source's AmountScaleDecimals.
+//  2. On-chain DEX source, quote USD-pegged per [USDVolumeQuoteSpec];
+//     scaled by 7.
+//     2b. The BASE leg is USD-pegged (either source class), for
+//     `USDC/TOKEN`-oriented markets; see [tradeUSDVolumeViaUSDBase].
+//  3. `fxResolver` returns a USD rate for the quote at the trade's
+//     timestamp (also tried for off-chain trades that missed tier 1).
+//  4. DEX trade whose BASE is XLM or its SAC: base_amount is stroops, so
+//     usd_volume = base_amount/1e7 × XLM/USD with no knowledge of the
+//     token's decimals; see [usdVolumeViaXLMBaseAnchor].
 //
-//  2. On-chain DEX source AND `quoteSpec` recognises the quote
-//     asset as USD-pegged (operator-declared classic credits +
-//     their SAC wrappers per [USDVolumeQuoteSpec]). Decimals: 7
-//     (Stellar classic invariant).
+// On a DEX trade with an XLM leg on either side, the XLM anchor runs ahead
+// of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
+// Peg tiers trust the peg at insert time; a depeg does not rewrite stored
+// values. FX tiers may decline on stale data. Anything else stays NULL
+// rather than over-claim USD-equivalence; the row still inserts. No oracle
+// price feeds usd_volume, matching [Store.SorobanVolume24hUSDForAsset].
 //
-// Then, still exact and still ahead of the FX tiers, comes the tier
-// the code calls **2b**: the BASE leg is USD-pegged (either source
-// class), so `usd_volume = base_amount / 10^decimals`. It covers
-// `USDC/TOKEN`-oriented markets, which every other tier missed because
-// the waterfall inspected only the quote leg — see
-// [tradeUSDVolumeViaUSDBase]. Continuing with the estimated tiers:
-//
-//  3. **L2.2 Phase 2** — On-chain DEX source AND `fxResolver !=
-//     nil` returns a USD rate for the quote asset at the trade's
-//     timestamp. quote_amount × USDPrice / 10^classicDecimals
-//     produces a non-NULL `usd_volume` for any operator-watched
-//     quote with a recent VWAP. Off-chain trades that fell
-//     through tier 1 also get a tier-3 attempt — covers a CEX
-//     pair quoted in a non-stablecoin (e.g. binance:XLM/BTC).
-//
-//  4. **L7.6** — On-chain DEX source, tier 3 declined (the quote
-//     asset has no direct USD-pegged market — the common case for a
-//     pure-Soroban SEP-41 token whose only liquidity route is
-//     against XLM), AND the trade's BASE asset is native XLM (or
-//     its SAC wrapper). Trades keep the pool's observed orientation
-//     (see [canonical.Trade]'s docstring — we do not re-orient to
-//     canonical.Orient's base/quote choice), so a pool that quotes
-//     TOKEN-in-XLM stores base=XLM, quote=TOKEN — the mirror image
-//     of tier 3's base=TOKEN, quote=XLM case. Valuing the XLM leg
-//     needs no knowledge of TOKEN's decimals: base_amount is
-//     already XLM stroops (decimals=7, the Stellar classic
-//     invariant XLM keeps even wrapped in a Soroban pool), so
-//     usd_volume = base_amount/1e7 × XLM/USD. See
-//     [usdVolumeViaXLMBaseAnchor].
-//
-// On a DEX trade with an XLM leg on EITHER side, that XLM anchor runs
-// ahead of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
-//
-// Tiers 1 + 2 trust their pegs at insert time — depeg events
-// are observed separately via the divergence + anomaly paths and
-// do NOT change the inserted usd_volume retroactively. Tiers 3 + 4
-// are time-anchored to the trade's timestamp; the resolver MAY
-// return (false) on stale data, in which case the column stays
-// NULL.
-//
-// Everything else — including a SEP-41/SEP-41 pair with no priced
-// leg (neither XLM, USD-pegged, nor a recent resolver USD price) —
-// returns nil and the column stays NULL — neither over-claiming USD-equivalence on unknown
-// quotes (would mislead downstream sums) nor silently dropping the
-// trade itself (the row still inserts; only the USD column goes
-// NULL). No oracle price feeds usd_volume — separate work, matching the boundary
-// [Store.SorobanVolume24hUSDForAsset] documents for its query-time
-// equivalent.
-// LOCKSTEP: [ClassifyUSDVolumeTier] (below) mirrors this waterfall — same
-// legs, same order, same decimal scale — so `verify-usd-volume` can judge
-// the exact tiers' stored values. Changing the order of the leg probes, the
-// scale a tier divides by, or which amount a tier reads REQUIRES changing it
-// too; TestClassifyUSDVolumeTier_TracksTheWaterfall round-trips a trade
-// through both and fails if they drift. A silent drift does not merely
-// mis-label a tier: it makes the checker verify `usd_volume == quote/10^d`
-// on rows built from the BASE leg, i.e. report a fleet-wide violation, or —
-// the quiet direction — verify nothing at all.
+// LOCKSTEP: [ClassifyUSDVolumeTier] mirrors this waterfall (legs, order,
+// scale) so `verify-usd-volume` can judge stored values;
+// TestClassifyUSDVolumeTier_TracksTheWaterfall fails on drift, which would
+// otherwise report a fleet-wide violation or verify nothing at all.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {
 	v, _ := tradeUSDVolumeChecked(ctx, t, quoteSpec, fxResolver)
 	return v
@@ -1893,72 +1846,26 @@ func offChainSourcesArg() string {
 // nil error when the market has no trades.
 //
 // sourceFilter "" returns all sources; a non-empty value restricts to
-// that single source (0- or 1-element slice). Filtering at the SQL
-// layer means a single-source query is just an index point lookup.
+// that single source (0- or 1-element slice).
 //
-// Implementation: DISTINCT ON (source) per stored direction, ordered by
-// ts DESC, ledger DESC — cheap because trades_pair_source_ts_idx
-// (migration 0037) covers the (base_asset, quote_asset, source, ts
-// DESC, ledger DESC) order exactly, and each arm uses it as it always
-// did. The cost is ~O(num_sources) per direction rather than
-// O(rows_in_market). A ledger can hold several of one source's trades,
-// so the LATERAL then picks among that head's rows by (tx_hash,
-// op_index). Those keys must stay out of the DISTINCT ON's ORDER BY:
-// the index does not cover them, and the skip scan degrades to a sort
-// of the whole market.
+// Each stored direction runs DISTINCT ON (source) ordered by ts DESC,
+// ledger DESC, a skip scan over trades_pair_source_ts_idx costing
+// ~O(num_sources). The LATERAL then picks among that ledger's rows by
+// (tx_hash, op_index); those keys stay out of the DISTINCT ON's ORDER BY,
+// which the index does not cover. A source that traded both ways arrives
+// twice and is folded in Go by [tradeIsLaterInMarket] on (ts, ledger,
+// tx_hash, op_index), a total order within one source, so the answer is
+// the same in either orientation and matches /v1/history's last row.
 //
-// A source that traded the market BOTH ways round therefore arrives
-// twice, and one row per source is what this returns, so the two are
-// folded here by [tradeIsLaterInMarket] — the later trade wins. The
-// fold happens in Go, over rows already fetched, so it never leans on
-// the database's collation; and it compares (ts, ledger, tx_hash,
-// op_index), which is a TOTAL order within one source (the trades
-// primary key is (source, ledger, tx_hash, op_index, ts), so two rows
-// tying on all four would be the same row). The answer is therefore
-// the same whichever way round the market is asked for, and it is the
-// same row /v1/history serves last for that source — it orders on
-// those four components too.
-//
-// # This read carries no time bound, deliberately
-//
-// It is the last unbounded per-key walk of `trades` on a request path,
-// and it stays that way. Written down here because the shape invites
-// the same conclusion as [Store.HasAsset]'s unbounded arm every time
-// somebody greps for it.
-//
-//  1. It is not the HasAsset shape. That one bound `base_asset = $1 OR
-//     quote_asset = $1`. `trades` is compressed with
-//     compress_segmentby = 'base_asset, quote_asset, source' (migration
-//     0001), so a compressed chunk is indexed on those three columns in
-//     that order: a lone `quote_asset` predicate has no leading
-//     equality to seek on and every compressed chunk had to be scanned.
-//     Each arm HERE binds `base_asset = $n AND quote_asset = $m` — the
-//     leading two segmentby columns — so every chunk, compressed or
-//     not, is an index SEEK. Same table, same absence of a time bound,
-//     different cost class. [TestRawTradeReadsSpanBothStoredDirections]
-//     pins the arms that make it so.
-//  2. Measured, not asserted: 49 ms (native/fiat:USD), 289 ms
-//     (heaviest pair), 47 ms to prove a novel pair EMPTY — the
-//     full-history walk, the worst case, over every chunk. EXPLAIN puts
-//     the second arm's cost at exactly 2x with the skip scan surviving
-//     on both arms.
-//  3. No window preserves the answer. This surface reports the last
-//     trade seen from each source; `ts >= now() - W` turns that into
-//     "…within W", so a market whose last trade predates W reports
-//     NOTHING where it reported a real trade. Unlike HasAsset — which
-//     could answer XLM's existence from first principles and does
-//     ([Store.HasAsset]) —
-//     there is no first-principles answer to "what traded last": the
-//     answer IS the unbounded question. The cost lands on the quiet
-//     networks, which is where it is invisible in testing: futurenet
-//     has had ZERO XLM trades in a 14-day window while testnet had
-//     2,030 in the same window.
-//
-// So the affordability comes from the segmentby prefix and the answer's
-// completeness comes from the absence of a window; changing either
-// breaks the other. [TestLatestTradeReadsTakeNoRecencyBound] pins the
-// window's absence, on both the SQL and the bound-argument channel.
-// unbounded-latest-ok: see point 3 above; TestLatestTradeReadsTakeNoRecencyBound pins it.
+// The read has no time bound, deliberately. Each arm binds `base_asset AND
+// quote_asset`, the leading compress_segmentby columns, so every chunk is
+// an index seek (unlike HasAsset's old OR arm); the full-history worst case
+// measured under 300 ms. And no window preserves the answer: "last trade
+// seen" becomes "last trade within W", and quiet networks (futurenet had
+// zero XLM trades in 14 days) would report nothing.
+// [TestRawTradeReadsSpanBothStoredDirections] pins the arms and
+// [TestLatestTradeReadsTakeNoRecencyBound] pins the window's absence.
+// unbounded-latest-ok: "last trade seen" has no window that preserves it; TestLatestTradeReadsTakeNoRecencyBound pins it.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
         (SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,

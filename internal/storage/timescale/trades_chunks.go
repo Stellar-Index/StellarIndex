@@ -146,75 +146,38 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 
 // ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
-// THE MEASURED CASE (r1). A deploy restarted stellarindex-aggregator;
-// its cold-start VWAP alias-map aggregation spilled to disk (wait_event
-// = IO/BufFileRead) and held AccessShareLock on `trades` for 18+
-// minutes. A `usd-volume-restamp -chunks` run was mid-window and its
-// decompress_chunk asked for AccessExclusiveLock on a chunk of that
-// hypertable. It could not have it, so it QUEUED — and a pending
-// exclusive request is not a private wait: PostgreSQL puts every LATER
-// request for that object behind it, however trivial and however
-// compatible with the lock actually held. The measured pile-up:
+// A pending AccessExclusiveLock request queues every LATER request for the
+// object behind it, however compatible. On r1 a restamp's decompress_chunk
+// queued behind an aggregator cold-start read that held AccessShareLock on
+// `trades` for 18+ minutes, and postgres_exporter's scrapes queued behind
+// the decompress: alerting went blind, the restamp stalled 33 minutes and
+// /v1/status went `degraded`. The trigger is a heavy read colliding with a
+// restamp's decompress/compress phase, which can recur beside any deploy.
 //
-//	decompress_chunk (restamp)      blocked 1,984 s
-//	UPDATE trades  x2 (restamp)     blocked 1,164 s
-//	postgres_exporter scrapes x3    blocked   917 s
-//	chunks_detailed_size (watcher)  blocked   904 s
+// `SET LOCAL lock_timeout` (5 s) bounds EVERY lock request in the attempt,
+// including the late AccessExclusiveLock on the chunk that compress and
+// decompress take after their work, because the API's request timeout is
+// 15 s. It does not touch a statement that holds its locks and is working;
+// no `statement_timeout` is used, so a 1.5-hour outlier decompress runs.
 //
-// The exporter being in that list is why it mattered: alerting went
-// cascade-blind (stellarindex_postgres_exporter_down, direct scrape HTTP
-// 000 after 30 s), stellarindex_aggregator_silent paged, the restamp
-// stalled 33 minutes and /v1/status went `degraded`. Both systemd units
-// read `active` throughout. It cleared in under 20 s once the aggregator's
-// SELECT was cancelled by hand. Seven aggregator restarts in the preceding
-// 14 hours did NOT jam, so a restart is not the trigger: the COLLISION of
-// a heavy cold-start read with a restamp's decompress/compress phase is,
-// and it can recur whenever restamps run beside deploys.
+// A refused late request throws that work away, so two things keep it rare
+// and visible: a lock holder older than [longLockHolderAge] is waited out
+// with no request of ours pending, and each attempt first takes the
+// functions' opening locks with `LOCK TABLE`, so a refusal there is known
+// to be cheap.
 //
-// WHAT THE 5 s BOUND COVERS. `SET LOCAL lock_timeout` covers EVERY lock
-// request in the attempt's transaction, not only the first. On TimescaleDB
-// 2.26.4 both functions take AccessShareLock on `trades`, then
-// ExclusiveLock on the chunk (readers still pass), do their work, and
-// then ask for AccessExclusiveLock on the chunk: that late request is the
-// one a long reader blocks, and it is bounded at 5 s like the rest. No
-// request of ours may sit pending longer, because a pending exclusive
-// request queues every later reader of the chunk and the API's request
-// timeout is 15 s. `lock_timeout` does nothing to a statement that HOLDS
-// its locks and is working; the 1.5-hour decompress of the 159.7 GB
-// outlier chunk is untouched, and no `statement_timeout` is used.
+// Each attempt is one transaction, so a refusal rolls back atomically (a
+// refused decompress leaves the chunk compressed, a refused compress leaves
+// it decompressed and readable). Between attempts nothing of ours is
+// pending for [lockWaitPolicy.drain]. The budget charges only waiting,
+// never work, and a retry after costly work starts only if the last
+// attempt's length fits in the remaining wall-clock budget, so a SIGTERM
+// stop window is not overrun. A SIGKILLed attempt rolls back (safe).
 //
-// THE COST OF THAT BOUND, AND HOW IT IS AVOIDED. A refusal of the late
-// request throws the attempt's work away: up to 1.5 hours of decompress.
-// Two things keep that rare and visible:
-//
-//   - before each attempt, a lock holder on the chunk (or its compressed
-//     chunk) whose transaction is older than [longLockHolderAge] is waited
-//     out, with no request of ours pending, instead of starting work it
-//     would block at the end.
-//   - each attempt first takes the functions' own opening locks with
-//     `LOCK TABLE`, in their order, so a refusal there is known to be
-//     cheap and one inside the function is known to have cost work.
-//
-// FAILING IS SAFE, AND FAILING IS NOT THE FIRST ANSWER. Each attempt is
-// one transaction, so a refusal rolls back atomically: verified on 2.26.4
-// / PG 15, a refused decompress left the chunk compressed and a refused
-// compress left it decompressed with every row readable. Between attempts
-// this process has NO request pending for [lockWaitPolicy.drain], so the
-// queue behind the last one drains. The budget is charged only for time
-// spent waiting (refused requests, drains, long holders), never for work.
-// A retry after a refusal that cost work starts only while the caller is
-// still running and the last attempt's length fits in what is left of
-// the budget on the wall clock, so a re-compress after a SIGTERM cannot
-// start a fresh 47-minute attempt that the stop window would kill. A late
-// attempt cut by SIGKILL anyway rolls back and leaves the chunk decompressed (safe).
-//
-// WHAT THIS DOES NOT COVER. A convoy whose head is somebody ELSE's
-// exclusive request (a by-hand ALTER, a migration, the compression
-// policy's own proc) is untouched by this; that is what the
-// stellarindex_pg_lock_convoy alert exists for. A decompress that HOLDS
-// its locks for 1.5 hours still blocks writers of that chunk for 1.5
-// hours. And a holder in another role is invisible to the long-holder
-// check unless this role can read its pg_stat_activity row.
+// Not covered: a convoy headed by someone else's exclusive request (that is
+// the stellarindex_pg_lock_convoy alert), writers blocked by a decompress
+// that holds its locks, and long holders in a role whose pg_stat_activity
+// rows this role cannot read.
 
 // lockWaitPolicy is how hard one statement may ask for its locks: `wait`
 // per request, `drain` of clear air between attempts, `budget` of total

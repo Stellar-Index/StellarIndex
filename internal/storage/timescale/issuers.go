@@ -444,63 +444,21 @@ func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool
 // every issuer's cached SEP-1 payload SERVER-SIDE, one row per declared
 // currency, instead of shipping the payloads to Go to be parsed.
 //
-// # Why the projection, measured
+// The column holds hundreds of MB of JSON; json.Unmarshal of it in Go was
+// 89% of a 2.5 s read, and this form returns the same images 5.8x faster
+// over a fraction of the wire. No index: the predicate costs ~12 ms and the
+// planner refuses a partial index at this selectivity anyway.
 //
-// The column is not a few dozen rows of metadata. On r1 it held
-// 35,829 payloads totalling 448 MB of JSON, up ~50% in two days on the
-// back of a deliberate SEP-1 backfill. Reproduced on
-// the integration harness' TimescaleDB with a 611 MB equivalent set, the
-// plain `SELECT g_strkey, sep1_payload` split as:
+// `jsonb_array_elements` raises 22023 on a non-array, and one hostile TOML
+// (`Currencies = "nope"`) would fail the statement and blank every logo. A
+// WHERE jsonb_typeof guard works only while the planner pushes it below the
+// lateral; the CASE substitutes an empty array inside the function's own
+// argument, so no plan shape can separate guard from guarded.
+// TestAllSep1ImagesProjection pins the outcome over the hostile shapes.
 //
-//	row scan + IS NOT NULL predicate     12 ms   (EXPLAIN ANALYZE)
-//	detoast + wire transfer of 610 MB   ~250 ms
-//	json.Unmarshal of 610 MB in Go     2,238 ms   ← 89% of the wall clock
-//	                                   -------
-//	                                    2,500 ms
-//
-// This form returns the same 107,487 images in 431 ms over 15 MB of
-// wire — 5.8x faster — because the 89% simply stops happening.
-//
-// # Why there is no index here
-//
-// Because the predicate was never the cost. The planner picks a seq scan
-// for `sep1_payload IS NOT NULL` at this selectivity (35,829 of 59,829)
-// and REFUSES a partial index offered to it — measured: 12.3 ms
-// unindexed against 8.9 ms with `(g_strkey) WHERE sep1_payload IS NOT
-// NULL` present, which is noise on a 2.5 s query. A migration here would
-// have bought 3 ms of a 2,500 ms problem.
-//
-// # Why the CASE rather than a WHERE guard
-//
-// `jsonb_array_elements` raises 22023 ("cannot extract elements from an
-// object") on anything that is not an array, and ONE such row fails the
-// whole statement — which would blank the logo map for every issuer
-// because a single attacker wrote `Currencies = "nope"` in their TOML.
-//
-// A `WHERE jsonb_typeof(...) = 'array'` guard appears to prevent that and
-// mostly does: measured on TimescaleDB 2.26.4-pg15, the planner pushes
-// that qual below the lateral and the hostile shapes never reach the
-// function. But that is a property of the plan, not of the query —
-// nothing in the SQL standard or in Postgres orders a WHERE qual against
-// a set-returning function in the FROM clause, and the plan is free to
-// change with row estimates, a parallel scan, or a join added above. The
-// CASE substitutes an empty array inside the function's own argument, so
-// the guard cannot be separated from the thing it guards at any plan
-// shape. It is the difference between a query that does not error today
-// and one that cannot.
-//
-// TestAllSep1ImagesProjection exercises the whole hostile set — Currencies
-// absent, null, an object, a string, an array of scalars, an array of
-// mixed junk, plus payloads that are themselves an array or a bare scalar
-// — and passes with either form on today's plans. It pins the OUTCOME
-// (right rows, no error); the CASE is what stops a future plan from
-// changing that.
-//
-// Key lookups are case-SENSITIVE where Go's encoding/json is not. That
-// is safe here and only here: [marshalSep1Payload] is the sole writer of
-// this column and spells every key as a hardcoded Go literal
-// ("Currencies", "Code", "Issuer", "Image"), so attacker-authored TOML
-// supplies values and never keys.
+// Key lookups are case-SENSITIVE where Go's encoding/json is not. That is
+// safe only because [marshalSep1Payload], the sole writer, spells every
+// key as a Go literal, so attacker TOML supplies values, never keys.
 //
 //nolint:gosec // G202: sep1PayloadOutlivedSQL is constant SQL; values bind via $N
 var allSep1ImagesQuery = `
