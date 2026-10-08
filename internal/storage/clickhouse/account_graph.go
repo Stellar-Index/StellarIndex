@@ -8,41 +8,26 @@ import (
 	"time"
 )
 
-// The two relationships the account graph models. They are
-// deliberately never summed: a creation is immutable and happens once
-// per (creator, created) pair per lifetime of the created address, while
-// a sponsorship is revocable and repeatable, and one account can
-// legitimately sit high in both.
+// The two relationships the graph models are never summed: a creation is immutable and once
+// per (creator, created) pair per address lifetime; a sponsorship is revocable and repeatable.
 const (
 	GraphRelationCreated   = "created"
 	GraphRelationSponsored = "sponsored"
 )
 
-// AccountGraphInboundCap bounds how many INBOUND edges one direction may
-// return. Inbound is small by nature and this is a guard rail, not a
-// page: measured on r1 over lake partition 63, no created
-// account has more than 9 distinct creators (p99.99 = 4.4) and no
-// sponsored account more than 8 distinct sponsors (p99.9 = 7). The cap
-// exists so a future protocol or a pathological address cannot turn a
-// bounded response into an unbounded one, and the served total is the
-// EXACT count either way, so truncation is visible rather than silent.
+// AccountGraphInboundCap bounds inbound edges per direction: a guard rail, not a page
+// (measured: no account has more than 9 distinct creators or 8 sponsors). The served total is
+// the exact count, so truncation is visible.
 const AccountGraphInboundCap = 25
 
-// AccountGraphEdge is one edge of the graph: a counterparty plus the
-// weight of the relationship with it.
-//
-// ONE ROW PER DISTINCT PAIR, not per operation. Events is how many
-// operations sit behind the edge — creations for a creation edge,
-// sponsorship arrangements STARTED for a sponsorship edge.
+// AccountGraphEdge is one edge: a counterparty plus the relationship's weight. One row per
+// distinct pair, not per operation; Events counts creations or sponsorship arrangements started.
 type AccountGraphEdge struct {
-	// Account is the other end: the creator/sponsor on an inbound edge,
-	// the created/sponsored account on an outbound one.
+	// Account is the other end: creator/sponsor on an inbound edge, created/sponsored outbound.
 	Account string
 	Events  uint64
-	// FundedStroops is the starting balance summed over the creations
-	// behind this edge, and is set on CREATION edges only (nil on
-	// sponsorship edges, which move no balance). Zero is a real, common
-	// value: a CAP-33 sponsored creation pays no reserve of its own.
+	// FundedStroops is the starting balance summed over the creations behind this edge; set on
+	// creation edges only (nil on sponsorship). Zero is real: a CAP-33 sponsored creation pays no reserve.
 	FundedStroops *big.Int
 	FirstLedger   uint32
 	LastLedger    uint32
@@ -50,14 +35,9 @@ type AccountGraphEdge struct {
 	LastAt        time.Time
 }
 
-// AccountGraphSide is the whole-history summary of ONE outbound
-// direction — every account this one created, or every account it
-// sponsored — independent of any page the caller asked for.
-//
-// Accounts is the number of distinct counterparties (edges); Events is
-// the number of operations across them. The two differ sharply for a
-// recycling creator or a re-sponsoring sponsor, and collapsing them
-// would misreport both.
+// AccountGraphSide is the whole-history summary of one outbound direction, independent of
+// any page. Accounts counts distinct counterparties, Events operations; they differ sharply
+// for a recycling creator, so neither stands in for the other.
 type AccountGraphSide struct {
 	Accounts      uint64
 	Events        uint64
@@ -68,12 +48,9 @@ type AccountGraphSide struct {
 	LastAt        time.Time
 }
 
-// AccountGraphCoverage is the span ONE arm of the graph aggregated, read
-// off the same cycle that built that arm's edges. The two arms come from
-// two independent rollup cycles over two different sources, so they are
-// carried separately rather than merged into a single claim: the
-// creation arm reaches back to genesis, the sponsorship arm only to
-// protocol 14's activation, where sponsorship began to exist.
+// AccountGraphCoverage is the span one arm aggregated, read from the cycle that built that
+// arm's edges. The arms come from independent cycles and sources, so they stay separate:
+// creation reaches genesis, sponsorship only protocol 14.
 type AccountGraphCoverage struct {
 	FromLedger uint32
 	ThruLedger uint32
@@ -82,62 +59,41 @@ type AccountGraphCoverage struct {
 	ComputedAt time.Time
 }
 
-// AccountGraph is one account's neighbourhood in the sponsorship and
-// account-creation graph.
+// AccountGraph is one account's neighbourhood in the sponsorship and creation graph.
 //
-// EVERYTHING HERE IS HISTORY. A creation edge is immutable — a creation
-// never un-happens. A sponsorship edge says an arrangement was STARTED,
-// never that one is in force: RevokeSponsorship names the entry it
-// revokes inside body_xdr, which the rollup does not decode, so a
-// revocation is attributable to the account that ISSUED it and to no
-// individual edge; and an arrangement also lapses when the sponsored
-// entry is deleted or the account merges away, neither of which emits an
-// operation at all. RevocationsIssued is carried for that reason — as
-// the account-level fact it is — and no field on any edge claims a live
-// sponsorship.
+// Everything here is history. A sponsorship edge says an arrangement was started, never that
+// one is in force: RevokeSponsorship names its entry inside undecoded body_xdr, so a
+// revocation attributes to the issuer, not an edge, and arrangements also lapse on entry
+// deletion or merge with no operation. No edge field claims a live sponsorship.
 //
-// The two directions are shaped by their measured cardinality. Inbound
-// (CreatedBy / SponsoredBy) is bounded by AccountGraphInboundCap with an
-// exact total beside it. Outbound is summarised (Created / Sponsored)
-// and paged (Page), because the busiest sponsor on the network covers
-// 785,543 distinct accounts and the busiest creator 193,015.
+// Inbound (CreatedBy / SponsoredBy) is capped by AccountGraphInboundCap with an exact total;
+// outbound is summarised (Created / Sponsored) and paged (Page) because the busiest sponsor
+// covers 785,543 accounts.
 type AccountGraph struct {
-	// CreatedBy is normally one edge, and is a LIST rather than a single
-	// value because it genuinely can be several: an address can be
-	// created, merged away and created again, by the same funder or a
-	// different one. Measured on r1, 41,358 of partition 63's
-	// 418,016 created addresses carry more than one creation and the
-	// widest carries 29,634 — which is why the edges are collapsed to
-	// distinct pairs before they are served.
+	// CreatedBy is a list because an address can be created, merged away and created again
+	// (by the same or another funder); edges are collapsed to distinct pairs before serving.
 	CreatedBy      []AccountGraphEdge
 	CreatedByTotal uint64
-	// SponsoredBy is every account that has ever begun a sponsorship
-	// arrangement covering this one. Not "is sponsoring it now".
+	// SponsoredBy is every account that has ever begun a sponsorship covering this one.
 	SponsoredBy      []AccountGraphEdge
 	SponsoredByTotal uint64
 
 	Created   AccountGraphSide
 	Sponsored AccountGraphSide
-	// RevocationsIssued counts RevokeSponsorship operations this account
-	// was the source of. It is an ACCOUNT-level fact, not an edge-level
-	// one, and it is a lower bound on arrangements that ended.
+	// RevocationsIssued counts RevokeSponsorship operations this account sourced: an
+	// account-level fact and a lower bound on arrangements that ended.
 	RevocationsIssued uint64
 
 	CreationCoverage    AccountGraphCoverage
 	SponsorshipCoverage AccountGraphCoverage
 
-	// Page is the requested outbound direction's slice, keyset-ordered by
-	// the counterparty's account id. Empty when no relation was asked
-	// for.
+	// Page is the requested outbound direction's slice, keyset-ordered by counterparty id.
 	Page []AccountGraphEdge
 }
 
-// accountGraphInboundQuery reads both inbound directions in one
-// round-trip. `count() OVER ()` is evaluated before the LIMIT, so each
-// arm carries the EXACT number of inbound edges alongside the capped
-// slice — truncation is then observable rather than inferred from a full
-// page. Both reads are primary-key range reads: the tables are ORDER BY
-// (created, creator) and (sponsored, sponsor).
+// accountGraphInboundQuery reads both inbound directions in one round-trip. `count() OVER ()`
+// is evaluated before the LIMIT, so each arm carries the exact inbound count beside the capped
+// slice. Both are primary-key range reads (ORDER BY (created, creator) / (sponsored, sponsor)).
 const accountGraphInboundQuery = `
 	SELECT * FROM (
 	    SELECT '` + GraphRelationCreated + `' AS rel,
@@ -165,16 +121,9 @@ const accountGraphInboundQuery = `
 	    LIMIT ?
 	)`
 
-// accountGraphOutboundQuery summarises both outbound directions in one
-// round-trip. Each arm is an aggregate over a primary-key range, so its
-// cost is that account's own edges and not the table: measured on r1,
-// the same shape over the busiest creator's 1,569,693 rows
-// in stellar.account_creators_ops — an upper bound, since that address
-// collapses to 193,015 edges — cost 63 ms at max_threads=2.
-//
-// An account with no edges in one direction yields that arm's row with
-// accounts = 0; callers must read that as "no relationship", not as a
-// span starting at ledger 0.
+// accountGraphOutboundQuery summarises both outbound directions in one round-trip; each arm
+// aggregates a primary-key range, so cost follows that account's edges, not the table.
+// An arm with accounts = 0 means "no relationship", not a span starting at ledger 0.
 const accountGraphOutboundQuery = `
 	SELECT '` + GraphRelationCreated + `' AS rel,
 	       toUInt64(count()) AS accounts,
@@ -198,19 +147,14 @@ const accountGraphOutboundQuery = `
 	FROM stellar.account_sponsor_edges
 	WHERE sponsor = ?`
 
-// accountGraphRevocationsQuery reads the account-level revocation count
-// off the sponsor board, which the same cycle EXCHANGEs with the edges,
-// so the number cannot describe a different cycle from the graph beside
-// it. A scan of the board's one row per distinct sponsor — 2,423 rows on
-// r1, measured at 2 ms.
+// accountGraphRevocationsQuery reads the revocation count off the sponsor board, which the
+// same cycle EXCHANGEs with the edges, so it cannot describe a different cycle than the graph.
 const accountGraphRevocationsQuery = `
 	SELECT toUInt64(sum(revocations_issued))
 	FROM stellar.account_sponsors_rollup WHERE sponsor = ?`
 
-// accountGraphCoverageQuery reads both arms' data-derived spans from the
-// stats tables their own cycles wrote (ADR-0031). Kept separate per arm
-// because they are separate facts: the creation arm's floor is genesis,
-// the sponsorship arm's is protocol 14.
+// accountGraphCoverageQuery reads both arms' data-derived spans from the stats tables their
+// own cycles wrote (ADR-0031); separate per arm because the floors differ (genesis vs protocol 14).
 const accountGraphCoverageQuery = `
 	SELECT '` + GraphRelationCreated + `' AS arm, metric, value, computed_at
 	FROM stellar.account_creators_stats
@@ -220,12 +164,9 @@ const accountGraphCoverageQuery = `
 	FROM stellar.account_sponsors_stats
 	WHERE metric IN ('from_ledger', 'thru_ledger', 'from_time', 'thru_time')`
 
-// The two outbound page reads. Both are keyset-paged on the
-// counterparty's account id, which is the second column of the table's
-// ORDER BY, so a page is a primary-key range read bounded by LIMIT
-// however many edges the account has. An empty cursor compares as
-// greater-than the empty string, which every strkey satisfies, so the
-// first page needs no separate statement.
+// The outbound page reads are keyset-paged on the counterparty id (second ORDER BY column), so
+// a page is a primary-key range bounded by LIMIT. An empty cursor sorts below every strkey,
+// so the first page needs no separate statement.
 const (
 	accountGraphCreatedPageQuery = `
 	SELECT created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at
@@ -242,17 +183,10 @@ const (
 	LIMIT ?`
 )
 
-// AccountGraph reads one account's neighbourhood in both relationships.
-//
-// relation selects which OUTBOUND direction is paged: GraphRelationCreated,
-// GraphRelationSponsored, or "" for none. The inbound edges and both
-// outbound SUMMARIES are always returned — they are bounded by
-// construction, so the expensive direction is the one a caller has to
-// ask for explicitly.
-//
-// ok=false (not an error) when either graph arm has not been exchanged
-// live yet: a half-provisioned graph would answer "this account was
-// created by nobody", which is a claim, not an absence.
+// AccountGraph reads one account's neighbourhood. relation selects the paged OUTBOUND
+// direction (GraphRelationCreated, GraphRelationSponsored, or "" for none); inbound edges and
+// both outbound summaries are always returned. ok=false (not an error) when either arm has
+// not been exchanged live: a half-provisioned graph would claim "created by nobody".
 func (r *ExplorerReader) AccountGraph(ctx context.Context, account, relation string, limit int, cursor string) (AccountGraph, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorEdgesProbe,
 		`SELECT creator FROM stellar.account_creator_edges LIMIT 1`, true) {
@@ -308,8 +242,7 @@ func (r *ExplorerReader) readAccountGraphInbound(ctx context.Context, out *Accou
 			out.CreatedBy = append(out.CreatedBy, edge)
 			out.CreatedByTotal = total
 		case GraphRelationSponsored:
-			// Sponsorship moves no balance, so the column stays nil
-			// rather than being served as a zero that reads like a fact.
+			// Sponsorship moves no balance; nil rather than a zero that reads like a fact.
 			out.SponsoredBy = append(out.SponsoredBy, edge)
 			out.SponsoredByTotal = total
 		}
@@ -317,9 +250,8 @@ func (r *ExplorerReader) readAccountGraphInbound(ctx context.Context, out *Accou
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	// UNION ALL does not promise the arms' inner ordering survives, and a
-	// truncated slice must still be a deterministic one, so both are
-	// sorted here on the same key the inner statements ordered by.
+	// UNION ALL does not keep the arms' inner ordering, so sort here on the inner key to make
+	// a truncated slice deterministic.
 	sortGraphEdges(out.CreatedBy)
 	sortGraphEdges(out.SponsoredBy)
 	return nil

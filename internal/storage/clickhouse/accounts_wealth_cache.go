@@ -11,40 +11,21 @@ import (
 
 // AccountsWealthCacheTTL is how long a wealth ranking stays servable.
 //
-// The underlying query is a `FINAL` scan of stellar.ledger_entries_current
-// — 43.6M live account/trustline rows, measured 11.1 s on R1 for the row
-// COUNT alone, before the per-account price join and sort. It cannot be
-// made to fit a request deadline by tuning; it has to be precomputed.
-//
-// 15 minutes is chosen against what the data actually does: this is a
-// leaderboard of the largest balances on the network, which reorders on
-// the timescale of large transfers, not seconds. Serving a ranking up to
-// 15 minutes old is materially indistinguishable from live, and the
-// response carries the snapshot's own ledger (AsOfLedger) as its vintage.
+// The query is a FINAL scan of ledger_entries_current (43.6M rows, ~11 s for the count alone),
+// so it must be precomputed. A leaderboard of the largest balances reorders on the timescale
+// of large transfers; the response carries the snapshot's own ledger (AsOfLedger).
 const AccountsWealthCacheTTL = 15 * time.Minute
 
-// AccountsWealthRefreshTimeout bounds a single background refresh. Well
-// above the ~11-20 s the query needs, so a loaded box does not abandon a
-// refresh that would have succeeded, but bounded so a wedged query cannot
-// pin the refresher forever.
+// AccountsWealthRefreshTimeout bounds one background refresh: well above the ~11-20 s the
+// query needs, but finite so a wedged query cannot pin the refresher.
 const AccountsWealthRefreshTimeout = 3 * time.Minute
 
-// accountsWealthMaxLimit is the size of the single ranking the cache
-// computes and stores. Requests ask for a limit (ParseLimit caps it at
-// 500), and the cache serves the first `limit` rows of this one ranking
-// rather than caching per-limit.
-//
-// Per-limit keying was a real bug (site-audit S3 verification): prewarm
-// warms one limit (100) while requests use 5/10/etc, so every real request
-// missed a different key, kicked its own 23s refresh, and served 503 until
-// that particular limit happened to finish. One ranking, sliced, means a
-// single warm entry covers every request size.
+// accountsWealthMaxLimit is the size of the single ranking the cache stores; requests get the
+// first `limit` rows of it. Keying per limit made prewarm (one limit) miss every real request.
 const accountsWealthMaxLimit = 500
 
-// Wealth-ranking bases. The ranking is by total USD value where the caller
-// supplies a USD price map; where it can't (no aggregator / empty catalogue —
-// the lean test nets), the caller ranks by native XLM balance instead, and the
-// cached entry records which so the API can label the served numbers correctly.
+// Wealth-ranking bases: total USD value when the caller supplies a price map, else native XLM
+// balance (no aggregator / empty catalogue); the entry records which so the API can label it.
 const (
 	WealthBasisUSD    = "usd"
 	WealthBasisNative = "native_xlm"
@@ -59,33 +40,20 @@ func wealthBasis(assets []string) string {
 	return WealthBasisUSD
 }
 
-// AccountWealthSnapshot is one computed wealth ranking and its vintage. The
-// cache holds a single one (top [accountsWealthMaxLimit]); callers get it
-// sliced to their requested limit.
+// AccountWealthSnapshot is one computed ranking and its vintage; the cache holds one (top
+// [accountsWealthMaxLimit]) and callers get it sliced.
 type AccountWealthSnapshot struct {
 	Rows  []AccountWealth
 	Basis string
-	// AsOf is when the ranking was computed. AsOfLedger is the lake watermark
-	// read immediately BEFORE its scan, so it never names a ledger later than
-	// the data the ranking read; 0 when the watermark was unreadable.
+	// AsOf is when the ranking was computed. AsOfLedger is the lake watermark read before
+	// the scan, so it never names a ledger later than the data read; 0 if unreadable.
 	AsOf       time.Time
 	AsOfLedger uint32
 }
 
 // accountsWealthCache is a TTL + single-flight cache in front of
-// [ExplorerReader.AccountsByWealth].
-//
-// Why this exists (site-audit S3): /v1/accounts was returning HTTP 500
-// after 8.1 s on every single request. The handler wraps the read in an
-// 8 s deadline; the query needs 11-20 s; so it timed out, logged
-// "context deadline exceeded", and 500'd — 100% of the time, at any load.
-// The page showed a permanent "Loading…" and then an error blaming
-// "the current-state projection is still backfilling, or pricing is
-// offline", neither of which was true.
-//
-// Serving stale-but-real data beats serving nothing: a request that finds
-// a warm entry returns immediately, and a request that finds none is told
-// so honestly rather than being hung for 8 s first.
+// [ExplorerReader.AccountsByWealth]. The query needs 11-20 s against the handler's 8 s
+// deadline, so it must never run on a request; a warm stale entry beats hanging.
 type accountsWealthCache struct {
 	mu     sync.Mutex
 	entry  AccountWealthSnapshot
@@ -97,15 +65,10 @@ func newAccountsWealthCache() *accountsWealthCache {
 	return &accountsWealthCache{}
 }
 
-// get returns the cached ranking and its fetch time whenever one has EVER
-// been stored — including past the TTL. Staleness is the CALLER's decision
-// now: treating an expired entry as a hard miss meant one
-// window of failed refreshes blanked the route back to its 503 warming
-// state even though a perfectly real ranking sat in memory — serving it
-// with an honest as-of + degraded flag beats serving nothing. ok=false only
-// when nothing was ever stored. A nil cache (a zero-value ExplorerReader,
-// as built in some tests) behaves as a permanent miss rather than
-// panicking.
+// get returns the cached ranking and fetch time whenever one was ever stored, including past
+// the TTL: staleness is the caller's decision, and a real old ranking with an honest as-of
+// beats blanking the route. ok=false only when nothing was stored. A nil cache is a
+// permanent miss.
 func (c *accountsWealthCache) get() (AccountWealthSnapshot, bool) {
 	if c == nil {
 		return AccountWealthSnapshot{}, false
@@ -128,10 +91,8 @@ func (c *accountsWealthCache) put(snap AccountWealthSnapshot) {
 	c.filled = true
 }
 
-// beginFlight returns (wait, false) when a refresh is already running — the
-// caller should wait on the channel rather than issue a second scan. It
-// returns (done, true) when the caller owns the refresh and must close
-// `done` when finished.
+// beginFlight returns (wait, false) when a refresh is running; (done, true) when the caller
+// owns it and must close `done`.
 func (c *accountsWealthCache) beginFlight() (chan struct{}, bool) {
 	if c == nil {
 		return nil, false
@@ -156,28 +117,16 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 	close(ch)
 }
 
-// AccountsByWealthCached serves the wealth ranking from cache, refreshing
-// in the background when stale.
+// AccountsByWealthCached serves the ranking from cache, refreshing in the background when
+// stale. It never runs the slow scan on the caller's deadline:
 //
-// It NEVER runs the slow scan on the caller's deadline. Three states:
+//   - fresh: served as-is; handlers stamp the snapshot's AsOf/AsOfLedger, never a serve-time
+//     watermark read (a torn read).
+//   - stale: served with its real asOf and a detached single-flight refresh is kicked; the
+//     handler compares asOf to AccountsWealthCacheTTL to set the `stale` flag.
+//   - empty: ok=false immediately (honest warming state) and the refresh is kicked.
 //
-//   - fresh entry (within AccountsWealthCacheTTL): served as-is. The
-//     snapshot carries its own AsOf and AsOfLedger; a handler stamps
-//     those, never a serve-time watermark read (a torn read).
-//   - STALE entry (TTL lapsed — e.g. the background refresh has been
-//     failing): served anyway, with its real asOf, and a detached
-//     single-flight refresh is kicked. The handler compares asOf against
-//     AccountsWealthCacheTTL to set the envelope's degraded (`stale`)
-//     flag — a real-but-old ranking with an honest timestamp beats a 503
-//     (a window of refresh failures would blank
-//     the route back to "warming up" indefinitely).
-//   - nothing ever stored: ok=false immediately so the handler can render
-//     an honest warming state instead of hanging for the request timeout
-//     and then failing — precisely the behaviour site-audit S3 recorded —
-//     and the same detached refresh is kicked.
-//
-// PrewarmAccountsByWealth exists so that in practice nobody ever sees the
-// cold state at all.
+// PrewarmAccountsByWealth keeps the cold state out of sight in practice.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets, prices []string, limit int,
 ) (AccountWealthSnapshot, bool) {
@@ -189,13 +138,10 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	if ok && time.Since(snap.AsOf) <= AccountsWealthCacheTTL {
 		return snap, true
 	}
-	// Stale or cold: start a background refresh either way.
+	// Stale or cold: refresh in the background.
 	//
-	// contextcheck: the refresh must NOT inherit this request's context.
-	// Bound to the caller's 8s deadline it would be cancelled before the
-	// ~11-20s FINAL scan completed, so the cache would never populate and
-	// every request would keep paying the timeout — exactly the failure
-	// this cache exists to fix (site-audit S3).
+	// contextcheck: the refresh must not inherit this request's context; bound to the 8s
+	// deadline it would be cancelled before the ~11-20s scan finished and never populate.
 	r.refreshAccountsWealth(assets, prices) //nolint:contextcheck // intentional detach; see above
 	if ok {
 		// Stale-but-real: serve it with its honest timestamp.
@@ -212,10 +158,8 @@ func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
 	return rows
 }
 
-// PrewarmAccountsByWealth refreshes the ranking synchronously, for the
-// API's prewarm loop. Blocks for as long as the scan takes (bounded by
-// AccountsWealthRefreshTimeout), which is exactly what a background
-// warmer should do.
+// PrewarmAccountsByWealth refreshes the ranking synchronously for the prewarm loop, blocking
+// up to AccountsWealthRefreshTimeout.
 func (r *ExplorerReader) PrewarmAccountsByWealth(
 	ctx context.Context, assets, prices []string,
 ) error {
@@ -227,10 +171,8 @@ func (r *ExplorerReader) PrewarmAccountsByWealth(
 	return nil
 }
 
-// computeAccountsWealth runs one full ranking and stamps its vintage. The
-// watermark is read BEFORE the scan so AsOfLedger never names a ledger later
-// than the data the ranking saw; an unreadable watermark leaves it 0
-// (as_of_ledger omitted) rather than failing a ranking that did compute.
+// computeAccountsWealth runs one ranking and stamps its vintage. The watermark is read before
+// the scan so AsOfLedger never exceeds the data seen; unreadable leaves it 0, not a failure.
 func (r *ExplorerReader) computeAccountsWealth(
 	ctx context.Context, assets, prices []string,
 ) (AccountWealthSnapshot, error) {
@@ -248,11 +190,8 @@ func (r *ExplorerReader) computeAccountsWealth(
 	}, nil
 }
 
-// withLocked resolves the locked-burn flag for the ranked accounts and
-// stamps it onto the rows, so the request path never runs the
-// AccountsUnspendable FINAL scan (site-audit S3). A failure here degrades
-// to unbadged rather than failing the whole refresh — the ranking is the
-// important part; the badge is advisory.
+// withLocked stamps the locked-burn flag onto the ranked rows so requests never run the
+// AccountsUnspendable FINAL scan. A failure degrades to unbadged; the badge is advisory.
 func (r *ExplorerReader) withLocked(ctx context.Context, rows []AccountWealth) []AccountWealth {
 	if len(rows) == 0 {
 		return rows
@@ -278,14 +217,11 @@ func (r *ExplorerReader) refreshAccountsWealth(assets, prices []string) {
 	if !owner {
 		return // someone else is already scanning; don't pile on
 	}
-	// Detached from the request context on purpose: the whole point is to
-	// outlive the request that noticed the miss.
+	// Detached from the request context on purpose: it must outlive the request.
 	go func() {
 		defer r.wealthCache.endFlight(ch)
-		// An unrecovered panic in ANY goroutine kills the whole API process.
-		// Registered last so it unwinds FIRST and endFlight above still runs,
-		// which is what keeps a contained panic from wedging /v1/accounts on
-		// a flight that never ends.
+		// An unrecovered panic in any goroutine kills the API. Registered last so it unwinds
+		// first and endFlight still runs, so a contained panic cannot wedge the flight.
 		defer worker.Recover(nil, "explorer-accounts-wealth-refresh")
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
@@ -293,10 +229,8 @@ func (r *ExplorerReader) refreshAccountsWealth(assets, prices []string) {
 		snap, err := r.computeAccountsWealth(ctx, assets, prices)
 		obs.ObserveExplorerSWRRefresh("accounts_wealth", start, err)
 		if err != nil {
-			// Log rather than swallow: a persistently-failing refresh keeps
-			// /v1/accounts on its 503 warming state indefinitely, and a
-			// silent failure here is what made that hard to diagnose the
-			// first time (the query was dying at the connection's 30s cap).
+			// Log rather than swallow: a persistently-failing refresh pins /v1/accounts on its
+			// 503 warming state.
 			if r.wealthRefreshErr != nil {
 				r.wealthRefreshErr(err)
 			}

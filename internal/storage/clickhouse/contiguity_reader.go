@@ -8,30 +8,23 @@ import (
 	"fmt"
 )
 
-// LedgerWindowCoverage is one range's (or bucket's) Check-1 substrate
-// contiguity result: how many DISTINCT ledger_seq values stellar.ledgers
-// actually holds within [From,To], against the range's own size
-// (Expected = To-From+1). Backs stellarindex-ops verify-contiguity's
-// ledger-contiguity check (ADR-0034: the raw lake's ledger substrate must
-// be gap-free).
+// LedgerWindowCoverage is one range's Check-1 result: distinct ledger_seq values
+// stellar.ledgers holds in [From,To] against Expected (ADR-0034: gap-free substrate).
 type LedgerWindowCoverage struct {
 	From, To          uint32
 	Expected, Present uint64
 
-	// Rows is count() over the same range: stellar.ledgers is
-	// ReplacingMergeTree, so an un-merged re-ingest leaves Rows > Present.
-	// Only QueryLedgerRangeCoverage fills it; zero elsewhere.
+	// Rows is count() over the range; un-merged ReplacingMergeTree re-ingests make
+	// Rows > Present. Only QueryLedgerRangeCoverage fills it.
 	Rows uint64
 }
 
-// Missing is Expected-Present — the count of ledger_seq values in [From,To]
-// that stellar.ledgers has zero rows for.
+// Missing is Expected-Present: ledger_seq values in [From,To] with zero rows.
 func (c LedgerWindowCoverage) Missing() uint64 {
 	return c.Expected - c.Present
 }
 
-// DuplicateRows is Rows-Present: rows beyond the first for a ledger_seq,
-// which uniqExact alone cannot see. Saturates at zero when Rows is unset.
+// DuplicateRows is Rows-Present, which uniqExact alone cannot see; 0 when Rows is unset.
 func (c LedgerWindowCoverage) DuplicateRows() uint64 {
 	if c.Rows <= c.Present {
 		return 0
@@ -39,13 +32,9 @@ func (c LedgerWindowCoverage) DuplicateRows() uint64 {
 	return c.Rows - c.Present
 }
 
-// QueryLedgerRangeCoverage is Check 1's headline: a single uniqExact() plus
-// count() over the WHOLE [from,to] range. uniqExact on one narrow UInt32 column is cheap
-// even across full history — unlike the wide argMax/multi-column reads that
-// have driven CH memory ceilings elsewhere in this package (see gate.go,
-// recognition.go's doc comments) — so this deliberately does NOT window,
-// letting the caller skip the (more expensive) bucket-level scan entirely
-// when the range is already fully contiguous.
+// QueryLedgerRangeCoverage is Check 1's headline: one uniqExact()+count() over the whole
+// range. Deliberately unwindowed: uniqExact on a narrow UInt32 column is cheap, and a clean
+// result lets the caller skip the bucket scan.
 func QueryLedgerRangeCoverage(ctx context.Context, addr string, from, to uint32) (LedgerWindowCoverage, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -61,13 +50,9 @@ func QueryLedgerRangeCoverage(ctx context.Context, addr string, from, to uint32)
 	return LedgerWindowCoverage{From: from, To: to, Expected: uint64(to-from) + 1, Present: present, Rows: rows}, nil
 }
 
-// QueryLedgerWindowCoverage runs the Check-1 gap-localization scan over
-// [from,to], one uniqExact() query per stride-wide window (see
-// forEachLedgerWindow) so peak query cost never exceeds one lake partition
-// regardless of the overall range's size. Only called by verify-contiguity
-// after QueryLedgerRangeCoverage's headline already found a deficit — the
-// per-window breakdown is what makes the report actionable (which buckets
-// have gaps), not a substitute for the headline check.
+// QueryLedgerWindowCoverage localizes gaps with one uniqExact() per stride-wide window
+// (forEachLedgerWindow), keeping peak cost within one lake partition. Run only after the
+// headline check found a deficit.
 func QueryLedgerWindowCoverage(ctx context.Context, addr string, from, to, stride uint32) ([]LedgerWindowCoverage, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -91,15 +76,9 @@ func QueryLedgerWindowCoverage(ctx context.Context, addr string, from, to, strid
 	return out, nil
 }
 
-// QueryMissingLedgerSeqs returns every individual ledger_seq absent from
-// stellar.ledgers within [from,to]. Callers MUST bound [from,to] to a single
-// lake partition or smaller (e.g. one QueryLedgerWindowCoverage window)
-// before calling this — verify-contiguity's Check 1 orchestration only ever
-// calls it on buckets QueryLedgerWindowCoverage already flagged with
-// missing>0, never over an unbounded whole-history range. Implemented as
-// numbers(from, to-from+1) (one candidate row per ledger_seq in range)
-// anti-joined against the present set, so cost is bounded by the window's
-// width, not by how sparse or dense the gaps within it are.
+// QueryMissingLedgerSeqs returns each ledger_seq absent from stellar.ledgers in [from,to].
+// Callers MUST bound the range to one lake partition or less: it anti-joins
+// numbers(from, to-from+1) against the present set, so cost scales with window width.
 func QueryMissingLedgerSeqs(ctx context.Context, addr string, from, to uint32) ([]uint32, error) {
 	if to < from {
 		return nil, nil
@@ -137,14 +116,9 @@ func QueryMissingLedgerSeqs(ctx context.Context, addr string, from, to uint32) (
 	return out, nil
 }
 
-// ECWindowCoverage is one window's Check-2 result: how many ledgers in
-// stellar.ledgers are tx-bearing (tx_count > 0) within [From,To], and how
-// many of THOSE ledger_seqs stellar.ledger_entry_changes holds at least one
-// row for. Used for BOTH the below-ec-floor (backfill-pending) and
-// at/above-ec-floor (live-covered, hard-gated) scans — verify-contiguity
-// scopes [From,To] to one side of -ec-floor before calling
-// QueryECWindowCoverage, so a single window is never ambiguous about which
-// side of the floor it's on (see chops.ecFloorSegments).
+// ECWindowCoverage is one window's Check-2 result: tx-bearing ledgers in [From,To] and how
+// many have a stellar.ledger_entry_changes row. Callers scope a window to one side of
+// -ec-floor (chops.ecFloorSegments).
 type ECWindowCoverage struct {
 	From, To uint32
 
@@ -152,37 +126,15 @@ type ECWindowCoverage struct {
 	// in [From,To].
 	TxLedgers uint64
 
-	// ECCoveredTxLedgers is the subset of those TxLedgers that
-	// stellar.ledger_entry_changes holds at least one row for — a per-ledger
-	// semi-join, NOT a standalone cardinality of entry_changes. It is
-	// therefore ≤ TxLedgers by construction. See [ECWindowCoverage.Missing].
+	// ECCoveredTxLedgers is the tx-bearing subset with entry-change rows (a per-ledger
+	// semi-join, so always <= TxLedgers). See [ECWindowCoverage.Missing].
 	ECCoveredTxLedgers uint64
 }
 
-// Missing is the EXACT count of tx-bearing ledgers in [From,To] with zero
-// stellar.ledger_entry_changes rows: TxLedgers - ECCoveredTxLedgers.
-//
-// A naive form would subtract two INDEPENDENT
-// cardinalities — tx-bearing ledgers from stellar.ledgers against
-// uniqExact(ledger_seq) over ALL of ledger_entry_changes in the window — and
-// saturate at zero. Entry-change rows exist for ledgers that carry no
-// transactions at all: a protocol-upgrade ledger (or, in early history, a
-// config/base-reserve change) mutates LedgerEntry state with tx_count == 0,
-// so it lands in the "present" side while never appearing in the "expected"
-// side. Inside a 1,000,000-ledger window those ledgers pad `present` and
-// NET OUT genuinely-uncovered tx-bearing ledgers one-for-one: a window
-// holding 5 protocol-upgrade ledgers reports zero deficiency while 5
-// tx-bearing ledgers have no entry-change coverage at all, and Check 2 —
-// the hard gate above -ec-floor — passes on a real gap.
-//
-// Instead ECCoveredTxLedgers is an anti-join, computed per-ledger against the
-// tx-bearing set, so a tx_count == 0 ledger can never contribute coverage
-// it does not have, and Missing() is the true gap rather than a lower bound.
-//
-// The saturating guard is retained as defence-in-depth only: the subset
-// relation makes ECCoveredTxLedgers > TxLedgers unreachable through
-// [QueryECWindowCoverage], but a hand-constructed value must still not wrap
-// uint64 to ~1.8e19 and catastrophically false-fail a whole run.
+// Missing is TxLedgers - ECCoveredTxLedgers, the exact count of uncovered tx-bearing ledgers.
+// Never subtract an independent uniqExact over all entry changes: tx_count == 0 ledgers
+// (protocol upgrades) carry entry changes and would net out real gaps one-for-one.
+// The saturating guard only protects hand-built values from uint64 wrap.
 func (w ECWindowCoverage) Missing() uint64 {
 	if w.ECCoveredTxLedgers >= w.TxLedgers {
 		return 0
@@ -195,37 +147,16 @@ func (w ECWindowCoverage) Missing() uint64 {
 // the second sort-key column, so the ledger_seq range still prunes granules.
 const ecTxScopedRow = "tx_hash != ''"
 
-// ecWindowCoverageQuery is the Check-2 per-window scan: one query returning
-// (tx-bearing ledgers, tx-bearing ledgers WITH entry-change coverage).
+// ecWindowCoverageQuery is the Check-2 per-window scan; a builder so a unit test pins the shape.
 //
-// Split out as a builder so the anti-join shape is pinned by a unit test
-// without a live lake — the same discipline distinctShapesWindowQuery uses.
+//   - uniqExact(ledger_seq), not count(): stellar.ledgers is ReplacingMergeTree, so count()
+//     double-counts un-merged re-ingests.
+//   - uniqExactIf(... IN (subquery)) restricts coverage to the same tx-bearing set as the
+//     total; a standalone uniqExact would count tx_count == 0 ledgers as coverage.
+//   - Both sides are primary-key range scans bounded by the stride window.
+//   - The subquery admits only ecTxScopedRow rows: a snapshot or eviction row is not coverage.
 //
-// Shape notes:
-//
-//   - uniqExact(ledger_seq), not count(): stellar.ledgers is
-//     ReplacingMergeTree, so count() over an un-merged re-ingested ledger
-//     double-counts a tx-bearing ledger and manufactures a false coverage
-//     surplus. uniqExact counts distinct ledgers — matching
-//     the two uniqExact reads above.
-//
-//   - uniqExactIf(..., ledger_seq IN (SELECT … FROM ledger_entry_changes …))
-//     is the anti-join's complement, evaluated over the SAME tx-bearing row
-//     set as the total. Restricting coverage to that set is the whole fix
-//     for the coverage over-count; a standalone uniqExact over ledger_entry_changes counts
-//     tx_count == 0 ledgers as coverage of ledgers that are not in the
-//     expected set at all.
-//
-//   - Both sides are primary-key range scans bounded by the caller's stride
-//     window, so the IN-set is one window wide — the cost class is unchanged
-//     from the two-query form it replaces (in fact one fewer round trip).
-//
-//   - The membership subquery admits only ecTxScopedRow rows: a snapshot seed
-//     or eviction row left behind on a ledger whose tx meta was lost is not
-//     coverage of that ledger.
-//
-// The four `?` placeholders bind positionally in text order:
-// (subquery lo, subquery hi, outer lo, outer hi) — the same pair twice.
+// The four `?` bind positionally: (subquery lo, hi, outer lo, hi).
 func ecWindowCoverageQuery() string {
 	return `
 		SELECT
@@ -239,11 +170,8 @@ func ecWindowCoverageQuery() string {
 		WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 }
 
-// QueryECWindowCoverage runs the Check-2 coverage scan over [from,to], one
-// query per stride-wide window (see forEachLedgerWindow): the tx-bearing
-// ledger count from stellar.ledgers alongside how many of those same ledgers
-// stellar.ledger_entry_changes covers. Windowing bounds per-query cost to one
-// lake partition regardless of the overall range's size.
+// QueryECWindowCoverage runs the Check-2 scan over [from,to], one query per stride-wide
+// window (forEachLedgerWindow) to bound cost to one lake partition.
 func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride uint32) ([]ECWindowCoverage, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -272,16 +200,10 @@ func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride ui
 	return out, nil
 }
 
-// QueryECLowerEdge returns the lowest ledger in [from,to] holding a
-// transaction-scoped stellar.ledger_entry_changes row (non-empty tx_hash):
-// the lower edge of ledger-by-ledger entry-change coverage, which
-// verify-contiguity's Check 2 gates everything at/above. Snapshot seed rows
-// (entry_backfill.go SnapshotEntryRow) carry an empty tx_hash and are stamped
-// at each entry's LastModifiedLedgerSeq across all history, so counting them
-// would drag the edge to genesis. found=false when the range has no such row.
-//
-// ORDER BY the sort-key prefix + LIMIT 1 lets ClickHouse read in order and
-// stop at the first match instead of aggregating the whole table.
+// QueryECLowerEdge returns the lowest ledger in [from,to] with a transaction-scoped
+// ledger_entry_changes row (non-empty tx_hash); found=false if none. Snapshot seed rows have
+// empty tx_hash and span all history, so counting them would drag the edge to genesis.
+// ORDER BY the sort-key prefix + LIMIT 1 reads in order and stops at the first match.
 func QueryECLowerEdge(ctx context.Context, addr string, from, to uint32) (edge uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

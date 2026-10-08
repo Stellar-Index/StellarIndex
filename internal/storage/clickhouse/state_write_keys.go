@@ -14,43 +14,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// This file is the lake-side twin of internal/dispatcher's
-// events.Event.StateWriteKeys enrichment: it recovers, per streamed
-// contract event, the base64 XDR LedgerKeys of the contract-data entries
-// whose VALUE the event's operation CHANGED, from
-// stellar.ledger_entry_changes — linkage (ledger_seq, tx_hash, op_index)
-// — then filters them to the event's own contract, applying EXACTLY the
-// dispatcher's rule (see internal/dispatcher/state_write_keys.go for the
-// ground-truth derivation on r1 ledger 62056824, where write_prices
-// rewrites every REQUESTED feed's entry byte-identical and only the
-// ACCEPTED feed's stored PriceData changes):
+// This file is the lake-side twin of internal/dispatcher's events.Event.StateWriteKeys
+// enrichment: per streamed contract event, it recovers from stellar.ledger_entry_changes
+// (linkage (ledger_seq, tx_hash, op_index)) the base64 LedgerKeys of the contract-data entries
+// whose VALUE the op changed, filtered to the event's contract, by the dispatcher's rule
+// (internal/dispatcher/state_write_keys.go):
 //
-//   - pre-image  = the op's FIRST `state` row for the key
-//     (ContractDataEntry.Val bytes from entry_xdr);
+//   - pre-image  = the op's FIRST `state` row for the key (ContractDataEntry.Val bytes);
 //   - post-image = the op's LAST `created`/`updated` row for the key;
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
-// Cost model: the fetch is per-EVENT-batch, not per-window — one point
-// query per stateWriteKeyBatch streamed events, each a primary-key
-// prefix lookup ((ledger_seq, tx_hash, op_index) is the table's ORDER BY
-// prefix) additionally bounded by the batch's ledger span for partition
-// pruning. It is opt-in per source (like withOpArgs) because a
-// firehose-scale source would pay the lookups for keys its decoder never
-// reads — today only redstone opts in.
+// Byte-identical rewrites are not changes: write_prices rewrites every requested feed's entry
+// but only the accepted feed's PriceData changes.
 //
-// ReplacingMergeTree note: duplicate un-merged parts repeat rows with
-// identical (ledger_seq, tx_hash, op_index, change_index) keys; the scan
-// below dedups by change_index within each op, keeping the row with the
-// LATEST ingested_at — the same row a FINAL merge would keep
-// (ReplacingMergeTree(ingested_at): highest version wins) — so no FINAL
-// is needed and a re-ingested correction row beats its stale
-// predecessor regardless of read order.
+// Cost: one point query per stateWriteKeyBatch events, a primary-key prefix lookup
+// ((ledger_seq, tx_hash, op_index) is the ORDER BY prefix) bounded by the batch's ledger span
+// for partition pruning. Opt-in per source (like withOpArgs); only redstone uses it.
+//
+// ReplacingMergeTree: un-merged duplicates repeat (ledger_seq, tx_hash, op_index,
+// change_index); the scan keeps the row with the latest ingested_at per change_index, as FINAL
+// would, so no FINAL is needed and a re-ingested correction beats its stale predecessor.
 
-// stateWriteKeyBatch is how many streamed events accumulate before one
-// ledger_entry_changes lookup resolves their changed-write keys.
-// Buffered events hold their wide OpArgs, so keep this small; 128 events
-// ≈ well under a megabyte for the redstone payload class while cutting
-// query count by two orders of magnitude vs per-event lookups.
+// stateWriteKeyBatch is how many streamed events accumulate per ledger_entry_changes lookup.
+// Buffered events hold wide OpArgs, so keep it small; 128 is well under a megabyte for
+// redstone while cutting query count by two orders of magnitude.
 const stateWriteKeyBatch = 128
 
 // opRef identifies one operation in the lake.
@@ -60,8 +47,7 @@ type opRef struct {
 	OpIndex int
 }
 
-// entryChangeLite is the slice of a ledger_entry_changes row the
-// changed-write rule needs.
+// entryChangeLite is the slice of a ledger_entry_changes row the changed-write rule needs.
 type entryChangeLite struct {
 	ChangeIndex uint32
 	ChangeType  string
@@ -69,9 +55,8 @@ type entryChangeLite struct {
 	EntryXDR    string
 }
 
-// stateWriteKeyEnricher buffers streamed events, resolves their
-// operations' value-changing contract-data write keys in one query per
-// batch, and forwards each event — enriched and in arrival order — to fn.
+// stateWriteKeyEnricher buffers events, resolves their value-changing write keys in one query
+// per batch, and forwards each event, enriched and in order, to fn.
 type stateWriteKeyEnricher struct {
 	ctx  context.Context
 	conn driver.Conn
@@ -92,12 +77,9 @@ func (e *stateWriteKeyEnricher) add(ev events.Event) error {
 	return nil
 }
 
-// flush resolves changed-write keys for the buffered batch and forwards
-// every buffered event. A lookup ERROR is fatal (the caller's stream
-// fails — same contract as any lake read failure); an op with NO
-// matching change rows simply yields no keys, so a coverage hole in
-// ledger_entry_changes degrades consumers to their no-keys fallback
-// rather than failing the stream.
+// flush resolves keys for the buffered batch and forwards every event. A lookup error is
+// fatal (the stream fails); an op with no change rows yields no keys, so a coverage hole
+// degrades consumers to their no-keys fallback instead of failing the stream.
 func (e *stateWriteKeyEnricher) flush() error {
 	if len(e.buf) == 0 {
 		return nil
@@ -118,10 +100,8 @@ func (e *stateWriteKeyEnricher) flush() error {
 	return nil
 }
 
-// fetchOpEntryChanges runs one batched lookup for the distinct operations
-// behind the buffered events and returns each op's contract-data change
-// rows in change_index order, deduped across un-merged
-// ReplacingMergeTree parts.
+// fetchOpEntryChanges runs one batched lookup for the distinct ops behind the buffered events
+// and returns each op's contract-data change rows in change_index order, deduped across parts.
 func fetchOpEntryChanges(ctx context.Context, conn driver.Conn, batch []events.Event) (map[opRef][]entryChangeLite, error) {
 	refs := make([]opRef, 0, len(batch))
 	seen := make(map[opRef]bool, len(batch))
@@ -159,14 +139,10 @@ func fetchOpEntryChanges(ctx context.Context, conn driver.Conn, batch []events.E
 	return acc.out, nil
 }
 
-// opChangeAccumulator folds ORDER BY change_index rows into per-op
-// change lists, deduping repeated change_index rows from un-merged
-// ReplacingMergeTree parts by keeping the row with the LATEST
-// ingested_at — the exact FINAL-merge semantics of
-// ReplacingMergeTree(ingested_at). Keeping the FIRST-seen row (the
-// earlier behaviour) could resurrect a stale pre-correction row
-// after a re-ingest, because read order among duplicate parts is not
-// version order. Split out pure for unit tests.
+// opChangeAccumulator folds ORDER BY change_index rows into per-op lists, deduping repeated
+// change_index rows from un-merged parts by keeping the LATEST ingested_at (FINAL-merge
+// semantics). Keeping the first-seen row could resurrect a stale pre-correction row, since
+// read order among duplicate parts is not version order. Pure, for unit tests.
 type opChangeAccumulator struct {
 	out     map[opRef][]entryChangeLite
 	lastIdx map[opRef]uint32
@@ -181,11 +157,9 @@ func newOpChangeAccumulator(sizeHint int) *opChangeAccumulator {
 	}
 }
 
-// add folds one row. Rows arrive ORDER BY change_index within an op, so
-// duplicates of one logical row are adjacent; a repeated change_index
-// replaces the just-appended row when its version (ingested_at) is
-// strictly newer. Ties keep the first-read row — duplicate parts with
-// equal versions carry identical logical content.
+// add folds one row. Duplicates of one logical row are adjacent (ORDER BY change_index); a
+// repeated change_index replaces the previous row only when ingested_at is strictly newer.
+// Ties keep the first: equal versions carry identical content.
 func (a *opChangeAccumulator) add(ref opRef, lite entryChangeLite, ingestedAt time.Time) {
 	if prev, ok := a.lastIdx[ref]; ok && prev == lite.ChangeIndex {
 		if ingestedAt.After(a.lastIng[ref]) {
@@ -199,12 +173,9 @@ func (a *opChangeAccumulator) add(ref opRef, lite entryChangeLite, ingestedAt ti
 	a.out[ref] = append(a.out[ref], lite)
 }
 
-// stateWriteKeysQuery renders the batched change-row lookup. The ledger
-// BETWEEN bound prunes partitions; the tuple IN pins the exact ops (the
-// table's ORDER BY prefix, so each is an index lookup, not a scan).
-// tx_hash values come back FROM the lake (hex), but are quote-escaped
-// like every other lake-sourced literal (see sqlQuoteEscaped). Split out
-// pure for unit tests.
+// stateWriteKeysQuery renders the batched lookup. The ledger BETWEEN prunes partitions; the
+// tuple IN pins exact ops (the ORDER BY prefix, so index lookups). tx_hash values from the lake
+// are quote-escaped like every lake literal (see sqlQuoteEscaped). Pure, for unit tests.
 func stateWriteKeysQuery(refs []opRef) string {
 	minL, maxL := refs[0].Ledger, refs[0].Ledger
 	tuples := make([]string, 0, len(refs))
@@ -228,11 +199,9 @@ func stateWriteKeysQuery(refs []opRef) string {
 		minL, maxL, strings.Join(tuples, ","))
 }
 
-// changedWriteKeysForContract applies the dispatcher's changed-write rule
-// to one op's change rows and returns the keys owned by contractID
-// (C-strkey), in first-write change order — the per-event
-// events.Event.StateWriteKeys slice. Any per-key parse failure excludes
-// that key (fail toward the consumer's fallback, never a guess).
+// changedWriteKeysForContract applies the changed-write rule to one op's change rows and
+// returns the keys owned by contractID (C-strkey) in first-write order. A per-key parse
+// failure excludes that key (toward the consumer's fallback, never a guess).
 func changedWriteKeysForContract(rows []entryChangeLite, contractID string) []string {
 	if len(rows) == 0 {
 		return nil
@@ -242,16 +211,10 @@ func changedWriteKeysForContract(rows []entryChangeLite, contractID string) []st
 	for _, r := range rows {
 		owner, val, ok, decodable := contractDataEntryVal(r.EntryXDR)
 		if !decodable {
-			// Unparseable entry_xdr: the row's OWNER is unknowable, but
-			// its KEY is not — key_xdr is a separate column. Poison the
-			// KEY rather than dropping the ROW: dropping the row silently
-			// discards a pre-image, which promotes an unchanged
-			// identical-rewrite key to "changed" (a misattribution
-			// vector), violating the documented "parse failure excludes
-			// the key" rule the dispatcher twin already enforces via its
-			// bad-set. Keys of other contracts embed their own contract
-			// address in the LedgerKey, so a foreign row's poison can
-			// never collide with this contract's keys.
+			// Unparseable entry_xdr: the owner is unknowable but the key is not (key_xdr is separate).
+			// Poison the KEY, not the ROW: dropping the row discards a pre-image and would promote an
+			// identical rewrite to "changed". Other contracts' keys embed their own address, so a
+			// foreign row's poison cannot collide with this contract's keys.
 			ks := states[r.KeyXDR]
 			if ks == nil {
 				ks = &lakeKeyState{}
@@ -281,8 +244,8 @@ func changedWriteKeysForContract(rows []entryChangeLite, contractID string) []st
 	return out
 }
 
-// lakeKeyState accumulates one key's pre/post images across an op's lake
-// change rows — the CH mirror of the dispatcher's keyChangeState.
+// lakeKeyState accumulates one key's pre/post images; the CH mirror of the dispatcher's
+// keyChangeState.
 type lakeKeyState struct {
 	preVal  []byte
 	postVal []byte
@@ -291,10 +254,8 @@ type lakeKeyState struct {
 	bad     bool
 }
 
-// record folds one row into the state: nil val marks the key bad, the
-// FIRST `state` row becomes the pre-image, the LAST write row becomes
-// the post-image. Returns true exactly on the key's first post-image
-// (the caller's ordering signal).
+// record folds one row: nil val marks the key bad, the FIRST `state` row is the pre-image,
+// the LAST write row the post-image. Returns true on the key's first post-image (ordering signal).
 func (ks *lakeKeyState) record(changeType string, val []byte) (firstPost bool) {
 	if val == nil {
 		ks.bad = true
@@ -323,15 +284,11 @@ func (ks *lakeKeyState) valueChanged() bool {
 	return true
 }
 
-// contractDataEntryVal parses a ledger_entry_changes entry_xdr and
-// returns the owning contract's C-strkey plus the ContractDataEntry.Val
-// bytes. decodable=false means the entry_xdr itself failed to
-// unmarshal — the caller cannot even learn the owner and must poison the
-// row's KEY (see changedWriteKeysForContract) rather than drop the row.
-// With decodable=true: ok=false when the entry is not contract-data (or
-// is account-owned) — genuinely not ours, skip; a nil val with ok=true
-// signals a Val marshal failure on a genuine contract-data entry —
-// callers exclude that key.
+// contractDataEntryVal parses entry_xdr and returns the owning C-strkey plus the
+// ContractDataEntry.Val bytes. decodable=false: unmarshal failed, so the caller must poison
+// the row's KEY (see changedWriteKeysForContract), not drop the row. decodable=true with
+// ok=false: not contract-data or account-owned, skip; nil val with ok=true: Val marshal
+// failure, callers exclude the key.
 func contractDataEntryVal(entryB64 string) (contractID string, val []byte, ok, decodable bool) {
 	var entry xdr.LedgerEntry
 	if err := xdr.SafeUnmarshalBase64(entryB64, &entry); err != nil {

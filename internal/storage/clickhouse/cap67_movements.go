@@ -9,19 +9,13 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// ProvenanceCAP67Derived stamps account_movements rows derived from the
-// lake's CAP-67 transfer events by `stellarindex-ops ch-cap67-movements`
-// — the post-P23 continuation of the classic_derived
-// archive, covering EVERY asset including the deliberately-unwatched
-// native XLM SAC. The provenance split is what lets the movements
-// handler floor its Postgres tail at this feed's watermark.
+// ProvenanceCAP67Derived stamps account_movements rows derived from CAP-67 transfer events
+// (ch-cap67-movements), including the unwatched native XLM SAC; lets the movements handler
+// floor its Postgres tail at this feed's watermark.
 const ProvenanceCAP67Derived = "cap67_derived"
 
-// Cap67MovementsWatermark returns the highest ledger the cap67
-// movement derive has completed THROUGH (0 = never run). Read from the
-// tiny stellar.cap67_movements_watermark row rather than
-// max(ledger) over the 6.7B-row movements table — the watermark is
-// consulted per catch-up run AND (cached) per /movements request.
+// Cap67MovementsWatermark returns the highest ledger the cap67 derive completed through (0 =
+// never run). Read from the tiny watermark row, not max(ledger) over the movements table.
 func Cap67MovementsWatermark(ctx context.Context, addr string) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -32,8 +26,7 @@ func Cap67MovementsWatermark(ctx context.Context, addr string) (uint32, error) {
 }
 
 func cap67WatermarkOn(ctx context.Context, conn driver.Conn) (uint32, error) {
-	// max() collapses un-merged RMT duplicate rows; the watermark only
-	// ever advances, so max IS the latest.
+	// max() collapses un-merged RMT duplicates; the watermark only advances.
 	const q = `SELECT max(thru_ledger) FROM stellar.cap67_movements_watermark WHERE name = 'cap67_movements'`
 	var wm uint32
 	if err := conn.QueryRow(ctx, q).Scan(&wm); err != nil {
@@ -48,22 +41,14 @@ func cap67WatermarkOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 // cap67WMTTL is how long a successful watermark read is served from cache.
 const cap67WMTTL = time.Minute
 
-// cap67WMRetryAfter is how long a failed watermark read is answered from
-// cache (as the same error) before the store is asked again, matching
-// [schemaProbeRetryAfter]: an outage costs one query per window, not one
-// per /movements request.
+// cap67WMRetryAfter is how long a failed read is answered from cache, matching
+// [schemaProbeRetryAfter]: an outage costs one query per window, not one per request.
 const cap67WMRetryAfter = schemaProbeRetryAfter
 
-// Cap67MovementsWatermark (method form) serves the explorer handler's
-// per-request floor read through a ~60s cache — the watermark advances
-// every derive window (~minutes), so staleness within the cache TTL
-// only makes the Postgres tail serve slightly more than strictly
-// necessary, never a gap (the handler ALSO ceilings the CH arm at the
-// same cached value, so the two arms stay consistent with each other).
-//
-// The round-trip runs OUTSIDE the mutex as a single flight: concurrent
-// callers wait on the flight or their own ctx, whichever ends first, so
-// a slow store cannot queue every request behind a context-blind lock.
+// Cap67MovementsWatermark (method form) serves the handler's floor read through a ~60s cache;
+// staleness only makes the Postgres tail serve slightly more, never a gap (the handler also
+// ceilings the CH arm at the same cached value). The round-trip runs outside the mutex as a
+// single flight so a slow store cannot queue requests behind a context-blind lock.
 func (r *ExplorerReader) Cap67MovementsWatermark(ctx context.Context) (uint32, error) {
 	cov, err := r.cap67Coverage(ctx)
 	return cov.Thru, err
@@ -97,9 +82,8 @@ func (r *ExplorerReader) cap67Coverage(ctx context.Context) (Cap67Coverage, erro
 	}
 }
 
-// cap67WMClaim answers from cache (hit) — a fresh value, or a recent
-// failure still inside its back-off — or else hands back the flight to
-// wait on, creating it when this caller is the owner.
+// cap67WMClaim answers from cache (fresh value or failure inside back-off) or hands back the
+// flight to wait on, creating it when the caller is the owner.
 func (r *ExplorerReader) cap67WMClaim(now time.Time) (flight chan struct{}, owner, hit bool, cov Cap67Coverage, err error) {
 	r.cap67WMMu.Lock()
 	defer r.cap67WMMu.Unlock()
@@ -116,9 +100,8 @@ func (r *ExplorerReader) cap67WMClaim(now time.Time) (flight chan struct{}, owne
 	return r.cap67WMFlight, true, false, Cap67Coverage{}, nil
 }
 
-// refreshCap67WM runs the owned flight and publishes its outcome. The
-// flight is released even on panic, so one bad read cannot wedge every
-// later caller on a channel that never closes.
+// refreshCap67WM runs the owned flight and publishes its outcome; released even on panic so
+// a bad read cannot wedge later callers.
 func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{}) (cov Cap67Coverage, err error) {
 	completed := false
 	defer func() {
@@ -129,8 +112,8 @@ func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{
 		case err == nil:
 			r.cap67Cov, r.cap67WMAt, r.cap67WMErr = cov, now, nil
 		case !errors.Is(ctx.Err(), context.Canceled):
-			// A caller's own disconnect says nothing about the store; a
-			// deadline or backend error does, and backs everyone off.
+			// A caller's own disconnect says nothing about the store; a deadline or backend
+			// error does, and backs everyone off.
 			r.cap67WMErr, r.cap67WMErrAt = err, now
 		}
 		r.cap67WMFlight = nil
@@ -142,44 +125,24 @@ func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{
 	return cov, err
 }
 
-// ErrCap67MovementsHole reports a REFUSED watermark advance: the lake does
-// not hold every ledger of the window the derive asked to record, so
-// advancing would step past a hole. Callers treat it as delay, not failure —
-// the hole heals via ch-live-catchup and the next run re-derives the window.
+// ErrCap67MovementsHole reports a refused watermark advance: the lake lacks a ledger of the
+// window. Delay, not failure: ch-live-catchup heals it and the next run re-derives.
 var ErrCap67MovementsHole = errors.New("clickhouse: cap67 movements window is not contiguous in the lake")
 
-// ErrCap67MovementsSkippedPrefix reports a REFUSED watermark advance whose
-// window starts ABOVE watermark+1: the ledgers in between were never derived
-// by this run, so stamping the window's top would claim them as done.
+// ErrCap67MovementsSkippedPrefix reports a refused advance whose window starts above
+// watermark+1; stamping its top would claim never-derived ledgers.
 var ErrCap67MovementsSkippedPrefix = errors.New("clickhouse: cap67 movements window skips ledgers below it")
 
-// ErrCap67MovementsEventShortfall reports a REFUSED watermark advance: the
-// window's ledgers are all present but stellar.contract_events holds fewer
-// rows than they declare, so the derive read an incomplete event set. Like a
-// hole it is delay, not failure — the next run re-derives once events return.
+// ErrCap67MovementsEventShortfall reports a refused advance: the ledgers are present but
+// stellar.contract_events holds fewer rows than they declare. Delay, not failure.
 var ErrCap67MovementsEventShortfall = errors.New("clickhouse: cap67 movements window is missing contract events")
 
-// SetCap67MovementsWatermark records completion through `thru` for the
-// derive window [from, thru] — and ONLY if that advance is proven: the lake
-// holds every ledger in the window and every event those ledgers declare, AND
-// the window continues the derived prefix rather than jumping over part of it
-// (see cap67AdvanceProven for the refusals and for the re-derive case, which
-// records nothing).
-//
-// WHY the proof is required at the WRITE: the watermark is read back as
-// max(thru_ledger) and the derive resumes at watermark+1 with no trailing
-// re-derive, so an advance over a ledger the lake was missing drops that
-// ledger's classic/native account movements PERMANENTLY and invisibly (the
-// raw lake self-heals via ch-live-catchup; account_movements never revisits
-// it). Cap67Range clamps the range it hands out to the contiguous tip, but a
-// range is resolved once per run and its upper bound can be operator-supplied
-// (`ch-cap67-movements -to N`); the advance itself is the one place the
-// invariant "the watermark is the top of a hole-free prefix" holds for EVERY
-// caller. Fail-closed: a window that cannot be proven does not advance.
-//
-// Contiguity is keyed off stellar.ledgers, the per-ledger commit marker
-// Sink.Flush writes LAST (present in ledgers ⟹ that ledger's contract_events
-// are durable) — the same substrate ContiguousWatermark reads.
+// SetCap67MovementsWatermark records completion through `thru` for window [from, thru], only
+// if the advance is proven (see cap67AdvanceProven). Proof is required at the write: the
+// derive resumes at watermark+1, so an advance over a missing ledger would drop its
+// movements permanently and invisibly, and the range may be operator-supplied
+// (`-to N`). Fail-closed. Contiguity is keyed off stellar.ledgers, the commit marker
+// Sink.Flush writes last (present there implies contract_events are durable).
 func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uint32) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: cap67 watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", from, thru)
@@ -203,22 +166,15 @@ func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uin
 	return nil
 }
 
-// cap67AdvanceProven reports whether recording [from, thru] keeps the
-// watermark the top of a hole-free, fully-derived prefix — erroring (never
-// silently skipping) when it would not. Two ways an advance is unproven:
+// cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a
+// hole-free, fully-derived prefix, erroring (never skipping) when not. Unproven when:
+//   - `from` is above watermark+1 (a typo or operator jump would stamp undone ledgers);
+//     a first run (watermark 0) has no prefix, -floor-ledger is where coverage starts;
+//   - the lake has a hole in the window (cap67WindowContiguous);
+//   - the events are missing (cap67WindowEventsPresent).
 //
-//   - the window skips ledgers below it. `from` above watermark+1 means this
-//     run never derived (watermark, from): a `-from` typo, or an operator
-//     jumping the derive forward past a stretch it meant to backfill later,
-//     would otherwise stamp those ledgers done. A FIRST run (watermark 0) has
-//     no prefix to keep — the -floor-ledger boundary is where coverage starts.
-//   - the lake has a hole inside the window (see cap67WindowContiguous).
-//   - the window's ledgers are present but their events are not (see
-//     cap67WindowEventsPresent).
-//
-// A window entirely at or below the watermark is a legitimate idempotent
-// re-derive (account_movements is a ReplacingMergeTree): it claims nothing
-// new, so it is neither refused nor written.
+// A window at or below the watermark is an idempotent re-derive (ReplacingMergeTree):
+// neither refused nor written.
 func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32) (bool, error) {
 	wm, err := cap67WatermarkOn(ctx, conn)
 	if err != nil {
@@ -240,14 +196,9 @@ func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32
 	return true, nil
 }
 
-// cap67WindowContiguous errors (wrapping ErrCap67MovementsHole) unless
-// stellar.ledgers holds every ledger in [from, thru]. DISTINCT because
-// stellar.ledgers is a ReplacingMergeTree: un-merged duplicates must not
-// count as separate ledgers and mask a hole. The scan is a primary-key range
-// (ORDER BY ledger_seq, PARTITION BY intDiv(ledger_seq, 1000000)) over one
-// derive window, so it reads at most `-window` pruned rows — orders of
-// magnitude cheaper than the tip-resolving window function, and paid once per
-// window rather than per row.
+// cap67WindowContiguous errors (wrapping ErrCap67MovementsHole) unless stellar.ledgers holds
+// every ledger in [from, thru]. DISTINCT because un-merged RMT duplicates must not mask a
+// hole. A primary-key range over one derive window, so it reads at most `-window` pruned rows.
 func cap67WindowContiguous(ctx context.Context, conn driver.Conn, from, thru uint32) error {
 	present, err := windowLedgersPresent(ctx, conn, from, thru)
 	if err != nil {
@@ -269,14 +220,10 @@ func windowLedgersPresent(ctx context.Context, conn driver.Conn, from, thru uint
 	return present, err
 }
 
-// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall)
-// when stellar.contract_events holds fewer rows in [from, thru] than
-// stellar.ledgers declares via soroban_event_count — the window-scoped form of
-// EventCensusShortfalls. Ledger contiguity alone does not prove the events: a
-// dropped or unrestored contract_events partition leaves ledgers intact, and
-// the derive would read it as a stretch with no movements. Both sides are
-// primary-key ranges over one window; unmerged RMT duplicates can only raise
-// present, so they never cause a false refusal.
+// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall) when
+// contract_events holds fewer rows in [from, thru] than ledgers declares via
+// soroban_event_count. Contiguity alone misses a dropped events partition. Unmerged RMT
+// duplicates only raise present, so they never cause a false refusal.
 func cap67WindowEventsPresent(ctx context.Context, conn driver.Conn, from, thru uint32) error {
 	var expected, present uint64
 	if err := conn.QueryRow(ctx, cap67WindowEventCensusQuery, from, thru, from, thru).Scan(&expected, &present); err != nil {
@@ -300,19 +247,16 @@ const cap67WindowEventCensusQuery = `
 		)),
 		(SELECT toUInt64(count()) FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`
 
-// Supply-kind coverage rows in stellar.cap67_movements_watermark. Mint, burn
-// and clawback joined the derive after deployments had advanced the main
-// watermark over transfer-only windows, so the ledgers derived with them form
-// their own range [from, thru]: from only moves down (read with min) and thru
-// only up (read with max), so unmerged RMT rows never misreport it.
+// Supply-kind coverage rows in stellar.cap67_movements_watermark: mint/burn/clawback joined
+// later, so their derived ledgers form their own range. from only moves down (min) and thru
+// only up (max), so unmerged RMT rows never misreport it.
 const (
 	cap67SupplyFromName = "cap67_movements_supply_from"
 	cap67SupplyThruName = "cap67_movements_supply_thru"
 )
 
-// Cap67Coverage is the derive's progress in one read: Thru is the main
-// watermark; [SupplyFrom, SupplyThru] the contiguous range also derived with
-// mint, burn and clawback (SupplyFrom 0 = none yet).
+// Cap67Coverage is the derive's progress: Thru is the main watermark; [SupplyFrom, SupplyThru]
+// the range also derived with mint, burn and clawback (SupplyFrom 0 = none yet).
 type Cap67Coverage struct {
 	Thru       uint32
 	SupplyFrom uint32
@@ -357,12 +301,10 @@ func Cap67MovementsCoverage(ctx context.Context, addr string) (Cap67Coverage, er
 	return cap67CoverageOn(ctx, conn)
 }
 
-// ExtendCap67SupplyCoverage records that [lo, hi] was derived with the supply
-// kinds. The range grows only by a window that overlaps or abuts it, so a
-// stretch derived transfer-only (by an older binary) is never claimed, and
-// only once the newly claimed ledgers are proven present with all their
-// events, as for the main watermark. A first window writes from before thru:
-// a crash between them leaves an empty range at from, which never over-claims.
+// ExtendCap67SupplyCoverage records [lo, hi] as derived with the supply kinds. The range
+// grows only by an overlapping or abutting window (never claiming transfer-only stretches),
+// and only once the ledgers are proven present with their events. A first window writes from
+// before thru, so a crash leaves an empty range, never an over-claim.
 func ExtendCap67SupplyCoverage(ctx context.Context, addr string, lo, hi uint32) error {
 	if lo == 0 || hi < lo {
 		return fmt.Errorf("clickhouse: cap67 supply window [%d,%d] is not a ledger range (genesis is ledger 1)", lo, hi)

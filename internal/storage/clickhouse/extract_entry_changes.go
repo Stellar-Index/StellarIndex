@@ -11,62 +11,42 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// extractLedgerEntryChanges populates ext.Changes with one row per
-// LedgerEntryChange in the WHOLE ledger — the substrate the account-state
-// explorer (ADR-0038 Phase C) re-derives current balances/trustlines/offers/
-// contract-data from, and the ADR-0034 "re-derive the LedgerEntry supply
-// observers from the lake" promise. Closes the G12-03 known gap in
-// ExtractLedger.
+// extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange in the
+// whole ledger: the substrate the account-state explorer (ADR-0038) and the ADR-0034 promise
+// to re-derive LedgerEntry supply observers from the lake rely on.
 //
-// Mirrors dispatcher.walkLedgerEntryChanges — including its
-// meta-version handling and its unsupported-version counter — so the lake's rows match
-// what the live LedgerEntryChangeDecoder hook sees — including its two
-// correctness properties (see that function's doc for the full derivation):
+// Mirrors dispatcher.walkLedgerEntryChanges (meta-version handling, unsupported-version
+// counter) so lake rows match the live decoder hook:
 //
-//   - Every tx is walked, FAILED TXS INCLUDED: a failed tx's fee debit is
-//     committed on chain, and only its operation changes are rolled back.
-//   - The walk is LEDGER-WIDE AND THREE-PHASE — every tx's fee changes,
-//     then every tx's apply-phase changes, then every tx's
-//     PostTxApplyFeeChanges — mirroring the SDK's canonical
-//     ingest.LedgerChangeReader state machine (feeChangesState →
-//     metaChangesState → postTxApplyState). stellar-core charges all fees
-//     before applying any transaction, and protocol 23 moved the
-//     Soroban fee REFUND into a third ledger-wide phase applied after all
-//     transactions execute (R-A01-1; LCM V2 only, so empty pre-P23).
-//     intra_ledger_seq therefore ranks an apply-phase change above a later
-//     tx's fee change and a refund above both, which is what makes "the
-//     FINAL intra-ledger change wins FINAL dedup" mean the ledger-final
-//     balance. Ledger UPGRADE changes (the SDK's 4th state) are deliberately
-//     not walked — they are not transaction-scoped and carry no tx_hash;
-//     dispatcher.walkLedgerEntryChanges makes the identical choice.
-//   - A FOURTH phase records the ledger's state-archival EVICTIONS (evicted:
-//     the LCM's evicted-keys list) as `removed` rows, but only temporary
-//     entries and TTL keys: a persistent entry or contract code is archived
-//     and restorable, so it stays live. Skipped keys still take their walk
-//     position, keeping intra_ledger_seq aligned with dispatcher.walkEvictedKeys.
+//   - Every tx is walked, failed txs included: a failed tx's fee debit is committed, only its
+//     operation changes roll back.
+//   - The walk is ledger-wide and three-phase, as the SDK's ingest.LedgerChangeReader: every
+//     tx's fee changes, then every tx's apply-phase changes, then every tx's
+//     PostTxApplyFeeChanges (P23 Soroban fee refunds; LCM V2 only). intra_ledger_seq thus ranks
+//     an apply change above a later tx's fee change and a refund above both, so "the final
+//     intra-ledger change wins FINAL dedup" means the ledger-final balance. Ledger UPGRADE
+//     changes are not walked (no tx_hash), same as the dispatcher.
+//   - A fourth phase records state-archival EVICTIONS as `removed` rows, only for temporary
+//     entries and TTL keys: persistent entries and contract code are archived and restorable,
+//     so they stay live. Skipped keys still take their walk position, aligned with
+//     dispatcher.walkEvictedKeys.
 //
-// Within each LedgerEntryChanges block the changes are walked in
-// entrywalk.Canonical order (by ledger key), not as the export lists them:
-// stellar-core's block order is hash-map order and differs between exports of
-// the same ledger, so only a canonical order makes a re-extract reproducible.
+// Within each LedgerEntryChanges block changes are walked in entrywalk.Canonical order, since
+// core's block order is hash-map order and differs between exports; only a canonical order makes
+// re-extract reproducible.
 //
-// Change positions within a tx keep their existing shape: fee-meta +
-// TxChangesBefore/After at op_index -1, per-operation changes at their
-// op_index. change_index is a monotonic per-TRANSACTION counter (stable
-// across re-ingest → idempotent under the ReplacingMergeTree) and continues
-// across the two phases for a given tx, so a tx's fee change keeps
-// change_index 0. Resilient: a change that won't marshal is skipped and
-// counted, never fatal, and still takes its intra_ledger_seq position.
+// Fee-meta + TxChangesBefore/After sit at op_index -1, per-operation changes at their op_index.
+// change_index is a per-TRANSACTION counter (stable across re-ingest, so idempotent under the
+// ReplacingMergeTree) continuing across phases, so a tx's fee change keeps 0. A change that
+// won't marshal is skipped and counted, never fatal, and still takes its intra_ledger_seq.
 //
-// intra_ledger_seq is the per-LEDGER position. Unlike change_index it is
-// monotonic over the whole ledger's canonical walk, so it uniquely orders
-// every change to a given key within one ledger. It is folded into
-// ledger_entries_current's ReplacingMergeTree version so the LAST
-// intra-ledger change to a key wins FINAL dedup deterministically.
+// intra_ledger_seq is the per-LEDGER position, monotonic over the canonical walk. It is
+// folded into ledger_entries_current's RMT version so the last intra-ledger change to a key
+// wins FINAL dedup deterministically.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
-	// change_index is per-transaction, so it must survive the gap between
-	// the two ledger-wide phases — one slot per tx.
+	// change_index is per-transaction, so it must survive the gap between the two
+	// ledger-wide phases: one slot per tx.
 	changeIdx := make([]uint32, len(txs))
 	emitterFor := func(i int) func(int, xdr.LedgerEntryChange) {
 		txHash := hex.EncodeToString(txs[i].Result.TransactionHash[:])
@@ -109,15 +89,13 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 			}
 			emitChangeSet(v4.TxChangesAfter, -1, emit)
 		default:
-			// Not silent: an unwalked apply phase is indistinguishable
-			// from a ledger in which nothing happened. Mirrors the
-			// dispatcher's entryMetaUnsupported counter.
+			// Not silent: an unwalked apply phase looks like a ledger where nothing happened.
+			// Mirrors the dispatcher's entryMetaUnsupported counter.
 			ext.EntryMetaUnsupported++
 		}
 	}
-	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for
-	// every tx, in the same order. op_index -1 — a tx-level change, like the
-	// fee phase it mirrors.
+	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for every tx, in the same
+	// order, at op_index -1 like the fee phase.
 	for i := range txs {
 		emit := emitterFor(i)
 		emitChangeSet(txs[i].PostTxApplyFeeChanges, -1, emit)
@@ -127,12 +105,10 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	emitEvictions(ext, evicted, seq, closeTime, entryChangeSeq)
 }
 
-// emitEvictions appends one `removed` row per evicted key: no tx, so empty
-// tx_hash and op_index -1, with change_index counting within that group.
-// A persistent entry or contract code is archived, not deleted (it moves to
-// the hot archive and stays restorable), so its last live row stays current;
-// every key, written or not, takes its walk position so later rows match the
-// dispatcher's, which advances its position for every key it walks.
+// emitEvictions appends one `removed` row per evicted key: empty tx_hash, op_index -1,
+// change_index counting within the group. A persistent entry or contract code moves to the hot
+// archive and stays restorable, so its last live row stays current. Every key takes its walk
+// position, written or not, matching the dispatcher.
 func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
 	var changeIdx uint32
 	for i := range evicted {
@@ -172,13 +148,9 @@ func emitChangeSet(changes []xdr.LedgerEntryChange, opIdx int, emit func(int, xd
 	}
 }
 
-// entryChangeRow builds one LedgerEntryChangeRow from an xdr.LedgerEntryChange.
-// ok=false when the change can't be marshalled (skip + tolerate). For
-// created/updated/state/restored the key is derived from the entry and the
-// entry XDR is retained; for removed only the key is present. A P23 `restored`
-// change is a post-image (the SDK's ingest.Change reads it as Pre=nil,
-// Post=entry): dropping it leaves a restored entry's TTL row at its lapsed
-// value, and the lake liveness filter then serves the live entry as archived.
+// entryChangeRow builds one LedgerEntryChangeRow from an xdr.LedgerEntryChange; ok=false when
+// it can't be marshalled. A P23 `restored` change is a post-image: dropping it leaves a
+// restored entry's TTL row at its lapsed value and the liveness filter serves it as archived.
 func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int32, changeIdx uint32, c xdr.LedgerEntryChange) (LedgerEntryChangeRow, bool) {
 	row := LedgerEntryChangeRow{
 		LedgerSeq:   seq,
@@ -229,25 +201,16 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 	return row, true
 }
 
-// ownerAndAsset extracts the queryable owner account (G-strkey) and asset
-// (canonical "CODE-ISSUER" / "native" / "pool:<hex>") from a ledger key, for
-// the account-state + asset-holder explorer indexes. Both empty for entry
-// types with no single owning account (claimable balances, liquidity pools,
-// contract data/code, ttl, config); asset is empty for everything but
-// trustlines.
+// ownerAndAsset extracts the owner account (G-strkey) and asset ("CODE-ISSUER" / "native" /
+// "pool:<hex>") from a ledger key. Both empty for entry types with no single owner (claimable
+// balances, pools, contract data/code, ttl, config); asset is empty for all but trustlines.
 //
-// THE EMPTY `asset` ON THE OTHER HOLDING TYPES IS STRUCTURAL, NOT A GAP TO
-// FILL. This function is handed a LedgerKey, and for the three other places a
-// classic asset's supply can sit the key does not name the asset: a claimable
-// balance's key is a hash (the asset is in the ENTRY), a liquidity pool holds
-// TWO assets and TWO reserves so one (asset, balance) column pair cannot
-// represent it at all, and a SAC Balance entry names only its CONTRACT — and
-// contract → asset is a one-way hash in that direction, derivable FORWARD from
-// the asset only (canonical.Asset.SacContractID). Any per-asset supply summed
-// off this column is therefore a trustline-only LOWER BOUND; the reading that
-// sees all four domains is the lake-flows total over the asset's SAC contract
-// (stellar.supply_flows). See asset_supply_reader.go's ClassicCirculatingSupply
-// and internal/api/v1/classic_lake_supply.go.
+// The empty asset on other holding types is structural, not a gap: the key does not name the
+// asset (a claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry
+// names only its contract, derivable only forward via canonical.Asset.SacContractID). Any
+// per-asset supply summed off this column is a trustline-only LOWER BOUND; the lake-flows
+// total over the SAC contract (stellar.supply_flows) sees all four domains. See
+// asset_supply_reader.go's ClassicCirculatingSupply.
 func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	switch key.Type {
 	case xdr.LedgerEntryTypeAccount:
@@ -271,9 +234,8 @@ func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	return accountID, asset
 }
 
-// entryBalance returns the stroop balance carried by an account (native) or
-// trustline entry, 0 for every other entry type. Stored as a queryable column
-// so top-holder / account-balance reads sort + aggregate in SQL.
+// entryBalance returns the stroop balance of an account or trustline entry, else 0; a column
+// so top-holder reads sort and aggregate in SQL.
 func entryBalance(e xdr.LedgerEntry) int64 {
 	switch e.Data.Type {
 	case xdr.LedgerEntryTypeAccount:

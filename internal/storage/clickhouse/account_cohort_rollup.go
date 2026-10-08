@@ -15,12 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AccountCohortMinCreated is the creator-side coverage floor: a creator
-// with fewer accounts to its name than this is not rolled up. Every
-// sponsor is. Below the floor a cohort is a handful of accounts, the
-// per-account explorer pages are the better read, and the API says the
-// cohort is not covered rather than serving an empty one as "holds
-// nothing".
+// AccountCohortMinCreated is the creator-side coverage floor: a creator with fewer accounts
+// is not rolled up (every sponsor is); the per-account pages serve that better and the API
+// says "not covered" rather than "holds nothing".
 const AccountCohortMinCreated = 10
 
 // Cohort relations, the `rel` column's vocabulary and the API's
@@ -30,15 +27,10 @@ const (
 	CohortRelationSponsored = "sponsored"
 )
 
-// cohortScanSettings is the board rollups' memory and spill budget with
-// more threads: this cycle reads the whole movements archive once a day,
-// and at the boards' two threads a dense window near tip does not finish
-// inside its budget. Measured on r1, one 1M-ledger window of
-// 657M rows: the boards' argMax de-duplication exceeded 8 GiB at both 2
-// and 6 threads; FINAL at 6 threads finished in 151 s at 2.7 GiB. So the
-// walk de-duplicates with FINAL (per partition, which is per window) and
-// runs at six threads, and every join spills rather than sizing the
-// ~25M-row membership in memory.
+// cohortScanSettings is the board rollups' budget with more threads: the cycle reads the whole
+// movements archive daily. Measured on a 1M-ledger window (657M rows): the boards' argMax
+// de-dup exceeded 8 GiB at 2 and 6 threads; FINAL at 6 threads took 151 s at 2.7 GiB. So the
+// walk uses FINAL per window and every join spills rather than sizing the ~25M-row membership.
 const cohortScanSettings = "SETTINGS max_threads = 6, max_memory_usage = 8589934592, " +
 	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296, " +
 	"join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 16, " +
@@ -56,8 +48,8 @@ const cohortJoinSettings = cohortScanSettings + ", max_execution_time = 3600"
 // tables.
 const cohortFoldSettings = boundedScanSettings + ", max_execution_time = 1800"
 
-// cohortStagingTables are the served tables the cycle rebuilds; every
-// one is truncated at the start and exchanged at the end, in this order.
+// cohortStagingTables are the served tables the cycle rebuilds: truncated at the start,
+// exchanged at the end, in this order.
 var cohortStagingTables = []string{
 	"account_cohort_roots",
 	"account_cohort_holdings",
@@ -69,20 +61,16 @@ var cohortStagingTables = []string{
 	"asset_month_usd_prices",
 }
 
-// cohortLoadedTables are the staging twins RunCohortRollup fills from
-// the served tier by batch insert BEFORE the statements run — their
-// truncation is the loader's, not a statement's.
+// cohortLoadedTables are the staging twins RunCohortRollup fills by batch insert before the
+// statements run; their truncation is the loader's.
 var cohortLoadedTables = map[string]bool{
 	"defi_position_holders":  true,
 	"asset_month_usd_prices": true,
 }
 
-// cohortRollupStatements is one cycle. Membership first, then the two
-// joins that do not need a walk (current holdings, recent activity),
-// then the movements walk into the parts table and its folds, then the
-// DeFi positions join, then the swap. The positions join reads
-// defi_position_holders_staging, which RunCohortRollup fills from the
-// served tier BEFORE these run.
+// cohortRollupStatements is one cycle: membership, the joins needing no walk, the movements
+// walk and its folds, the DeFi positions join (reads defi_position_holders_staging, loaded
+// before these run), then the swap.
 var cohortRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_cohort_members`},
 	{sql: `INSERT INTO stellar.account_cohort_members (rel, root, member)
@@ -105,9 +93,8 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_cohort_positions_staging`},
 	{sql: `TRUNCATE TABLE stellar.account_cohort_parts_staging`},
 
-	// Current holdings: every live account + trustline entry of every
-	// member, re-keyed by the root it belongs to. A pool-share trustline
-	// (asset 'pool:<hex>') rides along as a classic-side DeFi position.
+	// Current holdings: every live account + trustline entry of each member, re-keyed by root.
+	// A pool-share trustline (asset 'pool:<hex>') rides along as a classic-side DeFi position.
 	{sql: `INSERT INTO stellar.account_cohort_holdings_staging (rel, root, asset, holders, balance)
 	 SELECT c.rel, c.root, e.asset,
 	        toUInt64(count()) AS holders,
@@ -121,9 +108,8 @@ var cohortRollupStatements = []rollupStep{
 	 GROUP BY c.rel, c.root, e.asset
 	 ` + cohortJoinSettings},
 
-	// Roots: one row per covered (rel, root). live_accounts is the
-	// 'native' holdings row — an account entry exists iff the account is
-	// live — so it needs no second pass over ledger_entries_current.
+	// Roots: one row per covered (rel, root). live_accounts is the 'native' holdings row (an
+	// account entry exists iff the account is live).
 	{sql: `INSERT INTO stellar.account_cohort_roots_staging
 	     (rel, root, cohort_accounts, live_accounts, computed_at, tip_ledger)
 	 SELECT m.rel, m.root, m.cohort_accounts, toUInt64(h.holders), now('UTC'),
@@ -153,14 +139,11 @@ var cohortRollupStatements = []rollupStep{
 	 GROUP BY c.rel, c.root
 	 ` + cohortJoinSettings},
 
-	// The movements walk. Each window reads the archive with FINAL — the
-	// ReplacingMergeTree's own de-duplication, per partition, which a
-	// 1M-ledger window is exactly one of — joins the rows to the
-	// membership, and writes one partial row per (cohort, month, asset,
-	// C… counterparty) with a mergeable distinct-member state. A month
-	// spans windows, so the fold below is what produces a month's figure.
-	// (The boards' argMax de-duplication is not used here: see
-	// cohortScanSettings for the measurement that rules it out.)
+	// The movements walk. Each window reads the archive with FINAL (ReplacingMergeTree dedup per
+	// partition; a 1M-ledger window is one partition), joins to membership, and writes one partial
+	// row per (cohort, month, asset, C... counterparty) with a mergeable distinct-member state.
+	// A month spans windows, so the fold below produces its figure. Not argMax: see
+	// cohortScanSettings.
 	{walk: true, windowBinds: 1, sql: `INSERT INTO stellar.account_cohort_parts_staging
 	     (rel, root, month, asset, contract, inflow, outflow, movements, actives, first_at, last_at)
 	 SELECT c.rel, c.root,
@@ -192,9 +175,8 @@ var cohortRollupStatements = []rollupStep{
 	 FROM stellar.account_cohort_parts_staging
 	 GROUP BY rel, root, month, asset
 	 ` + cohortFoldSettings},
-	// … plus one all-assets row per month (asset '*'): amounts are not
-	// summable across units so they are zero there; movements and the
-	// distinct active members are the point of the row.
+	// … plus one all-assets row per month (asset '*'): amounts are not summable across
+	// units so they are zero; movements and distinct active members are the point.
 	{sql: `INSERT INTO stellar.account_cohort_flows_staging
 	     (rel, root, month, asset, inflow, outflow, movements, active_accounts)
 	 SELECT rel, root, month, '` + CohortAllAssets + `',
@@ -227,9 +209,8 @@ var cohortRollupStatements = []rollupStep{
 	{sql: cohortExchangeSQL()},
 }
 
-// CohortAllAssets is the flows row that stands for every asset at once:
-// movement count and distinct active members for the month, amounts
-// zero because they are not summable across units.
+// CohortAllAssets is the flows row standing for every asset: movements and distinct active
+// members, amounts zero (not summable across units).
 const CohortAllAssets = "*"
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -249,12 +230,9 @@ func cohortExchangeSQL() string {
 	return out
 }
 
-// RunCohortRollup runs one cycle: loads the served tier's DeFi position
-// snapshot and its monthly USD prices into ClickHouse, then the
-// statements above. holders may be empty (a deployment with no DeFi
-// folds) — the positions table then swaps in empty, which is the truth
-// on that network; likewise prices on a deployment with no USD-quoted
-// market yet.
+// RunCohortRollup runs one cycle: loads the DeFi position snapshot and monthly USD prices
+// into ClickHouse, then the statements above. Empty holders or prices swap in empty, which is
+// the truth on a network with none.
 func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiPositionHolder, prices []timescale.MonthlyUSDVWAP, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -276,10 +254,9 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 	return runRollupSteps(ctx, conn, tip, "cohort rollup", cohortRollupStatements, logf)
 }
 
-// positionHolderAmount is h.Amount as a canonical base-10 integer, or an
-// error: the positions fold sums exactly, so a fractional or empty amount
-// fails the cycle (the previous snapshot stays live) rather than being
-// rounded, zeroed or dropped from a total served as exact.
+// positionHolderAmount is h.Amount as a canonical base-10 integer, or an error: the fold sums
+// exactly, so a fractional or empty amount fails the cycle (prior snapshot stays live) rather
+// than being rounded or dropped from an exact total.
 func positionHolderAmount(h timescale.DeFiPositionHolder) (string, error) {
 	a, err := canonical.FromString(h.Amount)
 	if err != nil || h.Amount == "" {
@@ -318,10 +295,8 @@ func loadDeFiPositionHolders(ctx context.Context, conn driver.Conn, holders []ti
 	return nil
 }
 
-// loadAssetMonthUSDPrices truncates and refills
-// asset_month_usd_prices_staging with the served tier's per-month USD
-// VWAPs (timescale.Store.MonthlyUSDVWAPs), which readCohortFlows joins to
-// price a month's flow at that month's price.
+// loadAssetMonthUSDPrices truncates and refills asset_month_usd_prices_staging with per-month
+// USD VWAPs (timescale.Store.MonthlyUSDVWAPs), which readCohortFlows joins to price a month.
 func loadAssetMonthUSDPrices(ctx context.Context, conn driver.Conn, prices []timescale.MonthlyUSDVWAP) error {
 	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.asset_month_usd_prices_staging`); err != nil {
 		return fmt.Errorf("clickhouse: cohort rollup: truncate month prices: %w", err)
@@ -351,10 +326,8 @@ func loadAssetMonthUSDPrices(ctx context.Context, conn driver.Conn, prices []tim
 type AccountCohort struct {
 	Relation string
 	Root     string
-	// Covered is false when the root is not in the rollup — a creator
-	// under the floor, or an address with no edges in this relation.
-	// The other fields are then empty; Cycle is still set when a cycle
-	// has completed at all.
+	// Covered is false when the root is not in the rollup (creator under the floor, or no edges
+	// in this relation); other fields are then empty, Cycle still set once a cycle completed.
 	Covered bool
 	Cycle   AccountCohortCycle
 
@@ -365,11 +338,8 @@ type AccountCohort struct {
 	Flows          []AccountCohortFlow // ascending by month, then asset
 	Contracts      []AccountCohortContract
 	Positions      []AccountCohortPosition
-	// FlowPricesUnavailable is true when Flows was served without
-	// then-prices because asset_month_usd_prices (an OPTIONAL
-	// enrichment, not the flows' own table) does not exist on this
-	// deployment. Flows themselves are never withheld for
-	// this: PriceUSDThen is simply nil on every row.
+	// FlowPricesUnavailable is true when Flows was served without then-prices because the
+	// OPTIONAL asset_month_usd_prices table is absent; PriceUSDThen is then nil on every row.
 	FlowPricesUnavailable bool
 }
 
@@ -402,10 +372,8 @@ type AccountCohortFlow struct {
 	Outflow        *big.Int
 	Movements      uint64
 	ActiveAccounts uint64
-	// PriceUSDThen is the asset's volume-weighted USD price for THIS
-	// month on the index's own markets (stellar.asset_month_usd_prices,
-	// joined at read time), nil where no USD-quoted market priced it
-	// that month. Never zero.
+	// PriceUSDThen is the asset's volume-weighted USD price for this month on the index's own
+	// markets (joined at read time); nil where unpriced. Never zero.
 	PriceUSDThen *string
 }
 
@@ -429,10 +397,8 @@ type AccountCohortPosition struct {
 	Amount       *big.Int // exact sum in the fold's own unit
 }
 
-// Read caps. A root's holdings and flows are bounded by the assets its
-// cohort touches, which for an exchange's sponsored set is thousands; the
-// caps keep one read one screen without hiding that a cap applied
-// (Truncated* on the view).
+// Read caps: an exchange's sponsored set touches thousands of assets; the caps keep one read
+// one screen without hiding that a cap applied (Truncated* on the view).
 // CohortHoldingsLimit is exported so the API can say a cap applied.
 const CohortHoldingsLimit = 400
 
@@ -444,9 +410,8 @@ const (
 	cohortPositionsLimit = 120
 )
 
-// AccountCohort reads one root's cohort. ok=false (not an error) means
-// no cycle has completed on this deployment yet; a completed cycle that
-// does not cover the root returns ok=true with Covered=false.
+// AccountCohort reads one root's cohort. ok=false (not an error): no cycle has completed yet;
+// a completed cycle not covering the root gives ok=true, Covered=false.
 func (r *ExplorerReader) AccountCohort(ctx context.Context, account, relation string) (AccountCohort, bool, error) {
 	out := AccountCohort{Relation: relation, Root: account}
 	var computed time.Time
@@ -521,13 +486,9 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 	return rows.Err()
 }
 
-// cohortFlowsSQL and cohortFlowsFallbackSQL differ only in the
-// price_usd_then projection: the fallback drops the LEFT JOIN entirely
-// and literals it empty (read as nil, same as a joined-but-unpriced
-// month) so the same Scan below serves both. Used when
-// asset_month_usd_prices — an OPTIONAL enrichment of the flows, not
-// their source of truth — is absent: a missing enrichment
-// table must not take the whole cohort-flows read down with it.
+// cohortFlowsSQL and cohortFlowsFallbackSQL differ only in price_usd_then: the fallback drops
+// the LEFT JOIN and literals it empty (read as nil) so one Scan serves both. Used when the
+// OPTIONAL asset_month_usd_prices is absent, which must not take the flows read down.
 const cohortFlowsSQL = `
 		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
 		       ifNull(p.vwap_usd, '') AS price_usd_then
@@ -557,13 +518,10 @@ const cohortFlowsFallbackSQL = `
 		  ))
 		ORDER BY f.month, f.asset`
 
-// readCohortFlows serves every month for the CohortFlowAssetsLimit assets it
-// moved most, plus the all-assets row. Assets past the cap are not
-// summed into an "other" bucket — their units differ — so the view says
-// that the cap applied (assets_truncated). Each row carries the month's own USD price
-// where the served tier had a USD-quoted market for the asset that
-// month (a LEFT JOIN on (asset, month); the empty string is the miss,
-// read as nil).
+// readCohortFlows serves every month for the CohortFlowAssetsLimit assets moved most, plus the
+// all-assets row. Assets past the cap are not summed into "other" (units differ); the view
+// says so (assets_truncated). Each row carries the month's USD price via a LEFT JOIN on
+// (asset, month); the empty string is the miss, read as nil.
 func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort) error {
 	rows, err := r.conn.Query(ctx, cohortFlowsSQL,
 		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, CohortFlowAssetsLimit)

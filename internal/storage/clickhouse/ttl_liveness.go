@@ -12,38 +12,18 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Soroban archives (evicts) a contract_data entry once its TTL lapses. The
-// entry stops being part of live ledger state, but the lake still holds its
-// last-known value forever — so any reader that takes "the newest
-// contract_data row for this key" as current state will serve an archived
-// balance indefinitely.
+// Soroban archives a contract_data entry once its TTL lapses, but the lake keeps its last
+// value forever, so "newest contract_data row for this key" serves an archived balance
+// indefinitely. The signal is the companion TTL entry's `liveUntilLedgerSeq`.
 //
-// That is not hypothetical. It is why PHO served +157% against Horizon:
-// `supply seed-sac-balances` wrote 122,148,204 PHO across 39
-// contract holders whose entries had been archived,
-// while our LIVE observer's rows matched Horizon to 0.009%. Four of the five
-// keys behind the largest balance had `live_until` in the 54.4M–56.5M range
-// against a tip of 63.68M.
-//
-// The signal to separate them is already in the lake: every contract_data
-// entry has a companion TTL entry carrying `liveUntilLedgerSeq`.
-//
-// HOW the signal is read matters. A classifier that scanned
-// `ledger_entries_current WHERE entry_type = 'ttl'` (586M rows) per batch,
-// extracting liveUntilLedgerSeq from the WIDE entry_xdr column for every ttl
-// row. Six production attempts failed across four mechanisms (IN-list parse
-// cap, two client-pin OOMs, thread fan-out amplification, and terminally an
-// OOM of the query's own 8 GiB pin inside AggregatingTransform); the design
-// was wrong, not the tuning. The extraction happens ONCE per TTL change,
-// at ingest, into the slim `stellar.ttl_live_until` projection
-// (key_hash → live_until, ReplacingMergeTree(version), ~20-30 GB vs 590 GB),
-// and this reader is a primary-key lookup bounded by construction. The scan
-// path is DELETED, not dormant — deployments without the projection get
-// [errTTLLiveUntilTableMissing], never a silent fallback.
+// It is extracted once per TTL change, at ingest, into the slim `stellar.ttl_live_until`
+// projection (key_hash -> live_until, ReplacingMergeTree(version)); this reader is a bounded
+// primary-key lookup. Scanning ledger_entries_current for ttl rows (586M rows, wide
+// entry_xdr) OOMs, so there is no fallback: a missing projection gives
+// [errTTLLiveUntilTableMissing].
 
-// ttlKeyHashOffset/Len locate the 32-byte key hash inside a decoded TTL
-// LedgerKey. The key is 36 bytes: a 4-byte LedgerEntryType discriminant
-// (TTL = 9) followed by sha256(LedgerKey) of the entry it governs.
+// ttlKeyHashOffset/Len locate the 32-byte key hash in a decoded TTL LedgerKey: a 4-byte
+// LedgerEntryType discriminant (TTL = 9) then sha256 of the governed LedgerKey.
 const (
 	ttlKeyHashOffset = 4
 	ttlKeyHashLen    = 32
@@ -55,40 +35,29 @@ const (
 //	lastModifiedLedgerSeq (4) | data.type (4) | keyHash (32) |
 //	liveUntilLedgerSeq (4)    | ext.v (4)     = 48
 //
-// liveUntilLedgerSeq therefore starts at byte 40 (0-indexed). Since v0.21.4
-// the extraction itself lives in SQL DDL — the `ttl_live_until` materialized
-// view in deploy/clickhouse/tier1_schema.sql and the operator artifact
-// deploy/clickhouse/ttl_live_until.sql — guarded on the exact decoded lengths
-// so an unrecognised wire shape is SKIPPED (→ key absent → [TTLUnknown] →
-// entry kept), never misread as archived. These constants remain the Go-side
-// statement of that layout; ttl_liveness_test.go asserts both DDL files
-// against them so the three cannot drift apart.
+// so liveUntilLedgerSeq starts at byte 40. The extraction lives in SQL DDL
+// (deploy/clickhouse/tier1_schema.sql, ttl_live_until.sql), guarded on these exact lengths so
+// an unrecognised shape is skipped (-> [TTLUnknown], entry kept), never misread as archived.
+// ttl_liveness_test.go asserts both DDL files against these constants.
 const (
 	ttlEntryLen         = 48
 	ttlLiveUntilOffset0 = 40
 )
 
-// ttlLivenessBatchSize caps how many key hashes ride in one IN list.
-// 1,500 keys ≈ 105 KiB of query text (each key renders as
-// `unhex('<64-hex>'), ` ≈ 70 bytes), safely inside ClickHouse's 256 KiB
-// default max_query_size. The original 5,000 produced ~350 KiB and
-// failed the parse cap on the first production run — the
-// tool must fit DEFAULT server limits, not depend on a users.d raise.
+// ttlLivenessBatchSize caps key hashes per IN list: 1,500 keys is ~105 KiB of query text,
+// inside ClickHouse's default 256 KiB max_query_size (5,000 failed the parse cap).
 const ttlLivenessBatchSize = 1_500
 
-// errTTLLiveUntilTableMissing is returned when the slim projection this
-// reader depends on has not been provisioned. Refusing loudly is deliberate:
-// the pre-v0.21.4 scan path is deleted, and silently degrading every key to
-// TTLUnknown would make the archived-balance filter a no-op that looks like
-// "nothing was archived" rather than like a misconfiguration.
+// errTTLLiveUntilTableMissing means the slim projection is not provisioned. Refusing loudly is
+// deliberate: degrading every key to TTLUnknown would make the archived-balance filter a
+// silent no-op.
 var errTTLLiveUntilTableMissing = errors.New(
 	"clickhouse: stellar.ttl_live_until does not exist — apply deploy/clickhouse/ttl_live_until.sql " +
 		"(table + materialized view, then its Step-2 windowed backfill) before running TTL-liveness reads; " +
 		"there is no scan fallback")
 
-// TTLKeyHash returns the TTL key hash governing the ledger entry whose
-// base64-encoded LedgerKey is keyXDR — i.e. sha256 over the DECODED key
-// bytes, which is exactly how stellar-core derives LedgerKeyTtl.keyHash.
+// TTLKeyHash returns the TTL key hash for the entry whose base64 LedgerKey is keyXDR: sha256
+// over the decoded key bytes, as stellar-core derives LedgerKeyTtl.keyHash.
 func TTLKeyHash(keyXDR string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(keyXDR)
 	if err != nil {
@@ -102,35 +71,24 @@ func TTLKeyHash(keyXDR string) (string, error) {
 type TTLLiveness int
 
 const (
-	// TTLUnknown — no TTL entry was found, or its wire shape was
-	// unrecognised. NOT a licence to drop the entry: callers must keep it.
-	// Entry types that carry no TTL at all (classic entries) land here.
+	// TTLUnknown: no TTL entry found, or its wire shape was unrecognised. Callers must keep
+	// the entry. Classic entries (no TTL) land here.
 	TTLUnknown TTLLiveness = iota
 	// TTLLive — liveUntilLedgerSeq is at or beyond the reference ledger.
 	TTLLive
-	// TTLArchived — liveUntilLedgerSeq has lapsed. The entry is no longer
-	// part of live ledger state and its last-known value must not be
-	// reported as current.
+	// TTLArchived: liveUntilLedgerSeq has lapsed; the last-known value must not be reported
+	// as current.
 	TTLArchived
 )
 
-// ClassifyTTLLiveness resolves, for each base64 LedgerKey in keyXDRs, whether
-// the entry is still live as of asOfLedger.
+// ClassifyTTLLiveness resolves whether each base64 LedgerKey in keyXDRs is live as of
+// asOfLedger, via a primary-key lookup of `stellar.ttl_live_until` (cost scales with the
+// batch). Missing projection: [errTTLLiveUntilTableMissing].
 //
-// It reads the slim `stellar.ttl_live_until` projection (key_hash →
-// live_until, MV-maintained at ingest) — a primary-key lookup whose cost
-// scales with the batch, not with the lake. The projection must exist:
-// [errTTLLiveUntilTableMissing] otherwise.
-//
-// Keys with no TTL row come back [TTLUnknown], and the contract is that
-// callers KEEP those. Dropping an entry we merely failed to resolve would
-// understate supply, which is the same class of error as the phantom balances
-// this exists to remove — and a silent over-drop is far harder to notice than
-// a residual over-count. Only a positive, parsed, lapsed liveUntilLedgerSeq
-// justifies exclusion.
-// A whole-network seed resolves tens of thousands of keys (USDC alone carries
-// 48,505 seeded holders), far past what one IN list should carry, so the work
-// is split into [ttlLivenessBatchSize] chunks.
+// Keys with no TTL row come back [TTLUnknown] and callers KEEP them: dropping an unresolved
+// entry understates supply, and a silent over-drop is harder to notice than an over-count.
+// Only a parsed, lapsed liveUntilLedgerSeq justifies exclusion. Seeds resolve tens of
+// thousands of keys, so work is chunked by [ttlLivenessBatchSize].
 func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32) (map[string]TTLLiveness, error) {
 	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keyXDRs)
 	if err != nil {
@@ -143,10 +101,9 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 	return out, nil
 }
 
-// TTLVerdictAt is the one liveness rule every TTL reader shares: an entry is
-// live through its liveUntilLedgerSeq inclusive and archived once asOfLedger
-// passes it. A zero live_until (absent, or a literal stored 0) proves
-// nothing: fail-open says UNKNOWN, never a guessed archival.
+// TTLVerdictAt is the liveness rule every TTL reader shares: live through liveUntilLedgerSeq
+// inclusive, archived once asOfLedger passes it. A zero live_until proves nothing: UNKNOWN,
+// never a guessed archival.
 func TTLVerdictAt(liveUntil, asOfLedger uint32) TTLLiveness {
 	switch {
 	case liveUntil == 0:
@@ -185,9 +142,8 @@ func resolveTTLLiveUntil(ctx context.Context, conn driver.Conn, keyXDRs []string
 	return out, nil
 }
 
-// ensureTTLLiveUntilTable probes for the projection and refuses with a
-// deploy-pointing error when it is absent. One tiny metadata query per
-// ClassifyTTLLiveness call (not per batch), before any work is done.
+// ensureTTLLiveUntilTable probes for the projection and refuses with a deploy-pointing error
+// when absent; one metadata query per ClassifyTTLLiveness call.
 func ensureTTLLiveUntilTable(ctx context.Context, conn driver.Conn) error {
 	var exists uint8
 	if err := conn.QueryRow(ctx, "EXISTS TABLE stellar.ttl_live_until").Scan(&exists); err != nil {
@@ -199,18 +155,12 @@ func ensureTTLLiveUntilTable(ctx context.Context, conn driver.Conn) error {
 	return nil
 }
 
-// ttlLivenessBatchQuery renders the per-batch lookup. argMax(live_until,
-// version) keeps the LATEST TTL state per key (version = (ledger_seq<<32) |
-// intra_ledger_seq, matching the table's ReplacingMergeTree version — the
-// GROUP BY makes the read correct over not-yet-merged duplicate versions
-// without FINAL).
+// ttlLivenessBatchQuery renders the per-batch lookup. argMax(live_until, version) keeps the
+// latest TTL state per key (version = (ledger_seq<<32) | intra_ledger_seq, the table's RMT
+// version), correct over un-merged duplicates without FINAL.
 //
-// SETTINGS rationale: the lookup is bounded by construction (≤ batch-size
-// primary-key probes over three tiny columns), so these pins are guard rails,
-// not load-bearing tuning — carried over from the scan era
-// (measured on r1: unpinned max_threads fanned a read out to 40× its
-// single-digit-MiB cost) so that a future layout or planner shift fails THIS
-// query loudly instead of starving the shared host.
+// The SETTINGS pins are guard rails (unpinned max_threads fanned a read out 40x its cost), so
+// a future layout shift fails this query loudly instead of starving the host.
 func ttlLivenessBatchQuery(placeholders []string) string {
 	return fmt.Sprintf(`
 		SELECT lower(hex(key_hash)) AS key_hash_hex,
@@ -224,20 +174,17 @@ func ttlLivenessBatchQuery(placeholders []string) string {
 	)
 }
 
-// ttlLiveUntilBatch returns the newest non-zero live_until held in
-// stellar.ttl_live_until for each key of one bounded chunk. A key with no
-// row, an undecodable key, or a stored 0 is absent from the result.
+// ttlLiveUntilBatch returns the newest non-zero live_until in stellar.ttl_live_until per key
+// of one chunk; keys with no row, an undecodable key, or a stored 0 are absent.
 func ttlLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []string) (map[string]uint32, error) {
-	// hash -> the key(s) it governs. Distinct keys cannot collide under
-	// sha256, but the same key may legitimately appear twice in the input.
+	// hash -> the key(s) it governs; the same key may appear twice in the input.
 	byHash := make(map[string][]string, len(keyXDRs))
 	args := make([]any, 0, len(keyXDRs))
 	placeholders := make([]string, 0, len(keyXDRs))
 	for _, k := range keyXDRs {
 		h, err := TTLKeyHash(k)
 		if err != nil {
-			// An undecodable key cannot be proven archived. Leave it
-			// unresolved (TTLUnknown) so the caller keeps it.
+			// An undecodable key cannot be proven archived: leave it unresolved (TTLUnknown).
 			continue
 		}
 		if _, seen := byHash[h]; !seen {
@@ -265,9 +212,8 @@ func ttlLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []string) 
 		if err := rows.Scan(&keyHash, &liveUntil); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		// The MV's length guards mean a malformed shape is never inserted,
-		// so 0 cannot arise from misparsing — but a literal stored 0 still
-		// cannot prove anything, and fail-open says UNKNOWN over a guess.
+		// The MV's length guards mean 0 cannot come from misparsing, and a stored 0 still
+		// proves nothing: UNKNOWN over a guess.
 		if liveUntil == 0 {
 			continue
 		}
