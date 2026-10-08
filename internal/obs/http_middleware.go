@@ -9,45 +9,15 @@ import (
 	"time"
 )
 
-// routeCapture is a single-field pointer holder we plant in the
-// request context so HTTPMetrics can read the matched route after
-// the inner mux has dispatched. See [CaptureRoute] for the writer
-// side and [HTTPMetrics] for why we need this indirection rather
-// than reading r.Pattern directly.
+// routeCapture carries the matched route out of the mux; see [HTTPMetrics].
 type routeCapture struct{ route string }
 
 type routeCaptureKey struct{}
 
-// HTTPMetrics returns middleware that emits `http_requests_total`
-// + `http_request_duration_seconds` for every served request.
-//
-// Label discipline:
-//   - `method`: the HTTP verb (uppercase).
-//   - `route`: the registered route pattern path (e.g. "/v1/assets/{asset_id}"),
-//     NOT the raw URL — using the raw URL would blow up cardinality
-//     on endpoints with ID path params. The method prefix is stripped
-//     from Go 1.22+ patterns so it doesn't duplicate `method`.
-//   - `status`: HTTP status code as a string; dashboards regex-filter
-//     (status=~"5..") for bucketing.
-//
-// # Route pattern discovery
-//
-// Go 1.22+ ServeMux exposes the matched pattern via
-// http.Request.Pattern, but only on the request struct the mux was
-// dispatched with — and any middleware between HTTPMetrics and the
-// mux that calls `r = r.WithContext(...)` (Logger does, to attach
-// request_id / remote_ip) creates a fresh struct, leaving
-// HTTPMetrics holding a Request whose Pattern stays "".
-//
-// To survive the WithContext shadow-copy chain we plant a
-// *routeCapture pointer in the request context. The innermost
-// [CaptureRoute] middleware writes r.Pattern into it after
-// dispatch; HTTPMetrics reads from the same pointer. The pointer
-// itself is in the context, and contexts pass through WithContext
-// chains unchanged, so all middlewares see the same routeCapture.
-//
-// For unmatched routes (404) the pattern is empty; we label those
-// as `"unmatched"` to keep cardinality bounded.
+// HTTPMetrics emits http_requests_total and http_request_duration_seconds labelled by
+// method, route pattern (never the raw URL, for cardinality; "unmatched" on 404) and status.
+// r.Pattern is lost once any middleware calls WithContext, so a *routeCapture planted in
+// the context lets the innermost [CaptureRoute] hand the pattern back out.
 func HTTPMetrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -55,11 +25,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		rc := &routeCapture{}
 		ctx := context.WithValue(r.Context(), routeCaptureKey{}, rc)
-		// Keep a reference to the ctx-wrapped request so we can
-		// read the mux-set Pattern off it as a fallback when no
-		// CaptureRoute is wired innermost. Reading from the
-		// original `r` here would always be empty — our own
-		// WithContext above shadowed it.
+		// Keep the ctx-wrapped request: its Pattern is the fallback when no CaptureRoute is wired.
 		r2 := r.WithContext(ctx)
 		next.ServeHTTP(rec, r2)
 
@@ -70,90 +36,41 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		method := normalizeMethod(r.Method)
 		elapsed := time.Since(start).Seconds()
 
-		// Client-abort detection. If the request's context was
-		// cancelled before the handler finished writing, record the
-		// NGINX-style 499 "client closed request" sentinel instead
-		// of whatever status the recorder saw — otherwise an early
-		// disconnect looks like a successful 200 on the dashboard.
+		// A client abort before any write is 499, not the recorder's default 200.
 		status := rec.status
 		if err := r.Context().Err(); err != nil && !rec.wrote {
 			status = 499
 		}
 
-		// Skip metrics emission for synthetic monitoring traffic.
-		// The smoke timer (configs/healthchecks/r1-smoke.sh) and
-		// other operator-side probes set
-		// `User-Agent: stellarindex-smoke/<n>` so we can identify
-		// them. Letting their requests into the histogram pollutes
-		// the SLO recording rule — at every smoke fire we cold-hit
-		// /v1/oracle/latest etc., adding 13 slow-request samples
-		// every 5 minutes that customers never experience. The
-		// alerts then fire on a synthetic-monitoring artifact
-		// rather than real customer-facing latency.
-		//
-		// Smoke traffic still exits the process and the response
-		// is real — we just don't surface it in the customer-facing
-		// observability stream. Failures are caught by the smoke
-		// script's exit code + Healthchecks.io ping (see
-		// configs/healthchecks/smoke.sh).
+		// Synthetic probes (smoke, SLA probe, prewarm) stay out of the SLO series: their cold hits
+		// would fire latency alerts customers never see. Their failures surface via Healthchecks.
 		if IsSyntheticRequest(r) {
 			return
 		}
 
 		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
 
-		// SSE / long-lived streaming endpoints: the handler returns
-		// only when the client disconnects, so `elapsed` is the
-		// connection LIFETIME (minutes-to-hours), not request
-		// latency. Feeding that into the latency histogram pins p99
-		// at the +Inf bucket (the histogram tops out at 10s) and
-		// burns the latency SLO — one open status-page tab on
-		// /v1/ledger/stream is enough to do it. Count the request
-		// (above) but skip the duration observation.
+		// A stream's elapsed time is connection lifetime, which would pin p99 at +Inf; count it
+		// but skip the duration.
 		if isStreamingRoute(route) {
 			return
 		}
 		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)
-		// Only count non-5xx in the success histogram. The
-		// latency SLO numerator filters on this histogram while the
-		// denominator counts everything via HTTPRequestDuration, so a
-		// fast 500 lands in the denominator but not the numerator —
-		// SLO ratio drops, budget burns, alert fires. A single
-		// histogram for both numerator and denominator would report
-		// a fast 500 as "good." 499 (client-aborted)
-		// also stays out: it isn't a service-side failure but it
-		// isn't customer success either; safer to exclude than to
-		// dilute the numerator.
+		// The success histogram is the latency SLO numerator, so 5xx (a fast 500 is not good)
+		// and 499 (not a customer success) stay out of it.
 		if status < 500 && status != 499 {
 			HTTPRequestSuccessDuration.WithLabelValues(method, route).Observe(elapsed)
 		}
 	})
 }
 
-// isStreamingRoute reports whether a route pattern is an SSE /
-// long-lived streaming endpoint, identified by the conventional
-// `/stream` suffix (`/v1/price/stream`, `/v1/price/tip/stream`,
-// `/v1/observations/stream`, `/v1/ledger/stream`). Such handlers
-// must be kept out of the request-latency histogram — see the
-// caller. Suffix-matching is deliberate so any future `/stream`
-// route is excluded automatically.
+// isStreamingRoute matches the `/stream` suffix so a future SSE route is excluded automatically.
 func isStreamingRoute(route string) bool {
 	return strings.HasSuffix(route, "/stream")
 }
 
-// IsSyntheticUA reports whether the User-Agent STRING LOOKS LIKE
-// internal synthetic / maintenance traffic: `stellarindex-smoke/...`
-// (the r1-smoke.sh wrapper), `stellarindex-probe/...` (operator
-// probes, including the SLA probe), and `stellarindex-prewarm/...`
-// (the API's own self-prewarm goroutine). The match is prefix-only so
-// version suffixes don't affect the decision.
-//
-// This is a NAME check, not a trust check — the header is entirely
-// client-controlled, so a UA-only match must never gate anything
-// customer-observable by itself. [IsSyntheticRequest] is the actual
-// trust boundary; use that (or the equivalent judgement inline, as
-// middleware.Logger does) wherever the answer decides whether a
-// request counts against the customer-facing SLO or the access log.
+// IsSyntheticUA is a NAME check on the client-controlled User-Agent, never a trust check;
+// gate on [IsSyntheticRequest].
 func IsSyntheticUA(ua string) bool {
 	if ua == "" {
 		return false
@@ -172,28 +89,10 @@ var syntheticUAPrefixes = []string{
 	"stellarindex-prewarm/",
 }
 
-// IsSyntheticRequest reports whether a request should be trusted as
-// first-party synthetic traffic — the judgement [HTTPMetrics] uses to
-// skip the customer-facing SLO metrics, and middleware.Logger uses to
-// demote a successful request to DEBUG (see that package's Logger
-// doc: "the two must agree on which requests those are").
-//
-// A User-Agent prefix match ([IsSyntheticUA]) is necessary but NOT
-// sufficient: it is a plain client-supplied header, so any external
-// caller can set `User-Agent: stellarindex-smoke/1` and erase its own
-// traffic from the error-rate/availability-SLO series before the
-// alerts that watch them ever see the request. The three legitimate
-// sources — r1-smoke.sh, the SLA probe, and the self-prewarm goroutine
-// (see their call sites) — all hit the API's OWN loopback listener
-// directly, bypassing the haproxy front entirely. haproxy
-// (configs/ansible/roles/haproxy/templates/haproxy.cfg.j2, `option
-// forwardfor`) appends X-Forwarded-For to every request it proxies,
-// so any request that crossed it — including one from an attacker
-// spoofing the UA — carries that header; a request that didn't cross
-// it can't have it. Trusting the UA only when the request arrived on
-// loopback WITHOUT an X-Forwarded-For hop closes that gap without the
-// three internal callers needing to prove anything more than the
-// connection they already make.
+// IsSyntheticRequest is the trust boundary for skipping SLO metrics and demoting logs
+// (middleware.Logger must agree). A spoofable UA counts only on loopback with no
+// X-Forwarded-For: haproxy appends that header to every proxied request, and the three
+// first-party callers hit the loopback listener directly.
 func IsSyntheticRequest(r *http.Request) bool {
 	if !IsSyntheticUA(r.UserAgent()) {
 		return false
@@ -215,18 +114,8 @@ func isLoopbackRemoteAddr(remoteAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// CaptureRoute writes the mux-matched route pattern into the
-// *routeCapture installed by [HTTPMetrics]. Wire this as the
-// INNERMOST middleware in the stack — directly above the mux —
-// so r.Pattern is populated before this middleware reads it.
-//
-// No-op when the request context doesn't carry a routeCapture —
-// the route still ends up in r.Pattern; HTTPMetrics's fallback
-// path picks it up.
-//
-// The capture is deferred so a handler panic, recovered further out by
-// the Recoverer, still labels its 500 with the route rather than
-// "unmatched".
+// CaptureRoute must be the INNERMOST middleware so r.Pattern is set. Deferred so a panic
+// recovered further out still labels its 500 with the route.
 func CaptureRoute(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc, ok := r.Context().Value(routeCaptureKey{}).(*routeCapture)
@@ -237,15 +126,8 @@ func CaptureRoute(next http.Handler) http.Handler {
 	})
 }
 
-// RouteFromContext returns the mux-matched route pattern path
-// captured by [CaptureRoute] (e.g. "/v1/assets/{asset_id}"), or ""
-// when no capture is planted / the mux hasn't dispatched yet.
-//
-// Middlewares that sit BETWEEN [HTTPMetrics] and [CaptureRoute]
-// (e.g. the usage tracker) use this after next.ServeHTTP returns —
-// their own *http.Request copy predates the mux's Pattern write, so
-// reading r.Pattern directly would come back empty whenever any
-// inner middleware re-wrapped the request via WithContext.
+// RouteFromContext returns the route [CaptureRoute] captured, or "". Middleware between
+// HTTPMetrics and CaptureRoute needs it because its own request copy never sees Pattern.
 func RouteFromContext(ctx context.Context) string {
 	rc, ok := ctx.Value(routeCaptureKey{}).(*routeCapture)
 	if !ok {
@@ -254,19 +136,9 @@ func RouteFromContext(ctx context.Context) string {
 	return rc.route
 }
 
-// normalizeMethod canonicalises the HTTP method for use as a Prometheus
-// label. Standard methods are returned uppercased (a client sending "get"
-// instead of "GET" would otherwise double our method-label cardinality).
-//
-// Any method outside the known set collapses to the bounded label "other".
-// net/http accepts an ARBITRARY token as a request method, so passing
-// unknown verbs through verbatim would let an unauthenticated
-// client mint unbounded metric label children — `curl -X <random>` in a
-// loop grows HTTPRequestsTotal without limit and OOMs the API + Prometheus
-// (metric-cardinality DoS). The label is telemetry only:
-// routing and handlers read the real r.Method, which is unaffected — so a
-// genuine custom verb (WebDAV PROPFIND, etc.) still WORKS, it just shares
-// the "other" bucket in the metric.
+// normalizeMethod maps unknown verbs to "other": net/http accepts any token as a method,
+// so passing them through lets an unauthenticated client mint unbounded label children
+// (cardinality DoS). Routing still sees the real r.Method.
 func normalizeMethod(m string) string {
 	switch strings.ToUpper(m) {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "CONNECT", "TRACE":
@@ -275,9 +147,7 @@ func normalizeMethod(m string) string {
 	return "other"
 }
 
-// routeFromPattern extracts just the path from a Go 1.22+ ServeMux
-// pattern. "METHOD /path" → "/path"; "/path" → "/path"; "" →
-// "unmatched".
+// routeFromPattern strips the method from a ServeMux pattern; "" becomes "unmatched".
 func routeFromPattern(p string) string {
 	if p == "" {
 		return "unmatched"
@@ -288,10 +158,7 @@ func routeFromPattern(p string) string {
 	return p
 }
 
-// statusRecorder wraps http.ResponseWriter + captures status. Tiny
-// duplicate of the one in middleware/logger.go — kept here so obs
-// doesn't depend on the middleware package (which imports obs in
-// the production wiring).
+// statusRecorder duplicates middleware's recorder because middleware imports obs.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -321,10 +188,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// Unwrap exposes the underlying ResponseWriter so
-// http.NewResponseController can reach SetWriteDeadline / Hijack
-// on it. Required for SSE handlers that need to clear the global
-// 30s WriteTimeout so long-running streams don't get cut.
+// Unwrap lets http.NewResponseController clear the 30s WriteTimeout for SSE streams.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }
