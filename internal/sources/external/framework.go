@@ -1,35 +1,16 @@
-// Package external houses the connector framework for off-chain data
-// sources — centralised exchanges (Binance, Kraken, Bitstamp, Coinbase,
-// …), institutional FX feeds (Massive, ExchangeRatesApi), third-party
-// aggregators (CoinGecko, CoinMarketCap, CryptoCompare), and
-// sovereign daily anchors (ECB, Fed H.10).
+// Package external is the connector framework for off-chain sources: centralised exchanges, institutional
+// FX feeds, third-party aggregators and sovereign daily anchors. Unlike the on-chain dispatcher, they speak
+// HTTPS/WebSocket to vendor APIs on their own cadence, outside the ledger loop, but converge on the same
+// canonical types and hypertables.
 //
-// Contrast with the on-chain dispatcher at internal/dispatcher/: that
-// package consumes xdr.LedgerCloseMeta from Galexie and routes events
-// to event- / op- / contract-call decoders. External sources speak
-// HTTPS / WebSocket to vendor APIs on their own cadence, so they live
-// outside the ledger loop. Both converge on the same canonical types
-// (canonical.Trade, canonical.OracleUpdate) and the same Timescale
-// hypertables — only the arrival path differs.
+// A venue implements whichever capabilities it supports:
 //
-// Three orthogonal capabilities per source. A venue implements
-// whichever subset it actually supports:
+//   - [Streamer]   — live WebSocket trade feed (exchange class)
+//   - [Poller]     — periodic REST fetch (aggregator / FX / sovereign)
+//   - [Backfiller] — historical OHLC candles, synthesised to canonical.Trade per bucket (optional; depth
+//     varies, Kraken caps at 720 intervals)
 //
-//   - [Streamer]     — live WebSocket trade feed (exchange class)
-//   - [Poller]       — periodic REST fetch (aggregator / FX / sovereign)
-//   - [Backfiller]   — historical OHLC candles via a venue's REST
-//     endpoint; synthesised to canonical.Trade per bucket
-//
-// Sources that only stream live implement Streamer; sources that poll
-// quote-boards implement Poller; a source can implement all three.
-// Backfiller is always optional — Kraken caps historical at 720
-// intervals (~30 days at 1h), Fed H.10 is daily-only, etc.
-//
-// Source class metadata lives in [Registry] — a Go-map source of truth
-// that the aggregator queries at VWAP compute time to decide
-// contribution (ClassExchange = yes, ClassAggregator / ClassOracle /
-// ClassAuthoritySanity = no). No database table at this scale; swap
-// to DB when the list outgrows a single Go file.
+// [Registry] holds source class metadata, read by the aggregator at VWAP time to decide contribution.
 package external
 
 import (
@@ -41,30 +22,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Class enumerates how a source participates in downstream aggregation.
-//
-// The distinction matters because mixing classes in a VWAP is either
-// incorrect (averaging aggregates with raw trades double-counts
-// upstream markets) or policy-sensitive (oracles publish already-
-// aggregated values with their own governance — folding them into our
-// VWAP would impose their methodology on our output).
-//
-// Stellar Index v1 policy: only [ClassExchange] contributes to VWAP.
-// Everything else is reported alongside for transparency and
-// divergence checking, but excluded from the computed price. Operators
-// can override per-source via config.
+// Class is how a source participates in aggregation. Mixing classes in a VWAP is wrong (averaging
+// aggregates with raw trades double-counts upstream markets) or imposes another publisher's methodology
+// (oracles), so only [ClassExchange] contributes; the rest are reported for transparency and divergence.
 type Class string
 
 const (
-	// ClassExchange — a venue that publishes real executed trades
-	// (Binance, Kraken, Coinbase, SDEX, Soroswap). Contributes to
-	// VWAP. Off-chain FX providers are also exchange class: Massive
-	// serves daily grouped OHLC aggregates of the interbank FX
-	// market (the forex worker takes the day's close),
-	// ExchangeRatesApi a computed interbank / official-blend rate.
-	// Each is a first-party FX reference, not a third-party
-	// aggregation across venues sampled elsewhere (that is
-	// ClassAggregator).
+	// ClassExchange publishes real executed trades (Binance, Kraken, Coinbase, SDEX, Soroswap) and
+	// contributes to VWAP. Off-chain FX providers (Massive's daily interbank close, ExchangeRatesApi's computed
+	// rate) are first-party FX references, so also exchange class, not ClassAggregator.
 	ClassExchange Class = "exchange"
 
 	// ClassAggregator — a third-party service that publishes
@@ -89,53 +55,25 @@ const (
 	// bank's public close.
 	ClassAuthoritySanity Class = "authority_sanity"
 
-	// ClassLending — on-chain lending protocols whose events are
-	// directional / state-change signals rather than spot prices
-	// (Blend). Auctions surface stress-prices during liquidation;
-	// supply / borrow events surface position-side metrics; bad
-	// debt flags protocol health. None of these contributes to
-	// VWAP — lending events represent decisions taken on top of
-	// other oracles' prices, not new price observations. Reported
-	// alongside as a secondary validation surface.
+	// ClassLending is on-chain lending (Blend): auction stress-prices, position metrics and bad-debt flags
+	// are decisions taken on other oracles' prices, not new observations, so never VWAP; reported as a
+	// secondary validation surface.
 	ClassLending Class = "lending"
 
-	// ClassRouter — Soroban DEX routers + aggregator vaults (Soroswap
-	// Router, DeFindex). These don't emit independent trades; they
-	// invoke other contracts that do. Their value is per-tx
-	// attribution (which router drove this swap?) + intent
-	// (path the user requested vs realised). Excluded from VWAP
-	// for the same reason as ClassLending — derivative actions on
-	// top of other sources, not new price observations. The
-	// `routers` table (migration 0025) is the registry of contract
-	// addresses each ClassRouter source watches.
+	// ClassRouter is Soroban DEX routers and aggregator vaults (Soroswap Router, DeFindex). They invoke
+	// contracts that trade rather than trading, so are excluded from VWAP; their value is per-tx attribution
+	// and intent (path requested vs realised). The `routers` table lists the contracts each one watches.
 	ClassRouter Class = "router"
 
-	// ClassBridge — cross-chain transfer / intent protocols (Circle
-	// CCTP, Rozo). These move tokens between chains rather than
-	// exchanging them at a price; a `deposit_for_burn` on Stellar +
-	// `mint_and_withdraw` on Ethereum is one logical USDC transfer,
-	// not a two-leg trade. Excluded from VWAP — no price signal in
-	// the event stream. Reported alongside for cross-chain flow
-	// attribution (which bridge moved the most USDC out of Stellar
-	// yesterday? which destination chain drives the most inbound
-	// USDC mint volume?) and for USDC supply accounting (CCTP
-	// burns/mints are the cross-chain side of Algorithm 3 supply,
-	// complementing the classic trustline-driven mints/burns
-	// already tracked by the SEP-41 supply observer per ADR-0023).
-	// Design + per-protocol event schemas at
-	// docs/protocols/cctp.md and docs/protocols/rozo.md.
+	// ClassBridge is cross-chain transfer/intent protocols (Circle CCTP, Rozo): a Stellar deposit_for_burn
+	// plus an Ethereum mint_and_withdraw is one USDC transfer, not a two-leg trade, so no price and no VWAP.
+	// Reported for cross-chain flow attribution and USDC supply accounting (the cross-chain side of
+	// Algorithm 3). Schemas: docs/protocols/cctp.md, docs/protocols/rozo.md.
 	ClassBridge Class = "bridge"
 )
 
-// Subclass is a finer-grained partition within a [Class]. Used by
-// the confidence diversity factor (ADR-0019): a CEX (subclass "cex")
-// and a DEX (subclass "dex") under the same `ClassExchange` parent
-// are economically distinct sources for diversity-counting purposes.
-//
-// Empty string means "no further partitioning"; sources outside
-// ClassExchange (oracles, aggregators, authority anchors) typically
-// leave this blank — their parent Class already captures the
-// economic distinction.
+// Subclass partitions a [Class] for the confidence diversity factor (ADR-0019): a CEX and a DEX under
+// ClassExchange are economically distinct. Empty means no partition, usual outside ClassExchange.
 type Subclass string
 
 const (
@@ -214,22 +152,10 @@ type Connector interface {
 // read from the returned channel.
 type Streamer interface {
 	Connector
-	// Start opens the connection, subscribes to the requested pairs,
-	// and returns a channel that emits canonical.Trade values. The
-	// channel is closed when ctx is cancelled or the source hits an
-	// unrecoverable error (invalid credential, persistent venue
-	// outage past the backoff ceiling).
-	//
-	// Transient problems (single dropped frame, one reconnect cycle)
-	// are handled internally and surfaced via metrics; they do not
-	// close the channel. Only a fatal "this source is dead" state
-	// returns an error from Start or closes the channel without
-	// cancellation.
-	//
-	// Caller supplies the pair list. An empty list means "all pairs
-	// this source supports" — venues that enumerate symbols on
-	// connect (Binance, Kraken) can honour that; others return an
-	// error.
+	// Start subscribes to pairs (empty = all, where the venue enumerates symbols on connect; otherwise an
+	// error) and returns a trade channel. Transient faults (a dropped frame, a reconnect) are handled
+	// inside and surface as metrics; the channel closes only on ctx cancel or a fatal state (bad
+	// credential, outage past the backoff ceiling).
 	Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error)
 }
 
@@ -250,30 +176,17 @@ type Poller interface {
 	PollInterval() time.Duration
 }
 
-// Backfiller is implemented by venues whose REST APIs expose
-// historical OHLC candles. Output is synthesised canonical.Trade —
-// one Trade per candle at the candle's VWAP (or close price, when
-// VWAP unavailable) carrying the candle's volume. Open/high/low fields
-// are dropped; consumers that need full candle fidelity read from the
-// continuous-aggregate tables instead.
-//
-// Each venue has its own historical depth limit; callers should
-// consult Metadata.BackfillAvailable and the venue's doc rather than
-// assuming "all the way to listing." Kraken, for example, caps at
-// 720 intervals regardless of granularity.
+// Backfiller is implemented by venues whose REST APIs expose historical OHLC candles, emitted as one
+// synthesised canonical.Trade per candle at its VWAP (or close) with its volume; open/high/low are dropped.
+// Depth varies per venue (Kraken caps at 720 intervals), so check Metadata.BackfillAvailable.
 type Backfiller interface {
 	Connector
 	Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error)
 }
 
-// TradeEvent is the consumer.Event wrapper for trades arriving from
-// external connectors. Mirrors soroswap.TradeEvent / aquarius.TradeEvent
-// / comet.TradeEvent so the indexer's sink type-switch stays uniform.
-//
-// Unlike per-venue wrappers in the on-chain source packages, there's
-// only one wrapper here — external trades all land in the same
-// trades hypertable via the same InsertTrade path, and the Source
-// field on canonical.Trade already identifies the venue.
+// TradeEvent wraps external trades as a consumer.Event, mirroring the on-chain venues' TradeEvent so the
+// indexer's sink type-switch stays uniform. One wrapper suffices: all external trades take the same
+// InsertTrade path and canonical.Trade.Source names the venue.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
