@@ -132,9 +132,9 @@ expect_not "workflow -> lint-actions-pinning is NOT scoped to the changed file" 
 # The sigpipe gate gets the workflows DIRECTORY appended after the changed
 # pipefail scripts, not the changed workflow file. The trailing "   (" is
 # the start of the step note, so it proves the argument ENDED at the
-# directory. Before this row nothing sent .yml to the gate at all: a commit
-# touching six workflow files ran it as "0 pipefail run: block(s) in 0
-# workflow file(s)", blind to the class that failed the v0.69.0 deploy.
+# directory. Without this row nothing sends .yml to the gate: a commit
+# touching six workflow files would run it as "0 pipefail run: block(s) in 0
+# workflow file(s)", blind to the sigpipe class.
 expect_has "workflow -> lint-shell-sigpipe over the workflows DIRECTORY, after the scripts" "lint-shell-sigpipe.sh scripts/dev/verify.sh tools/run.sh .github/workflows   (" "$out"
 if command -v actionlint >/dev/null 2>&1; then
     expect_has "workflow -> actionlint with embedded shellcheck off" "actionlint -shellcheck= .github/workflows/w.yml" "$out"

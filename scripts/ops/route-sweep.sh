@@ -38,8 +38,7 @@ SPEC="${SPEC:-openapi/stellar-index.v1.yaml}"
 # subscript is evaluated arithmetically, undefined names become 0, so all
 # entries collapse onto index 0 and every lookup returns the LAST value.
 # The sweep then requests the same nonsense id for every route and the
-# 4xx column is pure noise — which is exactly what happened on the first
-# two runs before this was caught. `case` works everywhere.
+# 4xx column is pure noise. `case` works everywhere.
 #
 # Per-key rationale:
 #   pool        - a Blend/Phoenix pool contract id

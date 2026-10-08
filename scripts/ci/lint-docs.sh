@@ -1231,9 +1231,8 @@ if [ -f Makefile ] && [ -f "$DEV_COMPOSE" ]; then
   done
 fi
 
-# (c) README's "Self-hostable." has to lead somewhere. Before this check the
-# guide was linked from exactly one file in the tree (docs/getting-started.md)
-# and never from the README that makes the claim.
+# (c) README's "Self-hostable." has to lead somewhere: the README that makes
+# the claim must link the guide, not only docs/getting-started.md.
 if [ -f README.md ] && ! grep -q "operations/self-hosting.md" README.md; then
   err "README.md advertises the project as self-hostable but never links $SELF_HOSTING — a reader who takes the claim seriously has nowhere to go. Link it from the 'Start here' list."
 fi

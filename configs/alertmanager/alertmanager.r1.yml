@@ -27,12 +27,10 @@
 # notification kills the receiver for every alert routed to it, not just
 # the one that overflowed.
 #
-# That is not hypothetical. On 2026-09-07T14:28 reflector-dex stalled,
-# 22 stellarindex_oracle_stale alerts landed in one group, the then
-# unbounded `range .Alerts` rendered a 9319-character description, and
-# chat-default returned 400 on every attempt for 11 hours
-# (alertmanager_notifications_failed_total{integration="discord"} = 107).
-# Every other ticket alert in that window was silently dropped with it.
+# That is not hypothetical: an unbounded `range .Alerts` over a 22-alert
+# group renders a ~9300-character description, and the receiver then
+# returns 400 on every attempt, silently dropping every other ticket alert
+# routed to it (alertmanager_notifications_failed_total{integration="discord"}).
 #
 # So both message templates render AT MOST `$max` alerts, state the
 # remainder, and cap every interpolated field with `printf "%.Ns"`. The

@@ -5,8 +5,8 @@
 # popular by MARKET-CHARACTER volume (single-account-pair wash excluded, so
 # a volume-painting scam farm cannot self-select in) yet have NO served
 # price and NO recorded withheld verdict — an unexplained pricing-coverage
-# gap. Before this tripwire such gaps waited for an operator to notice
-# USDC-quoted assets rendering priceless while browsing /assets; now they
+# gap. Without this tripwire such gaps wait for an operator to notice
+# USDC-quoted assets rendering priceless while browsing /assets; instead they
 # page a ticket. Analytics-adjacent, not an SLO: ticket severity.
 
 groups:

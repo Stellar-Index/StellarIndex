@@ -150,7 +150,7 @@ allowed_count="$(wc -l < "$allowed_file" | tr -d ' ')"
 # ── The PLAY RECAP ───────────────────────────────────────────────────
 # Only lines AFTER the `PLAY RECAP` banner are recap lines; a `--diff`
 # hunk can contain the literal text `changed=` and must not be read as
-# one (the pre-fix gate grepped the whole file).
+# one, so the recap is parsed from the banner onward only.
 recap_lines="$(awk '/^PLAY RECAP/ {inrecap=1; next} inrecap && /changed=[0-9]+/ {print}' "$DRIFT_OUT")"
 
 if [ -z "$recap_lines" ]; then

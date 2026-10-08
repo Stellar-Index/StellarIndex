@@ -4,9 +4,9 @@
 #
 # DEPLOY_APPROVAL_RELAXED=true lets the gated workflows skip the
 # required-reviewers assertion (never the main-only branch policy)
-# while r1 carries no production traffic. Pre-fix, that relaxation had
-# no expiry: the repo variable could be flipped on once and forgotten
-# forever, and nothing in the repo would notice or alarm. This script
+# while r1 carries no production traffic. Without an expiry, the repo
+# variable could be flipped on once and forgotten forever, and nothing in
+# the repo would notice or alarm. This script
 # is the single place they ask "is the relaxation still valid?" (via
 # assert-deploy-gate.sh), paired with a companion repo variable,
 # DEPLOY_APPROVAL_RELAXED_UNTIL (an ISO-8601 date, e.g. 2026-10-01):

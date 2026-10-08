@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Self-test for provision-vms.sh's idempotency guard and image-checksum
-# verification (Q272, T476).
+# verification.
 #
-# Before the fix, create_vm() ran `lvcreate ... 2>/dev/null || true`
-# (swallowing an already-exists error) followed by an unconditional
-# `qemu-img convert` onto /dev/vg0/$lv — re-running the script against an
-# already-provisioned VM clobbered its block device, live or not. The
-# script also wget'd the base image with no checksum/signature check at
-# all. Both cases are proven here by pointing the script at fake
+# create_vm() must not swallow an lvcreate already-exists error and then
+# `qemu-img convert` onto /dev/vg0/$lv — that would clobber the block
+# device of an already-provisioned VM, live or not. The base image must
+# also be checksum/signature-verified after download. Both are proven here by pointing the script at fake
 # IMAGES_DIR/VG_DEVICE_DIR trees and a stub PATH, never real libvirt/LVM.
 
 set -uo pipefail

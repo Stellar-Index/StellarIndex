@@ -162,9 +162,9 @@
 # cadence, same operator), and the repo2 vars it should ride along with
 # are already in scope here.
 #
-# Nothing existed for §2.1 before this — the lake had DDL in
-# deploy/clickhouse/tier1_schema.sql (the FOUNDING schema, since
-# outgrown by indexes, MVs and compression policies) and nothing else.
+# For §2.1 the lake's only DDL is deploy/clickhouse/tier1_schema.sql
+# (the FOUNDING schema, since outgrown by indexes, MVs and compression
+# policies).
 #
 # On PUBNET the ack is not accepted. ADR-0043's restore is schema-FIRST:
 # the DDL is what a re-derive is replayed into, so in the total-site-loss
