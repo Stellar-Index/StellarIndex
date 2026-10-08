@@ -1749,14 +1749,9 @@ var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// DivergenceReferenceTotal — one increment per (reference, pair)
-// lookup in a divergence refresh, labelled by the reference's Name()
-// and its bounded outcome class (divergence.ReferenceOutcomes: ok,
-// asset_unsupported, price_unavailable, too_stale_to_compare,
-// invalid_price, timeout, overall_deadline_exceeded, panicked, error).
-// DivergenceRefreshTotal is per PAIR and only goes non-ok when EVERY
-// reference fails, so one reference going dark — which can drop a
-// pair below the warning quorum — is visible only here.
+// DivergenceReferenceTotal counts (reference, pair) lookups per divergence refresh by reference Name() and
+// outcome class (divergence.ReferenceOutcomes). DivergenceRefreshTotal goes non-ok only when EVERY reference
+// fails, so one reference going dark, which can drop a pair below the warning quorum, shows only here.
 var DivergenceReferenceTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_divergence_reference_total",
@@ -1800,23 +1795,9 @@ var DivergencePairsOver = prometheus.NewGaugeVec(
 	[]string{"threshold"},
 )
 
-// UsageRollupSweepsTotal — per-outcome counter for the API binary's
-// usage-rollup worker (internal/usage.Rollup), which folds the Redis
-// per-endpoint request counters into the `usage_daily` Timescale
-// hypertable every 5 minutes. Labels:
-//
-//   - `ok`         — sweep completed (including the no-rows case).
-//   - `scan_error` — the Redis SCAN/HGETALL pass failed. Counters
-//     keep accumulating in Redis; nothing is lost yet
-//     (35-day TTL), but /v1/account/usage endpoint rows
-//     stop advancing.
-//   - `sink_error` — the Timescale upsert failed (Postgres
-//     unreachable / migration missing). Same
-//     consequence as scan_error.
-//
-// A sustained non-`ok` rate means the dashboard's per-endpoint
-// usage analytics are going stale — informational severity (the
-// customer-facing pricing surface is unaffected).
+// UsageRollupSweepsTotal counts internal/usage.Rollup sweeps (Redis per-endpoint counters folded into
+// `usage_daily` every 5 min): ok, scan_error (Redis read failed; counters keep accumulating under a 35-day TTL)
+// or sink_error (upsert failed). Sustained non-`ok` means usage analytics go stale; informational, pricing unaffected.
 var UsageRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_usage_rollup_sweeps_total",
@@ -1843,16 +1824,8 @@ const (
 	UsageCounterDetail   = "detail"
 )
 
-// UsageRollupSweepDurationSeconds — latency histogram for one
-// usage-rollup sweep (Redis SCAN + HGETALLs + one batched Timescale
-// upsert), labelled by outcome (matches the counter labels) so
-// operators chart `ok` p95/p99 separately from the fail-fast error
-// paths — "sweep slow" (Redis key population growing, Postgres lock
-// contention) is a different signal from "sweep failing".
-//
-// Buckets span 5 ms → 30 s: a healthy sweep with a handful of
-// active subjects is ≤ 50 ms; hundreds of subjects × two days of
-// hashes plus a slow upsert can reach seconds.
+// UsageRollupSweepDurationSeconds is per-sweep usage-rollup latency by outcome, so "sweep slow" (key growth,
+// lock contention) charts apart from "sweep failing". Buckets 5ms–30s: a healthy sweep is ≤ 50ms.
 var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_usage_rollup_sweep_duration_seconds",
@@ -1862,21 +1835,9 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// ProtocolEventsRollupSweepsTotal — per-sweep outcome counter for the
-// aggregator's protocol-events rollup worker
-// (internal/aggregate/protoeventsrollup), which folds the
-// trailing-24h per-source event census into the protocol_events_24h
-// table so /v1/protocols' events_24h column reads a keyed-on-PK lookup
-// instead of a multi-table UNION count per request. Labels:
-//
-//   - `ok`            — sweep completed; rollup rows upserted + pruned.
-//   - `refresh_error` — the census/upsert transaction failed (Postgres
-//     unreachable, migration 0086 missing). The rollup keeps its
-//     previous rows; /v1/protocols events_24h goes stale, not blank.
-//
-// A sustained `refresh_error` rate means /v1/protocols' activity
-// counters stop advancing — informational severity (the customer-facing
-// pricing surface is unaffected).
+// ProtocolEventsRollupSweepsTotal counts internal/aggregate/protoeventsrollup sweeps, which fold the trailing-24h
+// per-source event census into protocol_events_24h so /v1/protocols' events_24h is a PK lookup. refresh_error
+// keeps the previous rows (stale, not blank); informational, pricing unaffected.
 var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_protocol_events_rollup_sweeps_total",
@@ -1885,14 +1846,8 @@ var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// ProtocolEventsRollupSweepDurationSeconds — latency histogram for one
-// protocol-events rollup sweep (the trailing-24h UNION ALL census over
-// ~17 hypertables + one upsert + one prune), labelled by outcome so
-// operators chart `ok` p95/p99 separately from the fail-fast error path.
-//
-// Buckets span 10 ms → 30 s: the census is the multi-second leg that
-// rollup keeps off the request path, so watching its p95 here is
-// how an operator learns the served-tier census is getting heavier.
+// ProtocolEventsRollupSweepDurationSeconds is per-sweep latency of that census (UNION ALL over ~17 hypertables)
+// by outcome. Buckets 10ms–30s; its p95 is how an operator learns the census is getting heavier.
 var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_protocol_events_rollup_sweep_duration_seconds",
@@ -1902,22 +1857,9 @@ var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AssetVolumeRollupSweepsTotal — per-sweep outcome counter for the
-// aggregator's asset-volume rollup worker
-// (internal/aggregate/assetvolrollup), which folds the trailing-24h
-// per-asset USD-volume SUM over prices_1m (single-sided: base OR quote)
-// into the asset_volume_24h table so the /v1/assets listing reads a
-// keyed-on-PK lookup instead of the ~256k-row per-request scan the
-// latency incident measured (~4.8s cold). Labels:
-//
-//   - `ok`            — sweep completed; rollup rows upserted + pruned.
-//   - `refresh_error` — the sum/upsert transaction failed (Postgres
-//     unreachable, migration 0087 missing). The rollup keeps its
-//     previous rows; the listing's volume_24h_usd goes stale, not blank.
-//
-// A sustained `refresh_error` rate means /v1/assets 24h volumes stop
-// advancing — informational severity (the customer-facing pricing
-// surface is unaffected).
+// AssetVolumeRollupSweepsTotal counts internal/aggregate/assetvolrollup sweeps, which fold the trailing-24h
+// per-asset USD volume over prices_1m into asset_volume_24h, replacing a ~256k-row per-request scan (~4.8s
+// cold). refresh_error keeps the previous rows (stale, not blank); informational, pricing unaffected.
 var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_asset_volume_rollup_sweeps_total",
@@ -1926,15 +1868,8 @@ var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AssetVolumeRollupSweepDurationSeconds — latency histogram for one
-// asset-volume rollup sweep (the trailing-24h base-OR-quote SUM over
-// prices_1m + one upsert + one prune), labelled by outcome so operators
-// chart `ok` p95/p99 separately from the fail-fast error path.
-//
-// Buckets span 50 ms → 60 s: this is the heaviest of the two 24h
-// rollups (an all-asset prices_1m scan), so watching its p95 here is
-// how an operator learns the served-tier volume scan is getting heavier
-// — long before it would have shown up as a slow /v1/assets endpoint.
+// AssetVolumeRollupSweepDurationSeconds is per-sweep latency of that all-asset prices_1m scan by outcome.
+// Buckets 50ms–60s; its p95 shows the scan growing long before /v1/assets slows.
 var AssetVolumeRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_asset_volume_rollup_sweep_duration_seconds",
@@ -1944,24 +1879,9 @@ var AssetVolumeRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AssetCharacterRollupSweepsTotal — per-sweep outcome counter for the
-// aggregator's asset-volume-character rollup worker
-// (internal/aggregate/assetcharacterrollup, wash-and-scam-signals design
-// §2), which folds the trailing-window all-asset account-structure roll
-// over `trades` (each trade counted on BOTH sides, folded onto canonical
-// assets) into the asset_volume_character table so /v1/assets{,/{id}} read
-// a keyed-on-PK lookup instead of the ~4s per-request trades roll (measured
-// 4.09s on the USDC detail, tripping the 4s per-request timeout → null).
-// Labels:
-//
-//   - `ok`            — sweep completed; rollup rows upserted + pruned.
-//   - `refresh_error` — the roll/upsert transaction failed (Postgres
-//     unreachable, migration 0149 missing). The rollup keeps its previous
-//     rows; volume_character goes stale, not blank.
-//
-// A sustained `refresh_error` rate means the volume_character overlay stops
-// advancing — informational severity (pricing/verification are unaffected;
-// the field is analytics-only).
+// AssetCharacterRollupSweepsTotal counts internal/aggregate/assetcharacterrollup sweeps, which fold the
+// trailing-window account-structure roll over `trades` into asset_volume_character, replacing a per-request
+// roll measured at 4.09s (past the 4s timeout, so null). refresh_error keeps the previous rows; analytics-only.
 var AssetCharacterRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_asset_character_rollup_sweeps_total",
@@ -1970,15 +1890,8 @@ var AssetCharacterRollupSweepsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AssetCharacterRollupSweepDurationSeconds — latency histogram for one
-// asset-volume-character rollup sweep (the all-asset trailing-window trades
-// roll + batched upsert + prune), labelled by outcome so operators chart
-// `ok` p95/p99 separately from the fail-fast error path.
-//
-// Buckets span 50 ms → 120 s: this is the heaviest asset rollup (a
-// full-window all-asset `trades` scan with unordered account-pair
-// aggregation), so watching its p95 here is how an operator learns the roll
-// is getting heavier — long before it would surface as a slow endpoint.
+// AssetCharacterRollupSweepDurationSeconds is per-sweep latency of that roll by outcome. Buckets 50ms–120s:
+// the heaviest asset rollup, a full-window all-asset `trades` scan.
 var AssetCharacterRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_asset_character_rollup_sweep_duration_seconds",
@@ -1988,23 +1901,10 @@ var AssetCharacterRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// PriceAlertEvalTotal — per-sweep outcome counter for the aggregator's
-// price-alert evaluator (internal/pricealerts), which
-// checks every enabled price_alerts row against the latest closed 1m
-// VWAP each tick and enqueues account-scoped `price.alert` webhook
-// deliveries when a threshold is crossed. Labels:
-//
-//   - `ok`            — sweep completed cleanly (including the no-rows
-//     and nothing-fired cases).
-//   - `list_error`    — the ListEnabledPriceAlerts read failed; the
-//     whole sweep was skipped and retried next tick.
-//   - `partial_error` — the sweep ran but at least one alert hit a
-//     price-read, parse, or enqueue error. Other alerts in the same
-//     sweep were still evaluated.
-//
-// A sustained `list_error` rate means NO alerts are being evaluated —
-// customers stop getting notified. `partial_error` says only that at
-// least one alert failed; [PriceAlertEvaluatedTotal] says how many.
+// PriceAlertEvalTotal counts internal/pricealerts sweeps (enabled price_alerts checked against the latest
+// closed 1m VWAP, `price.alert` webhooks enqueued on a crossing): ok, list_error (whole sweep skipped, so NO
+// alerts are evaluated and customers stop being notified) or partial_error (≥1 alert failed; others ran;
+// [PriceAlertEvaluatedTotal] says how many).
 var PriceAlertEvalTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_eval_total",
@@ -3238,21 +3138,9 @@ var SupplyWriteBandBreachTotal = prometheus.NewCounterVec(
 	[]string{"asset_key", "direction"},
 )
 
-// AggregatorSupplyRefreshDurationSeconds — latency histogram for
-// the supply.Refresher.Tick call per supply-refresh cycle. Pairs
-// with the per-asset_key counter above; this metric labels by
-// outcome only (NOT asset_key) to keep cardinality manageable
-// when many assets are watched.
-//
-// Tick does Postgres reads (ledger lookup + per-component
-// freshness queries) plus a Postgres write (snapshot insert).
-// Steady-state ~50-200 ms; a p99 climb past 1 s typically means
-// the snapshot inserter is contending with another writer or one
-// of the per-component freshness readers fell off its index.
-//
-// Buckets span 10 ms → 30 s. The per-tick log line emitted by
-// supply.Refresher.Tick names the asset; correlate from the
-// histogram + log timestamp when per-asset latency matters.
+// AggregatorSupplyRefreshDurationSeconds is supply.Refresher.Tick latency by outcome only (not asset_key, for
+// cardinality; the per-tick log names the asset). Steady state 50–200ms; p99 past 1s usually means the
+// snapshot insert is contending with another writer or a freshness reader fell off its index.
 var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_aggregator_supply_refresh_duration_seconds",
@@ -3262,26 +3150,10 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// SEP41SupplyRollupAdvancesTotal — counter of sep41_supply_rollup
-// incremental-advance passes (migration 0085).
-// The rollup is what keeps the SEP-41 Algorithm-3 supply reader cheap:
-// each pass folds a contract's newly-settled mint/burn/clawback events
-// into a per-contract running checkpoint so the reader never re-sums
-// the full per-contract history. One increment per (contract_id, tick);
-// labels:
-//
-//   - contract_id: the watched SEP-41 C-strkey being advanced.
-//   - outcome ∈ {ok, noop, no_cursor, error}. `ok` folded new settled
-//     rows; `noop` ran cleanly with nothing new to settle (steady state
-//     for a dormant token); `no_cursor` folded nothing because the
-//     projector's sep41_supply cursor row is absent, so the fold is
-//     pinned and reads take the full-history scan; `error` is a failed
-//     advance (Postgres issue).
-//
-// Sustained `error` for a contract means its checkpoint is frozen and
-// the reader is silently back on the slow full-sum fallback for that
-// contract — correlate with a p99 climb on
-// `stellarindex_aggregator_supply_refresh_duration_seconds`.
+// SEP41SupplyRollupAdvancesTotal counts sep41_supply_rollup advances per (contract_id, tick); the checkpoint
+// keeps the Algorithm-3 reader off a full-history re-sum. outcome: ok, noop (nothing new), no_cursor (projector
+// cursor row absent, so reads take the full scan) or error. Sustained `error` means that contract's reader is
+// silently on the slow fallback; check stellarindex_aggregator_supply_refresh_duration_seconds p99.
 var SEP41SupplyRollupAdvancesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sep41_supply_rollup_advances_total",
@@ -3290,18 +3162,9 @@ var SEP41SupplyRollupAdvancesTotal = prometheus.NewCounterVec(
 	[]string{"contract_id", "outcome"},
 )
 
-// SEP41SupplyRollupAdvanceDurationSeconds — latency histogram for one
-// AdvanceSEP41SupplyRollup pass. Pairs with the per-contract counter
-// above; labelled by outcome only (NOT contract_id) to keep cardinality
-// bounded across deployments watching many contracts.
-//
-// Steady-state is sub-second (a bounded tail sum on the
-// (contract_id, ledger DESC) index). The one exception is a cold
-// contract's FIRST fold — that pass sums the whole per-contract history
-// once and can take seconds→minutes on a hundreds-of-millions-row
-// table; every subsequent pass is incremental. A sustained high p99
-// after warm-up means the tail delta stopped being bounded (worker
-// starved / checkpoint not advancing).
+// SEP41SupplyRollupAdvanceDurationSeconds is per-pass latency by outcome only (not contract_id, for
+// cardinality). Sub-second steady state; a cold contract's first fold can take minutes once. Sustained high
+// p99 after warm-up means the tail delta stopped being bounded (worker starved, checkpoint stuck).
 var SEP41SupplyRollupAdvanceDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_sep41_supply_rollup_advance_duration_seconds",
@@ -3311,24 +3174,10 @@ var SEP41SupplyRollupAdvanceDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AggregatorConfidenceComputeTotal — counter of confidence-score
-// compute outcomes per (pair, window) per tick (ADR-0019 §"Multi-
-// factor confidence score"). Outcome labels:
-//
-//   - ok                       — score computed + cached cleanly
-//   - skipped                  — first-tick / no prev-VWAP comparator
-//   - baseline_missing         — MultiBaseline absent or in full bootstrap
-//   - baseline_stale           — baseline row older than the one-day ceiling; read as bootstrap
-//   - marshal_error           — score JSON encode failed (unreachable in practice)
-//   - write_error              — Redis write of confidence: key failed
-//   - divergence_read_error    — Redis Get on div:<asset> errored (best-effort; sentinel passed)
-//   - divergence_decode_error  — div:<asset> JSON decode failed
-//
-// `skipped` and `baseline_missing` are normal during pair bring-up;
-// `ok` should dominate in steady state. divergence_* errors are
-// non-fatal (the confidence step continues with the "no data"
-// sentinel) but sustained rates indicate the divergence worker /
-// Redis is misbehaving.
+// AggregatorConfidenceComputeTotal counts confidence-score outcomes per (pair, window) per tick (ADR-0019):
+// ok, skipped, baseline_missing, baseline_stale, marshal_error, write_error, divergence_read_error,
+// divergence_decode_error. skipped and baseline_missing are normal at bring-up; divergence_* are non-fatal
+// (the "no data" sentinel is used) but sustained means the divergence worker or Redis is misbehaving.
 var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_confidence_compute_total",
@@ -3423,24 +3272,9 @@ var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 	[]string{"chunk_idx", "reason"},
 )
 
-// PostgresPingTotal — counter of resilience probes the indexer's
-// `watchPostgresPing` goroutine fires (every 60 s) against the
-// Timescale pool. Outcome label is `ok` for a successful Ping and
-// `error` for any failure mode (timeout, connection refused, dead
-// pool, network blip).
-//
-// Background: a postgres cascade left the
-// indexer's *sql.DB pool with stale conns AFTER postgres@15-main
-// recovered. Live ingest silently stalled for ~14 h until a manual
-// restart. The pool now retires conns every `PoolConnMaxLifetime`
-// regardless of liveness; this counter is the OBSERVABILITY signal
-// so the next cascade surfaces in minutes via
-// `stellarindex_postgres_ping_failing` instead of hours of silent
-// drift.
-//
-// Alert on `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0`
-// for 2 m → page. A handful of failures during postgres restart is
-// expected; a sustained non-zero rate means the pool is wedged.
+// PostgresPingTotal counts the indexer's 60s watchPostgresPing probes (ok, error). A pool left with stale
+// conns after a postgres recovery once stalled live ingest ~14h silently; this surfaces it in minutes.
+// Alert: `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0` for 2m (a few during restart are expected).
 var PostgresPingTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_postgres_ping_total",
@@ -3449,15 +3283,8 @@ var PostgresPingTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// PostgresPingFailureStreak — gauge tracking the consecutive
-// failed-ping count. Resets to 0 on a successful ping. Used by the
-// indexer's resilience goroutine to log a structured warning at
-// every 3-failure threshold, and exposed so dashboards can chart
-// the live streak length alongside the cumulative
-// [PostgresPingTotal].
-//
-// Pair with the rate-based alert: a sustained streak > 0 for >2 m
-// is the page signal.
+// PostgresPingFailureStreak is the consecutive failed-ping count, reset on success; a streak > 0 for > 2m
+// is the page signal beside [PostgresPingTotal].
 var PostgresPingFailureStreak = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_postgres_ping_failure_streak",
@@ -3465,24 +3292,9 @@ var PostgresPingFailureStreak = prometheus.NewGauge(
 	},
 )
 
-// TLSCertNotAfterUnix — per-host gauge of the public TLS cert's
-// NotAfter timestamp (Unix seconds). Set by the API binary's
-// self-probe goroutine on a 6 h cadence: a `tls.Dial(host:443)`
-// captures the cert chain, the leaf's NotAfter is emitted here.
-//
-// Caddy auto-renews Let's Encrypt 30 d
-// before expiry, but if renewal fails (DNS, rate limit, ACME
-// quota) we would discover it only at cert expiry. This
-// gauge gives the alert rule a producer: fire on
-// `(TLSCertNotAfterUnix - time()) < 14*24*3600` to catch a stuck
-// renewal cycle with 2-week head room.
-//
-// Cardinality: one host per series; the operator-curated list is
-// typically the apex + 1–2 subdomains (api / status). Probe
-// failures DO NOT clear the gauge — the last-known value stays in
-// place until the next successful probe, so a transient outage
-// doesn't blank the alert input. Separate counter
-// [TLSCertProbeTotal] tracks probe outcome.
+// TLSCertNotAfterUnix is the public cert's NotAfter per host, from the API's 6h tls.Dial self-probe, so a
+// stuck Caddy renewal (DNS, rate limit, ACME quota) alerts at `< 14*24*3600` instead of at expiry. Failed
+// probes keep the last value so an outage does not blank the alert input; [TLSCertProbeTotal] counts outcomes.
 var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_tls_cert_not_after_unix",
@@ -3505,37 +3317,10 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 	[]string{"host", "outcome"},
 )
 
-// AdminAuditWriteFailuresTotal — counter of privileged mutations (and
-// privileged PII READS) that COMPLETED but whose durable
-// audit row did not land.
-//
-// Every one of these call sites appends to the audit log best-effort and
-// logs a bare `logger.Warn("… audit append failed (best-effort)")`. The
-// mutation itself is already committed by then, so the choice is correct —
-// refusing the write after the fact would be worse — but it means a
-// money/security change to a customer's account can happen with NO durable
-// record, and until this counter existed the only trace was one WARN line
-// nobody greps for.
-//
-// This is the accountability counterpart to the mutation succeeding: a
-// non-zero reading means the admin audit trail is incomplete and the gap
-// has to be reconstructed from application logs before the retention window
-// closes on them. Any sustained non-zero value is alertable.
-//
-// Labels:
-//   - surface: which privileged action lost its audit row
-//     (account_override|key_mint|key_revoke|status_notice|
-//     staff_customer_lookup|admin_account_read|passkey_register|
-//     passkey_delete|passkey_clone_warning|passkey_login_replay)
-//
-// `staff_customer_lookup` and `admin_account_read` are the READS in the
-// set: the staff customer look-up returns another customer's billing email
-// plus every user's email and last-login, and the operator
-// account read returns the billing email, so the audit row is the only
-// record that someone saw it.
-//
-// Bounded, well-known label set — pre-seeded so the alert's increase()
-// reads a real zero rather than "no data" before the first failure.
+// AdminAuditWriteFailuresTotal counts privileged mutations, and privileged PII reads, that completed but
+// whose audit row did not land (appends are best-effort after commit). Non-zero means a money/security change
+// or a look at another customer's email has no durable record; reconstruct from logs before their retention
+// closes. Alertable; `surface` is a bounded, pre-seeded set so increase() reads a real zero.
 var AdminAuditWriteFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_admin_audit_write_failures_total",
@@ -3600,26 +3385,9 @@ const (
 	FailedAuthThrottled = "throttled"
 )
 
-// AdminKeyBudgetClampsTotal — counter of API credentials whose per-minute
-// budget was lowered to their account's tier ceiling by
-// `Server.clampKeyBudgetsToTier` (the admin account-override path
-// funnels through it).
-//
-// A clamp silently reduces throughput a customer may still believe they
-// have: their existing key keeps working but starts 429-ing sooner, and the
-// only prior trace was an INFO line per account. Downgrades are legitimate
-// and expected — this is deliberately NOT alerted — but the rate is what
-// tells an operator whether a support ticket ("my key started rate-limiting")
-// has a billing explanation, and it is what makes an accidental mass-clamp
-// (a bad tier map, a mis-sequenced webhook) visible at all.
-//
-// Labels:
-//   - outcome: `lowered` — the credential's budget was written down;
-//     `failed`  — the downgrade errored and the key KEPT its old, higher
-//     budget (paid throughput still live past the downgrade).
-//
-// Counts CREDENTIALS, not clamp calls: one account downgrade lowering four
-// keys adds 4. Pre-seeded on both outcomes.
+// AdminKeyBudgetClampsTotal counts CREDENTIALS whose per-minute budget `Server.clampKeyBudgetsToTier` lowered
+// to the tier ceiling (one downgrade lowering four keys adds 4): `lowered`, or `failed` (the key KEPT its higher
+// paid budget). Not alerted, downgrades are legitimate; it explains "my key started 429-ing" and exposes a mass-clamp.
 var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_admin_key_budget_clamps_total",
@@ -3628,19 +3396,9 @@ var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// MintScopeClampRefusedTotal counts mint requests `clampMintToCaller`
-// refused because they asked for more scope or rate limit than the
-// minting credential itself holds. The refusal is already a
-// 403 plus a WARN log line, but a scope-narrowed key probing for
-// privilege escalation left NO telemetry an alert could fire on — the
-// log line is only found after the fact, by someone already looking.
-//
-// Labelled by route, not actor: both mint paths (POST /v1/admin/keys,
-// POST /v1/account/keys) funnel through the same chokepoint, and the
-// route tells an operator which surface to go looking at without
-// admitting an unbounded actor identifier into the label set.
-//
-// Bounded set of two; pre-seeded.
+// MintScopeClampRefusedTotal counts mints `clampMintToCaller` refused for asking more scope or rate limit than
+// the minting credential holds: the alertable trace of a narrowed key probing for escalation. Labelled by
+// route (two, pre-seeded), never actor, to keep the label set bounded.
 var MintScopeClampRefusedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_mint_scope_clamp_refused_total",
@@ -3649,25 +3407,10 @@ var MintScopeClampRefusedTotal = prometheus.NewCounterVec(
 	[]string{"route"},
 )
 
-// ChLiveSinkLedgersTotal — count of ledgers processed by the
-// ClickHouse real-time dual-sink (ADR-0041), labelled by
-// `outcome`:
-//   - "written"  — durably flushed to ClickHouse (post-Flush).
-//   - "buffered" — accepted into the in-memory buffer (pre-flush);
-//     written - buffered ≈ the unflushed backlog and is the
-//     early-warning signal of a CH write stall.
-//   - "dropped"  — bounded-dropped: a full channel (live ingest
-//     out-paced the worker) or a full Sink buffer during a
-//     sustained CH outage (G12-01). The ch-live-catchup gap-scan
-//     timer heals dropped ledgers; a steady non-zero climb means
-//     the live edge of the lake is degrading.
-//   - "errored"  — a failed Add / Flush operation. A climb is a
-//     CH write-path fault (down / wedged / disk-full).
-//
-// The indexer's periodic stats goroutine samples the LiveSink's
-// monotonic counters and emits the per-tick DELTA. Pre-seeded with
-// all four label values so the series exist at boot when the sink
-// is enabled.
+// ChLiveSinkLedgersTotal counts ledgers through the ClickHouse live dual-sink (ADR-0041): written (flushed),
+// buffered (written − buffered ≈ unflushed backlog, early warning of a CH stall), dropped (full channel or
+// buffer; healed by the ch-live-catchup gap scan, but a steady climb degrades the lake's live edge) or errored
+// (CH write fault). Emitted as per-tick deltas; all four pre-seeded.
 var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_ledgers_total",
