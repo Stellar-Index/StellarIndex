@@ -4,7 +4,7 @@
 # unpredictably with the repo's default-drop base chain. On HA-dedicated log_aggregator hosts
 # the role now owns the whole-host firewall.
 #
-# SL12: loki_internal_cidrs / loki_allowed_ssh_cidrs entries containing
+# loki_internal_cidrs / loki_allowed_ssh_cidrs entries containing
 # ':' were rendered into ipv4_addr-only sets, so an IPv6 CIDR silently
 # dropped out of the ruleset instead of being enforced. Mirror ipv6_addr
 # sets fix that.

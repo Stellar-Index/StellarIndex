@@ -26,7 +26,7 @@ sentinel monitor {{ redis_sentinel_master_name }} {{ redis_effective_primary_hos
 
 sentinel auth-pass {{ redis_sentinel_master_name }} {{ redis_password }}
 {% if redis_acl_lockdown | bool %}
-# SL03: under lockdown the primary's `default` user is off, so a
+# Under lockdown the primary's `default` user is off, so a
 # username-less AUTH (what `auth-pass` alone sends) is rejected and
 # Sentinel can't monitor the primary at all. `auth-user` names the
 # dedicated `sentinel` ACL user (users.acl.j2) to authenticate as

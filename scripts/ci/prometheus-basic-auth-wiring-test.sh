@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prometheus-basic-auth-wiring-test.sh — regression test for T643.
+# prometheus-basic-auth-wiring-test.sh — regression test for Prometheus/Alertmanager basic-auth wiring.
 #
 # prometheus_listen/alertmanager_listen bind 0.0.0.0 by design (peer
 # Prometheuses scrape/deliver cross-host — see defaults/main.yml), and
@@ -61,9 +61,11 @@ cat >"$TMPD/play.yml" <<EOF
     prometheus_data_dir: /var/lib/prometheus
     prometheus_retention_days: 30
     prometheus_retention_size: "0"
+    prometheus_port: 9090
     prometheus_listen: "0.0.0.0:9090"
     alertmanager_user: alertmanager
     alertmanager_group: alertmanager
+    alertmanager_port: 9093
     alertmanager_listen: "0.0.0.0:9093"
     alertmanager_cluster_listen_port: 9094
     prometheus_basic_auth_password_hash: "{{ prom_hash }}"
