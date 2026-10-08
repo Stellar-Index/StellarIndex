@@ -850,7 +850,7 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 
 		hashdbVerifyStop, hashdbVerifyDone := startHashDBVerifier(
-			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg, archiveCfg,
+			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg,
 			&hashdbLastAppended, logger.With("component", "hashdb-verify"),
 		)
 		defer func() {
@@ -2583,7 +2583,6 @@ func startHashDBVerifier(
 	hcfg config.HashDBConfig,
 	verifyDB *hashdb.DB,
 	lsCfg ledgerstream.Config,
-	archiveCfg ledgerstream.Config,
 	lastAppended *atomic.Uint32,
 	logger *slog.Logger,
 ) (context.CancelFunc, <-chan struct{}) {
@@ -2626,7 +2625,7 @@ func startHashDBVerifier(
 		for {
 			select {
 			case <-ticker.C:
-				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, archiveCfg, lastAppended, window, seenDrifted, time.Now().UnixNano())
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window, seenDrifted)
 			case <-ctx.Done():
 				return
 			}
@@ -2676,8 +2675,7 @@ func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]s
 	return newly
 }
 
-// hashDBVerifyPass (window: hashDBWindowRecent|hashDBWindowHistory, the
-// runs-counter label) runs one bounded hashdb verify pass over an explicit
+// hashDBVerifyPass (window: the runs-counter label) runs one bounded hashdb verify pass over an explicit
 // [from, to] ledger range and records/logs its outcome. It is separate
 // from hashDBVerifySweep so the same pass can run either off the live
 // tip's trailing window (hashDBVerifySweep's job) OR over an

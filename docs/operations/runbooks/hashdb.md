@@ -22,7 +22,6 @@ journalctl -u stellarindex-indexer --since "-2h" | grep -E "hashdb (DRIFT DETECT
 
 - [`stellarindex_hashdb_drift_detected`](#stellarindex_hashdb_drift_detected)
 - [`stellarindex_hashdb_verify_failing`](#stellarindex_hashdb_verify_failing)
-- [`stellarindex_hashdb_history_verify_failing`](#stellarindex_hashdb_history_verify_failing)
 - [`stellarindex_hashdb_verify_stale`](#stellarindex_hashdb_verify_stale)
 - [`stellarindex_hashdb_append_failing`](#stellarindex_hashdb_append_failing)
 
@@ -81,18 +80,6 @@ sum(rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome=~"error|o
 - **An in-window object was rewritten to bytes that no longer XDR-decode, or deleted.** Potentially the tamper class, not blindness. The sweep streams strictly (missing objects are errors) and aborts at the first bad object; later ledgers in the window went unverified. A decode failure or "object … is missing" naming an already-ingested ledger (not mid-catch-up) warrants the three-way comparison above. If drift was tallied before the stream error, the run records `outcome="drift"` (stream error attached to the log), not `error`.
 
 Diagnose: `journalctl -u stellarindex-indexer | grep -E "hashdb verify sweep (failed|incomplete)"` (WARN includes the error; `incomplete` = stream ended early without error, or no ledger in the window had a recorded baseline: triage like a missing object). Fix the connectivity/disk cause; the sweep retries every `verify_interval_minutes` with no operator action. If the error names a specific in-window object, escalate per the drift section.
-
-## stellarindex_hashdb_history_verify_failing
-
-Trips:
-```
-sum(increase(stellarindex_hashdb_verify_runs_total{window="history",outcome="error"}[6h])) > 0
-unless
-sum(increase(stellarindex_hashdb_verify_runs_total{window="history",outcome=~"ok|drift"}[6h])) > 0
-```
-`for: 30m`. Each sweep also re-verifies a random 1000-ledger slice of pre-window history from the archive bucket (`window="history"`); this means 6h (6 hourly sweeps) with at least one error and no ok/drift. `hashdb_verify_failing` cannot see it (the healthy recent window's ok runs mask it). Find the slice in the indexer log (`slice=history`, with `seed`, `from`, `to`), then re-run it:
-`stellarindex-indexer -config /etc/stellarindex.toml -verify-hashdb-from FROM -verify-hashdb-to TO`.
-Usual causes: archive bucket unreachable or missing objects for that range, or no ledger in the slice has a recorded baseline.
 
 ## stellarindex_hashdb_verify_stale
 

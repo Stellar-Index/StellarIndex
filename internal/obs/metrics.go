@@ -5303,7 +5303,7 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 )
 
 // HashdbVerifyRunsTotal — per-outcome counter for the indexer's
-// periodic hashdb verify sweep; `window` is recent|history (re-reads a trailing window from the
+// periodic hashdb verify sweep; `window` is recent (re-reads a trailing window from the
 // same galexie bucket and compares against hashdb; see
 // internal/archivecompleteness.HashDBWindowVerifier). Labels:
 //
@@ -5322,7 +5322,7 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 var HashdbVerifyRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_hashdb_verify_runs_total",
-		Help: "Indexer periodic hashdb verify-sweep outcomes, labelled by outcome (ok|drift|error) and window (recent|history).",
+		Help: "Indexer periodic hashdb verify-sweep outcomes, labelled by outcome (ok|drift|error) and window (recent).",
 	},
 	[]string{"outcome", "window"},
 )
