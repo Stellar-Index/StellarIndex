@@ -345,7 +345,7 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 //     "native"): keys are asset_id/code/issuer/..., kind="stellar_asset".
 // When the response is a GlobalAssetView shape, return null so the
 // page routes to VerifiedCurrencyView via the !coin branch. The
-// discriminator is `kind` (ADR-0042 LC-040), not `asset_id` truthiness.
+// discriminator is `kind` (ADR-0042), not `asset_id` truthiness.
 // `data.kind` is widened to `string` before the comparison: the
 // generated type narrows it to the literal "stellar_asset" (this is
 // the Asset schema), but at runtime this endpoint can hand back a

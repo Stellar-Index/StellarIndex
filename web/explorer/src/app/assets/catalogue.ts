@@ -52,7 +52,7 @@ async function fetchCatalogue(): Promise<Map<string, GlobalAssetView>> {
       // has no `kind` field of its own — that endpoint isn't part of
       // the /v1/assets/{asset_id} dual-shape oneOf). Stamping
       // "catalogue" here is correct by construction: every value in
-      // this map IS the catalogue-identity shape (ADR-0042 LC-040).
+      // this map IS the catalogue-identity shape (ADR-0042).
       kind: 'catalogue',
       ticker: item.ticker,
       slug: item.slug,

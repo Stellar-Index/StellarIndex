@@ -18,7 +18,7 @@
 
 all:
   vars:
-    # Supply-chain checksums (F-1291/F-1293 — role asserts fail-fast
+    # Supply-chain checksums (the role asserts fail-fast
     # without these; same pinned versions across every pubnet region).
     minio_release_sha256:               "5025057c694f6623c3601be7a81de7639920f96930998085b239590496ecc4e8"
     mc_release_sha256:                  "ebc6ee59019a7c82bbfdd7d0ae47658cc44fc90075d5bcbe4128766543f3c3cc"

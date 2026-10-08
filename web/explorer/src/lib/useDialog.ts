@@ -18,8 +18,7 @@ const FOCUSABLE = [
 ].join(',');
 
 /**
- * useDialog wires the WCAG modal-dialog contract that every reveal/drawer was
- * missing (LC-050 / LC-051):
+ * useDialog wires the WCAG modal-dialog contract into every reveal/drawer:
  *
  *  - **Escape** closes the dialog.
  *  - **Focus moves in** when it opens (first focusable, else the container).

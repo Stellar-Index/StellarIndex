@@ -39,7 +39,7 @@ DURATION="${SLA_PROBE_DURATION:-30s}"
 # is well above any realistic customer cadence; it tripped both
 # the operator-tier rate limit (returning 429s → fake availability
 # fail) AND saturated the API's request path itself (p95 climbed
-# to ~3.8s under the load — the F-1311 false-positive). At
+# to ~3.8s under the load — a false positive). At
 # concurrency=1 the probe samples at ~800 req over 30s which
 # stresses the closed-bucket lookup enough to surface real
 # regressions without overwhelming a single-instance deployment.
