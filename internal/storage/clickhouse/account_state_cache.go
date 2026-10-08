@@ -10,24 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountStateCacheTTL bounds how long a cached account state is served.
-//
-// Account balances change, but a detail view tolerates seconds of
-// staleness, and this is deliberately short. The point of the cache is not
-// long-lived freshness — it is to break the contention spiral (site-audit
-// follow-up): AccountState reads stellar.ledger_entries_current (4.2B rows)
-// with a FINAL scan that, though it uses the account_id bloom index and is
-// ~0.4s in isolation, balloons to the 8s handler ceiling when many detail
-// requests (a crawler, a static-export build, a burst of users) run
-// concurrently under the bounded 2-thread api_serving profile. Serving
-// repeat views from cache both returns them instantly AND cuts the number
-// of concurrent scans, so the scans that DO run stay fast.
+// AccountStateCacheTTL bounds how long a cached account state is served. Deliberately short:
+// the cache exists to break contention, not for freshness. AccountState FINAL-scans
+// ledger_entries_current (4.2B rows; ~0.4s alone) but balloons to the 8s handler ceiling when
+// many detail requests run concurrently under the 2-thread api_serving profile. Cache hits
+// also cut concurrent scans.
 const AccountStateCacheTTL = 30 * time.Second
 
-// accountStateCacheMax bounds resident entries. Account detail is
-// long-tail — a handful of hot accounts (large issuers, the burn address)
-// plus a churn of one-off lookups — so a modest cap holds the hot set while
-// capping memory. On overflow the oldest entry is evicted.
+// accountStateCacheMax bounds resident entries: a few hot accounts plus one-off churn. On
+// overflow the oldest entry is evicted.
 const accountStateCacheMax = 4096
 
 type accountStateEntry struct {
@@ -44,14 +35,10 @@ func newAccountStateCache() *accountStateCache {
 	return &accountStateCache{entries: make(map[string]accountStateEntry)}
 }
 
-// get returns the cached state whenever one exists — INCLUDING past the
-// TTL (fresh=false). Staleness is the CALLER's judgment:
-// treating an expired entry as a hard miss meant a whale
-// account whose scan outruns the request budget was warm for only the
-// 30s after each detached fill and 503'd the rest of the time — the
-// same failure shape the wealth cache fixed. ok=false only
-// when the account was never computed. Nil-safe (a zero-value reader in
-// tests behaves as a permanent miss).
+// get returns the cached state whenever one exists, past the TTL too (fresh=false); staleness
+// is the caller's judgment. An expired entry as a hard miss left a whale account (scan outruns
+// the budget) warm only briefly after each fill and 503 otherwise. ok=false only when never
+// computed. Nil-safe: a zero-value reader is a permanent miss.
 func (c *accountStateCache) get(account string) (st AccountState, ok, fresh bool) {
 	if c == nil {
 		return AccountState{}, false, false
@@ -72,8 +59,7 @@ func (c *accountStateCache) put(account string, st AccountState, now time.Time) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.entries) >= accountStateCacheMax {
-		// Evict the oldest entry (approximate LRU — good enough for a
-		// bound, and cheap: one pass only when at capacity).
+		// Evict the oldest entry (approximate LRU: one pass, only at capacity).
 		var oldestKey string
 		var oldestAt time.Time
 		for k, e := range c.entries {
@@ -86,48 +72,31 @@ func (c *accountStateCache) put(account string, st AccountState, now time.Time) 
 	c.entries[account] = accountStateEntry{state: st, cachedAt: now}
 }
 
-// accountStateRefreshTimeout bounds one detached account-state scan. The
-// same 3-minute ceiling as the other detached explorer refreshes; a whale
-// account's UNION arms measured well past the 8s request budget, which is
-// exactly why the scan cannot be request-scoped (see below).
+// accountStateRefreshTimeout bounds one detached scan: the 3-minute ceiling of the other
+// detached refreshes; a whale account's UNION arms run well past the 8s request budget.
 const accountStateRefreshTimeout = 3 * time.Minute
 
-// errAccountStateRefreshFailed is returned to waiters when the detached
-// scan finished without producing a cacheable state (the underlying error
-// was reported through the wealth-refresh error hook, the reader's only
-// logging seam).
+// errAccountStateRefreshFailed is returned to waiters when the detached scan produced no
+// cacheable state (the error went through the wealth-refresh error hook, the only log seam).
 var errAccountStateRefreshFailed = errors.New(
 	"clickhouse: detached account-state refresh produced no entry")
 
-// AccountStateCached serves account state from the TTL cache; on a miss it
-// kicks ONE DETACHED scan per account and waits bounded by the CALLER's
-// deadline only. This is the method the API detail handlers should call —
-// see accountStateCache's godoc for why (site-audit follow-up:
-// /v1/accounts/{g} and /v1/issuers/{g} were 6-8s under concurrent load).
-//
-// Detached: the scan must not run on the request
-// context: a whale account whose UNION arms exceed the 8s budget would die
-// WITH the request, the cache would never fill, and every retry would pay the
-// timeout again — a permanent 503 for exactly the accounts people look up.
-// Now the scan runs on its own bounded budget and outlives any caller that
-// gives up; the timed-out request 503s honestly and the retry lands warm.
+// AccountStateCached serves account state from the TTL cache; on a miss it kicks one detached
+// scan per account and waits bounded by the caller's deadline only. Detached because a whale
+// account's scan would otherwise die with the request, the cache never fill, and every retry
+// pay the timeout. The scan runs on its own budget; a timed-out request 503s and the retry
+// lands warm.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
-			// Serve the STALE entry immediately while ONE detached
-			// refresh runs — old-but-real beats a 503, and for a whale
-			// account whose scan outruns the request budget this is the
-			// only way the route answers at all outside the short
-			// post-fill window. The stale bool
-			// lets the handler pair the serve with flags.stale, matching
-			// the wealth ranking's honesty contract.
+			// Serve the stale entry now while one detached refresh runs: old-but-real beats a 503. The
+			// stale bool lets the handler set flags.stale, as for the wealth ranking.
 			r.refreshAccountState(account) //nolint:contextcheck // intentional detach — see refreshAccountState
 		}
 		return st, !fresh, nil
 	}
-	// Not single-flighted across accounts on purpose — distinct accounts
-	// genuinely need distinct scans. Only the exact-same-account burst is
-	// worth collapsing, which the per-account flight handles.
+	// Not single-flighted across accounts: distinct accounts need distinct scans; only the
+	// same-account burst is collapsed, by the per-account flight.
 	fl, saturated := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	select {
 	case <-fl.done:
@@ -135,14 +104,9 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 			return st, false, nil
 		}
 		if saturated || fl.saturated {
-			// The gate was full, so no scan ran and the cache stayed
-			// empty — a transient backpressure condition, NOT a failed
-			// scan. Return the distinct retryable sentinel so the handler
-			// maps it to 503 (retry) instead of 500 (bug); a genuine scan
-			// failure below keeps errAccountStateRefreshFailed → 500.
-			// fl.saturated covers the NON-OWNER that joined a flight the
-			// owner then saturation-skipped — it must not fall through to
-			// the 500 for pure backpressure.
+			// A full gate means no scan ran: transient backpressure, not a failed scan. Return the
+			// retryable sentinel (503) rather than 500; fl.saturated covers a non-owner that joined a
+			// flight the owner then skipped.
 			return AccountState{}, false, ErrRefreshSaturated
 		}
 		return AccountState{}, false, errAccountStateRefreshFailed
@@ -151,29 +115,21 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	}
 }
 
-// refreshAccountState kicks ONE detached scan for account (returning the
-// existing flight's channel while one is up). Detached from any request
-// context on purpose — the whole point is to outlive the request that
-// noticed the miss (see AccountStateCached).
+// refreshAccountState kicks one detached scan for account (returning the existing flight's
+// channel while one is up), outliving the request that noticed the miss.
 //
-// saturated is true only when THIS call owned the flight and the shared
-// refresh gate was full, so the scan was skipped. Non-owners that joined
-// the same flight learn the same outcome from the entry's saturated flag
-// (set by the owner BEFORE end() closes done — the close is the
-// happens-before edge, same pattern as ttlFlight.err) so a
-// saturation-skipped flight reads as retryable backpressure (503) for
-// every waiter, not just the owner.
+// saturated is true only when this call owned the flight and the shared refresh gate was
+// full. Non-owners learn it from the entry's saturated flag, set by the owner before end()
+// closes done (the close is the happens-before edge, as ttlFlight.err), so every waiter reads
+// a skipped flight as retryable backpressure.
 func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {
 		return fl, false
 	}
-	// Global bound across keys: the per-account flight collapses
-	// same-account bursts, but the account space is attacker-chosen
-	// (fabricated G-addresses), so without this gate key churn would queue
-	// one unbounded detached scan per key on the shared explorer pool. On
-	// saturation SKIP — the waiter misses honestly and a later request
-	// re-kicks — never queue (see RefreshGate).
+	// Global bound across keys: the per-account flight collapses same-account bursts, but the
+	// account space is attacker-chosen, so key churn would queue unbounded scans on the shared
+	// pool. On saturation skip, never queue (see RefreshGate).
 	if !r.refreshGate.TryAcquireClass("account_state") {
 		fl.saturated = true // published to waiters by end()'s close
 		r.stateFlight.end(account, fl)
@@ -183,17 +139,13 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 		// end() runs last: a waiter woken by done that re-kicks must find the slot free.
 		defer r.stateFlight.end(account, fl)
 		defer r.refreshGate.ReleaseClass("account_state")
-		// An unrecovered panic in ANY goroutine kills the whole API process;
-		// the account is attacker-chosen, so this scan is reachable with
-		// arbitrary input. Registered last so it unwinds FIRST and the two
-		// releases above then run on a non-panicking stack.
+		// An unrecovered panic in any goroutine kills the API, and the account is attacker-chosen.
+		// Registered last so it unwinds first and the releases above run on a non-panicking stack.
 		defer worker.Recover(nil, "explorer-account-state-refresh")
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()
-		// Watermark read BEFORE the scan (mirrors computeAccountsWealth):
-		// AsOfLedger must never name a ledger later than the state it is
-		// stamped on. An unreadable watermark leaves it 0 rather than
-		// failing a scan that did complete.
+		// Watermark read before the scan (as computeAccountsWealth): AsOfLedger must never exceed
+		// the state it stamps. Unreadable leaves it 0 rather than failing a completed scan.
 		var ledger uint32
 		if wm, _, err := r.LakeWatermark(rctx); err == nil {
 			ledger = wm
@@ -232,9 +184,7 @@ func newPerKeyFlight() *perKeyFlight {
 
 func (f *perKeyFlight) begin(key string) (*stateFlightEntry, bool) {
 	if f == nil {
-		// Test-only readers construct without a flight; a nil done channel
-		// blocks in select until the caller's deadline — the pre-existing
-		// nil-receiver contract.
+		// Test-only readers have no flight; a nil done channel blocks until the caller's deadline.
 		return &stateFlightEntry{}, false
 	}
 	f.mu.Lock()

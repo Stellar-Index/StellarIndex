@@ -12,40 +12,27 @@ import (
 // the API clamps requests to 500, so 500 covers every servable page.
 const holdersRollupTopN = 500
 
-// holdersRollupTimeLayout is the ClickHouse DateTime literal format used to
-// bake a single cycle stamp into every staging INSERT below.
+// holdersRollupTimeLayout is the ClickHouse DateTime literal format for the cycle stamp.
 const holdersRollupTimeLayout = "2006-01-02 15:04:05"
 
-// holdersRollupExchangeStatement is the final, multi-pair EXCHANGE TABLES
-// statement. Swaps all five live tables atomically as a group (RA-2).
-// ClickHouse commits a multi-pair EXCHANGE TABLES as one metadata
-// transaction, so a crash / ctx-cancel / CH restart cannot land midway and
-// leave the board swapped-new while counts/stats/histograms hold the
-// previous cycle's data. It is always the LAST statement holdersRollupStatements
-// returns — every staging arm must be filled before the group swap fires.
+// holdersRollupExchangeStatement is the multi-pair EXCHANGE TABLES swapping all five live
+// tables as one metadata transaction, so a crash cannot leave the board new and counts old.
+// Always the last statement; every staging arm must be filled first.
 const holdersRollupExchangeStatement = `EXCHANGE TABLES stellar.asset_holders_rollup_staging AND stellar.asset_holders_rollup,
                  stellar.asset_holders_counts_staging AND stellar.asset_holders_counts,
                  stellar.accounts_stats_staging AND stellar.accounts_stats,
                  stellar.accounts_wealth_histogram_staging AND stellar.accounts_wealth_histogram,
                  stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`
 
-// holdersRollupStatements builds the full recompute cycle for one run:
-// truncate staging, fill both arms (trustline assets + native XLM from
-// account entries), fill counts, fill the accounts-analytics tables that
-// ride the same cycle, then atomically exchange live↔staging.
+// holdersRollupStatements builds one recompute cycle: truncate staging, fill both arms
+// (trustline assets + native XLM), counts and accounts-analytics, then exchange.
 //
-// Every staging INSERT stamps computed_at with cycleAt explicitly, rather
-// than each table's own `DEFAULT now()` (which would give each of the six
-// inserts below a slightly different timestamp, since they run one after
-// another). All five live tables carry the SAME computed_at once this cycle
-// swaps in — the cycle stamp holdersRollupBoard and AccountsStats compare
-// across their separate read round trips to detect a swap landing mid-read:
-// each read's own timestamps are internally consistent within
-// a cycle, but only a SHARED stamp lets a reader detect that two of its
-// queries landed in different cycles.
+// Every INSERT stamps computed_at with cycleAt, not each table's `DEFAULT now()`, so all
+// five tables share one stamp; readers compare it across round trips to detect a swap
+// landing mid-read.
 func holdersRollupStatements(cycleAt time.Time) []string {
-	// Explicit 'UTC': a bare toDateTime(literal) parses in the server's own
-	// timezone, which would skew the absolute age holdersRollupFresh gates on.
+	// Explicit 'UTC': a bare toDateTime(literal) uses the server timezone and would skew the
+	// age holdersRollupFresh gates on.
 	at := "'" + cycleAt.UTC().Format(holdersRollupTimeLayout) + "', 'UTC'"
 	stmts := []string{
 		`TRUNCATE TABLE stellar.asset_holders_rollup_staging`,
@@ -54,10 +41,8 @@ func holdersRollupStatements(cycleAt time.Time) []string {
 	stmts = append(stmts, holdersBoardSteps(at)...)
 	stmts = append(stmts, holdersCountSteps(at)...)
 	stmts = append(stmts,
-		// ── accounts analytics (deploy/clickhouse/accounts_stats_rollup.sql)
-		// — ride the same cycle; the holders statements above already paid
-		// for the FINAL scans' page cache. top100 reads the STAGING board
-		// (filled earlier in this cycle — statement order is load-bearing).
+		// ── accounts analytics (deploy/clickhouse/accounts_stats_rollup.sql): same cycle.
+		// top100 reads the STAGING board filled earlier, so statement order is load-bearing.
 		`TRUNCATE TABLE stellar.accounts_stats_staging`,
 		`TRUNCATE TABLE stellar.accounts_wealth_histogram_staging`,
 		`TRUNCATE TABLE stellar.accounts_trustline_histogram_staging`,
@@ -67,10 +52,8 @@ func holdersRollupStatements(cycleAt time.Time) []string {
 	return append(stmts, holdersRollupExchangeStatement)
 }
 
-// holdersBoardSteps is the two FINAL scans AssetHolders would otherwise run
-// per-request — trustline assets' per-asset top-N by
-// balance, and native XLM (every account holds it in its AccountEntry) —
-// here run once per cycle instead.
+// holdersBoardSteps is the two FINAL scans AssetHolders would run per request (trustline
+// assets' per-asset top-N, and native XLM), run once per cycle instead.
 func holdersBoardSteps(at string) []string {
 	return []string{
 		`INSERT INTO stellar.asset_holders_rollup_staging (asset, rank, account_id, balance, computed_at)
@@ -183,17 +166,10 @@ func accountsHistogramSteps(at string) []string {
 	}
 }
 
-// holdersRollupShrinkGuardMinRatio is the floor a staging arm's row count may
-// fall to relative to what is CURRENTLY live before RunHoldersRollup refuses
-// to publish it. EXCHANGE TABLES only guarantees the SWAP is atomic (RA-2);
-// it has no opinion on what it is swapping in. ClickHouse can finish a FINAL
-// scan that read far fewer rows than a healthy cycle without returning any
-// error — a merge left mid-flight, a scan silently truncated by
-// max_execution_time on a subset of parts — so a row-count check between the
-// fills and the swap is the only thing standing between a broken cycle and a
-// board published as authoritative. Holder counts move gradually cycle to
-// cycle (30 min); halving would itself be page-one pubnet news, not a normal
-// rollup, so this floor never fires on a healthy chain.
+// holdersRollupShrinkGuardMinRatio is the floor a staging arm's row count may fall to
+// relative to the live table before RunHoldersRollup refuses to publish. EXCHANGE only makes
+// the swap atomic; a FINAL scan can finish with far fewer rows and no error (mid-flight merge,
+// max_execution_time truncation). Holder counts move gradually, so a healthy cycle never trips it.
 const holdersRollupShrinkGuardMinRatio = 0.5
 
 // holdersRollupShrinkGuardTables pairs each staging arm the swap is about to
@@ -203,20 +179,16 @@ var holdersRollupShrinkGuardTables = [][2]string{
 	{"stellar.asset_holders_counts_staging", "stellar.asset_holders_counts"},
 }
 
-// holdersRollupConn is what one holders-rollup cycle needs from a
-// connection: Exec for every statement, QueryRow for
-// holdersRollupShrinkGuard. Named so the cycle is drivable without a
-// ClickHouse connection — the same split runRollupCycle/runRollupSteps use.
+// holdersRollupConn is what one cycle needs from a connection (Exec, and QueryRow for the
+// shrink guard), so it is drivable without ClickHouse.
 type holdersRollupConn interface {
 	Exec(ctx context.Context, query string, args ...any) error
 	QueryRow(ctx context.Context, query string, args ...any) driver.Row
 }
 
-// holdersRollupShrinkGuard aborts the cycle — leaving the previous (good)
-// cycle live — when a staging arm has shrunk by more than
-// holdersRollupShrinkGuardMinRatio relative to its live counterpart. A live
-// count of zero (first cycle ever, or a not-yet-populated deployment) has
-// nothing to compare against and is skipped rather than treated as a shrink.
+// holdersRollupShrinkGuard aborts the cycle, leaving the previous one live, when a staging
+// arm shrank below holdersRollupShrinkGuardMinRatio of its live counterpart. A live count of
+// zero (first cycle) has nothing to compare and is skipped.
 func holdersRollupShrinkGuard(ctx context.Context, conn holdersRollupConn) error {
 	for _, pair := range holdersRollupShrinkGuardTables {
 		if err := shrinkGuardCompare(ctx, conn, pair[0], pair[1]); err != nil {
@@ -256,12 +228,9 @@ func RunHoldersRollup(ctx context.Context, addr string, logf func(format string,
 	return runHoldersRollupSteps(ctx, conn, logf)
 }
 
-// runHoldersRollupSteps runs the fills, then holdersRollupShrinkGuard, then
-// the swap, then the daily snapshot, against an already-open connection —
-// split out from RunHoldersRollup so the cycle is drivable in a test without
-// dialing ClickHouse. holdersRollupShrinkGuard runs after every staging arm
-// is filled and before the swap, so a broken cycle errors out with the
-// previous cycle left live rather than publishing a degraded board.
+// runHoldersRollupSteps runs the fills, the shrink guard (after every arm is filled, before
+// the swap, so a broken cycle leaves the previous one live), the swap, then the daily
+// snapshot, on an open connection; split out so tests need no ClickHouse.
 func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any)) error {
 	cycleAt := time.Now()
 	if err := runHoldersRollupSwap(ctx, conn, cycleAt, logf); err != nil {
@@ -290,28 +259,18 @@ func runHoldersRollupSwap(ctx context.Context, conn holdersRollupConn, cycleAt t
 	return nil
 }
 
-// holdersRollupMaxAge is the oldest cycle stamp holdersRollupBoard will serve.
-// The stamp is taken when a run starts and is replaced when the next run swaps
-// in: run + the timer's OnUnitInactiveSec=30min + RandomizedDelaySec=2min +
-// next run. Runs under ~44 min each stay inside this; slower runs (the unit
-// allows up to TimeoutStartSec=80min) let the board age out between swaps, and
-// readers fall back to the per-request scans rather than serve it stale.
+// holdersRollupMaxAge is the oldest cycle stamp holdersRollupBoard will serve: run + timer
+// OnUnitInactiveSec=30min + RandomizedDelaySec=2min + next run. Runs under ~44 min stay
+// inside it; slower ones (unit allows 80min) age the board out and readers fall back to scans.
 const holdersRollupMaxAge = 2 * time.Hour
 
-// holdersRollupBoard is AssetHolders' precomputed fast path: keyed
-// sub-millisecond reads off the rollup tables. Returns ok=false when the
-// board can't answer (probe says the rollup is unavailable, or its cycle
-// stamp is older than holdersRollupMaxAge because the rollup timer has
-// wedged) — caller falls back to the legacy per-request scans, an honest
-// slow answer rather than a fast stale one.
+// holdersRollupBoard is AssetHolders' precomputed fast path (keyed sub-millisecond reads).
+// ok=false when the rollup is unavailable or its stamp is older than holdersRollupMaxAge;
+// the caller falls back to per-request scans, an honest slow answer over a fast stale one.
 //
-// asset_holders_rollup and asset_holders_counts are exchanged together as
-// part of RA-2's five-table atomic group, but read here as two independent
-// round trips — a swap landing between them serves a board from one cycle
-// paired with a count from another. Both tables carry the same
-// computed_at cycle stamp once a swap lands (holdersRollupStatements), so
-// comparing the two reads' stamps detects that; a mismatch retries the pair
-// once, matching AccountsStats' consistency check.
+// The board and count tables are exchanged together but read in two round trips, so a swap
+// between them could pair different cycles. Both carry the same computed_at stamp; a
+// mismatch retries the pair once, as AccountsStats does.
 func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {
@@ -334,11 +293,9 @@ func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, l
 	return out, total, true, nil
 }
 
-// readHoldersRollupCycle reads the board and its count, plus each side's
-// computed_at cycle stamp, and reports whether the two round trips landed in
-// the same swap cycle (see holdersRollupBoard). The returned stamp is the
-// older of the two sides that carried one — unstamped when the asset has no
-// row in either table.
+// readHoldersRollupCycle reads the board, its count and each side's computed_at stamp, and
+// reports whether both landed in the same cycle (see holdersRollupBoard). The returned stamp
+// is the older one carrying a stamp; unstamped when the asset has no row in either table.
 func (r *ExplorerReader) readHoldersRollupCycle(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, time.Time, bool, error) {
 	out, boardAt, err := r.readHoldersRollupRows(ctx, asset, limit)
 	if err != nil {
@@ -362,10 +319,9 @@ func holdersRollupStamped(at time.Time) bool {
 	return at.Unix() > 0
 }
 
-// holdersRollupFresh reports whether the cycle a board was read from is young
-// enough to serve. An asset absent from both tables carries no stamp of its
-// own, yet "no row" is only authoritative for a current cycle — so read the
-// live table's stamp instead, which every row of one exchanged cycle shares.
+// holdersRollupFresh reports whether a board's cycle is young enough to serve. An asset in
+// neither table has no stamp, yet "no row" is only authoritative for a current cycle, so read
+// the live table's stamp, which every row of one cycle shares.
 func (r *ExplorerReader) holdersRollupFresh(ctx context.Context, at time.Time) (bool, error) {
 	if !holdersRollupStamped(at) {
 		if err := r.conn.QueryRow(ctx, `
@@ -406,10 +362,8 @@ func (r *ExplorerReader) readHoldersRollupRows(ctx context.Context, asset string
 func (r *ExplorerReader) readHoldersRollupCount(ctx context.Context, asset string) (int64, time.Time, error) {
 	var total int64
 	var at time.Time
-	// max() collapses the (impossible-by-design, but cheap to be safe)
-	// multi-row case; a missing row scans to 0 — authoritative under the
-	// exchange contract: a completed cycle materializes EVERY asset with
-	// a positive-balance holder.
+	// max() collapses duplicate rows (impossible by design); a missing row scans to 0, which is
+	// authoritative: a completed cycle materializes every asset with a positive-balance holder.
 	if err := r.conn.QueryRow(ctx, `
 		SELECT toInt64(max(holders)), max(computed_at) FROM stellar.asset_holders_counts WHERE asset = ?`, asset).Scan(&total, &at); err != nil {
 		return 0, time.Time{}, fmt.Errorf("clickhouse: holders rollup count: %w", err)

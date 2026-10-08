@@ -12,54 +12,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Phoenix pool PERSISTENT-storage layout, derived from the protocol's
-// public Rust source (Phoenix-Protocol-Group/phoenix-contracts,
-// contracts/pool/src/storage.rs @ main):
+// Phoenix pool PERSISTENT-storage layout, from the protocol's Rust source
+// (phoenix-contracts, contracts/pool/src/storage.rs). DataKey is a #[repr(u32)] enum, so
+// storage keys are plain ScvU32 values (as in Soroswap pairs):
 //
-//	DataKey is a #[repr(u32)] enum with a manual `TryFromVal<Env,
-//	DataKey> for Val` impl of `(*v as u32).into()` — so its storage
-//	keys are plain ScvU32 values (same convention the Soroswap pair
-//	contract uses):
+//	U32(0) = TotalShares (i128)
+//	U32(1) = ReserveA    (i128)   <- read
+//	U32(2) = ReserveB    (i128)   <- read
+//	U32(3) = Admin
+//	U32(4) = Initialized
 //
-//	  U32(0) = TotalShares (i128)
-//	  U32(1) = ReserveA    (i128)   ← read
-//	  U32(2) = ReserveB    (i128)   ← read
-//	  U32(3) = Admin
-//	  U32(4) = Initialized
+// plus `CONFIG` -> a Config struct (ScvMap keyed by field-name Symbols) whose `token_a` /
+// `token_b` Address fields carry the token identities (read). All are PERSISTENT standalone
+// contract_data entries under the pool contract, not the instance entry.
 //
-//	plus `const CONFIG: Symbol = symbol_short!("CONFIG")` → a
-//	#[contracttype] Config struct (ScvMap keyed by field-name
-//	Symbols) whose `token_a` / `token_b` Address fields carry the
-//	pool's token identities.                                  ← read
-//
-// All three live in PERSISTENT durability (env.storage().persistent()
-// throughout storage.rs), i.e. standalone contract_data entries under
-// the pool contract — NOT the contract-instance entry.
-//
-// VALIDATED ON R1: all 6 storage keys for two curated pools
-// (CBHCRSVX…, CBCZGGNO…) matched real ledger_entries_current rows and
-// decoded cleanly — reserves at stroop scale + CONFIG token pairs
-// (PHO/USDC-class addresses) consistent with known pools. The layout
-// below is confirmed against the DEPLOYED WASM, not just source. Re-run
-// the query below after any Phoenix contract upgrade.
-//
-// VALIDATE-ON-R1 (original derivation note): this layout is source-derived, NOT yet validated
-// against real lake entries (no r1 access from the implementing
-// session), and Phoenix pools upgrade in place — two pool-WASM
-// generations are already curated (phoenix.MainnetPools vs
-// phoenix.MainnetMapPools), so the deployed storage shape may differ
-// from main. An operator should confirm with (HTTP port 8123):
+// Pools upgrade in place (phoenix.MainnetPools vs phoenix.MainnetMapPools are two WASM
+// generations), so re-check after any upgrade (HTTP port 8123):
 //
 //	SELECT key_xdr, ledger_seq, base64Decode(entry_xdr) IS NOT NULL
 //	FROM stellar.ledger_entries_current FINAL
 //	WHERE entry_type = 'contract_data'
-//	  AND key_xdr IN (<output of phoenixPoolKeys for one curated pool,
-//	                   e.g. CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX>)
+//	  AND key_xdr IN (<output of phoenixPoolKeys for one curated pool>)
 //
-// (three rows expected: two ScvU32-keyed i128s + the CONFIG map), then
-// cross-check the decoded reserves against the pool's latest
-// phoenix_trades post-state fields. A mismatch shows up as pools in
-// the undecodable list — fail-to-absent, never a misread number.
+// Expect three rows (two ScvU32-keyed i128s + the CONFIG map), then cross-check the reserves
+// against the latest phoenix_trades post-state. A mismatch surfaces as undecodable pools:
+// fail-to-absent, never a misread number.
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB
@@ -69,28 +46,22 @@ const (
 	phoenixFieldTokenB     = "token_b"
 )
 
-// PhoenixPoolState is one Phoenix pool contract's decoded CURRENT
-// state: post-interaction reserves + token identities straight from
-// the pool's persistent storage in the certified lake. Reserves are
-// full-precision i128 (*big.Int, ADR-0003) in token base units.
+// PhoenixPoolState is one pool's decoded current state: reserves (full-precision i128
+// *big.Int, ADR-0003, token base units) and token identities from persistent storage.
 type PhoenixPoolState struct {
 	Pool     string // pool contract C-strkey
 	TokenA   string // token contract C-strkey, from the CONFIG entry
 	TokenB   string
 	ReserveA *big.Int
 	ReserveB *big.Int
-	// Ledger is the highest ledger_seq across the pool's decoded
-	// entries — its last interaction; the reserves are current as of
-	// this ledger (and unchanged since).
+	// Ledger is the highest ledger_seq across the pool's decoded entries (its last
+	// interaction); the reserves are current as of it.
 	Ledger uint32
 }
 
-// phoenixPoolStateQuery is the batched current-state lookup — a
-// PK-prefix probe on (entry_type, key_xdr), bounded by construction to
-// 3 keys per curated pool. The SETTINGS pins are guard rails (see
-// ttlLivenessBatchQuery's rationale): the read is cheap, but a planner
-// or layout shift must fail THIS query loudly rather than fan out on
-// the shared host.
+// phoenixPoolStateQuery is the batched current-state lookup: a PK-prefix probe on
+// (entry_type, key_xdr), 3 keys per curated pool. The SETTINGS pins are guard rails (see
+// ttlLivenessBatchQuery) so a planner shift fails this query loudly.
 const phoenixPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -126,21 +97,13 @@ func (p *phoenixPoolParts) complete() bool {
 	return !p.shapeBad && p.tokenA != "" && p.tokenB != "" && p.reserveA != nil && p.reserveB != nil
 }
 
-// PhoenixPoolReserves reads the CURRENT reserve state for the given
-// Phoenix pool contracts from the lake in a single batched
-// `key_xdr IN (...)` lookup (3 persistent keys per pool). Semantics
-// mirror SoroswapPairReserves:
+// PhoenixPoolReserves reads current reserve state for the given pools in one batched
+// `key_xdr IN (...)` lookup (3 keys per pool), mirroring SoroswapPairReserves:
 //
-//   - Pools with NO captured entries are absent from both returns —
-//     absence is "reserves unavailable", never zero.
-//   - Pools whose entries have been TTL-ARCHIVED are absent too (a
-//     dead pool's last-known reserves are not current liquidity;
-//     only a positively-resolved lapsed TTL drops a pool).
-//   - Pools with captured entries that do NOT decode to the verified
-//     shape — or with a partial entry set — come back in the second
-//     return (undecodable, sorted): PRESENT on-chain but unreadable,
-//     so callers can count them honestly instead of fabricating or
-//     silently dropping. Never partially decoded.
+//   - No captured entries, or TTL-archived entries (only a positively-resolved lapsed TTL
+//     drops a pool): absent from both returns. Absence is "unavailable", never zero.
+//   - Entries that do not decode to the verified shape, or a partial set: returned in the
+//     second return (undecodable, sorted), so callers count them honestly. Never partially decoded.
 func (r *ExplorerReader) PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]PhoenixPoolState, []string, error) {
 	keys, refByKey, err := phoenixPoolKeys(pools)
 	if err != nil {
@@ -243,9 +206,8 @@ func scanPhoenixPoolParts(rows driver.Rows, refByKey map[string]phoenixKeyRef) (
 	return parts, nil
 }
 
-// applyPhoenixEntry decodes one fetched entry onto the pool's parts,
-// marking the pool shape-bad (→ undecodable, never misread) when the
-// entry doesn't match the source-derived layout.
+// applyPhoenixEntry decodes one entry onto the pool's parts, marking the pool shape-bad
+// (undecodable, never misread) when it does not match the layout.
 func applyPhoenixEntry(p *phoenixPoolParts, kind phoenixKeyKind, b64 string) {
 	switch kind {
 	case phoenixKindReserveA, phoenixKindReserveB:
@@ -269,9 +231,7 @@ func applyPhoenixEntry(p *phoenixPoolParts, kind phoenixKeyKind, b64 string) {
 	}
 }
 
-// phoenixReserveFromEntry decodes a ReserveA/ReserveB entry. The value
-// must be a bare i128 (fail-to-absent on anything else — a schema
-// change or a non-Phoenix contract, never a guess).
+// phoenixReserveFromEntry decodes a ReserveA/ReserveB entry: a bare i128, else fail-to-absent.
 func phoenixReserveFromEntry(b64 string) (*big.Int, bool) {
 	val, ok := contractDataValue(b64)
 	if !ok {
@@ -284,10 +244,8 @@ func phoenixReserveFromEntry(b64 string) (*big.Int, bool) {
 	return amt.BigInt(), true
 }
 
-// phoenixTokensFromConfigEntry decodes the CONFIG entry's token_a /
-// token_b Address fields, by field name (contract-schema-evolution:
-// never by position). Extra/unknown fields are ignored; a missing or
-// mis-typed token field fails the whole entry.
+// phoenixTokensFromConfigEntry decodes CONFIG's token_a / token_b by field name (schema
+// evolution: never position). Unknown fields are ignored; a missing or mis-typed token fails.
 func phoenixTokensFromConfigEntry(b64 string) (tokenA, tokenB string, ok bool) {
 	val, okVal := contractDataValue(b64)
 	if !okVal || val.Type != xdr.ScValTypeScvMap || val.Map == nil || *val.Map == nil {
@@ -317,10 +275,8 @@ func phoenixTokensFromConfigEntry(b64 string) (tokenA, tokenB string, ok bool) {
 	return tokenA, tokenB, true
 }
 
-// dropArchivedPhoenixPools removes pools with ANY TTL-archived entry
-// among their three keys — a lapsed pool's last-known reserves must
-// not be reported as current (same contract as dropArchivedPairs;
-// only a positively-resolved lapsed TTL drops a pool).
+// dropArchivedPhoenixPools removes pools with any TTL-archived entry among their three keys
+// (as dropArchivedPairs); only a positively-resolved lapsed TTL drops a pool.
 func dropArchivedPhoenixPools(ctx context.Context, conn driver.Conn, out map[string]PhoenixPoolState, refByKey map[string]phoenixKeyRef) error {
 	if len(out) == 0 {
 		return nil

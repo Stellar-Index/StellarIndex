@@ -8,74 +8,37 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// maxSaneTokenDecimals bounds the accepted on-chain `decimal` declaration.
-// The value is self-declared by the token contract (a u32 on the wire), so a
-// hostile or broken token can claim anything up to 2^32−1; downstream unit
-// math divides by 10^decimals, and absurd scales would zero out market-cap /
-// display amounts. 38 mirrors the NUMERIC(38) precision ceiling used across
-// the served tier — no legitimate token exceeds 18 in practice. Declarations
-// above the bound are treated as "no usable metadata" (callers keep their
-// default).
+// maxSaneTokenDecimals bounds the accepted on-chain `decimal`. A token self-declares a u32,
+// and unit math divides by 10^decimals, so absurd scales would zero out market-cap and display
+// amounts. 38 mirrors the NUMERIC(38) ceiling; above it is "no usable metadata" (default kept).
 const maxSaneTokenDecimals = 38
 
-// tokenDecimalsKeys are the METADATA map keys that carry the scale, in
-// preference order.
+// tokenDecimalsKeys are the METADATA map keys that carry the scale, in preference order.
 //
-// `decimal` is the soroban-token-sdk's own field name, and reading only
-// it was a MEASURED defect rather than a theoretical gap. Of the 17
-// Soroban contract addresses a public listing platform names on Stellar,
-// SEVEN spell it `decimal` and TEN spell it `decimals`:
-// the SACs and token-sdk builds take the first, and every hand-written
-// token in that sample takes the second — including two tokenized
-// Treasury funds holding nine figures of supply.
-//
-// On a display surface a missed reading costs a wrong amount. On the
-// RWA surface it is the published figure: a 5-decimal fund read at the
-// caller's default of 7 publishes one HUNDREDTH of its capitalisation,
-// and an 18-decimal one read at 7 publishes eleven orders of magnitude
-// too much. "Virtually every SEP-41 token follows the SDK" was the
-// assumption this list replaces, and the measurement says it was wrong
-// for the majority of the population that matters.
-//
-// Both are read, never blended: see [decimalsFromInstanceEntry] for what
-// happens when a contract declares both and they disagree.
+// `decimal` is the soroban-token-sdk's name (SACs, token-sdk builds); hand-written tokens
+// use `decimals`, including tokenized Treasury funds, so both are read. A missed reading
+// publishes a wrong figure on the RWA surface: a 5-decimal fund read at the default 7 shows one
+// hundredth of its capitalisation. Never blended: see [decimalsFromInstanceEntry] for
+// disagreement.
 var tokenDecimalsKeys = []string{"decimal", "decimals"}
 
-// tokenMetadataMapKeys are the instance-storage keys whose value is a map that
-// may carry the scale, in preference order.
+// tokenMetadataMapKeys are the instance-storage keys whose value is a map that may carry the
+// scale, in preference order.
 //
-// `METADATA` is the soroban-token-sdk convention and was the only spelling read
-// until a MEASURED gap forced the second, in the same shape as the
-// decimal/decimals split above. The twenty-four private-credit deal tokens the
-// storage-supply basis was built for carry NO METADATA key at all — their
-// instance storage holds `Config`, a map whose `decimals` field is the scale,
-// alongside `TotalSupply`, `Nav` and the deal's identifiers.
-//
-// This mattered more than a missed display value. Those contracts publish a
-// nine-figure supply, and the working assumption before the entry was read was
-// that their exponent was NOT on-chain and had to be borrowed from a
-// third-party seed file. It is on-chain, and reading it is the difference
-// between a published money figure resting on our own measurement and one
-// resting on someone else's spreadsheet.
-//
-// As with the two `decimal` spellings, both maps are read and never blended:
-// a contract that declares a different scale in each has not told us its scale,
-// and [decimalsFromInstance] refuses rather than picking one.
+// `METADATA` is the soroban-token-sdk convention. The private-credit deal tokens have no
+// METADATA key; their instance storage holds `Config`, a map whose `decimals` is the scale.
+// Reading it keeps a nine-figure published supply on our own measurement, not a third-party
+// seed file. As with the field spellings, both maps are read and never blended: a contract
+// declaring different scales in each is refused by [decimalsFromInstance].
 var tokenMetadataMapKeys = []string{"METADATA", "Config"}
 
-// TokenDecimals resolves a token contract's `decimals()` value from the
-// certified lake: the soroban-token-sdk convention — followed by SACs (always
-// 7) and by token-sdk-shaped SEP-41 WASM tokens — persists TokenMetadata in
-// the contract INSTANCE storage under Symbol "METADATA" as
-// Map{decimal: U32, name: String, symbol: String}. Hand-written tokens use
-// the same map under the key `decimals`, and both are read. Reading the
-// instance entry is exactly the `decimals()` a caller would get from the
-// contract, without executing WASM.
+// TokenDecimals resolves a token contract's `decimals()` from the lake. The soroban-token-sdk
+// persists TokenMetadata in the contract INSTANCE storage under Symbol "METADATA" as
+// Map{decimal: U32, name, symbol}; hand-written tokens use `decimals` in the same map. This is
+// the value `decimals()` would return, without executing WASM.
 //
-// found=false (nil error) when the instance isn't captured in the lake, the
-// contract stores no METADATA map (a non-standard token — its decimals are
-// simply not derivable from storage), or the declaration is out of sane
-// bounds. Callers keep their default (7) in that case.
+// found=false (nil error) when the instance isn't in the lake, no METADATA map exists, or the
+// declaration is out of bounds; callers keep their default (7).
 func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -87,9 +50,8 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 	if err != nil {
 		return 0, false, err
 	}
-	// Same table choice + rationale as contractWasmHash: ledger_entries_current
-	// is merge-loss immune and (entry_type, key_xdr) is a PK-prefix lookup —
-	// cheap enough for the (response-cached) asset-detail path.
+	// Same table choice as contractWasmHash: ledger_entries_current is merge-loss immune and
+	// (entry_type, key_xdr) is a PK-prefix lookup, cheap for the cached asset-detail path.
 	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 		ORDER BY ledger_seq DESC LIMIT 1`
@@ -109,19 +71,11 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 	return d, ok, rows.Err()
 }
 
-// decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and
-// returns the instance's declared scale, read on both axes by
-// [decimalsFromInstance].
-//
-// ok=false when the entry isn't an instance or [decimalsFromInstance] finds
-// no usable scale: none declared, one out of bounds, or two that DISAGREE.
-//
-// The last case is refused rather than resolved by preference. A contract
-// claiming two different scales for itself has not told us its scale, and the
-// caller's documented response to ok=false — keep the default — is at least a
-// stated convention. Picking one of two contradictory self-declarations would
-// be this layer inventing an exponent for a money figure, which is the one
-// thing maxSaneTokenDecimals exists to prevent.
+// decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and returns its declared
+// scale as read by [decimalsFromInstance]. ok=false when it isn't an instance or no usable
+// scale exists: none, out of bounds, or two that DISAGREE. Disagreement is refused, not
+// resolved by preference: picking one of two contradictory self-declarations would invent an
+// exponent for a money figure, which maxSaneTokenDecimals exists to prevent.
 func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -138,16 +92,10 @@ func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	return decimalsFromInstance(inst)
 }
 
-// decimalsFromInstance reads the declared scale out of a decoded contract
-// instance, under either map spelling in [tokenMetadataMapKeys] and either field
-// spelling in [tokenDecimalsKeys].
-//
-// ok=false when the instance stores no scale, when a declaration is out of sane
-// bounds, or when two declarations DISAGREE — across the two map names for the
-// same reason [decimalsFromMetadataMap] refuses across the two field names: a
-// contract claiming two different scales for itself has not told us its scale,
-// and choosing between them would be this layer inventing an exponent for a
-// money figure.
+// decimalsFromInstance reads the declared scale from a decoded instance, under either map
+// spelling in [tokenMetadataMapKeys] and either field spelling in [tokenDecimalsKeys].
+// ok=false when no scale is stored, one is out of bounds, or two DISAGREE (across map names
+// for the same reason as across field names: choosing would invent an exponent).
 func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
 	if inst.Storage == nil {
 		return 0, false
@@ -158,9 +106,8 @@ func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
 	)
 	for _, want := range tokenMetadataMapKeys {
 		for _, kv := range *inst.Storage {
-			// Both key encodings: a bare Symbol (soroban-token-sdk) and the
-			// single-element Vec a Rust enum variant derives to. See
-			// [instanceStorageKeyName].
+			// Both key encodings: a bare Symbol (soroban-token-sdk) and the single-element Vec a Rust
+			// enum variant derives to. See [instanceStorageKeyName].
 			name, ok := instanceStorageKeyName(kv.Key)
 			if !ok || name != want || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
 				continue
@@ -209,10 +156,8 @@ func decimalsFromMetadataMap(entries []xdr.ScMapEntry) (uint32, scaleDecl) {
 			}
 			u, ok := e.Val.GetU32()
 			if !ok || uint32(u) > maxSaneTokenDecimals {
-				// A present-but-unusable declaration is a refusal for
-				// the whole entry, not a reason to try the other
-				// spelling: the contract answered, and the answer was
-				// not a scale.
+				// A present-but-unusable declaration refuses the whole entry, not a reason to try the
+				// other spelling: the contract answered, and the answer was not a scale.
 				return 0, scaleUnusable
 			}
 			if found && value != uint32(u) {
