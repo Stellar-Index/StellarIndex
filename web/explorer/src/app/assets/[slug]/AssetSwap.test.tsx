@@ -15,7 +15,7 @@ import { AssetSwap } from './AssetSwap';
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
 // `price_type` and `observed_at` were dropped and every fiat leg looked
 // like a fresh observed quote. It is not a theoretical gap: measured on
-// the live API 2026-09-19, fiat:EUR/fiat:USD answered `observed_at:
+// the live API, fiat:EUR/fiat:USD answered `observed_at:
 // 2026-09-18T00:00:00Z` (~36h old) with `flags.stale: true`, and the
 // widget's whole output is a money amount computed from it.
 
@@ -111,9 +111,8 @@ describe('AssetSwap fiat leg basis', () => {
     expect(await screen.findByDisplayValue(/^0\.1697/)).toBeInTheDocument();
   });
 
-  // GH-786: once picked, the leg used to freeze at its pick-time snapshot
-  // forever — no refetch, ever, regardless of how long the tab stayed
-  // open. It must poll its own price live, the same as the page asset.
+  // Once picked, the leg must not freeze at its pick-time snapshot,
+  // however long the tab stays open. It must poll its own price live, the same as the page asset.
   it("re-fetches the picked leg's own price on a live interval instead of freezing at pick time", async () => {
     stubApi();
     renderSwap();

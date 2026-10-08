@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * F100/K066: fetchVerifiedCurrencies used to wrap a single fetch in
+ * fetchVerifiedCurrencies must not wrap a single fetch in
  * try/catch and fall back to `[]` on ANY failure — a persistent API
  * outage would silently bake a catalogue with zero verified rows into
  * the static export (every asset renders as unverified) instead of
- * failing the build. It now goes through buildFetchData's fail-hard
+ * failing the build. It goes through buildFetchData's fail-hard
  * contract (src/lib/buildFetch.ts), the same layer sitemap.ts and the
  * other strategy-2 pages use for their listings.
  */

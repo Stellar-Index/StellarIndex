@@ -1,10 +1,10 @@
-// The ADR-0033 recognition census is not a source. It used to arrive
-// as a 21st row in /v1/coverage's `sources[]`, where it read
+// The ADR-0033 recognition census is not a source. It must not arrive
+// as a 21st row in /v1/coverage's `sources[]`, where it would read
 // permanently incomplete BY CONSTRUCTION (it can only be clean if no
 // un-indexed Soroban contract exists anywhere on the network), so the
-// public headline was an unfixable "20/21".
+// public headline would be an unfixable "20/21".
 //
-// The API now reports it as its own top-level axis and the headline
+// The API reports it as its own top-level axis and the headline
 // counts sources only. The direction that change moves the number is
 // the flattering one, so the panel has to carry the other half: the
 // census must be MORE visible here, not less. These tests pin that —
@@ -32,7 +32,7 @@ const blend = {
   computed_at: '2026-09-02T07:41:40Z',
 };
 
-// r1's real census, 2026-09-02.
+// r1's real census.
 const recognition = {
   all_shapes_recognized: false,
   unrecognized_shapes: 23945,

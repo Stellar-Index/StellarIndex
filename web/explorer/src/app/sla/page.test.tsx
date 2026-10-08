@@ -4,7 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import SLAPage from './page';
 
 // The availability objective in the targets table is the customer
-// commitment (#487): the burn-rate alerts, the sla-probe default and
+// commitment: the burn-rate alerts, the sla-probe default and
 // the operator docs are all derived from it, and a Go test in
 // internal/ops/chops pins those to this cell. This test pins the page
 // to itself: the error-budget section restates the figure and the

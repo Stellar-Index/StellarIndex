@@ -5,22 +5,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { STATUS_POLL_MS } from '@/api/hooks';
 import { DegradedBanner } from './DegradedBanner';
 
-// health-check: the /v1/status poll used to swallow every fetch error with
+// health-check: the /v1/status poll must not swallow every fetch error with
 // an empty catch, leaving `overall` frozen at whatever it last was
 // ('unknown' on first load) — so a TOTAL outage (the status feed itself
 // unreachable) rendered nothing at all, the one case this banner exists to
-// catch. Two consecutive failed polls should now flip it to a visible
+// catch. Two consecutive failed polls flip it to a visible
 // "unreachable" state instead of staying invisible forever.
 //
-// The banner now reads the SHARED useStatus query (FEC A6-6/D2 fold), so
+// The banner reads the SHARED useStatus query (FEC A6-6/D2 fold), so
 // each case renders under a fresh QueryClient; the failure-counting lives
 // in the shared StatusFeed and these assertions pin that it still surfaces
 // here exactly as before.
 describe('DegradedBanner', () => {
   afterEach(() => {
     // Restore timers + the fetch spy so this file cannot pollute (or be
-    // polluted by) the rest of the suite — the default-order flake this
-    // test previously rode (cross-file fetch-mock leakage).
+    // polluted by) the rest of the suite — the default-order flake
+    // (cross-file fetch-mock leakage).
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

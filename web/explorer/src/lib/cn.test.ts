@@ -16,7 +16,7 @@ describe('cn', () => {
     expect(cn('base', { active: true, hidden: false })).toBe('base active');
   });
 
-  // FEC audit A1-1 guard: the custom max-w-page theme token must live in the
+  // Guard: the custom max-w-page theme token must live in the
   // max-w conflict group, or Container className="max-w-*" overrides are
   // silently dead (both classes emitted; .max-w-page wins on stylesheet order).
   it('lets callers override the custom max-w-page token (and vice versa)', () => {

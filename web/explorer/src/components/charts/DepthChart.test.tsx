@@ -108,7 +108,7 @@ describe('formatDepthPrice', () => {
     expect(formatDepthPrice(1234.5678)).toBe('1234.57');
     expect(formatDepthPrice(1.23456)).toBe('1.2346');
     expect(formatDepthPrice(0.168218)).toBe('0.168218');
-    // F-A4-03: plain decimal below 1e-4 (2026-08-06 no-scientific-notation rule)
+    // plain decimal below 1e-4 (no-scientific-notation rule)
     expect(formatDepthPrice(0.00001)).toBe('0.00001');
     expect(formatDepthPrice(Number.NaN)).toBe('—');
   });

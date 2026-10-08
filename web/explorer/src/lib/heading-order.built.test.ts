@@ -1,4 +1,4 @@
-// Guard: no page in the static export may skip a heading level (#486).
+// Guard: no page in the static export may skip a heading level.
 //
 // This is the check that produced the finding — 694 of the 1,691 built
 // pages carrying a heading jumped h1 → h3 — turned into something that
@@ -75,7 +75,7 @@ describe('built static export: heading order (WCAG 1.3.1)', () => {
   // cost scales with the site, not with the assertion — vitest's 5 s
   // default measures how many pages exist and how loaded the machine is,
   // not whether a heading level was skipped. It timed out mid-verification
-  // on 2026-09-04 with the export intact and every heading correct. The
+  // with the export intact and every heading correct. The
   // sibling nav-shell scan iterates a fixed route list and needs none.
   it.runIf(built)(
     'no page skips a heading level',

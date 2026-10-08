@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * T250/T293: every API-derived sitemap section used to wrap exactly one
+ * No API-derived sitemap section may wrap exactly one
  * 5s-timeout `fetch` in try/catch and fall back to `[]` on ANY failure —
- * no retry, so a single transient blip permanently dropped a whole URL
+ * no retry, so a single transient blip would permanently drop a whole URL
  * family from the sitemap with no error and no reconciliation against a
- * prior good result. sitemap.ts now goes through buildFetch
+ * prior good result. sitemap.ts goes through buildFetch
  * (src/lib/buildFetch.ts), the same bounded-retry/fail-hard layer every
  * sibling generateStaticParams uses for these listings.
  *

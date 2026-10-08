@@ -309,7 +309,7 @@ describe('LiveAssetPrice', () => {
   });
 });
 
-// REGRESSION (2026-08-28): the transitive price was invisible in the UI.
+// REGRESSION: the transitive price must be visible in the UI.
 //
 // /v1/price answers for DIRECT markets only, so a two-hop asset gets
 // price:null there while /v1/assets serves a real substance-gated
@@ -359,7 +359,7 @@ describe('LiveAssetPrice — transitive provenance', () => {
   });
 });
 
-// REGRESSION (2026-09-18 audit F090): the 24h change pill was built ONCE
+// REGRESSION: the 24h change pill must not be built ONCE
 // from the build-time `change_24h_pct` and handed in as a static React
 // node — the price beside it kept refreshing live, so a large intraday
 // move could leave the pill's direction arrow flatly contradicting the

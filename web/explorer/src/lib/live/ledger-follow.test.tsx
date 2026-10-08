@@ -22,7 +22,7 @@ vi.mock('./streams', () => ({
 const { resetLedgerFollowThrottleForTest, useLedgerFollow, followThrottleSizeForTest } =
   await import('./hooks');
 
-// The defect (#470): `HomeTopMovers` and `HomeTopAssets` BOTH call
+// The defect: `HomeTopMovers` and `HomeTopAssets` BOTH call
 // `useLedgerFollow(['/v1/assets'])`. The throttle was a per-instance
 // `useRef`, so it only ever throttled a component against itself. Both
 // instances see the same SSE frame in one React commit, both start at 0,

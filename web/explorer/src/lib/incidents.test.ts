@@ -149,7 +149,7 @@ Body.
 
 describe('loadIncidentsFrom', () => {
   it('logs a warning instead of publishing a silent empty corpus when the data dir is unreadable', () => {
-    // RLT-467: the readdirSync catch used to set the cache to `[]` with zero
+    // The readdirSync catch must not set the cache to `[]` with zero
     // logging on any error — indistinguishable, to every caller, from "no
     // incidents have ever happened" (a false all-clear on /status). Use a
     // real nonexistent path so this exercises the actual ENOENT branch

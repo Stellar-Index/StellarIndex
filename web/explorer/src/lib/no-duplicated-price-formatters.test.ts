@@ -24,10 +24,10 @@ const sources = walk(SRC).map((p) => ({
   text: readFileSync(p, 'utf8'),
 }));
 
-// GH-774: the guard used to pin the literal pre-2026-08-06 ladder text
-// (`n.toExponential(3)`), which no live fork has contained since
-// formatSubunitPrice replaced scientific notation — so it matched
-// nothing, and three later forks (HomeTopMarkets.formatLastPrice,
+// The guard must not pin the literal old ladder text
+// (`n.toExponential(3)`), which no live fork contains now that
+// formatSubunitPrice replaced scientific notation — it would match
+// nothing, and later forks (HomeTopMarkets.formatLastPrice,
 // embed/LivePrice's inline ladder, LivePairPrice.formatQuotePrice) went
 // uncaught. This matches by STRUCTURE — the `>=1000/>=1/>=0.0001` and
 // `>=1/>=0.001` threshold chains that fall back to formatSubunitPrice,
@@ -75,8 +75,8 @@ describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => 
 // independent forks of one formatter, free to visibly drift. The first
 // remediation made each file import formatPairPrice but left four local
 // LastPriceCell components wrapping it — and those forked AGAIN
-// (DexesView's copy silently lost the flash-on-change). 2026-08-21: the
-// cell itself was extracted to @/components/LastPriceCell, which is now
+// (DexesView's copy silently lost the flash-on-change). The
+// cell itself lives in @/components/LastPriceCell, which is now
 // the ONLY place formatPairPrice appears in a last-price cell. This
 // guard asserts the end state: every price table renders the shared
 // cell, defines no local one, and nobody re-copies the raw ladder.

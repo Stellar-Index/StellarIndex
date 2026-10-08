@@ -27,7 +27,7 @@ async function renderPool(pool: string) {
 
 // Frontend-honesty sweep: /v1/lending/pools serves "200 + empty array"
 // when no LendingReader is wired (internal/api/v1/lending.go), and
-// buildFetchData returns null on a CI-stub build. Both used to collapse
+// buildFetchData returns null on a CI-stub build. Both must not collapse
 // into `data?.auctions_total ?? 0`, baking "Auctions (total): 0" into the
 // static export for pools with thousands of real auctions. A listing that
 // answered but omits this pool IS a real zero and must stay "0".

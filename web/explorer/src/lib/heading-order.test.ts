@@ -1,4 +1,4 @@
-// Unit tests for the heading-order scanner itself (#486).
+// Unit tests for the heading-order scanner itself.
 //
 // The scanner is what keeps the 694-page regression closed, so it needs
 // its own tests: a checker that silently stops finding anything reads

@@ -68,8 +68,8 @@ describe('LendingPoolsTable', () => {
         };
       }
       // One priced reserve (util 50%) + one wholly unpriced reserve. The
-      // old coerced-zero math still produced 50% here, but the APR average
-      // used to fold the unpriced reserve's APR in at weight 0 and absent
+      // coerced-zero math would still produce 50% here, but the APR average
+      // must not fold the unpriced reserve's APR in at weight 0 and absent
       // APRs in at 0% — the basis must be priced reserves only.
       return {
         data: {

@@ -123,10 +123,9 @@ describe('LivePairPrice — 24h change badge (K061)', () => {
   });
 });
 
-// REGRESSION (GH-772): the withheld caption was a hardcoded liquidity
-// -only string regardless of WHY the server refused to serve a price,
-// and a live tip's own divergence/frozen flags never reached this
-// surface at all.
+// REGRESSION: the withheld caption must follow WHY the server refused to
+// serve a price (not a hardcoded liquidity-only string), and a live tip's
+// own divergence/frozen flags must reach this surface.
 describe('LivePairPrice — withheld wording + tip flags (GH-772)', () => {
   it('sources the withheld caption from the server problem body, not a hardcoded liquidity string', async () => {
     useTipStream.mockReturnValue(null);

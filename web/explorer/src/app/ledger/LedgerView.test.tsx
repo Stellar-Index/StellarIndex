@@ -35,7 +35,7 @@ afterEach(() => {
   net.id = 'mainnet';
 });
 
-// Measured live 2026-08-28: mainnet total_coins still counts the 2019 burn.
+// Measured live: mainnet total_coins still counts the 2019 burn.
 const LEDGER = {
   sequence: 60_000_000,
   hash: 'a'.repeat(64),

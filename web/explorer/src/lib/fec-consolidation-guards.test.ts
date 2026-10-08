@@ -3,9 +3,9 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// FEC audit 2026-08-24 guard pack. The audit's meta-finding (A2-07/A5-10):
+// FEC guard pack. Meta-finding:
 // only guarded consolidation classes hold — every unguarded class kept
-// forking. These are repo-WALK guards (A5-11's lesson: fixed file lists
+// forking. These are repo-WALK guards (lesson: fixed file lists
 // only bite on an exact replay of the last regression; a 5th price table
 // or a renamed fork walks straight past them). Each block names its
 // finding; extend the allowlist ONLY with a reviewed reason.
@@ -29,9 +29,9 @@ const sources = walk(SRC).map((p) => ({
 }));
 
 describe('FEC guards (repo-walk)', () => {
-  // A5-12 / UXP-26: no scientific notation anywhere a price could render.
-  // 2026-08-06 operator decision; F-A4-03 removed the last sanctioned
-  // exception (DepthChart), so the allowlist is empty.
+  // No scientific notation anywhere a price could render.
+  // Operator decision; no sanctioned exception remains, so the
+  // allowlist is empty.
   it('no .toExponential( call sites exist in src', () => {
     const offenders = sources
       .filter((f) => /\.toExponential\(/.test(f.text))
@@ -43,10 +43,10 @@ describe('FEC guards (repo-walk)', () => {
   // NEW file importing formatPairPrice (e.g. a 5th venue price table)
   // must either use the shared LastPriceCell or be reviewed onto this
   // list. lib/format.ts defines it; the four non-cell importers use it
-  // for stat lines, reviewed 2026-08-24. RLT-388 (2026-09-21): the
+  // for stat lines, reviewed. The
   // /convert/[from]/[to] headline, interactive widget and meta
   // description were three independent formatRate forks that could
-  // (and did) disagree; folded onto formatPairPrice. GH-774: the home
+  // (and did) disagree; folded onto formatPairPrice. The home
   // Top Markets table's own `formatLastPrice` ternary was the same
   // formatPairPrice shape, hand-copied; folded onto the import.
   it('formatPairPrice importers are exactly the reviewed set', () => {
@@ -98,7 +98,7 @@ describe('FEC guards (repo-walk)', () => {
   // A3-F1: relative-time / duration bucket math has ONE home. 15 forks
   // existed; three had real rendering bugs ("-1s ago", raw-ISO leak,
   // "NaNd ago"). Recorded variants: ConvertPair's absolute-time switch and
-  // AnomaliesFeed's 1.5x-unit hysteresis (deliberate, reviewed 2026-08-24).
+  // AnomaliesFeed's 1.5x-unit hysteresis (deliberate).
   it('relative-time bucket math lives only in lib/format.ts (+ recorded variants)', () => {
     const allowed = new Set([
       'lib/format.ts',
@@ -136,8 +136,8 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F2b: shortAsset display labels have one canonical
-  // (lib/asset-label.shortAssetText). 13 forks folded 2026-08-24; the two
+  // shortAsset display labels have one canonical
+  // (lib/asset-label.shortAssetText); the two
   // allowlisted files are the recorded issuer-parenthetical VARIANTS
   // (per-asset pages where the bare code is ambiguous).
   it('shortAsset-style helpers are defined only in the canonical + recorded variants', () => {
@@ -261,7 +261,7 @@ describe('FEC guards (repo-walk)', () => {
   // sanctioned homes — ui/Segmented (the in-card window/metric switch;
   // quiet bg-surface active style + WindowPills' donated a11y) and
   // SortPill (the recorded separate sibling). 7 hand-rolled rows with 4
-  // disagreeing active styles were folded 2026-08-24.
+  // disagreeing active styles were folded.
   it('aria-pressed toggles exist only in ui/Segmented and SortPill', () => {
     const allowed = new Set([
       'components/ui/Tabs.tsx',
@@ -300,7 +300,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // CA2-A35-harden-0 (audit 2 2026-09-23): a raw `fetch(` in a build-time
+  // A raw `fetch(` in a build-time
   // (non-'use client') app/** file bypasses buildFetch.ts's fail-hard
   // retry contract — a single transient 429/5xx during static export is
   // then swallowed by a local try/catch and silently bakes a fallback or

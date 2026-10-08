@@ -11,10 +11,10 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { ConvertPair } from './ConvertPair';
 
-// RLT-384. The converter is a static export: `initialRate` is baked at
+// The converter is a static export: `initialRate` is baked at
 // BUILD time (page.tsx generateStaticParams + next.config `output:
 // 'export'`), so the fallback number can be days or weeks old. Three
-// ways the widget used to misrepresent it, all caused by typing the
+// ways the widget could misrepresent it, all caused by typing the
 // /v1/price/batch response as `{data: Array<{asset_id, price}>}` and
 // throwing the rest of the envelope away:
 //
@@ -28,7 +28,7 @@ import { ConvertPair } from './ConvertPair';
 //  3. `price_type: peg` — the operator's standing 1:1 declaration, not
 //     an observation — rendered identically to an observed VWAP.
 //
-// Measured against the live API on 2026-09-19: fiat:EUR/fiat:USD came
+// Measured against the live API: fiat:EUR/fiat:USD came
 // back `observed_at: 2026-09-18T00:00:00Z` with `flags.stale: true`,
 // i.e. ~36h old, while the widget said "Updated 0s ago".
 
@@ -37,7 +37,7 @@ const BAKED_INVERSE = 1 / BAKED_RATE;
 
 /**
  * An `observed_at` in the past. 36h is what the live FX feed actually
- * carried on 2026-09-19; formatRelative renders anything past a day in
+ * carried; formatRelative renders anything past a day in
  * days, so 36h reads "2d ago".
  */
 function hoursAgo(h: number): string {
@@ -115,7 +115,7 @@ describe('ConvertPair freshness', () => {
 describe('ConvertPair omitted row', () => {
   it('labels the baked rate as unavailable instead of passing it off as current', async () => {
     // The pair is withheld / never observed: the batch answers 200 with
-    // the row OMITTED. This is the case that used to fall back silently.
+    // the row OMITTED. This is the case that must not fall back silently.
     stubBatch({
       data: [],
       as_of: new Date().toISOString(),

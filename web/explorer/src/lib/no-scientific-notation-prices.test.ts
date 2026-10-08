@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // while the canonical @/lib/format formatters (formatPriceSmall /
 // formatSubunitPrice / formatPairPrice) render the SAME magnitude as a
 // plain decimal ("0.0007407"). The operator deliberately removed
-// scientific-notation price rendering on 2026-08-06 (see format.ts:28-34)
+// scientific-notation price rendering (see format.ts:28-34)
 // because it "is not user-friendly"; these sites bypassed that single
 // source. This guard fails if any of them re-introduces toExponential in
 // a price context — the canonical formatters (whose behaviour is asserted

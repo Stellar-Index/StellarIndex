@@ -13,7 +13,7 @@ import type { Coin } from '@/api/hooks';
 // floor — a per-pair verdict measured at request time, invisible to the
 // query that ranked the page. So rows rank as priced and serve as dashes.
 //
-// Measured against api.stellarindex.io 2026-09-03 21:31 UTC,
+// Measured against api.stellarindex.io,
 // `/v1/assets?asset_class=all&limit=100&include=sparkline7d`: 78 rows, 33
 // with price_usd, first unpriced row at position 16 (EURZ) above priced
 // USDV, BTC and sUSD, with eighteen priced rows trailing it — TESOURO at 43
@@ -177,7 +177,7 @@ describe('AssetsTable priced-first default ranking', () => {
 // explanation is only true of the Stellar listing: /external/assets shares
 // this component (endpoint=/v1/external/assets), and its fiat and reference
 // coins are outside the substance gate's scope entirely — an unpriced row
-// there (POL, AAVE and WBTC on 2026-09-03) is one the reference feed does
+// there (POL, AAVE and WBTC) is one the reference feed does
 // not cover. That page must state the rule without asserting a cause that
 // is false for every row it lists.
 describe('AssetsTable footer note on unpriced rows', () => {

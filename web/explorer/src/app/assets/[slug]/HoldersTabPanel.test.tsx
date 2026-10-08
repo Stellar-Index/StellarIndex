@@ -5,10 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { HoldersTabPanel } from './HoldersTabPanel';
 
 // Native XLM has no trustlines — its holders board is the account-balance
-// ranking (backend fix 2026-07-31). The panel's empty state must therefore
+// ranking. The panel's empty state must therefore
 // never blame "trustline … backfill" for XLM: that copy was simply false
-// for native (the API returned holder_count 0 by construction pre-fix, and
-// post-fix an empty board means the ranking is warming/unavailable). Issued
+// for native (an empty board means the ranking is warming/unavailable). Issued
 // assets keep the backfill copy — for them it is accurate.
 vi.mock('@/api/client', async () => {
   const actual =

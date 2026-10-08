@@ -38,7 +38,7 @@ vi.mock('@/lib/networks', async () => {
 
 import { apiGet } from '@/api/client';
 
-// Measured live 2026-08-28.
+// Measured live.
 const TIP = {
   sequence: 60_000_000,
   close_time: new Date().toISOString(),
@@ -82,7 +82,7 @@ async function renderView() {
   );
 }
 
-// Audit 2026-08-28 ("XLM supply 2.11× route divergence"): the network
+// XLM supply 2.11× route divergence: the network
 // strip showed the ledger header's total_coins (~105B, which still counts
 // the ~55B burned in 2019) as an unlabeled "Total XLM" while
 // /v1/assets/native serves total_supply 50.0B. Both are right under their

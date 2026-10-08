@@ -206,8 +206,8 @@ describe('AccountRelationHistory', () => {
 
   /**
    * THE FINDING THIS GUARDS. graph/history postdates the deployed API on
-   * some environments and 404s there (verified against production
-   * 2026-09-15, where /graph answers 200 and /graph/history answers
+   * some environments and 404s there (verified against production,
+   * where /graph answers 200 and /graph/history answers
    * 404). Calling that "warming" would tell a reader to wait for a
    * rollup cycle that has already run; the endpoint has to ship first.
    */

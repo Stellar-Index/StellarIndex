@@ -71,7 +71,7 @@ describe('SearchModal Cmd-K ownership', () => {
 // listing serves COALESCE(slug, code) AS slug, so an impersonator emits
 // the verified asset's CODE as its slug and matches the verified set —
 // meaning an asset the backend had explicitly flagged rendered with the
-// "Verified currency" check in search. Cold audit 2026-08-04.
+// "Verified currency" check in search.
 describe('SearchModal verified badge', () => {
   const verifiedSlugs = new Set(['aqua']);
   const coin = (over: Record<string, unknown>) =>
@@ -101,8 +101,8 @@ describe('SearchModal verified badge', () => {
   });
 });
 
-// CA2-A36: a same-code collision must not resolve the pair-jump link.
-// lookupAssetID used to return the first coin whose `code` matched,
+// A same-code collision must not resolve the pair-jump link.
+// lookupAssetID must not return the first coin whose `code` matched,
 // ignoring `unverified_ticker_collision` — so a spoofed issuer with more
 // observations (sorted earlier in the top-100 list) could become the
 // base of the /markets/<id>~native link instead of the real asset.

@@ -140,12 +140,12 @@ describe('StatusPageClient measurement tiles', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Honest-staleness sweep (audit 2026-08-28, web-status-1/2/4/6). The page
+// Honest-staleness sweep. The page
 // rendered a server-flagged degraded ingestion snapshot as fresh green data,
 // kept "All systems operational" + a pulsing "Live" while the status feed
 // was unreachable, labelled days-old completeness verdicts with the
 // request's assembly time, and blanked operator notices the moment the
-// notices endpoint failed. Each case below fails on the pre-fix page.
+// notices endpoint failed. Each case below pins one of those.
 // ---------------------------------------------------------------------------
 
 type Handler = () => Promise<Response>;
@@ -666,9 +666,9 @@ describe('StatusPageClient overall banner ticket note', () => {
   });
 });
 
-// RLT-385: a 2xx status alone isn't proof the API answered — a WAF
+// A 2xx status alone isn't proof the API answered — a WAF
 // challenge page, maintenance interstitial or misrouted edge response
-// can return 200 with an unrelated body. probeEndpoint used to trust
+// can return 200 with an unrelated body. probeEndpoint must not trust
 // `res.ok` alone and report those as 'fast'.
 describe('probeEndpoint body-shape check', () => {
   afterEach(() => {
@@ -739,9 +739,9 @@ describe('probeEndpoint body-shape check', () => {
 
   // RLT-468: computeReadyz (server.go) returns HTTP 200 with
   // data.status="degraded" by design when a non-critical dependency
-  // fails (F-1275) — 503 is reserved for a critical failure. Reading
+  // fails — 503 is reserved for a critical failure. Reading
   // `res.ok` alone can't distinguish that from a genuinely healthy
-  // readyz, so the badge used to render a green "fast"/"slow" tick
+  // readyz, so the badge would render a green "fast"/"slow" tick
   // for a degraded backend instead of a warning.
   it('reports degraded, not fast, for a 200 readyz body reporting a non-critical failure', async () => {
     vi.stubGlobal(
@@ -809,7 +809,7 @@ describe('probeEndpoint body-shape check', () => {
   });
 });
 
-// RLT-466 (audit-2026-09-18): the header claimed "the full public-endpoint
+// The header claimed "the full public-endpoint
 // matrix", but PUBLIC_ENDPOINTS lists a curated subset of the API's actual
 // routes (health/pricing/catalogue/oracle/auth surfaces only). "Full" is a
 // completeness claim the page can't back up.
@@ -836,9 +836,9 @@ describe('StatusPageClient header copy', () => {
   });
 });
 
-// GH-837 claim 2: the runbook says setting an incident's frontmatter
+// The runbook says setting an incident's frontmatter
 // `postmortem:` field drives the "Read full postmortem" link — but the
-// link used to render unconditionally off `slug`, so every incident got
+// link must not render unconditionally off `slug`, so every incident would get
 // a "full postmortem" link even when none was ever written. Gate on the
 // field the runbook claims controls it.
 describe('StatusPageClient incident history postmortem link', () => {

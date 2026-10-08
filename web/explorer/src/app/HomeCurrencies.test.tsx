@@ -52,7 +52,7 @@ describe('HomeCurrencies caption', () => {
 // price}>}` and threw the envelope away, so it captioned itself "Live"
 // over rates the API had flagged stale, showed a declared peg exactly
 // like an observed FX quote, and left the 24h chip with no producer at
-// all. Measured against the live API on 2026-09-19: the fiat rows came
+// all. Measured against the live API: the fiat rows came
 // back `observed_at: 2026-09-18T00:00:00Z` with `flags.stale: true`.
 function stubEnvelope() {
   vi.mocked(apiGet).mockResolvedValue({

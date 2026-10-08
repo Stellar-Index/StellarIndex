@@ -11,7 +11,7 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { HomeTopAssets } from './HomeTopAssets';
 
-// Regression test for the 2026-08-31 explorer outage.
+// Regression test for codeless assets in the volume-ranked top ten.
 //
 // /v1/assets began honouring `order_by=volume_24h_usd_desc` — the
 // ranking this page's own caption had always claimed — instead of
