@@ -382,11 +382,9 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // much wider: it covers every `reference_only` entry (USDT, BTC, ETH,
 // SOL, BNB, XRP, ADA, DOGE, AVAX, POL, DOT, LINK, UNI, AAVE, WBTC).
 //
-// Before this, byStellarCode held 11 keys — so those were the ONLY codes
-// an impersonation could ever be reported for. Measured on r1: 22,496
-// codes are claimed by more than one issuer, covering 132,808 of 194,034
-// classic assets, and `?code=XRP` returned 645 rows with NOT ONE flagged,
-// one of them served with a market_cap_usd of $109,504,500.
+// Without it, byStellarCode would hold only 11 keys, so those would be the
+// ONLY codes an impersonation could ever be reported for, and a query like
+// `?code=XRP` would return hundreds of rows with none flagged.
 //
 // The reasoning is the native-XLM one: no legitimate classic asset can
 // bear a ticker this catalogue has verified as belonging to an

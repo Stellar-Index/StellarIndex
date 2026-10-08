@@ -529,9 +529,9 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // failure policy the trades path uses: a write failure blocks-and-retries with capped
 // backoff by DEFAULT; only a POSITIVELY-classified permanent data
 // fault (the injected IsPermanentFault predicate — pq class 22/23) is
-// isolated and dropped. Before this, ANY error — including a
-// transient infra fault during a Postgres outage — silently
-// discarded the whole batch after one Warn log, permanently losing
+// isolated and dropped. Dropping on ANY error — including a
+// transient infra fault during a Postgres outage — would silently
+// discard the whole batch after one Warn log, permanently losing
 // that window of raw soroban_events rows with no operator signal and
 // no re-derive hint (this table is ADR-0029's catch-all landing
 // zone, the last-resort source of truth Row.Ledger the census +
