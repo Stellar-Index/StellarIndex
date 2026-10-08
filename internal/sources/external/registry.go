@@ -97,9 +97,9 @@ var Registry = map[string]Metadata{
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the active fiat-FX feed (massive.com, the vendor once branded polygon.io). There is
 	// deliberately NO `polygon-forex` entry: it named the same upstream with IncludeInVWAP:true and would
-	// double-count. Do not re-add it. The forex worker (API binary) polls hourly but writes one fx_quotes row
-	// per ticker per UTC day: the USD anchor behind per-trade usd_volume, /v1/assets fiat pricing and the
-	// /v1/chart fiat series. Registered so /v1/sources classifies it off-chain FX, not the unknown fallback.
+	// double-count. Do not re-add it. The forex worker (API binary) polls hourly but writes fx_quotes at
+	// one row per ticker per UTC day (every write buckets to Truncate(24 * time.Hour)): the USD anchor
+	// behind per-trade usd_volume, /v1/assets fiat pricing and the /v1/chart fiat series. Registered so /v1/sources classifies it off-chain FX, not the unknown fallback.
 	//
 	// `exchangeratesapi` (disabled) is NOT a forex-snap fallback: it emits only OracleUpdates, so
 	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the forex worker's ECB standby
