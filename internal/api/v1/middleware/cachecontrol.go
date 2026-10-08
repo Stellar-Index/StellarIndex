@@ -6,62 +6,20 @@ import (
 	"strings"
 )
 
-// CacheControl is a middleware that sets the Cache-Control response
-// header per the route's caching policy. CDN tier (e.g. CloudFront)
-// reads `s-maxage`; client tier reads `max-age`. The two-tier setup
-// lets a hot path absorb a 100× burst at the CDN without filling
-// the origin budget while still serving fresh-enough data to clients.
+// CacheControl sets Cache-Control per the route's policy (ADR-0018 surface
+// model). `s-maxage` lets the CDN absorb bursts while `max-age` keeps clients
+// fresh. Operator and tip routes are never shared-cached because caching would
+// mask outages or change the tip's consistency contract. Scam-gated price reads
+// get `s-maxage=5` so a shared entry cannot outlive a scam-withhold flip by
+// more than one probe tick.
 //
-// Policy (per ADR-0018 surface model):
+// A handler may override the directive by setting the header before writing.
+// Every problem+json writer MUST set `Cache-Control: no-store`; otherwise an
+// error inherits the route's public directive and the CDN caches the failure
+// against the success key.
 //
-//   - **Health / version / metrics** → `no-store` (operator endpoints
-//     change every probe; caching them would mask outages).
-//   - **Account endpoints** → `private, no-store` (auth-tied; never
-//     caches across users; CDN MUST NOT see them).
-//   - **Tip / observations / diagnostics** → `private, no-cache,
-//     must-revalidate` (tip surface intentionally has no cross-region
-//     consistency contract per ADR-0018; caching shifts the contract.
-//     `/v1/diagnostics/*` is operator-facing live data — the
-//     explorer polls it every 15 s, so caching defeats the UX).
-//   - **Closed-bucket historical + catalogues** (`/v1/history*`,
-//     `/v1/ohlc`, `/v1/markets`, `/v1/pairs`,
-//     `/v1/oracle/streams` and other non-SEP-40 `/v1/oracle/*`,
-//     `/v1/sources`, `/v1/assets*`, `/v1/issuers*`,
-//     `/v1/changes/*`) → `public, max-age=60, s-maxage=300` (1 min
-//     client / 5 min CDN). Closed buckets are immutable per
-//     ADR-0015, but the trailing-edge boundary advances as time
-//     passes — the s-maxage caps how long a CDN entry stays
-//     before the boundary moves.
-//   - **Current price + asset detail** → `public, max-age=30,
-//     s-maxage=60` (more aggressive refresh; these update on every
-//     bucket close).
-//   - **Scam-gated price reads** (`/v1/price`, `/v1/price/batch`,
-//     `/v1/price/changes`, `/v1/price/at`, `/v1/vwap`, `/v1/twap`,
-//     the SEP-40 passthroughs) → `public, max-age=30, s-maxage=5`
-//     (shortBandPolicy / SLOPriceRoutes). A shared cache entry must
-//     not outlive a scam-withhold flip by more than one probe tick.
-//
-// Handlers MAY override the middleware's directive by setting
-// Cache-Control before they call writeJSON / writeProblem (the
-// middleware sets the header BEFORE calling the inner handler).
-// Override is the exception, not the rule — the middleware's
-// directive is the right answer for >99% of requests.
-//
-// Errors override the route's directive at the writer side. ALL
-// problem+json writers (writeProblem in v1/envelope.go, the rate
-// limiter's writeRateLimitProblem, the recoverer's panic body, the
-// envelope404 middleware that rewrites the mux's text/plain 404/405,
-// writeAuthProblem, writeKeyPolicyDenied, writeEmailUnverified, and
-// the monthly-quota writer) explicitly set `Cache-Control: no-store`
-// before WriteHeader — a new problem writer MUST do the same. Without
-// that override an error response would inherit (e.g.) `public,
-// max-age=60, s-maxage=300` from the catalogue surface and a CDN would
-// happily cache the transient failure for 5 minutes against the same
-// key as the success response.
-//
-// Backwards-compat shim: behaves like cdn_enabled=true. Operators
-// who run the API behind no CDN should use [CacheControlWithCDN]
-// to drop the `s-maxage` half of the directive.
+// Behaves like cdn_enabled=true; deployments without a CDN use
+// [CacheControlWithCDN] to drop `s-maxage`.
 func CacheControl(next http.Handler) http.Handler {
 	return CacheControlWithCDN(true)(next)
 }
