@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # r1-smoke-test.sh — regression test for scripts/dev/r1-smoke.sh's
-# issue-reference hygiene (RSWP-092).
+# issue-reference hygiene.
 #
 # GitHub issue #1131 is real but unrelated to security.txt (it's the
 # fail-open dwell-window ticket) — a dangling-reference sweep flagged
@@ -27,7 +27,7 @@ else
   ok "no dangling #1131 citation remains"
 fi
 
-# RSWP-094: #1134 was cited as the PR behind the cursor-guard behaviour
+# #1134 was cited as the PR behind the cursor-guard behaviour
 # pins, but GitHub #1134 is an unrelated open issue (xdrjson decode-arm
 # coverage), not a PR, and never shipped this behaviour.
 if grep -q '1134' "$SMOKE"; then
@@ -51,7 +51,7 @@ else
   ok "security.txt is no longer listed as a pending promotion"
 fi
 
-# RSWP-107: the markets ?asset= behaviour-pin lines cited "(#1189)" as the
+# The markets ?asset= behaviour-pin lines cited "(#1189)" as the
 # shipping PR, but GitHub #1189 is now an unrelated open issue (the
 # extract-wasm-from-galexie found-before-write bug), not the PR that
 # shipped the /v1/markets ?asset= filter (that was PR #1189 at merge time
@@ -62,7 +62,7 @@ else
   ok "no dangling #1189 citation remains"
 fi
 
-# RSWP-108: the "queued for promotion" block cited (#1135, #1162,
+# The "queued for promotion" block cited (#1135, #1162,
 # #1164, #1168, #1172, #1207, #1189, #1190) as the PRs/issues behind
 # each pinned behaviour. Every one of those numbers now resolves to an
 # unrelated live GitHub issue (confirmed via `gh issue view`), not the

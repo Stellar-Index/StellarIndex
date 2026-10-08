@@ -40,7 +40,6 @@ lint-lexicon-test.sh
 lint-migrations-test.sh
 lint-orphans-truth-test.sh
 lint-patroni-basic-auth-quoting-test.sh
-lint-replay-plan-citation-test.sh
 lint-runbook-annotations-test.sh
 lint-systemd-envfile-order-test.sh
 lint-tripwire-window-test.sh
