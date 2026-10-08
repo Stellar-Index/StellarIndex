@@ -2047,79 +2047,38 @@ type proxyPairGate interface {
 	RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error)
 }
 
-// tryStablecoinFiatProxy handles the X / fiat:USD → X / <classic-USD-peg>
-// rewrite at handler read time, as a safety net for deployments
-// where the aggregator's [aggregate].enable_stablecoin_fiat_proxy
-// is not enabled. The literal X/fiat:USD pair never has rows in
-// prices_1m on Stellar mainnet because no on-chain trades quote in
-// fiat:USD — every USD-flavoured trade quotes in classic USDC
-// (USDC-GA5Z…) or one of the other operator-declared pegs.
+// tryStablecoinFiatProxy rewrites X/fiat:USD to X/<classic USD peg> at
+// read time, a safety net for deployments without
+// [aggregate].enable_stablecoin_fiat_proxy: no on-chain trade quotes in
+// fiat:USD, so the literal pair has no prices_1m rows and
+// /v1/price?asset=native&quote=fiat:USD would 404 on a fresh deployment.
 //
-// Two routes, chosen by what the asset is:
+//   - A non-peg asset walks [trades].usd_pegged_classic_assets in
+//     priority order ([Server.walkUSDPegs]); the first non-stale
+//     asset/<peg> row wins, as in chart.go's chartStablecoinFallback.
+//   - A declared peg, by classic id or SAC ([Server.isDeclaredUSDPeg]),
+//     is priced through its XLM book, asset/XLM × XLM/fiat:USD
+//     ([Server.crossDeclaredPegThroughXLM]), classic book first, then
+//     the SAC's. Both spellings get one value here (only `asset_id`
+//     echoes the request), though the caller's literal-first direct read
+//     can still differ between them. The declaration
+//     ([Server.declaredPegSnapshot]) answers only when the cross has
+//     nothing: a constant must not pre-empt an observation, since a depeg
+//     is when they disagree. Pricing via another declared peg is not a
+//     route: a break in that peg would print an inverted wrong price.
+//     XLM is not a peg.
 //
-//   - An asset that is NOT a declared peg walks the operator's
-//     [trades].usd_pegged_classic_assets allow-list in priority order
-//     ([Server.walkUSDPegs]); the first peg whose asset/<peg> pair has a
-//     non-stale Timescale row wins. Same shape as chart.go's
-//     chartStablecoinFallback — without it,
-//     /v1/price?asset=native&quote=fiat:USD 404s out-of-the-box on every
-//     fresh deployment, which is the most-basic possible query against
-//     the canonical price endpoint.
+// ok=false when the quote is not fiat:USD, no pegs are configured, or a
+// non-peg asset finds no price under any peg. The snapshot is flagged
+// triangulated: it rests on peg ≈ $1, the XLM cross or the declaration.
 //
-//   - An asset that IS a declared peg — under the classic id the operator
-//     declared or the SAC that wraps it, [Server.isDeclaredUSDPeg] —
-//     does not walk. Its fiat:USD market
-//     was the caller's own direct read, which has already missed by the
-//     time this runs; the market it has on Stellar is its XLM book, so it
-//     is priced through that — asset/XLM × XLM/fiat:USD
-//     ([Server.crossDeclaredPegThroughXLM]) — and only when that cross
-//     has nothing to read does the declaration itself answer
-//     ([Server.declaredPegSnapshot]) rather than a 404. Both spellings
-//     take this route, and it composes ONE value for them: the cross
-//     prices the peg as an ASSET — the classic id's book first, the SAC
-//     wrapper's only where that one found nothing — and the declaration
-//     is a constant, so only `asset_id` echoes the request. That holds for this route
-//     alone — the caller's own direct read, one tier above, is
-//     literal-first and can still answer the two spellings differently
-//     when only one of them has an observed fiat:USD bucket.
-//     The declaration
-//     is a LAST resort, never a short-circuit: a constant must not
-//     pre-empt an observation, and a depeg is precisely the moment the
-//     two disagree. Pricing the peg in ANOTHER declared peg's terms is
-//     deliberately not a route: it assumes the other peg is the sound
-//     one, and with two declared pegs a break of the other would print
-//     an inverted wrong price for this one. XLM is not a peg.
-//
-// Returns ok=false when:
-//   - quote is not fiat:USD,
-//   - usdPeggedClassics is empty (operator hasn't opted in),
-//   - the asset is not a declared peg and every peg's pair returns
-//     ErrPriceNotFound or an error.
-//
-// Sets flags.triangulated=true on the returned snapshot — the served
-// price is the X/<peg> VWAP rounded by the implicit assumption peg ≈ $1,
-// the XLM cross, or the declaration; none is a direct print of the
-// requested pair. SingleSource is whatever the underlying lookup carried.
-//
-// The third return is `withheld`: a peg leg whose read came back
-// ErrPriceWithheld means we HAVE a price for this asset and are
-// declining to publish it. It must not be swallowed by the bare
-// `continue` that skips an inactive peg, or the caller would report
-// errors/price-not-found — "we have no price" — when the truth is "we
-// have one and are withholding it". The two are
-// different answers to the customer: the withheld problem body names
-// the raw surfaces (/v1/observations, /v1/ohlc, /v1/history) where the
-// data IS available, and a not-found tells them to look nowhere.
-//
-// Withheld is sticky across the peg walk and does NOT stop it: a later
-// peg may still yield a servable price, which is strictly better than a
-// 404, and only if NO peg serves does the withheld verdict surface.
-//
-// The declared-peg route reports withheld when the cross comes back
-// pegXLMLegRefused, and then does NOT publish the declaration: a flat
-// 1.0 served over a market the gate refused would hide the refusal on
-// every surface that reads this fallback. The one refusal the declaration
-// still answers is pegXLMLegFlagged — see that verdict for why.
+// The third return is `withheld`: a peg leg returned ErrPriceWithheld.
+// That must not collapse into not-found, because the withheld body points
+// the caller at the raw surfaces that do hold the data. It is sticky but
+// does not stop the walk; a later peg's servable price beats it. On the
+// declared-peg route, a pegXLMLegRefused cross is withheld and the
+// declaration is NOT served, or a flat 1.0 would hide the refusal; only
+// pegXLMLegFlagged still falls through to the declaration.
 func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
 	// Self-peg: the asset IS a `crypto:<STABLE>` ticker priced in the
 	// very fiat it tracks (crypto:USDC/fiat:USD, crypto:EURC/fiat:EUR,
@@ -2273,85 +2232,40 @@ func (s *Server) walkUSDPegs(
 }
 
 // crossDeclaredPegThroughXLM prices a declared USD peg in fiat:USD
-// through the one market it has on Stellar — its XLM book:
+// through its XLM book:
 //
 //	price(peg/fiat:USD) = price(peg/XLM) × price(XLM/fiat:USD)
 //
-// It is the point-surface twin of the per-bucket series cross /v1/chart
-// and /v1/history apply ([Server.fiatSeriesThroughXLM]) and runs the
-// same multiplication, [crossThroughPivot]: exact big.Rat on both legs
-// (ADR-0003 — no float on a served price), a zero, negative or missing
-// leg is a miss, ten fractional digits. The result is served as
-// price_type "vwap" with flags.triangulated=true — two VWAPs multiplied,
-// not a declaration — and it names its window: window_seconds is the
-// wider of the two legs' windows, 60 when both are closed 1-minute
-// buckets ([VWAP1mToSnapshot]). A served vwap carries its window on the
-// wire; only last_trade omits it. This is what makes a depeg VISIBLE on
-// this surface:
-// no on-chain venue quotes USDC-GA5Z… in fiat:USD, so the caller's
-// direct read misses in steady state, and without the cross the answer
-// would be the flat $1 declaration before any market had been read. A peg
-// that has broken reprices against XLM first — SDEX is where its book is — and that is
-// the leg read here.
+// It is the point twin of [Server.fiatSeriesThroughXLM] and shares
+// [crossThroughPivot]: exact big.Rat (ADR-0003), a zero, negative or
+// missing leg is a miss. It serves price_type "vwap", flagged
+// triangulated, with window_seconds the wider of the two legs' windows.
+// No venue quotes a classic peg in fiat:USD, so without this cross the
+// answer would be the flat $1 declaration; a broken peg reprices against
+// XLM first, so this is what makes a depeg visible.
 //
-// The pivot leg is read DIRECT (XLM/fiat:USD, the CEX market under XLM's
-// alias forms), never through the Redis composite or the stablecoin
-// proxy: a pivot priced via the very peg under test would cancel to
-// exactly 1 and prove nothing. Nor does the cross lean on any other
-// declared peg being sound — XLM is not a peg.
+// The pivot is read direct (XLM/fiat:USD), never via the Redis composite
+// or the stablecoin proxy: a pivot priced through the peg under test
+// would cancel to exactly 1.
 //
-// Cost bound: every call on the way to the reads is bounded. The peg/XLM
-// leg is read under each spelling of the peg — the classic id and its
-// SAC wrapper — crossed with each XLM form as the quote
-// ([Server.readDeclaredPegXLMLeg]) — `native`, crypto:XLM, the XLM SAC:
-// at most six combinations for a wrapped peg, three for one with no
-// wrapper, and the SAC spelling's three are reached only when the
-// classic spelling FOUND NOTHING — every one of its combinations
-// gate-missed or read not-found. A refusal or a read failure on the
-// classic spelling is not "found nothing": it ends the walk where it
-// stands (see [Server.readDeclaredPegXLMLeg]), so the six-combination
-// bound is the worst case and the common shape is three.
-// A `native`- or SAC-quoted
-// miss is the reader's unbounded last-trade scan, not its synthetic-fiat
-// fast path, so each combination runs behind the same [proxyPairGate]
-// probe the peg walk uses: one bounded existence check per combination,
-// and only one the probe reports live pays the read.
+// Cost: [Server.readDeclaredPegXLMLeg] tries each peg spelling (classic,
+// then SAC only if classic found nothing) against each XLM form: at most
+// six combinations, usually three. Each is `native`- or SAC-quoted, an
+// unbounded last-trade scan on a miss, so each sits behind a
+// [proxyPairGate] probe. A probe error falls through to the read (a blip
+// must not hide a price), so a probe outage costs up to six scans. The
+// fiat-quoted pivot always takes the closed-bucket fast path and is read
+// only after the peg leg answers.
 //
-// What the probe being DOWN costs: a gate error falls through to
-// LatestPrice rather than skipping the combination (a probe blip must
-// not hide a price), and every one of the six combinations is `native`-
-// or SAC-quoted — the unbounded last-trade scan. So a probe outage on
-// this route costs up to six unbounded scans, twice the three of the
-// classic spelling alone. No new class of read; twice as wide.
+// A withheld leg (ErrPriceWithheld) is returned as a verdict, neither a
+// price nor a miss, so the caller withholds instead of serving the
+// declaration. It also stops the spelling walk: the scam gate keys on a
+// classic issuer and cannot fire on a SAC base, so moving on to the SAC
+// book would publish the market the gate declined.
 //
-// The XLM/fiat:USD leg is fiat-quoted, so
-// every miss there IS the fast path — one closed-bucket lookup per
-// form. The pivot is read only once the peg leg has answered, so a peg
-// with no XLM book costs no pivot read. No unbounded read is reachable
-// from here.
-//
-// A withheld leg (ErrPriceWithheld) is not a price: the gate refused to
-// publish that market and a cross must not re-serve it through a side
-// door. Nor is it a miss: the verdict is returned as-is so the caller
-// can withhold rather than print the declaration over it. Reading the
-// peg's SAC spelling makes that rule load-bearing in a second place — a
-// refusal is also not a reason to go LOOKING for another spelling of the same
-// asset, because the two spellings are not gated alike: the substance
-// gate measures the alias UNION and so reaches the same verdict for
-// either, but the scam gate keys on a classic issuer G-address and
-// cannot fire on a Soroban base at all. Walking on from a refused
-// classic book to the peg's SAC book would therefore publish, through
-// an ungated spelling, exactly the market the gate declined. So the
-// spelling walk STOPS on a refusal ([Server.readDeclaredPegXLMLeg]).
-//
-// The returned verdict is pegXLMLegPriced only when the product was
-// served. A refused pivot leg is pegXLMLegRefused like a refused peg leg;
-// a product [crossThroughPivot] declines is pegXLMLegNoMarket.
-//
-// observed_at is the OLDER of the two legs
-// — a derived price is only as fresh as its staler input — and sources
-// is the union of both, so a consumer sees the SDEX book and the CEX
-// venues that set the pivot.
+// Verdicts: pegXLMLegPriced only when served; a refused pivot is
+// pegXLMLegRefused; a product [crossThroughPivot] declines is
+// pegXLMLegNoMarket. observed_at is the older leg's; sources is the union.
 func (s *Server) crossDeclaredPegThroughXLM(
 	ctx context.Context, asset, quote canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict) {
@@ -2402,85 +2316,38 @@ func (s *Server) crossDeclaredPegThroughXLM(
 }
 
 // readDeclaredPegXLMLeg reads asset/XLM for
-// [Server.crossDeclaredPegThroughXLM] — the peg's own on-chain book —
-// under each spelling of the peg as the BASE crossed with each of XLM's
-// alias forms as the QUOTE (`native` first, then crypto:XLM, then the
-// SAC; [canonical.AssetAliases] owns the order). The store folds both
-// stored orientations of a market into the requested one, so the read
-// answers whichever way SDEX recorded the book.
+// [Server.crossDeclaredPegThroughXLM]: each peg spelling as the base
+// against each XLM alias as the quote ([canonical.AssetAliases] order).
+// The store folds both stored orientations into the requested one.
 //
-// The spellings are read ONE AT A TIME, and the walk advances to the
-// next spelling on exactly ONE verdict: pegXLMLegNoMarket — this
-// spelling FOUND NOTHING, every combination gate-missed or read
-// not-found. Any other verdict ends the walk where it stands:
+// Spellings are read one at a time, and the walk advances only on
+// pegXLMLegNoMarket (every combination gate-missed or not-found):
 //
-//   - pegXLMLegPriced — this spelling is the answer.
-//     [Server.readPegXLMLegForSpelling] prefers fresh over stale WITHIN
-//     one spelling, so a DORMANT book still answers and the next
-//     spelling is never reached. That is the shape [tipMergePairs] gave
-//     the tip: a SAC-form combination is read where the alternative is
-//     no price, never where an established form can answer. Ranking
-//     fresh-beats-stale ACROSS the spellings instead would let a fresh
-//     few-hundred-dollar Soroban pool outrank a dormant-but-present
-//     SDEX book on a classic-keyed request — the thin-pool third-alias
-//     shape the family's SAC-last ordering exists to stop, arriving on
-//     the surface that ordering was meant to protect.
+//   - pegXLMLegPriced ends it. Fresh beats stale only within a spelling,
+//     so a dormant SDEX book still outranks a fresh, thin Soroban pool,
+//     as [tipMergePairs] orders the tip. A zero, negative or unparsable
+//     price also counts as answered and [crossThroughPivot] declines it:
+//     one degenerate print on the deep book must not hand the price to a
+//     thin pool.
+//   - pegXLMLegRefused / pegXLMLegFlagged end it. pricingguard.ScamGate
+//     never fires on a non-classic base, so advancing to the SAC book
+//     would republish the refused market. Sticky-withheld matches
+//     [Server.readPriceWithAliases] and [Server.walkUSDPegs].
+//   - pegXLMLegReadFailed ends it and the declaration answers. A broken
+//     read is not evidence of no classic book; a 42883 planning error was
+//     measured failing 1,651 times on one pair.
 //
-//   - pegXLMLegRefused / pegXLMLegFlagged — the gate withheld this
-//     spelling's book. The walk must not go looking for another
-//     spelling of the same asset, because the two are not gated alike:
-//     pricingguard.ScamGate.Withheld returns false for any non-classic
-//     base, so the peg's SAC book is scam-ungated. Advancing would republish, through the ungated
-//     spelling, the very market the gate refused — a side door on the
-//     function whose own contract says a withheld leg is not a
-//     price. Sticky-withheld is what both siblings do:
-//     [Server.readPriceWithAliases] ("a withheld verdict on ANY alias
-//     wins over not-found") and [Server.walkUSDPegs] ("a WITHHELD
-//     verdict is not a miss").
+// Order is canonical-first ([canonical.CanonicalAsset], SAC last), not
+// the literal-first order [Server.readPriceWithAliases] uses, so the
+// classic id and the C-address price one asset from one book. This
+// departs from [canonical.AssetAliases]' documented contract; the bounded
+// residual is accepted in §7 of the d7 thin-pool third-alias VWAP review
+// (docs/methodology/) until the orders are reconciled after v1.
 //
-//   - pegXLMLegReadFailed — the read itself broke (transport, planning,
-//     timeout). A partial reader failure is not evidence that the peg
-//     has no classic book; treating it as one would silently reprice the
-//     peg off whatever thin pool its SAC spelling holds, and the failure
-//     class is not hypothetical (a 42883 planning error was measured
-//     failing 1,651 times on a single pair). The walk ends and the
-//     declaration answers.
-//
-// A price that parsed but is zero, negative or unparsable counts as
-// pegXLMLegPriced — the spelling ANSWERED — so the walk ends there too
-// and [crossThroughPivot] declines the product, leaving the declaration
-// to answer. Resolved that way deliberately, and identically to the
-// refusal and failure arms: the walk advances on "found nothing", never
-// on "found something unusable". The opposite resolution would let a
-// single degenerate print on the deep book hand the peg's price to a
-// thin pool, which is the shape this ordering exists to stop. Unchanged
-// from before the SAC spelling joined the walk.
-//
-// The spellings are ordered canonically — [canonical.CanonicalAsset]
-// first, the SAC wrapper last — rather than literal-first as
-// [Server.readPriceWithAliases] walks the direct read. This leg does not
-// serve the caller's own spelling; it prices ONE asset whichever id the
-// caller typed, and the classic id and the C-address must print the same
-// cross from the same book. Literal-first would let the C-address read
-// its thin Soroban pool ahead of the SDEX book the classic id reads
-// first, and the two spellings would disagree about the price of one
-// asset. The requested spelling is echoed by the caller, not by this
-// leg.
-//
-// That canonical-first order departs from the literal-first contract
-// [canonical.AssetAliases] documents, which still governs every other
-// read. The departure is an accepted, bounded residual (§7 of the
-// d7 thin-pool third-alias VWAP review in docs/methodology/):
-// it keeps one asset's two spellings reading one book, and it stays as is
-// until the two orders are reconciled after v1.
-//
-// Each combination runs behind the [proxyPairGate] probe first, exactly
-// as the peg walk does and for the same reason: a `native`- or
-// SAC-quoted miss is not the reader's synthetic-fiat fast path, it is
-// the unbounded last-trade scan. A gate ERROR falls through to the read
-// (a probe blip must not hide a price); a gate miss is pegXLMLegNoMarket
-// for that combination. The decimals normalization is the walk's (M2),
-// against the legs actually traded.
+// Each combination sits behind the [proxyPairGate] probe, since a
+// `native`- or SAC-quoted miss is an unbounded last-trade scan. A gate
+// error falls through to the read; a gate miss is pegXLMLegNoMarket.
+// Decimals are normalised against the legs actually traded.
 func (s *Server) readDeclaredPegXLMLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict) {

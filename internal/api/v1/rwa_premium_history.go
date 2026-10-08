@@ -17,85 +17,32 @@ import (
 )
 
 // GET /v1/rwa/premium — the token's price against the instrument's net
-// asset value, over time.
+// asset value, as a daily series of /v1/rwa/assets' point-in-time
+// `premium.pct`. It needs an observed market price and an oracle NAV on
+// the same clock; a chain query has neither.
 //
-// # What this is
+// Neither leg is carried across a silent day. /v1/rwa/history may carry
+// supply because an append-only log makes a silent day an unchanged
+// level; both legs here are sampled. A held-to-maturity token can sit
+// untraded for weeks while its NAV moves, so carrying the market leg
+// draws a discount nobody traded, and carrying the NAV leg draws a
+// premium against a value nobody published. A point exists only on a
+// day both legs were observed; per-day measurable counts let a reader
+// tell a quiet market from a quiet sector.
 //
-// /v1/rwa/assets publishes `premium.pct` per asset: the token's market
-// price measured against an independent oracle's valuation of the
-// instrument the issuer declares it anchors to. That figure is
-// point-in-time. This surface is the same measurement as a daily
-// series, and it is the one chart a chain-query tool structurally
-// cannot draw: it needs both an observed market price and an oracle's
-// published NAV on the same clock, and a chain query has neither leg.
+// The market leg is held to a floor of the live thin-market gate's shape
+// ([Server.rwaPremiumDayFloorFor]); a raw daily VWAP would publish, for
+// past days, the attacker-seeded dust rate the live surface refuses. A
+// failing day is withheld and counted. The live gate's trailing 24h at
+// minute grain has no past-day analogue, and the minute aggregate's
+// history depends on deployment retention ([timescale.Store.DailyMarketDays]),
+// so the floor uses hourly data. An asset can therefore carry a premium
+// on a past day and none today: those are two different days.
 //
-// # The two legs, and why NEITHER may be carried forward
-//
-// The sibling /v1/rwa/history carries ONE of its legs across a silent
-// day, and the asymmetry there is load-bearing: supply is cumulated
-// from an append-only log that records every event able to move the
-// level, so a day with no entry is a day the level did not change —
-// carrying it is arithmetic. Its price leg is a sampled observation and
-// is never carried.
-//
-// A premium has no such leg. It is a ratio of two SAMPLED observations:
-//
-//   - The MARKET leg is the day's volume-weighted average of what
-//     buyers were observed paying. A day with no trade is a day nobody
-//     transacted, not a day the price stayed put — a held-to-maturity
-//     instrument can sit untraded for weeks while the thing it tracks
-//     moves daily.
-//   - The REFERENCE leg is the day's closing publication by an oracle.
-//     A day the oracle was silent is a day nobody stated a value.
-//
-// Carrying EITHER manufactures the number outright. Carry the market
-// leg over a week in which the NAV rose and the chart draws a widening
-// discount that nobody traded; carry the NAV leg and it draws a premium
-// against a valuation nobody published. So a point exists only on a day
-// BOTH legs were independently observed, and every other day is a hole.
-// The response says how many assets were measurable on each day so a
-// reader can tell a quiet market from a quiet sector.
-//
-// # The market leg is gated, not merely read
-//
-// The premium on /v1/rwa/assets compares against the SERVED price,
-// which has already passed the thin-market substance gate: an
-// aggregated price claim is withheld for a pair whose trailing market
-// activity is below the operator's floor, because on a permissionless
-// DEX an attacker can mint a token, seed a handful of dust trades and
-// have their own rate published as ours. A history built on the raw
-// daily VWAP would publish, for every past day, exactly the claim the
-// live surface refuses — the gate routed around by changing the time
-// axis.
-//
-// So each day's market leg is measured and then held to a floor of the
-// same shape ([Server.rwaPremiumDayFloorFor]), and a day that fails it is
-// withheld and COUNTED rather than dropped in silence.
-//
-// The floor is not the live gate and cannot be. The live gate measures
-// a trailing 24 hours ending now at MINUTE grain; a past day has no
-// "trailing 24 hours", and the minute aggregate's reach back through
-// history is a deployment setting rather than a property of the schema
-// (see [timescale.Store.DailyMarketDays] — a retention policy on it
-// ships disarmed and would truncate the series the day it is armed).
-// What survives is the same three legs at the coarsest grain history
-// reliably keeps, which is the hour. The
-// consequence to state plainly: an asset can carry a premium on a past
-// day and none today, because its market was substantial then and is
-// too thin now. That is not an inconsistency between the two surfaces —
-// it is the two surfaces measuring two different days.
-//
-// # Coverage is small, and the response says how small
-//
-// Only a curated (code, issuer) → feed binding may value an instrument
-// (internal/rwa/oracle_reference.go), and the curated set binds SEVEN
-// pairs of the fourteen `rwa:` feeds the registry carries — XAU and
-// SPXU are deliberately refused as off-chain reference codes, and the
-// rest have no admitted Stellar issuer. Of those seven, only the ones
-// that actually TRADE against a dollar can carry a premium at all: a
-// tokenized bill that is bought and held has a NAV every day and a
-// market price on none. `excluded[]` names every member left out and
-// who can move it.
+// Coverage is small: the curated binding (internal/rwa/oracle_reference.go)
+// admits seven of the fourteen `rwa:` feeds (XAU and SPXU are refused as
+// off-chain codes), and only those trading against a dollar can carry a
+// premium. `excluded[]` names every member left out and who can move it.
 
 // rwaPremiumHistoryTTL bounds the reuse of one assembled series. It
 // matches [rwaHistoryTTL] for the same reason: a daily grain cannot

@@ -986,70 +986,27 @@ func isValidClassicCode(s string) bool {
 	return true
 }
 
-// handleAssetList serves GET /v1/assets.
+// handleAssetList serves GET /v1/assets; parameters are documented in the
+// OpenAPI spec.
 //
-// Query params:
-//   - cursor (optional): opaque, from a prior response's pagination.next.
-//   - limit  (optional): integer 1-500, default 100.
+// The row filters (type, code, issuer, q) are validated before dispatch,
+// so bad input never 200s, and travel as one assetListFilters value: a
+// filter passed piecemeal is easy to drop on some path, and the response
+// then looks unfiltered. They apply on the default and unified
+// (`asset_class=all`) listings; on the unified path they narrow the spine
+// before the alias fold, so a filtered SAC-wrapped asset's
+// `volume_24h_usd` is its classic arm alone (catalogue rows match via
+// [Server.lookupCatalogueTwin]; see [Server.fetchClassicUnifiedRows]).
 //
-// Row filters, validated up front (garbage → 400)
-// regardless of which backing path serves the request:
-//   - type (optional): structural asset class, one of native |
-//     classic | soroban | fiat | any. `any`/omitted disables it.
-//   - code (optional): exact classic asset code, case-sensitive,
-//     1-12 alphanumeric (e.g. `USDC`). Not unique on Stellar —
-//     combine with issuer to pin a single asset.
-//   - issuer (optional): a G-strkey (CRC-checked).
-//   - q (optional): case-insensitive substring over code / slug /
-//     issuer (and, on catalogue rows, the currency name).
+// The class-scoped catalogue listings (`fiat` / `stablecoin` / `crypto`)
+// ignore the filters rather than 400, because the explorer's search box
+// and class chips are independent (AssetsTable.tsx) and send both on
+// every keystroke. Any dropped filter is named in `flags.filters_ignored`
+// ([assetListFilters.ignored]) so a client can tell an over-broad page
+// from a match.
 //
-// The filters apply on the default listing AND on the unified
-// (`asset_class=all`) one, in both of its phases: `code` / `issuer` /
-// `type` push down to the listing spine, the catalogue phase narrows
-// its curated rows on the same three, and `q` searches both. They
-// travel as one assetListFilters value because a filter passed
-// piecemeal is easy to drop on some path, and the response then looks
-// exactly like an unfiltered one. Validation fires before the
-// dispatch, so bad input never 200s.
-//
-// A filtered listing reports the money of the rows the filter admitted.
-// On the unified path the alias fold merges a SAC wrapper's trailing-24h
-// volume onto its classic twin, and every row filter narrows the spine
-// before that fold — so a spine-served SAC-wrapped asset's
-// `volume_24h_usd` under any of the four filters is its classic-arm
-// figure alone. A verified-catalogue row reaches the same two figures by
-// a different route: its stats come from [Server.lookupCatalogueTwin],
-// an exact-issuer lookup that returns the classic arm only, so an
-// unfiltered request folds the wrapper's arm on top
-// ([Server.mergeContractArmVolume]) — the sum the classic phase already
-// computes for the twin this row suppresses — and a filtered one leaves
-// the classic arm standing. Both facts are on the four parameters in the
-// OpenAPI spec; see the pushdown note in
-// [Server.fetchClassicUnifiedRows] for why the filters run before the
-// fold rather than after it.
-//
-// `asset_class` remains the major dispatch, not a row filter. The
-// class-scoped catalogue listings (`fiat` / `stablecoin` / `crypto`)
-// serve their whole class and do NOT narrow on these filters, `q`
-// included — the same gap, still open on that path because it shares
-// its page writer with /v1/external/assets and closing it there is a
-// decision about that listing too. Stated on all four parameters in
-// the spec rather than refused with a 400, because the explorer's
-// search box and its class chips are independent controls
-// (web/explorer/src/app/assets/AssetsTable.tsx), so today's deployed
-// client sends `asset_class=stablecoin&q=…` on every keystroke: a 400
-// would replace an over-broad list with a hard error page.
-//
-// Every path that drops a filter names it on the envelope instead —
-// `flags.filters_ignored` (see [assetListFilters.ignored]). Prose in
-// the spec tells an integrator writing the client; the flag tells the
-// client itself, which otherwise cannot distinguish the over-broad
-// page from a genuine match.
-//
-// Returns an empty list when no AssetReader is wired (operator did
-// not configure the asset-catalog reader). The Envelope shape is
-// otherwise correct so clients can integrate against the wire
-// contract regardless of whether the catalogue is populated.
+// With no AssetReader wired it returns an empty list in the normal
+// envelope.
 func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Parse + validate query params FIRST — bad input is 400
 	// regardless of whether the backing reader is wired.
