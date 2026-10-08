@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestGetSourceStatsFoldsFlippedOrientation pins RLT-274: a source
+// TestGetSourceStatsFoldsFlippedOrientation pins that a source
 // that printed the same market in both stored orientations (native/USDC
 // and USDC/native) must be counted as ONE market, not two. Before the
 // fix, GetSourceStats grouped its per_pair CTE on the raw (base_asset,
@@ -60,7 +60,7 @@ func TestGetSourceStatsFoldsFlippedOrientation(t *testing.T) {
 }
 
 // TestGetNetworkStatsFoldsFlippedOrientation pins the same defect
-// (RLT-274) in GetNetworkStats's MarketsCount24h: the DISTINCT over
+// in GetNetworkStats's MarketsCount24h: the DISTINCT over
 // prices_1m must fold a market's two stored orientations before
 // counting.
 func TestGetNetworkStatsFoldsFlippedOrientation(t *testing.T) {

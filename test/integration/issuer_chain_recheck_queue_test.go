@@ -11,8 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A FILLED issuer row must still be re-offered to the chain — RSEC-V1 /
-// RLT-470, against a real Postgres.
+// A FILLED issuer row must still be re-offered to the chain, against a real
+// Postgres.
 //
 // Making `issuers.home_domain` overwritable was necessary and not sufficient.
 // Nothing scheduled ever re-read a row that already had one: the drain's

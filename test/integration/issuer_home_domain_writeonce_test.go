@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// issuers.home_domain must track the chain — RSEC-V1 / RLT-470, against a
+// issuers.home_domain must track the chain, against a
 // real Postgres.
 //
 // Both writers of the column refused a row that already held a value: the

@@ -43,7 +43,7 @@ func TestRecognize(t *testing.T) {
 	}
 }
 
-// TestRecognize_ValidateFailureIsRecognitionGap proves RLT-137: a
+// TestRecognize_ValidateFailureIsRecognitionGap proves that a
 // decoder whose Matches() reports the topic shape as owned, but whose
 // sample would not actually decode, must surface as a recognition gap
 // (ok == false) rather than a false "recognized". A decoder that does

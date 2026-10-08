@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers is the RLT-282
+// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers is the
 // regression guard for the tiered-datastore site of the "a short walk
 // reads as full coverage" class.
 //

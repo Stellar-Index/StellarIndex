@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// ─── RLT-265: a unit's header may not contradict its directives ────
+// ─── A unit's header may not contradict its directives ────
 //
 // The verify-archive units carry unusually long headers, and an
 // operator installing the deploy/systemd copy by hand reads the header

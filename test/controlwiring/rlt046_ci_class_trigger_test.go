@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ─── RLT-046: every non-.go file a Go test reads, and every file
+// ─── Every non-.go file a Go test reads, and every file
 // clickhouse-exporter-test.sh reads, must trigger the CI class that runs it ───
 //
 // The `go` class matched only *.go, go.mod/sum and openapi/**, so a diff

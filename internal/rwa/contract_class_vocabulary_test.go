@@ -110,7 +110,7 @@ func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 
 // TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire contract
 // to the Go vocabulary it serves. `anchor_class` is populated from BOTH the
-// classic and contract arms (RLT-026): a term the contract arm may legally
+// classic and contract arms: a term the contract arm may legally
 // emit (`fund`) but the spec's enum omits is an undocumented value on every
 // Spiko SAFO row, live, with no way for a generated client to model it.
 func TestOpenAPIAnchorClassEnumMatchesContractVocabulary(t *testing.T) {

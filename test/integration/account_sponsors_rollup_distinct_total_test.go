@@ -10,7 +10,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestSponsorsRollup_DistinctSponsoredTotalIsGlobal is RLT-028's proof,
+// TestSponsorsRollup_DistinctSponsoredTotalIsGlobal is the proof,
 // run through the real cycle on a real ClickHouse. The board's
 // distinct_sponsored_total must count each sponsored account once
 // across the WHOLE board, not once per sponsor that touched it.

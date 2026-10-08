@@ -21,7 +21,7 @@ func wellFormedMessage() notify.Message {
 	}
 }
 
-// RLT-321: a transport with no credential is an ERROR on every Send — never
+// A transport with no credential is an ERROR on every Send — never
 // the nil that the old NoopSender fallback returned and callers counted as
 // result="sent".
 func TestUnconfiguredSender_SendIsAlwaysErrNotConfigured(t *testing.T) {

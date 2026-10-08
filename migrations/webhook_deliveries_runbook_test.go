@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestWebhookDeliveriesRunbookColumnsExist guards RLT-226: the
+// TestWebhookDeliveriesRunbookColumnsExist guards a regression: the
 // customer-webhook-delivery-failing runbook's `_mark_errors` diagnostic
 // query named columns webhook_deliveries has never had (`updated_at`).
 // The table (0027_platform_v1_schema.up.sql) is the schema of record; no
@@ -78,8 +78,8 @@ func webhookDeliveriesMarkErrorsQuery(t *testing.T) string {
 }
 
 // queryColumnRefs extracts bare column names from a SELECT ... ORDER BY
-// query's select-list and ORDER BY clause (the two clauses RLT-226's
-// stale `updated_at` reference could hide in).
+// query's select-list and ORDER BY clause (the two clauses a stale
+// `updated_at` reference could hide in).
 func queryColumnRefs(query string) []string {
 	var refs []string
 
