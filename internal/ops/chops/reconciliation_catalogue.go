@@ -273,35 +273,23 @@ type gatedDecoder interface {
 	GatedContractSet() []string
 }
 
-// buildReconciliationCatalogue assembles the per-source reconciliation
-// set and returns the soroswap decoder separately so the caller can
-// seed its pair registry (its swap event omits token identities).
+// buildReconciliationCatalogue assembles the per-source reconciliation set
+// and returns the soroswap decoder separately so the caller can seed its pair
+// registry (its swap event omits token identities).
 //
-// Scope: every source whose decoder matches by TOPIC (so a soroban_events
-// re-derive reproduces it) or by a REAL contract address (oracles); sdex via
-// the LCM op census; and the event-less ContractCall sources (band,
-// soroswap-router) via the InvokeContract-op census (callDec path) — their
-// calls are re-derived from the lake by filtering body_xdr on the contract
-// bytes (stellar.operations has no contract_id column). PLUS, when
-// cfg.Supply.WatchedSEP41Contracts is configured, sep41_transfers +
-// sep41_supply (see [buildSEP41ReconSources]). Counting them is sound only
-// because the full-history truncate+re-derive (`ch-rebuild -sep41 -write`,
-// windows 50.0M→63.42M) purged every row written before the event_index PK
-// discriminator (migration 0057): those rows collapsed multiple same-op
-// events on disk, and a re-derive (which counts each event) flags every
-// such ledger as "missing rows".
+// Scope: sources whose decoder matches by TOPIC or by a real contract address
+// (oracles); sdex via the LCM op census; the event-less ContractCall sources
+// (band, soroswap-router) via the InvokeContract-op census, filtering body_xdr
+// on the contract bytes since stellar.operations has no contract_id column;
+// and sep41_transfers + sep41_supply when cfg.Supply.WatchedSEP41Contracts is
+// set (see [buildSEP41ReconSources]). Counting sep41 is sound only because the
+// full-history `ch-rebuild -sep41 -write` purged the rows written before the
+// event_index PK discriminator, which collapsed same-op events.
 //
-// Promoting them HERE, rather than each caller special-casing the append,
-// means compute-completeness, verify-reconciliation and ch-reproject all
-// see them; ch_rebuild.go's -sep41 flag doc says exactly this: "promote
-// them into buildReconciliationCatalogue".
-//
-// Errors only when a configured watched contract fails to build its
-// decoder (a malformed C-strkey). An EMPTY watched set is NOT an error
-// here — unlike calling [buildSEP41ReconSources] directly for ch-rebuild's
-// explicit -sep41 opt-in — a deployment that doesn't watch any SEP-41
-// contract simply gets no sep41 entries, mirroring the dispatcher's own
-// non-opted-in behavior.
+// Adding them here rather than per caller means compute-completeness,
+// verify-reconciliation and ch-reproject all see them. Errors only on a
+// malformed watched C-strkey; an empty watched set yields no sep41 entries,
+// matching the dispatcher.
 //
 //nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
@@ -838,29 +826,18 @@ func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSo
 	return kept, dropped
 }
 
-// warmCatalogueGates gives every contract-gated catalogue source the SAME
-// gate the live indexer runs with: the source's in-code curated set UNION
-// the children recorded in protocol_contracts.
+// warmCatalogueGates gives every contract-gated catalogue source the gate the
+// live indexer runs with: its in-code curated set UNION the children recorded
+// in protocol_contracts. Without it, a contract admitted through that operator
+// seam is decoded live but invisible to every re-derive, so its served rows
+// read as phantoms and a truncate + `ch-rebuild -write` drops them.
+// preseedFactoryChildren does not cover it: the seam exists for contracts with
+// no creation event.
 //
-// buildReconciliationCatalogue takes only a config, so it can only build
-// each gated decoder bare — in-code seed and nothing else. The live
-// indexer's decoders are built from pipeline.GatedRegistryOptions, which
-// also warms them from protocol_contracts: the documented operator seam
-// for admitting a pool or vault without a redeploy. Without this warm, a
-// contract admitted through that seam is decoded live and then invisible to
-// every re-derive: its served rows read as phantoms against an expected side
-// that cannot produce them, and a truncate + `ch-rebuild -write` rebuilds the
-// table WITHOUT them. preseedFactoryChildren does not cover it — it walks
-// creation events, and the seam exists precisely for contracts that have
-// none (and it is a no-op for every source that declares no factories).
-//
-// Read-only by construction: withHook=false, so nothing here can write to
-// protocol_contracts. A re-derive that registered contracts while
-// re-deriving them would be manufacturing its own evidence.
-//
-// Call it on the freshly built catalogue, BEFORE preseedFactoryChildren or
-// any stream touches src.dec: the gated decoders are rebuilt, so anything
-// seeded into the old instances would be lost.
+// Read-only (withHook=false): a re-derive that registered contracts while
+// re-deriving them would manufacture its own evidence. Call it before
+// preseedFactoryChildren or any stream touches src.dec, since the gated
+// decoders are rebuilt.
 func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slog.Logger, cat []reconSource) ([]reconSource, error) {
 	gated, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
 	if err != nil {
@@ -869,21 +846,12 @@ func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slo
 	return applyGatedOptions(cat, gated)
 }
 
-// applyGatedOptions is the pure half of [warmCatalogueGates]: it rebuilds
-// each gated source's decoder (and its throwaway newGatedDec, and its
-// static contractIDs filter) with gated[source] applied, and returns a new
-// catalogue. Non-gated sources pass through untouched.
-//
-// Constructors come from pipeline.GatedMetaFor — the one registry the
-// indexer's BuildDispatcher / BuildRegistry also construct from — so the
-// re-derive cannot drift onto a different decoder than the one it audits.
-// That is asserted, not assumed: a catalogue entry whose decoder type
-// differs from the registry's fails closed here.
-//
-// FAIL CLOSED on a gated source with no entry in `gated`:
-// GatedRegistryOptions returns one for every gated source, so a missing
-// key is a wiring bug, and quietly keeping the bare decoder would restore
-// exactly the defect this exists to remove.
+// applyGatedOptions is the pure half of [warmCatalogueGates]: it rebuilds each
+// gated source's decoder, newGatedDec and contractIDs filter with
+// gated[source] applied. Constructors come from pipeline.GatedMetaFor, the
+// registry the indexer also builds from, and a decoder type mismatch fails
+// closed so the re-derive cannot audit a different decoder. A gated source
+// missing from `gated` is a wiring bug and also fails closed.
 func applyGatedOptions(cat []reconSource, gated map[string][]contractid.Option) ([]reconSource, error) {
 	out := make([]reconSource, len(cat))
 	copy(out, cat)
@@ -964,26 +932,11 @@ func unionContractIDs(base, extra []string) []string {
 	return append(out, added...)
 }
 
-// validateSourceFilter fails CLOSED when a -source filter names no source in
-// the catalogue actually built for this config. Both compute-completeness and
-// verify-reconciliation filter their per-source loop with
-// `if only != "" && src.name != only { continue }`; without this check a typo'd
-// -source silently skips EVERY source and the run reports SUCCESS / "no gaps"
-// having verified nothing (F7 fail-open). The catalogue is config-dependent
-// (sep41 sources are promoted only when configured), so the valid set is
-// exactly what buildReconciliationCatalogue returned. only == "" (all sources)
-// is always valid.
-// entryDecoderSourceNames lists RegisterSupplyEntryDecoders' five sources
-// (internal/pipeline/dispatcher.go). They're real, config-driven ingest
-// sources — they bump stellarindex_source_decode_errors_total like every
-// other source, and the generic stellarindex_ingestion_decode_error alert
-// (deploy/monitoring/rules/ingestion.yml) fires on them with no source
-// exception — but they read LedgerEntry changes, not soroban_events, so
-// they can never be a reconSource: completeness.Decoder's re-derive is
-// soroban_events-specific (reconcile.go), a different data model entirely.
-// Named here so validateSourceFilter can tell an operator "known but not on
-// this axis" instead of the misleading "unknown source" a typo would also
-// produce.
+// entryDecoderSourceNames lists RegisterSupplyEntryDecoders' five sources.
+// They are real ingest sources but read LedgerEntry changes, not
+// soroban_events, so they can never be a reconSource; naming them lets
+// validateSourceFilter say "known but not on this axis" instead of "unknown
+// source".
 var entryDecoderSourceNames = map[string]bool{
 	accounts.SourceName:           true,
 	trustlines.SourceName:         true,
@@ -992,6 +945,11 @@ var entryDecoderSourceNames = map[string]bool{
 	sac_balances.SourceName:       true,
 }
 
+// validateSourceFilter fails CLOSED when a -source filter names no source in
+// the catalogue built for this config; otherwise a typo'd -source skips every
+// source and the run reports "no gaps" having verified nothing. The catalogue
+// is config-dependent, so the valid set is exactly what
+// buildReconciliationCatalogue returned. only == "" is always valid.
 func validateSourceFilter(only string, cat []reconSource) error {
 	if only == "" {
 		return nil
@@ -1009,27 +967,16 @@ func validateSourceFilter(only string, cat []reconSource) error {
 	return fmt.Errorf("-source %q matches no reconciliation source for this config; known sources: %s", only, strings.Join(names, ", "))
 }
 
-// buildSEP41ReconSources builds the two SEP-41 reconSources —
-// sep41_transfers + sep41_supply, watched-set-gated exactly like the
-// production dispatcher (pipeline.RegisterSupplyEventDecoders constructs
-// the SAME decoders from the SAME config field, so a re-derive reproduces
-// precisely what the dispatcher would have written). The watched contracts
-// double as the contractIDs prefilter, so the lake read is a
-// contract-indexed scan, not a firehose walk — mandatory here because the
-// SEP-41 topics ARE the CAP-67 classic-token firehose the DEX/lending
-// passes exclude (ClassicTokenTopic0Syms).
+// buildSEP41ReconSources builds sep41_transfers + sep41_supply, gated on the
+// watched set exactly like pipeline.RegisterSupplyEventDecoders, so a
+// re-derive reproduces what the dispatcher wrote. The watched contracts double
+// as the contractIDs prefilter: the SEP-41 topics are the CAP-67 classic-token
+// firehose, so the lake read must be a contract-indexed scan.
 //
-// Consumers: ch-rebuild's -sep41 flag (the re-derive; called directly,
-// unconditionally erroring on an empty watched set — see below) and
-// [buildReconciliationCatalogue] (promoted into the default catalogue,
-// gated on the watched set being non-empty so an unconfigured deployment gets silence instead
-// of this function's error).
-//
-// Errors when the watched set is empty: called directly (ch-rebuild
-// -sep41), an operator who passed -sep41 with no `[supply]
-// watched_sep41_contracts` asked for an impossible rebuild, and silence
-// would read as "nothing to recover". buildReconciliationCatalogue avoids
-// ever hitting this by checking non-emptiness itself first.
+// Errors on an empty watched set: ch-rebuild -sep41 with no `[supply]
+// watched_sep41_contracts` asks for an impossible rebuild, and silence would
+// read as "nothing to recover". [buildReconciliationCatalogue] checks
+// non-emptiness first so an unconfigured deployment gets no entries.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
 	floor := sorobanEraFloor(cfg)
@@ -1095,20 +1042,11 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 }
 
 // contractIDFilter renders a watched set as the served-side SQL predicate
-// that scopes a target to the same contracts the expected-side decoder is
-// gated on. Both sep41 tables carry `contract_id` and index it
-// (sep41_supply_events_contract_ledger_idx, sep41_transfers_contract_*_idx).
-//
-// whereFilter is INTERPOLATED into SQL by timescale.Store's row-count
-// helpers, and unlike every other filter in this catalogue — all in-code
-// literals — this one is built from operator config, which validates only
-// that entries are non-empty (config.SupplyConfig.Validate). So each id is
-// strkey-decoded as a contract address before it is quoted: a valid
-// C-strkey is base32 [A-Z2-7]{56} and cannot carry a quote, so the
-// rendered predicate is safe by construction rather than by escaping.
-// Sorted for a stable string — the filter is part of the durable
-// completeness_target_floors key (timescale.TargetFloorKey), so map/slice
-// order must not churn it between runs.
+// scoping a target to the contracts the expected-side decoder is gated on.
+// The predicate is interpolated into SQL and, unlike the catalogue's other
+// filters, comes from operator config, so each id is strkey-decoded first: a
+// valid C-strkey is base32 and cannot carry a quote. Sorted because the filter
+// is part of the completeness_target_floors key and must not churn.
 func contractIDFilter(watched []string) (string, error) {
 	ids := make([]string, 0, len(watched))
 	for i, c := range watched {
