@@ -39,7 +39,7 @@ import (
 // code" — an assumption a hostile filter value or cursor could
 // violate: str("a|b").str("c") and str("a").str("b|c") both rendered
 // as ".../a|b|c...", so one caller's request could be served another
-// caller's cached page. API-05 / COR-14. Length-prefixing removes the
+// caller's cached page. Length-prefixing removes the
 // assumption instead of trying to escape around it.)
 //
 // This is the in-process analogue of internal/cachekeys (the Redis

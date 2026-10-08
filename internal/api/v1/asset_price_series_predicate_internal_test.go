@@ -9,12 +9,12 @@ import "testing"
 // excluded declared-peg rows; the detail path did not. So a declared-peg
 // asset got no sparkline on /v1/assets while /v1/assets/{id} served a
 // full price_history_24h/7d drawn from the dust market the substance
-// gate had refused (MSP-04).
+// gate had refused.
 //
 // And suppressScamIssuerPricing nulled six fields but not ATH, so a
 // directory-flagged issuer published an all-time-HIGH dollar price next
 // to price_usd: null — a published USD valuation for a token the
-// platform decided must publish none (MSP-05).
+// platform decided must publish none.
 //
 // Both are now one predicate with two callers. This table is the
 // contract; the declared-peg case guards the detail path against testing less.
@@ -61,7 +61,7 @@ func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 }
 
 // A declared-peg detail payload must not keep the series the listing
-// refuses (MSP-04), exercised through the suppression helper rather than
+// refuses, exercised through the suppression helper rather than
 // the predicate.
 func TestWithholdPriceSeries_DeclaredPegDropsHistory(t *testing.T) {
 	usd := "0.65"
@@ -113,8 +113,7 @@ func TestWithholdPriceSeries_DeclaredPegDropsATH(t *testing.T) {
 	}
 }
 
-// A scam-flagged issuer must publish no all-time-high dollar price
-// (MSP-05).
+// A scam-flagged issuer must publish no all-time-high dollar price.
 func TestSuppressScamIssuerPricing_NullsATH(t *testing.T) {
 	usd := "0.65"
 	d := &AssetDetail{

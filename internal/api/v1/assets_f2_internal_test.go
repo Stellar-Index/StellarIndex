@@ -86,7 +86,7 @@ func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
 }
 
 // TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue is the
-// COR-03 regression: computeMarketCapUSD (the /v1/assets LISTING
+// regression: computeMarketCapUSD (the /v1/assets LISTING
 // path) and usdMarketValue (the /v1/assets/{id} DETAIL path, tested
 // above) must agree that a zero circulating supply is a legitimate
 // "0.00" reading, not an error/omitted field. Guards against
