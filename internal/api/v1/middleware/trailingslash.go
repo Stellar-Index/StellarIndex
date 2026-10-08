@@ -51,7 +51,7 @@ func TrailingSlashRedirect(mux muxMatcher) Middleware {
 					return
 				}
 				target := p[:len(p)-1]
-				// SEC-16: refuse to emit a Location that isn't a clean
+				// Refuse to emit a Location that isn't a clean
 				// same-origin absolute path. A request path of "//evil.com/"
 				// strips to "//evil.com" here — a PROTOCOL-RELATIVE URL that
 				// browsers resolve as an absolute redirect to evil.com, an

@@ -80,7 +80,7 @@ func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 }
 
 // TestTrailingSlashRedirect_refusesProtocolRelativeTarget is the
-// SEC-16 regression: a request path of "//evil.com/" must NOT redirect
+// Regression: a request path of "//evil.com/" must NOT redirect
 // to "//evil.com" (a protocol-relative Location a browser resolves as
 // an absolute redirect off the API origin — an unauthenticated open
 // redirect). The middleware must instead fall through to next (which

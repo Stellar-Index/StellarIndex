@@ -108,7 +108,7 @@ func (c *FixedWindowCounter) Incr(ctx context.Context, keyBase string) (int64, e
 // Nth+1-is-over semantics, no backend and therefore no error path. It
 // exists so a Redis-backed throttle can keep enforcing its cap —
 // degraded to per-process accounting — while Redis is unreachable,
-// instead of falling open for the whole outage (SEC-15 / REL-06).
+// instead of falling open for the whole outage.
 //
 // Backed by the same bounded [localStore] as the [Bucket] fallback, so
 // it inherits the once-per-window sweep and the hard key cap.

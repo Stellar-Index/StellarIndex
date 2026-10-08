@@ -333,7 +333,7 @@ func (d *sweepDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // while a plain output still counts at the stream event's ledger. Without the
 // carrier, the rescued trade lands at the trigger ledger and a strict
 // per-ledger reconcile reports a ± shift pair (missing at 100 / phantom at
-// 160) against a served tier that is perfectly correct — the CS-084 noise
+// 160) against a served tier that is perfectly correct — the noise
 // that forced phoenix onto aggregate netting.
 func TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger(t *testing.T) {
 	es := fakeEventStreamer{evs: []events.Event{

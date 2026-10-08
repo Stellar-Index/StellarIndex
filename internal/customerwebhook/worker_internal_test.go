@@ -129,7 +129,7 @@ func TestScheduleRetry_Jitter(t *testing.T) {
 	}
 }
 
-// TestSignHMACSHA256_BindsTimestamp is the CS-055 replay-defence
+// TestSignHMACSHA256_BindsTimestamp is the replay-defence
 // guard: the signature MUST cover "<unix_ts>." + body, not the body
 // alone (a body-only signature made a captured delivery replayable
 // forever). We recompute the expected HMAC and assert the exact
@@ -152,7 +152,7 @@ func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 		t.Fatalf("signature = %s, want %s", got, want)
 	}
 
-	// Body-only HMAC (the pre-CS-055 shape) must NOT match — this is
+	// Body-only HMAC (the replayable shape) must NOT match — this is
 	// the whole point of the timestamped construction.
 	bodyOnly := hmac.New(sha256.New, secret)
 	bodyOnly.Write(payload)

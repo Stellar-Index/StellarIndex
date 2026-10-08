@@ -269,7 +269,7 @@ func registerAppMetricsTail() {
 		// Prometheus exporter of its own.
 		DependencyUp,
 
-		// Scam-gate directory-lookup fail-open counter (GH-732), registered
+		// Scam-gate directory-lookup fail-open counter, registered
 		// here rather than beside its PriceServeScamWithheldTotal neighbour
 		// in [registerAppMetrics] for the same funlen reason as
 		// SourceUnrepresentableSymbolsTotal below.
@@ -619,7 +619,7 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
-	// GH-1146: the two mint routes that funnel through clampMintToCaller.
+	// The two mint routes that funnel through clampMintToCaller.
 	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
 	// over the gocognit ceiling, and two literal routes read no worse.
 	MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")
@@ -1583,9 +1583,8 @@ var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 // "reason" label takes, across every venue: wsclient.ClassifyDisconnect's
 // wire-level reasons plus the venue-specific ones (coinbase's
 // "subscription_rejected", bitstamp's "server_requested"). Single source
-// of truth for the metric's Help text so the two cannot drift apart the
-// way they did pre-GH-941 (stall and subscription_rejected were added to
-// the code without updating the Help/README enum). metrics_test.go checks
+// of truth for the metric's Help text so the two cannot drift apart
+// (a reason added in code but not in the Help/README enum). metrics_test.go checks
 // it against what wsclient + the venue classifiers actually emit.
 var CEXStreamDisconnectReasons = []string{
 	"stall", "reset", "broken_pipe", "timeout", "dial",
@@ -1599,8 +1598,7 @@ var CEXStreamDisconnectReasons = []string{
 //
 // Streamer analogue of [ExternalPollerLastSuccessUnix]: that gauge is
 // set only in runPoller, so joining CEXStreamDisconnectTotal against
-// it (as docs/reference/metrics/README.md instructed pre-GH-941)
-// selected a series with no binance/coinbase/kraken/bitstamp label —
+// it selected a series with no binance/coinbase/kraken/bitstamp label —
 // it can never exist for a streamer. Set in forwardTrades
 // (internal/sources/external/runner.go) so `time() - <gauge>` is
 // alertable the same way pollers already are.
@@ -3449,8 +3447,8 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 //     aggregator is publishing on the channel.
 //   - "dropped_slow_consumer" — go-redis's PubSub.Channel buffer filled
 //     and WithChannelSendTimeout elapsed before this handler could drain
-//     it (GH-753): a stalled Hub or a long GC pause, not a wire-format or
-//     clock fault. Previously silent — only logged, never counted.
+//     it: a stalled Hub or a long GC pause, not a wire-format or
+//     clock fault.
 //
 // Seeded by redispub.NewSubscriber, so only a process that wires a
 // subscriber exports it.
@@ -3494,7 +3492,7 @@ var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts
 
 // AfterResponseTasksDroppedTotal — post-response bookkeeping tasks
 // (UsageTracker counters, TouchUsage last-seen updates) dropped because
-// the shared after-response worker pool's queue was full (GH-627). A
+// the shared after-response worker pool's queue was full. A
 // dropped task silently loses a usage row or a last-seen touch, so a
 // sustained nonzero rate here means the pool is undersized for load or a
 // downstream store (Redis/Postgres) has slowed enough that tasks pile up.
@@ -4446,7 +4444,7 @@ var AggregatorCompositeCorroboration = prometheus.NewGaugeVec(
 
 // AggregatorRouteCorroborationCount — the router's independent,
 // tightly-agreeing, non-diverged route count behind the last published
-// composite for (pair, window) (GH-1023). This is the ROUTER count, not
+// composite for (pair, window). This is the ROUTER count, not
 // path_count (the raw survivor-set size before the tight-agreement /
 // independence filter) and not the venue source count phase2_freeze's
 // `sources=` reads — see [orchestrator.compositeMeta.CorroborationCount]
@@ -4992,7 +4990,7 @@ var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
 
 // MintScopeClampRefusedTotal counts mint requests `clampMintToCaller`
 // refused because they asked for more scope or rate limit than the
-// minting credential itself holds (GH-1146). The refusal is already a
+// minting credential itself holds. The refusal is already a
 // 403 plus a WARN log line, but a scope-narrowed key probing for
 // privilege escalation left NO telemetry an alert could fire on — the
 // log line is only found after the fact, by someone already looking.

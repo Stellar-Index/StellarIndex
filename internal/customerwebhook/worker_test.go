@@ -185,7 +185,7 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 		t.Errorf("delivery not marked OK: delivered=%v", store.delivered)
 	}
 
-	// CS-055: the signature is over "<timestamp>." + body, and the
+	// The signature is over "<timestamp>." + body, and the
 	// timestamp is sent in X-StellarIndex-Timestamp so the consumer can
 	// bound replay. Verify both.
 	if gotTimestamp == "" {

@@ -211,7 +211,7 @@ type DetailRow struct {
 // callers that want the whole batch (tests, one-off ops reads); a
 // production sweep over the live subject population should use
 // [Counter.ScanDetailFunc] instead so it never buffers a whole day's
-// rows in memory (GH-1282).
+// rows in memory.
 //
 // Keys are de-duplicated per date. Redis SCAN guarantees only that
 // every key present for the whole iteration is returned AT LEAST once
@@ -360,7 +360,7 @@ type Day struct {
 // Each day counts max(Redis, usage_daily) when [WithDurableDays] is
 // set. The day keys carry a TTL on an evicting Redis, and a missing
 // key reads as zero, so Redis alone under-bills a month whose cold
-// early days were evicted (GH-1274). Both sources are lower bounds of
+// early days were evicted. Both sources are lower bounds of
 // the true billable count, so their max never over-bills.
 //
 // A read failure on either side returns (0, err); the caller fails

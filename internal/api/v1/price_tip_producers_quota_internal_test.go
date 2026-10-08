@@ -290,7 +290,7 @@ func TestTipProducerRegistry_JoinDuringLingerTakesTheCharge(t *testing.T) {
 }
 
 // The quota is only as good as its key. IPv6 callers must aggregate to
-// their /64 (SEC-15): a quota keyed on the full /128 is bypassed by
+// their /64: a quota keyed on the full /128 is bypassed by
 // rotating the low bits of a prefix the caller already controls.
 func TestTipProducerCaller_KeysOnTheRotatableBlock(t *testing.T) {
 	callerFor := func(remoteAddr string) string {

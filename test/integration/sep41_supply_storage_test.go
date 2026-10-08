@@ -1490,7 +1490,7 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 }
 
 // TestMinSEP41ComponentLedgerUsesObserverWatermark is the SEP-41 half of
-// CS-102: the freshness anchor must track the supply-event PRODUCER's
+// the freshness rule: the anchor must track the supply-event PRODUCER's
 // progress, not one contract's last mint/burn.
 //
 // This bit harder than the classic case. 40 of 48 watched assets are
