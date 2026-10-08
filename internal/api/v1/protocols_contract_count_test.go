@@ -89,8 +89,7 @@ func protocolDetail(t *testing.T, base, name string) v1.ProtocolDetailView {
 
 // TestProtocolContractCount_TrueTotalNotZeroNotCap covers the protocol whose
 // contracts outnumber the enumerating roster's LIMIT 5000: sorocredit deploys
-// one Collateral-<uuid> child contract per opened position (116,124 on r1,
-// 2026-09-03). Neither enumeration outcome is a usable count — an absent
+// one Collateral-<uuid> child contract per opened position (116,124 on r1). Neither enumeration outcome is a usable count — an absent
 // projection path publishes 0, a capped one publishes 5,000 — so both the
 // directory row and the detail view must publish the counted TRUE total.
 func TestProtocolContractCount_TrueTotalNotZeroNotCap(t *testing.T) {

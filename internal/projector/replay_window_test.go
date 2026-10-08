@@ -14,8 +14,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Replay-window flag (issue #325). A `stellarindex-ops projector-replay`
-// rewind is an INTENDED lag: the 2026-08-29 reflector-fx replay rewound the
+// Replay-window flag. A `stellarindex-ops projector-replay`
+// rewind is an INTENDED lag: a reflector-fx replay once rewound the
 // cursor 2,574,496 ledgers on purpose and
 // stellarindex_projector_lag_high ticketed for the whole ~4h catch-up,
 // carrying no information the operator did not already have — and masking a
@@ -62,7 +62,7 @@ func runCycleThenRefresh(p *Projector, src Source) {
 	p.refreshReplayWindows(context.Background())
 }
 
-// TestReplayWindow_CursorInsideOperatorRewindFlagsActive is the issue-#325
+// TestReplayWindow_CursorInsideOperatorRewindFlagsActive is the
 // reproduction: after `projector-replay -source reflector-fx -from 61602787`
 // rewound the cursor below the recorded window's to_ledger, the projector
 // must publish replay_window_active=1 so the lag rule's `unless` arm
@@ -128,7 +128,7 @@ func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 // live cursor the way an early reading of ADR-0048 D3 suggests:
 // checkLiveCursorGuard admits liveLastLedger >= to (EQUALITY — and `-to`
 // DEFAULTS to the live cursor), and `-allow-live-overlap` bypasses the
-// guard entirely (exercised on r1 2026-07-27,
+// guard entirely (e.g.
 // `projected-rebuild -source sep41_supply -from 63419138 -to 63671020
 // -write -allow-live-overlap`). So a rebuild window routinely covers the
 // live cursor's own position, and under the override sits wholly above it.
@@ -178,8 +178,7 @@ func TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress(t *testing.T) {
 }
 
 // TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress is the
-// `-allow-live-overlap` shape, taken from the run this repo actually did on
-// r1 on 2026-07-27: the recorded window sits ABOVE the live cursor. Under
+// `-allow-live-overlap` shape, taken from a real r1 run: the recorded window sits ABOVE the live cursor. Under
 // a cursor-only bound the flag would read 1 for the whole climb from the
 // cursor to -to (hours), suppressing lag_high for a source with no rewind
 // on record — and a genuinely slow-but-still-advancing lag would then raise
@@ -357,7 +356,7 @@ func TestReplayWindow_ReadCarriesItsOwnDeadline(t *testing.T) {
 	// Bounded by PerSourceTimeout, and not by something far tighter: a
 	// budget that trips on ordinary DB slowness would zero the gauge
 	// mid-replay and re-arm lag_high for the whole catch-up, reinstating
-	// the ticket storm #325 removed. `before` is read a hair before the
+	// the ticket storm the flag removed. `before` is read a hair before the
 	// deadline is computed, so the upper check carries scheduling slack;
 	// the lower check is the one with teeth.
 	budget := dl.Sub(before)

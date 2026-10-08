@@ -17,8 +17,8 @@ import (
 // The Blend reserve reader matches lake rows by their `key_xdr` VERBATIM, so a
 // wrong key does not error — it simply matches nothing, and the pool reports
 // "no reserves captured". These fixtures are therefore not invented: the pool
-// is a live mainnet Blend pool (the busiest by `supply` events on r1,
-// 2026-09-03) and the asset is the mainnet USDC SAC, and both derived keys
+// is a live mainnet Blend pool (the busiest by `supply` events on r1)
+// and the asset is the mainnet USDC SAC, and both derived keys
 // below were confirmed present in r1's lake before being pinned here:
 //
 //	ledger_entry_changes, last 250k ledgers, ResData key → 74,834 rows

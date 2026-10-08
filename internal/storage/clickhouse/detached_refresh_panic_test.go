@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// K012 — the explorer's ClickHouse-side stale-while-revalidate refreshers
+// The explorer's ClickHouse-side stale-while-revalidate refreshers
 // run detached goroutines inside the stellarindex-api process, kicked from
 // request paths on attacker-chosen keys. An unrecovered panic in ANY
 // goroutine terminates the WHOLE process, so each of them has to recover.

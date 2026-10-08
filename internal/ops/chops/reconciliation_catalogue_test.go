@@ -447,7 +447,7 @@ func TestValidateSourceFilter(t *testing.T) {
 	}
 }
 
-// TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage pins Q116:
+// TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage pins:
 // "accounts" (and its four RegisterSupplyEntryDecoders siblings) are real,
 // config-driven ingest sources — they bump stellarindex_source_decode_errors_total
 // like any other source and the generic decode-error alert fires on them —

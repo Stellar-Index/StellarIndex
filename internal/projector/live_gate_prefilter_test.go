@@ -82,7 +82,7 @@ func sushiEvent(ledger uint32, contract, topic0B64 string, body []byte) events.E
 	}
 }
 
-// TestCycle_PrefilterTracksLiveFactorySeededGate pins #566: sushiswap_v3's
+// TestCycle_PrefilterTracksLiveFactorySeededGate pins: sushiswap_v3's
 // gate grows LIVE from the factory's pool_created events, so the contract-id
 // prefilter must follow it. A pool created at ledger 101 and traded at 102
 // — both inside one projector window — must have its swap projected before

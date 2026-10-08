@@ -587,7 +587,7 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 	}
 }
 
-// TestRegister_MirrorFailureSuspendsOrphanForReaper is the NS-3
+// TestRegister_MirrorFailureSuspendsOrphanForReaper is the
 // regression: when the credential mirror fails, the register path must
 // (a) commit NO durable api_keys row (mirror-first ordering) and
 // (b) quarantine the leftover account row as a `signup-race:` suspension

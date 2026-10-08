@@ -39,7 +39,7 @@ import (
 // handed SQL text instead of a completed refresh.
 //
 // NOT auto-fixed: restampCAGGFollowUp's print-only contract is the
-// reviewed #372-F3 resolution (see TestXLMBaseRestampFollowUp_* in
+// reviewed resolution (see TestXLMBaseRestampFollowUp_* in
 // usd_volume_report_claims_test.go: "The report must therefore print the
 // refresh sequence itself"), so turning it into an executor is a product
 // decision (block a CLI invocation on a multi-hour refresh? new flag?

@@ -89,7 +89,7 @@ func requireSuccessfulTxRestriction(t *testing.T, name, q string) {
 // (1) The successful-tx set must be a grace_hash INNER JOIN over a derived
 // table, never `tx_hash IN (SELECT ...)`. IN materialises the whole window's
 // tx-hash set (CreatingSetsTransform) before the join runs, which blew the
-// 10 GiB query budget on a dense 250k-ledger window, 2026-07-11.
+// 10 GiB query budget on a dense 250k-ledger window.
 //
 // (2) That join must be spelled BEFORE the outer ledger WHERE. Hoisting the
 // outer window into a derived table also removes the IN-set, but it stops

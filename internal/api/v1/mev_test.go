@@ -43,7 +43,7 @@ func (r *stubMEVReader) deadline() (time.Time, bool) {
 	return r.lastCtx.Deadline()
 }
 
-// TestMEVEvents_InvalidKindIs400 pins Q204: an unrecognised ?kind= must
+// TestMEVEvents_InvalidKindIs400 pins that an unrecognised ?kind= must
 // 400, not pass straight through to the storage query (which would just
 // index-scan zero rows and mask the caller's typo as "nothing detected
 // yet" — the same silent-empty-page anti-pattern /v1/markets guards
@@ -106,7 +106,7 @@ func TestMEVEvents_DeadlineExceededIs503(t *testing.T) {
 	}
 }
 
-// TestNoDanglingCeilingIssueReference pins RSWP-072: the 8s-ceiling
+// TestNoDanglingCeilingIssueReference pins that the 8s-ceiling
 // comments must not cite issue 1082. It was never a live tracking reference
 // and now resolves to an unrelated issue, so a reader following it lands
 // on the wrong thing. Every non-test handler file is scanned, not a fixed

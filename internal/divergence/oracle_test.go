@@ -306,7 +306,7 @@ func TestOracleReference_NoObservationIsUnsupported(t *testing.T) {
 
 // TestOracleReference_StaleObservationIsUnavailable — a frozen feed
 // must read as "reference unavailable", never as agreement or
-// divergence (CS-089 applied to served rows).
+// divergence (the staleness gate applied to served rows).
 func TestOracleReference_StaleObservationIsUnavailable(t *testing.T) {
 	now := time.Now().UTC()
 	reader := &fakeOracleReader{

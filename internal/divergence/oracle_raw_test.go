@@ -26,7 +26,7 @@ import (
 //
 // Break any one link and divergence starts interpreting raw rows, with
 // nothing in this package objecting. The test that pinned this was
-// deleted by #305's squash merge (issue #339) along with two siblings,
+// deleted by a squash merge along with two siblings,
 // so the property has been unproven since.
 //
 // This restores the proof. It is deliberately written against the

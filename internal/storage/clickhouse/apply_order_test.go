@@ -27,7 +27,7 @@ func collect(t *testing.T, o *applyOrderer, in []events.Event) {
 	}
 }
 
-// Q040: the lake streams a ledger by tx_hash, so a pool's first trade whose
+// The lake streams a ledger by tx_hash, so a pool's first trade whose
 // hash sorts lexically before its add_pool arrives first. The orderer must
 // deliver the add_pool (applied first on-chain) before the trade.
 func TestApplyOrderer_SameLedgerAddPoolPrecedesTrade(t *testing.T) {

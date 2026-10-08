@@ -116,7 +116,7 @@ func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
 	}
 }
 
-// TestCheckXLMBaseBound_SubCentDust — #372's residual: after the restamp
+// TestCheckXLMBaseBound_SubCentDust — after the restamp
 // every remaining violation had stored=0.00 and expected≈0.00, ratios that
 // are sub-cent quantisation rather than valuation error. Those are exempt;
 // a breach with a cent on EITHER side must still count at any group size.

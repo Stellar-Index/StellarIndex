@@ -20,7 +20,7 @@ import (
 //
 // The history it guards is specific. Migration 0002 gave `prices_1m`
 // and `prices_15m` a 30-day retention and 0001 gave raw `trades` 90
-// days; 0031 removed all three on 2026-05-14 and its `down` is a
+// days; 0031 removed all three and its `down` is a
 // deliberate no-op, because re-arming retention on `trades` is the
 // recurring data-loss drift the repo names by that number. 0156 adds
 // exactly ONE policy back — `prices_1m`, 90 days — and the argument
@@ -501,7 +501,7 @@ func TestPrices1mRetention_WarnsThatATWAPRefreshMustBeWindowed(t *testing.T) {
 
 // The up-migration must not claim the 0115 / 0147 distinction is that
 // `trades` is permanent. Migration 0031 removed the retention on
-// `trades` on 2026-05-14; 0115 landed 2026-07-24 and 0147 2026-08-22,
+// `trades`; 0115 and 0147 landed later,
 // so it was already permanent for both and the distinction does not
 // exist. The real one is that those were one-off drops and this policy
 // drops daily forever — which is why every recovery here starts with a

@@ -8,8 +8,7 @@ import (
 )
 
 // TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget is the
-// SECOND rail RLT-131 asks for, committed skipped by the first half of the fix
-// and un-skipped by this one.
+// second rail for the shed cap.
 //
 // The rail: the per-cycle cap ([PermanentSkipPerCycle]) bounds the RATE at
 // which a global class-22/23 fault sheds rows, but not the FACT of it. The
@@ -28,7 +27,7 @@ import (
 //     now supplies the health proof it always meant to (a second row that
 //     commits) and keeps asserting the anti-wedge property;
 //   - trade_drop_outcome_test.go, TestCycle_DroppedTradeIsNotReportedOK now
-//     asserts the hold on cycle one AND the eventual self-heal, so RLT-132's
+//     asserts the hold on cycle one AND the eventual self-heal, so
 //     "a drop must not wedge a sole-writer source" survives intact.
 func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *testing.T) {
 	const source = "rlt131-no-health-proof"

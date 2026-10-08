@@ -42,7 +42,7 @@ func (d panickingCallDecoder) Decode(cc dispatcher.ContractCallContext) ([]consu
 	return []consumer.Event{stubCallEvent{}}, nil
 }
 
-// TestDecodeContractCallTree_PanicIsBlindNotCrash pins #1297 for the
+// TestDecodeContractCallTree_PanicIsBlindNotCrash pins, for the
 // ContractCall census (band, soroswap-router): a panicking Matches or Decode
 // must be recorded as a blind spot on its ledger and the rest of the tree
 // still decoded, not unwind through compute-completeness.
@@ -86,7 +86,7 @@ func (d panickingGatedDecoder) Decode(ev events.Event) ([]consumer.Event, error)
 	return d.mockGatedDecoder.Decode(ev)
 }
 
-// TestGatedPrefilter_PanicIsBlindNotCrash pins #1297 for the aquarius /
+// TestGatedPrefilter_PanicIsBlindNotCrash pins, for the aquarius /
 // phoenix prefilter walk: a creation event whose decoder panics must come
 // back as a blind spot (its child is unregistered on the expected side),
 // while the healthy child is still announced.
@@ -126,7 +126,7 @@ var completenessWriterFiles = map[string]bool{
 	"projected_rebuild.go":          true,
 }
 
-// TestChopsDecoderCallsAreGuarded is the class guard for #1297: outside the
+// TestChopsDecoderCallsAreGuarded is the class guard: outside the
 // named writer files, every decoder Matches / Decode / DecodeCounted call in
 // internal/ops/chops must run inside a completeness.Guard closure, so a new
 // oracle loop cannot reintroduce an unguarded decoder on the audit path.

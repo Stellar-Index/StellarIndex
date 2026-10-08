@@ -156,7 +156,7 @@ func TestForEachLedgerWindow(t *testing.T) {
 	}
 }
 
-// TestContractEventsFilteredQuery_ContractIDsEscaped pins T345/T387:
+// TestContractEventsFilteredQuery_ContractIDsEscaped pins:
 // contractIDs is a caller-supplied slice (a decoder's live-grown
 // GatedContractSet(), not a compile-time constant) — an unescaped quote in
 // one element must not be inlined raw into the query text (it would close

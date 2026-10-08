@@ -214,9 +214,9 @@ func TestChainlink_TransportError_SecretNeverReachesDivergenceCache(t *testing.T
 
 	pair := mustPair(t, "crypto:BTC", "fiat:USD")
 	ctx := context.Background()
-	// Every reference failed, so RefreshPair reports the outage
-	// (CS-088) — but it still writes the cache entry, which is the
-	// point of this test.
+	// Every reference failed, so RefreshPair reports the outage,
+	// but it still writes the cache entry, which is the point of
+	// this test.
 	if err := svc.RefreshPair(ctx, pair, 65_000, time.Now()); err != nil && !errors.Is(err, ErrNoReferenceResponded) {
 		t.Fatalf("RefreshPair: %v", err)
 	}

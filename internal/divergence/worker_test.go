@@ -216,7 +216,7 @@ func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 // above must NOT touch: MNY-22's symmetric-disagreement case, where
 // two references straddle ourPrice (median ≈ ourPrice, DivergencePct
 // small) but neither individually agrees. AgreementCount==0 must still
-// fire regardless of the majority-veto added for #1041.
+// fire regardless of the majority-veto.
 func TestRefreshPair_ZeroAgreementLegStillFires(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "high", price: 1.08},

@@ -596,7 +596,7 @@ func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Sink-side adaptive shrink (v0.21.12, 2026-08-01 incident): the cycle-level
+// Sink-side adaptive shrink: the cycle-level
 // half of the shrinkWindow unit test. A window whose CH scan FINISHES but
 // whose per-event sink writes exhaust PerSourceTimeout ends the cycle with a
 // dead cycleCtx and held transient rows; pre-fix the window pointer never
@@ -864,7 +864,7 @@ func TestCycle_HealthyRowsUnaffected(t *testing.T) {
 }
 
 // TestCycle_AdjacentDuplicateRowsDecodeOnce pins the entry-point
-// duplicate guard (2026-08-11 stake-buffer investigation): the lake is
+// duplicate guard: the lake is
 // an append log read without FINAL, so re-ingested duplicate rows reach
 // the cycle consecutively. Stateless decoders + keyed sinks absorb
 // that, but BUFFERED decoders (phoenix's multi-event correlation)

@@ -60,7 +60,7 @@ func TestStellarDashboardReference_DerivesCirculating(t *testing.T) {
 	defer srv.Close()
 
 	// Pin the clock just after the fixture's updatedAt (2026-07-07T01:06:15Z)
-	// so the CS-089 staleness gate reads the historical snapshot as fresh
+	// so the staleness gate reads the historical snapshot as fresh
 	// rather than depending on wall time.
 	fixedNow := time.Date(2026, 7, 7, 1, 30, 0, 0, time.UTC)
 	ref := NewStellarDashboardReference(StellarDashboardOptions{
@@ -108,7 +108,7 @@ func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
 	}
 }
 
-// TestSupplyReferences_StalenessGate (MNY-22 / CS-089) — a FROZEN
+// TestSupplyReferences_StalenessGate — a FROZEN
 // supply upstream must read as "reference unavailable", never drive a
 // supply divergence. Both references expose an upstream publication
 // time (`/lumens`.updatedAt, `/coins/{id}`.market_data.last_updated);

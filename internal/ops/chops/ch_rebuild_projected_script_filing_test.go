@@ -115,7 +115,7 @@ func TestChRebuildProjectedScript_PendingDirtyWindowIsFiledBeforeRecovery(t *tes
 	}
 }
 
-// #408's measured decision, on the filing side: a window that re-derived
+// Filing side: a window that re-derived
 // cleanly empties nothing, so it files nothing. One obligation per routine
 // window would point the next nightly at ~12.9M ledgers across 8
 // un-prefiltered sources and time every source's verdict out.

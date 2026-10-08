@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// #782: a refresh that returns is not proof prices_1m matches `trades`.
+// A refresh that returns is not proof prices_1m matches `trades`.
 // Nothing compared them, so a bucket left on the pre-repair rows served
 // stale OHLC / volume with the rebuild reporting success. The refresh now
 // fails on any drift, and the drifting minute may sit on either edge of

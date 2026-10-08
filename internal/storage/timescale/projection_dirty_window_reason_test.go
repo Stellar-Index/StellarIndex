@@ -18,12 +18,12 @@ import "testing"
 // mis-classify live rows — a rebuild row read as a replay is a lag ticket
 // suppressed with no operator rewind on record.
 func TestProjectionDirtyWindowReasonIsStableAcrossReleases(t *testing.T) {
-	// The 2026-08-29 reflector-fx replay, verbatim.
+	// A real reflector-fx replay reason, verbatim.
 	if got, want := ProjectorReplayReason(64_177_283, 61_602_787),
 		"projector-replay rewind 64177283 -> 61602787"; got != want {
 		t.Errorf("ProjectorReplayReason = %q, want %q (rows written by older binaries must still classify)", got, want)
 	}
-	// The 2026-07-27 sep41_supply -allow-live-overlap rebuild, verbatim.
+	// A real sep41_supply -allow-live-overlap rebuild reason, verbatim.
 	if got, want := ProjectedRebuildReason(63_419_138, 63_671_020),
 		"projected-rebuild -write [63419138,63671020]"; got != want {
 		t.Errorf("ProjectedRebuildReason = %q, want %q (rows written by older binaries must still classify)", got, want)

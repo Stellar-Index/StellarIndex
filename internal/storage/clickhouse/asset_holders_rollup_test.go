@@ -101,7 +101,7 @@ func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead pins T361: a
+// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead pins: a
 // group EXCHANGE landing between the board-rows read and the count read must
 // not serve a board from one cycle paired with a count from another. The
 // stub reports the rows query as still on cycle1 the first time (as if read

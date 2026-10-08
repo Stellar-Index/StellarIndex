@@ -132,7 +132,7 @@ func gateSaturated(class, bound string) float64 {
 	return testutil.ToFloat64(obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, bound))
 }
 
-// TestRefreshGate_SaturationIsCounted pins T404: every refusal is counted
+// TestRefreshGate_SaturationIsCounted pins: every refusal is counted
 // with the bound that tripped, and an admitted acquire is not. Not parallel,
 // so the exact deltas on the shared counter are this test's alone.
 func TestRefreshGate_SaturationIsCounted(t *testing.T) {

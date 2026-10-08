@@ -100,7 +100,7 @@ func TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts(t *testing.T) {
 	}
 }
 
-// TestRecognitionAttribution_EveryPinningSourceCanFail pins #1323: with the
+// TestRecognitionAttribution_EveryPinningSourceCanFail pins: with the
 // SEP-41 pair configured (sep41_transfers and sep41_supply both gated on the
 // same watched list), a recognition gap on ANY pinned contract must cap EVERY
 // catalogue source that pins it. A single-owner map handed every watched

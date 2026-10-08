@@ -21,7 +21,7 @@ const heldRowWarning = "sink failure — holding cursor for retry (NOT advancing
 // as long as it lasts, and the per-row warning must fire on the first
 // failing cycle and every heldRowLogEvery-th after — not once per cycle,
 // which turned a sustained outage into one identical line per row per
-// Interval and buried the ERROR lines an operator needs (RLT-142).
+// Interval and buried the ERROR lines an operator needs.
 func TestCycle_HeldRowWarningIsThrottled(t *testing.T) {
 	const source = "rlt142-held-row-log"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}

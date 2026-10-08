@@ -54,7 +54,7 @@ func productionTradeSink(other func(consumer.Event) error) SinkFunc {
 }
 
 // TestCycle_DroppedOutputDoesNotAbortTheRowsOtherOutputs pins the regression
-// the first RLT-132 attempt introduced. Once a dropped trade is REPORTED
+// an early attempt at the drop-reporting fix introduced. Once a dropped trade is REPORTED
 // (non-nil) instead of folded into nil, a loop that stops at the first sink
 // error never offers the row's remaining outputs to the sink — and because a
 // permanent fault is SKIPPED, the cursor advances past the row, so those valid

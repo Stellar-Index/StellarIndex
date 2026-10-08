@@ -56,7 +56,7 @@ func TestResetSEP41SupplyRollupFoldDoc_NamesBothCallers(t *testing.T) {
 }
 
 // TestSEP41SupplyRollupMigrationsNeverPrescribeDestructiveReset pins the
-// migrations' own guidance to the non-destructive reset (T364). Migration
+// migrations' own guidance to the non-destructive reset. Migration
 // 0085's header told operators a below-checkpoint re-derive "requires a
 // `TRUNCATE sep41_supply_rollup`", which also wipes migration 0088's seeded
 // genesis baseline and silently under-reports supply.

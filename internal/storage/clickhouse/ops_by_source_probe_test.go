@@ -52,7 +52,7 @@ func accountHistoryErrs(ctx context.Context, r *ExplorerReader) map[string]error
 	}
 }
 
-// TestAccountHistory_RefusesEmptyOpsBySource pins T394: an existing-but-EMPTY
+// TestAccountHistory_RefusesEmptyOpsBySource pins: an existing-but-EMPTY
 // stellar.ops_by_source must not be treated as provisioned. The readers
 // serve an empty sourced arm as "this account sourced nothing", so an unfed
 // projection would answer every account's own history as empty (or

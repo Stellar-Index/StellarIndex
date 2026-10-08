@@ -70,7 +70,7 @@ func TestCopyMergeUpsertSQL_GenerationGuarded(t *testing.T) {
 
 // TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects pins that the
 // ch-rebuild COPY path refuses a negative or missing transfer/approve Amount
-// before any database access, exactly as InsertSEP41TransferBatch does (T090).
+// before any database access, exactly as InsertSEP41TransferBatch does.
 // The zero Store has no *sql.DB, so a row that slips past validation fails in
 // copyMerge rather than with the validation error.
 func TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects(t *testing.T) {

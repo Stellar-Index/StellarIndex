@@ -197,7 +197,7 @@ func TestSnapshotEntryRow_PopulatesTheQueryableColumns(t *testing.T) {
 }
 
 // TestResolveChangeIndexCollisions_ReassignsCollidingRows is the regression
-// test for T347/T386: crc32(key) is only 32 bits, so two DIFFERENT keys
+// test: crc32(key) is only 32 bits, so two DIFFERENT keys
 // sharing a ledger_seq/tx_hash/op_index group can legitimately collide on
 // ChangeIndex — the exact shape the site audit measured destroying
 // >55% of a 48M-entry snapshot. Without a resolution pass, that collision

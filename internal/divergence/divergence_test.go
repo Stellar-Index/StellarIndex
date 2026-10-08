@@ -312,8 +312,7 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 
 // TestCoinGecko_DefaultIDMapCoversCommonPairs — a stock deployment
 // (no operator IDMap) MUST recognise the canonical asset_id forms
-// the aggregator computes by default. Caught from r1 audit
-// (2026-05-10): the previous behaviour was empty-IDMap → every
+// the aggregator computes by default. Caught from an r1 audit: the previous behaviour was empty-IDMap → every
 // pair returns ErrAssetUnsupported → divergence_observations
 // silently empty even though Compare's "ok" counter incremented.
 func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
@@ -650,7 +649,7 @@ func TestCompare_PanicInName(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_StalenessGate (MNY-22 / CS-089) — a FROZEN CoinGecko
+// TestCoinGecko_StalenessGate — a FROZEN CoinGecko
 // upstream must read as "reference unavailable", never as a fresh
 // price that could suppress a real divergence or manufacture a false
 // one. The reference requests include_last_updated_at=true and gates
@@ -800,10 +799,10 @@ func TestCompare_OverallDeadlineReturnsPartial(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_MissingUpstreamTimestampIsRejected (MNY-22) — every
+// TestCoinGecko_MissingUpstreamTimestampIsRejected — every
 // request sets include_last_updated_at=true and /simple/price returns
 // it, so a response WITHOUT the field means the freshness contract the
-// CS-089 gate rests on was not honoured. Waving it through silently
+// staleness gate rests on was not honoured. Waving it through silently
 // disabled the staleness gate for that id and served a possibly-frozen
 // price as fresh; fail closed instead.
 func TestCoinGecko_MissingUpstreamTimestampIsRejected(t *testing.T) {

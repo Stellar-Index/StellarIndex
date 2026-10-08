@@ -54,7 +54,7 @@ func synthPair(t *testing.T, quoteCode string) canonical.Pair {
 }
 
 // TestSyntheticCross_DerivesNonUSDFiatQuote is the reason this
-// reference exists (2026-08-24): XLM/EUR gets a SECOND reference by
+// reference exists: XLM/EUR gets a SECOND reference by
 // crossing XLM/USD (oracle leg) with EUR/USD (an independent FX leg), so
 // SuccessCount can reach the divergence trust floor and the
 // corroborated-release gate can auto-release genuine repricings on

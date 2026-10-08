@@ -21,7 +21,7 @@ func (emptyProbeConn) Query(context.Context, string, ...any) (driver.Rows, error
 	return &probeRows{consumed: true}, nil
 }
 
-// TestProbeSchema_LatchedAbsenceIsExported pins T403: an API that starts
+// TestProbeSchema_LatchedAbsenceIsExported pins: an API that starts
 // before the lake DDL latches the probe false for its whole lifetime and
 // serves the slow fallback — the gauge is the only place that shows.
 func TestProbeSchema_LatchedAbsenceIsExported(t *testing.T) {
