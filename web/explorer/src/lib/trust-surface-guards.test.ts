@@ -402,9 +402,8 @@ describe('trust-surface guards', () => {
     // AMBIGUOUS: every USDC-alike shares /assets/USDC. A link built by
     // slicing at the dash can therefore land the user on a DIFFERENT
     // issuer's asset than the row they clicked — including resolving a
-    // scam issuer's token to the legitimate one's page, or the reverse
-    // (wave-D EXR-02). markets/[pair] already took this decision
-    // (AM-09); AssetLink was the straggler.
+    // scam issuer's token to the legitimate one's page, or the reverse.
+    // This guard keeps every link builder off that idiom.
     //
     // Matches the truncation idiom rather than the href, because the
     // slug is usually computed a few lines above the <Link>. Display

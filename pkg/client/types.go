@@ -319,8 +319,8 @@ type HistoryPoint struct {
 type AssetDetail struct {
 	// Kind vs Type: Kind says which WIRE SHAPE this is — always
 	// "stellar_asset" on this struct, the discriminator [AssetLookup]
-	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042
-	// LC-040). Type says which STELLAR ASSET CLASS this is within that
+	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042).
+	// Type says which STELLAR ASSET CLASS this is within that
 	// shape (native / classic / soroban / fiat / global / external).
 	// Don't conflate them: Kind never varies on this struct; Type does.
 	Kind string `json:"kind"`

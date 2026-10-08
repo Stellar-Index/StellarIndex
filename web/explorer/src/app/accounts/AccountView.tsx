@@ -62,8 +62,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   const id = (idProp ?? params.get('id') ?? '').trim();
   const looksValid = ACCOUNT_RE.test(id);
 
-  // ACC-3: both activity endpoints serve next_cursor; the tables were
-  // hard-capped at one page. Same keyset pattern as the contract page.
+  // Both activity endpoints serve next_cursor; page them with the same
+  // keyset pattern as the contract page.
   const [txCursor, setTxCursor] = useState('');
   const [opsCursor, setOpsCursor] = useState('');
   const txQ = useQuery<AccountTransactionsResp>({
@@ -789,7 +789,7 @@ function TransactionsPanel({
                   >
                     {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
                   </Link>
-                  {/* ACC-2: the API serves scope:"all" (sourced +
+                  {/* The API serves scope:"all" (sourced +
                       participant); without a direction marker a viewer
                       can't tell who initiated. */}
                   {t.source_account && t.source_account !== id && (
