@@ -125,3 +125,46 @@ jobs:
           range="$(scripts/ci/commit-identity-range.sh)"
 
           ./scripts/ci/lint-attribution.sh "$range"
+
+  dco:
+    name: DCO sign-off
+    # Pull requests only: GitHub writes the squash commit on merge, after
+    # every commit it replaces was checked here. The maintainer is exempt:
+    # the DCO certifies a contribution to the copyright holder, and the
+    # commit-msg hook keeps personal names out of commit messages.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Every commit carries its author's Signed-off-by
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAINTAINER: ash@ashfrancis.com
+        run: |
+          set -euo pipefail
+
+          range="$(scripts/ci/commit-identity-range.sh)"
+          bad=0
+          # shellcheck disable=SC2086
+          for sha in $(git rev-list --no-merges $range); do
+            ae=$(git log -1 --format='%ae' "$sha")
+            case "$ae" in "$MAINTAINER" | *'[bot]@users.noreply.github.com') continue ;; esac
+            signoffs=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
+            if ! grep -qiF "<$ae>" <<<"$signoffs"; then
+              echo "::error::${sha} has no Signed-off-by for its author ${ae}"
+              bad=$((bad + 1))
+            fi
+          done
+          if [ "$bad" -gt 0 ]; then
+            echo "::error::dco: $bad commit(s) not signed off. Sign with git commit -s (see CONTRIBUTING.md, Sign off your commits), then git rebase --signoff to fix existing ones."
+            exit 1
+          fi
+          echo "dco: OK"
