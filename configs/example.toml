@@ -301,7 +301,7 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
   # poll_interval overrides the connector's built-in default cadence.
   # The default is 300s (5 min) — at one batched /simple/price call
   # per tick × 288 ticks/day this burns ~288 calls/day, well below
-  # the demo tier's 10,000-call/day ceiling (F-0030). Bump higher
+  # the demo tier's 10,000-call/day ceiling. Bump higher
   # when sharing the IP cap with other CG consumers; the divergence
   # signal tolerates 5-min-old references gracefully because the
   # service caches reference quotes between polls.
@@ -515,7 +515,7 @@ allowed_origins          = []
 # between the internet and this server) so XFF is honoured, e.g.
 # ["10.0.0.0/8"].
 #
-# SECURITY (F-1338): X-Forwarded-For is walked RIGHT-TO-LEFT and the
+# SECURITY: X-Forwarded-For is walked RIGHT-TO-LEFT and the
 # first entry NOT inside any CIDR here is taken as the client IP (the
 # closest untrusted hop). This is safe even when your proxy APPENDS
 # to XFF (nginx `proxy_add_x_forwarded_for`, AWS ALB, Cloudflare,
@@ -579,7 +579,7 @@ trusted_proxy_cidrs      = []
 
 # tls_cert_probe_hosts — hostnames whose TLS leaf cert NotAfter is
 # periodically probed and surfaced as
-# stellarindex_tls_cert_not_after_unix{host} (F-0051). Empty disables
+# stellarindex_tls_cert_not_after_unix{host}. Empty disables
 # the probe.
 # tls_cert_probe_hosts = ["api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"]
 
@@ -902,8 +902,8 @@ enabled = false
 # [supply.max_supply_overrides]
 # "XLM" = "50001803000.0000000"
 #
-# stale_component_ledgers_by_asset (F-0040) — per-asset override of
-# the F-1236 stale-component-ledger threshold. Empty keeps every
+# stale_component_ledgers_by_asset — per-asset override of
+# the stale-component-ledger threshold. Empty keeps every
 # asset on the global 1000-ledger threshold.
 # [supply.stale_component_ledgers_by_asset]
 # "XLM" = 1000
@@ -985,7 +985,7 @@ enabled          = false
 interval_seconds = 30   # 0 = library default
 
 # ──────────────────────────────────────────────────────────────────
-# Signup reaper — F-1255 speculative-account reaper. Deletes orphan
+# Signup reaper — speculative-account reaper. Deletes orphan
 # `accounts` rows left by a lost signup race (Suspended, no user, no
 # key) — unambiguous garbage. Runs in the API binary when the
 # dashboard is wired. On by default.

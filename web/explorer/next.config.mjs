@@ -49,7 +49,6 @@ const nextConfig = {
   // 60s for slugs the build happens to hit late in the queue.
   // 180s gives headroom without papering over a real hang —
   // if a page legitimately stalls forever we still notice.
-  // Tracked since 2026-05-11 deploy stuck on /assets/WGUARDIAN-...
   staticPageGenerationTimeout: 180,
 
   // Sourcemaps in production help when debugging from issue reports.
