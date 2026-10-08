@@ -49,26 +49,17 @@ type Sep1FetchStateReader interface {
 	IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool, error)
 }
 
-// Compile-time proof that the production reader still satisfies the seam —
-// the same guard [preciseSupplyReader] carries, for the same reason: an
-// optional seam that stops matching is not a build failure, it is a silent
-// opt-out, and here the opt-out reverts every attempted-and-failed issuer
-// to `not_fetched` with nothing red anywhere. Only the bare store is listed
-// because that is what the binary wires (cmd/stellarindex-api/main.go,
-// `Sep1Cache: store`); [CachedAssetsReader] does not implement
-// [Sep1CachedReader] at all, so it cannot stand in front of this seam. A
-// caching wrapper that one day does must be added here the same day.
+// The production reader must keep satisfying the seam: an optional seam that
+// stops matching is a silent opt-out, reverting every failed issuer to
+// `not_fetched`. Only the bare store is listed because that is what the binary
+// wires; a caching wrapper that implements [Sep1CachedReader] must be added
+// here too.
 var _ Sep1FetchStateReader = (*timescale.Store)(nil)
 
-// warnIfSep1CacheLacksFetchState is the mechanical half of the guard above:
-// the compile-time assertion only proves the bare store type still
-// implements the seam, it says nothing about whatever concrete value a
-// future Options.Sep1Cache actually wires. If that value stops satisfying
-// [Sep1FetchStateReader] — a caching wrapper added without the fetch-state
-// method, say — sep1StatusForNoPayload falls back to "not_fetched" for
-// every issuer with nothing red anywhere. Called once from [New] so that
-// regression logs loudly at boot instead of only showing up as a wrong
-// wire value nobody traced back here.
+// warnIfSep1CacheLacksFetchState checks the value Options.Sep1Cache actually
+// wires, which the compile-time assertion above cannot: if it stops
+// satisfying [Sep1FetchStateReader], every issuer reads "not_fetched" with
+// nothing red. Called once from [New] so the regression logs at boot.
 func warnIfSep1CacheLacksFetchState(s *Server, logger *slog.Logger) {
 	if s.Sep1Cache == nil {
 		return
@@ -373,19 +364,14 @@ type AssetDetail struct {
 	PriceUSD *string `json:"price_usd,omitempty"`
 
 	// PriceBasis identifies a PriceUSD that is NOT a Stellar market
-	// observation: [priceBasisGlobalMarket] ("global_market") — filled
-	// from the vetted global ticker's cross-venue price
-	// ([AssetDetail.GlobalMarket]); [priceBasisDeclaredPeg]
-	// ("declared_peg") — filled from an operator-declared 1:1 fiat peg ×
-	// the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets)
-	// when no global price exists either; [priceBasisTransitive]. Both
-	// fills run only when no market-derived price survived the substance
-	// gate. Absent means market-derived (the pre-existing contract,
-	// unchanged). Filled
-	// rows deliberately carry NO change pills, sparkline-backed cap, or
-	// other market-history claims — the peg fill asserts a conversion
-	// basis, not a market. Additive, omitempty — consumers that don't
-	// know the field see exactly the old shape.
+	// observation: [priceBasisGlobalMarket] (the vetted global ticker's
+	// cross-venue price, [AssetDetail.GlobalMarket]), [priceBasisDeclaredPeg]
+	// (an operator-declared 1:1 fiat peg × the fiat→USD FX rate,
+	// pricing_guard.fiat_pegged_classic_assets) or [priceBasisTransitive]. Fills
+	// run only when no market-derived price survived the substance gate; absent
+	// means market-derived. Filled rows carry NO change pills, sparkline-backed
+	// cap or other market-history claims: a fill asserts a conversion basis, not
+	// a market.
 	PriceBasis string `json:"price_basis,omitempty"`
 
 	// PriceWithheldReason says price_usd is null because the price was
@@ -446,28 +432,19 @@ type AssetDetail struct {
 	// prominent warning when present.
 	IssuerScamReason string `json:"issuer_scam_reason,omitempty"`
 
-	// IssuerDirectoryTags / IssuerDirectoryDomain / IssuerDirectoryName
-	// mirror the curated third-party label the account_directory table
-	// (migration 0136; synced from the MIT-licensed
-	// stellar-expert/public-directory) carries for this asset's issuer
-	// G-address, joined additively onto the payload. Tags follow the
-	// upstream registry (#exchange, #anchor, #issuer, #malicious,
-	// #unsafe, …); clients should surface `malicious`/`unsafe`/`fraud`/
-	// `scam`/`hack`/`phishing` as prominent warnings.
+	// IssuerDirectoryTags / IssuerDirectoryDomain / IssuerDirectoryName mirror
+	// the third-party label account_directory (synced from the MIT-licensed
+	// stellar-expert/public-directory) carries for this asset's issuer. Clients
+	// should surface `malicious`/`unsafe`/`fraud`/`scam`/`hack`/`phishing` as
+	// prominent warnings.
 	//
-	// DISPLAY-ONLY, third-party attribution — with the two deliberate
-	// SCAM-CLASS exceptions registered at the top of
-	// asset_directory_tags.go (a scam-class tag withholds the row's
-	// published dollar figures via suppressScamIssuerPricing, and
-	// demotes the row in the listing rank). They never alter the
-	// verified status or the substance/decimals gates. Distinct from
-	// IssuerScamReason,
-	// which is the hand-curated in-binary scamIssuers list; this is the
-	// live synced directory and covers issuers the static list misses
-	// (e.g. the wash-inflated scam AUD, audrev-stellar.com). Omitted
-	// when no directory reader is wired, the issuer isn't listed, or the
-	// lookup fails (best-effort — a directory outage never fails the
-	// asset response).
+	// DISPLAY-ONLY, except the SCAM-CLASS exceptions registered in
+	// asset_directory_tags.go: a scam-class tag withholds the row's dollar
+	// figures (suppressScamIssuerPricing) and demotes it in the listing rank. It
+	// never alters verified status or the substance/decimals gates. Distinct from
+	// IssuerScamReason (the in-binary scamIssuers list); the synced directory
+	// covers issuers that list misses. Omitted when no reader is wired, the issuer
+	// isn't listed, or the lookup fails (best-effort).
 	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
@@ -507,35 +484,21 @@ type AssetDetail struct {
 	Slug string `json:"slug,omitempty"`
 
 	// FirstSeenLedger / LastSeenLedger / ObservationCount are the
-	// asset-catalogue activity metadata. Mirrored from AssetRow so
-	// the explorer's asset-detail page can drop its parallel
-	// /v1/coins/{slug} fetch.
+	// asset-catalogue activity metadata, mirrored from AssetRow so the explorer's
+	// asset-detail page needs no /v1/coins/{slug} fetch. They answer different
+	// questions:
 	//
-	// WHAT EACH ONE MEANS, since the registry has a second observation
-	// source (migration 0158) and the three do not answer the same
-	// question:
+	//   ObservationCount counts TRADES only (a holder-only asset carries 0); the
+	//   explorer's "Observations" label and the default listing rank use it.
 	//
-	//   ObservationCount counts TRADES, and only trades. An asset the
-	//   registry knows about solely because somebody holds it carries 0.
-	//   This is the field the explorer labels "Observations" and the
-	//   field the default listing rank sorts on, and both keep meaning
-	//   trading activity.
+	//   FirstSeenLedger / LastSeenLedger are the earliest / latest ledger the
+	//   asset was observed from ANY source, trade or trustline holding.
+	//   FirstSeenLedger is an upper bound on the genesis ledger, not the genesis.
+	//   Neither means "last traded".
 	//
-	//   FirstSeenLedger / LastSeenLedger are the earliest / latest
-	//   ledger at which the asset was observed from ANY source — a trade
-	//   or a trustline holding. FirstSeenLedger has always been an upper
-	//   bound on the asset genesis ledger rather than the genesis
-	//   itself; widening the sources can only move it earlier, so the
-	//   bound tightens, it does not break. Neither field means "last
-	//   traded".
-	//
-	// Absent means "no asset-catalogue row" for all three; native XLM
-	// has none, so its ObservationCount is absent too. The ledger
-	// fields additionally stay absent when the registry holds 0 (not
-	// a real ledger — genesis is 1), but ObservationCount is emitted
-	// as 0 when the catalogued asset has no observations, because 0
-	// is a legitimate count and a client must be able to tell it
-	// apart from "we have nothing".
+	// All three are absent with no catalogue row (native XLM has none). The ledger
+	// fields also stay absent at 0 (genesis is 1), but ObservationCount emits 0,
+	// a legitimate count a client must tell apart from "we have nothing".
 	FirstSeenLedger  *uint32 `json:"first_seen_ledger,omitempty"`
 	LastSeenLedger   *uint32 `json:"last_seen_ledger,omitempty"`
 	ObservationCount *int64  `json:"observation_count,omitempty"`
@@ -651,17 +614,11 @@ type FiatCodeAnchor struct {
 	Note string `json:"note"`
 }
 
-// detailFromAsset populates an AssetDetail from the canonical shape.
-// Nullable fields are nil-pointered when empty so JSON omits them
-// cleanly.
-//
-// This is the SCAFFOLDING path used when no AssetReader is wired
-// (tests, the dev binary before the storage layer is up). The
-// production cmd/stellarindex-api path uses its own assetToDetail
-// that consults the operator's curated home-domain map; this stub
-// version doesn't have access to that map, so HomeDomain stays nil
-// and the overlay handler stamps sep1_status="not_applicable" via
-// the existing default.
+// detailFromAsset populates an AssetDetail from the canonical shape, with
+// empty nullable fields nil so JSON omits them. It is the scaffolding path
+// used when no AssetReader is wired (tests, dev binary); it has no curated
+// home-domain map, so HomeDomain stays nil and sep1_status defaults to
+// "not_applicable".
 func detailFromAsset(a canonical.Asset) AssetDetail {
 	d := AssetDetail{
 		Kind:    "stellar_asset",
@@ -765,17 +722,10 @@ type assetsOrderParam struct {
 	raw      string
 }
 
-// parseAssetsOrder extracts + validates `order_by` for /v1/assets,
-// writing a problem+json 400 and returning ok=false on an unrecognised
-// value — the same fail-loud shape as /v1/markets (markets.go).
-//
-// The storage layer supports AssetsOrderVolume24hUSDDesc end to end, so
-// only this wire-to-store step decides the ranking. Without it every
-// request would get the observation-count ordering: a client asking for
-// a volume ranking would silently get the top rows by ALL-TIME
-// observation count, an asset that traded $2M in 24h but has a modest
-// lifetime count could not appear at all, and even
-// `order_by=TOTAL_GARBAGE` would return 200.
+// parseAssetsOrder extracts + validates `order_by` for /v1/assets, writing a
+// problem+json 400 and returning ok=false on an unrecognised value, like
+// /v1/markets. Only this step decides the ranking: dropping it would serve
+// the all-time observation-count order to a client asking for 24h volume.
 func parseAssetsOrder(w http.ResponseWriter, r *http.Request) (assetsOrderParam, bool) {
 	raw := r.URL.Query().Get("order_by")
 	switch raw {
@@ -865,31 +815,21 @@ func parseAssetListFilters(w http.ResponseWriter, r *http.Request) (assetListFil
 	return f, true
 }
 
-// assetListMaxQueryLen bounds the free-text `q` filter, in bytes.
-//
-// `q` had no bound but the server's header limit, and it is carried
-// verbatim into the listing cache key and into three LIKE patterns. The
-// longest thing a caller can usefully search for is a full classic
-// asset id — a 12-byte code, a dash and a 56-byte issuer strkey, 69
-// bytes — since `q` substring-matches code, slug and issuer VALUES and
-// none of those is longer. 100 leaves headroom over that; anything past
-// it cannot match a row and exists only to be expensive.
+// assetListMaxQueryLen bounds the free-text `q` filter, in bytes. `q` is
+// carried verbatim into the listing cache key and three LIKE patterns, and
+// its longest useful value is a full classic asset id (69 bytes); anything
+// past 100 cannot match a row and exists only to be expensive.
 const assetListMaxQueryLen = 100
 
-// Rate-limit surcharges for the /v1/assets plans a caller can select.
+// Rate-limit surcharges for the /v1/assets plans a caller can select. One
+// route covers several query plans, and the limiter's pre-dispatch charge is
+// one token for all of them; each surcharge is added via
+// [middleware.ChargeRateLimit].
 //
-// /v1/assets is one route and several query plans, and the query string
-// picks the plan. The limiter's pre-dispatch charge is one token for
-// all of them, so the per-minute budget bought the dearest plan at the
-// cheapest plan's price. Each surcharge is added to
-// the base token through [middleware.ChargeRateLimit].
-//
-// These are weights, not measurements of any one request, and they are
-// deliberately CONSERVATIVE — set below the measured cost ratio, so that
-// if they are wrong they under-charge an abuser rather than lock out an
-// honest client. They are capacity knobs: re-derive them from the
-// slow-request log (middleware.SlowRequestThreshold records the query
-// shape) when the plans change.
+// These are weights, deliberately set BELOW the measured cost ratio so an
+// error under-charges an abuser rather than locks out an honest client.
+// Re-derive them from the slow-request log (middleware.SlowRequestThreshold
+// records the query shape) when the plans change.
 const (
 	// assetListSurchargeVolumePlan prices the volume-ranked listing
 	// plan: the concentration-adjusted sort over per-asset CTEs.
@@ -906,16 +846,10 @@ const (
 )
 
 // assetListCost is the rate-limit price, in tokens, of one /v1/assets
-// request, decided by the PLAN it selects rather than by the parameter
-// that selected it — `order_by=volume_24h_usd_desc` and
-// `asset_class=all` reach the same volume-ranked store read, and pricing
-// only the one the finding named would leave the other as the way
-// around it.
-//
-// storeBacked is whether an AssetsReader is wired. Without one, and on
-// the class-scoped catalogue listings (a few dozen curated rows filtered
-// in-process, which ignore `q` altogether), no plan is selected and the
-// request costs the base token.
+// request, decided by the PLAN it selects: `order_by=volume_24h_usd_desc` and
+// `asset_class=all` reach the same volume-ranked store read, so both pay.
+// Without an AssetsReader, and on the class-scoped catalogue listings (which
+// ignore `q`), the request costs the base token.
 func assetListCost(f assetListFilters, order timescale.AssetsOrder, assetClass string, storeBacked bool) int {
 	const base = 1
 	if !storeBacked || (assetClass != "" && assetClass != "all") {
@@ -951,20 +885,11 @@ func parseAssetListLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return parsed, true
 }
 
-// typeMatchesListingSpine reports whether a structural `type` filter
-// can match ANY row of the classic listing spine, which is
-// classic_assets UNION the traded Soroban-native contracts. A caller
-// that gets false must serve an empty page rather than query: no
-// predicate over that spine could return a row.
-//
-// native and fiat are the two that cannot match. Native XLM has no
-// classic_assets row (it is served by the catalogue phase and the
-// dedicated native reader) and fiat reference rows moved to
-// /v1/external/assets with the Stellar/external split.
-//
-// `soroban` DOES match: the spine includes the traded contract assets
-// (see listAssetsBaseSelect), so short-circuiting everything but
-// `classic` would answer `type=soroban` with an empty page.
+// typeMatchesListingSpine reports whether a structural `type` filter can match
+// ANY row of the classic listing spine (classic_assets UNION the traded
+// Soroban-native contracts); on false the caller serves an empty page. native
+// (served by the catalogue phase) and fiat (/v1/external/assets) cannot match;
+// `soroban` can (see listAssetsBaseSelect).
 func typeMatchesListingSpine(typ string) bool {
 	return typ == "" || typ == "classic" || typ == "soroban"
 }
@@ -1042,18 +967,10 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
 
 	// An unrecognised asset_class 400s rather than falling through to the
-	// default listing, for the same reason order_by does a few lines below:
-	// accepting a filter and quietly not applying it is a wrong answer
-	// dressed as a right one.
-	//
-	// It mattered concretely. `asset_class=rwa` returned USDC, yXLM, AQUA,
-	// SHX and VELO — byte-identical to the unfiltered listing, and to
-	// `asset_class=bogus` — so a consumer asking for real-world assets got
-	// a governance token and a wrapped lumen back, with nothing in the 200
-	// to say the filter had never applied. There is no `rwa` class here by
-	// design: that set is decided by attestation rather than by a column,
-	// and it has its own surface at /v1/rwa/assets. Saying so is the
-	// answer; silently serving everything is not.
+	// default listing: accepting a filter and silently not applying it is a
+	// wrong answer dressed as a right one. There is deliberately no `rwa` class:
+	// that set is decided by attestation, not a column, and lives at
+	// /v1/rwa/assets.
 	if !validAssetClass(assetClass) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-class",
@@ -1067,15 +984,10 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The catalogue and unified listings rank on their own fixed
-	// schemes — the catalogue by market cap, the unified path by phase
-	// (catalogue market-cap first, then classic volume-desc), each with
-	// a keyset cursor encoding THAT scheme's keys. They cannot honour a
-	// caller-chosen order without a different cursor.
-	//
-	// So say so, rather than accept the parameter and quietly ignore it.
-	// Silently ignoring it would give the home page a ranking that is not
-	// the ranking it advertises, with nothing in the 200 response to show it.
+	// The catalogue and unified listings rank on their own fixed schemes, each
+	// with a keyset cursor encoding THAT scheme's keys, so they cannot honour a
+	// caller-chosen order. Say so rather than serve a ranking that is not the one
+	// advertised.
 	if orderBy.explicit && assetClass != "" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-order",
@@ -1447,15 +1359,12 @@ func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.S
 	return m
 }
 
-// fillRowMarketCap fills one listing row's market cap from circulating supply,
-// applying the dust-liquidity valuation-integrity guard. Split out of
-// [Server.fillMarketCapsFromSupply] to keep that function under the gocognit
-// cap. A dust-liquidity price (single venue AND sub-floor 24h volume) must not
-// present an obscure asset as worth billions: the cap is SUPPRESSED (left null,
-// market_cap_low_liquidity=true) rather than asserting a fabricated headline.
-// The price_usd is untouched — we guard the valuation, not the price;
-// circulating_supply is a raw fact (not a valuation), so it still surfaces,
-// matching the detail path's populateSupplyFields.
+// fillRowMarketCap fills one listing row's market cap from circulating supply.
+// A dust-liquidity price (single venue AND sub-floor 24h volume) must not
+// present an obscure asset as worth billions: the cap is SUPPRESSED (null,
+// market_cap_low_liquidity=true). price_usd is untouched (we guard the
+// valuation, not the price), and circulating_supply, a raw fact, still
+// surfaces, matching the detail path's populateSupplyFields.
 func (s *Server) fillRowMarketCap(
 	ctx context.Context,
 	row *AssetDetail,
@@ -1921,16 +1830,12 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	if last != nil {
 		return last
 	}
-	// Nothing servable (a fresh process, or a map past classicSupplyMaxAge): wait BRIEFLY for the
-	// in-flight refresh so a healthy, fast query still fills this first
-	// response — but never hold the request for its whole budget. The backing
-	// query currently runs longer than the 15s request timeout, so waiting on
-	// the caller's deadline meant the FIRST visitor after every deploy ate a
-	// full 15s before getting a degraded page anyway. Bounding the wait costs
-	// that visitor nothing (they degrade either way) and returns in 2s instead.
-	// The detached refresh keeps running on its own budget, so the very next
-	// request is served from cache. Prewarm (prewarmClassicSupply) normally
-	// fills this before any user request arrives at all.
+	// Nothing servable (a fresh process, or a map past classicSupplyMaxAge):
+	// wait BRIEFLY for the in-flight refresh so a fast query still fills this
+	// response, but never for the whole request budget: the backing query can
+	// outrun the 15s request timeout, and the visitor degrades either way. The
+	// detached refresh keeps running, so the next request is served from cache;
+	// prewarmClassicSupply normally fills it before any request arrives.
 	if flight == nil {
 		return nil // retry gap still open and nothing cached
 	}
