@@ -1,15 +1,15 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-10-05
+last_verified: 2026-10-08
 status: current
 ---
 
 # Credential rotation runbook
 
 Rotating the load-bearing service credentials on an archival node (r1 today; R2/R3 the
-same once they run their own MinIO). Only the MinIO family is written up; add a `##`
-section per family (Postgres password, SEP-10 signing seed, webhook HMAC secrets) as
-each gets a procedure.
+same once they run their own MinIO). The MinIO family has a full procedure;
+[The full rotation batch](#the-full-rotation-batch) lists every credential in rotation
+order.
 
 Secrets live **ansible-vault encrypted** in
 `configs/ansible/inventory/<region>.secrets.yml` (`r1.secrets.yml` for r1). The file is
@@ -188,6 +188,51 @@ mc ls archivewriter/galexie-archive/ | head        # must list, not 403
 it cannot list it. The only delete, the operator-run `PARTIALS=…` sweep, goes through
 `ARCHIVE_DELETE_ALIAS` (`local`, same file); the run stops before deleting if that alias is
 not configured. After deploying, confirm one full timer cycle.
+
+## The full rotation batch
+
+Every credential is rotated in one batch, in this order: each step's consumers are
+redeployed and checked before the next starts, and the vault itself goes last so a
+failed step can still be rolled back with the old vault password. Which values are due
+is tracked in the private inventory, not here, because this repository is public.
+
+1. **Vendor API keys.** `vault_resend_api_key`, `vault_coingecko_api_key`,
+   `vault_coingecko_demo_api_key`, `vault_dune_api_key`, `vault_massive_api_key`,
+   `vault_tiingo_api_key`, `vault_exchangeratesapi_key`,
+   `vault_openexchangerates_app_id`, `vault_chainlink_rpc_url`,
+   `alertmanager_pagerduty_key` and the Healthchecks write key. Issue the new key at the
+   vendor, deploy, then revoke the old one. Check: each connector's next poll succeeds
+   and a sign-in email arrives.
+2. **MinIO.** `minio_root_password`, `galexie_s3_*`, `galexie_archive_s3_*`,
+   `stellarindex_reader_*`, `stellarindex_archive_trimmer_*`, per [MinIO](#minio).
+   Check: no `SignatureDoesNotMatch` in any reader's log and galexie keeps exporting.
+3. **ClickHouse.** `clickhouse_live_daemon_password`, `clickhouse_ops_admin_password`,
+   `clickhouse_ops_batch_password`, `clickhouse_ops_monitor_password`,
+   `vault_clickhouse_serving_password`. Check: the indexer's lake writes and the API's
+   serving reads both succeed.
+4. **Postgres, Redis and the HA plumbing.** `patroni_*` passwords, `redis_password`,
+   `keepalived_vrrp_password`, `etcd_cluster_token`. Check: every service reconnects,
+   `patronictl list` shows a leader, and `/v1/status` is green.
+5. **Backup keys.** `ch_lake_backup_s3_key*`, `galexie_archive_mirror_s3_key*`,
+   `pgbackrest_repo2_s3_key*` and the B2 application keys. Check: one full backup of
+   each kind completes with the new key before the old key is deleted.
+6. **Monitoring basic auth.** `prometheus_basic_auth_password_hash`,
+   `alertmanager_basic_auth_password_hash`, `patroni_rest_basic_auth_password`. Check:
+   Prometheus scrapes every target and the Healthchecks dead-man's switch keeps pinging.
+7. **Application secrets.** `vault_dashboard_code_secret` invalidates every live
+   sign-in code, login-device proof and passkey ceremony, so rotate it when no one is
+   mid-sign-in. `vault_webhook_seal_key` orphans every sealed webhook secret: re-seal
+   them under the new key first, or skip it when none are sealed and it was never
+   exposed. Check: a fresh sign-in and a test webhook delivery succeed.
+8. **GitHub Actions secrets.** `DEPLOY_SSH_PRIVATE_KEY` together with the matching
+   `authorized_keys` entry on every host, `CLOUDFLARE_API_TOKEN`,
+   `DEPLOY_PROTECTION_TOKEN`, `STELLARINDEX_LOAD_API_KEY`. Check: a deploy and a load run
+   both complete.
+9. **GCP service-account key.** Create the new key, swap it in, delete the old one.
+   Check: the job that uses it runs once.
+10. **The vault itself, last.** Rekey the vault, then update the
+    `ANSIBLE_VAULT_PASSWORD` and `ANSIBLE_VAULT_FILE_B64` Actions secrets. Check: the
+    ansible-drift workflow decrypts and reports no drift.
 
 ## Related
 
