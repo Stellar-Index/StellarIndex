@@ -16,29 +16,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyReconciliation implements ADR-0033 Claim 2b (projection
-// reconciliation): per ledger, the rows a source SHOULD have produced
-// must equal the rows actually in its table.
+// verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a
+// source SHOULD have produced must equal the rows in its table. The expected
+// side, by source class:
 //
-// Two oracles for "should have produced", by source class:
+//   - Soroban sources: run the real decoder over the lake's contract_events,
+//     as compute-completeness -ch does ([expectedProjection]). Event-less
+//     ContractCall sources (band, soroswap-router) re-derive from the lake's
+//     InvokeContract ops.
+//   - SDEX: run the lake's operations through the SDEX decoder and the served
+//     write filter (Validate + primary-key de-dup), gated on lake coverage.
+//     Not the classic_trade_effect_count census, which counts one-side-zero
+//     fills the trades table cannot hold. `hubble-check` is the external
+//     cross-check.
 //
-//   - Soroban sources — re-derive by running the real decoder over the
-//     ClickHouse lake's contract_events (deterministic recomputation), the
-//     same expected side compute-completeness -ch publishes
-//     ([expectedProjection]). Correlation sources reconcile correctly
-//     because each logical record's events share one (ledger, tx, op).
-//     The event-less ContractCall sources (band, soroswap-router) re-derive
-//     from the lake's InvokeContract ops.
-//   - SDEX — predates Soroban, so there are no contract events to
-//     re-derive from. Re-derive from the ClickHouse lake's operations
-//     through the SDEX decoder and the served write filter (Validate +
-//     primary-key de-dup), gated on the lake substrate covering the
-//     range. NOT the ledger_ingest_log classic_trade_effect_count census:
-//     it counts one-side-zero fills the trades table cannot hold, so it
-//     never reconciles. The external Hubble anchor (`hubble-check`) is
-//     the defense-in-depth cross-check.
-//
-// Exits non-zero if any mismatch is found. Cron/CI-gateable.
+// Exits non-zero on any mismatch.
 func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -201,36 +193,24 @@ func reconciliationIsVacuous(expTotal, actTotal int) bool {
 	return expTotal == 0 && actTotal == 0
 }
 
-// seedSoroswapForRecon seeds the soroswap pair registry from the
-// factory via RPC so the re-derive resolves token identities for pairs
-// created before the audited range. Same contract as verify-decoders'
-// seed (internal/ops/diagnostics/verify_decoders.go):
+// seedSoroswapForRecon seeds the soroswap pair registry from the factory via
+// RPC so the re-derive resolves pairs created before the audited range, with
+// the same contract as verify-decoders' seed:
 //
-//   - oracle.soroswap.factory_contract EMPTY is the documented way to
-//     DISABLE the seed (config.SoroswapConfig) and is the default, and
-//     the shape both test nets run. It is not a failure: returns nil with
-//     nothing seeded; the decoder still learns the pairs whose new_pair
-//     events fall inside the re-derived range.
-//   - factory SET but no RPC endpoint, or the sweep erroring, IS a
-//     failure and returns an error the caller must not swallow.
-//     SeedFromFactoryRPC returns mid-loop, so an error can mean a
-//     PARTIALLY seeded registry: every event of an unseeded pair fails
-//     Matches, the projection re-derive expects 0 against real served
-//     rows, and compute-completeness would publish projection_ok=false
-//     over healthy data — which projectionFloor then answers the next
-//     night with a from-genesis re-derive of the first catalogue source.
+//   - An empty oracle.soroswap.factory_contract (the default, and both test
+//     nets) disables the seed: nil, nothing seeded; pairs whose new_pair
+//     events fall inside the range are still learned.
+//   - A factory with no RPC endpoint, or a failed sweep, is an error the
+//     caller must not swallow. SeedFromFactoryRPC can stop mid-loop, and a
+//     partly seeded registry makes the re-derive expect 0 rows for unseeded
+//     pairs, so compute-completeness would publish projection_ok=false over
+//     healthy data and trigger a from-genesis re-derive the next night.
 //
-// Failing closed must not make the run FRAGILE: on r1 the endpoint is a
-// public third-party RPC (the host runs no stellar-rpc) and the sweep is
-// ~640 sequential calls. SeedFromFactoryRPC therefore retries a
-// TRANSIENT failure per call within a bounded budget (5 attempts, 15s of
-// backoff); what reaches here as an error is a deterministic failure or
-// an endpoint that stayed down for a whole budget. The 15-minute context
-// below remains the bound on the sweep, retries included.
-//
-// The notices carry no command prefix: this helper serves both
-// verify-reconciliation and compute-completeness, and each caller
-// prefixes the ERROR with its own name.
+// SeedFromFactoryRPC retries transient failures within a bounded budget, so
+// an error here is deterministic or an endpoint down for the whole budget;
+// the 15-minute context below bounds the sweep. Notices carry no command
+// prefix because both verify-reconciliation and compute-completeness call
+// this.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {
