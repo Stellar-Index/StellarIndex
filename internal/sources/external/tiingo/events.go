@@ -21,10 +21,10 @@
 //
 // Wire format (captured from the live API):
 //
-//	GET https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=2026-09-22
+//	GET https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=YYYY-MM-DD
 //	Authorization: Token <key>
 //
-//	[{"date":"2026-09-29T00:00:00.000Z","close":9.44,"high":9.44,"low":9.44,
+//	[{"date":"YYYY-MM-DDT00:00:00.000Z","close":9.44,"high":9.44,"low":9.44,
 //	  "open":9.44,"volume":0,"adjClose":9.44,...}]
 //
 // A fund with no NAV history returns `[]` with 200 — no NAV, not an error.

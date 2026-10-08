@@ -20,7 +20,7 @@
 //	  "success": true,
 //	  "timestamp": 1745000000,
 //	  "base": "USD",
-//	  "date": "2026-04-24",
+//	  "date": "YYYY-MM-DD",
 //	  "rates": {
 //	    "EUR": 0.92350,
 //	    "GBP": 0.78450,

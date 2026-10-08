@@ -34,7 +34,7 @@ import (
 // Estimated tiers (3/4: FX rate / XLM anchor at trade time) are OUT of
 // scope: their value is not reproducible from the row alone and needs the
 // full resolver-backed waterfall, which is
-// `ch-rebuild`'s job (docs/operations/usd-volume-rederive-2026-08.md).
+// `ch-rebuild`'s job (the usd-volume-rederive runbook in docs/operations/).
 
 // ExactTierUSDVolume renders the exact-tier identity for one row: the
 // pegged leg divided by 10^decimals, rendered EXACTLY as [tradeUSDVolume]

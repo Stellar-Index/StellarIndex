@@ -292,7 +292,7 @@ var (
 //	}
 //
 // On the wire (verified against four mainnet DEX-oracle
-// captures in test/fixtures/reflector/v6-2026-04-23/), the
+// captures in test/fixtures/reflector/v6-*/), the
 // soroban-sdk #[contractevent] macro wraps non-topic fields in a
 // Map keyed by field name — even when there is only one such
 // field. So the body we receive is:
