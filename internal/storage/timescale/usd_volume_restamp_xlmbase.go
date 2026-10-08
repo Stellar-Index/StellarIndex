@@ -16,66 +16,32 @@ import (
 
 // ─── the XLM-BASE usd_volume RE-DERIVE ───────────────────────────────
 //
-// [usd_volume_restamp.go] repairs the EXACT tiers, whose value is a pure
-// decimal rescaling of an amount already on the row and can therefore be
-// evaluated in SQL. This file is the ESTIMATED-tier counterpart for the
-// one estimated tier whose input is not authorable by a counterparty: the
-// XLM-base anchor (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
-// [usdVolumeViaXLMBaseAnchor]).
+// The estimated-tier counterpart of [usd_volume_restamp.go], for the one
+// estimated tier whose input no counterparty authors: the XLM-base anchor
+// (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
+// [usdVolumeViaXLMBaseAnchor]). The population is on-chain DEX trades with
+// an XLM base and a non-pegged quote whose stored value differs from the
+// anchor's, up to the day before a later re-derive's first row (the
+// runbook gives `-to`). Most of it is coverage (`-fill-null`), not
+// correction; note prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio
+// misreads holes as valuation errors.
 //
-// The population: every on-chain DEX trade with an XLM BASE leg, with a
-// non-USD-pegged quote, whose `usd_volume` the anchor tier would have
-// written differently. Rows a later re-derive already stamped carry a
-// higher `derive_generation`, so the window ends the day before that
-// re-derive's first row (the runbook gives the `-to` value).
+// Why the arithmetic is not done in SQL:
 //
-// It is mostly coverage, not valuation: per month the PRICED rows aggregate to
-// within 0.3% of the anchor, and the gap is rows stored NULL. So the bulk of a
-// run is `-fill-null`; wrong-leg corrections (an `XLM/<token>` trade valued
-// through the token's own thin `<token>/USDC` bucket) are a long tail. A
-// CAGG-derived ratio misreads this: `prices_1m`/`prices_1d` coalesce a NULL
-// `usd_volume` to 0, so a coverage hole reads as a valuation error.
+//  1. THE VALUE COMES FROM THE LIVE FUNCTION: each row is rebuilt into its
+//     [canonical.Trade] and passed to [usdVolumeViaXLMBaseAnchor] with the
+//     store's [VWAPUSDFXResolver] and [USDVolumeQuoteSpec], anchored to the
+//     row's `ts`, so there is no second waterfall to drift.
+//  2. ONLY THE ANCHOR: where it declines the row is REPORTED, never valued
+//     via [tradeUSDVolumeViaFX], the route that wrote the defect. A wrong
+//     value at a high `derive_generation` cannot be clawed back; an
+//     unpriced row can.
+//  3. NEVER WRITE NULL OVER A VALUE: a declined row that carries a number
+//     is left as is and counted in [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-// Three rules make this a re-derive rather than a guess, and they are the
-// reason the arithmetic is NOT done in SQL:
-//
-//  1. THE VALUE COMES FROM THE LIVE FUNCTION. Each candidate row is
-//     rebuilt into the [canonical.Trade] the decoder produced and handed
-//     to [usdVolumeViaXLMBaseAnchor] — the same function
-//     [Store.InsertTrade] calls, with the store's installed
-//     [VWAPUSDFXResolver] and [USDVolumeQuoteSpec]. There is no second
-//     spelling of the waterfall to drift against (the reimplementation
-//     trap the verifier's header warns about). The resolver is
-//     time-anchored to the ROW's `ts`, not to now(), so a historical
-//     re-derive is deterministic given prices_1m.
-//
-//  2. ONLY THE ANCHOR. The live insert path, when the anchor declines,
-//     falls through to [tradeUSDVolumeViaFX] — the quote-side route that
-//     wrote the defect. This tool deliberately stops at the anchor: a row
-//     the anchor cannot price is REPORTED, not valued. Writing the
-//     quote-side estimate here would re-commit the error this tool
-//     corrects, and it would do so at a HIGH `derive_generation`, which is
-//     the one state a later correction cannot claw back. An unpriced row
-//     stays recoverable; a confidently-wrong high-generation row does not.
-//
-//  3. NEVER WRITE NULL OVER A VALUE. When the anchor declines on a row
-//     that already carries a (quote-side, probably wrong) number, the row
-//     is left exactly as it is and counted in
-//     [XLMBaseRestampStats.AnchorDeclinedStored]. Blanking it would
-//     destroy a figure every volume surface already sums, on the strength
-//     of an inference this tool is not entitled to make.
-//
-// Scope, decided in Go from the SAME primitives the insert path uses —
-// never from a SQL predicate that could mean something subtly different:
-//
-//   - the source's registered subclass is DEX. The anchor returns nil for
-//     anything else, so a CEX/FX row is not in this tier at all.
-//   - base leg is an XLM form ([isXLMAsset]: `native` or the SAC wrapper).
-//     That is the exact condition under which [tradeUSDVolume] takes the
-//     anchor branch AHEAD of the quote side.
-//   - quote leg is NOT USD-pegged ([usdVolumeDecimals]). A pegged quote is
-//     tier 1/2 — exact, and `usd-volume-restamp -tier exact`'s job. Rows
-//     of the two tiers never overlap.
+// Scope is decided in Go from the insert path's own primitives: a DEX
+// source subclass, an XLM base ([isXLMAsset]) and a non-pegged quote
+// ([usdVolumeDecimals]); pegged quotes belong to `-tier exact`.
 
 // The candidate scan for one bounded window is the shared one
 // ([restampScanSelect], usd_volume_restamp_legs.go) with this tier's leg:

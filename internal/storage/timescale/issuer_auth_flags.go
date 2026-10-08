@@ -192,62 +192,33 @@ var persistIssuerAuthFlagsQuery = `
 // PersistIssuerAuthFlags writes decoded auth flags for the given issuers,
 // returning how many rows it actually changed.
 //
-// # WHY THIS EXISTS
+// The flags already resolve at read time from the lake's AccountEntry, but
+// that depends on a warm account-state cache; persisting them gives a
+// fallback that survives a cold cache, a restart and a load spike.
 //
-// The flags already resolve at READ time — Server.enrichIssuerFromAccountState
-// decodes them from the lake's AccountEntry per request, and measured
-// 39/40 of the top issuers resolve. But that path depends on the
-// ClickHouse lake plus a warm account-state cache: under burst load the
-// refresh gate degrades and a cold issuer page renders "not yet
-// resolved". Persisting the decoded values gives the read path a durable
-// fallback that survives a cold cache, a restart, and a load spike.
+// UPDATE, not upsert: this fills columns on known issuers and is not a
+// discovery path; account entries must not invent issuer rows.
 //
-// UPDATE, not upsert: an issuer row must already exist. This job fills
-// columns on known issuers; it is not a discovery path, and inventing
-// issuer rows from account entries would put accounts in the issuers
-// table that never issued anything.
+// home_domain follows the reading's provenance, and a changed domain unbinds
+// the row's SEP-1 state in the same statement (sep1ResetOnHomeDomainChange):
 //
-// home_domain follows the reading's provenance, and a row whose domain changes
-// has its SEP-1 state unbound in the same statement (see
-// sep1ResetOnHomeDomainChange):
+//   - live: set to exactly what the AccountEntry declares; "" CLEARS it,
+//     since clickhouse.BulkAccountAuthFlags decodes every live account.
+//   - last_known_before_removal: cleared. A merged account's domain can no
+//     longer be checked against SEP-1's [[CURRENCIES]] back-reference, so
+//     keeping it is an impersonation surface.
+//   - "" (unlabelled): a non-empty value overwrites; an empty one is ignored.
 //
-//   - live: the column becomes exactly what the AccountEntry declares, and an
-//     empty reading CLEARS it. clickhouse.BulkAccountAuthFlags returns every
-//     live account and decodes the field from its entry, so "" there is the
-//     account declaring none, not a field the lake did not return.
-//   - last_known_before_removal: the column is cleared. A merged account's
-//     self-declared identity can no longer be checked against SEP-1's
-//     bidirectional [[CURRENCIES]] back-reference, which is why validate()
-//     refuses to write one; retaining a domain stored while it was live is the
-//     same impersonation surface.
-//   - "" (unlabelled): a non-empty value overwrites, an empty one leaves the
-//     row alone, because nothing says what produced it.
+// No COALESCE keeping the stored value: the SEP-1 resolver READS this column
+// to pick the domain to fetch, so a write-once column would stop an anchor
+// that moved, cleared or lapsed its domain from ever taking it back. See
+// [Store.SyncIssuerHomeDomain].
 //
-// A COALESCE that kept the stored value would be wrong: the SEP-1 resolver
-// does not write this column, it READS it, to choose which domain to fetch.
-// Such a clause would only protect one snapshot of the AccountEntry from a
-// newer snapshot of the same AccountEntry, and between this writer and the
-// enrich job the column would be write-once: an anchor that moved domain
-// on-chain and let the old name lapse could never take its identity back,
-// because nothing would ever overwrite the lapsed name the SEP-1 refresh
-// keeps fetching. See [Store.SyncIssuerHomeDomain]. Treating an empty
-// reading as "not read" would freeze the column the same way for an anchor
-// that CLEARED its domain, or merged its account, and let the name lapse.
-//
-// # PROVENANCE
-//
-// auth_flags_source + auth_flags_as_of_ledger move TOGETHER or not at all.
-// Writing a new source beside a retained as-of ledger would assert that the
-// reading is true as of a ledger it was not taken from — a quieter, more
-// credible falsehood than the unlabelled column this replaces. An empty
-// Source therefore leaves BOTH columns untouched rather than nulling them:
-// "unknown provenance" is a safe state to leave alone, and clearing a
-// known-good label would be a regression, not a no-op.
-//
-// A labelled reading older than the one on record is refused: the row keeps
-// the newer reading and the write does not count as a change. Two drain runs,
-// or a drain and a lagging lake read, can otherwise land out of order and
-// reinstate a home_domain the account had already moved away from.
+// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at
+// all, so a reading is never claimed true at a ledger it was not taken
+// from. An empty Source leaves both untouched. A labelled reading older
+// than the one on record is refused and not counted, so out-of-order drain
+// runs cannot reinstate a home_domain the account moved away from.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil
