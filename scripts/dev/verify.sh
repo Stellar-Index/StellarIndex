@@ -442,7 +442,7 @@ echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
 # come back empty and the job report "checking 0 commit(s)" as a pass.
 # The self-test existed but ran nowhere until now.
 echo "=== Commit-identity range self-test ===" && ./scripts/ci/commit-identity-range-test.sh
-# govulncheck (F-0057). Graceful-skip when not installed locally —
+# govulncheck. Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
 if command -v govulncheck >/dev/null 2>&1; then
     echo "=== Vuln ==="        && make vuln
@@ -683,7 +683,7 @@ lane_d() { # everything else
     else
         defer_check_lane "$LANEDIR/d.deferred" "Monitoring" "promtool is not installed"
         # The dead-metric-ref guard needs no promtool, so run it even when
-        # the promtool-dependent monitoring-check is skipped (F-1329).
+        # the promtool-dependent monitoring-check is skipped.
         echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
     fi
     # Alertmanager config — validate BOTH render branches of apply.sh

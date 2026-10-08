@@ -104,8 +104,8 @@ TimeoutStartSec=30min
 # Every stellar.toml it fetches is written by the issuer whose asset we
 # index, and the TOML parser's cost is superlinear in input size for
 # nested inline tables: measured against the pinned BurntSushi/toml,
-# a 38 KB file allocates 4.5 GB and a 150 KB file reaches 10.9 GB RSS
-# (cold audit 2026-08-03). The body cap is a BYTE cap and does not
+# a 38 KB file allocates 4.5 GB and a 150 KB file reaches 10.9 GB RSS.
+# The body cap is a BYTE cap and does not
 # cover it; neither the HTTP timeout nor the run deadline can interrupt
 # a parse once it starts.
 #

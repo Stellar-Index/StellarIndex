@@ -2,14 +2,10 @@
 #
 # Runs the hardened /usr/local/bin/galexie-archive-fill — the
 # per-partition mirror (aws-public-blockchain → local galexie-archive)
-# that the team already built but, until f12289f6d, only ever invoked by
-# hand. galexie-archive silently fell ~23 days / ~346k ledgers behind
-# (2026-04-26 → 2026-05-19) precisely because nothing scheduled this
-# script: the live appender (galexie.service) kept galexie-live
-# current, but the durable full-mirror (ADR-0016) had no recurring
-# catch-up. aws-public-blockchain is the durable upstream so no data
-# was at permanent risk, but the R1 full-mirror guarantee was broken
-# and local WASM-walks / backfills past the stall point failed.
+# on a schedule. The live appender (galexie.service) keeps galexie-live
+# current but never fills the durable full-mirror (ADR-0016); without a
+# recurring catch-up the mirror silently falls behind and local
+# WASM-walks / backfills past the stall point fail.
 #
 # Pull source is aws-public (full Stellar history), so this is safe to
 # run as often as the timer fires regardless of galexie-live retention.

@@ -234,7 +234,7 @@ detect_growth() {
   done <<<"$added"
 
   # 7) configs/ansible/.ansible-lint's skip_list: each entry silences a
-  #    whole ansible-lint rule class repo-wide (CID-3) — the same
+  #    whole ansible-lint rule class repo-wide — the same
   #    shrink-only shape, but auto-discovered by ansible-lint rather than
   #    named in any CI yaml, so nothing else points a reader at it.
   added="$(added_entries "$base" "$head" configs/ansible/.ansible-lint '^\s*-\s+\S')"

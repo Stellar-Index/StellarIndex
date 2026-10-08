@@ -137,18 +137,9 @@ ReadWritePaths=/var/lib/node_exporter/textfile_collector
 # walk can run as long as it makes progress. 10m is plenty for
 # READY=1 (it fires immediately on startup); if the binary can't
 # get to that point in 10m something is catastrophically wrong and
-# a fast SIGTERM is the right answer.
-#
-# Historical context for future archaeologists:
-#   - 2026-05-19 (Task #13): TimeoutStartSec was 4h, too tight for
-#     a fresh bootstrap; raised to 17h.
-#   - 2026-05-23 (f7fc1acab root cause): 17h was sized for the 12-worker
-#     parallel walk, but parallelism never actually happened on r1
-#     (splitRange `to <= from` guard + MinIO IAM denying ListBucket).
-#     Bootstrap walked serially at ~700 ledgers/s = ~25h needed;
-#     17h cap SIGTERMed the walk at ledger 40.5M. Briefly raised to
-#     36h then replaced with Type=notify + WatchdogSec=1h — the
-#     systemd-idiomatic liveness pattern, no more wall-clock guessing.
+# a fast SIGTERM is the right answer. A wall-clock cap cannot be sized
+# for a from-genesis bootstrap (a serial walk needs ~25h), so liveness
+# is the watchdog's job, not TimeoutStartSec's.
 TimeoutStartSec=10m
 
 [Install]
