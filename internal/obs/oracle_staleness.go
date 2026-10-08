@@ -5,58 +5,19 @@ import (
 	"sync"
 )
 
-// Oracle staleness budgets.
-//
-// `stellarindex_oracle_stale` asks one question per (source, asset):
-// has this pair gone longer without a publication than it is allowed
-// to? A per-SOURCE allowance (`10 * stellarindex_oracle_resolution_seconds`)
-// is wrong because resolution is declared per source.
-//
-// Staleness, though, is a per-ASSET property. `reflector-cex` declares
-// a 300 s resolution, so every asset on it got a 3000 s (50 min)
-// budget; `crypto:DAI` is a peg asset that Reflector publishes only
-// when it moves, so it ran 7-hour gaps and breached that budget 11.6%
-// of the time with nothing broken anywhere. The fix is a budget that
-// can vary per asset — not a looser resolution, which would be a lie
-// about the source's cadence and would loosen every OTHER asset on it.
-//
-// So the budget is now its own gauge on the same label set as
-// last_update_unix, and the alert is a plain comparison. This file
-// owns the policy behind that gauge:
-//
-//   - [DeclareOracleResolution] publishes a source's resolution and
-//     derives its DEFAULT budget (multiplier × resolution) — the exact
-//     number a per-source alert would compute, so nothing moves for an
-//     asset nobody overrode.
-//   - [DeclareOracleHeartbeat] does the same for heartbeat sources,
-//     whose default budget is heartbeat + [OracleHeartbeatGrace].
-//   - [SetOracleStalenessOverrides] installs the operator's
-//     per-(source, asset) exceptions from `[[oracle.staleness_overrides]]`.
-//   - [RecordOracleUpdate] emits the age and the budget together.
-//
-// The state is process-global for the same reason the metrics are:
-// the emission point (internal/pipeline's oracle sink) is reached
-// through a chain of free functions that carry no config, and both the
-// declaration and the emission happen in one binary — the indexer
-// declares on-chain oracles at dispatcher-build time and polled ones in
-// external.Run's preflight, both before that source's first event is
-// persisted.
+// Oracle staleness budgets: stellarindex_oracle_stale compares each (source, asset)'s age
+// with its own budget gauge, because staleness is per ASSET. A per-source budget made
+// crypto:DAI (published only on moves) breach reflector-cex's 50 min 11.6% of the time,
+// and loosening the resolution would lie about the source and loosen every other asset.
+// State is process-global like the metrics: the oracle sink is reached through free
+// functions that carry no config.
 
-// OracleStaleBudgetMultiplier is how many declared resolutions an
-// oracle source may miss before stellarindex_oracle_stale tickets.
-//
-// This constant IS the alert's historical threshold: the rule read
-// `> 10 * stellarindex_oracle_resolution_seconds` until the budget
-// became a gauge. Changing it re-thresholds every oracle asset that
-// has no explicit override, which is a fleet-wide alerting change —
-// prefer a per-asset override for a single misbehaving pair.
+// OracleStaleBudgetMultiplier is the alert's historical `10 × resolution` threshold;
+// changing it re-thresholds every un-overridden asset, so prefer a per-asset override.
 const OracleStaleBudgetMultiplier = 10
 
-// OracleStalenessOverride is one operator-declared budget for a single
-// (source, asset) pair. Asset is the CANONICAL asset string exactly as
-// it appears in the metric's `asset` label ("crypto:DAI", "native",
-// "raw:XAU"), not the oracle's raw symbol — the sink labels series
-// with canonical.Asset.String().
+// OracleStalenessOverride is one operator budget; Asset is the canonical metric label
+// ("crypto:DAI", "native"), not the oracle's raw symbol.
 type OracleStalenessOverride struct {
 	Source        string
 	Asset         string
@@ -77,13 +38,8 @@ var oracleStaleness = struct {
 	byAsset:  map[oracleStalenessKey]float64{},
 }
 
-// DeclareOracleResolution publishes `source`'s declared publication
-// cadence and derives its default staleness budget.
-//
-// Call it where a source's decoder is constructed (see
-// pipeline.BuildDispatcher). Both effects must happen together: a
-// source whose resolution is published but whose budget is not would
-// emit ages that nothing can judge.
+// DeclareOracleResolution publishes a source's cadence and derives its default budget
+// together, so no published age lacks a budget to be judged by.
 func DeclareOracleResolution(source string, resolutionSeconds float64) {
 	OracleResolutionSeconds.WithLabelValues(source).Set(resolutionSeconds)
 
@@ -96,10 +52,8 @@ func DeclareOracleResolution(source string, resolutionSeconds float64) {
 // heartbeat before a silent asset tickets.
 const OracleHeartbeatGrace = 2 * 3600
 
-// DeclareOracleHeartbeat is [DeclareOracleResolution] for a source whose
-// declared cadence is a heartbeat, i.e. the longest gap a healthy feed
-// may show. A multiple of that would let a dead feed hide for days, so
-// the budget is the heartbeat plus [OracleHeartbeatGrace].
+// DeclareOracleHeartbeat budgets a heartbeat source at heartbeat + [OracleHeartbeatGrace];
+// a multiple of the heartbeat would let a dead feed hide for days.
 func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
 	OracleResolutionSeconds.WithLabelValues(source).Set(heartbeatSeconds)
 
@@ -108,14 +62,9 @@ func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
 	oracleStaleness.bySource[source] = heartbeatSeconds + OracleHeartbeatGrace
 }
 
-// SetOracleStalenessOverrides REPLACES the operator override set — it
-// is a whole-policy install from config, not an accumulating register,
-// so removing a row from the config removes the override on restart.
-//
-// Call it before the first oracle update is persisted. An override
-// installed later only reaches the gauge on that pair's next
-// publication, which for a slow asset is exactly the wait the override
-// exists to tolerate.
+// SetOracleStalenessOverrides REPLACES the override set (removing a config row removes it
+// on restart). Call before the first update; a later install reaches a pair only on its
+// next publication.
 func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	next := make(map[oracleStalenessKey]float64, len(overrides))
 	for _, o := range overrides {
@@ -127,20 +76,9 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	oracleStaleness.byAsset = next
 }
 
-// OracleStalenessBudget reports the staleness budget for one
-// (source, asset): the operator override if there is one, else the
-// source's declared default.
-//
-// A source that never declared a resolution yields +Inf, so it cannot
-// alert — the same result as joining against
-// stellarindex_oracle_resolution_seconds, where a source with no
-// resolution series has no right-hand side.
-// +Inf keeps that silence while still emitting a series, so the gap is
-// visible on a dashboard instead of being an absent row nobody
-// notices. Every oracle source the dispatcher can enable declares one,
-// and external.Run declares one for every poller (pinned by pipeline's
-// TestBuildDispatcher_DeclaresBudgetForEveryOracleSource and
-// TestExternalRun_DeclaresBudgetForEveryPolledOracleSource).
+// OracleStalenessBudget returns the override, else the source default, else +Inf: an
+// undeclared source cannot alert but still emits a visible series. Every source declares
+// one (TestBuildDispatcher_DeclaresBudgetForEveryOracleSource and its external twin).
 func OracleStalenessBudget(source, asset string) float64 {
 	oracleStaleness.mu.RLock()
 	defer oracleStaleness.mu.RUnlock()
@@ -154,15 +92,8 @@ func OracleStalenessBudget(source, asset string) float64 {
 	return math.Inf(1)
 }
 
-// RecordOracleUpdate publishes one oracle observation: the timestamp
-// of the update AND the staleness budget that timestamp will be judged
-// against, on the same label set.
-//
-// This pairing is the point. stellarindex_oracle_stale is a bare
-// vector-to-vector comparison, which Prometheus evaluates only where
-// both sides carry identical labels; emitting the two gauges from one
-// call is what makes "every asset with an age has a budget" a property
-// of the code rather than a convention someone has to remember.
+// RecordOracleUpdate emits the age and its budget from one call, so Prometheus's
+// label-matched comparison always has both sides.
 func RecordOracleUpdate(source, asset string, updatedAtUnix float64) {
 	OracleLastUpdateUnix.WithLabelValues(source, asset).Set(updatedAtUnix)
 	OracleStalenessBudgetSeconds.WithLabelValues(source, asset).
