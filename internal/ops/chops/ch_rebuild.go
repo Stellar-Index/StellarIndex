@@ -86,39 +86,19 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 // live ingestion_cursors table.
 type projectorCursorReader func(source string) (uint32, bool, error)
 
-// checkCHRebuildLiveOverlap is projected-rebuild's ADR-0048 D3 one-writer
-// contract (see checkLiveCursorGuard in projected_rebuild.go), ported to
-// ch-rebuild's multi-source shape.
+// checkCHRebuildLiveOverlap is projected-rebuild's one-writer guard
+// (checkLiveCursorGuard, ADR-0048 D3) ported to ch-rebuild's multi-source
+// shape. `ch-rebuild -write` re-derives the projected domains through the
+// same sink with a positive derive_generation, so its rows win ON CONFLICT
+// over the live projector's: run to the tip it is a second writer inside the
+// projector's range, and a guard on one of two tools is not a guard.
 //
-// WHY IT HAS TO BE HERE TOO: `ch-rebuild -write` re-derives the SAME
-// projected domains the live projector owns (ADR-0031/0032 give each of
-// them exactly one writer), through the same decoders and the same
-// pipeline.HandleEvent sink — and it stamps a positive derive_generation,
-// so its rows WIN the ON CONFLICT guard over the live projector's gen-0
-// values. Run with `-to <tip>` it is therefore a second writer inside the
-// live projector's committed range, re-stamping rows the projector may
-// still be writing. Row content is identical on the same binary, so this
-// is an invariant-7 violation by construction rather than data loss — but
-// the sibling bulk path (projected-rebuild) already refuses it, and a
-// guard on one of two tools is not a guard. The runbooks that prescribe
-// `ch-rebuild ... -to <tip>` (see docs/architecture/ingest-pipeline.md's
-// replay decision rule) cannot make it safe; this refusal can.
-//
-// Semantics are byte-for-byte projected-rebuild's, per source: allowed
-// only when the live projector's cursor for that source is AT OR ABOVE
-// the requested top, i.e. this pass fills history strictly BEHIND a
-// live-current source. No cursor row at all is treated as "cursor at 0"
-// (a never-run projector WILL walk this range once it starts), and
-// -allow-live-overlap is the operator's explicit "I verified this is
-// safe" override. Non-projected passes (-sdex, -contract-calls, band /
-// soroswap-router) are not affected: nothing else writes those domains.
-//
-// DELIBERATE DIVERGENCE from projected-rebuild: that command applies the
-// guard to dry-runs too; this one arms it only under -write. ch-rebuild's
-// default mode writes nothing at all (it is the count/compare report that
-// ch-reproject shares), so a dry run cannot race any writer, and refusing
-// it would break the read-only reporting every operator procedure starts
-// with.
+// Per source, allowed only when the live cursor is at or above -to, so the
+// pass fills history strictly behind it; a missing cursor counts as 0, and
+// -allow-live-overlap is the operator override. Non-projected passes are
+// unaffected. Unlike projected-rebuild it arms only under -write: ch-rebuild's
+// default mode writes nothing, and refusing it would break the read-only
+// report every procedure starts with.
 func checkCHRebuildLiveOverlap(projectedSources []string, to uint32, allowOverlap bool, read projectorCursorReader) error {
 	if allowOverlap || len(projectedSources) == 0 {
 		return nil
@@ -233,25 +213,13 @@ func gateCHRebuildLake(ctx context.Context, cfg config.Config, chAddr string, st
 	return wasmaudit.GateReplay(ctx, chAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
 }
 
-// checkCHRebuildBackfillSafe refuses a -write run that would decode a
-// source whose decoder has not been audited against every WASM
-// generation that ran over its history.
-//
-// ch-rebuild runs the CURRENT decoders over a HISTORICAL lake range and
-// — because it stamps a positive derive_generation — its rows WIN over
-// what is stored. That is `backfill`'s old-WASM-generation hazard with a
-// stronger writer, yet `backfill` was the only command that asked
-// external.BackfillSafe. The question goes through
-// [external.ReplayBackfillSafe], which resolves the projector-namespace
-// names (blend_backstop, the sep41 pair) that have no registry row of
-// their own; a name nobody registered is refused, which also turns a
-// -sources typo from a silent rebuild-of-nothing into an error.
-//
-// Armed under -write only, the same deliberate divergence
-// checkCHRebuildLiveOverlap documents: the default mode writes nothing,
-// and the dry-run count/compare report is precisely how an unaudited
-// decoder gets evaluated against history. No override flag, matching
-// `backfill` — the way through is the audit plus the registry flip.
+// checkCHRebuildBackfillSafe refuses a -write run over a source whose decoder
+// has not been audited against every WASM generation in its history: the
+// current decoder over an old range, with rows that win on conflict, is
+// `backfill`'s hazard with a stronger writer. [external.ReplayBackfillSafe]
+// resolves projector-namespace names, and an unregistered name is refused.
+// Armed under -write only, like checkCHRebuildLiveOverlap, since the dry run
+// is how an unaudited decoder gets evaluated; no override flag.
 func checkCHRebuildBackfillSafe(sources []string) error {
 	unsafeSources := external.UnsafeReplaySources(sources)
 	if len(unsafeSources) == 0 {
@@ -361,24 +329,14 @@ func chRebuildSourceUniverse(cat []reconSource) []string {
 	return out
 }
 
-// checkCHRebuildSources refuses a -sources value naming something this
-// binary does not know as a ch-rebuild source.
+// checkCHRebuildSources refuses a -sources value naming something this binary
+// does not know as a ch-rebuild source. Otherwise a typo makes enabled() false
+// for every real source and the dry run, which operators run first, exits 0
+// having re-derived nothing.
 //
-// srcFilter is a bare split of the flag and enabled() is a membership test
-// against it, so a name nobody recognises — `-sources sdx` for `sdex` —
-// makes enabled() false for EVERY real source: the run streams the range,
-// decodes nothing, prints its DRY-RUN banner and its count report, and
-// exits 0 having re-derived nothing. That is the DO-NOTHING half of the
-// trap the write gate's own doc names, reported as success, and it is the
-// mode operators run FIRST: -write already refuses an unregistered name
-// through checkCHRebuildBackfillSafe, the default dry run did not.
-//
-// Only UNKNOWN names are refused, never known-but-inert ones. A named
-// source whose pass this invocation did not request (-sdex / -sep41 /
-// -contract-calls), or whose decoder this config does not build, still
-// narrows legitimately — and scripts/ops/ch-rebuild-projected.sh DEPENDS
-// on that narrowing: it asks -preflight for its whole source set and
-// deletes only the subset the verdict names back.
+// Only UNKNOWN names are refused. A known source whose pass was not requested
+// or whose decoder this config does not build still narrows legitimately, and
+// scripts/ops/ch-rebuild-projected.sh depends on that narrowing.
 func checkCHRebuildSources(cat []reconSource, named []string) error {
 	if len(named) == 0 {
 		return nil
@@ -409,22 +367,12 @@ type projectionDirtyWindowRecorder interface {
 }
 
 // recordCHRebuildDirtyWindows records [lo,hi] as a pending projection dirty
-// window for every source in sources, stamped with reason(lo, hi), so the
-// next compute-completeness re-reconciles the range instead of carrying its
-// prior clean claim over it (-record-dirty-window and every -write run).
-//
-// One row PER SOURCE, under the catalogue names the reconcile keys on: the
-// table is keyed by source and compute-completeness looks a window up by
-// the source it is verifying, so a single record — or one under a name no
-// catalogue entry carries — silently no-ops. An empty set is therefore an
-// error, not a quiet success: the caller asked to record an obligation and
-// none was written.
-//
-// The obligation is discharged ONLY by a clean completeness verdict whose
-// scope covered the window (compute-completeness clears it in the same
-// transaction that stores the verdict). Nothing in the
-// rebuild path clears it, because a re-derive is the CAUSE of the
-// dirtiness, never evidence against it.
+// window for every source, stamped with reason(lo, hi), so the next
+// compute-completeness re-reconciles the range instead of carrying its prior
+// clean claim over it. One row per source under its catalogue name, since a
+// lookup by any other name silently no-ops; an empty set is an error. Only a
+// clean verdict covering the window clears it: a re-derive is the cause of
+// the dirtiness, never evidence against it.
 func recordCHRebuildDirtyWindows(ctx context.Context, store projectionDirtyWindowRecorder, w io.Writer, lo, hi uint32, sources []string, reason func(from, to uint32) string) error {
 	if len(sources) == 0 {
 		return fmt.Errorf("ch-rebuild: record dirty window [%d,%d]: this invocation would re-derive no source, so no obligation was recorded — name the sources whose rows were deleted in -sources", lo, hi)
@@ -453,48 +401,28 @@ func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) err
 }
 
 // chRebuild is the write path (ADR-0034): it re-derives a ledger range's
-// protocol output from the ClickHouse Tier-1 lake using the EXISTING decoders
-// and WRITES it to the Postgres served tier via the production sink
-// (pipeline.HandleEvent — idempotent ON CONFLICT). It is the write-enabled
-// sibling of ch-reproject (which only counts + compares).
+// protocol output from the ClickHouse lake with the existing decoders and
+// writes it to Postgres through the production sink (pipeline.HandleEvent,
+// idempotent ON CONFLICT). ch-reproject is its count-only sibling.
 //
-// Three passes, mirroring the dataflow split:
-//   - Event-based sources (soroswap / aquarius / phoenix / comet / blend /
-//     cctp / rozo / defindex / reflector / redstone): one StreamContractEvents
-//     pass, every Matches-gated decoder per event. This is where the
-//     event_index-collision recovery lands (CH > served: aquarius +61%,
-//     defindex/cctp/blend_emissions 0→N).
-//   - SDEX (op-based, NOT in contract_events): a StreamSDEXOps pass feeding the
-//     SDEX OpDecoder. Gated behind -sdex because it decodes ~15.5 B trade ops
-//     across all history and the loss it recovers (passive-offer + one-side-zero
-//     fills) is ~0.004 % and pricing-immaterial (the aggregator skips zero legs;
-//     served pricing is CEX+SDEX-dominated). The live indexer captures
-//     these forward; a full historical SDEX rebuild is opt-in.
-//   - Event-less ContractCall sources (band / soroswap-router): a
-//     StreamContractCallOps pass (body_xdr contract-byte filter) feeding each
-//     source's ContractCallDecoder. Gated behind -contract-calls. These emit no
-//     Soroban events, so the projector can't rebuild them — this pass is the
-//     lake-replay successor to the superseded backfill-router MinIO walk
-//     (still registered as `stellarindex-ops backfill-router`, which decodes
-//     soroswap-router only; this pass is the preferred lake-path replacement).
-//   - SEP-41 watched-contract sources (sep41_transfers / sep41_supply): a
-//     dedicated StreamContractEventsFiltered pass gated behind -sep41. They
-//     CANNOT ride the main event pass — their topics ARE the CAP-67 firehose
-//     it excludes — so this pass prefilters on contract_id IN (the watched
-//     set), turning the 447M-row firehose scan into an indexed one. See the
-//     -sep41 flag help for the operator truncate+re-derive contract. For a
-//     SCOPED dropped-rows recovery (a decoder bug that lost a few rows from
-//     otherwise-clean data), -contracts <csv> narrows the contract_id prefilter
-//     to just the affected contracts and -sep41-supply-only narrows the read to
-//     the supply topics (mint/burn/clawback), so the additive ON CONFLICT write
-//     recovers the missing rows without a full re-derive or a truncate
+// Passes, mirroring the dataflow split:
+//   - Event-based sources: one StreamContractEvents pass, every Matches-gated
+//     decoder per event.
+//   - SDEX (-sdex): a StreamSDEXOps pass. Opt-in because it decodes ~15.5B
+//     ops for a pricing-immaterial ~0.004% recovery.
+//   - Event-less ContractCall sources (-contract-calls; band,
+//     soroswap-router): a StreamContractCallOps pass filtering body_xdr on
+//     contract bytes. The projector cannot rebuild these; this is the lake
+//     successor to the superseded backfill-router MinIO walk.
+//   - SEP-41 watched contracts (-sep41): their topics are the CAP-67 firehose
+//     the main pass excludes, so this pass prefilters on contract_id. For a
+//     scoped recovery, -contracts and -sep41-supply-only narrow the read so
+//     the additive write restores missing rows without a truncate
 //     (docs/operations/sep41-mint-recovery.md).
 //
-// Defaults to DRY-RUN (count only). Pass -write to persist. For a clean-slate
-// rebuild (ADR-0034 "rebuild, not repair") the operator truncates the target
-// tables first; the writes are idempotent either way (recover-into-existing or
-// repopulate-after-truncate). Window [from,to] per partition for the full run
-// so the streamed result set + the successful-tx IN-set stay bounded.
+// Dry-run by default; -write persists. Writes are idempotent whether or not
+// the operator truncated first. Windowing [from,to] keeps the streamed set
+// and the successful-tx IN-set bounded.
 func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -1197,22 +1125,13 @@ func tallyTrade(t canonical.Trade, src string, written, failed map[string]int) {
 	failed[src]++
 }
 
-// drainAndWrite persists the buffered events to Postgres and returns per-source
-// written / failed tallies.
-//
-// Trade and sep41 events are batched (one multi-row INSERT per batch) with a
-// per-row fallback on batch failure; everything else (protocol entities) goes
-// per-row via HandleEvent. The primary CopyMerge* path and the per-row Insert*
-// fallback share the identical generation-guarded corrective-upsert
-// semantics (both bind s.deriveGeneration and merge DO UPDATE ... WHERE
-// derive_generation <= EXCLUDED), so a batch error dropping into the fallback
-// cannot change the write outcome.
-//
-// An event is counted in written[source] ONLY after its insert is
-// confirmed. A row whose batch AND per-row insert both fail — or whose
-// HandleEvent returns an error — is tallied in failed[source] and never
-// inflates written[]. A trade that fails Validate never lands and is tallied
-// in failed[]. In dry-run (write=false) nothing is persisted and the same split is predicted.
+// drainAndWrite persists the buffered events to Postgres and returns
+// per-source written / failed tallies. Trade and sep41 events are batched with
+// a per-row fallback that shares the batch path's generation-guarded upsert,
+// so falling back cannot change the outcome; other events go per-row via
+// HandleEvent. An event counts as written only after its insert is confirmed;
+// a failed insert or a trade failing Validate is tallied in failed. Dry-run
+// predicts the same split without persisting.
 func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf []consumer.Event, write bool) (written, failed map[string]int) { //nolint:gocognit,gocyclo,funlen // linear: three symmetric batch/flush closures + a per-event dispatch; splitting the flush closures apart hurts clarity.
 	written = map[string]int{}
 	failed = map[string]int{}
