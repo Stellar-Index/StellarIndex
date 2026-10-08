@@ -925,78 +925,24 @@ const distinctPairsActivityCTEs = `
 //     the standard keyset tuple-comparison trick is adapted to
 //     mixed ordering.
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
-	// /v1/markets is a DIRECTORY query ("which pairs are active +
-	// their 24h volume / last price"), not a history view. Sourcing
-	// it from prices_1m × 14 days is O(~52k pairs × 20,160 1-min
-	// buckets): the aggregate seq-scans multi-million-row materialized
-	// chunks and blows both the 8s handler ceiling and the prewarm
-	// budget.
+	// /v1/markets is a directory listing, not a history view: reading
+	// prices_1m × 14 days (~52k pairs × 20,160 buckets) blew the 8s
+	// handler ceiling. So the 14d-active-pair set comes from prices_1d,
+	// and only the 24h figures read prices_1m (chunk-pruned to the last
+	// day, so exact). A rolling 24h window is not bucket-additive over a
+	// coarser CAGG: prices_1h understated 24h volume ~9%. Detail
+	// endpoints are untouched.
 	//
-	// Right-granularity rewrite. NO data or precision loss anywhere
-	// data is consumed at resolution — prices_1m and every detail
-	// endpoint (/history, /ohlc, /chart, /vwap, /twap) are
-	// untouched; this changes only which CAGG this one *listing*
-	// query reads:
-	//   - 14d-active-pair set                   ← prices_1d
-	//     (~14 buckets/pair), UNIONed with the 24h prices_1m scan
-	//     below so a market whose first trade is today is listed
-	//     rather than omitted — see the FULL OUTER JOIN note.
-	//   - last_price: the newest prices_1m bucket's close within the
-	//     trailing 24h, falling back to prices_1d only for pairs idle
-	//     longer than that — see the last_price note below.
-	//   - 24h trade_count + volume_usd          ← prices_1m
-	//     RESTRICTED to the trailing 24h. Exact + fresh. A rolling
-	//     (non-hour-aligned) 24h window is NOT bucket-additive over
-	//     a coarser CAGG: prices_1h understated the
-	//     all-pairs 24h volume ~9% vs prices_1m ($3.60B vs $3.97B —
-	//     boundary mismatch + prices_1h refresh-lag near the tip).
-	//     Only the 14d × ~52k-pair enumeration needs prices_1d; a 24h
-	//     prices_1m sum is chunk-pruned to the last day's chunks — fast AND
-	//     exact, so the user-facing 24h figure stays prices_1m-accurate.
-	// bucket_close_at rounds to the day — immaterial for a directory;
-	// the exact ts/price is on the detail endpoints. It is the LATER
-	// of prices_1d's newest materialized bucket and the day of the
-	// newest prices_1m bucket, because prices_1d's newest bucket is
-	// the PREVIOUS UTC day for every pair that traded today (6h
-	// end_offset, materialized_only) and the field means "the day
-	// bucket the pair was last active in". count_24h is COALESCE'd to
-	// 0 for 14d-active-but-24h-idle pairs (more robust than the prior
-	// FILTER-SUM, which yielded NULL for that case).
+	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset,
+	// materialized_only) has no row yet for a pair whose first trade is
+	// today, and its newest bucket is yesterday's close. last_price,
+	// last_trade_at and bucket_close_at prefer h's fresh prices_1m
+	// values, falling back to d only for pairs idle longer than 24h.
+	// count_24h is COALESCE'd to 0 for 14d-active-but-24h-idle pairs.
 	//
-	// last_price + membership come from the FULL OUTER JOIN of d and h
-	// prices_1d is materialized_only with a 6-hour end_offset
-	// and a 6-hour schedule, so its newest bucket for an actively
-	// traded pair is yesterday's close — reading last_price from it
-	// served a price 12-36 h old under a field the spec documents as
-	// the latest observed price, and driving the listing off it ALONE
-	// (the prior LEFT JOIN, d on the left) omitted every market whose
-	// first trade is today, since such a pair has no prices_1d row at
-	// all. The 24h prices_1m scan already in `h` carries both answers
-	// at zero added cost: its newest non-null bucket close is the
-	// fresh price (30s end_offset), and its pair set is the missing
-	// membership. d still supplies pairs idle longer than 24h — and
-	// their last_price, which is genuinely older by construction.
-	//
-	// last_trade_at is sourced from the SAME 24h prices_1m scan as
-	// the volume aggregate (zero added cost) — MAX(bucket) gives
-	// minute-precision for in-24h-active pairs. For pairs idle >24h
-	// (rare under volume-desc default ordering) it falls back to
-	// the daily bucket-start.
-	//
-	// $1 since(14d) bounds the prices_1d set; $4 source / $5 asset
-	// filter BOTH CTEs (empty short-circuits → planner skips); the
-	// keyset-cursor ($2) + LIMIT $3 overfetch-by-one shape is
-	// byte-for-byte the prior pagination contract.
-	//
-	// $5 is a text[] of the requested asset's ALIAS forms, not a scalar:
-	// XLM lives under `native`, `crypto:XLM` and its SAC
-	// C-address depending on which venue's trades keyed the row, so a
-	// scalar `= $5` on `?asset=native` structurally omitted the
-	// crypto:XLM-keyed CEX markets (and vice-versa). ANY-membership on
-	// each leg matches every form the same way the price/OHLC read paths
-	// loop the alias set. AssetAliasStrings returns just `[asset]` for
-	// every non-aliased id, so single-form assets bind a one-element
-	// array — identical selectivity to the prior `= $5`.
+	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`,
+	// `crypto:XLM` or its SAC depending on venue, so a scalar match
+	// omitted the other forms' markets.
 	// canon collapses flipped orientations of the same market (XLM/USDC
 	// and USDC/XLM — the SDEX decoder records both) into ONE row: USD
 	// volume + trade count sum across both directions, and last_price is

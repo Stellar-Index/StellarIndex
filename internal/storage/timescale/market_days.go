@@ -67,75 +67,25 @@ type MarketDay struct {
 // of `assets` over the inclusive day range [from, to], folding EVERY
 // dollar spelling in `quotes` into a single day figure.
 //
-// # Why the quote spellings are unioned rather than chosen between
+// The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint
+// venue populations, so the market is their sum, the same union
+// [pricingguard.SubstanceGate] and [Store.GetAssetATH] use. Each asset's
+// [canonical.AssetAliases] forms are likewise bound and mapped back to it
+// in SQL, so `hours` counts distinct hours across spellings once. A
+// spelling shared by two requested assets is credited to the first only.
 //
-// A Stellar token's dollar book is split across spellings of the
-// dollar — the issuer's classic USDC, that asset's SAC wrapper, and the
-// synthetic `fiat:USD` an off-chain venue quotes in. They carry
-// DISJOINT venue populations, exactly as XLM's three canonical ids do,
-// so the market's real breadth is their sum and reading one spelling
-// measures a fraction of the market as though it were all of it. This
-// is the alias union [pricingguard.SubstanceGate] applies before
-// measuring substance, and the same USD-quote set
-// [Store.GetAssetATH] already treats as one dollar.
+// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can
+// carry an armable 90-day retention (migration 0156) that would silently
+// truncate the series. prices_1h has never had retention and is
+// re-materialised by backfill ([CAGGsLiveForever]). Its depth is not
+// promised: migrations 0115/0147 left re-materialisation to the operator,
+// so an unmaterialised span reads as "did not trade" and callers counting
+// silent days must bound the count to the span this reader covers.
 //
-// # The base leg is unioned the same way
-//
-// A token with a SAC wrapper trades under both spellings (Soroban AMMs
-// store the SAC form; nothing canonicalises at ingest), so every
-// [canonical.AssetAliases] form of each requested asset is bound and
-// mapped back onto it IN SQL. Grouping by that member key rather than
-// by the stored spelling is what keeps `hours` a count of DISTINCT hour
-// buckets and `span_seconds` a min/max over the union: an hour traded
-// under both spellings counts once, which a per-spelling fold in Go
-// could not get right. A spelling shared by two requested assets is
-// credited to the first only, so no row is counted for two members.
-//
-// # Why prices_1h, and not prices_1d or prices_1m
-//
-// `prices_1d` carries the day's VWAP and its dollar volume but nothing
-// about WHEN inside the day the trading happened, and two of the
-// serving floor's three legs are about exactly that.
-//
-// `prices_1m` has the serving gate's own grain, and its reach is a
-// DEPLOYMENT SETTING rather than a property of the schema: migration
-// 0002 gave it a 30-day retention, 0031 removed that, and 0156
-// attached a 90-day policy to that view alone — created
-// `scheduled => false`, dropping nothing until an operator arms it, and
-// then dropping every day forever. A series whose history silently
-// truncates the day a job is armed is not a series, so the floor is not
-// built on that grain.
-//
-// `prices_1h` has never carried a retention policy (migration 0002: "No
-// retention policy on 1h+ — indefinite by design") and is one of the
-// views the backfill tool re-materialises after every chunk
-// ([CAGGsLiveForever]), so it is the coarsest-reaching grain that still
-// answers the "when inside the day" question. It is also ~60x fewer
-// rows to scan than the minute grain over a multi-year window.
-//
-// What it does NOT promise is materialisation depth. Migrations 0115
-// and 0147 dropped all seven price CAGGs and left re-materialisation to
-// the operator, so on a deployment where that was not completed this
-// reader returns nothing for the affected span — which reads as "the
-// token did not trade". Callers that count silent days must bound the
-// count to the span this reader actually answered for.
-//
-// # What this deliberately does NOT read
-//
-// Only the stored direction with the ASSET as base. The sibling readers
-// in this package fold both directions with an exact 1/vwap; doing it
-// here would additionally need the flipped row's base volume
-// re-derived to keep the weighting exact, and no admitted member is
-// known to keep a book stored dollar-first. The consequence of the
-// narrowing is a false ABSENCE and never a wrong price: such a market
-// reads here as no market at all.
-//
-// An empty `assets` or `quotes` returns (nil, nil) — no keys is not a
-// query. Closed buckets only (ADR-0015).
-//
-// `to` names a DAY, and the table is at hour grain: the upper bound is
-// the end of that day, or the last day would be read from its 00:00
-// hour alone. Both bounds are floored to their UTC day first.
+// Only rows with the asset as base are read; a dollar-first book reads as
+// no market (a false absence, never a wrong price). Empty `assets` or
+// `quotes` returns (nil, nil). Closed buckets only (ADR-0015). Both bounds
+// are floored to their UTC day, and `to` reads through the end of its day.
 //
 // dailyMarketDaysQuery is hoisted to package level (rather than an
 // in-function `const q`) so its sargability can be pinned by a
