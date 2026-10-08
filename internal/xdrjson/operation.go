@@ -90,11 +90,10 @@ func OpTypeEnumString(name string) (string, bool) {
 }
 
 // OpTypeNameFromEnumString returns the same snake_case wire name OpTypeName
-// gives its enum, but from the lake's stored CamelCase enum string (GH-1136:
-// the /v1/operations directory and op_type_stats served this via a naive
-// lowercase-and-strip-prefix fallback instead of the controlled vocabulary,
-// so invokehostfunction/manageselloffer diverged from every other read
-// path's invoke_host_function/manage_sell_offer). Falls back to a
+// gives its enum, but from the lake's stored CamelCase enum string
+// (a naive lowercase-and-strip-prefix fallback would serve
+// invokehostfunction/manageselloffer where every other read path serves
+// invoke_host_function/manage_sell_offer). Falls back to a
 // lowercased, "OperationType"-stripped best effort for a string the map
 // doesn't cover (forward-compat for a future protocol op decoded before
 // this package's map is updated).
@@ -474,7 +473,7 @@ type AuthInvocation struct {
 // AuthCredentials describes who authorized one auth entry's root invocation:
 // the op's own source account, or a separate address (which may be a
 // different signer entirely — e.g. a relayer-submitted transaction carrying
-// a user's signed auth entry, GH-1138).
+// a user's signed auth entry).
 type AuthCredentials struct {
 	Kind                      string `json:"kind"` // source_account | address
 	Address                   string `json:"address,omitempty"`

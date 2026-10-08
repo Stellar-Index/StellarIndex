@@ -166,7 +166,7 @@ func FuzzClassicCompute(f *testing.F) {
 			LPReserve: new(big.Int).Set(vals[2]), SACWrapped: new(big.Int).Set(vals[3]),
 			IssuerBalance: new(big.Int).Set(vals[4]), LockedAccountBalances: new(big.Int).Set(vals[5]),
 			LockedContractBalances: new(big.Int).Set(vals[6]), MinComponentLedger: minLedger,
-			// negMask's spare high bit drives the CS-087 gate: an unobserved SAC must yield nil.
+			// negMask's spare high bit drives the SAC-observed gate: an unobserved SAC must yield nil.
 			SACObserved: negMask&0x80 == 0,
 		}
 		asset, err := canonical.NewClassicAsset("USDC", validIssuer)

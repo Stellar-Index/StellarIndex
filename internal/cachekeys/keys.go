@@ -665,7 +665,7 @@ func APIKey(keyHash string) APIKeyRecordKey {
 // encoded in the JSON payload so the lookup can return the right error sentinel
 // (ErrTokenExpired vs ErrUnauthorized). Zero is also what keeps them
 // out of the instance's volatile-lru eviction pool: the plaintext is
-// unrecoverable, so an evicted record is a lost credential (GH-1317).
+// unrecoverable, so an evicted record is a lost credential.
 const APIKeyTTL = time.Duration(0)
 
 // APIKeyCacheKey is the typed Redis key for the `apikey-cache:<sha256-hex>`
@@ -707,8 +707,7 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 // Reader: the same store's by-owner / by-KeyID lookups.
 //
 // Why ONE hash and not a SET per owner plus a pointer per KeyID: under
-// an allkeys-* policy (the production default until GH-1317; still any
-// operator's override) every Redis key is independently evictable. A per-owner set evicted while
+// an allkeys-* policy (any operator's override) every Redis key is independently evictable. A per-owner set evicted while
 // its records survive would make live credentials invisible to list,
 // revoke and the tier clamp — a revocation that silently no-ops. With
 // the entries and the `ready` marker in one key they share one fate:

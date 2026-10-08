@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// SEC-06 / RLT-420: [New] requires its store to answer the account kill
+// [New] requires its store to answer the account kill
 // switch ([AccountStatusReader]), so the package's white-box fakes —
 // which model the webhook tables only and never a suspended account —
 // complete the contract here by reporting every account active. The

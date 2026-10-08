@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// SEC-06 / RLT-420: the account kill switch was INBOUND-ONLY. Suspending
+// The account kill switch was INBOUND-ONLY. Suspending
 // or closing an account stopped its API keys authenticating, but nothing
 // in the webhook fan-out, claim or delivery path read account status —
 // so a suspended or closed customer kept RECEIVING our data at the

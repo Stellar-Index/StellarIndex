@@ -559,9 +559,8 @@ func (g *Guard) Reconcile(ctx context.Context) error {
 }
 
 // reconcileRowReadTimeout bounds a single lake decimals() read inside
-// reconcileRow. GH-1059: Reconcile ran every row on the aggregator's root
-// tick context with no per-row budget, so one hung ClickHouse query stalled
-// the whole tick (Reconcile runs serially after Sweep). The table is
+// reconcileRow. Without a per-row budget on the aggregator's root tick
+// context, one hung ClickHouse query stalls the whole tick (Reconcile runs serially after Sweep). The table is
 // bounded by construction (confirmed offenders only, single digits in
 // production — see [Guard.Reconcile]), so this is defence in depth, not a
 // throughput fix.

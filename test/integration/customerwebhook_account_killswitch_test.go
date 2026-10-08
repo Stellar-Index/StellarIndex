@@ -25,7 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// SEC-06 / RLT-420 — the account kill switch was INBOUND-ONLY.
+// The account kill switch was INBOUND-ONLY.
 //
 // Suspending or closing an account stopped its API keys authenticating
 // (internal/auth), but every webhook query was blind to account status:

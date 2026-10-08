@@ -38,7 +38,7 @@
 -- (0012), sac_balance_observations (0014), soroswap_router_swaps (0049),
 -- trustline_observations (0011). Re-segment on the served predicate first.
 --
--- REMOVED 2026-09-02 with migration 0152 (#358): aggregator_exposures
+-- Dropped by migration 0152: aggregator_exposures
 -- (0025), classic_asset_stats_5m (0024) and tvl_observations (0021)
 -- were dropped as never-wired scaffolds. They MUST come out of the list
 -- below in the same change: `\set ON_ERROR_STOP on` plus a
