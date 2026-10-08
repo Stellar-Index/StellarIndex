@@ -105,7 +105,7 @@ describe('502/503/504 unavailable-wait budget', () => {
   });
 });
 
-// CA2-A35-harden-4: the API is unauthenticated (AGENTS.md — "public REST +
+// The API is unauthenticated (AGENTS.md — "public REST +
 // SSE API"), so a 401/403 can only be an intermediary (edge/WAF) response,
 // never the origin API's own "not found". Collapsing it into the same
 // null bucket as a real 404 bakes a not-found page over a transport

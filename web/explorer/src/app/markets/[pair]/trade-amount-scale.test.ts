@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { formatBaseUnits } from '@/lib/format';
 
-// RLT-214: the recent-trades table rendered base_amount/quote_amount as
+// The recent-trades table rendered base_amount/quote_amount as
 // `Number(raw) / 10 ** decimals`, the same silent-rounding-above-2^53
 // pattern F096 removed from the OHLC volume figure elsewhere on this
 // page. A Soroban i128 trade amount can exceed 2^53 stroops; Number()

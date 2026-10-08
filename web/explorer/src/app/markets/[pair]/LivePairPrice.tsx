@@ -111,7 +111,7 @@ export function LivePairPrice({
         // Mirrors the asset-page sibling: a withheld verdict replaces the
         // timestamp caption — "as of <ts>" under a — price implies the
         // server is stale rather than deliberately refusing to quote.
-        // The wording is the server's own (GH-772) — never a hardcoded
+        // The wording is the server's own — never a hardcoded
         // liquidity-only string, which is wrong for e.g. a scam-issuer
         // withhold.
         <span className="text-ink-muted text-xs">

@@ -129,7 +129,7 @@ export function HomeCurrencies() {
           </p>
           {/* One honest freshness line for the whole strip, off the
               oldest row's own observed_at — never a render or fetch
-              clock (RLT-384). */}
+              clock. */}
           {strip?.observed_at != null && (
             <p className="text-ink-muted text-xs">
               Rates observed {formatRelative(strip.observed_at)}
@@ -182,7 +182,7 @@ export function HomeCurrencies() {
               </div>
               {/* A declared peg is the operator's 1:1 statement, not a
                   rate anyone observed — say so on the tile rather than
-                  letting it read as an FX quote (RLT-384). */}
+                  letting it read as an FX quote. */}
               {row?.price_type === 'peg' && (
                 <div
                   className="text-ink-muted text-[10px] tracking-wider uppercase"

@@ -69,7 +69,7 @@ afterEach(() => {
 });
 
 describe('HomeHeroChart', () => {
-  // REGRESSION (RLT-368): the "live USD price" label was hardcoded and the
+  // REGRESSION: the "live USD price" label was hardcoded and the
   // tip stream frame was used verbatim with no staleness check, so a
   // wedged/quiet stream kept showing a stale tick captioned "live"
   // forever. Every sibling live-price widget (LivePairPrice, LiveAssetPrice)

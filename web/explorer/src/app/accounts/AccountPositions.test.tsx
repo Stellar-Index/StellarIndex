@@ -11,7 +11,7 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { AccountPositions } from './AccountPositions';
 
-// RLT-384. The panel valued a portfolio off /v1/price/batch typed as
+// The panel valued a portfolio off /v1/price/batch typed as
 // `{data: BatchPrice[]}` — `{asset_id, price}` and nothing else — under
 // a hint that said the holdings were "valued at the live VWAP". Two of
 // those words could be false at once: a `peg` row is the operator's
@@ -90,7 +90,7 @@ describe('AccountPositions price envelope', () => {
     vi.useRealTimers();
   });
 
-  // RLT-387: the /v1/price/batch query had staleTime only, no
+  // The /v1/price/batch query had staleTime only, no
   // refetchInterval — an open tab's valuation never updated again
   // without the visitor navigating away and back. It must poll live,
   // the same as the converter's identical batch read.

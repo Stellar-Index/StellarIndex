@@ -31,7 +31,7 @@ function publishedAvailabilityPct(): number {
   return Number((m as RegExpExecArray)[1]);
 }
 
-// RLT-332: the targets table states a flat "<= 30 s" price-freshness
+// The targets table states a flat "<= 30 s" price-freshness
 // bound for /v1/price/tip, but internal/api/v1/price_tip.go's
 // last-good fallback branch serves the most recent observation with
 // no synthetic age cap when the rolling window is empty. The aside

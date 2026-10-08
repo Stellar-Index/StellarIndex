@@ -34,7 +34,7 @@ async function renderPair() {
   );
 }
 
-// CA2-A35-correct-5: change_24h_pct is documented (openapi
+// change_24h_pct is documented (openapi
 // stellar-index.v1.yaml) as present on /v1/price/batch rows only and
 // omitted on the single-row /v1/price response. The page baked its 24h
 // badge off `price.change_24h_pct` — always undefined for the /v1/price

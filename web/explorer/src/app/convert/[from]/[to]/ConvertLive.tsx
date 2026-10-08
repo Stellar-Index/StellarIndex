@@ -126,7 +126,7 @@ export function useConvertRate({
         outcome: 'priced',
         rate: 1 / price,
         // A row without a stamp claims no freshness rather than
-        // borrowing one — the whole point of RLT-384.
+        // borrowing one.
         observedAt: row.observed_at ?? null,
         priceType: row.price_type ?? null,
         // `flags.stale` is the OR over returned rows; this request asks
@@ -282,7 +282,7 @@ export function ConvertSnippets({
       </div>
       {/* The caption must not call a number "current" when the API
           declined to price the pair and the figure on screen is the
-          build-baked one (RLT-384). */}
+          build-baked one. */}
       <p className="text-ink-muted mt-4 text-xs">
         {showingLastPublished ? (
           <>

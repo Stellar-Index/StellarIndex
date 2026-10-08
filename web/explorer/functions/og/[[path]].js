@@ -4,13 +4,13 @@ import { ImageResponse, loadGoogleFont } from 'workers-og';
 // (satori + resvg-wasm on CF Pages Functions). The response carries a public
 // Cache-Control policy (CARD_CACHE_CONTROL) for downstream CDN/browser caches
 // AND this function explicitly reads/writes Cloudflare's `caches.default`
-// edge cache (K060) — CF Pages does not cache a Function response from
-// Cache-Control alone (confirmed live, GH-893: `/og/*` returned
+// edge cache — CF Pages does not cache a Function response from
+// Cache-Control alone (confirmed live: `/og/*` returned
 // `cf-cache-status: DYNAMIC` with no `age` while a static asset on the same
 // zone returned `HIT`). Market cards carry the LIVE price (near-real-time
 // via the 60s cache window + a tight upstream timeout, guarded by a circuit
 // breaker below). NB the live fetch hits our public API from the edge; a
-// per-IP rate limit (K067) bounds a single client's request volume in
+// per-IP rate limit bounds a single client's request volume in
 // addition to the OG_DISABLED kill-switch.
 
 function code(s) {
@@ -105,7 +105,7 @@ const MAX_ID_LENGTH = 160;
 // arbitrary attacker-controlled text (markup, whitespace, path traversal).
 const ASSET_LEG_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 
-// K067: a per-IP token bucket. This is deliberately module-scope state, not
+// A per-IP token bucket. This is deliberately module-scope state, not
 // KV — CF Pages Functions reuse an isolate across many requests, so this is
 // a real (if best-effort, per-isolate) gate against a single client hammering
 // the render path, layered on top of (not replacing) the OG_DISABLED
@@ -211,7 +211,7 @@ function loadCardFont() {
 
 const CARD_CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=300';
 
-// GH-893: liveSubline swallows every upstream failure and returns a
+// liveSubline swallows every upstream failure and returns a
 // subline-less card so the request still succeeds — but that card must not
 // sit behind the same cache window as a genuinely live one, or a transient
 // upstream blip pins a price-less card for up to 5 minutes. A short TTL lets
@@ -221,7 +221,7 @@ const DEGRADED_CARD_CACHE_CONTROL =
 
 // Buffers the render so a font or satori/resvg failure is catchable here
 // instead of erroring the body of an already-sent 200. `cacheControl` lets
-// the caller distinguish a normal card from a degraded one (GH-893).
+// the caller distinguish a normal card from a degraded one.
 async function renderCard(html, cacheControl) {
   const fontData = await loadCardFont();
   const res = new ImageResponse(html, {
@@ -263,7 +263,7 @@ function staticCardFallback(requestUrl) {
 // request — this function has no business guessing a network.
 // Returns `{ sub, degraded }`. `sub` is the live subline text or null.
 // `degraded` distinguishes "an upstream fetch was attempted and failed" (the
-// card is a fallback, GH-893) from "no live fetch applies to this request"
+// card is a fallback) from "no live fetch applies to this request"
 // (wrong type, malformed pair) — a null `sub` alone conflates the two and the
 // caller needs to know which one happened to pick a cache TTL.
 export async function liveSubline(type, rawId, apiOrigin) {
@@ -288,7 +288,7 @@ export async function liveSubline(type, rawId, apiOrigin) {
     recordUpstreamOutcome(r.ok || r.status === 404);
     if (r.ok) {
       const data = (await r.json())?.data;
-      // CA2-A36-correct-5: a dormant pair, a frozen-held value, or a
+      // A dormant pair, a frozen-held value, or a
       // first-ever low-confidence bucket all come back 200 with
       // flags.stale=true — that price is real but not current, and the
       // card must not present it as a LIVE quote (this fetch's whole
@@ -311,7 +311,7 @@ export async function liveSubline(type, rawId, apiOrigin) {
       }
       return { sub: null, degraded: true };
     }
-    // CA2-A36-correct-6: /v1/price legitimately 404s for a documented
+    // /v1/price legitimately 404s for a documented
     // no-price or withheld pair (price.go's ErrPriceWithheld / not-found) —
     // that is not an upstream failure, so it must not count toward the
     // breaker above alongside real 5xx/timeout outcomes.
@@ -340,7 +340,7 @@ function notFound() {
   });
 }
 
-// K060: writes behind the response so the caller returns immediately;
+// Writes behind the response so the caller returns immediately;
 // `context.waitUntil` keeps the isolate alive long enough for the put to
 // finish. Cloudflare's cache API reads the stored response's own
 // Cache-Control to decide freshness on a later `match`, so this is a
@@ -363,10 +363,10 @@ export async function onRequest(context) {
     });
   }
 
-  // K060: explicit edge cache — see the header comment. Keyed on the
+  // Explicit edge cache — see the header comment. Keyed on the
   // origin+path only: the card is a pure function of the path, so a query
   // string or fragment must not fragment the cache. A hit skips render, the
-  // K067 rate-limit budget and the live price fetch entirely.
+  // Rate-limit budget and the live price fetch entirely.
   const cache = globalThis.caches?.default;
   const keyUrl = new URL(request.url);
   keyUrl.search = '';
@@ -377,7 +377,7 @@ export async function onRequest(context) {
     if (cached) return cached;
   }
 
-  // K067: per-IP gate ahead of everything else — cheaper than the 404
+  // Per-IP gate ahead of everything else — cheaper than the 404
   // checks below and the only one of these gates that needs the request's
   // origin, not just its path.
   const clientIP = request.headers.get('cf-connecting-ip') || 'unknown';
@@ -406,7 +406,7 @@ export async function onRequest(context) {
   if (rawId.length > MAX_ID_LENGTH) {
     return cachePut(context, cache, cacheKey, notFound());
   }
-  // CS-009: decode the path segment AT MOST ONCE (the previous 2× loop
+  // Decode the path segment AT MOST ONCE (the previous 2× loop
   // defeated the upstream ogImageFor encodeURIComponent, resurfacing raw
   // markup). Combined with esc() below this closes the SSRF/injection sink.
   try {
@@ -426,7 +426,7 @@ export async function onRequest(context) {
   const apiOrigin = `https://api.${url.hostname}`;
   const { sub, degraded } = await liveSubline(type, rawId, apiOrigin);
 
-  // CS-009: HTML-escape every interpolated value. Unescaped attacker input
+  // HTML-escape every interpolated value. Unescaped attacker input
   // reaching satori markup lets an injected `<img src=…>` trigger an
   // unauthenticated blind SSRF (satori fetches the src with no allow-list).
   const esc = (s) =>

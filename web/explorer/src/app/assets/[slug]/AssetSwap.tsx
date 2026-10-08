@@ -30,7 +30,7 @@ import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
  * exactly the freshness the old converter used. A forex-batch leg says so:
  * the batch's `price_type` and `observed_at` ride with the rate and are
  * named under the fields, because that snapshot can be hours old and a
- * declared peg is not a market rate at all (RLT-384). Catalogue-priced legs
+ * declared peg is not a market rate at all. Catalogue-priced legs
  * carry no basis and are left unannotated rather than described with a
  * guess.
  *
@@ -52,7 +52,7 @@ export interface SwapToken {
    * How the pricing API says `usdPrice` was derived, where it told us —
    * `peg` is the operator's standing 1:1 declaration rather than an
    * observed market rate, and a converter must not present the two
-   * alike (RLT-384). Undefined for legs priced off the asset catalogue,
+   * alike. Undefined for legs priced off the asset catalogue,
    * which does not carry the basis.
    */
   basis?: PriceType | null;
@@ -218,7 +218,7 @@ function fiatName(ticker: string): string {
  * leg the pricing API described. The converter's output is a money
  * amount, so a leg carried by the operator's 1:1 peg declaration, or by
  * an FX print taken hours ago, must say so rather than looking exactly
- * like a fresh observed quote (RLT-384). Legs priced off the asset
+ * like a fresh observed quote. Legs priced off the asset
  * catalogue carry no basis and are left unannotated rather than
  * described with a guess.
  */
@@ -302,7 +302,7 @@ export function AssetSwap({
   const pTo = toRate.price;
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
   // What the legs' USD prices actually are, for the legs whose price
-  // came with a declared basis and an observation time (RLT-384).
+  // came with a declared basis and an observation time.
   const basisNote = swapBasisNote([
     { ...fromToken, usdPrice: pFrom, basis: fromRate.basis, observedAt: fromRate.observedAt },
     { ...toToken, usdPrice: pTo, basis: toRate.basis, observedAt: toRate.observedAt },
@@ -735,7 +735,7 @@ function TokenPicker({
  * refetch and no way to tell the number on screen had gone stale.
  * Re-fetches that leg's own price on the same 60s cadence as
  * the rest of the site's live reads, carrying `price_type`/`observed_at`
- * so a stale or declared-peg rate is visible (RLT-384) rather than
+ * so a stale or declared-peg rate is visible rather than
  * assumed live.
  */
 function useLegRate(
@@ -805,7 +805,7 @@ function useFiatTokens(enabled: boolean): SwapToken[] {
           symbol: ticker,
           name: fiatName(ticker),
           usdPrice: price,
-          // RLT-384: the basis and the observation time ride with the
+          // The basis and the observation time ride with the
           // rate. Dropping them made a declared peg and an hours-old
           // FX print indistinguishable from a fresh market quote in a
           // widget whose whole output is a money amount.

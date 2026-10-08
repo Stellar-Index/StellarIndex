@@ -698,7 +698,7 @@ export async function generateMetadata({
   const canonicalSlug = globalView?.slug ?? coin?.slug ?? slug;
   // AM-16: fiat currencies have two detail pages (/assets/us-dollar and
   // /external/assets/us-dollar — split identity, duplicate content).
-  // The external page is canonical post-LC-001; point crawlers there.
+  // The external page is canonical; point crawlers there.
   const canonical =
     globalView?.class === 'fiat'
       ? `${CURRENT_NETWORK.explorerUrl}/external/assets/${canonicalSlug}`

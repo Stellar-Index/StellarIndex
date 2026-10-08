@@ -120,7 +120,7 @@ export function useIssuerLookup() {
           g_strkey: string;
           home_domain?: string;
           org_name?: string;
-          // CS-100: bidirectional SEP-1 proof. Downstream renderers
+          // Bidirectional SEP-1 proof. Downstream renderers
           // (AssetLabel) MUST gate authoritative "by {org_name}"
           // attribution on this — org_name alone is self-declared and
           // spoofable (a scam issuer can set home_domain to a reputable
@@ -293,7 +293,7 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 //      for the explorer origin allow-list (allow_credentials=true),
 //   3. the cookie is SameSite=Lax, which is enough because the two
 //      origins share the `stellarindex.io` registrable domain, so the
-//      request is cross-ORIGIN but same-SITE (CS-124).
+//      request is cross-ORIGIN but same-SITE.
 // A signed-out visitor is now detected from the session hint and never
 // makes the request at all; one that slips through (a hint that outlived
 // its session) still gets 401 → null, and the navbar shows the sign-in

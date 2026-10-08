@@ -126,7 +126,7 @@ const MAX_THROTTLE_WAITS = 8;
 // 408 (Request Timeout) joins this set: it is a proxy/edge signal that the
 // request didn't complete in time, not an authoritative "not found" — it
 // gets the same wait-then-retry discipline as a gateway blip rather than
-// being collapsed into the 404/410 null bucket (CA2-A35-harden-4).
+// being collapsed into the 404/410 null bucket.
 const MAX_UNAVAILABLE_WAITS = 6;
 const UNAVAILABLE_STATUSES = new Set([408, 502, 503, 504]);
 export { MAX_UNAVAILABLE_WAITS };

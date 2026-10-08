@@ -117,7 +117,7 @@ describe('/dashboard/usage request history', () => {
     expect(screen.queryByText(EMPTY_COPY)).not.toBeInTheDocument();
   });
 
-  // GH-1280: the enforced quota window is monthly, not daily, and the
+  // The enforced quota window is monthly, not daily, and the
   // rendered month-to-date figure must reconcile against `billable` —
   // never the 5xx-inclusive `requests` column.
   it('surfaces month-to-date billable usage against the monthly quota, not the 5xx-inclusive request count', async () => {

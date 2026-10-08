@@ -277,7 +277,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         />
         {detail.org_name ? (
           <>
-            {/* CS-100: org_name is SELF-DECLARED SEP-1 metadata. Render the
+            {/* org_name is SELF-DECLARED SEP-1 metadata. Render the
                 verification state next to it so an unverified name can't pass
                 as an authoritative identity. Verified = the org's stellar.toml
                 lists this issuer back (bidirectional). */}

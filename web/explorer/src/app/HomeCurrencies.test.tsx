@@ -48,7 +48,7 @@ describe('HomeCurrencies caption', () => {
   });
 });
 
-// RLT-384. The strip typed /v1/price/batch as `{data: Array<{asset_id,
+// The strip typed /v1/price/batch as `{data: Array<{asset_id,
 // price}>}` and threw the envelope away, so it captioned itself "Live"
 // over rates the API had flagged stale, showed a declared peg exactly
 // like an observed FX quote, and left the 24h chip with no producer at

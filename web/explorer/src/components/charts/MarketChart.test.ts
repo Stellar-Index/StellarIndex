@@ -5,7 +5,7 @@ import { coverageCaption, toChartBar } from './MarketChart';
 
 type OHLCBar = components['schemas']['OHLCSeriesBar'];
 
-// GH-1152: the candlestick volume pane plotted `Number(b.v_quote)` — a raw
+// The candlestick volume pane plotted `Number(b.v_quote)` — a raw
 // smallest-unit sum at the scale of the venues in the bucket — so every
 // chart's volume was 10^6..10^8 times the market's. Each bar now states its
 // own scale and the chart must divide by it, per bar.

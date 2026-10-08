@@ -19,7 +19,7 @@ vi.mock('./streams', () => ({
 
 const { useTipStream } = await import('./hooks');
 
-// RLT-370: the server's tip_update frame (internal/api/v1/price_tip_stream.go
+// The server's tip_update frame (internal/api/v1/price_tip_stream.go
 // tipStreamPayload) carries `data.observed_at` and a `flags` block
 // (divergence_warning, frozen, ...), but the LiveTip type declared here only
 // named {price, price_type, window_seconds}/{as_of, sources} — so a consumer

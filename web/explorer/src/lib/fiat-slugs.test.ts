@@ -44,7 +44,7 @@ describe('assetHref', () => {
   });
 });
 
-// GH-894/K064: a hand-built `/assets/${slug}` template literal is exactly
+// A hand-built `/assets/${slug}` template literal is exactly
 // how the market-pair badge's `fiat:` branch drifted past assetHrefFor and
 // linked a fiat leg to the non-canonical /assets/ page. assetHref/
 // assetHrefFor above are the two sanctioned owners of that URL shape;

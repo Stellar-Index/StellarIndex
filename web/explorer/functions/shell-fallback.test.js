@@ -67,7 +67,7 @@ if (cases.length === 0) {
   );
 }
 
-// GH-916: every response this handler returns must carry the security
+// Every response this handler returns must carry the security
 // headers `public/_headers` declares for its route family — `/embed/*`
 // gets `frame-ancestors *` and no X-Frame-Options, everything else gets the `/*`
 // block's DENY + no frame-ancestors. Parse both blocks out of the real

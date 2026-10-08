@@ -45,8 +45,8 @@ function hasHandRolledLadder(text: string): boolean {
 }
 
 describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => {
-  // Shape-matching against the whole tree surfaces older forks GH-774 did
-  // not name (build-time asset/embed pages, DepthChart's axis labels) —
+  // Shape-matching against the whole tree surfaces older forks the original list
+  // missed (build-time asset/embed pages, DepthChart's axis labels) —
   // recorded here rather than silently swept in, so the guard's job from
   // here is to block a NEW (6th) fork, not to have quietly re-narrowed
   // itself back to a fixed list. Migrate one off this list and delete its
@@ -106,7 +106,7 @@ describe.each(files)('%s', (rel) => {
   });
 });
 
-// RLT-388: /convert/[from]/[to]'s headline (ConvertLive.tsx), interactive
+// /convert/[from]/[to]'s headline (ConvertLive.tsx), interactive
 // widget (ConvertPair.tsx) and SEO meta description (page.tsx) each
 // hand-copied their own quote-per-base rate ladder. The meta copy broke
 // at >=100 -> toFixed(2) while the others broke at >=1000, so the same

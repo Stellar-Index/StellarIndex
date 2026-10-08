@@ -135,7 +135,7 @@ export function AssetsTable({
    * Base path for the filter/pagination URL updates (`router.push`)
    * AND per-row detail links. `/assets` (default) routes rows to the
    * Stellar detail page; `/external/assets` routes them to the
-   * external (fiat / reference-coin) detail page (LC-001 split).
+   * external (fiat / reference-coin) detail page.
    */
   basePath?: string;
   /**

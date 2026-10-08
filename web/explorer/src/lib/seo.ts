@@ -27,7 +27,7 @@ const SITE_OG_IMAGE_PATH = '/og.png';
  * resolves it to the prod origin. The function sets Cache-Control but never
  * calls Cloudflare's Cache API, so whether a repeat request is actually
  * served from Cloudflare's edge cache depends on zone cache config, not just
- * this header (GH-893/K060 — do not describe this as "edge-cached").
+ * this header (K060 — do not describe this as "edge-cached").
  */
 export function ogImageFor(type: string, id: string): string {
   return `/og/${type}/${encodeURIComponent(id)}`;
