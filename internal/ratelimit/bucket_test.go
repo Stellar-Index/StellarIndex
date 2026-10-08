@@ -328,7 +328,7 @@ func TestBucket_Charge_ZeroLimitUsesBucketDefault(t *testing.T) {
 	}
 }
 
-// TestBucket_DwellTime_FailsOpenInsideWindow pins F-0050 / F-0150:
+// TestBucket_DwellTime_FailsOpenInsideWindow pins that
 // errors inside the dwell-time window still surface as wrapped
 // Redis errors (caller falls open).
 func TestBucket_DwellTime_FailsOpenInsideWindow(t *testing.T) {

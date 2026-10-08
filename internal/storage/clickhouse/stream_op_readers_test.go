@@ -139,7 +139,7 @@ func TestSDEXOpsQuery_Shape(t *testing.T) {
 	}
 
 	// The join memory bound. grace_hash spills join buckets to disk; without
-	// it this join is the sdex-reconcile OOM class (three OOMs, 2026-07).
+	// it this join is the sdex-reconcile OOM class.
 	for _, s := range []string{
 		"SETTINGS join_algorithm = 'grace_hash'",
 		"grace_hash_join_initial_buckets = 32",

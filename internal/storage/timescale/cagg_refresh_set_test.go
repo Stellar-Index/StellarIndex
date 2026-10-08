@@ -25,14 +25,7 @@ import (
 // materialises a historical bucket. The rows exist and no read can
 // reach them.
 //
-// prices_1m and prices_15m were omitted for that reason from 2026-05
-// to 2026-09 on a premise that expired in between (a 30-day retention
-// migration 0031 removed), while /v1/ohlc, /v1/chart and
-// /v1/history/since-inception went on serving both grains over
-// caller-chosen windows.
-//
-// This file exists so the set cannot fall behind the enum again, and
-// it is derived rather than transcribed. Three links make that hold:
+// This file keeps the set from falling behind the enum, and it is derived rather than transcribed. Three links make that hold:
 //
 //  1. [AllHistoryGranularities] is the only declaration of the served
 //     set. [HistoryGranularity.Validate] ranges over it, and the 400
