@@ -267,7 +267,7 @@ echo
 
 echo "  Customer surfaces"
 # Positive customer-facing surface: /v1/methodology is the
-# integrator-readable methodology slice (R-023). Pin both the
+# integrator-readable methodology slice. Pin both the
 # success path and the price_method=vwap invariant — flipping it
 # to "twap" or removing the field would silently break every
 # integrator's "verify the pricing engine still uses VWAP" check.

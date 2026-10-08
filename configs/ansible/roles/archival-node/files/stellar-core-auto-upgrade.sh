@@ -3,7 +3,7 @@
 #
 # WHY: a captive-core older than the network protocol halts ingest at the
 # upgrade-vote ledger. The version-lag probe detected core 29.0.0 (a P29
-# prerequisite and SDF security fix) within a day of its 2026-09-24 publish,
+# prerequisite and SDF security fix) within a day of its publish,
 # and the P1 page then sat unactioned for ~2.5 days with the vote 4 days out.
 # Detection was never the gap; acting was. This closes it for core, which
 # ships through apt.stellar.org. galexie ships from a git tag and needs a new
@@ -13,7 +13,7 @@
 # Each run: if the apt candidate is newer than the installed core, stop
 # galexie, install the candidate, restore the captive-core config group
 # (the deb postinst chowns /etc/stellar to stellar:stellar and galexie then
-# cannot read its config: 2026-07-08), start galexie and wait for the live
+# cannot read its config), start galexie and wait for the live
 # ledger tip to advance. No advance → reinstall the previous version and
 # publish result="rolled_back", which pages.
 #

@@ -23,10 +23,10 @@
 #     so again the first row is the newest ledger / ledger range. A
 #     range object contributes its <end> ledger.
 #
-# WHY both name forms (2026-08-28): the parser originally matched
-# only the single-ledger name. Testnet is moving to
+# WHY both name forms: matching
+# only the single-ledger name fails. Testnet is moving to
 # ledgers_per_file=64, under which EVERY object is a range name —
-# the old regex would match nothing, report archive=0, and latch the
+# a single-ledger-only regex would match nothing, report archive=0, and latch the
 # tip-lag alert forever (a permanently-firing alert is as blind as
 # no alert). The galexie SDK schema also spells the suffix
 # `.xdr.zstd`, so both `.zst` and `.zstd` are accepted.

@@ -57,7 +57,7 @@ load_env_file /etc/default/stellarindex
 
 # Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
 # aborts with "Invalid data directory for cluster 15 main" for any user that
-# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
+# cannot read it — which User=stellarindex (non-root hardening)
 # cannot. Call the versioned binary directly to bypass the wrapper.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 
@@ -75,7 +75,7 @@ fi
 # Reconcile a safety margin BELOW the live cursor: the served-tier drain
 # legitimately trails the lake by seconds-minutes under load, and a
 # per-ledger reconcile right up to the cursor reads that lag as
-# "expected>0 served=0" — a false red (seen 2026-07-06: sdex "205
+# "expected>0 served=0" — a false red (seen: sdex "205
 # mismatched ledgers" that were simply not drained yet).
 TIP=$(( TIP - 100 ))
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # lake-dedup-driver.sh — force ReplacingMergeTree deduplication of the
-# raw lake, partition by partition. Operator artifact (2026-07-25);
+# raw lake, partition by partition. Operator artifact;
 # companion runbook: docs/operations/lake-dedup-2026-07.md.
 #
 # WHY THIS EXISTS. The lake was ingested twice — a partial backfill in
 # June 2026 (transactions ~96% of history, operations ~48%, LEC ~1.4%)
-# and a full re-backfill on 2026-07-16/17. Copies are value-identical
+# and a full re-backfill. Copies are value-identical
 # (verified: 0 disagreeing ledgers in sampled buckets; only ingested_at
 # differs). ReplacingMergeTree dedups ONLY when parts merge, and old
 # partitions (5-9 active parts, no new writes) never attract background
@@ -217,7 +217,7 @@ for p in $PARTS; do
 
   # Scratch guard: require 3x the partition's on-disk size free. Both
   # operands are validated numeric above/below BEFORE this comparison —
-  # an unparseable df line used to make `[ … -lt … ]` error (exit 2),
+  # an unparseable df line made `[ … -lt … ]` error (exit 2),
   # which `if` reads as false, skipping the ABORT and falling through to
   # an unguarded OPTIMIZE.
   free_bytes=$(df --output=avail -B1 /var/lib/clickhouse | tail -1 | tr -d ' ')

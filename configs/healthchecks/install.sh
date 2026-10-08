@@ -7,7 +7,7 @@
 # which is idempotent and tracks drift. This script remains for
 # ad-hoc bring-up of a new host before Ansible inventory exists.
 #
-# Drift footprint (F-0137 / audit-2026-05-26): every manual re-run
+# Drift footprint: every manual re-run
 # of this script was a chance for the deployed copy of a wrapper /
 # unit / r1-smoke.sh to lag the repo. The Ansible task closes that
 # gap by running on every `archival-node` playbook apply with
@@ -47,8 +47,7 @@ install -m 0644 "$SCRIPT_DIR/stellarindex-sla-probe.timer" "$SYSTEMD_DIR/"
 
 # Provision the env file with placeholders if missing. Operator
 # pastes the five Healthchecks.io URLs (3 heartbeats + 1 smoke
-# + 1 SLA probe; F-1267 corrected the four-vs-five count on
-# 2026-05-13) they create on the dashboard, then runs
+# + 1 SLA probe) they create on the dashboard, then runs
 # `systemctl restart stellarindex-heartbeat@*.timer \
 #                    stellarindex-smoke.timer \
 #                    stellarindex-sla-probe.timer`.

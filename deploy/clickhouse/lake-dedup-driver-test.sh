@@ -12,7 +12,7 @@
 # What is pinned, and why each is the actual defect (not an invented one):
 #
 #   1. the partition-enumeration query FAILING (auth, OOM, server down)
-#      used to leave PARTS empty, so total=0, the for-loop never ran, and
+#      left PARTS empty, so total=0, the for-loop never ran, and
 #      the driver logged "=== done: 0 partitions processed ===" and
 #      exited 0 — a failed enumeration was indistinguishable from a
 #      legitimate quiet run. It must now ABORT (exit 1) before that line.
@@ -312,7 +312,7 @@ for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../..
 done
 
 # ── 7. textfile-collector metrics reach monitoring (F127) ────────────
-# A multi-day dedup run used to be observable only by tailing $OUT.
+# A multi-day dedup run must be observable beyond tailing $OUT.
 # Point TEXTFILE_DIR at a real directory and assert the terminal .prom
 # state reflects the run: running=0 (exited), partitions_processed=2
 # (both candidates finished), last_exit_ok=1 (clean exit).

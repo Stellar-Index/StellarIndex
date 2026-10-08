@@ -41,7 +41,7 @@ bad() { fail=$((fail + 1)); echo "FAIL — $1"; indent "$2"; }
 # harness that fell through to the host's real /var/lib/stellarindex/
 # deployed-versions would give a different verdict on r1 than on a laptop.
 # With no sidecar readable the gate is UNVERIFIED and the comparison runs
-# unchanged, which is the lane every pre-2026-09-09 case below expects.
+# unchanged, which is the lane the explicit-intent cases below expect.
 no_sidecars="$tmp/no-sidecars"
 
 # run <name> <want-rc> <intent-file> <live-file>
@@ -421,7 +421,7 @@ fi
 # ── AS-clone (alias) declarations ──────────────────────────────────
 # tier1_schema.sql declares every *_staging table as a two-line clone
 # (`CREATE TABLE x_staging` / `AS stellar.x;`) with no ENGINE/columns of
-# its own, while SHOW CREATE renders the clone fully. The 2026-08-24
+# its own, while SHOW CREATE renders the clone fully. The
 # incident: the parser emitted empty facts for the clone → 3 drifts per
 # staging table forever; and the symmetric intent-vs-intent test above
 # could never catch it. These fixtures are deliberately ASYMMETRIC.
@@ -499,7 +499,7 @@ SQL
 expect_msg "AS-clone of an undeclared base reports drift" \
   "not declared" "$tmp/alias_orphan.sql" "$tmp/alias_orphan_live.sql"
 
-# ─── how the check FINDS the repo's intent (2026-09-09) ─────────────
+# ─── how the check FINDS the repo's intent ─────────────
 # Every case above hands the checker an explicit INTENT, so the branch
 # that runs when nothing sets one was never exercised — and it shipped
 # broken. That branch is not a corner: it is the by-hand shape
@@ -602,7 +602,7 @@ fi
 # ─── the shipped-copy path is written in four places ────────────────
 # The script's fallback, the role default, the unit's Environment= and
 # the copy task's dest must name the SAME file. Three of the four already
-# agreed on 2026-09-09 and the script did not, which is exactly how the
+# agreed and the script did not, which is exactly how the
 # by-hand run ended up reading a path no host has. Pinned rather than
 # trusted: these four live in four different files and nothing else
 # compares them.
@@ -641,7 +641,7 @@ ch-schema-drift.service.j2          : ${unit_path:-<not found>}
 18-pgbackrest-backup.yml dest       : ${ship_path:-<not found>}"
 fi
 
-# ─── WHICH SIDE IT ACTUALLY READS (2026-09-09) ──────────────────────
+# ─── WHICH SIDE IT ACTUALLY READS ──────────────────────
 # The unit is called "repo intent vs live" and the metric HELP says
 # repo-vs-live — but until this change a bare run compared the intent
 # against the newest DAILY SNAPSHOT. Measured on both hosts that morning,
@@ -873,7 +873,7 @@ live r1 tables as ABSENT on 2026-09-09 and that cannot fail when
 ClickHouse is down."
 fi
 
-# ─── IS THE INTENT SIDE ITSELF CURRENT? (2026-09-09) ────────────────
+# ─── IS THE INTENT SIDE ITSELF CURRENT? ────────────────
 # THE BLIND SPOT, measured on both test nets by extracting the
 # `transactions` DDL from each host's OWN shipped intent file and
 # comparing it to that host's live schema:

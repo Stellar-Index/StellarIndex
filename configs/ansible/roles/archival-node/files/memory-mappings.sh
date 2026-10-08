@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # memory-mappings — per-process virtual-memory-mapping headroom.
 #
-# WHY THIS EXISTS (r1, 2026-09-10 13:53 CEST). ClickHouse exhausted the
+# WHY THIS EXISTS (r1). ClickHouse exhausted the
 # kernel's per-process mapping limit and said so itself:
 #
 #   Allocator: Cannot malloc 63.33 MiB: , errno: 12, strerror: Cannot allocate memory
@@ -230,7 +230,7 @@ printf 'stellarindex_process_memory_mappings_updated_unix %s\n' "$(date +%s)" >>
 #
 # node_exporter does not skip an unparseable line, it rejects the WHOLE
 # file — one bad value here takes every family above down together, and
-# on 2026-09-10 that same shape cost 127 unrelated timescale series ~20
+# that same shape once cost 127 unrelated timescale series ~20
 # minutes of darkness. Every value this producer writes is already
 # guarded numerically at its source (digits-only from wc -l and from the
 # sysctl, %.6f from awk, date +%s), so this is a last line of defence

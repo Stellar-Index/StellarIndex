@@ -4,7 +4,7 @@
 # The guard exists because an empty URL is not a no-op: the renderer
 # drops the receiver's *_configs block, the reload SUCCEEDS, and the
 # receiver becomes a black hole identical to `silent`. That is what
-# produced 31 days of total alerting silence (2026-07-29 → 2026-08-29)
+# produced 31 days of total alerting silence
 # with every self-check green throughout.
 #
 # A guard nobody has watched fail is not a guard, so each case below
@@ -47,7 +47,7 @@ FULL=(
 
 echo "alertmanager apply-test:"
 
-# 1. The exact 2026-07-29 shape: secrets file present, every URL empty.
+# 1. The exact incident shape: secrets file present, every URL empty.
 out="$(run_with 'HEALTHCHECKS_DEADMANSSWITCH_URL=' 'DISCORD_WEBHOOK_URL_PAGES=' 'DISCORD_WEBHOOK_URL_ALERTS=')"
 rc=$?
 if [ "$rc" -ne 0 ] && [[ "$out" == *"refusing to install"* ]]; then

@@ -25,7 +25,7 @@ set -uo pipefail
 
 PROBE_BIN="${PROBE_BIN:-/usr/local/bin/stellarindex-sla-probe}"
 BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
-# F-1305 (codex audit-2026-05-13): 30s default keeps the probe
+# 30s default keeps the probe
 # cheap on a quiet deployment, but on a single-instance host
 # under memory pressure (e.g. r1 today) a 30s window of ~800
 # requests is too sensitive to single-timeout jitter — one
@@ -34,8 +34,8 @@ BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
 # SLA_PROBE_DURATION=120s (or longer) in /etc/default/stellarindex-
 # healthchecks for a smoother percentile.
 DURATION="${SLA_PROBE_DURATION:-30s}"
-# F-1305 / F-1311 (codex audit-2026-05-13): default concurrency=1
-# (was 2). At 2 the probe drives ~2.5k req/s against the API which
+# Default concurrency=1
+# (not 2). At 2 the probe drives ~2.5k req/s against the API which
 # is well above any realistic customer cadence; it tripped both
 # the operator-tier rate limit (returning 429s → fake availability
 # fail) AND saturated the API's request path itself (p95 climbed
@@ -51,7 +51,7 @@ URL="${HEALTHCHECKS_URL_SLA_PROBE:-}"
 # dir where the probe writes per-endpoint p50/p95/p99 + freshness
 # + verdict metrics. Without this set the alerts in
 # deploy/monitoring/rules/sla-probe.yml have no series to evaluate
-# against — the gap the 2026-05-12 audit caught as F-1221. The
+# against — the gap an audit caught. The
 # archival-node ansible role provisions
 # /var/lib/node_exporter/textfile_collector/ + sets the
 # --collector.textfile flag on node_exporter; we default-on here
@@ -59,7 +59,7 @@ URL="${HEALTHCHECKS_URL_SLA_PROBE:-}"
 # automatically. Set to empty to disable the metric emission.
 TEXTFILE_OUTPUT="${SLA_PROBE_TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/sla_probe.prom}"
 
-# F-1303 (codex audit-2026-05-13): a missing or non-executable
+# A missing or non-executable
 # probe binary is itself a failure — fan out to Healthchecks/fail
 # so the SLA-evidence check goes red, otherwise a broken binary
 # deploy silently disables the check without anyone noticing.

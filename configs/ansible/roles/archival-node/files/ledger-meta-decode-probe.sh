@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ledger-meta-decode-probe — detect "we are behind a protocol upgrade" FAST.
 #
-# WHY THIS EXISTS (2026-08-27):
+# WHY THIS EXISTS:
 # galexie v27 could not decode Protocol-28 ledger meta. The futurenet archive
 # backfill died at ledger 92747 with:
 #
